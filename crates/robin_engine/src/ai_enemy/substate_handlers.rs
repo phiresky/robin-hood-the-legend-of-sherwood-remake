@@ -1545,45 +1545,9 @@ impl EnemyAi {
         match self.base.current_substate {
             Substate::SeekingSeekpoint => {
                 if stimulus_type == StimulusType::EventReachPoint
-                    || stimulus_type == StimulusType::EventTimer
+                    && self.actual_seek_point.is_some()
                 {
-                    // Arrived at seek point — build list of directions
-                    // to look from the actual seek point's direction list.
-                    // Get directions from `actual_seek_point.directions`.
-                    self.seek_point_view_directions.clear();
-                    if let Some(sp_id) = self.actual_seek_point
-                        && let Some(sp) = resolve_seek_point_id(
-                            sp_id,
-                            &self.personal_seek_point_1,
-                            &self.personal_seek_point_2,
-                            global,
-                        )
-                    {
-                        // Copy directions, randomise order.
-
-                        for &dir in &sp.directions {
-                            let pos = if self.seek_point_view_directions.is_empty() {
-                                0
-                            } else {
-                                crate::sim_rng::usize(
-                                    sim,
-                                    crate::sim_rng::RngSite::EnemySeekDirectionShuffle,
-                                    0..=self.seek_point_view_directions.len(),
-                                )
-                            };
-                            self.seek_point_view_directions.insert(pos, dir);
-                        }
-                    }
-
-                    if let Some(&dir) = self.seek_point_view_directions.first() {
-                        self.seek_point_view_directions.remove(0);
-                        self.set_state(AiState::Seeking, Substate::SeekingSeekpointWatching);
-                        self.base.face_direction(dir, ctx);
-                        self.base
-                            .launch_timer(parameters_ai::AI_SEEKPOINT_LOOK_TIME as u32, ctx.frame);
-                    } else {
-                        self.seek_next_point(sim, global, ctx, tick);
-                    }
+                    self.reached_seek_point(sim, global, ctx, tick);
                 }
             }
 
@@ -1631,8 +1595,12 @@ impl EnemyAi {
                 match stimulus_type {
                     StimulusType::EventReachPoint => {
                         self.set_state(AiState::Seeking, Substate::SeekingSeekpoint);
-                        // Re-dispatch as reachpoint.
-                        self.base.launch_timer(1, ctx.frame);
+                        // Original calls Think(EVENT_REACHPOINT) re-entrantly
+                        // here; do the same work inline instead of synthesizing
+                        // a one-frame timer.
+                        if self.actual_seek_point.is_some() {
+                            self.reached_seek_point(sim, global, ctx, tick);
+                        }
                     }
                     StimulusType::EventTimer => {
                         self.base.stop_all();
@@ -1642,10 +1610,6 @@ impl EnemyAi {
                         );
                         // Look LEFT.
                         self.base.outbox.actor.look_sidewards = Some(LookDirection::Left);
-                        self.base.launch_timer(
-                            parameters_ai::AI_AMBUSH_POINT_GLANCE_TIME as u32,
-                            ctx.frame,
-                        );
                     }
                     _ => {}
                 }
@@ -1655,7 +1619,9 @@ impl EnemyAi {
                 match stimulus_type {
                     StimulusType::EventReachPoint => {
                         self.set_state(AiState::Seeking, Substate::SeekingSeekpoint);
-                        self.base.launch_timer(1, ctx.frame);
+                        if self.actual_seek_point.is_some() {
+                            self.reached_seek_point(sim, global, ctx, tick);
+                        }
                     }
                     StimulusType::EventTimer => {
                         self.base.stop_all();
@@ -1665,29 +1631,36 @@ impl EnemyAi {
                         );
                         // Look RIGHT.
                         self.base.outbox.actor.look_sidewards = Some(LookDirection::Right);
-                        self.base.launch_timer(
-                            parameters_ai::AI_AMBUSH_POINT_GLANCE_TIME as u32,
-                            ctx.frame,
-                        );
                     }
                     _ => {}
                 }
             }
 
             Substate::SeekingSeekpointCheckingAmbushPoint => {
-                if stimulus_type == StimulusType::EventDone
-                    || stimulus_type == StimulusType::EventTimer
-                {
+                if stimulus_type == StimulusType::EventDone {
                     // Resume walking to seek point
                     let goto_flags = if self.seek_flags.contains(SeekFlags::WALKING) {
                         GotoFlags::empty()
                     } else {
                         GotoFlags::RUN
                     };
+                    let seek_point_id = self
+                        .actual_seek_point
+                        .expect("ambush-point check lost its actual seek point");
+                    let seek_position = resolve_seek_point_id(
+                        seek_point_id,
+                        &self.personal_seek_point_1,
+                        &self.personal_seek_point_2,
+                        global,
+                    )
+                    .unwrap_or_else(|| {
+                        panic!("actual seek point {seek_point_id:?} no longer resolves")
+                    })
+                    .position;
                     self.go_to(
                         AiState::Seeking,
                         Substate::SeekingSeekpoint,
-                        self.base.seek_position,
+                        seek_position,
                         goto_flags,
                         ctx,
                     );
@@ -4240,6 +4213,60 @@ impl EnemyAi {
             _ => {}
         }
         false
+    }
+
+    /// Handle the body of Original `Think(EVENT_REACHPOINT)` while seeking an
+    /// authored seek point. This is also called re-entrantly by the two
+    /// passed-ambush substates, matching their direct `Think` call.
+    fn reached_seek_point(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        let seek_point_id = self
+            .actual_seek_point
+            .expect("seek-point arrival without an actual seek point");
+        let directions = resolve_seek_point_id(
+            seek_point_id,
+            &self.personal_seek_point_1,
+            &self.personal_seek_point_2,
+            global,
+        )
+        .unwrap_or_else(|| panic!("actual seek point {seek_point_id:?} no longer resolves"))
+        .directions
+        .clone();
+
+        self.seek_point_view_directions.clear();
+        for direction in directions {
+            // `(direction + 16 - current_direction) ^ 8` is the exact
+            // precedence of the Original expression. Directions within one
+            // sector of the direction the soldier arrived from are skipped.
+            let relative = ((i32::from(direction) + 16 - i32::from(ctx.direction)) ^ 8) & 15;
+            if matches!(relative, 15 | 0 | 1) {
+                continue;
+            }
+
+            // Original increments the count before `rand() % count`, so even
+            // insertion into an empty list consumes one global RNG draw.
+            let insertion = crate::sim_rng::usize(
+                sim,
+                crate::sim_rng::RngSite::EnemySeekDirectionShuffle,
+                0..=self.seek_point_view_directions.len(),
+            );
+            self.seek_point_view_directions.insert(insertion, direction);
+        }
+
+        if let Some(&direction) = self.seek_point_view_directions.first() {
+            self.seek_point_view_directions.remove(0);
+            self.set_state(AiState::Seeking, Substate::SeekingSeekpointWatching);
+            self.base.face_direction(direction, ctx);
+            self.base
+                .launch_timer(parameters_ai::AI_SEEKPOINT_LOOK_TIME as u32, ctx.frame);
+        } else {
+            self.seek_next_point(sim, global, ctx, tick);
+        }
     }
 
     fn think_expected_attacking_event(

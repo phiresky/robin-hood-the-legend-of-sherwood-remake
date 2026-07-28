@@ -1547,6 +1547,7 @@ impl EngineInner {
         let cur_frame = self.control.frame_counter;
         drain_matured_exclamations(&mut self.feedback.sound_sim, cur_frame);
         self.settle_npc_speech_completions(sim, assets);
+        self.launch_expired_parry_stops();
 
         // Drain deferred console-cheat / death reinforcement spawns and
         // scroll-reveal amulet spawns. Both used to live in

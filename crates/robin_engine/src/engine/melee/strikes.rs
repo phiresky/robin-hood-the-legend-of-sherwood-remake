@@ -259,15 +259,67 @@ impl EngineInner {
         self.tick_refresh_purse_disable(assets);
     }
 
-    /// Decrement parry counters and end the parry stance when the timer
-    /// runs out.
+    /// Launch normal-parry stop commands whose hold counter expired during
+    /// the preceding frame.
     ///
-    /// Each frame `parry_counter` counts down; when it hits 0 a
-    /// `StopParrySword` sequence is launched which returns the actor
-    /// to `WaitingSword`.  `ParrySwordLow` instead terminates its
-    /// own sequence element directly (no explicit stop-parry step).
+    /// The Original decrements `muwParryCounter` from inside the actor's
+    /// `RHANIMATION_PARRYING_SWORD` execute arm and launches the stop
+    /// sequence there. Because that happens while the actor is still being
+    /// traversed, the replacement command is not instructed until the next
+    /// engine pass. Rust advances animation in the entity phase but keeps
+    /// combat bookkeeping in a later batch, so launching directly from
+    /// [`Self::tick_parry_counters`] replaces the command one frame early.
+    /// Drain the expired normal holds at the next frame's leading deferred
+    /// boundary instead, before actors execute, which preserves both sides
+    /// of the Original boundary.
+    pub(crate) fn launch_expired_parry_stops(&mut self) {
+        let owners: Vec<EntityId> = self
+            .world
+            .entities
+            .humans()
+            .filter_map(|(entity_id, entity)| {
+                let normal_parry = entity
+                    .actor_data()
+                    .is_some_and(|actor| actor.action_state == ActionState::ParryingSword);
+                let expired = entity
+                    .human_data()
+                    .is_some_and(|human| human.parry_counter == 0);
+                let holding = self
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(entity_id)
+                    .is_some_and(|(_, _, order)| {
+                        order.order_type == crate::order::OrderType::ParryingSword
+                    });
+                (normal_parry && expired && holding).then_some(entity_id.into())
+            })
+            .collect();
+
+        for owner in owners {
+            if self
+                .orders
+                .sequence_manager
+                .has_unpostponed_element_for_actor_matching(owner, |cmd| {
+                    cmd == Command::StopParrySword
+                })
+            {
+                continue;
+            }
+            let elem =
+                crate::sequence::SequenceElement::new(1, Command::StopParrySword, Some(owner));
+            self.launch_element(elem);
+        }
+    }
+
+    /// Decrement parry counters and end low-parry holds when their timer runs
+    /// out. Expired normal holds are consumed at the start of the next frame
+    /// by [`Self::launch_expired_parry_stops`].
+    ///
+    /// Each frame `parry_counter` counts down. A normal parry is picked up by
+    /// the next leading-boundary drain, which launches `StopParrySword` and
+    /// returns the actor to `WaitingSword`. `ParrySwordLow` instead terminates
+    /// its own sequence element directly (no explicit stop-parry step).
     pub(super) fn tick_parry_counters(&mut self) {
-        let mut launch_stop_parry: Vec<EntityId> = Vec::new();
         let mut terminate_low_parry: Vec<(crate::sequence::SequenceId, usize, EntityId)> =
             Vec::new();
 
@@ -307,9 +359,7 @@ impl EngineInner {
             let state = entity.actor_data().map(|a| a.action_state);
             let counter = entity.human_data().map(|h| h.parry_counter).unwrap_or(0);
             if counter == 0 {
-                if matches!(state, Some(ActionState::ParryingSword)) {
-                    launch_stop_parry.push(entity_id.into());
-                } else if matches!(state, Some(ActionState::ParryingSwordLow))
+                if matches!(state, Some(ActionState::ParryingSwordLow))
                     && let Some(elem_ref) = self
                         .orders
                         .sequence_manager
@@ -331,9 +381,6 @@ impl EngineInner {
             }
             if new_counter == 0 {
                 match state {
-                    Some(ActionState::ParryingSword) => {
-                        launch_stop_parry.push(entity_id.into());
-                    }
                     Some(ActionState::ParryingSwordLow) => {
                         if let Some(elem_ref) = self
                             .orders
@@ -353,21 +400,6 @@ impl EngineInner {
                     state,
                 );
             }
-        }
-
-        for owner in launch_stop_parry {
-            if self
-                .orders
-                .sequence_manager
-                .has_unpostponed_element_for_actor_matching(owner, |cmd| {
-                    cmd == Command::StopParrySword
-                })
-            {
-                continue;
-            }
-            let elem =
-                crate::sequence::SequenceElement::new(1, Command::StopParrySword, Some(owner));
-            self.launch_element(elem);
         }
 
         for (seq_id, elem_idx, owner) in terminate_low_parry {
