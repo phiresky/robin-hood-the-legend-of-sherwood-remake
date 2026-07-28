@@ -5537,17 +5537,29 @@ impl EngineInner {
             );
         }
 
-        // Launch any pending AI orders (Face/Turn, GoTo movement,
-        // generic animation) BEFORE draining
-        // `pending_set_attentive_mode`.  `face` / `go_to` call
-        // `launch_sequence` inline inside the think handler, so by the
-        // time `set_attentive_mode(true)` fires `ENTER_ATTENTIVE_MODE`
-        // at `postpone_everything_but_injuries`, there's already an
-        // active sequence at `Normal` priority to preempt — whose
-        // `send_condolation_card` dispatches `think(EVENT_DONE)`
-        // re-entrantly, advancing
-        // `AttackingReactiontimeTurning → AttackingReactiontime` the
-        // same frame as `EVENT_VIEW`.
+        // Preserve the authored boundary on either side of SetState's
+        // attentive-mode call. Face normally launches before attentive mode;
+        // Face authored after SetState is held until that transition has
+        // launched, matching the two distinct C++ statement orders.
+        let orders_after_attentive = {
+            let ai = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "pending-drain owner {} lost AI before Face split",
+                        npc_id.index()
+                    )
+                });
+            let orders = std::mem::take(&mut ai.outbox.actor.orders);
+            let (before, after) = orders
+                .into_iter()
+                .partition(|intent| !intent.after_attentive_mode);
+            ai.outbox.actor.orders = before;
+            after
+        };
         self.launch_pending_orders_for_npc_mode_after_halt(
             npc_id,
             defer_turn_instruction,
@@ -5593,6 +5605,27 @@ impl EngineInner {
             // tick; snapping the flag immediately here would race
             // that.
             self.set_soldier_attentive_mode(npc_id, request.target, request.fast_officer_variant);
+        }
+
+        if !orders_after_attentive.is_empty() {
+            let ai = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "pending-drain owner {} lost AI after attentive mode",
+                        npc_id.index()
+                    )
+                });
+            ai.outbox.actor.orders.extend(orders_after_attentive);
+            // EnterAttentiveMode is registered but remains Todo until the
+            // sequence-manager instruction phase. Register following Turns
+            // behind it as well so that phase arbitrates the two elements in
+            // authored FIFO order instead of eagerly instructing the Turn
+            // past the still-Todo attentive barrier.
+            self.launch_pending_orders_for_npc_mode_after_halt(npc_id, true, true);
         }
 
         // Process pending `SetGuardedPC` — `set_guarded_pc`.  The AI

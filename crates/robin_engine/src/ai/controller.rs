@@ -2923,10 +2923,9 @@ impl AiController {
     /// direction / action state). Prefer [`Self::face_position_with_ctx`]
     /// at call sites that have a ctx.
     pub fn face_position(&mut self, pos: Position) {
-        self.outbox
-            .actor
-            .orders
-            .push(AiOrderIntent::face_toward(pos.x, pos.y));
+        let mut intent = AiOrderIntent::face_toward(pos.x, pos.y);
+        intent.after_attentive_mode = self.outbox.actor.set_attentive_mode.is_some();
+        self.outbox.actor.orders.push(intent);
     }
 
     /// Internal helper — all `face_*_with_ctx` / `face_entity[_fast]`
@@ -2967,6 +2966,7 @@ impl AiController {
             return;
         }
         let mut intent = AiOrderIntent::face_direction(target_dir);
+        intent.after_attentive_mode = self.outbox.actor.set_attentive_mode.is_some();
         intent.fast_turn = fast;
         self.outbox.actor.orders.push(intent);
     }

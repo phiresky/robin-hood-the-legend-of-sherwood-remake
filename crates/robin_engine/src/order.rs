@@ -671,6 +671,11 @@ pub struct AiOrderIntent {
     pub target_actor: Option<u32>,
     pub compute_direction: bool,
     pub defer_initial_turn_step: bool,
+    /// This Face was authored after a same-call SetState changed attentive
+    /// mode. The engine must apply that attentive transition before
+    /// instructing the Turn.
+    #[serde(default)]
+    pub after_attentive_mode: bool,
     /// `Face(..., true)` requests the same turn geometry with a
     /// `TurnFast` sequence command.
     pub fast_turn: bool,
@@ -721,6 +726,7 @@ impl AiOrderIntent {
             target_actor: None,
             compute_direction: true,
             defer_initial_turn_step: false,
+            after_attentive_mode: false,
             fast_turn: false,
             explicit_direction: None,
             tolerance: 0.0,

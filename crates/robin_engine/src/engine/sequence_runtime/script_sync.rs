@@ -253,6 +253,18 @@ impl EngineInner {
                         sequence_id,
                         element_index,
                     );
+                } else if matches!(command, Command::Turn | Command::TurnFast) {
+                    // A terminal condolation can synchronously resume a
+                    // postponed Face Turn through Ready -> Go -> Instruct.
+                    // Use the same translator as the ordinary hourglass path
+                    // so its stored direction is applied only now, when the
+                    // Turn has actually won arbitration.
+                    TurnCommandContext {
+                        entities: &mut self.world.entities,
+                        sequence_manager: &mut self.orders.sequence_manager,
+                        next_order_id: &mut self.orders.next_order_id,
+                    }
+                    .dispatch(owner, command, sequence_id, element_index);
                 } else if matches!(
                     command,
                     Command::Wait | Command::WaitTimer | Command::WaitFreeLift

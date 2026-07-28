@@ -1372,6 +1372,30 @@ impl EngineInner {
         order: crate::order::Order,
         with_transitions: bool,
     ) -> crate::sequence::SequenceId {
+        self.launch_single_order_sequence_stamped_ex_configured(
+            owner,
+            command,
+            order,
+            with_transitions,
+            |_| {},
+        )
+        .0
+    }
+
+    /// Configured single-order launch that installs element properties before
+    /// priority arbitration and reports whether the owner was instructed.
+    ///
+    /// Turn uses this to mirror Original's `Instruct -> Translate` boundary:
+    /// an element postponed during arbitration retains its authored direction
+    /// property but must not mutate the actor until it is later instructed.
+    pub(crate) fn launch_single_order_sequence_stamped_ex_configured(
+        &mut self,
+        owner: EntityId,
+        command: crate::element::Command,
+        order: crate::order::Order,
+        with_transitions: bool,
+        configure: impl FnOnce(&mut crate::sequence::SequenceElement),
+    ) -> (crate::sequence::SequenceId, bool) {
         use crate::sequence::SequenceState;
 
         // Unfreeze actor on any incoming command.
@@ -1390,7 +1414,7 @@ impl EngineInner {
                 .sequence_manager
                 .launch_single_order_sequence_unchecked(owner, command);
             self.orders.sequence_manager.element_terminated(seq_id, 0);
-            return seq_id;
+            return (seq_id, false);
         }
 
         // Launch an EMPTY element so `generate_transition`'s auto-
@@ -1409,6 +1433,7 @@ impl EngineInner {
             .sequence_manager
             .get_element_mut(seq_id, elem_idx)
         {
+            configure(elem);
             let resolver = Self::priority_resolver(&self.world.entities);
             if elem.priority == crate::sequence::SequencePriority::NotYetSet {
                 elem.priority = resolver(elem);
@@ -1419,7 +1444,7 @@ impl EngineInner {
         // NonInterruptable guard — see `launch_element_for_owner` for
         // details.
         if self.non_interruptable_guard(owner, seq_id, elem_idx) {
-            return seq_id;
+            return (seq_id, false);
         }
 
         // Auto-insert exit / posture / enter transition orders before
@@ -1432,7 +1457,7 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
-            return seq_id;
+            return (seq_id, false);
         }
 
         // NOW append the pre-baked command order — transitions are
@@ -1452,6 +1477,7 @@ impl EngineInner {
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| e.state);
+        let mut instructed = false;
         if accepted && matches!(state, Some(SequenceState::Todo)) {
             // After `DecidePriorities` runs an `INTERRUPT_CURRENT`
             // cascade, re-check the actor's current element pointer.  A
@@ -1466,6 +1492,7 @@ impl EngineInner {
                 self.orders
                     .sequence_manager
                     .element_in_progress(seq_id, elem_idx);
+                instructed = true;
                 // Mirror the original actor lifecycle flag when the element
                 // transitions to InProgress.
                 if let Some(entity) = self.world.entities.get_mut(owner)
@@ -1475,7 +1502,7 @@ impl EngineInner {
                 }
             }
         }
-        seq_id
+        (seq_id, instructed)
     }
 
     /// Register a direct FaceTo-style Turn without instructing its owner yet.

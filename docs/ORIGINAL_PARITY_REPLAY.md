@@ -241,7 +241,7 @@ mission `H01_Lin_VL` (Lincoln), 7,128 contiguous gameplay frames (0 through
 a direct `mission_start` capture with the complete schema-9 campaign,
 resolved-command, director-completion, simulation-body, motion-grid,
 path-request, and global-RNG contracts. Replay currently matches through frame
-3,364. The corrections since frame 1,929 cover positive integer hearing
+3,424. The corrections since frame 1,929 cover positive integer hearing
 thresholds, stale ability retirement, boundary-inclusive sector membership,
 synchronous released-Seek translation, nested owner-card FIFO closure,
 creation-slot entity-seek refresh, stable base seek distance, and
@@ -260,8 +260,13 @@ dispatch boundaries. The next section of the recording exposed authored
 PassDoor action preservation, sector-qualified door-combat positions,
 synchronous door-combat AI dispatch, inline AI route construction/RNG
 ordering, retained post-Execute timer ownership, and terminal
-cross-postponement cleanup. The first remaining divergence is soldier 67's
-direction goal at frame 3,365.
+cross-postponement cleanup. The next correction preserves the two distinct
+Original statement orders around `Face` and `SetState`: a Turn instructed
+before an attentive-mode transition retains its direction side effect, while
+a Turn registered after that transition remains inert while postponed and
+applies its stored direction only when later instructed. The first remaining
+divergence is soldier 67 choosing `LookRight` instead of `LookLeft` at frame
+3,425.
 
 ## Change ledger
 
@@ -505,6 +510,7 @@ direction goal at frame 3,365.
 | Done | Inline AI route construction and RNG | Soldier 78's timer-fired `GoTo` was queued until the global sequence phase. Original expands `AppendMoveToSequence` inline during Think, so its building-exit RNG draws occur between the periodic owner slots for soldiers 74 and 90. Rust consumed soldier 90's idle draw first and produced a wait of 4 instead of 8. | Every synchronous AI order barrier now promotes that owner's queued movement into a deferred sequence immediately. Topology expansion and construction-time RNG occur at the Think boundary, while owner instruction remains in the ordinary sequence-manager phase. Replay advances through frame 2,765. |
 | Done | Execute-entry timer ownership | At frame 2,766 soldier 78 entered `Execute` on a `WaitTimer` with one tick left. A synchronous WaitingSword callback interrupted that element before Rust's post-Execute modifier scanned for the live command, so the final decrement was skipped. C++ retains the selected `mpSequenceElement` pointer while the current Actor Hourglass stack unwinds. | `ActorExecuteResult`'s entry element is now the fallback command identity when no genuinely instructed live replacement exists. The selected timer consumes its final tick, while any resulting completion still targets the then-live element under the existing base-Actor rule. |
 | Done | Terminal cross-postponement cleanup | A lethal injury postponed soldier 78's active strike, then the same stop cascade interrupted that strike. Rust cleared incoming cross-links only for directly stopped targets, not cascade-stopped descendants. Friday cleanup removed the dead strike sequence, leaving the injury with a dangling target that panicked when the dying animation completed at frame 2,831. | The central sequence state-transition processor now removes every incoming cross-postponement link as soon as its target becomes Terminated, Interrupted, or Impossible. Direct and cascaded stops therefore share the same pointer-lifetime rule, and periodic cleanup cannot invalidate a live link. Replay advances through frame 3,364. |
+| Done | Authored SetState/Face instruction order | `SeekingHeardstepsPreReactiontime` has opposite call order in its two branches. The investigate branch calls `Face` then `SetState`: the Turn is instructed, writes its direction, and is subsequently postponed by `EnterAttentiveMode`. The ignore branch calls `SetState` then `Face`: attentive mode registers first, so the later Turn loses priority arbitration before translation and must not change direction until it resumes. Rust batched all Face orders before the attentive request and also wrote direction before arbitration. | Face intents record whether they were authored after the pending attentive boundary. The drain registers pre-boundary work first, attentive mode second, and following Turns in manager FIFO without eager instruction. Immediate Turns now install their direction property before arbitration and change the actor only when instruction succeeds. The synchronous postponed-successor path supports Turn translation on resume. No actor, frame, or replay identity is involved; replay advances through frame 3,424. |
 
 ## Workflow
 

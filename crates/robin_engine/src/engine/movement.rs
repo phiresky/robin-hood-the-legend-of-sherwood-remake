@@ -7510,20 +7510,32 @@ impl EngineInner {
                                 retained_goal,
                             );
                         } else {
-                            if let (Some(direction), Some(entity)) =
-                                (direction, self.world.entities.get_mut(entity_id))
-                            {
-                                entity.element_data_mut().set_direction_goal(direction);
-                            }
                             let mut intent = intent;
                             intent.defer_initial_turn_step = self.control.frame_counter == 0;
                             let order = intent.stamp(self.orders.allocate_order_id());
-                            self.launch_single_order_sequence_stamped_ex(
-                                entity_id,
-                                turn_command,
-                                order,
-                                true,
-                            );
+                            let (_, instructed) = self
+                                .launch_single_order_sequence_stamped_ex_configured(
+                                    entity_id,
+                                    turn_command,
+                                    order,
+                                    true,
+                                    |element| {
+                                        if let Some(direction) = direction {
+                                            element.set_property(
+                                                crate::sequence::Field::Direction,
+                                                crate::sequence::FieldValue::Integer(
+                                                    direction as u32,
+                                                ),
+                                            );
+                                        }
+                                    },
+                                );
+                            if instructed
+                                && let (Some(direction), Some(entity)) =
+                                    (direction, self.world.entities.get_mut(entity_id))
+                            {
+                                entity.element_data_mut().set_direction_goal(direction);
+                            }
                         }
                         if let (Some(goal), Some(entity)) =
                             (retained_goal, self.world.entities.get_mut(entity_id))
@@ -7562,18 +7574,30 @@ impl EngineInner {
                                     )
                                 })
                             });
-                            if let (Some(direction), Some(entity)) =
-                                (direction, self.world.entities.get_mut(entity_id))
+                            let order = intent.stamp(self.orders.allocate_order_id());
+                            let (_, instructed) = self
+                                .launch_single_order_sequence_stamped_ex_configured(
+                                    entity_id,
+                                    turn_command,
+                                    order,
+                                    true,
+                                    |element| {
+                                        if let Some(direction) = direction {
+                                            element.set_property(
+                                                crate::sequence::Field::Direction,
+                                                crate::sequence::FieldValue::Integer(
+                                                    direction as u32,
+                                                ),
+                                            );
+                                        }
+                                    },
+                                );
+                            if instructed
+                                && let (Some(direction), Some(entity)) =
+                                    (direction, self.world.entities.get_mut(entity_id))
                             {
                                 entity.element_data_mut().set_direction_goal(direction);
                             }
-                            let order = intent.stamp(self.orders.allocate_order_id());
-                            self.launch_single_order_sequence_stamped_ex(
-                                entity_id,
-                                turn_command,
-                                order,
-                                true,
-                            );
                         }
                     }
                 }
@@ -7590,6 +7614,7 @@ impl EngineInner {
             }
         }
     }
+
     // ─── Elevation-line crossing ──────────────────────────────────
 
     /// Find a projection-area sight obstacle on `layer` whose
