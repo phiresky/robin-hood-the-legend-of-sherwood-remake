@@ -2199,16 +2199,14 @@ impl EngineInner {
                 attacker_direction: soldier.element.direction(),
                 attacker_camp: soldier.soldier.cached_camp,
                 attacker_pos: {
-                    // Use ground position (includes elevation).
+                    // `GetPossibleVictimsOfSwordStrike` subtracts
+                    // `GetPositionMap()` for both actors. Elevation remains a
+                    // separate input to the strike estimator; adding it to
+                    // only the attacker's projected Y mixes world and map
+                    // coordinates and can turn an adjacent opponent into a
+                    // target hundreds of units away.
                     let map = &soldier.element.position_map();
-                    let z = soldier
-                        .element
-                        .sprite
-                        .position_iface
-                        .get_plane()
-                        .map(|plane| plane.compute_z(map.x, map.y))
-                        .unwrap_or(0.0);
-                    (map.x, map.y + z)
+                    (map.x, map.y)
                 },
                 attacker_elevation: soldier.element.position().z,
                 boredom: soldier.human.sword_strike_boredom.clone(),

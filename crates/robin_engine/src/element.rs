@@ -2936,7 +2936,7 @@ impl Entity {
             }
             LeaningOut => {
                 // Bend forward by 40 units along the facing direction.
-                let (dx, dy) = direction_vector_16(e.direction());
+                let [dx, dy] = crate::position_interface::sector_to_vector_iso(e.direction());
                 eyes.x += dx * 40.0;
                 eyes.y += dy * 40.0;
                 eyes.z += 45.0;
@@ -2987,7 +2987,7 @@ impl Entity {
                 pt.z += if is_rider { 60.0 } else { 45.0 };
             }
             LeaningOut => {
-                let (dx, dy) = direction_vector_16(e.direction());
+                let [dx, dy] = crate::position_interface::sector_to_vector_iso(e.direction());
                 pt.x += dx * 40.0;
                 pt.y += dy * 40.0;
                 pt.z += 45.0;
@@ -3036,7 +3036,7 @@ impl Entity {
         // Rider: offset backward from facing direction, high Z.
         let is_rider = matches!(self, Self::Soldier(s) if s.soldier.rider);
         if is_rider {
-            let (dx, dy) = direction_vector_16(e.direction());
+            let [dx, dy] = crate::position_interface::sector_to_vector_iso(e.direction());
             return Some(WorldPoint3D {
                 x: base.x - dx * 10.0,
                 y: base.y - dy * 10.0,
@@ -3069,7 +3069,7 @@ impl Entity {
             }
             Dead => {
                 // Head fell forward — offset 30 units along facing.
-                let (dx, dy) = direction_vector_16(e.direction());
+                let [dx, dy] = crate::position_interface::sector_to_vector_iso(e.direction());
                 Some(WorldPoint3D {
                     x: base.x + dx * 30.0,
                     y: base.y + dy * 30.0,
@@ -3078,7 +3078,7 @@ impl Entity {
             }
             DeadBack => {
                 // Fell backward — offset 30 units against facing.
-                let (dx, dy) = direction_vector_16(e.direction());
+                let [dx, dy] = crate::position_interface::sector_to_vector_iso(e.direction());
                 Some(WorldPoint3D {
                     x: base.x - dx * 30.0,
                     y: base.y - dy * 30.0,
@@ -3101,7 +3101,7 @@ impl Entity {
             }
             LeaningOut => {
                 // Leaning forward out of a window — small forward offset.
-                let (dx, dy) = direction_vector_16(e.direction());
+                let [dx, dy] = crate::position_interface::sector_to_vector_iso(e.direction());
                 Some(WorldPoint3D {
                     x: base.x + dx * 10.0,
                     y: base.y + dy * 10.0,
@@ -3615,7 +3615,7 @@ pub trait Human: Actor {
         let here = self.position_map();
         let dx = prisoner_pos.x - here.x;
         let dy = prisoner_pos.y - here.y;
-        let (vx, vy) = crate::element_kinds::direction_vector_16(self.direction());
+        let [vx, vy] = crate::position_interface::sector_to_vector_iso(self.direction());
         dx * vx + dy * vy > 0.0
     }
 }

@@ -1,6 +1,6 @@
 //! Line-jump sequence.
 //!
-//! A line-jump is a `Command::Jump` sequence element that moves the PC
+//! A line-jump is a `Command::JumpCmd` sequence element that moves the PC
 //! across a pair of jump lines.  The translator picks between three
 //! branches based on the height delta between source and destination:
 //!
@@ -92,7 +92,7 @@ pub struct CurrentStepState {
 
 /// Active jump state stored on an actor.
 ///
-/// Created by [`EngineInner::start_jump`] from a `Command::Jump` sequence
+/// Created by [`EngineInner::start_jump`] from a `Command::JumpCmd` sequence
 /// element and drained by [`EngineInner::tick_active_jumps`].
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct ActiveJump {
@@ -107,6 +107,9 @@ pub struct ActiveJump {
     /// Destination sector of the jump (for the post-jump sector swap).
     pub dest_sector: Option<u16>,
     pub dest_layer: u16,
+    /// Exact bare-map-space `GetSector0to15()` of the normalized source jump
+    /// line normal. Every jump take-off Execute arm installs this facing.
+    pub source_direction_goal: i16,
     /// Projection-area probe used at landing. C++ asks the destination
     /// motion sector for the projection area at the destination jump-line
     /// midpoint, not necessarily at the exact landing point.
@@ -324,10 +327,10 @@ pub fn build_jump_steps(
                 anim: OrderType::JumpingLong,
                 target_3d: Some(*pt),
                 airborne: true,
-                // Each trajectory segment runs for 4 frames
-                // (`TIME_FLYSEGMENT`), rolling over to the next before
-                // the full JumpingLong cycle.
-                max_frames: Some(TIME_FLYSEGMENT),
+                // TIME_FLYSEGMENT shapes the projectile trajectory. Runtime
+                // order duration is derived independently from the exact
+                // actor-to-waypoint 3D distance in Execute.
+                max_frames: None,
             });
         }
 
@@ -768,7 +771,7 @@ impl EngineInner {
         )
     }
 
-    /// Dispatcher entry point for `Command::Jump`.  Reads jump-line
+    /// Dispatcher entry point for `Command::JumpCmd`.  Reads jump-line
     /// source/destination from the sequence element's properties,
     /// builds the step list via [`build_jump_steps`], installs
     /// [`ActiveJump`] on the actor, and marks the element in-progress.
@@ -849,6 +852,17 @@ impl EngineInner {
         let dest_sector = jump_line_sector_number(&self.world.fast_grid, &dst_line);
         let dest_layer = dst_line.layer;
         let dest_projection_point = dst_line.get_middle_point();
+        let source_vector = src_line.vector();
+        let source_length =
+            (source_vector.x * source_vector.x + source_vector.y * source_vector.y).sqrt();
+        if source_length <= f32::EPSILON {
+            tracing::warn!(src_id = %src_id, "Jump: source line has zero length");
+            return false;
+        }
+        let source_direction_goal = crate::position_interface::vector_to_sector_0_to_15(
+            -source_vector.y / source_length,
+            source_vector.x / source_length,
+        );
 
         // `jump_height = associated.z_a - line.z_a`.  For our source
         // line, `associated` is the paired dst line.
@@ -912,6 +926,7 @@ impl EngineInner {
             dest_sector,
             dest_layer,
             dest_projection_point,
+            source_direction_goal,
         };
 
         // Install on the actor and reset any stale flight state.
@@ -921,9 +936,9 @@ impl EngineInner {
             actor.clear_path();
             actor.active_jump = Some(active);
             actor.jump_z_offset = 0.0;
-            // Flip to Waiting so the movement tick skips this actor
-            // while the jump drives position directly.
-            actor.action_state = ActionState::Waiting;
+            // Translation only installs the jump orders. The outgoing
+            // movement state remains observable until the first jump order
+            // executes in the actor's next creation slot.
         }
 
         tracing::debug!(
@@ -948,13 +963,8 @@ impl EngineInner {
     /// to [`EngineInner::advance_jump_step`].  Position interpolation is
     /// done here so it runs every frame, not just on animation end.
     pub(super) fn tick_active_jumps(&mut self, assets: &LevelAssets) {
-        let mut jump_finishes: Vec<(EntityId, u16, Option<u16>, MapPoint)> = Vec::new();
-        // Entities whose current step has reached its `max_frames`
-        // cap — we force-advance them after the loop (can't call
-        // advance_jump_step inline due to the mutable borrow on
-        // `self.world.entities`).  Each trajectory segment pops after
-        // `TIME_FLYSEGMENT` frames regardless of the sprite
-        // animation's natural length.
+        // Entities whose current order reached its exact Execute termination
+        // boundary. We advance them after the entity borrow closes.
         let mut force_advance: Vec<EntityId> = Vec::new();
         // Collected here during the main loop, applied after — each
         // entry is `(seq_id, elem_idx, order)` for the step that just
@@ -989,18 +999,9 @@ impl EngineInner {
                         // sequence element and swap layer/sector.
                         let seq_id = jump.sequence_id;
                         let elem_idx = jump.element_index;
-                        let dest_sector = jump.dest_sector;
-                        let dest_layer = jump.dest_layer;
-                        let dest_projection_point = jump.dest_projection_point;
                         actor.active_jump = None;
                         actor.jump_z_offset = 0.0;
                         actor.action_state = ActionState::Waiting;
-                        jump_finishes.push((
-                            entity_id.into(),
-                            dest_layer,
-                            dest_sector,
-                            dest_projection_point,
-                        ));
                         // Defer sequence termination to after the loop.
                         actor.pending_jump_done = Some((seq_id, elem_idx));
                         continue;
@@ -1030,11 +1031,60 @@ impl EngineInner {
                 ) {
                     jump_orders.push(order);
                 }
+                if entity.actor_data().is_some_and(|actor| {
+                    actor.active_jump.as_ref().is_some_and(|jump| {
+                        jump.current
+                            .as_ref()
+                            .is_some_and(|state| state.step.airborne && actor.wait_time == 0)
+                    })
+                }) {
+                    force_advance.push(entity_id.into());
+                }
                 continue;
             }
 
             // A step is in progress — advance interpolation.
+            let current = jump.current.as_ref().expect("current step exists");
+            let current_anim = current.step.anim;
+            let transition_reached_terminal_tick =
+                !current.step.airborne && current.frames_elapsed >= current.total_frames;
+            if transition_reached_terminal_tick
+                && matches!(
+                    current_anim,
+                    OrderType::TransitionWaitingUprightJumpingUp
+                        | OrderType::TransitionWaitingCrouchedJumpingDown
+                        | OrderType::TransitionWaitingUprightJumpingLong
+                        | OrderType::TransitionWaitingSwordJumpingLongSword
+                )
+            {
+                // These Execute arms apply flight state on
+                // RHMOTION_TERMINATED. Jump stepping precedes the owner
+                // animation pass, so expose it once the authored duration
+                // elapsed on the preceding frames.
+                entity.set_posture(Posture::Flying);
+                if let Some(actor) = entity.actor_data_mut() {
+                    actor.action_state =
+                        if current_anim == OrderType::TransitionWaitingSwordJumpingLongSword {
+                            ActionState::MovingSword
+                        } else {
+                            ActionState::Moving
+                        };
+                }
+                force_advance.push(entity_id.into());
+            }
+            if jump_step_turns(current_anim) {
+                entity.position_iface_mut().turn();
+            }
             advance_step_interpolation(entity);
+            if entity.actor_data().is_some_and(|actor| {
+                actor.active_jump.as_ref().is_some_and(|jump| {
+                    jump.current
+                        .as_ref()
+                        .is_some_and(|state| state.step.airborne && actor.wait_time == 0)
+                })
+            }) {
+                force_advance.push(entity_id.into());
+            }
 
             // If the step has a max-frames cap (TIME_FLYSEGMENT for
             // airborne trajectory segments), mark it for early
@@ -1074,34 +1124,19 @@ impl EngineInner {
             ));
         }
 
-        // Force-advance entities whose current step hit its frame cap.
+        // Force-advance entities whose current step reached its Execute
+        // termination boundary.
         for entity_id in force_advance {
-            self.advance_jump_step(entity_id);
-        }
-
-        // Apply destination layer/sector/obstacle finalization for jumps
-        // that finished this tick. This mirrors the C++ landing path:
-        // final 3D position is already snapped by `advance_jump_step`;
-        // landing then recomputes the map/plane/material using the
-        // destination line's projection area.
-        for (entity_id, new_layer, new_sector, projection_point) in jump_finishes {
-            let Some(position) = self
-                .get_entity(entity_id)
-                .map(|entity| entity.element_data().position())
-            else {
-                continue;
-            };
-            self.finalize_special_move_position(
-                assets,
-                entity_id,
-                super::special_motion::SpecialMovePosition::World(position),
-                Some(new_layer),
-                new_sector,
-                Some(projection_point),
-                "jump landing",
-            );
-            if let Some(entity) = self.world.entities.get_mut(entity_id) {
-                entity.position_iface_mut().settle_current_position();
+            if let Some((new_layer, new_sector, projection_point)) =
+                self.advance_jump_step(entity_id)
+            {
+                self.finalize_airborne_jump_landing(
+                    assets,
+                    entity_id,
+                    new_layer,
+                    new_sector,
+                    projection_point,
+                );
             }
         }
 
@@ -1129,22 +1164,37 @@ impl EngineInner {
     /// interpolation frame counter), applies the end-of-animation
     /// posture transition, and clears `current` so the next tick pops
     /// the next step.
-    pub(super) fn advance_jump_step(&mut self, entity_id: EntityId) {
+    pub(super) fn advance_jump_step(
+        &mut self,
+        entity_id: EntityId,
+    ) -> Option<(u16, Option<u16>, MapPoint)> {
         let Some(entity) = self.world.entities.get_mut(entity_id) else {
-            return;
+            return None;
         };
 
         // Take the completed step out of the jump state.
-        let finished = {
+        let (finished, next_anim, landing_finalize, jump_completion) = {
             let Some(actor) = entity.actor_data_mut() else {
-                return;
+                return None;
             };
             let Some(jump) = actor.active_jump.as_mut() else {
-                return;
+                return None;
             };
             match jump.current.take() {
-                Some(s) => s,
-                None => return,
+                Some(s) => {
+                    let next_anim = jump.steps.front().map(|step| step.anim);
+                    let landing_finalize = (s.step.airborne && next_anim != Some(s.step.anim))
+                        .then_some((
+                            jump.dest_layer,
+                            jump.dest_sector,
+                            jump.dest_projection_point,
+                        ));
+                    let jump_completion = next_anim
+                        .is_none()
+                        .then_some((jump.sequence_id, jump.element_index));
+                    (s, next_anim, landing_finalize, jump_completion)
+                }
+                None => return None,
             }
         };
 
@@ -1153,13 +1203,8 @@ impl EngineInner {
         // exactly on it, independent of frame-count drift. Airborne
         // steps mirror C++ `SetPosition(pointDestination3D)`.
         if let Some(target) = finished.step.target_3d {
-            let elem = entity.element_data_mut();
-            if finished.step.airborne {
-                elem.set_position(target);
-            } else {
-                elem.set_position_map(crate::coordinates::MapPoint::from_world_xyz(
-                    target.x, target.y, target.z,
-                ));
+            if finished.step.airborne && next_anim != Some(finished.step.anim) {
+                entity.element_data_mut().set_position(target);
             }
             if let Some(actor) = entity.actor_data_mut() {
                 actor.jump_z_offset = 0.0;
@@ -1200,6 +1245,24 @@ impl EngineInner {
             entity.set_posture(p);
         }
 
+        if matches!(
+            finished.step.anim,
+            OrderType::TransitionWaitingUprightJumpingUp
+                | OrderType::TransitionWaitingCrouchedJumpingDown
+                | OrderType::TransitionWaitingUprightJumpingLong
+                | OrderType::TransitionWaitingSwordJumpingLongSword
+        ) {
+            entity.set_posture(Posture::Flying);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state =
+                    if finished.step.anim == OrderType::TransitionWaitingSwordJumpingLongSword {
+                        ActionState::MovingSword
+                    } else {
+                        ActionState::Moving
+                    };
+            }
+        }
+
         // Sword long-jump returns the actor to `WaitingSword` idle so
         // the sword-specific idle animation picks up when the next
         // tick clears `active_ai_anim` — the post-
@@ -1209,6 +1272,13 @@ impl EngineInner {
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.action_state = ActionState::WaitingSword;
+        }
+        if jump_completion.is_some() {
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.active_jump = None;
+                actor.jump_z_offset = 0.0;
+            }
+            entity.position_iface_mut().set_anti_collision_on(true);
         }
 
         // For the three jump landing transitions: re-broadcast
@@ -1249,6 +1319,38 @@ impl EngineInner {
                 crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::Stature),
             ));
         }
+        if let Some((sequence_id, element_index)) = jump_completion {
+            self.orders
+                .sequence_manager
+                .element_terminated(sequence_id, element_index);
+        }
+        landing_finalize
+    }
+
+    pub(super) fn finalize_airborne_jump_landing(
+        &mut self,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        new_layer: u16,
+        new_sector: Option<u16>,
+        projection_point: MapPoint,
+    ) {
+        let Some(position) = self
+            .get_entity(entity_id)
+            .map(|entity| entity.element_data().position())
+        else {
+            tracing::warn!(?entity_id, "jump landing lost actor");
+            return;
+        };
+        self.finalize_special_move_position(
+            assets,
+            entity_id,
+            super::special_motion::SpecialMovePosition::World(position),
+            Some(new_layer),
+            new_sector,
+            Some(projection_point),
+            "jump landing",
+        );
     }
 }
 
@@ -1269,6 +1371,77 @@ fn start_step(
 ) -> Option<(crate::sequence::SequenceId, usize, crate::order::Order)> {
     if step.airborne {
         start_airborne_jump_motion(entity, &step);
+        entity.position_iface_mut().turn();
+    } else if matches!(
+        step.anim,
+        OrderType::TransitionWaitingOnShouldersJumpingUp
+            | OrderType::TransitionWaitingOnShouldersJumpingLong
+            | OrderType::TransitionWaitingUprightJumpingUp
+            | OrderType::TransitionWaitingCrouchedJumpingDown
+            | OrderType::TransitionWaitingUprightJumpingLong
+            | OrderType::TransitionWaitingSwordJumpingLongSword
+    ) {
+        // Every jump take-off Execute arm faces the source line's normalized
+        // normal, including jump-up orders that have no 2D destination.
+        let source_direction_goal = entity
+            .actor_data()
+            .and_then(|actor| actor.active_jump.as_ref())
+            .map(|jump| jump.source_direction_goal)?;
+        let position_iface = entity.position_iface_mut();
+        position_iface.set_direction(crate::position_interface::Direction::from_raw(
+            source_direction_goal.into(),
+        ));
+        position_iface.set_anti_collision_on(false);
+
+        // Only the upright/sword long-jump transitions use PerformMotion to
+        // approach their authored take-off point. The shoulders and vertical
+        // take-off arms use PerformAction even where an order carries a point.
+        if matches!(
+            step.anim,
+            OrderType::TransitionWaitingUprightJumpingLong
+                | OrderType::TransitionWaitingSwordJumpingLongSword
+        ) && let Some(target) = step.target_3d
+        {
+            position_iface.set_map_goal(target.to_map());
+        }
+        position_iface.turn();
+
+        // Shoulder-assisted take-offs establish flight on START. The other
+        // take-off transitions do so only when their animation terminates.
+        if matches!(
+            step.anim,
+            OrderType::TransitionWaitingOnShouldersJumpingUp
+                | OrderType::TransitionWaitingOnShouldersJumpingLong
+        ) {
+            entity.set_posture(Posture::Flying);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Moving;
+            }
+        }
+    } else if matches!(
+        step.anim,
+        OrderType::TransitionJumpingUpWaitingCrouched
+            | OrderType::TransitionJumpingDownWaitingCrouched
+            | OrderType::TransitionJumpingLongWaitingUpright
+            | OrderType::TransitionJumpingLongSwordWaitingSword
+    ) {
+        // Landing Execute arms establish the waiting posture/action on
+        // RHMOTION_START, before the landing animation completes.
+        let (posture, action) = match step.anim {
+            OrderType::TransitionJumpingUpWaitingCrouched
+            | OrderType::TransitionJumpingDownWaitingCrouched => {
+                (Posture::Crouched, ActionState::Waiting)
+            }
+            OrderType::TransitionJumpingLongSwordWaitingSword => {
+                (Posture::Upright, ActionState::WaitingSword)
+            }
+            _ => (Posture::Upright, ActionState::Waiting),
+        };
+        entity.set_posture(posture);
+        if let Some(actor) = entity.actor_data_mut() {
+            actor.action_state = action;
+        }
+        entity.position_iface_mut().turn();
     }
 
     let (start_x, start_y, start_z) = {
@@ -1322,10 +1495,26 @@ fn start_step(
         actor.active_jump_airborne = step.airborne;
     }
 
+    // Airborne Execute calls UpdatePosition on its first START tick. Ground
+    // transition motion remains owned by the sprite motion driver, whose
+    // first-frame distance may legitimately be zero.
+    if step.airborne {
+        advance_step_interpolation(entity);
+    }
+
     // Build the order to push after the loop closes.  `NextJumpStep`
     // completion routes the motion-terminated signal through
     // `process_anim_completion_outcomes → advance_jump_step`.
-    let mut order = crate::order::Order::new(step.anim, 0.0, 0.0, order_id);
+    let target_map = step
+        .target_3d
+        .filter(|_| !step.airborne)
+        .map(crate::coordinates::WorldPoint3D::to_map)
+        .unwrap_or_default();
+    let mut order = crate::order::Order::new(step.anim, target_map.x, target_map.y, order_id);
+    // Every order authored by Original's TranslateJump explicitly disables
+    // generic movement-direction computation. Jump initiation sets its
+    // source-line-normal facing above; airborne and landing orders retain it.
+    order.compute_direction = false;
     order.completion = crate::order::OrderCompletion::NextJumpStep;
     Some((jump_seq, jump_elem, order))
 }
@@ -1333,31 +1522,56 @@ fn start_step(
 fn start_airborne_jump_motion(entity: &mut crate::element::Entity, step: &JumpStep) {
     entity.set_posture(Posture::Flying);
 
+    let Some(target) = step.target_3d else {
+        tracing::warn!(?step.anim, "airborne jump step missing 3D target");
+        return;
+    };
+    let position = entity.element_data().position();
+    let dx = target.x - position.x;
+    let dy = target.y - position.y;
+    let dz = target.z - position.z;
+    let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+    if distance <= f32::EPSILON {
+        tracing::warn!(?step.anim, "airborne jump step has zero-length motion");
+        return;
+    }
+    let mut wait_time = (distance / jump_airborne_speed(step.anim) - 1.0) as u32;
+    if wait_time == 0 {
+        wait_time = 1;
+    }
+
     if let Some(actor) = entity.actor_data_mut() {
         actor.action_state = if step.anim == OrderType::JumpingLongSword {
             ActionState::MovingSword
         } else {
             ActionState::Moving
         };
+        // Original reuses mulWaitTime for seek refresh and jump segment
+        // duration. Starting flight overwrites the old seek value rather than
+        // preserving a second logical countdown.
+        actor.seek_refresh_wait = 0;
+        actor.wait_time = wait_time;
     }
+}
 
-    let Some(target) = step.target_3d else {
-        tracing::warn!(
-            ?step.anim,
-            "airborne jump step missing 3D target; cannot set jump direction"
-        );
-        return;
-    };
-
-    let pos = entity.element_data().position();
-    let dx = target.x - pos.x;
-    let dy = target.y - pos.y;
-    if dx.abs().max(dy.abs()) >= f32::EPSILON {
-        let dir = crate::position_interface::vector_to_direction(dx, dy);
-        entity
-            .element_data_mut()
-            .set_direction_instantly(dir.into());
-    }
+fn jump_step_turns(anim: OrderType) -> bool {
+    matches!(
+        anim,
+        OrderType::TransitionWaitingOnShouldersJumpingUp
+            | OrderType::TransitionWaitingOnShouldersJumpingLong
+            | OrderType::TransitionWaitingUprightJumpingUp
+            | OrderType::TransitionWaitingCrouchedJumpingDown
+            | OrderType::TransitionWaitingUprightJumpingLong
+            | OrderType::TransitionWaitingSwordJumpingLongSword
+            | OrderType::JumpingUp
+            | OrderType::JumpingDown
+            | OrderType::JumpingLong
+            | OrderType::JumpingLongSword
+            | OrderType::TransitionJumpingUpWaitingCrouched
+            | OrderType::TransitionJumpingDownWaitingCrouched
+            | OrderType::TransitionJumpingLongWaitingUpright
+            | OrderType::TransitionJumpingLongSwordWaitingSword
+    )
 }
 
 fn jump_airborne_speed(anim: OrderType) -> f32 {
@@ -1435,6 +1649,7 @@ fn advance_step_interpolation(entity: &mut crate::element::Entity) {
 
             if let Some(actor) = entity.actor_data_mut() {
                 actor.jump_z_offset = 0.0;
+                actor.wait_time = actor.wait_time.saturating_sub(1);
             }
 
             if let Some(actor) = entity.actor_data_mut()

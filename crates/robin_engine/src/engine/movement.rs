@@ -629,6 +629,10 @@ pub(crate) struct PendingPathRequestQueue {
 }
 
 impl PendingPathRequestQueue {
+    pub(super) fn has_in_flight(&self) -> bool {
+        self.in_flight.is_some()
+    }
+
     fn enqueue(&mut self, request: PendingPathRequest) {
         let total = self.waiting.len() + usize::from(self.in_flight.is_some());
         if total < 2 {
@@ -672,6 +676,25 @@ impl PendingPathRequestQueue {
             .is_some_and(|processed| processed.request.owner == owner)
         {
             self.in_flight = None;
+        }
+    }
+
+    /// Mirror `RHPathFinder::CancelPathRequest`: cancelling the list head
+    /// marks its eventual result stale instead of removing it, while later
+    /// requests for the same actor are deleted immediately. The retained head
+    /// still occupies one `ProcessPathRequests` result slot.
+    pub(super) fn cancel_for_owner(&mut self, owner: EntityId) {
+        if self.in_flight.is_some() {
+            self.waiting.retain(|request| request.owner != owner);
+            return;
+        }
+        let mut index = 1;
+        while index < self.waiting.len() {
+            if self.waiting[index].owner == owner {
+                self.waiting.remove(index);
+            } else {
+                index += 1;
+            }
         }
     }
 
@@ -1069,7 +1092,7 @@ pub(crate) fn build_line_jump_click_sequence(
     };
     seq.append_element(move_to_line);
 
-    let mut jump = SequenceElement::new_generic(2, Command::Jump, Some(owner));
+    let mut jump = SequenceElement::new_generic(2, Command::JumpCmd, Some(owner));
     jump.set_property(Field::JumplineSource, FieldValue::LineId(source_line_idx));
     jump.set_property(
         Field::JumplineDestination,
@@ -1085,11 +1108,10 @@ pub(crate) fn build_line_jump_click_sequence(
         gate_id: None,
         line_id: None,
         element: None,
-        // C++ has already selected/routed the jump interaction before
-        // appending this tail. Do not send the short post-jump click tail
-        // back through A*; execute it as direct map motion from the
-        // landing side.
-        flags: MoveFlags::MAP,
+        // Original appends the post-jump click tail with no movement flags.
+        // In particular it is a normal-priority move, so a later click may
+        // interrupt it while the actor is still finishing this route.
+        flags: MoveFlags::empty(),
         tolerance: 0.0,
         direction: 0,
         action,
@@ -2942,7 +2964,7 @@ impl EngineInner {
                     }
                 };
                 let mut jump_elem =
-                    SequenceElement::new_generic(level, Command::Jump, Some(entity_id));
+                    SequenceElement::new_generic(level, Command::JumpCmd, Some(entity_id));
                 jump_elem.set_property(Field::JumplineSource, FieldValue::LineId(src));
                 jump_elem.set_property(Field::JumplineDestination, FieldValue::LineId(dst));
                 seq.append_element(jump_elem);
@@ -4161,12 +4183,6 @@ impl EngineInner {
         // `self.world.entities` mutably while consulting
         // `self.orders.sequence_manager` for the factor.
         let mut speed_factors = EntitySlots::filled(self.world.entities.len(), 1.0);
-        // Per-entity line-snap info: `(line_index, tolerance)` set
-        // when the active movement element carries `MoveFlags::LINE`
-        // and a `line_id`.  Drives the final-waypoint snap to the
-        // nearest point on the line at arrival time, comparing the
-        // line's distance against the element's tolerance.
-        let mut line_snaps = EntitySlots::filled(self.world.entities.len(), None);
         // Per-entity final-waypoint tolerance snapshot for the arrival
         // check.  The seek-arrival predicate is:
         //
@@ -4235,7 +4251,6 @@ impl EngineInner {
                 speed_factors[actor_id] = elem.speed_factor();
                 if let crate::sequence::SequenceElementData::Movement {
                     flags,
-                    line_id,
                     tolerance,
                     element: target_elem,
                     destination,
@@ -4243,9 +4258,7 @@ impl EngineInner {
                     ..
                 } = &elem.data
                 {
-                    if line_id.is_some() && flags.contains(crate::sequence::MoveFlags::LINE) {
-                        line_snaps[actor_id] = Some((line_id.unwrap(), *tolerance));
-                    } else if flags.contains(crate::sequence::MoveFlags::SEEK) {
+                    if flags.contains(crate::sequence::MoveFlags::SEEK) {
                         // The per-tick seek-arrival predicate (and its
                         // FROZEN-wait sibling) is a SEEK-only
                         // mechanism.  Non-seek `GoNear`-style
@@ -5924,40 +5937,6 @@ impl EngineInner {
                 self.world.fast_grid.level.map_bbox.contains_point(old_pos),
             );
 
-            // LINE-snap early arrival: when the active element
-            // carries `MoveFlags::LINE` + `line_id` and the actor is
-            // on the final waypoint, the arrival check uses distance
-            // to the line (not the midpoint) against the element's
-            // tolerance — snaps to the nearest line point instead of
-            // the stored destination.
-            let line_snap_arrival = if let Some((line_idx, tol)) = line_snaps[actor_id] {
-                if !is_final_waypoint {
-                    false
-                } else {
-                    let actor_pt = elem.position_map();
-                    match self
-                        .world
-                        .fast_grid
-                        .level
-                        .jump_lines
-                        .get(usize::from(line_idx))
-                    {
-                        Some(jl) => {
-                            let d = jl.compute_distance(actor_pt);
-                            // Tolerance of 0 means "on the line" —
-                            // accept a small epsilon so we don't
-                            // stall when the actor approaches from a
-                            // perpendicular angle.
-                            let effective = if tol <= 0.0 { 1.0 } else { tol };
-                            d <= effective
-                        }
-                        None => false,
-                    }
-                }
-            } else {
-                false
-            };
-
             // Seek-arrival predicate:
             //
             //   - dist_sq = squared distance (target - pos), with Y
@@ -6024,10 +6003,9 @@ impl EngineInner {
             // retaining (not recomputing) the pre-motion seek predicate.
             let mut post_step_arrival = dist <= f32::EPSILON || tolerance_arrival;
             'arrival: loop {
-                if line_snap_arrival || post_step_arrival {
+                if post_step_arrival {
                     // Reached waypoint — snap to it and advance
-                    if !line_snap_arrival
-                        && !tolerance_arrival
+                    if !tolerance_arrival
                         && order_tolerance == 0.0
                         && !entity.position_iface().is_deviated()
                     {
@@ -6038,11 +6016,6 @@ impl EngineInner {
                                 y: goal.y,
                             });
                     }
-                    // On line-snap arrival leave `position_map` where it
-                    // is; the actor is already "on the line" within
-                    // tolerance and should not teleport to the
-                    // midpoint.
-
                     let eid = entity_id;
 
                     // Transition-animation refresh.  When this arrival
@@ -6749,7 +6722,27 @@ impl EngineInner {
                 )
             });
         if selected_terminal {
-            self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
+            let resumed_cross_successors =
+                self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
+            for (seq_id, elem_idx) in resumed_cross_successors {
+                let Some(successor) =
+                    self.movement_selection_for_exact_element(owner, seq_id, elem_idx)
+                else {
+                    continue;
+                };
+                let actor = self
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .and_then(Entity::actor_data_mut)
+                    .unwrap_or_else(|| {
+                        panic!("cross-postponed movement successor owner {owner:?} lost actor data")
+                    });
+                actor.execute_order_initialising =
+                    actor.last_execute_order_id != Some(successor.order_id);
+                actor.last_execute_order_id = Some(successor.order_id);
+                self.tick_entity_movement_owner(sim, assets, owner, Some(successor));
+            }
         }
 
         self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
@@ -6758,6 +6751,28 @@ impl EngineInner {
                     "movement owner {owner:?} failed to drain synchronous callback work: {error:?}"
                 )
             });
+    }
+
+    fn movement_selection_for_exact_element(
+        &self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> Option<MovementOwnerSelection> {
+        self.orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .filter(|element| {
+                element.owner == Some(owner)
+                    && element.state == crate::sequence::SequenceState::InProgress
+                    && element.data.is_movement()
+            })
+            .and_then(|element| element.current_order())
+            .map(|order| MovementOwnerSelection {
+                seq_id,
+                elem_idx,
+                order_id: order.order_id,
+            })
     }
 
     fn selected_galopp_decision_frame(
@@ -9179,7 +9194,7 @@ mod line_jump_tests {
             other => panic!("expected movement element, got {other:?}"),
         }
 
-        assert_eq!(seq.elements[1].command, Command::Jump);
+        assert_eq!(seq.elements[1].command, Command::JumpCmd);
         assert!(matches!(
             seq.elements[1].get_property(Field::JumplineSource),
             Some(FieldValue::LineId(idx)) if *idx == source_idx
@@ -9200,7 +9215,7 @@ mod line_jump_tests {
             } => {
                 assert_eq!((destination.x, destination.y), (90.0, 120.0));
                 assert_eq!(*layer, 5);
-                assert!(flags.contains(MoveFlags::MAP));
+                assert!(flags.is_empty());
                 assert_eq!(*line_id, None);
             }
             other => panic!("expected final movement element, got {other:?}"),

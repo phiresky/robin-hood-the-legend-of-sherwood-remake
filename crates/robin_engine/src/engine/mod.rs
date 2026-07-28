@@ -2335,7 +2335,7 @@ impl EngineInner {
                     )
                 });
                 self.world.pathfinder.cancel_requests_for(owner);
-                self.orders.pending_path_requests.retain_not_owned_by(owner);
+                self.orders.pending_path_requests.cancel_for_owner(owner);
                 self.orders
                     .failed_path_requests
                     .retain(|request| request.owner != owner);
@@ -2366,7 +2366,7 @@ impl EngineInner {
     /// transition.
     fn stop_owner_active_mechanics(&mut self, owner: EntityId) {
         self.world.pathfinder.cancel_requests_for(owner);
-        self.orders.pending_path_requests.retain_not_owned_by(owner);
+        self.orders.pending_path_requests.cancel_for_owner(owner);
         // `MaybeCancelPathRequest` fires from both
         // `SetState(Interrupted)` *and* `SetState(Postponed)`, and
         // drops stale retry entries for the actor.  Mirror that here so
@@ -2438,7 +2438,7 @@ impl EngineInner {
         self.orders
             .failed_path_requests
             .retain(|r| r.owner != owner);
-        self.orders.pending_path_requests.retain_not_owned_by(owner);
+        self.orders.pending_path_requests.cancel_for_owner(owner);
         self.orders
             .sequence_manager
             .stop_owner(owner, stop_priority, &resolver);

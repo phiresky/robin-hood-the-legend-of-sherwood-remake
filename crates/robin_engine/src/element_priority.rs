@@ -73,7 +73,7 @@ fn pc_branch(ctx: ActorPriorityContext, elem: &SequenceElement) -> SequencePrior
 
         Command::CrouchUp | Command::CrouchDown => SequencePriority::Preference,
 
-        Command::Jump
+        Command::JumpCmd
         | Command::ClimbUpOnShoulders
         | Command::ClimbDownFromShoulders
         | Command::EnterHelpingClimb
@@ -464,7 +464,7 @@ mod tests {
 
     #[test]
     fn pc_jump_is_non_interruptable() {
-        let elem = make_elem(Command::Jump);
+        let elem = make_elem(Command::JumpCmd);
         assert_eq!(
             determine_priority(pc_ctx(), &elem),
             SequencePriority::NonInterruptable,

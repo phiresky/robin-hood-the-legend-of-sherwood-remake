@@ -761,7 +761,7 @@ fn build_ctx(
             | Command::MoveOk
             | Command::Seek
             | Command::PassDoor
-            | Command::Jump
+            | Command::JumpCmd
             | Command::AssertPosition
     );
     let movement_action = match &elem.data {

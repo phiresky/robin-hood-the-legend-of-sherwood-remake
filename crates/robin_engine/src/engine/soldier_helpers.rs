@@ -380,17 +380,19 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         owner: EntityId,
         assets: &LevelAssets,
-    ) {
+    ) -> Vec<(crate::sequence::SequenceId, usize)> {
         let preexisting = self.orders.sequence_manager.drain_pending_condolations();
         let (roots, foreign_backlog): (Vec<_>, Vec<_>) = preexisting
             .into_iter()
             .partition(|dispatch| dispatch.card.owner == owner);
+        let mut resumed_cross_successors = Vec::new();
         for root in roots {
-            self.close_owner_boundary_condolation(sim, assets, root);
+            self.close_owner_boundary_condolation(sim, assets, root, &mut resumed_cross_successors);
         }
         self.orders
             .sequence_manager
             .restore_pending_condolations(foreign_backlog);
+        resumed_cross_successors
     }
 
     fn close_owner_boundary_condolation(
@@ -398,6 +400,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         dispatch: crate::sequence::PendingCondolationDispatch,
+        resumed_cross_successors: &mut Vec<(crate::sequence::SequenceId, usize)>,
     ) {
         let card_owner = dispatch.card.owner;
         let from_halt = dispatch.card.from_halt;
@@ -428,7 +431,7 @@ impl EngineInner {
         // inside that call. Close those cards before resuming this outer
         // SetState at Ready()/cascade.
         for nested in self.orders.sequence_manager.drain_pending_condolations() {
-            self.close_owner_boundary_condolation(sim, assets, nested);
+            self.close_owner_boundary_condolation(sim, assets, nested, resumed_cross_successors);
         }
 
         #[cfg(test)]
@@ -437,9 +440,38 @@ impl EngineInner {
                 trace.push(card_owner);
             }
         });
+        let cross_postponed_successor = dispatch.cross_postponed_successor();
         self.orders
             .sequence_manager
             .finish_pending_condolation(dispatch);
+
+        // SetState(TERMINATED) resumes after SendCondolationCard with
+        // Ready(), then StartPostponedSequenceElement(). Promote that exact
+        // released element before this actor boundary closes, so a postponed
+        // movement's path request is available at the next
+        // ProcessPathRequests phase without reordering unrelated work.
+        if !from_halt && let Some((sequence_id, element_index)) = cross_postponed_successor {
+            let action = self
+                .orders
+                .sequence_manager
+                .take_deferred_owner_action(card_owner, sequence_id, element_index)
+                .unwrap_or_else(|detail| {
+                    panic!(
+                        "condolation owner {} postponed successor dispatch failed: {detail}",
+                        card_owner.index()
+                    )
+                });
+            if let Some(action) = action {
+                self.dispatch_script_synchronous_action(sim, assets, action, &mut active_scripts)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "condolation owner {} postponed successor failed: {error:?}",
+                            card_owner.index()
+                        )
+                    });
+            }
+            resumed_cross_successors.push((sequence_id, element_index));
+        }
         self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
             .unwrap_or_else(|error| {
                 panic!(
@@ -449,7 +481,7 @@ impl EngineInner {
             });
 
         for nested in self.orders.sequence_manager.drain_pending_condolations() {
-            self.close_owner_boundary_condolation(sim, assets, nested);
+            self.close_owner_boundary_condolation(sim, assets, nested, resumed_cross_successors);
         }
     }
 
@@ -509,13 +541,6 @@ impl EngineInner {
             from_halt,
             postponed_successor_pending,
         } = card;
-
-        // Orders live on `SequenceElement.orders` and disappear when
-        // the element is cancelled / destroyed (see `Sequence::set_element_state`
-        // clearing `orders` in the `Interrupted` / `Impossible` arms).
-        // That automatically invalidates anything the animation driver
-        // reads via `current_order_for_actor`, so no per-actor cleanup
-        // is needed here.
 
         // Snapshot the owner's posture for the `is_very_very_busy` check
         // below without holding a mutable borrow on `self.world.entities` — so
@@ -597,6 +622,21 @@ impl EngineInner {
             // movement, even if an incoming element is already selected.
             if active_movement_matches && let Some(actor) = entity.actor_data_mut() {
                 actor.active_movement.clear();
+            }
+
+            // Bow execution is tracked separately from the selected element
+            // so its animation phase can release the projectile. Original has
+            // no independent tracker: interrupting/impossibilizing the
+            // sequence deletes its orders, and the actor has already selected
+            // any incoming replacement before this condolence callback. Clear
+            // the Rust handle by exact element identity even when the old bow
+            // element is no longer selected, or a later valid shot will be
+            // rejected as though the cancelled shot were still active.
+            if let Some(actor) = entity.actor_data_mut()
+                && actor.active_shot.sequence_id == Some(seq_id)
+                && actor.active_shot.element_index == elem_idx as usize
+            {
+                actor.active_shot.clear();
             }
         }
 

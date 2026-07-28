@@ -493,32 +493,22 @@ impl EngineInner {
                 return false;
             };
             let ed = entity.element_data();
-            // Always read live actor state here.
-            //
-            // Both dispatch paths (straight-line and async
-            // path-resolved) invoke `post_process_path` on an actor
-            // whose live state is the authoritative source: the
-            // straight-line dispatch leaves the element in-progress,
-            // and the async path-resolved dispatch is a re-entry on
-            // an already-active element. The Rust port additionally
-            // calls `post_process_path` from `try_dispatch_move_path`
-            // **before** the element state flips to `InProgress`, so
-            // a state-gated fallback to `elem_action_state_after`
-            // (which defaults to `Waiting` for a fresh Move element)
-            // would insert a `WaitingUpright → WalkingUpright`
-            // startup transition onto an actor already mid-stride —
-            // visible as a "reset on click" sprite-frame regression.
-            //
-            // Since `post_process_path` is only called from
-            // dispatch-time flows (try_dispatch_move_path +
-            // make_fast / make_slow / make_upright / make_crouched,
-            // all of which operate on the actor's current movement
-            // element), the actor's live state is always correct.
-            let cur_posture = ed.posture;
-            let cur_action_state = entity
-                .actor_data()
-                .map(|a| a.action_state)
-                .unwrap_or_default();
+            // Original PostProcessPath reads the actor only for an element
+            // that is already executing. A newly instructed or resumed
+            // postponed element instead uses the posture/action snapshot
+            // captured by its first Instruct, so time spent behind a blocker
+            // cannot invent a stop/start transition.
+            let (cur_posture, cur_action_state) = if state == SequenceState::InProgress {
+                (
+                    ed.posture,
+                    entity
+                        .actor_data()
+                        .map(|a| a.action_state)
+                        .unwrap_or_default(),
+                )
+            } else {
+                (elem_posture_after, elem_action_state_after)
+            };
             (
                 cur_posture,
                 cur_action_state,
@@ -526,9 +516,6 @@ impl EngineInner {
                 ed.sector(),
             )
         };
-        // `state`, `elem_posture_after`, and `elem_action_state_after`
-        // are intentionally unused now that we always read live state.
-        let _ = (state, elem_posture_after, elem_action_state_after);
 
         // ── Decide which transitions to insert ──────────────────
         if matches!(current_posture, Posture::OnWall | Posture::OnLadder)

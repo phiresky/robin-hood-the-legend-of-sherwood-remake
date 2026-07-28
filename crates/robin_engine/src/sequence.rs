@@ -2193,6 +2193,12 @@ pub struct PendingCondolationDispatch {
     effects_after_card: StateChangeEffects,
 }
 
+impl PendingCondolationDispatch {
+    pub fn cross_postponed_successor(&self) -> Option<(SequenceId, usize)> {
+        self.effects_after_card.resume_cross_postponed
+    }
+}
+
 impl Default for SequenceManager {
     fn default() -> Self {
         Self::new()
@@ -3592,21 +3598,16 @@ impl SequenceManager {
             self.register_element_to_go(seq_id, postponed_idx);
         }
 
-        // Release the cross-sequence postponed successor — switch it
-        // back to `Todo` and register it for dispatch on the next
-        // `hourglass` pass.
+        // Release the cross-sequence postponed successor and retain the
+        // posture/action snapshot captured by its original Instruct. Original
+        // postponement delays execution; it does not reinterpret the command
+        // from the blocker's terminal pose.
         if let Some((succ_seq_id, succ_idx)) = resume_cross_postponed
             && let Some(succ_seq) = self.sequences.get_mut(&succ_seq_id)
             && let Some(succ_elem) = succ_seq.elements.get_mut(succ_idx)
             && succ_elem.state == SequenceState::Postponed
         {
             succ_elem.state = SequenceState::Todo;
-            // Original re-enters Instruct after postponement and samples the
-            // owner's then-current posture/action state. Force the same
-            // restamp instead of retaining the state captured before the
-            // non-interruptable blocker ran to completion.
-            succ_elem.posture_after_transition = Posture::Undefined;
-            succ_elem.action_state_after_transition = ActionState::default();
             self.register_element_to_go(succ_seq_id, succ_idx);
         }
     }
@@ -4122,11 +4123,11 @@ impl SequenceManager {
             .unwrap_or(false)
     }
 
-    /// As [`Self::is_next_movement`], but also accepts `Command::Jump`.
+    /// As [`Self::is_next_movement`], but also accepts `Command::JumpCmd`.
     pub fn is_next_movement_or_jump(&self, seq_id: SequenceId, elem_idx: usize) -> bool {
         self.next_element_in_chain(seq_id, elem_idx)
             .and_then(|(s, i)| self.get_element(s, i))
-            .map(|next| next.data.is_movement() || next.command == Command::Jump)
+            .map(|next| next.data.is_movement() || next.command == Command::JumpCmd)
             .unwrap_or(false)
     }
 
@@ -6122,7 +6123,7 @@ mod tests {
         ));
         seq.append_element(SequenceElement::new(
             3,
-            Command::Jump,
+            Command::JumpCmd,
             Some(EntityId::Pc(crate::entity_id::PcId(1))),
         ));
         let seq_id = mgr.launch_sequence(seq);

@@ -454,73 +454,80 @@ impl TraceCommand {
                     // sector-array index, which Rust does not retain. Resolve
                     // its isomorphic motion area from the other authoritative
                     // command fields.
-                    let candidates = engine
+                    let containing = engine
                         .fast_grid()
                         .level
                         .sectors
                         .iter()
                         .filter(|sector| {
-                            sector.layer == goal_layer
-                                && sector.sector_type.is_motion()
-                                && sector.sector_type.is_area()
-                                && sector.contains_point(destination)
+                            sector.layer == goal_layer && sector.contains_point(destination)
                         })
                         .collect::<Vec<_>>();
-                    match candidates.as_slice() {
-                        [sector] => Some((sector.sector_number, goal_layer)),
-                        [] => {
-                            let containing = engine
-                                .fast_grid()
-                                .level
-                                .sectors
-                                .iter()
-                                .filter(|sector| {
-                                    sector.layer == goal_layer && sector.contains_point(destination)
-                                })
-                                .collect::<Vec<_>>();
-                            match containing.as_slice() {
-                                [] if engine.group_move_door_at(destination).is_some() => {
-                                    // Some authored door click polygons extend
-                                    // beyond every fast-grid sector polygon.
-                                    // Preserve the validated canonical door
-                                    // hit and let group movement resolve it
-                                    // through its ordinary click-polygon path.
-                                    None
-                                }
-                                [sector]
-                                    if sector.sector_type.is_door()
-                                        || sector.sector_type.is_jump() =>
-                                {
-                                    // Preserve semantic overlay selection.
-                                    // Re-running the ordinary spatial lookup
-                                    // lets perform_group_move use its canonical
-                                    // door/jump routing instead of collapsing
-                                    // the hit to an underlying motion area.
-                                    None
-                                }
-                                _ => panic!(
-                                    "group-move raw sector index {raw_index} has no \
+                    let has_semantic_overlay = containing
+                        .iter()
+                        .any(|sector| sector.sector_type.is_door() || sector.sector_type.is_jump())
+                        || engine.group_move_door_at(destination).is_some();
+                    if has_semantic_overlay {
+                        // Door and jump polygons intentionally overlap their
+                        // underlying motion areas. A motion-only override
+                        // would erase the Original's selected overlay and
+                        // change route construction (notably MoveToLine's
+                        // nearest jump-line point). Re-enter the ordinary
+                        // spatial selection with the recorded point and the
+                        // parity-matched live PC reference instead.
+                        None
+                    } else {
+                        let candidates = engine
+                            .fast_grid()
+                            .level
+                            .sectors
+                            .iter()
+                            .filter(|sector| {
+                                sector.layer == goal_layer
+                                    && sector.sector_type.is_motion()
+                                    && sector.sector_type.is_area()
+                                    && sector.contains_point(destination)
+                            })
+                            .collect::<Vec<_>>();
+                        match candidates.as_slice() {
+                            [sector] => Some((sector.sector_number, goal_layer)),
+                            [] => {
+                                match containing.as_slice() {
+                                    [sector]
+                                        if sector.sector_type.is_door()
+                                            || sector.sector_type.is_jump() =>
+                                    {
+                                        // Preserve semantic overlay selection.
+                                        // Re-running the ordinary spatial lookup
+                                        // lets perform_group_move use its canonical
+                                        // door/jump routing instead of collapsing
+                                        // the hit to an underlying motion area.
+                                        None
+                                    }
+                                    _ => panic!(
+                                        "group-move raw sector index {raw_index} has no \
                                      motion area at {destination:?} on layer {goal_layer}; containing \
                                      semantic sectors: {:?}",
-                                    containing
-                                        .iter()
-                                        .map(|sector| (
-                                            sector.sector_number,
-                                            sector.sector_type,
-                                            sector.underlying_sector,
-                                            sector.door_index,
-                                        ))
-                                        .collect::<Vec<_>>()
-                                ),
+                                        containing
+                                            .iter()
+                                            .map(|sector| (
+                                                sector.sector_number,
+                                                sector.sector_type,
+                                                sector.underlying_sector,
+                                                sector.door_index,
+                                            ))
+                                            .collect::<Vec<_>>()
+                                    ),
+                                }
                             }
-                        }
-                        many => panic!(
-                            "group-move raw sector index {raw_index} is ambiguous \
+                            many => panic!(
+                                "group-move raw sector index {raw_index} is ambiguous \
                              at {destination:?} on layer {goal_layer}: {:?}",
-                            many.iter()
-                                .map(|sector| sector.sector_number)
-                                .collect::<Vec<_>>(),
-                        ),
+                                many.iter()
+                                    .map(|sector| sector.sector_number)
+                                    .collect::<Vec<_>>(),
+                            ),
+                        }
                     }
                 };
                 PlayerCommand::GroupMove {

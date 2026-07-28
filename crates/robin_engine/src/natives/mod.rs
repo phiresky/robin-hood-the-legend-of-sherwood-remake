@@ -1248,7 +1248,7 @@ impl NativeContext<'_, '_> {
                         continue;
                     }
                 };
-                let mut jump_elem = SequenceElement::new_generic(0, Command::Jump, owner);
+                let mut jump_elem = SequenceElement::new_generic(0, Command::JumpCmd, owner);
                 jump_elem.set_property(Field::JumplineSource, FieldValue::LineId(src));
                 jump_elem.set_property(Field::JumplineDestination, FieldValue::LineId(dst));
                 self.record_seq_step(jump_elem, emit_count == 0);

@@ -2429,6 +2429,7 @@ impl EngineInner {
     ) {
         // Rust computes A* synchronously, but the queue retains the original
         // one-call latency and one-completion-per-frame observation order.
+        let had_in_flight = self.orders.pending_path_requests.has_in_flight();
         let completed = MovementContext::new(
             self.control.frame_counter,
             &mut self.world,
@@ -2444,12 +2445,11 @@ impl EngineInner {
         )
         .start_next(assets);
 
-        // Deterministic synchronous pathfinding still observes the Original
-        // scheduling barrier: a request instructed at the sequence-manager
-        // tail is first visible here on the following frame. At this barrier
-        // its A* result is delivered immediately instead of being parked for
-        // another frame as an asynchronous worker result would be.
-        if sim.config().synchronous_pathfinding {
+        // Synchronous mode may deliver the request started above at this same
+        // barrier, but ProcessPathRequests returns at most one result per
+        // call. If an older result (including a stale one) occupied that slot,
+        // the newly computed result remains in-flight until the next frame.
+        if sim.config().synchronous_pathfinding && !had_in_flight {
             let completed = MovementContext::new(
                 self.control.frame_counter,
                 &mut self.world,
@@ -4810,7 +4810,17 @@ impl EngineInner {
         }
 
         for entity_id in outcomes.next_jump_step {
-            self.advance_jump_step(entity_id);
+            if let Some((new_layer, new_sector, projection_point)) =
+                self.advance_jump_step(entity_id)
+            {
+                self.finalize_airborne_jump_landing(
+                    assets,
+                    entity_id,
+                    new_layer,
+                    new_sector,
+                    projection_point,
+                );
+            }
         }
 
         for (entity_id, speed) in outcomes.select_hulk {

@@ -186,6 +186,32 @@ impl EngineInner {
                     self.dispatch_quit_swordfight(sim, assets, owner, sequence_id, element_index);
                 } else if matches!(
                     command,
+                    Command::EnterSwordfight | Command::PrepareSwordfight
+                ) {
+                    // `Ready() -> Go() -> Instruct()` is re-entrant in the
+                    // Original. A terminal owner card may therefore promote
+                    // an EnterSwordfight successor inside the same actor
+                    // Hourglass slot; use the ordinary command dispatcher,
+                    // but do not defer it to SequenceManager::Hourglass.
+                    let opponent = self
+                        .orders
+                        .sequence_manager
+                        .get_element(sequence_id, element_index)
+                        .and_then(|element| element.get_property(crate::sequence::Field::Opponent))
+                        .and_then(|value| match value {
+                            crate::sequence::FieldValue::Element(id) => Some(*id),
+                            _ => None,
+                        });
+                    self.dispatch_enter_swordfight(
+                        sim,
+                        assets,
+                        owner,
+                        opponent,
+                        sequence_id,
+                        element_index,
+                    );
+                } else if matches!(
+                    command,
                     Command::SwordstrikeSmalltalkLeft
                         | Command::SwordstrikeSmalltalkRight
                         | Command::ParrySmalltalkLeft
@@ -197,6 +223,22 @@ impl EngineInner {
                         next_order_id: &mut self.orders.next_order_id,
                     }
                     .dispatch(owner, command, sequence_id, element_index);
+                } else if command == Command::AssertPosition {
+                    self.orders.sequence_manager.begin_instruct_callback(
+                        owner,
+                        sequence_id,
+                        element_index,
+                    );
+                    PositionAssertionContext {
+                        entities: &self.world.entities,
+                        sequence_manager: &mut self.orders.sequence_manager,
+                    }
+                    .dispatch(owner, sequence_id, element_index);
+                    self.orders.sequence_manager.end_instruct_callback(
+                        owner,
+                        sequence_id,
+                        element_index,
+                    );
                 } else if matches!(
                     command,
                     Command::Wait | Command::WaitTimer | Command::WaitFreeLift

@@ -2145,7 +2145,7 @@ impl EngineInner {
                         // can't be installed (missing data) the
                         // element is terminated so the sequence
                         // doesn't stall.
-                        Command::Jump => {
+                        Command::JumpCmd => {
                             if self.start_jump(sim, assets, owner, seq_id, elem_idx) {
                                 self.orders
                                     .sequence_manager
