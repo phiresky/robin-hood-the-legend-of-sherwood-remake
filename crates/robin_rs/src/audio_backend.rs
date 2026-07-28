@@ -107,23 +107,37 @@ impl KiraAudioBackend {
 
     fn resolve_path(&self, file_name: &str) -> PathBuf {
         let normalised = file_name.replace('\\', "/");
-        let path = if Path::new(&normalised).is_absolute() {
+        let absolute = Path::new(&normalised).is_absolute();
+        let path = if absolute {
             PathBuf::from(&normalised)
         } else {
             self.sound_dir.join(&normalised)
         };
-        if path.exists() {
-            return path;
-        }
-        if let Some(p) = robin_engine::sbfile::resolve_case_insensitive(&path)
-            && p.exists()
-        {
-            return p;
-        }
-        if let Some(full) = path.to_str()
-            && let Some(p) = robin_engine::sbfile::resolve_data_path(full)
-        {
-            return p;
+        let candidates = if absolute {
+            vec![path.clone()]
+        } else {
+            // actors.res stores speech paths relative to its Exclamations
+            // directory (for example `Expressions/X_SD_...wav`), whereas
+            // ordinary FX/source paths are relative to Data/Sounds.
+            vec![
+                path.clone(),
+                self.sound_dir.join("Exclamations").join(&normalised),
+            ]
+        };
+        for candidate in candidates {
+            if candidate.exists() {
+                return candidate;
+            }
+            if let Some(p) = robin_engine::sbfile::resolve_case_insensitive(&candidate)
+                && p.exists()
+            {
+                return p;
+            }
+            if let Some(full) = candidate.to_str()
+                && let Some(p) = robin_engine::sbfile::resolve_data_path(full)
+            {
+                return p;
+            }
         }
         path
     }
@@ -662,24 +676,28 @@ pub fn create_sample_loader(base_dir: PathBuf) -> Box<SampleLoader> {
     Box::new(move |file_name: &str| {
         tracing::trace!(file_name, "SampleLoader: enter");
         let normalised = file_name.replace('\\', "/");
-        let path = if Path::new(&normalised).is_absolute() {
+        let absolute = Path::new(&normalised).is_absolute();
+        let path = if absolute {
             PathBuf::from(&normalised)
         } else {
             base_dir.join(&normalised)
         };
-        let data = match robin_util::asset_fs::read(&path) {
-            Ok(data) => data,
-            Err(_) => {
-                let resolved =
-                    if let Some(p) = robin_engine::sbfile::resolve_case_insensitive(&path) {
-                        Some(p)
-                    } else {
-                        let full = path.to_str().map(|s| s.to_string())?;
-                        robin_engine::sbfile::resolve_data_path(&full)
-                    };
-                robin_util::asset_fs::read(resolved?).ok()?
-            }
+        let candidates = if absolute {
+            vec![path]
+        } else {
+            vec![path, base_dir.join("Exclamations").join(&normalised)]
         };
+        let data = candidates.into_iter().find_map(|candidate| {
+            robin_util::asset_fs::read(&candidate).ok().or_else(|| {
+                let resolved =
+                    robin_engine::sbfile::resolve_case_insensitive(&candidate).or_else(|| {
+                        candidate
+                            .to_str()
+                            .and_then(robin_engine::sbfile::resolve_data_path)
+                    })?;
+                robin_util::asset_fs::read(resolved).ok()
+            })
+        })?;
         let size = data.len() as u32;
         let duration_ms = wav_duration_ms(&data).unwrap_or(0);
         Some((data, size, duration_ms))

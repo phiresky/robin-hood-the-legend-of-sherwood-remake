@@ -852,7 +852,7 @@ impl EnemyAi {
                 Substate::SeekingOfficerGetAlertingReportFromSoldier,
             );
             self.base.antagonist = soldier_handle;
-            self.face_npc(soldier_handle, tick);
+            self.face_npc(soldier_handle, ctx);
             self.base.seek_position = soldier_seek_position;
             self.base
                 .my_reconnaissance_report

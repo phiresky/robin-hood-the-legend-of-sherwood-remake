@@ -1099,18 +1099,13 @@ impl EnemyAi {
         }
     }
 
-    /// Turn to face another NPC by looking up their position in
-    /// `tick.camp_soldiers`. Replaces `face_entity` (which is a no-op)
-    /// for officer-seeking substates where tick data is available.
-    fn face_npc(&mut self, handle: HumanHandle, tick: &AiPerTickData) {
-        if let Some(pos) = tick
-            .camp_soldiers
-            .iter()
-            .find(|cs| cs.handle == handle)
-            .map(|cs| cs.position)
-        {
-            self.base.face_position(pos);
-        }
+    /// Turn to face another NPC through the live entity snapshot.
+    ///
+    /// This is the `Face(RHElement*)` overload: it includes the target's
+    /// elevation and preserves `FaceTo`'s already-facing Waiting/Bored
+    /// short-circuit.
+    fn face_npc(&mut self, handle: HumanHandle, ctx: &AiContext) {
+        self.base.face_entity(handle, ctx);
     }
 
     /// Forbid a remark on the global frame-expiry list. `flags` is a
@@ -1854,6 +1849,13 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) {
         match continuation {
+            ThinkResultContinuation::SoldierFinishedAlertReportStart => {
+                self.set_state(
+                    AiState::Seeking,
+                    Substate::SeekingSoldierGiveAlertingReportToOfficerPoint,
+                );
+                self.base.launch_timer(100, ctx.frame);
+            }
             ThinkResultContinuation::OfficerCalledSoldier => {
                 if accepted {
                     self.set_state(AiState::Seeking, Substate::SeekingOfficerWaitForSoldier);

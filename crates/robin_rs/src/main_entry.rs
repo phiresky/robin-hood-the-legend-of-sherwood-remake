@@ -860,6 +860,15 @@ fn add_language_folder() {
     );
 }
 
+/// Register the shipped language-data directory for developer tools that
+/// already established their own data-directory working directory.
+///
+/// Normal entry points do this as part of `setup_data_dir`. Direct engine
+/// tools must opt in before loading localized text, voices, or movies.
+pub fn register_language_data_paths_for_tool() {
+    add_language_folder();
+}
+
 /// Set up the working directory so that `Data/` is accessible.
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 fn setup_data_dir() -> Result<(), String> {

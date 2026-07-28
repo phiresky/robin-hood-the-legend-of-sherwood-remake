@@ -1251,6 +1251,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     if let Ok(dir) = std::env::var("ROBINHOOD_DATA_DIR") {
         std::env::set_current_dir(&dir).expect("chdir to ROBINHOOD_DATA_DIR");
     }
+    robin_rs::main_entry::register_language_data_paths_for_tool();
 
     let mut records = BinaryTraceReader::open(&cache_path);
     let stream_header = records.read_header();
@@ -2848,6 +2849,13 @@ fn initialize_engine(
         },
     })
     .expect("initialize engine");
+    robin_rs::game_session::setup_mission_audio_for_tool(
+        &mut host,
+        &engine,
+        &mut assets,
+        &profiles,
+        "Data/Sounds",
+    );
     (engine, assets, host, background)
 }
 

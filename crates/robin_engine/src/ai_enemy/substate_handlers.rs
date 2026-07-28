@@ -2396,7 +2396,7 @@ impl EnemyAi {
                                 Substate::SeekingSoldierCalledByOfficer
                                 | Substate::SeekingSoldierGoToOfficer,
                             ) => {
-                                self.face_npc(self.base.antagonist, tick);
+                                self.face_npc(self.base.antagonist, ctx);
                                 self.base.launch_timer(20, ctx.frame);
                             }
                             _ => {
@@ -2549,7 +2549,7 @@ impl EnemyAi {
                                 AiState::Seeking,
                                 Substate::SeekingOfficerGetReportFromSoldier,
                             );
-                            self.face_npc(self.base.antagonist, tick);
+                            self.face_npc(self.base.antagonist, ctx);
                             self.base.launch_timer(100, ctx.frame);
                         }
                     }
@@ -2966,7 +2966,7 @@ impl EnemyAi {
                         };
                         if !self.get_report_from_soldier(soldier, true, ctx, tick) {
                             // Nothing special detected
-                            self.face_npc(soldier, tick);
+                            self.face_npc(soldier, ctx);
                             self.base
                                 .launch_timer(combat::STANDARD_TALK_TIME as u32, ctx.frame);
                         }
@@ -3089,7 +3089,7 @@ impl EnemyAi {
                     if self.gather_position_instructed {
                         self.base.face_direction(self.gather_direction, ctx);
                     } else {
-                        self.face_npc(self.base.antagonist, tick);
+                        self.face_npc(self.base.antagonist, ctx);
                     }
                 }
                 StimulusType::EventDone => {
@@ -3369,35 +3369,44 @@ impl EnemyAi {
                         ReportType::MissedCharly => officer_report == ReportType::Nothing,
                     };
 
-                    self.base.outbox.reentrant.cross_npc_actions.push(
-                        CrossNpcAction::SendStimulus {
-                            fallback_to_sender: None,
-                            to_whole_patrol: false,
-                            target: self.base.antagonist,
-                            stimulus_type: StimulusType::CallReport,
-                            info: StimulusInfo::Human(self.base.me),
-                        },
-                    );
-
                     if point_direction {
                         self.base.outbox.reentrant.cross_npc_actions.push(
                             CrossNpcAction::SendStimulus {
-                                fallback_to_sender: Some(self.base.me),
+                                fallback_to_sender: None,
                                 to_whole_patrol: false,
                                 target: self.base.antagonist,
-                                stimulus_type: StimulusType::CallYourTalk1,
-                                info: StimulusInfo::None,
+                                stimulus_type: StimulusType::CallReport,
+                                info: StimulusInfo::Human(self.base.me),
                             },
                         );
-                        self.set_state(
-                            AiState::Seeking,
-                            Substate::SeekingSoldierGiveAlertingReportToOfficerPoint,
+                        // Original invokes both recipient Think calls before
+                        // changing the caller's substate. The officer's
+                        // CALL_YOURTALK_1 handling can synchronously call this
+                        // soldier back, and that callback must still observe
+                        // the report-start substate.
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::RequestThinkResult {
+                                target: self.base.antagonist,
+                                caller: self.base.me,
+                                stimulus_type: StimulusType::CallYourTalk1,
+                                info: StimulusInfo::None,
+                                continuation:
+                                    ThinkResultContinuation::SoldierFinishedAlertReportStart,
+                            },
                         );
-                        self.base.launch_timer(100, ctx.frame);
                     } else {
                         self.set_state(
                             AiState::Seeking,
                             Substate::SeekingSoldierGiveAlertingReportToOfficerEnd,
+                        );
+                        self.base.outbox.reentrant.cross_npc_actions.push(
+                            CrossNpcAction::SendStimulus {
+                                fallback_to_sender: None,
+                                to_whole_patrol: false,
+                                target: self.base.antagonist,
+                                stimulus_type: StimulusType::CallReport,
+                                info: StimulusInfo::Human(self.base.me),
+                            },
                         );
                         self.base
                             .launch_timer(combat::STANDARD_TALK_TIME as u32, ctx.frame);
@@ -3417,7 +3426,7 @@ impl EnemyAi {
                             AiState::Seeking,
                             Substate::SeekingSoldierGiveAlertingReportToOfficerEnd,
                         );
-                        self.face_npc(self.base.antagonist, tick);
+                        self.face_npc(self.base.antagonist, ctx);
                         self.base
                             .launch_timer(combat::STANDARD_TALK_TIME as u32, ctx.frame);
                     }
@@ -3452,7 +3461,7 @@ impl EnemyAi {
                                 | Substate::SeekingSoldierGiveAlertingReportToOfficerPoint
                                 | Substate::SeekingSoldierGiveAlertingReportToOfficerEnd,
                             ) => {
-                                self.face_npc(self.base.antagonist, tick);
+                                self.face_npc(self.base.antagonist, ctx);
                                 self.base.launch_timer(20, ctx.frame);
                             }
                             _ => {
@@ -3471,7 +3480,7 @@ impl EnemyAi {
                                 AiState::Seeking,
                                 Substate::SeekingOfficerGetReportFromSoldier,
                             );
-                            self.face_npc(self.base.antagonist, tick);
+                            self.face_npc(self.base.antagonist, ctx);
                             self.base
                                 .launch_timer(combat::STANDARD_TALK_TIME as u32, ctx.frame);
                         }
@@ -3492,7 +3501,7 @@ impl EnemyAi {
                     StimulusType::EventMyTalk1 => {
                         self.base.outbox.reentrant.cross_npc_actions.push(
                             CrossNpcAction::SendStimulus {
-                                fallback_to_sender: Some(self.base.me),
+                                fallback_to_sender: None,
                                 to_whole_patrol: false,
                                 target: self.base.antagonist,
                                 stimulus_type: StimulusType::CallYourTalk1,

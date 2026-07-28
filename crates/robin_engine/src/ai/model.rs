@@ -1547,6 +1547,10 @@ pub enum AlertSoldiersFailureContinuation {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub enum ThinkResultContinuation {
+    /// Resume the reporting soldier only after the officer's direct
+    /// `CALL_YOURTALK_1` stack has closed. The officer may synchronously call
+    /// back while the soldier must still be in the report-start substate.
+    SoldierFinishedAlertReportStart,
     OfficerCalledSoldier,
     OfficerSentCharlyToOfficer,
     OfficerInstructedGroupSoldier {

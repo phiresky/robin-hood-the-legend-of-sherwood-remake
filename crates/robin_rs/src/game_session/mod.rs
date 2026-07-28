@@ -22,6 +22,29 @@ pub(crate) use setup::initial_sim_config;
 mod terminal_debriefing;
 mod tick;
 
+/// Initialize the host-side mission sound caches and deterministic duration
+/// tables for developer tools that construct an [`Engine`] directly.
+///
+/// Normal game sessions perform this during their loading pipeline. Headless
+/// parity tools still need the same metadata because NPC speech completion is
+/// simulation state even when no audio backend is present.
+pub fn setup_mission_audio_for_tool(
+    host: &mut crate::Host,
+    engine: &robin_engine::engine::Engine,
+    assets: &mut robin_engine::engine::LevelAssets,
+    profiles: &robin_engine::profiles::ProfileManager,
+    sound_dir: &str,
+) {
+    let mission_idx = engine
+        .campaign()
+        .current_mission_idx
+        .expect("mission-audio setup requires a current campaign mission");
+    let location = engine.campaign().missions[mission_idx]
+        .profile(profiles)
+        .location;
+    setup::setup_mission_audio(host, None, engine, assets, profiles, location, sound_dir);
+}
+
 use bootstrap::{
     HeadlessBuildOutcome, HeadlessMissionBuilder, InteractiveBuildOutcome,
     InteractiveMissionBuilder, MultiplayerSetupFailurePolicy,

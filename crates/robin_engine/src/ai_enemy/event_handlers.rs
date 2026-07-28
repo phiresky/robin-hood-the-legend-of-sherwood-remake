@@ -585,7 +585,7 @@ impl EnemyAi {
                             antagonist
                         );
                         if self.can_call_this_soldier(cs, ctx, tick) {
-                            self.face_npc(antagonist, tick);
+                            self.face_npc(antagonist, ctx);
                             // Transition to
                             // SUBSTATE_SEEKING_OFFICER_CALL_SOLDIER — the
                             // EventDone arm of that substate sends
