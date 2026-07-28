@@ -1198,6 +1198,51 @@ fn started_pass_door_rejects_new_move() {
     assert_eq!(incoming.state, SequenceState::Impossible);
 }
 
+#[test]
+fn executing_pass_door_postpones_new_move() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+
+    let mut current_pass =
+        SequenceElement::new_movement(1, Command::PassDoor, Some(owner), OrderType::WalkingUpright);
+    current_pass.priority = SequencePriority::NonInterruptable;
+    let pass_seq = engine.orders.sequence_manager.launch_element(current_pass);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(pass_seq, 0);
+    // Execute clears this flag at the end of the actor's frame.
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .sequence_element_started = false;
+
+    let incoming =
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+    let incoming_seq = engine.launch_element_for_owner(incoming);
+
+    let pass = engine
+        .orders
+        .sequence_manager
+        .get_element(pass_seq, 0)
+        .unwrap();
+    assert_eq!(pass.state, SequenceState::InProgress);
+    assert_eq!(pass.cross_postponed, Some((incoming_seq, 0)));
+
+    let incoming = engine
+        .orders
+        .sequence_manager
+        .get_element(incoming_seq, 0)
+        .unwrap();
+    assert_eq!(incoming.state, SequenceState::Postponed);
+}
+
 /// A Crouched soldier receiving `ENTER_ATTENTIVE_MODE` must first
 /// auto-stand (CROUCH_UP) before the alerted transition can play,
 /// because `get_transition_flags_soldier` for this command sets

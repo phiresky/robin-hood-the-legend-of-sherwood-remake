@@ -46,7 +46,6 @@ pub(crate) struct ResolvedEntitySeek {
     pub(crate) destination: MapPoint,
     pub(crate) tolerance: f32,
     pub(crate) speed_factor: f32,
-    pub(crate) stop_npc: bool,
 }
 
 impl crate::engine::EngineInner {
@@ -76,9 +75,11 @@ impl crate::engine::EngineInner {
 
     /// Resolve the destination/tolerance/speed tuple for an entity-target
     /// seek.  Handles USE_POINT, moving-target chase speed, shield-danger
-    /// offset, and authorized-position snapping.
+    /// offset, synchronous SEEK_STOP_NPC, and authorized-position snapping.
     pub(crate) fn resolve_entity_seek(
-        &self,
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         target: EntityId,
         flags: MoveFlags,
@@ -112,7 +113,6 @@ impl crate::engine::EngineInner {
                     destination: target_box.center(),
                     tolerance: seek_distance,
                     speed_factor: 1.0,
-                    stop_npc: false,
                 });
             }
             tracing::warn!(
@@ -171,6 +171,23 @@ impl crate::engine::EngineInner {
             false
         };
 
+        // Original computes the chase speed/tolerance and distance gate from
+        // the target's pre-event moving state, then calls
+        // target->Think(EVENT_STOP) synchronously, and only afterwards
+        // samples the destination and authorizes/builds the replacement.
+        // End the immutable entity borrows before entering that nested Think.
+        let _ = owner_entity;
+        let _ = target_entity;
+        if stop_npc {
+            self.send_seek_stop_to_npc(sim, assets, target);
+        }
+
+        let owner_entity = self.get_entity(owner)?;
+        let target_entity = self.get_entity(target)?;
+        let target_elem = target_entity.element_data();
+        let target_pos = target_elem.position_map();
+        let target_layer = target_elem.layer();
+
         let mut destination = target_pos;
         if owner_entity.is_pc() && flags.contains(MoveFlags::SEEK_SHIELD) {
             let danger = owner_entity
@@ -198,7 +215,6 @@ impl crate::engine::EngineInner {
                 destination: target_box.center(),
                 tolerance,
                 speed_factor,
-                stop_npc,
             })
         } else {
             tracing::warn!(
@@ -210,44 +226,45 @@ impl crate::engine::EngineInner {
         }
     }
 
-    /// Scan every actor with an in-flight seek movement and re-launch
-    /// it when the target has moved more than 10 units (MaxNorm) since
-    /// the seek was last (re-)issued.
+    /// Refresh one selected entity-target seek at its live actor Hourglass
+    /// slot.
     ///
-    /// Runs once per tick before the sequence manager hourglass so the
-    /// freshly-launched seek sequence gets picked up in the same tick.
-    pub(super) fn tick_refresh_seeks(
+    /// Original evaluates this inside `RHElementActor::PerformSeek`, so a
+    /// target with an earlier creation slot has already moved this frame,
+    /// while a later target has not. Returns `true` when RefreshSeek replaced
+    /// the selected movement; its old Execute arm must then return without
+    /// moving the replacement in the same owner slot.
+    pub(super) fn tick_refresh_seek_for_owner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-    ) {
+        owner: EntityId,
+    ) -> bool {
         if self.actors_frozen() {
-            return;
+            return false;
         }
 
-        struct Refresh {
-            owner: EntityId,
-            seq_id: crate::sequence::SequenceId,
-            elem_idx: usize,
-            target: EntityId,
-            action: crate::order::OrderType,
-            flags: MoveFlags,
-            tolerance: f32,
-            new_target_pos: crate::coordinates::MapPoint,
-        }
-
-        let mut refreshes: Vec<Refresh> = Vec::new();
-
-        for (owner_id, entity) in self.world.entities.actors() {
+        let refresh = {
+            let Some(entity) = self.get_entity(owner) else {
+                return false;
+            };
             let Some(actor) = entity.actor_data() else {
-                continue;
+                return false;
             };
             let Some(seq_id) = actor.active_movement.sequence_id else {
-                continue;
+                return false;
             };
             let elem_idx = actor.active_movement.element_index;
+            if self
+                .orders
+                .sequence_manager
+                .current_element_for_actor(owner)
+                != Some((seq_id, elem_idx))
+            {
+                return false;
+            }
             let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
-                continue;
+                return false;
             };
             if !matches!(
                 elem.command,
@@ -255,7 +272,7 @@ impl crate::engine::EngineInner {
                     | crate::element::Command::MoveOk
                     | crate::element::Command::Seek
             ) {
-                continue;
+                return false;
             }
             let SequenceElementData::Movement {
                 flags,
@@ -265,16 +282,16 @@ impl crate::engine::EngineInner {
                 ..
             } = &elem.data
             else {
-                continue;
+                return false;
             };
             if !flags.contains(MoveFlags::SEEK) {
-                continue;
+                return false;
             }
             let Some(target_id) = *target else {
-                continue;
+                return false;
             };
             let Some(target_entity) = self.get_entity(target_id) else {
-                continue;
+                return false;
             };
             let target_pos = target_entity.element_data().position_map();
 
@@ -283,48 +300,40 @@ impl crate::engine::EngineInner {
             // remain expired rather than delaying refresh for another 2^32
             // owner ticks.
             if !seek_refresh_wait_elapsed(actor.seek_refresh_wait) {
-                continue;
+                return false;
             }
             let last = actor.last_seek_target_position;
             let dx = (target_pos.x - last.x).abs();
             let dy = (target_pos.y - last.y).abs();
             if dx.max(dy) <= 10.0 {
-                continue;
+                return false;
             }
 
-            refreshes.push(Refresh {
-                owner: owner_id.into(),
-                seq_id,
-                elem_idx,
-                target: target_id,
-                action: *action,
-                flags: *flags,
-                tolerance: *tolerance,
-                new_target_pos: target_pos,
-            });
-        }
-
-        for r in refreshes {
-            tracing::trace!(
-                owner = ?r.owner,
-                target = ?r.target,
-                new_x = r.new_target_pos.x,
-                new_y = r.new_target_pos.y,
-                "tick_refresh_seeks: target moved >10u, re-launching seek",
-            );
-            self.apply_seek_refresh(
-                sim,
-                assets,
-                r.owner,
-                r.seq_id,
-                r.elem_idx,
-                r.target,
-                r.action,
-                r.flags,
-                r.tolerance,
-                r.new_target_pos,
-            );
-        }
+            (
+                seq_id, elem_idx, target_id, *action, *flags, *tolerance, target_pos,
+            )
+        };
+        let (seq_id, elem_idx, target, action, flags, tolerance, new_target_pos) = refresh;
+        tracing::trace!(
+            ?owner,
+            ?target,
+            new_x = new_target_pos.x,
+            new_y = new_target_pos.y,
+            "owner-slot seek target moved >10u; re-launching seek",
+        );
+        self.apply_seek_refresh(
+            sim,
+            assets,
+            owner,
+            seq_id,
+            elem_idx,
+            target,
+            action,
+            flags,
+            tolerance,
+            new_target_pos,
+        );
+        true
     }
 
     /// Per-entity body of `tick_refresh_seeks`: re-resolve the seek
@@ -347,30 +356,46 @@ impl crate::engine::EngineInner {
         target: EntityId,
         action: crate::order::OrderType,
         flags: MoveFlags,
-        tolerance: f32,
+        _concrete_tolerance: f32,
         new_target_pos: crate::coordinates::MapPoint,
     ) {
+        let seek_distance = self
+            .get_entity(owner)
+            .and_then(|entity| entity.actor_data())
+            .map(|actor| actor.seek_distance)
+            .filter(|distance| *distance > 0.0)
+            .unwrap_or_else(|| {
+                panic!(
+                    "entity-target RefreshSeek owner {owner:?} has no positive base seek distance"
+                )
+            });
         if self.try_handle_same_sector_actor_seek_wait(owner, seq_id, elem_idx, target, flags) {
             return;
         }
 
         if self.try_dispatch_cross_sector_entity_seek(
-            sim, assets, owner, seq_id, elem_idx, target, action, flags, tolerance,
+            sim,
+            assets,
+            owner,
+            seq_id,
+            elem_idx,
+            target,
+            action,
+            flags,
+            seek_distance,
         ) {
             return;
         }
 
-        let Some(resolved) = self.resolve_entity_seek(owner, target, flags, tolerance) else {
+        let Some(resolved) =
+            self.resolve_entity_seek(sim, assets, owner, target, flags, seek_distance)
+        else {
             self.stop_selected_seek_for_refresh(owner, seq_id, elem_idx);
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
             return;
         };
-        if resolved.stop_npc {
-            self.send_seek_stop_to_npc(target);
-        }
-
         // RefreshSeek's transient selected Seek is replaced by the concrete
         // movement built by AppendMoveToSequence. Keep it as Move + SEEK
         // flags rather than another Seek wrapper, otherwise ordered dispatch
@@ -535,7 +560,9 @@ impl crate::engine::EngineInner {
             return false;
         }
 
-        let Some(resolved) = self.resolve_entity_seek(owner, target, flags, seek_distance) else {
+        let Some(resolved) =
+            self.resolve_entity_seek(sim, assets, owner, target, flags, seek_distance)
+        else {
             // Original RefreshSeek marks the current movement
             // impossible silently when FindAutorizedPosition fails.
             // The unable-to-do bark belongs to AppendMoveToSequence's
@@ -611,7 +638,7 @@ impl crate::engine::EngineInner {
             CascadeFlags::NEXT_LEVEL,
         );
 
-        self.build_gate_movement_sequence(
+        let _ = self.build_gate_movement_sequence(
             sim,
             owner,
             gate_path,
@@ -630,10 +657,6 @@ impl crate::engine::EngineInner {
             false,
             true,
         );
-
-        if resolved.stop_npc {
-            self.send_seek_stop_to_npc(target);
-        }
 
         tracing::trace!(
             ?owner,

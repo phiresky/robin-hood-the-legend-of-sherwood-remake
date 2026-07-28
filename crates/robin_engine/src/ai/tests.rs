@@ -249,6 +249,8 @@ fn goto_find_accessible_and_ask_obstacle_survive_order_intent() {
     assert!(order.find_accessible);
     assert!(order.ask_obstacle);
     assert!(!order.compute_direction);
+    let move_flags = crate::sequence::MoveFlags::from_bits_truncate(u32::from(order.move_flags));
+    assert!(move_flags.contains(crate::sequence::MoveFlags::STRAIGHT));
 }
 
 fn goto_short_circuit_ctx(animation: crate::order::OrderType) -> AiContext {

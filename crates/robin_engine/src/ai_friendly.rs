@@ -602,6 +602,43 @@ impl FriendlyAi {
             }
         }
 
+        // These three stimuli are consumed by the common
+        // RHArtificialIntelligence::StartThink implementation before the
+        // civilian-specific Think dispatcher runs.  They therefore mutate
+        // the base AI even though FriendlyAi's alerting-event switch has no
+        // derived handling for them.
+        match stimulus_type {
+            StimulusType::EventLoseConsciousness => {
+                self.base.break_macro();
+                self.base.clear_emoticon();
+                self.set_state(AiState::Sleeping, Substate::SleepingUnconscious);
+                self.base.outbox.recovery.set_eye_status =
+                    Some(crate::element::EyeStatus::DieOrGetUnconscious);
+                self.base.set_alert_status(AlertLevel::Green);
+                self.base.sorrow_level = 0;
+                self.base.register_log_line(LogLineType::EventRefused, 13);
+                return false;
+            }
+            StimulusType::EventWasp => {
+                self.base.break_macro();
+                self.base.set_emoticon(EmoticonType::Thunderstorm);
+                self.set_state(AiState::Wondering, Substate::WonderingWaspInArmour);
+                self.base.outbox.recovery.set_eye_status = Some(crate::element::EyeStatus::Closed);
+                self.base.sorrow_level = 0;
+                self.base.register_log_line(LogLineType::EventRefused, 14);
+                return false;
+            }
+            StimulusType::EventNet => {
+                self.base.break_macro();
+                self.set_state(AiState::Wondering, Substate::WonderingUnderNet);
+                self.base.outbox.recovery.set_eye_status = Some(crate::element::EyeStatus::Closed);
+                self.base.sorrow_level = 0;
+                self.base.register_log_line(LogLineType::EventRefused, 15);
+                return false;
+            }
+            _ => {}
+        }
+
         true
     }
 

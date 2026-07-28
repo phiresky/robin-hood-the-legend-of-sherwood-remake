@@ -627,16 +627,20 @@ pub struct ActorData {
     // Seeking
     pub seek_target: Option<EntityId>,
     pub last_seek_target_position: MapPoint,
+    /// Original `RHElementActor::mfSeekDistance`: the unadapted distance
+    /// requested by the transient Seek command. Moving-target refreshes
+    /// derive their concrete tolerance from this stable base each time.
+    pub seek_distance: f32,
     /// Countdown before the actor may re-issue a seek against a moving
     /// target.  Armed to `TIME_SEEK_REFRESH` (25) at seek launch and
     /// after each RefreshSeek; decremented by entity-target `PerformSeek`
     /// owner execution when that call does not return through a successful
     /// post-seek arrival.
     pub seek_refresh_wait: u32,
-    // Note: seek tolerance/flags/sector/layer all live on the active
-    // `Movement` element rather than as duplicate per-actor fields —
-    // it's the authoritative source consulted by `tick_refresh_seeks`,
-    // `refresh_seek_point`, and the per-tick movement loop.
+    // Note: concrete seek tolerance/flags/sector/layer live on the active
+    // `Movement` element. `seek_distance` is deliberately actor-owned
+    // because RefreshSeek repeatedly derives concrete moving-target
+    // tolerances from the original, unadapted request.
     /// Post-seek sequence launched via `SEQ_INFO` when the seek ends
     /// (target reached/lost, or a self-seek collapses immediately).
     /// Copied from the movement sequence element's `post_seek_sequence`
@@ -774,6 +778,7 @@ impl Default for ActorData {
             receive_purse_phase: ReceivePursePhase::Inactive,
             seek_target: None,
             last_seek_target_position: MapPoint::default(),
+            seek_distance: 0.0,
             seek_refresh_wait: 0,
             post_seek_sequence: None,
             passing_door_directly: false,
@@ -1473,7 +1478,10 @@ pub struct NpcData {
     pub drunken_cone_iterators: [f32; 4],
 
     /// Point the NPC is staring at (for `EyeStatus::Stare`).
-    pub stare_point: MapPoint,
+    /// Original `mViewParameters.starePoint`: world-ground `(x, y)`, not
+    /// projected map coordinates. `Focus(RHposition)` and `EYES_FOLLOW`
+    /// populate this from a 3D point's X/Y components.
+    pub stare_point: GroundPoint,
 
     /// Entity the view cone follows (for `EyeStatus::Follow`).
     pub follow_target: Option<EntityId>,
@@ -1572,7 +1580,7 @@ impl Default for NpcData {
             view_direction: [1.0, 0.0],
             view_lean_out: false,
             drunken_cone_iterators: [0.0; 4],
-            stare_point: MapPoint::new(0.0, 0.0),
+            stare_point: GroundPoint::new(0.0, 0.0),
             follow_target: None,
         }
     }

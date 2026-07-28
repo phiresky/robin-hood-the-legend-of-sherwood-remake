@@ -2099,6 +2099,19 @@ fn apply_active_animation_start_state_side_effect(
     }
 
     match (anim_type, motion) {
+        (OrderType::Taking | OrderType::TakingCrouched, MotionState::Terminated)
+            if entity.is_pc() =>
+        {
+            entity.set_posture(if anim_type == OrderType::Taking {
+                Posture::Upright
+            } else {
+                Posture::Crouched
+            });
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            return;
+        }
         // RHElementActorHuman owns this START transition for PCs and other
         // non-soldier humans.  Soldiers override the arm and settle into
         // WaitingSword on DONE instead.
@@ -2262,7 +2275,7 @@ fn apply_active_animation_start_state_side_effect(
     }
 }
 
-/// PC `Taking` Done handler — fires when a PC finishes the generic
+/// PC `Taking` / `TakingCrouched` Done handler — fires when a PC finishes the generic
 /// pickup animation for a scroll / bonus / landed projectile.
 ///
 /// Dispatches per `ObjectType` (amulet, purse, coin, relics, scroll,
@@ -2281,7 +2294,7 @@ fn apply_pc_taking_side_effect(
     outcomes: &mut ExecuteSideOutcomes,
 ) {
     if matches!(entity, Entity::Pc(_))
-        && matches!(anim_type, OrderType::Taking)
+        && matches!(anim_type, OrderType::Taking | OrderType::TakingCrouched)
         && matches!(motion, MotionState::Done)
         && let Some(a) = antagonist
     {
@@ -3590,6 +3603,7 @@ impl EngineInner {
             door_pass_crenel_transition_dir,
             validated_antagonist,
             waiting_sword_direction_goal,
+            pc_taking_direction_goal,
         ) = {
             let entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
                 panic!(
@@ -3693,6 +3707,7 @@ impl EngineInner {
                 anim_type,
                 OrderType::DrinkingAle
                     | OrderType::Taking
+                    | OrderType::TakingCrouched
                     | OrderType::Searching
                     | OrderType::TakingNet
                     | OrderType::WakingUp
@@ -3834,12 +3849,40 @@ impl EngineInner {
                 }
             });
 
+            // RHElementActorPC::Execute initializes TAKING from the live
+            // owner/object map positions immediately before its per-tick
+            // Turn(). Do not rely on a preceding Seek having left a suitable
+            // direction goal: direct interaction sequences take this path too.
+            let taking_direction = if entity.is_pc()
+                && actor.execute_order_initialising
+                && matches!(anim_type, OrderType::Taking | OrderType::TakingCrouched)
+            {
+                validated_antagonist.map(|antagonist_id| {
+                    let antagonist =
+                        self.world.entities.get(antagonist_id).unwrap_or_else(|| {
+                            panic!(
+                                "actor {entity_id:?} {anim_type:?} antagonist {antagonist_id:?} is missing at legacy slot {}",
+                                entity_id.index()
+                            )
+                        });
+                    let from = entity.element_data().position_map();
+                    let to = antagonist.element_data().position_map();
+                    crate::position_interface::vector_to_sector_0_to_15(
+                        to.x - from.x,
+                        to.y - from.y,
+                    )
+                })
+            } else {
+                None
+            };
+
             (
                 principal_frames,
                 antagonist_active,
                 door_direction,
                 validated_antagonist,
                 waiting_sword_direction,
+                taking_direction,
             )
         };
 
@@ -4144,6 +4187,9 @@ impl EngineInner {
                     if let Some(direction) = waiting_sword_direction_goal {
                         entity.element_data_mut().set_direction_goal(direction);
                     }
+                    if let Some(direction) = pc_taking_direction_goal {
+                        entity.element_data_mut().set_direction_goal(direction);
+                    }
                     if order_is_initialising
                         && anim_type == OrderType::Pointing
                         && let Some(direction) = pointing_direction_goal
@@ -4295,6 +4341,7 @@ impl EngineInner {
                                 | OrderType::RaisingShield
                                 | OrderType::Rolling
                                 | OrderType::Taking
+                                | OrderType::TakingCrouched
                                 | OrderType::DrinkingAle
                                 | OrderType::TakingNet
                                 | OrderType::UnlockingDoor
@@ -4341,10 +4388,19 @@ impl EngineInner {
                         // InProgress; otherwise delegate to the
                         // configured animation.
                         let mut wasp_still_turning = false;
+                        let mut pc_taking_still_turning = false;
                         if needs_turn {
                             let still_turning = entity.position_iface_mut().turn();
                             if matches!(anim_type, OrderType::GettingFreeFromWasp) {
                                 wasp_still_turning = still_turning;
+                            }
+                            if owner_is_pc
+                                && matches!(
+                                    anim_type,
+                                    OrderType::Taking | OrderType::TakingCrouched
+                                )
+                            {
+                                pc_taking_still_turning = still_turning;
                             }
                         }
                         let row = entity.element_data().direction() as u16;
@@ -4391,6 +4447,11 @@ impl EngineInner {
                             // keep matching on the original token.
                             let (played, progression) = if wasp_still_turning {
                                 (OrderType::TurningAlerted, FrameProgression::Default)
+                            } else if pc_taking_still_turning {
+                                (
+                                    sprite_anim_for_order(sprite, effective_anim, owner_is_pc),
+                                    FrameProgression::FrozenFirstFrame,
+                                )
                             } else if let Some(animation) = requested_custom_animation {
                                 let progression = match cur_command {
                                     Some(Command::PlayAnimLoop) => FrameProgression::Cyclically,

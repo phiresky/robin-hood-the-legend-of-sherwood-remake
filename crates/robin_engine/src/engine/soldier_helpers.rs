@@ -471,6 +471,23 @@ impl EngineInner {
                             card_owner.index()
                         )
                     });
+
+                // Each manager-FIFO `Go()` call returns only after every
+                // `SetState -> SendCondolationCard -> Ready()` stack it
+                // opened has closed. In particular, an AssertPosition ahead
+                // of a postponed Seek can make the old sequence's next Move
+                // ready here; that Move must be registered before the Seek
+                // later registers its concrete replacement. Delaying these
+                // cards until the whole extracted batch was dispatched
+                // reversed those two normal-priority FIFO entries.
+                for nested in self.orders.sequence_manager.drain_pending_condolations() {
+                    self.close_owner_boundary_condolation(
+                        sim,
+                        assets,
+                        nested,
+                        resumed_cross_successors,
+                    );
+                }
             }
             resumed_cross_successors.push((sequence_id, element_index));
         }
@@ -498,7 +515,7 @@ impl EngineInner {
         owner: EntityId,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
     ) -> Result<(), crate::engine::script::ScriptDriverError> {
-        for sequence_id in self.drain_pending_move_requests_for_owner(owner) {
+        for sequence_id in self.drain_pending_move_requests_for_owner(sim, owner) {
             let action = self
                 .orders
                 .sequence_manager
@@ -639,6 +656,26 @@ impl EngineInner {
                 && actor.active_shot.element_index == elem_idx as usize
             {
                 actor.active_shot.clear();
+            }
+
+            // Ability execution is likewise an implementation-side mirror of
+            // the selected C++ element/order. Once that exact element sends
+            // its condolence card, no independent ability may survive to
+            // reject a later valid command. This is especially observable
+            // when an ability is interrupted after its DONE effect but before
+            // the sprite's TERMINATED edge.
+            if let Some(actor) = entity.actor_data_mut()
+                && actor.active_ability.sequence_id == Some(seq_id)
+                && actor.active_ability.element_index == elem_idx as usize
+            {
+                let kind = actor.active_ability.kind;
+                actor.active_ability.clear();
+                if kind == Some(crate::movement::AbilityKind::Listen) {
+                    actor.listen_phase = crate::element::ListenPhase::Inactive;
+                    actor.listen_wait_time = 0;
+                } else if kind == Some(crate::movement::AbilityKind::ReceivePurse) {
+                    actor.receive_purse_phase = crate::element::ReceivePursePhase::Inactive;
+                }
             }
         }
 
@@ -1331,7 +1368,7 @@ impl EngineInner {
             if let Some(path) = path
                 && !path.is_empty()
             {
-                self.build_gate_movement_sequence(
+                let _ = self.build_gate_movement_sequence(
                     sim,
                     pc_id,
                     path,

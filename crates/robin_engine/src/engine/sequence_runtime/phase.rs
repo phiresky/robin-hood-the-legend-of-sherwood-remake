@@ -3,7 +3,7 @@ use super::*;
 impl EngineInner {
     /// Translate one Move/Seek at the exact `RHSequenceManager::Hourglass`
     /// FIFO position where its `Go()` action was emitted.
-    fn dispatch_ordered_move_seek_instruct(
+    pub(in crate::engine) fn dispatch_ordered_move_seek_instruct(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -119,6 +119,7 @@ impl EngineInner {
                     {
                         actor.seek_target = Some(target);
                         actor.last_seek_target_position = target_position;
+                        actor.seek_distance = seek_distance;
                         actor.wait_time = 0;
                         actor.seek_refresh_wait = 25;
                     }
@@ -136,7 +137,7 @@ impl EngineInner {
                         return;
                     }
                     let Some(resolved) =
-                        self.resolve_entity_seek(owner, target, flags, seek_distance)
+                        self.resolve_entity_seek(sim, assets, owner, target, flags, seek_distance)
                     else {
                         self.orders
                             .sequence_manager
@@ -158,9 +159,6 @@ impl EngineInner {
                         *tolerance = resolved.tolerance;
                         *speed_factor = resolved.speed_factor;
                     }
-                    if resolved.stop_npc {
-                        self.send_seek_stop_to_npc(target);
-                    }
                     resolved.destination
                 }
                 None => {
@@ -172,6 +170,7 @@ impl EngineInner {
                     {
                         actor.seek_target = None;
                         actor.last_seek_target_position = stored_destination;
+                        actor.seek_distance = tolerance;
                         actor.wait_time = 0;
                         actor.seek_refresh_wait = 25;
                     }
@@ -275,7 +274,7 @@ impl EngineInner {
         // so the sequence-manager Hourglass below still instructs it in this
         // frame. It reaches pathfinding only at next frame's earlier Paths
         // phase and therefore remains MoveWaiting meanwhile.
-        self.drain_pending_move_requests();
+        self.drain_pending_move_requests(sim);
 
         // ── Sequence manager dispatch ────────────────────────────
         // Process pending sequence elements in the manager's emitted order.

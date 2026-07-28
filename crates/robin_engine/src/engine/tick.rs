@@ -2310,7 +2310,7 @@ impl EngineInner {
         // in-flight one. A*-requiring elements enter the frame-paced
         // path-request queue advanced by the following `Paths` phase.
         self.process_pending_ai_orders();
-        self.drain_pending_move_requests();
+        self.drain_pending_move_requests(sim);
 
         // ── Dispatch per-waypoint ReachPoint scripts ─────────────
         // When the AI reaches a scripted waypoint it queues the
@@ -2352,8 +2352,8 @@ impl EngineInner {
     /// `original-code/RHengine.cpp:7909-7944`, and removes dead elements inline.
     fn hourglass_phase_entities(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        _sim: &crate::sim_rng::SimulationContext,
+        _assets: &LevelAssets,
     ) -> bool {
         // Snapshot pre-hourglass swordfight state so we can detect a
         // swordfight→non-swordfight transition across this tick and
@@ -2404,13 +2404,6 @@ impl EngineInner {
         // path) lets rollback / replay see bit-identical state (the
         // counter is serde'd `PcData`).
         self.tick_pc_teleport_fades();
-
-        // `RefreshSeek` is actor-Hourglass behavior in the
-        // original, not part of the engine's ProcessPathRequests pre-pass.
-        // Seek refresh dispatch is in
-        // `original-code/RHelementactor.cpp:2720-2728`. WAIT_TIMER now runs
-        // after Execute in the live actor-slot coordinator below.
-        self.tick_refresh_seeks(sim, assets);
 
         was_swordfighting
     }
@@ -3254,6 +3247,21 @@ impl EngineInner {
                         } else {
                             self.tick_actor_animation_for(sim, assets, entity_id)
                         };
+                    // Original clears mbSequenceElementStarted immediately
+                    // after Execute returns. It means "the selected element
+                    // has not had its first owner slot yet", not "this
+                    // element has ever started". In particular, a Move issued
+                    // while an already-running non-interruptable PassDoor is
+                    // postponed; only a PassDoor newly installed since the
+                    // actor's last slot rejects that Move as impossible.
+                    if let Some(actor) = self
+                        .world
+                        .entities
+                        .get_mut(entity_id)
+                        .and_then(Entity::actor_data_mut)
+                    {
+                        actor.sequence_element_started = false;
+                    }
                     for injured_id in combat_injury_terminated.iter().copied() {
                         self.dispatch_combat_injury_think_for_actor_hourglass(
                             sim, injured_id, assets,
@@ -3513,6 +3521,15 @@ impl EngineInner {
                     .and_then(Entity::actor_data)
                     .is_some_and(|actor| actor.execution_frozen);
                 if execution_frozen {
+                    return;
+                }
+                // RefreshSeek is part of this exact actor's PerformSeek
+                // Execute arm. Sampling here preserves creation-order
+                // visibility of the moving target, and a replacement does
+                // not itself execute until this owner returns next frame.
+                if movement.is_some()
+                    && engine.tick_refresh_seek_for_owner(sim, assets, owner)
+                {
                     return;
                 }
                 engine.tick_entity_movement_owner(sim, assets, owner, movement);

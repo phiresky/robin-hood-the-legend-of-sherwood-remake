@@ -664,6 +664,10 @@ pub struct AiOrderIntent {
     pub order_type: OrderType,
     pub target_x: f32,
     pub target_y: f32,
+    /// Authored GoTo topology. `None` means this is a local positional
+    /// order rather than a full AI `RHposition` destination.
+    pub target_sector: Option<crate::position_interface::SectorHandle>,
+    pub target_layer: Option<u16>,
     pub target_actor: Option<u32>,
     pub compute_direction: bool,
     pub defer_initial_turn_step: bool,
@@ -712,6 +716,8 @@ impl AiOrderIntent {
             order_type,
             target_x: x,
             target_y: y,
+            target_sector: None,
+            target_layer: None,
             target_actor: None,
             compute_direction: true,
             defer_initial_turn_step: false,

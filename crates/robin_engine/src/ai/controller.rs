@@ -2613,6 +2613,8 @@ impl AiController {
         };
 
         let mut order = AiOrderIntent::new(order_type, destination.x, destination.y);
+        order.target_sector = destination.sector;
+        order.target_layer = Some(destination.level);
         order.reverse = flags.contains(GotoFlags::BACK);
         order.compute_direction = !flags.contains(GotoFlags::STRAIGHT);
         // Preserve the authored flag in the intent. The shipped C++ GoTo
@@ -2631,6 +2633,9 @@ impl AiController {
         }
         if flags.contains(GotoFlags::SWORD) {
             order.move_flags |= MoveFlags::FORCE_SWORD_MOVEMENT.bits() as u16;
+        }
+        if flags.contains(GotoFlags::STRAIGHT) {
+            order.move_flags |= MoveFlags::STRAIGHT.bits() as u16;
         }
         // RHArtificialIntelligence::GoTo maps GOTO_DONTSTOP to
         // RHMOVE_NO_TRANSITIONS.  Route legs that flow through their next
@@ -2854,6 +2859,10 @@ impl AiController {
         self.couldnt_reachpoint = false;
 
         let mut order = Self::make_move_order(&destination, GotoFlags::RUN);
+        // This is deliberately a local RHMOVE_MAP element, not the full
+        // RHposition-aware GoTo overload.
+        order.target_sector = None;
+        order.target_layer = None;
         order.move_flags |= crate::sequence::MoveFlags::MAP.bits() as u16;
         self.outbox.actor.orders.push(order);
     }
@@ -2966,6 +2975,15 @@ impl AiController {
     /// the `already_turned` same-frame short-circuit.
     pub fn face_position_with_ctx(&mut self, pos: Position, ctx: &AiContext) {
         self.face_position_impl(pos, ctx, 0.0, false);
+    }
+
+    /// Face an `RHposition` through the Original `PositionToPoint3D`
+    /// projection. Unlike the explicitly 2D overload above, this preserves
+    /// the target sector/layer elevation in world-horizontal Y before
+    /// selecting the isometric direction.
+    pub fn face_position_3d_with_ctx(&mut self, pos: Position, ctx: &AiContext) {
+        let target = ctx.position_to_point_3d(pos);
+        self.face_position_impl(pos, ctx, target.z - ctx.elevation, false);
     }
 
     /// Turn to face another entity. Feeds the target's elevation into

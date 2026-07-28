@@ -274,7 +274,7 @@ impl EngineInner {
         owner: crate::element::EntityId,
         active: &mut Vec<ActiveScriptCall>,
     ) -> Result<(), ScriptDriverError> {
-        let launched_moves = self.drain_pending_move_requests_for_owner(owner);
+        let launched_moves = self.drain_pending_move_requests_for_owner(sim, owner);
         for sequence_id in launched_moves {
             let action = self
                 .orders
@@ -574,7 +574,7 @@ impl EngineInner {
                 self.drain_direct_ai_owner_boundary_without_forecast_deferred_instruct(
                     sim, owner, assets,
                 );
-                self.drain_pending_move_requests_for_owner(owner);
+                self.drain_pending_move_requests_for_owner(sim, owner);
                 Ok(0)
             }
             crate::interp::SynchronousScriptRequest::AssignPath { actor, way, .. } => {
@@ -629,7 +629,7 @@ impl EngineInner {
                 // AI callback now, then materialize its pending Move sequence
                 // without instructing or executing it early.
                 self.drain_direct_ai_owner_boundary_without_forecast(sim, owner, assets);
-                self.drain_pending_move_requests_for_owner(owner);
+                self.drain_pending_move_requests_for_owner(sim, owner);
                 Ok(0)
             }
         }

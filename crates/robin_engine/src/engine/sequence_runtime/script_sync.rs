@@ -176,6 +176,20 @@ impl EngineInner {
                         sequence_id,
                         element_index,
                     )?;
+                } else if command == Command::Seek {
+                    // `SetState(TERMINATED)` calls Ready() and then
+                    // StartPostponedSequenceElement() on the same C++ stack.
+                    // A released Seek therefore reaches the ordinary owner
+                    // Translate path before the outer condolence boundary
+                    // returns. Reuse that complete Seek translation here,
+                    // including live-target refresh and post-seek transfer.
+                    self.dispatch_ordered_move_seek_instruct(
+                        sim,
+                        assets,
+                        owner,
+                        sequence_id,
+                        element_index,
+                    );
                 } else if command == Command::QuitSwordfight {
                     // A GoTo issued from a sword action state is one
                     // Original sequence: QuitSwordfight followed by Move.

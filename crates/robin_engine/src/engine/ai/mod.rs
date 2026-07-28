@@ -65,6 +65,25 @@ struct PotentialDetectable {
     camp: Camp,
 }
 
+/// Apply the numeric tail of Original `RHElementActorNPC::GetHearVolume`.
+///
+/// The distance remainder is truncated to `UWORD` before deafness is tested
+/// and subtracted. A positive fractional remainder is therefore inaudible;
+/// testing the float first can incorrectly dispatch `EVENT_HEAR` with a
+/// zero-volume payload.
+fn subjective_hear_volume(modified_volume: f32, distance: f32, deafness: u16) -> u16 {
+    let remainder = modified_volume - distance;
+    if remainder <= 0.0 {
+        return 0;
+    }
+    let truncated = remainder as u16;
+    if truncated <= deafness {
+        0
+    } else {
+        truncated - deafness
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct NpcSpeechSettlement {
     pub(super) invoke_finished_callback: bool,
@@ -4063,8 +4082,8 @@ impl EngineInner {
             };
 
             let edata = entity.element_data();
-            let pos =
-                crate::coordinates::MapPoint::new(edata.position_map().x, edata.position_map().y);
+            let own_world = entity.position_iface().get_position();
+            let pos = crate::coordinates::GroundPoint::new(own_world.x, own_world.y);
 
             let is_active_and_outside_building =
                 edata.active && !self.entity_data_inside_building(edata);
@@ -4090,7 +4109,7 @@ impl EngineInner {
                     // Thus a later-created target has not moved yet, while
                     // an earlier-created target has. EntityId::index is the
                     // append-only legacy creation slot in this port.
-                    if target_id.index() > npc_id.index() {
+                    let boundary_map = if target_id.index() > npc_id.index() {
                         positions_before_movement
                             .get(target_id)
                             .copied()
@@ -4103,6 +4122,23 @@ impl EngineInner {
                             })
                     } else {
                         target.element_data().position_map()
+                    };
+                    let target_position = target.position_iface().get_position();
+                    if boundary_map == target.element_data().position_map() {
+                        // Production runs RefreshView inside the live
+                        // creation-ordered owner walk, so a later target is
+                        // still at this authoritative 3D position. Preserve
+                        // jump/flying Z rather than deriving it from a plane.
+                        crate::coordinates::GroundPoint::new(target_position.x, target_position.y)
+                    } else {
+                        // Test-facing globally-batched seam: reconstruct the
+                        // preserved map point on the target's active plane.
+                        let z = target
+                            .position_iface()
+                            .get_plane()
+                            .map(|plane| plane.compute_z(boundary_map.x, boundary_map.y))
+                            .unwrap_or(target_position.z);
+                        crate::coordinates::GroundPoint::from_map_and_z(boundary_map, z)
                     }
                 })
             });
@@ -5430,13 +5466,21 @@ impl EngineInner {
         }
 
         if let Some(point) = effects.focus_point {
+            // Original `Focus(RHposition&)` first calls
+            // `PositionToPoint3D(posTarget, false)` and stores that point's
+            // world X/Y in `starePoint`.
+            let point_3d =
+                self.position_to_point_3d(assets, point.sector, point.level, point.x, point.y);
             let npc = self
                 .world
                 .entities
                 .get_mut(npc_id)
                 .and_then(Entity::npc_data_mut)
                 .unwrap_or_else(|| panic!("pending-drain owner {} lost NPC data", npc_id.index()));
-            crate::ai_vision::focus_point(npc, crate::coordinates::MapPoint::new(point.x, point.y));
+            crate::ai_vision::focus_point(
+                npc,
+                crate::coordinates::GroundPoint::new(point_3d.x, point_3d.y),
+            );
             focus_channel_fired = true;
         }
 
@@ -7972,7 +8016,7 @@ impl EngineInner {
             // Owner instruction still belongs to the sequence-manager phase
             // later this hourglass, so promote the request to an element but
             // deliberately leave its deferred InstructOwner action queued.
-            self.drain_pending_move_requests_for_owner(minion_id);
+            self.drain_pending_move_requests_for_owner(sim, minion_id);
 
             // Original applies the instructed direction only after the
             // member's synchronous CALL_PATROL_COORDINATE Think returns.
@@ -8161,12 +8205,12 @@ impl EngineInner {
                 let Some(npc) = entity.npc_data_mut() else {
                     continue;
                 };
-                npc.get_deafness(frame, cover_volume) as f32
+                npc.get_deafness(frame, cover_volume)
             };
 
             let distance = (dx * dx + dy_stretched * dy_stretched + dz * dz).sqrt();
-            let subjective = modified_volume - distance - deafness;
-            if subjective <= 0.0 {
+            let subjective = subjective_hear_volume(modified_volume, distance, deafness);
+            if subjective == 0 {
                 continue;
             }
 
@@ -8177,7 +8221,7 @@ impl EngineInner {
             let noise = Noise {
                 origin: noise_pos,
                 noise_type,
-                volume: subjective as u16,
+                volume: subjective,
                 elevation,
                 element_id,
             };

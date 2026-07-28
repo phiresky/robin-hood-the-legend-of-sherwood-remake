@@ -1466,10 +1466,8 @@ impl EngineInner {
                 self.orders
                     .sequence_manager
                     .element_in_progress(seq_id, elem_idx);
-                // Set `sequence_element_started = true` once the element
-                // transitions to InProgress.  Read by
-                // `non_interruptable_guard` to gate the PASS_DOOR+MOVE
-                // IMPOSSIBLE fast-fail.
+                // Mirror the original actor lifecycle flag when the element
+                // transitions to InProgress.
                 if let Some(entity) = self.world.entities.get_mut(owner)
                     && let Some(actor) = entity.actor_data_mut()
                 {
@@ -1613,10 +1611,11 @@ impl EngineInner {
 
     /// Non-interruptable postpone guard.  Runs *before* GenerateTransition
     /// so a command issued on top of a NonInterruptable current element
-    /// skips the transition check entirely and either postpones
-    /// (normal case) or is marked Impossible (PASS_DOOR + MOVE special
-    /// case).  Returns `true` when the guard consumed the element (caller
-    /// should skip generate_transition + arbitrate); `false` otherwise.
+    /// skips the transition check entirely and either postpones the new
+    /// command or rejects a MOVE issued before a freshly-instructed
+    /// PASS_DOOR has executed. Returns `true` when the guard consumed the
+    /// element (caller should skip generate_transition + arbitrate);
+    /// `false` otherwise.
     fn non_interruptable_guard(
         &mut self,
         owner: EntityId,
@@ -1661,7 +1660,9 @@ impl EngineInner {
             .unwrap_or(Command::Null);
 
         if cur_started && cur_command == Command::PassDoor && new_command == Command::Move {
-            // The move won't be possible after passing that door.
+            // The move will be invalid after this newly-instructed door
+            // pass executes. Once Execute has run, the lifecycle flag is
+            // cleared and later moves are postponed normally.
             self.orders
                 .sequence_manager
                 .element_impossible(new_seq, new_idx);

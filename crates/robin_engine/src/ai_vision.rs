@@ -1034,10 +1034,12 @@ pub struct RefreshViewContext {
     /// — a cached copy on `NpcData` would go stale.
     pub blood_alcohol: u8,
     /// NPC's own projected map position (for stare/follow vector).
-    pub own_position: MapPoint,
+    /// Original `GetPositionGround()`: world-space `(position.x, position.y)`.
+    pub own_position: GroundPoint,
     /// Projected map position of the follow target, if [`EyeStatus::Follow`]
     /// and the target is alive.
-    pub follow_target_position: Option<MapPoint>,
+    /// Original followed element's `GetPositionGround()`.
+    pub follow_target_position: Option<GroundPoint>,
 }
 
 /// Per-frame view parameter update.
@@ -1228,7 +1230,7 @@ pub fn focus_entity(npc: &mut NpcData, target: EntityId) {
     npc.view_half_angle_range = STARE_HALF_ANGLE_RANGE;
 }
 
-pub fn focus_point(npc: &mut NpcData, point: MapPoint) {
+pub fn focus_point(npc: &mut NpcData, point: GroundPoint) {
     npc.stare_point = point;
     npc.eye_status = EyeStatus::Stare;
     npc.view_half_angle_range = STARE_HALF_ANGLE_RANGE;
@@ -1297,7 +1299,7 @@ fn refresh_view_look(npc: &mut NpcData, ctx: &RefreshViewContext, vdx: f32, vdy:
 }
 
 /// Handler for `Stare` and `Follow` (after stare-point update).
-fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &MapPoint) {
+fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &GroundPoint) {
     // Stare vector from own position to stare point.
     let mut svx = npc.stare_point.x - own_position.x;
     let mut svy = npc.stare_point.y - own_position.y;
@@ -1863,7 +1865,7 @@ mod tests {
             is_active_and_outside_building: true,
             is_rider: false,
             blood_alcohol: 0,
-            own_position: pt(0.0, 0.0),
+            own_position: GroundPoint::new(0.0, 0.0),
             follow_target_position: None,
         }
     }
@@ -2064,7 +2066,7 @@ mod tests {
 
         // Target off to the NPC's right (body facing east, target south-east).
         let mut c = ctx(None, Posture::Upright);
-        c.follow_target_position = Some(pt(200.0, 200.0));
+        c.follow_target_position = Some(GroundPoint::new(200.0, 200.0));
 
         for _ in 0..30 {
             refresh_view(&mut npc, &c);
@@ -2086,7 +2088,7 @@ mod tests {
         // `focus_point` sets eye status to Stare and the view cone
         // rotates toward the stored stare point.
         let mut npc = default_npc();
-        focus_point(&mut npc, pt(0.0, 200.0));
+        focus_point(&mut npc, GroundPoint::new(0.0, 200.0));
         assert_eq!(npc.eye_status, EyeStatus::Stare);
         assert_eq!(npc.view_half_angle_range, STARE_HALF_ANGLE_RANGE);
     }

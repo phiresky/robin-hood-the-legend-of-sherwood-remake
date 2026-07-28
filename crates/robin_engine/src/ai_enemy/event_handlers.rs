@@ -2381,7 +2381,7 @@ impl EnemyAi {
         // so ordinary PC detection keeps its two-frame refresh cadence.
         // Original: SetAlertStatus(ALERT_YELLOW, ALERT_ONLY_MUSIC).
         self.set_alert_status_with_flags(AlertLevel::Yellow, crate::ai::AlertFlags::ONLY_MUSIC);
-        self.base.face_position_with_ctx(*pos, ctx);
+        self.base.face_position_3d_with_ctx(*pos, ctx);
         self.base.launch_timer(10, ctx.frame);
     }
 

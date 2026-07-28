@@ -616,7 +616,7 @@ impl EngineInner {
                     self.drain_direct_ai_owner_boundary_without_forecast_deferred_instruct(
                         sim, owner, assets,
                     );
-                    self.drain_pending_move_requests_for_owner(owner);
+                    self.drain_pending_move_requests_for_owner(sim, owner);
                 }
                 self.orders
                     .sequence_manager

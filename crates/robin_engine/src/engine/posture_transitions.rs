@@ -102,7 +102,92 @@ fn insert_door_pass_start_transition(
     }
 }
 
+/// Continue Original's `InsertTransitionStart` scan from the materialized
+/// prefix into Rust's separately stored door-pass tail.
+///
+/// Returns the last nonzero destination and the transition distance which
+/// the materialized orders did not consume. `None` means the transition was
+/// placed completely inside the materialized prefix.
+fn door_pass_transition_tail_cursor(
+    orders: &VecDeque<crate::order::Order>,
+    point_start: MapPoint,
+    animation_to_replace: OrderType,
+    distance_transition: f32,
+) -> Option<(MapPoint, f32)> {
+    let mut distance_remaining = if distance_transition == 0.0 {
+        0.01
+    } else {
+        distance_transition
+    };
+    let mut point = point_start;
+
+    for order in orders {
+        let destination = MapPoint::new(order.target_x, order.target_y);
+        if order.order_type == animation_to_replace {
+            let norm = (destination - point).length();
+            if norm >= distance_remaining {
+                return None;
+            }
+            distance_remaining -= norm;
+        }
+        if destination != MapPoint::ZERO {
+            point = destination;
+        }
+    }
+
+    Some((point, distance_remaining))
+}
+
 impl EngineInner {
+    fn selected_order_action(&self, entity: EntityId) -> Option<OrderType> {
+        self.orders
+            .sequence_manager
+            .current_order_for_actor(entity)
+            .map(|(_, _, order)| order.order_type)
+    }
+
+    /// A make_* rewrite mutates the live C++ RHOrder action in place.
+    /// RHSprite observes that action change as a fresh animation even though
+    /// the order pointer is unchanged. Rust keys initialization by order ID,
+    /// so reseed a rewritten selected order and keep the lazy door-pass
+    /// mirror on the same action.
+    fn synchronize_rewritten_selected_order(
+        &mut self,
+        entity: EntityId,
+        action_before: Option<OrderType>,
+    ) {
+        let Some((seq_id, elem_idx, action_after)) = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(entity)
+            .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_type))
+        else {
+            return;
+        };
+        if action_before == Some(action_after) {
+            return;
+        }
+
+        let new_order_id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
+        let order = self
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
+            .and_then(|element| element.orders.front_mut())
+            .unwrap_or_else(|| {
+                panic!(
+                    "rewritten selected order for {entity:?} disappeared at {seq_id:?}/{elem_idx}"
+                )
+            });
+        order.reseed_id(new_order_id);
+
+        if let Some(actor) = self.get_entity_mut(entity).and_then(|e| e.actor_data_mut())
+            && let Some(pass) = actor.active_door_pass.as_mut()
+        {
+            pass.current_action = action_after;
+        }
+    }
+
     /// Upgrade walking to running for `entity`.
     pub(crate) fn actor_make_fast(
         &mut self,
@@ -131,9 +216,11 @@ impl EngineInner {
 
         let touched = self.sequence_manager_has_movement(entity);
         if touched {
+            let action_before = self.selected_order_action(entity);
             self.orders.sequence_manager.make_fast(entity);
             self.make_active_door_pass_fast(entity);
             self.after_make_rewrite(sim, entity);
+            self.synchronize_rewritten_selected_order(entity, action_before);
         }
     }
 
@@ -144,8 +231,10 @@ impl EngineInner {
         entity: EntityId,
     ) {
         if self.sequence_manager_has_movement(entity) {
+            let action_before = self.selected_order_action(entity);
             self.orders.sequence_manager.make_slow(entity);
             self.after_make_rewrite(sim, entity);
+            self.synchronize_rewritten_selected_order(entity, action_before);
         }
     }
 
@@ -166,6 +255,25 @@ impl EngineInner {
             _ => return,
         };
         let transition_distance = f32::from(owner.sprite().distance_for_animation(transition));
+        // Original keeps the already-materialized PassDoor orders and its
+        // untranslated tail in one `mlistOrders`. Continue the same
+        // InsertTransitionStart scan across Rust's representation boundary:
+        // matching materialized orders consume transition distance, every
+        // nonzero destination advances the cursor, and zero-position door
+        // action points leave it unchanged.
+        let tail_cursor = self
+            .find_active_movement_element(entity)
+            .and_then(|(seq_id, elem_idx)| {
+                self.orders.sequence_manager.get_element(seq_id, elem_idx)
+            })
+            .and_then(|element| {
+                door_pass_transition_tail_cursor(
+                    &element.orders,
+                    position,
+                    OrderType::RunningUpright,
+                    transition_distance,
+                )
+            });
         let Some(actor) = self.get_entity_mut(entity).and_then(|e| e.actor_data_mut()) else {
             return;
         };
@@ -184,12 +292,15 @@ impl EngineInner {
                 other => other,
             };
         }
+        let Some((tail_start, distance_remaining)) = tail_cursor else {
+            return;
+        };
         insert_door_pass_start_transition(
             &mut pass.steps,
-            position,
+            tail_start,
             OrderType::RunningUpright,
             transition,
-            transition_distance,
+            distance_remaining,
         );
     }
 
@@ -208,9 +319,11 @@ impl EngineInner {
         entity: EntityId,
     ) {
         if self.sequence_manager_has_active_element(entity) {
+            let action_before = self.selected_order_action(entity);
             self.orders.sequence_manager.make_upright(entity);
             if self.sequence_manager_has_movement(entity) {
                 self.after_make_rewrite(sim, entity);
+                self.synchronize_rewritten_selected_order(entity, action_before);
                 return;
             }
         }
@@ -228,8 +341,10 @@ impl EngineInner {
         entity: EntityId,
     ) {
         if self.sequence_manager_has_movement(entity) {
+            let action_before = self.selected_order_action(entity);
             self.orders.sequence_manager.make_crouched(entity);
             self.after_make_rewrite(sim, entity);
+            self.synchronize_rewritten_selected_order(entity, action_before);
         } else {
             let elem = SequenceElement::new(1, Command::CrouchDown, Some(entity));
             self.launch_element(elem);

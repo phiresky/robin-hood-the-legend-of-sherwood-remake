@@ -2084,29 +2084,44 @@ impl EngineInner {
     /// Fire `EVENT_STOP` on a target NPC that a PC is currently
     /// seeking with `SEEK_STOP_NPC`.  No-op when the target isn't an
     /// NPC or isn't in a moving action state.
-    pub(crate) fn send_seek_stop_to_npc(&mut self, target: EntityId) {
-        let Some(entity) = self.get_entity_mut(target) else {
-            return;
-        };
-        // Moving-state precondition: only fire when the target is
-        // actually in flight — the same two action states covered by
-        // `ActionState::is_moving`.
-        let is_moving = entity
-            .actor_data()
-            .is_some_and(|a| a.action_state.is_moving());
-        if !is_moving {
-            return;
+    pub(crate) fn send_seek_stop_to_npc(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        target: EntityId,
+    ) {
+        {
+            let Some(entity) = self.get_entity_mut(target) else {
+                return;
+            };
+            // Moving-state precondition: only fire when the target is
+            // actually in flight — the same two action states covered by
+            // `ActionState::is_moving`.
+            let is_moving = entity
+                .actor_data()
+                .is_some_and(|a| a.action_state.is_moving());
+            if !is_moving {
+                return;
+            }
+            let Some(npc) = entity.npc_data_mut() else {
+                return;
+            };
+            let Some(_base) = npc.ai_brain.base_mut() else {
+                return;
+            };
         }
-        let Some(npc) = entity.npc_data_mut() else {
-            return;
-        };
-        let Some(base) = npc.ai_brain.base_mut() else {
-            return;
-        };
-        base.outbox
-            .reentrant
-            .self_stimuli
-            .push(crate::ai::StimulusType::EventStop);
+
+        // C++ calls `target->Think(EVENT_STOP)` directly from RefreshSeek.
+        // Use the canonical synchronous Think boundary so the causal stop
+        // runs now while older deferred detection stimuli retain their FIFO.
+        // Delaying EVENT_STOP to the end-of-frame self-stimulus drain lets a
+        // registered gate successor enter non-interruptible PassDoor first.
+        self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+            sim,
+            target,
+            assets,
+            crate::ai::Stimulus::new(crate::ai::StimulusType::EventStop),
+        );
     }
 
     /// Launch the scroll-read composite sequence on `pc`, prepending a
@@ -2604,7 +2619,7 @@ impl EngineInner {
                     )
                 };
 
-                self.build_gate_movement_sequence(
+                let _ = self.build_gate_movement_sequence(
                     sim,
                     pc_id,
                     path,

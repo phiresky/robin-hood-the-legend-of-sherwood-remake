@@ -1844,6 +1844,16 @@ impl EngineInner {
                 elev_skipped_layer += 1;
                 continue;
             }
+            tracing::trace!(
+                layer = raw.layer,
+                ax = raw.point_a.0,
+                ay = raw.point_a.1,
+                bx = raw.point_b.0,
+                by = raw.point_b.1,
+                left_obstacle = ?left,
+                right_obstacle = ?right,
+                "loading elevation line"
+            );
             self.world.fast_grid.add_line(line, raw.layer);
             elev_added += 1;
         }

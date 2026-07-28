@@ -241,7 +241,8 @@ fn climb_lift_type(action: OrderType) -> Option<crate::sector::LiftType> {
 fn is_fast_climb_action(action: OrderType) -> bool {
     matches!(
         action,
-        OrderType::ClimbingWallUpFast
+        OrderType::RunningStairs
+            | OrderType::ClimbingWallUpFast
             | OrderType::ClimbingWallDownFast
             | OrderType::ClimbingLadderUpFast
             | OrderType::ClimbingLadderDownFast
@@ -269,6 +270,7 @@ fn sprite_motion_order_for_nonanimation(order: OrderType) -> OrderType {
         // legacy implementation RHNONANIMATION_CLIMBING_*_FAST tokens are dispatch /
         // pathfinder speed tokens. RHElementActor handles them by
         // playing the normal climb animation row with RHMOTIONMETHOD_RUN.
+        OrderType::RunningStairs => OrderType::WalkingStairs,
         OrderType::ClimbingWallUpFast => OrderType::ClimbingWallUp,
         OrderType::ClimbingWallDownFast => OrderType::ClimbingWallDown,
         OrderType::ClimbingLadderUpFast => OrderType::ClimbingLadderUp,
@@ -1924,7 +1926,7 @@ impl EngineInner {
             let clicked_door_index = clicked_sector_door_index.or(clicked_polygon_door_index);
             let is_door_click = is_door_click_sector || clicked_door_index.is_some();
 
-            let (effective_click, effective_layer) = if is_valid {
+            let (effective_click, effective_layer) = if is_valid || is_jump_click {
                 (click_point, hit.layer)
             } else {
                 let snapped = self.snap_to_nearest_walkable(assets, click_point, src_layer);
@@ -1990,6 +1992,22 @@ impl EngineInner {
             let mut pc_goal_sector = goal_sector;
             let mut pc_effective_layer = effective_layer;
             if is_jump_click {
+                // PerformGroupMove authorizes each formation slot before
+                // PerformMove tests whether the selected jump is usable.
+                // Keep the raw click through the jump-sector hit test, then
+                // apply that same move-box authorization here; the coarse
+                // nearest-walkable fallback is not equivalent near a jump
+                // landing boundary.
+                let Some(resolved_jump_dest) =
+                    self.snap_click_to_walkable(*dest, effective_click, pc_effective_layer, 0)
+                else {
+                    self.hero_speaking(
+                        assets,
+                        *pc_id,
+                        crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+                    );
+                    continue;
+                };
                 let pc_pos = positions
                     .iter()
                     .find(|(id, _, _, _)| *id == *pc_id)
@@ -2002,7 +2020,7 @@ impl EngineInner {
                             panic!("jump click missing selected jump sector index")
                         })),
                         pc_pos,
-                        effective_click,
+                        resolved_jump_dest,
                         false,
                         jump_underlying_sector.map(|(sector, _)| u16::from(sector)),
                     )
@@ -2074,8 +2092,8 @@ impl EngineInner {
                         source_line_idx,
                         &source_line,
                         destination_line_idx,
-                        effective_click,
-                        effective_layer,
+                        resolved_jump_dest,
+                        pc_effective_layer,
                         1.0,
                     );
                     if is_swordfighting {
@@ -2091,9 +2109,9 @@ impl EngineInner {
                     self.launch_sequence(seq);
                     if show_marker && !is_door_click {
                         self.feedback.ground_mark.add_mark(
-                            effective_click.x,
-                            effective_click.y,
-                            effective_layer,
+                            resolved_jump_dest.x,
+                            resolved_jump_dest.y,
+                            pc_effective_layer,
                         );
                     }
                     continue;
@@ -2418,7 +2436,7 @@ impl EngineInner {
                     } else {
                         GoalShape::Point(resolved_dest)
                     };
-                    self.build_gate_movement_sequence(
+                    let _ = self.build_gate_movement_sequence(
                         sim,
                         *pc_id,
                         gate_steps,
@@ -2566,7 +2584,7 @@ impl EngineInner {
         tail_elements: Vec<crate::sequence::SequenceElement>,
         append_arrival_speech: bool,
         append_recovery: bool,
-    ) {
+    ) -> Option<crate::sequence::SequenceId> {
         use crate::element::Command;
         use crate::sequence::{
             Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,
@@ -2636,7 +2654,7 @@ impl EngineInner {
 
         let (gate_shots, starting_sector) = {
             if self.scripts.mission.is_none() {
-                return;
+                return None;
             }
             // Starting sector = the sector on the "old" side of the
             // first gate.  Needed to decide whether the actor's
@@ -2718,9 +2736,10 @@ impl EngineInner {
             (shots, start_sector)
         }; // host borrow dropped here
 
-        if gate_shots.is_empty() {
-            return;
-        }
+        // An empty gate path is still a valid route when source adaptation
+        // (for example, an actor currently straddling a door) places the
+        // effective source in the goal sector. Keep building the sequence
+        // so its trailing direct MOVE is emitted.
 
         // Does the entity have the lockpick contextual action?
         // Needed to choose the lockpick sub-element branch.
@@ -3476,6 +3495,7 @@ impl EngineInner {
         // Destination markers are emitted by player group-move callers
         // only; AI/pathfinding callers use this helper without dropping
         // a ground mark.
+        Some(seq_id)
     }
 
     /// Append posture-cleanup sub-elements at the tail of a PC move
@@ -3753,10 +3773,10 @@ impl EngineInner {
     /// hourglass pipeline.  Determinism: requests drain in FIFO order
     /// of enqueue (a `Vec` with `retain`+`push` on launch preserves
     /// this).
-    pub(super) fn drain_pending_move_requests(&mut self) {
+    pub(super) fn drain_pending_move_requests(&mut self, sim: &crate::sim_rng::SimulationContext) {
         let requests = std::mem::take(&mut self.orders.pending_move_requests);
         for (entity_id, intent) in requests {
-            let _ = self.do_launch_ai_move(entity_id, &intent);
+            let _ = self.do_launch_ai_move(sim, entity_id, &intent);
         }
     }
 
@@ -3765,6 +3785,7 @@ impl EngineInner {
     /// positions for the normal tick drain.
     pub(super) fn drain_pending_move_requests_for_owner(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         owner: EntityId,
     ) -> Vec<crate::sequence::SequenceId> {
         let requests = std::mem::take(&mut self.orders.pending_move_requests);
@@ -3780,7 +3801,7 @@ impl EngineInner {
         self.orders.pending_move_requests = remaining;
         owner_requests
             .into_iter()
-            .filter_map(|(_, intent)| self.do_launch_ai_move(owner, &intent))
+            .filter_map(|(_, intent)| self.do_launch_ai_move(sim, owner, &intent))
             .collect()
     }
 
@@ -3791,6 +3812,7 @@ impl EngineInner {
     /// happens once per actor per tick at drain time.
     fn do_launch_ai_move(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         entity_id: EntityId,
         intent: &crate::order::AiOrderIntent,
     ) -> Option<crate::sequence::SequenceId> {
@@ -3798,16 +3820,97 @@ impl EngineInner {
             x: intent.target_x,
             y: intent.target_y,
         };
-        let (layer, sector) = {
+        let (source, source_layer, source_sector) = {
             let Some(entity) = self.get_entity(entity_id) else {
                 tracing::warn!("do_launch_ai_move: entity {:?} not found", entity_id);
                 return None;
             };
             let ed = entity.element_data();
-            (ed.layer(), ed.sector())
+            (ed.position_map(), ed.layer(), ed.sector())
         };
+        let goal_layer = intent.target_layer.unwrap_or(source_layer);
+        let goal_sector = intent.target_sector.or(source_sector);
+        let move_flags =
+            crate::sequence::MoveFlags::from_bits_truncate(u32::from(intent.move_flags));
 
         let action = intent.order_type;
+        let crosses_topology = goal_layer != source_layer || goal_sector != source_sector;
+        if crosses_topology {
+            let Some(source_sector) = source_sector else {
+                tracing::warn!(?entity_id, "cross-sector AI GoTo has no source sector");
+                self.set_ai_couldnt_reachpoint(entity_id);
+                return None;
+            };
+            let Some(goal_sector) = goal_sector else {
+                tracing::warn!(?entity_id, "cross-sector AI GoTo has no destination sector");
+                self.set_ai_couldnt_reachpoint(entity_id);
+                return None;
+            };
+            let auth = self
+                .get_entity(entity_id)
+                .map(|entity| entity.actor_auth_info());
+            let level = self.world.fast_grid.level.clone();
+            // TODO(original-parity): AppendMoveToSequence routes an authored
+            // door-sector destination through FindPathIntoDoor and stops at
+            // that door. AI GoTo currently exercises ordinary area/building
+            // destinations here; preserve the full destination topology now
+            // so the door-goal branch can be shared with player routing.
+            let gate_path = self.scripts.mission.as_ref().and_then(|_| {
+                crate::gate::find_path_gates(
+                    &self.script_domains.interactables.doors,
+                    (source.x, source.y),
+                    u16::from(source_sector),
+                    (dest.x, dest.y),
+                    u16::from(goal_sector),
+                    auth.as_ref(),
+                    move_flags.contains(crate::sequence::MoveFlags::MAP),
+                    &|sector| {
+                        level
+                            .sectors
+                            .iter()
+                            .find(|candidate| candidate.sector_number == sector)
+                            .and_then(|candidate| candidate.lift_type)
+                    },
+                )
+            });
+            let Some(gate_path) = gate_path else {
+                tracing::warn!(
+                    ?entity_id,
+                    source_sector = u16::from(source_sector),
+                    source_layer,
+                    goal_sector = u16::from(goal_sector),
+                    goal_layer,
+                    "cross-sector AI GoTo has no gate route"
+                );
+                self.set_ai_couldnt_reachpoint(entity_id);
+                return None;
+            };
+            let prefix = if intent.quit_swordfight_before_move {
+                vec![crate::sequence::SequenceElement::new(
+                    1,
+                    crate::element::Command::QuitSwordfight,
+                    Some(entity_id),
+                )]
+            } else {
+                Vec::new()
+            };
+            return self.build_gate_movement_sequence(
+                sim,
+                entity_id,
+                gate_path,
+                GoalShape::Point(dest),
+                goal_layer,
+                action,
+                true,
+                intent.speed_factor,
+                move_flags,
+                prefix,
+                Vec::new(),
+                false,
+                false,
+            );
+        }
+
         let move_level = if intent.quit_swordfight_before_move {
             2
         } else {
@@ -3832,9 +3935,9 @@ impl EngineInner {
         } = &mut elem.data
         {
             *destination = dest;
-            *elem_layer = layer;
-            *elem_sector = sector;
-            *flags = crate::sequence::MoveFlags::from_bits_truncate(u32::from(intent.move_flags));
+            *elem_layer = goal_layer;
+            *elem_sector = goal_sector;
+            *flags = move_flags;
             *tolerance = intent.tolerance;
             *element = intent.antagonist;
             *speed_factor = intent.speed_factor;
@@ -4269,7 +4372,7 @@ impl EngineInner {
                 speed_factors[actor_id] = elem.speed_factor();
                 if let crate::sequence::SequenceElementData::Movement {
                     flags,
-                    tolerance,
+                    tolerance: _,
                     element: target_elem,
                     destination,
                     sector,
@@ -4323,7 +4426,13 @@ impl EngineInner {
                         // the seek-arrival predicate doesn't fire.
                         if resolved_target_id.is_some() || seek_shield {
                             final_tolerances[actor_id] = FinalTol {
-                                tol: *tolerance,
+                                // `mfSeekDistance` remains the unadapted
+                                // interaction radius.  RefreshSeek may halve
+                                // the concrete movement element's tolerance
+                                // while chasing a moving target, but
+                                // PerformSeek never uses that adapted path
+                                // tolerance for its live-target arrival test.
+                                tol: actor.seek_distance,
                                 directional,
                                 target_is_actor,
                                 target_id: resolved_target_id,
@@ -5194,16 +5303,22 @@ impl EngineInner {
                     soldier_attentive,
                     action_state,
                 );
-                // Lift branches: when a moving actor is in a lift
-                // sector, the lift type rewrites the per-frame
-                // animation.  Upright posture takes the upwards
-                // mapping unconditionally; on-ladder / on-wall posture
-                // chooses upwards vs downwards by dot-producting the
+                // DetermineMovementAnimation translates the movement
+                // element's primary distance-producing action while it is
+                // instructed. PostProcessPath runs afterwards and may insert
+                // explicit start/end transition orders; Execute dispatches
+                // those transition actions literally even when the actor is
+                // standing in a live lift sector. Applying the lift map to a
+                // transition here would, for example, turn a walk-to-run
+                // transition on stairs back into WalkingStairs.
+                //
+                // For ordinary distance motion, upright posture takes the
+                // upwards mapping unconditionally; on-ladder / on-wall
+                // posture chooses upwards vs downwards by dot-producting the
                 // ladder vector (`pt_low - pt_high`) with the movement
-                // vector — non-negative means moving down.  Snapshotted
-                // in `lift_translations` so we don't have to re-borrow
-                // `self.world.fast_grid` or the door table mid-loop.
-                if is_authored_climb_action(base) {
+                // vector. Snapshotted in `lift_translations` so we don't have
+                // to re-borrow the grid or door table mid-loop.
+                if !order_uses_distance_motion(order_action) || is_authored_climb_action(base) {
                     // DetermineMovementAnimation rewrites the movement
                     // element once when it is instructed. Every path order
                     // retains that authored climb direction, even if a later
@@ -5298,8 +5413,9 @@ impl EngineInner {
             let fast_sword_motion = action_state == crate::element::ActionState::MovingFastSword
                 || order_action == OrderType::RunningWithSword
                 || door_pass_anim == Some(OrderType::RunningWithSword);
-            // Fast climb is a non-animation dispatch token: the Original
-            // executes the ordinary climb sprite motion twice.  Lift
+            // Fast stairs/ladder/wall actions are non-animation dispatch
+            // tokens: the Original executes the ordinary sprite motion
+            // twice. Lift
             // translation above may therefore turn an already-authored fast
             // token into its ordinary sprite action; retain the dispatch
             // semantics from the sequence order itself.
@@ -5408,8 +5524,9 @@ impl EngineInner {
                 );
             }
 
-            // Fast ladder/wall Execute is two literal Turn/PerformMotion
-            // pairs in Original. The second pair is skipped when the first
+            // Fast stairs/ladder/wall Execute is two literal
+            // Turn/PerformMotion pairs in Original. The second pair is
+            // skipped when the first
             // motion terminates; folding it into MotionMethod::Fast would
             // over-rotate on that terminal tick and cannot expose the first
             // call's termination barrier.
@@ -5455,6 +5572,10 @@ impl EngineInner {
                     dest_already_at_pos,
                 )
             };
+            let first_frame_dist_raw = frame_dist_raw;
+            let first_direction_differs_from_goal =
+                sprite.position_iface.get_direction() != sprite.position_iface.get_direction_goal();
+            let mut second_frame_dist_raw = None;
             if !tolerance_arrival && fast_climb_motion && motion_state != MotionState::Terminated {
                 let _ = sprite.position_iface.turn();
                 let (second_state, second_distance) = sprite.perform_motion(
@@ -5468,6 +5589,7 @@ impl EngineInner {
                     dest_already_at_pos,
                 );
                 motion_state = second_state;
+                second_frame_dist_raw = Some(second_distance);
                 frame_dist_raw += second_distance;
             }
             executed_sword_movement = is_sword_motion;
@@ -5532,12 +5654,31 @@ impl EngineInner {
             // RHMOTIONMETHOD_TILL_LAST_FRAME)` without passing the movement
             // element's speed factor, so C++ uses the default 1.0. Patrol
             // formation factors only scale the subsequent Walk/Run orders.
-            let speed = scaled_motion_distance(
-                frame_dist_raw,
-                speed_factor,
-                is_transition_anim,
-                direction_differs_from_goal,
-            );
+            let speed = if let Some(second_distance) = second_frame_dist_raw {
+                // The fast stairs/ladder/wall arms contain two literal
+                // PerformMotion calls. Each call applies its own turning
+                // slowdown using the direction reached by the immediately
+                // preceding Turn(), so a first call that is still rotating
+                // must not inherit the second call's newly aligned state.
+                scaled_motion_distance(
+                    first_frame_dist_raw,
+                    speed_factor,
+                    is_transition_anim,
+                    first_direction_differs_from_goal,
+                ) + scaled_motion_distance(
+                    second_distance,
+                    speed_factor,
+                    is_transition_anim,
+                    direction_differs_from_goal,
+                )
+            } else {
+                scaled_motion_distance(
+                    frame_dist_raw,
+                    speed_factor,
+                    is_transition_anim,
+                    direction_differs_from_goal,
+                )
+            };
             // PerformMotion applies the distance before returning its motion
             // state. A fresh walking order that reaches its goal on that same
             // invocation returns TERMINATED, not START, so the walking
@@ -5568,6 +5709,8 @@ impl EngineInner {
                 action_state = ?action_state,
                 sprite_frame = sprite.current_frame,
                 sprite_counter = sprite.frame_count,
+                sprite_num_frames = sprite.num_frames_for_row(sprite.current_row),
+                sprite_wait = sprite.wait_time(sprite.current_row, sprite.current_frame),
                 frame_distance_raw = frame_dist_raw,
                 speed_factor,
                 effective_distance = speed,
@@ -5640,9 +5783,10 @@ impl EngineInner {
             // goal (without this advance, soldiers stop at the
             // running-phase endpoint and never close the final ~26u
             // gap, leaving them outside sword_range forever and unable
-            // to trigger begin_swordfight). Arrival-pop and line-crossing
-            // remain waypoint-walk concerns, but C++ routes every nonzero
-            // transition distance through UpdatePositionAntiCollision too.
+            // to trigger begin_swordfight). C++ routes every nonzero
+            // transition distance through UpdatePositionAntiCollision, so
+            // transition displacement must also participate in elevation,
+            // patch, and sound boundary crossing.
             //
             // C++ seeds `PositionInterface` at the start of every new
             // sprite motion order and moves transition animations via
@@ -5661,6 +5805,17 @@ impl EngineInner {
                         order_action, entity_id
                     );
                 }
+                let transition_crossing_start =
+                    (transition_has_map_target && speed > 0.0).then(|| {
+                        let old_pos = entity.element_data().position_map();
+                        let layer = entity.element_data().layer();
+                        let eligible = actor_line_crossing_eligible(
+                            entity.element_data().posture,
+                            human_is_carried,
+                            self.world.fast_grid.level.map_bbox.contains_point(old_pos),
+                        );
+                        (old_pos, layer, eligible)
+                    });
                 if transition_has_map_target && speed > 0.0 {
                     // Match GetIncrementMap(): PerformMotion seeded this
                     // normalized vector when the order began and reuses it
@@ -5740,7 +5895,6 @@ impl EngineInner {
                     }
                     elem.update_grid_cell();
                 }
-
                 // TILL_LAST_FRAME still performs the ordinary arrival check
                 // after every nonzero transition step. Reaching the target
                 // zeros both increments and snaps an undeviated zero-tolerance
@@ -5764,16 +5918,43 @@ impl EngineInner {
                         motion_state = MotionState::Terminated;
                     }
                 }
+                // Actor::Hourglass runs CheckForLineCrossing after Execute
+                // returns, so use the final post-arrival position here. A
+                // TillLastFrame step may overshoot and snap back to its goal;
+                // the discarded overshoot must not trigger a boundary.
+                if let Some((old_pos, layer, eligible)) = transition_crossing_start
+                    && eligible
+                {
+                    let new_pos = entity.element_data().position_map();
+                    if self.world.fast_grid.level.map_bbox.contains_point(new_pos) {
+                        line_cross_checks.push((entity_id, old_pos, new_pos, layer));
+                        if is_pc {
+                            patch_cross_checks.push((entity_id, old_pos, new_pos, layer));
+                        }
+                        sound_cross_checks.push((entity_id, old_pos, new_pos, layer));
+                    }
+                }
                 let transition_effect_motion = movement_execute_visible_motion(
                     order_action,
                     motion_state,
                     false,
                     entity_target_seek,
                 );
-                if let Some((posture, action_state)) =
+                if let Some((posture, next_action_state)) =
                     movement_execute_state_effect(order_action, transition_effect_motion)
                 {
-                    movement_state_effects.push((entity_id, posture, action_state));
+                    // A speed-transition completion establishes the live
+                    // walking/running state itself. Do not let an older state
+                    // saved by a preceding door transition overwrite it when
+                    // the generated continuation order executes next tick.
+                    if next_action_state.is_moving()
+                        && let Some(pass) = entity
+                            .actor_data_mut()
+                            .and_then(|actor| actor.active_door_pass.as_mut())
+                    {
+                        pass.saved_action_state = None;
+                    }
+                    movement_state_effects.push((entity_id, posture, next_action_state));
                 }
                 if door_pass_anim.is_some()
                     && matches!(motion_state, MotionState::Terminated)
@@ -5799,6 +5980,28 @@ impl EngineInner {
                     // the exhausted transition. This keeps the copied order's
                     // old target as a one-tick continuation.
                     if !transition_goal_reached {
+                        // Original's movement element already contains the
+                        // whole PassDoor route. Rust keeps the untranslated
+                        // tail on ActiveDoorPass, so the next distinct
+                        // destination animation may live there rather than in
+                        // `element.orders`.
+                        let lazy_next_animation = entity
+                            .actor_data()
+                            .and_then(|actor| actor.active_door_pass.as_ref())
+                            .and_then(|pass| {
+                                pass.steps.iter().find_map(|step| match step {
+                                    crate::element::DoorPassStep::Walk {
+                                        destination,
+                                        action,
+                                        ..
+                                    } if *destination != MapPoint::ZERO
+                                        && *action != order_action =>
+                                    {
+                                        Some(*action)
+                                    }
+                                    _ => None,
+                                })
+                            });
                         let next_order_id = &mut self.orders.next_order_id;
                         if let Some(element) = self
                             .orders
@@ -5820,6 +6023,10 @@ impl EngineInner {
                                         && (order.target_x != 0.0 || order.target_y != 0.0)
                                 })
                                 .map(|(index, order)| (index, order.order_type));
+                            let next_animation = next_animation.or_else(|| {
+                                lazy_next_animation
+                                    .map(|animation| (element.orders.len(), animation))
+                            });
                             if let Some((insertion, animation)) = next_animation {
                                 let mut continuation = element.orders.front().unwrap().clone();
                                 continuation.order_type = animation;
@@ -6123,6 +6330,48 @@ impl EngineInner {
                         continue 'actors;
                     }
 
+                    // A final concrete waypoint is only the position at
+                    // which the target was observed when this Seek was
+                    // built.  When the walking order terminates, Original
+                    // PerformSeek validates that stale waypoint against the
+                    // live target before it may hand off to the post-seek
+                    // action:
+                    //
+                    //   same sector
+                    //   && (target has not moved || live target is in range)
+                    //
+                    // If that check fails, RefreshSeek replaces the movement
+                    // immediately and the exhausted old order must not reach
+                    // generic `do_next_order` (which would launch the Hit /
+                    // interaction tail unconditionally).
+                    let movement_is_last_sequence_element = self
+                        .orders
+                        .sequence_manager
+                        .get_sequence(move_seq_id)
+                        .map(|sequence| move_elem_idx + 1 >= sequence.elements.len())
+                        .unwrap_or(false);
+                    let final_entity_seek_arrival = if is_final_waypoint
+                        && movement_is_last_sequence_element
+                        && ft.target_id.is_some()
+                    {
+                        live_seek_target.map(|(target_position, target_sector, _)| {
+                            let same_sector = target_sector.is_some()
+                                && target_sector == entity.element_data().sector();
+                            let target_unchanged = target_position == ft.last_seek_target_position;
+                            same_sector && (target_unchanged || tolerance_arrival)
+                        })
+                    } else {
+                        None
+                    };
+                    if final_entity_seek_arrival == Some(false) {
+                        transition_seek_refreshes.push((eid, move_seq_id, move_elem_idx));
+                        tracing::trace!(
+                            ?eid,
+                            "tick_move: final seek waypoint is stale; refreshing against live target",
+                        );
+                        continue 'actors;
+                    }
+
                     let actor = entity.actor_data_mut().unwrap();
                     // The post-seek sequence fires whenever the seek
                     // arrival predicate is true and a post-seek sequence
@@ -6131,7 +6380,9 @@ impl EngineInner {
                     // post-seek requirement for intermediate waypoints, so
                     // reaching this point with both flags set is the
                     // "terminate the seek and launch the post-seek" path.
-                    let start_post_seek = (tolerance_arrival || point_seek_post_arrival)
+                    let start_post_seek = (tolerance_arrival
+                        || point_seek_post_arrival
+                        || final_entity_seek_arrival == Some(true))
                         && actor.post_seek_sequence.is_some();
                     let start_post_seek = if start_post_seek && actor.active_door_pass.is_some() {
                         tracing::warn!(
@@ -6163,6 +6414,15 @@ impl EngineInner {
                             human.last_motion_was_step_back_in_combat = active_move_flags
                                 .contains(crate::sequence::MoveFlags::STEP_BACK_IN_COMBAT);
                         }
+                        continue 'actors;
+                    }
+
+                    // With no post-seek tail, the successful final
+                    // entity-target arrival remains inside PerformSeek.  It
+                    // arms an immediate refresh check and returns InProgress
+                    // instead of consuming the final order.
+                    if final_entity_seek_arrival == Some(true) {
+                        actor.seek_refresh_wait = 0;
                         continue 'actors;
                     }
 
@@ -6477,9 +6737,25 @@ impl EngineInner {
             //
             // Also queue a patch-line-cross check for PC actors —
             // LINE_PATCH handling is gated to PCs only.
+            let new_pos = entity.element_data().position_map();
+            let new_position_in_bounds =
+                self.world.fast_grid.level.map_bbox.contains_point(new_pos);
+            tracing::trace!(
+                target: "robin_engine::elevation_crossing",
+                ?entity_id,
+                eligible_for_crossing,
+                new_position_in_bounds,
+                posture = ?entity_posture,
+                human_is_carried,
+                layer = entity_layer,
+                old_x = old_pos.x,
+                old_y = old_pos.y,
+                new_x = new_pos.x,
+                new_y = new_pos.y,
+                "considered queuing elevation crossing"
+            );
             if eligible_for_crossing {
-                let new_pos = entity.element_data().position_map();
-                if self.world.fast_grid.level.map_bbox.contains_point(new_pos) {
+                if new_position_in_bounds {
                     line_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
                     if entity.is_pc() {
                         patch_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
@@ -6740,27 +7016,13 @@ impl EngineInner {
                 )
             });
         if selected_terminal {
-            let resumed_cross_successors =
-                self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
-            for (seq_id, elem_idx) in resumed_cross_successors {
-                let Some(successor) =
-                    self.movement_selection_for_exact_element(owner, seq_id, elem_idx)
-                else {
-                    continue;
-                };
-                let actor = self
-                    .world
-                    .entities
-                    .get_mut(owner)
-                    .and_then(Entity::actor_data_mut)
-                    .unwrap_or_else(|| {
-                        panic!("cross-postponed movement successor owner {owner:?} lost actor data")
-                    });
-                actor.execute_order_initialising =
-                    actor.last_execute_order_id != Some(successor.order_id);
-                actor.last_execute_order_id = Some(successor.order_id);
-                self.tick_entity_movement_owner(sim, assets, owner, Some(successor));
-            }
+            // Termination may synchronously instruct a cross-postponed
+            // movement successor, but Actor::Hourglass has already made
+            // and executed its one entry-latched order choice for this
+            // owner slot. The successor becomes observable immediately and
+            // executes at the actor's next Hourglass; never recurse into a
+            // second Execute in the same slot.
+            let _ = self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
         }
 
         self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
@@ -6769,28 +7031,6 @@ impl EngineInner {
                     "movement owner {owner:?} failed to drain synchronous callback work: {error:?}"
                 )
             });
-    }
-
-    fn movement_selection_for_exact_element(
-        &self,
-        owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-    ) -> Option<MovementOwnerSelection> {
-        self.orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .filter(|element| {
-                element.owner == Some(owner)
-                    && element.state == crate::sequence::SequenceState::InProgress
-                    && element.data.is_movement()
-            })
-            .and_then(|element| element.current_order())
-            .map(|order| MovementOwnerSelection {
-                seq_id,
-                elem_idx,
-                order_id: order.order_id,
-            })
     }
 
     fn selected_galopp_decision_frame(
@@ -7668,6 +7908,17 @@ impl EngineInner {
             .world
             .fast_grid
             .get_crossing_elevation_line_indices(layer, old_pos, new_pos);
+        tracing::trace!(
+            target: "robin_engine::elevation_crossing",
+            ?entity_id,
+            layer,
+            old_x = old_pos.x,
+            old_y = old_pos.y,
+            new_x = new_pos.x,
+            new_y = new_pos.y,
+            crossing_count = indices.len(),
+            "queried elevation crossings"
+        );
         if indices.is_empty() {
             return false;
         }
@@ -8662,10 +8913,8 @@ impl EngineInner {
             // creates one or more concrete MOVE|SEEK elements without
             // resampling either value, so a route through a door retains the
             // original target reference and accumulated countdown.
-            // `sequence_element_started` flips true once the movement
-            // element promotes to InProgress.  Read by
-            // `non_interruptable_guard` to gate the PASS_DOOR + MOVE
-            // IMPOSSIBLE fast-fail.
+            // Mirror the original actor lifecycle flag once the movement
+            // element promotes to InProgress.
             actor.sequence_element_started = true;
         }
 

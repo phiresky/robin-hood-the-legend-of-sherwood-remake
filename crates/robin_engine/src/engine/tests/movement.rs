@@ -1663,7 +1663,7 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
         target_slot: u32,
         target_before_movement: MapPoint,
         target_after_movement: MapPoint,
-        target_position_observed_by_follow: MapPoint,
+        target_position_observed_by_follow: crate::coordinates::GroundPoint,
     }
 
     fn observe(observer_before_target: bool) -> Observation {
@@ -1686,6 +1686,14 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
         target
             .element_data_mut()
             .set_position_map(target_before_movement);
+        target.position_iface_mut().set_obstacle(
+            None,
+            Some(crate::position_interface::PlaneZCoeffs {
+                az: 0.0,
+                bz: 0.0,
+                dz: 45.0,
+            }),
+        );
 
         let (observer_id, target_id) = if observer_before_target {
             let observer_id = engine.add_entity(observer);
@@ -1747,7 +1755,9 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
                 target_slot: 1,
                 target_before_movement: MapPoint::new(80.0, 20.0),
                 target_after_movement: MapPoint::new(120.0, 20.0),
-                target_position_observed_by_follow: MapPoint::new(80.0, 20.0),
+                target_position_observed_by_follow: crate::coordinates::GroundPoint::new(
+                    80.0, 65.0,
+                ),
             },
             Observation {
                 frame: 73,
@@ -1755,7 +1765,9 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
                 target_slot: 0,
                 target_before_movement: MapPoint::new(80.0, 20.0),
                 target_after_movement: MapPoint::new(120.0, 20.0),
-                target_position_observed_by_follow: MapPoint::new(120.0, 20.0),
+                target_position_observed_by_follow: crate::coordinates::GroundPoint::new(
+                    120.0, 65.0,
+                ),
             },
         ],
         "original per-element virtual calls expose pre-move state to an earlier observer and post-move state to a later observer"

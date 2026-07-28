@@ -35,6 +35,8 @@ const BLIP_CONE_APERTURE_FACTOR: f32 = 1.0;
 struct EnemyOpticalTarget {
     id: EntityId,
     position: MapPoint,
+    sector: Option<crate::position_interface::SectorHandle>,
+    layer: u16,
     posture: crate::element::Posture,
     action_state: crate::element::ActionState,
     building_sector: Option<crate::position_interface::SectorHandle>,
@@ -973,7 +975,7 @@ impl EngineInner {
                 }
             }
 
-            let deafness = npc.get_deafness(universal_frame, cover_volume) as f32;
+            let deafness = npc.get_deafness(universal_frame, cover_volume);
             // `RefreshDetection` walks this NPC's DETECTABLE_ENEMY list, not
             // the engine PC registry. Preserve that list's insertion order:
             // each inline Think may mutate state observed by the next entry.
@@ -1054,9 +1056,9 @@ impl EngineInner {
                         // rising-edge latch.
                         let subjective =
                             if pc_volume == 0 || distance == 0.0 || max_norm > modified_volume {
-                                0.0
+                                0
                             } else {
-                                (modified_volume - distance - deafness).max(0.0)
+                                subjective_hear_volume(modified_volume, distance, deafness)
                             };
 
                         let (det_heard, det_seen) = npc.detectable_lists[enemy_idx]
@@ -1071,11 +1073,11 @@ impl EngineInner {
                                 )
                             });
 
-                        let stimulus = if subjective > 0.0 && !det_heard && !det_seen {
+                        let stimulus = if subjective > 0 && !det_heard && !det_seen {
                             let noise = crate::ai::Noise {
                                 origin: noise.origin,
                                 noise_type: noise.noise_type,
-                                volume: subjective as u16,
+                                volume: subjective,
                                 elevation: noise.elevation,
                                 element_id: noise.element_id,
                             };
@@ -1094,7 +1096,7 @@ impl EngineInner {
                             .iter_mut()
                             .find(|d| d.element == Some(pc.id))
                             .expect("hearing detectable vanished between reads");
-                        det.heard_last_frame = subjective > 0.0;
+                        det.heard_last_frame = subjective > 0;
                         stimulus
                     }
                 }
@@ -2874,8 +2876,8 @@ impl EngineInner {
                     let shadow_pos = crate::ai::Position {
                         x: target.position.x,
                         y: target.position.y,
-                        sector: None,
-                        level: 0,
+                        sector: target.sector,
+                        level: target.layer,
                     };
                     let stimulus = crate::ai::Stimulus::with_position(
                         crate::ai::StimulusType::EventSeesShadow,
@@ -3059,6 +3061,8 @@ impl EngineInner {
                     Some(EnemyOpticalTarget {
                         id: entity_id,
                         position: snapshot.position,
+                        sector: pc.element.sector(),
+                        layer: pc.element.layer(),
                         posture,
                         action_state: pc.actor.action_state,
                         building_sector: self.entity_building_sector(pc.element.sector()),
@@ -3109,6 +3113,8 @@ impl EngineInner {
                     Some(EnemyOpticalTarget {
                         id: entity_id,
                         position,
+                        sector: soldier.element.sector(),
+                        layer: soldier.element.layer(),
                         posture,
                         action_state: soldier.actor.action_state,
                         building_sector: self.entity_building_sector(soldier.element.sector()),
@@ -3751,8 +3757,8 @@ impl EngineInner {
                     shadow_dispatches.push(crate::ai::Position {
                         x: target.position.x,
                         y: target.position.y,
-                        sector: None,
-                        level: 0,
+                        sector: target.sector,
+                        level: target.layer,
                     });
                 }
             }

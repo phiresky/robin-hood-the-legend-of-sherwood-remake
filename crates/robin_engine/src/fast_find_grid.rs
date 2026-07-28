@@ -497,7 +497,12 @@ pub struct GridSector {
 }
 
 impl GridSector {
-    /// Point-in-polygon test using ray casting.
+    /// Point-in-polygon test using boundary-inclusive ray casting.
+    ///
+    /// Original `SBGeoPolygon2DArray::IsInside` explicitly treats every
+    /// point on an edge or vertex as inside. Test the closed edge before the
+    /// parity toggle so ray-cast half-open endpoint conventions cannot reject
+    /// an exact boundary click.
     pub fn contains_point(&self, pt: MapPoint) -> bool {
         if self.points.len() < 3 {
             return false;
@@ -511,6 +516,18 @@ impl GridSector {
         for i in 0..n {
             let vi = self.points[i];
             let vj = self.points[j];
+            let edge_x = vj.x - vi.x;
+            let edge_y = vj.y - vi.y;
+            let rel_x = pt.x - vi.x;
+            let rel_y = pt.y - vi.y;
+            if edge_x * rel_y == edge_y * rel_x
+                && pt.x >= vi.x.min(vj.x)
+                && pt.x <= vi.x.max(vj.x)
+                && pt.y >= vi.y.min(vj.y)
+                && pt.y <= vi.y.max(vj.y)
+            {
+                return true;
+            }
             if (vi.y > pt.y) != (vj.y > pt.y) {
                 let x_intersect = (vj.x - vi.x) * (pt.y - vi.y) / (vj.y - vi.y) + vi.x;
                 if pt.x < x_intersect {
@@ -2203,10 +2220,28 @@ impl FastFindGrid {
                         continue;
                     }
                     let line = &self.level.lines[usize::from(line_idx)];
-                    if !line.is_elevation || !self.is_line_active(line_idx) {
+                    if !line.is_elevation {
                         continue;
                     }
-                    if line.intersects_segment(movement) {
+                    let active = self.is_line_active(line_idx);
+                    let intersects = line.intersects_segment(movement);
+                    tracing::trace!(
+                        target: "robin_engine::elevation_crossing",
+                        layer,
+                        ?line_idx,
+                        line_ax = line.a.x,
+                        line_ay = line.a.y,
+                        line_bx = line.b.x,
+                        line_by = line.b.y,
+                        active,
+                        intersects,
+                        old_x = old_pos.x,
+                        old_y = old_pos.y,
+                        new_x = new_pos.x,
+                        new_y = new_pos.y,
+                        "tested elevation line"
+                    );
+                    if active && intersects {
                         result.push(line_idx);
                     }
                 }
@@ -3445,6 +3480,29 @@ mod tests {
     }
 
     #[test]
+    fn elevation_crossing_query_finds_a_short_diagonal_bond() {
+        let mut grid = FastFindGrid::new();
+        grid.size_map(40, 30);
+        grid.allocate_layers(4);
+
+        let line = GridLine::new_elevation(
+            MapPoint::new(1832.0, 1233.0),
+            MapPoint::new(1845.0, 1230.0),
+            Some(224),
+            Some(188),
+        );
+        let line_index = grid.add_line(line, 2);
+
+        let crossings = grid.get_crossing_elevation_line_indices(
+            2,
+            MapPoint::new(1837.538_5, 1232.892_3),
+            MapPoint::new(1837.076_9, 1231.784_7),
+        );
+
+        assert_eq!(crossings, vec![line_index]);
+    }
+
+    #[test]
     fn test_motion_normal_matches_original_area_flag() {
         let mut area_line = GridLine::new(MapPoint::new(0.0, 0.0), MapPoint::new(10.0, 0.0), true);
         area_line.initialize_motion_normal(true);
@@ -3724,6 +3782,24 @@ mod tests {
             gate_indices: Vec::new(),
             underlying_sector: None,
         }
+    }
+
+    #[test]
+    fn sector_contains_exact_boundary_vertices_and_edges() {
+        use crate::sector::SectorType;
+
+        let sector = square_sector(
+            MapPoint::new(10.0, 20.0),
+            MapPoint::new(30.0, 40.0),
+            SectorType::MOTION | SectorType::AREA,
+            0,
+            1,
+        );
+
+        assert!(sector.contains_point(MapPoint::new(10.0, 20.0)));
+        assert!(sector.contains_point(MapPoint::new(20.0, 20.0)));
+        assert!(sector.contains_point(MapPoint::new(30.0, 30.0)));
+        assert!(!sector.contains_point(MapPoint::new(40.0, 20.0)));
     }
 
     fn square_projection_obstacle(

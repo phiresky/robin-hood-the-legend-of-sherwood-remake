@@ -285,6 +285,7 @@ pub(super) struct SoldierSnapshot {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub(super) struct HumanTarget {
     pub(super) position: MapPoint,
+    pub(super) sector: Option<crate::position_interface::SectorHandle>,
     pub(super) layer: u16,
     pub(super) eye_z: f32,
     /// Exact ground Z for projected-map to world-horizontal conversion.
@@ -1093,6 +1094,7 @@ impl EngineInner {
                 id,
                 HumanTarget {
                     position,
+                    sector: entity.element_data().sector(),
                     layer,
                     eye_z,
                     ground_z,
