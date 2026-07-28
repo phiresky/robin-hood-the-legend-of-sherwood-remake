@@ -35,7 +35,6 @@ const BLIP_CONE_APERTURE_FACTOR: f32 = 1.0;
 struct EnemyOpticalTarget {
     id: EntityId,
     position: MapPoint,
-    layer: u16,
     posture: crate::element::Posture,
     action_state: crate::element::ActionState,
     building_sector: Option<crate::position_interface::SectorHandle>,
@@ -1748,14 +1747,11 @@ impl EngineInner {
                     det.last_visibility = 0.0;
                     continue;
                 }
-                // Different layer ⇒ different floor in a building;
-                // LOS raycast won't cross and the IsActive check
-                // would have bailed earlier.
-                if target.layer != layer {
-                    det.seen_now = false;
-                    det.last_visibility = 0.0;
-                    continue;
-                }
+                // Do not reject a target merely because its logical movement
+                // layer differs. Original `ComputeVisibility(human)` compares
+                // the full 3D eye/detection points and lets `IsDetecting`
+                // decide line of sight; actors on visible stairs, roofs, and
+                // adjoining elevations can therefore be seen cross-layer.
                 // Original Lacklandist ComputeVisibility rejects HollowMan
                 // targets before its PC-vs-soldier cadence branch. Keep the
                 // detectable (CleanUpDetectables only removes dead enemies),
@@ -3060,7 +3056,6 @@ impl EngineInner {
                     Some(EnemyOpticalTarget {
                         id: entity_id,
                         position: snapshot.position,
-                        layer: pc.element.layer(),
                         posture,
                         action_state: pc.actor.action_state,
                         building_sector: self.entity_building_sector(pc.element.sector()),
@@ -3111,7 +3106,6 @@ impl EngineInner {
                     Some(EnemyOpticalTarget {
                         id: entity_id,
                         position,
-                        layer: soldier.element.layer(),
                         posture,
                         action_state: soldier.actor.action_state,
                         building_sector: self.entity_building_sector(soldier.element.sector()),

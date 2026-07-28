@@ -206,14 +206,15 @@ mission `H01_Lin_VL` (Lincoln), 3,087 contiguous simulated frames (0 through
 3,086), four recorded director completions, and 4,224 filtered simulation RNG
 draws. It is a direct `mission_start` capture with the complete campaign,
 resolved-command, director-completion, simulation-body, and global-RNG
-contracts. Replay currently matches through frame 2,135. The apparent
-frame-2,132 thick-reachability mismatch was instead a sequence-ordering bug:
-after a non-interruptible door pass, Rust resumed the stale frame-1,909 route
-after the replacement frame-2,074 route and let the stale move interrupt the
-new one. Owner-local deferred dispatch now retains the Original manager FIFO,
-so the replacement route wins. The first remaining divergence after frame
-2,136 is soldier 78 turning in the Original while Rust continues its previous
-move and AI substate.
+contracts. Replay currently matches through frame 2,283. At frame 2,136,
+soldier 78 in the Original accumulated enough partial visibility of PC 126 on
+an adjoining elevation to enter `DefaultLookingShadow`; Rust's enemy optical
+pass rejected the PC solely because its movement layer differed. Original
+human visibility has no such layer gate: it compares full 3D eye/detection
+points and lets opaque line of sight decide. Removing the invented gate
+restores the general stairs/roof/ledge case. The first remaining divergence is
+soldier 79 entering an attentive AI state at frame 2,284 while Rust remains in
+`DefaultLookingShadow`.
 
 ## Change ledger
 
@@ -422,6 +423,7 @@ move and AI substate.
 | Done | Live cross-postponed owner continuation | Original terminal `SetState` performs `SendCondolationCard`, `Ready`, and `StartPostponedSequenceElement` synchronously; its live manager queue can instruct and execute the exact released owner successor before that owner boundary closes. Rust registered the successor but waited for a later global pass, and its synchronous dispatcher did not support owner-side `AssertPosition`. | Owner condolence closure returns exact released handles. Only a matching in-progress movement successor receives its first owner Execute in the open boundary, avoiding a second global actor pass. Postponed elements retain their original transition-state snapshot, path post-processing uses the Original's live-versus-stored state rule, and `AssertPosition` routes through the normal position-assertion translator. |
 | Done | Cancelled pathfinder head occupancy | Original `CancelPathRequest` does not remove a matching list head: it ignores that result when ready, deletes only later matching requests, and lets the stale head occupy the call's single completion slot. Rust deleted every matching queued/in-flight request, allowing a replacement request to start and complete one frame early. | The deterministic synchronous queue now preserves a cancelled head as stale while deleting later same-owner requests. Synchronous delivery remains allowed only when no older in-flight result consumed the barrier's one-result slot. Replay advances through frame 2,131. |
 | Done | Ready-before-postponed owner FIFO | When a non-interruptible `PassDoor` terminates, Original `SetState(TERMINATED)` calls sequence `Ready` before `StartPostponedSequenceElement`. The stale route's newly-ready successor is therefore registered before the newer cross-postponed route; normal equal-priority arbitration then lets the newer route interrupt the stale successor. Rust extracted the cross-postponed handle from the middle of its deferred queue, reversed those two instructions, and let the stale frame-1,909 route interrupt the frame-2,074 replacement. | Synchronous owner-boundary dispatch now removes and executes same-owner deferred actions through the released successor in their existing manager-FIFO order, without moving foreign-owner work. Already-terminal postponed links remain a no-op. A focused sequence-manager regression covers `Ready` successor → cross-postponed successor ordering. Replay advances through frame 2,135. |
+| Done | Cross-layer human visibility | At frame 2,136 Original soldier 78's Enemy suspect total crossed the shadow threshold after clear visibility samples of PC 126 on a neighboring elevated movement layer. Rust unconditionally zeroed and discarded cached visibility whenever target and observer layer IDs differed, despite matching positions and view direction. | The enemy optical pass no longer invents a same-layer requirement. The shared visibility query already uses full 3D eye/detection points and exact 3D opaque reachability, matching Original `ComputeVisibility(RHElementActorHuman*)` and covering stairs, roofs, and adjoining elevations generally. Replay advances through frame 2,283. |
 
 ## Workflow
 
