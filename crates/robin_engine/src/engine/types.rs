@@ -566,6 +566,13 @@ pub struct CameraState {
     /// when the zoom / slide completes.
     pub sequence_element: Option<crate::sequence::SequenceElementRef>,
 
+    /// Whether an external replay stream owns completion timing for latched
+    /// `CameraGoto` and `ZoomLevel` sequence elements. The visual transition
+    /// still advances normally, but reaching its target does not release the
+    /// sequence until the replay applies the recorded director event.
+    #[serde(default)]
+    pub external_completion_replay: bool,
+
     /// Display-op/zoom-transition state for the shared script camera.
     ///
     /// This is engine-owned because it advances `view_position`,
@@ -604,10 +611,25 @@ impl Default for CameraState {
             displacement_counter: 0,
             position_saved: ScreenPoint::ZERO,
             sequence_element: None,
+            external_completion_replay: false,
             display: super::CameraDisplayState::default(),
             pending_zoom_mouse_screen: None,
         }
     }
+}
+
+/// A director-side sequence completion recorded between simulation frames.
+///
+/// The Original performs camera director work during drawing, after
+/// `PerformHourglass`. Parity replays apply this event before the next
+/// hourglass so synchronous sequence successors observe the same boundary.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+#[serde(tag = "command", rename_all = "snake_case")]
+pub enum DirectorCompletion {
+    CameraGoto,
+    ZoomLevel,
 }
 
 impl CameraState {

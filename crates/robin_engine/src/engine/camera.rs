@@ -2,7 +2,9 @@
 
 use super::*;
 use crate::coordinates::{MapPoint, MapSize, MapVec, ScreenPoint, ScreenSize};
+use crate::element_kinds::Command;
 use crate::messenger::{Message, MessageType, SimpleMessage};
+use crate::sequence::SequenceState;
 
 impl EngineInner {
     // ─── Script/director camera ─────────────────────────────────
@@ -38,6 +40,81 @@ impl EngineInner {
     }
 
     // ─── Director work (camera automation) ─────────────────────
+
+    pub(crate) fn set_external_director_completion_replay(&mut self, enabled: bool) {
+        self.feedback.cutscene_camera.external_completion_replay = enabled;
+    }
+
+    pub(crate) fn apply_external_director_completion(
+        &mut self,
+        completion: DirectorCompletion,
+        display: &mut HostDisplayState,
+        assets: &LevelAssets,
+    ) -> Result<(), String> {
+        if !self.feedback.cutscene_camera.external_completion_replay {
+            return Err("external director completion replay is not enabled".to_owned());
+        }
+
+        let sequence_ref = self
+            .feedback
+            .cutscene_camera
+            .sequence_element
+            .ok_or_else(|| {
+                format!("recorded {completion:?} completion has no active camera sequence element")
+            })?;
+        let expected_command = match completion {
+            DirectorCompletion::CameraGoto => Command::CameraGoto,
+            DirectorCompletion::ZoomLevel => Command::ZoomLevel,
+        };
+        let element = self
+            .orders
+            .sequence_manager
+            .get_element(sequence_ref.sequence_id, sequence_ref.element_index)
+            .ok_or_else(|| {
+                format!(
+                    "recorded {completion:?} completion references missing sequence element {:?}/{}",
+                    sequence_ref.sequence_id, sequence_ref.element_index
+                )
+            })?;
+        if element.command != expected_command {
+            return Err(format!(
+                "recorded {completion:?} completion expected {expected_command:?}, but active camera sequence element {:?}/{} is {:?}",
+                sequence_ref.sequence_id, sequence_ref.element_index, element.command
+            ));
+        }
+        if !matches!(
+            element.state,
+            SequenceState::InProgress | SequenceState::Todo | SequenceState::Postponed
+        ) {
+            return Err(format!(
+                "recorded {completion:?} completion expected a nonterminal sequence element, but {:?}/{} is {:?}",
+                sequence_ref.sequence_id, sequence_ref.element_index, element.state
+            ));
+        }
+
+        self.feedback.cutscene_camera.sequence_element = None;
+        self.orders
+            .sequence_manager
+            .element_terminated(sequence_ref.sequence_id, sequence_ref.element_index);
+
+        // Original SetState(Terminated) synchronously executes
+        // ExecutedImmediately() successors inside the director callback.
+        // Ordinary successors remain queued for the next manager Hourglass.
+        let sim = self.control.simulation_context();
+        self.drain_registration_inline_actions_sync(&sim, display, assets);
+        Ok(())
+    }
+
+    fn release_director_sequence_autonomously(&mut self) {
+        if self.feedback.cutscene_camera.external_completion_replay {
+            return;
+        }
+        if let Some(r) = self.feedback.cutscene_camera.sequence_element.take() {
+            self.orders
+                .sequence_manager
+                .element_terminated(r.sequence_id, r.element_index);
+        }
+    }
 
     /// Script-driven camera changes: follow-cam, camera slide, zoom dispatch.
     ///
@@ -171,11 +248,7 @@ impl EngineInner {
             self.feedback.cutscene_camera.desired_zoom_factor = -1.0;
             // Zoom reached target, release the latched ZoomLevel
             // sequence element.
-            if let Some(r) = self.feedback.cutscene_camera.sequence_element.take() {
-                self.orders
-                    .sequence_manager
-                    .element_terminated(r.sequence_id, r.element_index);
-            }
+            self.release_director_sequence_autonomously();
         }
 
         if self.feedback.cutscene_camera.desired_zoom_factor > 0.0
@@ -276,11 +349,7 @@ impl EngineInner {
                     display.background_transform.scrolling_vector = MapVec::ZERO;
                     // Slide clipped at level edge, release the latched
                     // CameraGoto element.
-                    if let Some(r) = self.feedback.cutscene_camera.sequence_element.take() {
-                        self.orders
-                            .sequence_manager
-                            .element_terminated(r.sequence_id, r.element_index);
-                    }
+                    self.release_director_sequence_autonomously();
                 } else {
                     // Accelerate slide speed
                     if self.control.speed == 1.0 {
@@ -305,11 +374,7 @@ impl EngineInner {
                 display.background_transform.scrolling_vector = MapVec::ZERO;
                 // Slide reached target, release the latched
                 // CameraGoto element.
-                if let Some(r) = self.feedback.cutscene_camera.sequence_element.take() {
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(r.sequence_id, r.element_index);
-                }
+                self.release_director_sequence_autonomously();
             }
         }
     }

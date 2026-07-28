@@ -10,9 +10,7 @@
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::ops::Range;
 use std::path::PathBuf;
-use std::process::Command as ProcessCommand;
 use std::sync::Arc;
 use std::{collections::BTreeMap, collections::BTreeSet, collections::VecDeque};
 
@@ -23,7 +21,6 @@ use robin_engine::engine::{DevState, Engine, HostDisplayState, InputState, Level
 use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::profiles::Action;
-use robin_engine::sector::SectorNumber;
 use robin_engine::sprite::BBox;
 use robin_rs::Host;
 use robin_rs::gfx_types::BlendMode;
@@ -157,12 +154,11 @@ struct TraceRngBatch {
     first_index: usize,
     values: Vec<u32>,
     callsite_offsets: Vec<u32>,
-    #[serde(default)]
     domains: Vec<TraceRngDomain>,
 }
 
 impl TraceRngBatch {
-    fn gameplay_draw_count(&self, schema: u32, classifier: &RngDomainClassifier) -> usize {
+    fn gameplay_draw_count(&self) -> usize {
         assert_eq!(self.values.len(), self.callsite_offsets.len());
         if self.values.is_empty() {
             assert!(
@@ -171,25 +167,14 @@ impl TraceRngBatch {
             );
             return 0;
         }
-        if !self.domains.is_empty() {
-            assert_eq!(
-                self.values.len(),
-                self.domains.len(),
-                "RNG domain stream has a different length than its values"
-            );
-            return self
-                .domains
-                .iter()
-                .filter(|domain| **domain == TraceRngDomain::Simulation)
-                .count();
-        }
         assert_eq!(
-            schema, 2,
-            "schema {schema} RNG batches must include stable draw domains"
+            self.values.len(),
+            self.domains.len(),
+            "RNG domain stream has a different length than its values"
         );
-        self.callsite_offsets
+        self.domains
             .iter()
-            .filter(|offset| classifier.is_gameplay(**offset))
+            .filter(|domain| **domain == TraceRngDomain::Simulation)
             .count()
     }
 }
@@ -199,89 +184,6 @@ impl TraceRngBatch {
 enum TraceRngDomain {
     Simulation,
     Audio,
-}
-
-#[derive(Debug, Default)]
-struct RngDomainClassifier {
-    legacy_audio_symbol_ranges: Vec<Range<u32>>,
-}
-
-impl RngDomainClassifier {
-    fn for_schema(schema: u32) -> Self {
-        if schema != 2 {
-            return Self::default();
-        }
-        let Some(binary) = std::env::var_os("ROBIN_ORIGINAL_BINARY") else {
-            return Self::default();
-        };
-        let binary = PathBuf::from(binary)
-            .canonicalize()
-            .unwrap_or_else(|error| panic!("canonicalize ROBIN_ORIGINAL_BINARY: {error}"));
-        let output = ProcessCommand::new("nm")
-            .args(["-S", "--defined-only"])
-            .arg(&binary)
-            .output()
-            .unwrap_or_else(|error| panic!("inspect {} with nm: {error}", binary.display()));
-        assert!(
-            output.status.success(),
-            "nm failed while inspecting legacy Original binary {}: {}",
-            binary.display(),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let classifier = Self::from_nm_output(&String::from_utf8_lossy(&output.stdout));
-        assert!(
-            !classifier.legacy_audio_symbol_ranges.is_empty(),
-            "no RHSound/RHSoundCache symbols found in legacy Original binary {}",
-            binary.display()
-        );
-        eprintln!(
-            "classifying schema-2 audio RNG from {} ({} symbol ranges)",
-            binary.display(),
-            classifier.legacy_audio_symbol_ranges.len()
-        );
-        classifier
-    }
-
-    fn from_nm_output(output: &str) -> Self {
-        let legacy_audio_symbol_ranges = output
-            .lines()
-            .filter_map(|line| {
-                let mut fields = line.split_whitespace();
-                let start = u64::from_str_radix(fields.next()?, 16).ok()?;
-                let size = u64::from_str_radix(fields.next()?, 16).ok()?;
-                let _symbol_type = fields.next()?;
-                let name = fields.next()?;
-                if !(name.starts_with("_ZN7RHSound") || name.starts_with("_ZN12RHSoundCache")) {
-                    return None;
-                }
-                let end = start.checked_add(size)?;
-                Some(
-                    u32::try_from(start).expect("audio symbol address exceeds trace offset range")
-                        ..u32::try_from(end).expect("audio symbol end exceeds trace offset range"),
-                )
-            })
-            .collect();
-        Self {
-            legacy_audio_symbol_ranges,
-        }
-    }
-
-    /// Old schema-2 recordings predate stable RNG domains. The fixed offsets
-    /// preserve the first baseline trace, while symbol ranges make other
-    /// captured Original builds relocatable when ROBIN_ORIGINAL_BINARY names
-    /// the exact executable used for recording.
-    fn is_gameplay(&self, offset: u32) -> bool {
-        if matches!(
-            offset,
-            3_227_602 | 3_230_325 | 3_296_383 | 3_305_409 | 3_305_465 | 3_305_909 | 3_306_159
-        ) {
-            return false;
-        }
-        !self
-            .legacy_audio_symbol_ranges
-            .iter()
-            .any(|range| range.contains(&offset))
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -397,23 +299,22 @@ enum TraceCommand {
     LaunchInteraction {
         actor: TraceEntityId,
         target: TraceEntityId,
-        original_command: u16,
-        #[serde(default)]
-        original_command_name: Option<String>,
+        original_command_name: String,
         running: bool,
     },
     LaunchSelfAbility {
         actor: TraceEntityId,
-        original_command: u16,
-        #[serde(default)]
-        original_command_name: Option<String>,
+        original_command_name: String,
+    },
+    LaunchScrollRead {
+        actor: TraceEntityId,
+        target: TraceEntityId,
+        running: bool,
     },
     SwordStrike {
         actor: TraceEntityId,
         target: TraceEntityId,
-        original_command: u16,
-        #[serde(default)]
-        original_command_name: Option<String>,
+        original_command_name: String,
         with_seek: bool,
     },
     SelectPc {
@@ -426,14 +327,10 @@ enum TraceCommand {
     },
     SelectAction {
         pc: TraceEntityId,
-        #[serde(default)]
-        action: Option<TraceAction>,
-        #[serde(default)]
-        original_action: Option<u32>,
+        action: TraceAction,
     },
     OrientActionAt {
         action: TraceAction,
-        original_action: u32,
         actor: TraceEntityId,
         mouse_map: TracePoint,
         target: TracePoint3,
@@ -518,12 +415,7 @@ impl From<TraceAction> for Action {
 }
 
 impl TraceCommand {
-    fn into_player_command(
-        self,
-        entity_map: &EntityMap,
-        engine: &Engine,
-        schema: u32,
-    ) -> Option<PlayerCommand> {
+    fn into_player_command(self, entity_map: &EntityMap, engine: &Engine) -> Option<PlayerCommand> {
         Some(match self {
             Self::BoxSelect {
                 first,
@@ -547,14 +439,14 @@ impl TraceCommand {
                 goal_layer,
             } => {
                 let destination: MapPoint = destination.into();
-                let goal_override = if schema >= 6 {
+                let goal_override = {
                     let raw_index = usize::try_from(goal_sector).unwrap_or_else(|_| {
-                        panic!("schema-{schema} group-move has negative sector index {goal_sector}")
+                        panic!("group-move has negative sector index {goal_sector}")
                     });
-                    // Schema 6 records the Original's heterogeneous
-                    // fast-grid sector-array index, which Rust does not
-                    // retain. Resolve its isomorphic motion area from the
-                    // other authoritative command fields.
+                    // The Original records its heterogeneous fast-grid
+                    // sector-array index, which Rust does not retain. Resolve
+                    // its isomorphic motion area from the other authoritative
+                    // command fields.
                     let candidates = engine
                         .fast_grid()
                         .level
@@ -580,6 +472,14 @@ impl TraceCommand {
                                 })
                                 .collect::<Vec<_>>();
                             match containing.as_slice() {
+                                [] if engine.group_move_door_at(destination).is_some() => {
+                                    // Some authored door click polygons extend
+                                    // beyond every fast-grid sector polygon.
+                                    // Preserve the validated canonical door
+                                    // hit and let group movement resolve it
+                                    // through its ordinary click-polygon path.
+                                    None
+                                }
                                 [sector]
                                     if sector.sector_type.is_door()
                                         || sector.sector_type.is_jump() =>
@@ -592,7 +492,7 @@ impl TraceCommand {
                                     None
                                 }
                                 _ => panic!(
-                                    "schema-{schema} group-move raw sector index {raw_index} has no \
+                                    "group-move raw sector index {raw_index} has no \
                                      motion area at {destination:?} on layer {goal_layer}; containing \
                                      semantic sectors: {:?}",
                                     containing
@@ -608,15 +508,13 @@ impl TraceCommand {
                             }
                         }
                         many => panic!(
-                            "schema-{schema} group-move raw sector index {raw_index} is ambiguous \
+                            "group-move raw sector index {raw_index} is ambiguous \
                              at {destination:?} on layer {goal_layer}: {:?}",
                             many.iter()
                                 .map(|sector| sector.sector_number)
                                 .collect::<Vec<_>>(),
                         ),
                     }
-                } else {
-                    Some((SectorNumber::new(goal_sector), goal_layer))
                 };
                 PlayerCommand::GroupMove {
                     actors: actors
@@ -632,45 +530,39 @@ impl TraceCommand {
             Self::LaunchInteraction {
                 actor,
                 target,
-                original_command,
                 original_command_name,
                 running,
             } => PlayerCommand::LaunchInteraction {
                 actor: entity_map.translate(actor),
                 target: entity_map.translate(target),
-                command: decode_original_command(
-                    original_command,
-                    original_command_name.as_deref(),
-                    schema,
-                ),
+                command: command_from_stable_name(&original_command_name),
                 running,
             },
             Self::LaunchSelfAbility {
                 actor,
-                original_command,
                 original_command_name,
             } => PlayerCommand::LaunchSelfAbility {
                 actor: entity_map.translate(actor),
-                command: decode_original_command(
-                    original_command,
-                    original_command_name.as_deref(),
-                    schema,
-                ),
+                command: command_from_stable_name(&original_command_name),
+            },
+            Self::LaunchScrollRead {
+                actor,
+                target,
+                running,
+            } => PlayerCommand::LaunchScrollRead {
+                actor: entity_map.translate(actor),
+                target: entity_map.translate(target),
+                running,
             },
             Self::SwordStrike {
                 actor,
                 target,
-                original_command,
                 original_command_name,
                 with_seek,
             } => PlayerCommand::SwordStrikeCmd {
                 actor: entity_map.translate(actor),
                 target: entity_map.translate(target),
-                command: decode_original_command(
-                    original_command,
-                    original_command_name.as_deref(),
-                    schema,
-                ),
+                command: command_from_stable_name(&original_command_name),
                 with_seek,
             },
             Self::SelectPc { pc, append } => PlayerCommand::SelectPc {
@@ -681,30 +573,12 @@ impl TraceCommand {
             Self::StopPc { pc } => PlayerCommand::StopPc {
                 pc_id: entity_map.translate(pc),
             },
-            Self::SelectAction {
-                pc,
-                action,
-                original_action,
-            } => {
-                let action = match (action, original_action) {
-                    (Some(action), _) => action.into(),
-                    (None, Some(original_action)) if schema == 2 => {
-                        Action::try_from(original_action).unwrap_or_else(|_| {
-                            panic!("unsupported original RHaction value {original_action}")
-                        })
-                    }
-                    (None, _) => {
-                        panic!("schema {schema} select_action lacks a stable semantic action")
-                    }
-                };
-                PlayerCommand::SelectResolvedAction {
-                    pc_id: entity_map.translate(pc),
-                    action,
-                }
-            }
+            Self::SelectAction { pc, action } => PlayerCommand::SelectResolvedAction {
+                pc_id: entity_map.translate(pc),
+                action: action.into(),
+            },
             Self::OrientActionAt {
                 action,
-                original_action: _,
                 actor,
                 mouse_map,
                 target,
@@ -718,14 +592,6 @@ impl TraceCommand {
                 pc_id: entity_map.translate(entity),
             },
         })
-    }
-}
-
-fn decode_original_command(value: u16, name: Option<&str>, schema: u32) -> Command {
-    match name {
-        Some(name) => command_from_stable_name(name),
-        None if schema == 2 => original_command_to_rust(value),
-        None => panic!("schema {schema} RHcommand {value} lacks a stable semantic name"),
     }
 }
 
@@ -761,88 +627,6 @@ fn command_from_stable_name(name: &str) -> Command {
         .unwrap_or_else(|_| panic!("unsupported stable Original RHcommand name {name:?}"))
 }
 
-/// Convert only legacy values whose semantic names have been verified against
-/// `original-code/RHCommand.h`. Never cast enum ordinals: the two enums have
-/// deliberately diverged (notably original `ROLL` and Rust `Jump`).
-fn original_command_to_rust(value: u16) -> Command {
-    match value {
-        52 => Command::ParrySword,
-        59 => Command::SwordstrikeThrustA,
-        60 => Command::SwordstrikeThrustB,
-        61 => Command::SwordstrikeThrustC,
-        62 => Command::SwordstrikeThrustD,
-        63 => Command::SwordstrikeThrustE,
-        64 => Command::SwordstrikeThrustF,
-        65 => Command::SwordstrikeThrustG,
-        66 => Command::SwordstrikeThrustH,
-        67 => Command::SwordstrikeThrustI,
-        75 => Command::WakeUp,
-        86 => Command::HitCmd,
-        _ => panic!("unsupported original RHcommand value {value}"),
-    }
-}
-
-/// Map the active legacy sequence command by semantic name. This is separate
-/// from resolved player-command conversion above: trace frames contain many
-/// engine-internal commands, and Rust inserted/removed enum variants over
-/// time, so ordinal casts would report false parity after the first skew.
-fn original_active_command_to_rust(value: u16) -> Command {
-    match value {
-        19 => Command::PassDoor,
-        22 => Command::MoveOk,
-        23 => Command::MoveWaiting,
-        26 => Command::Turn,
-        27 => Command::TurnElement,
-        28 => Command::TurnFast,
-        29 => Command::EquipBow,
-        33 => Command::LowerBow,
-        34 => Command::RaiseBow,
-        35 => Command::ShootBow,
-        39 => Command::ReceiveSwordDamage,
-        40 => Command::ReceiveArrowDamage,
-        42 => Command::ReceiveHitDamage,
-        50 => Command::EnterSwordfight,
-        51 => Command::QuitSwordfight,
-        52 => Command::ParrySword,
-        54 => Command::StopParrySword,
-        55 => Command::SwordstrikeSmalltalkLeft,
-        56 => Command::SwordstrikeSmalltalkRight,
-        57 => Command::ParrySmalltalkLeft,
-        58 => Command::ParrySmalltalkRight,
-        59 => Command::SwordstrikeThrustA,
-        60 => Command::SwordstrikeThrustB,
-        61 => Command::SwordstrikeThrustC,
-        62 => Command::SwordstrikeThrustD,
-        63 => Command::SwordstrikeThrustE,
-        64 => Command::SwordstrikeThrustF,
-        65 => Command::SwordstrikeThrustG,
-        66 => Command::SwordstrikeThrustH,
-        67 => Command::SwordstrikeThrustI,
-        70 => Command::Provoke,
-        75 => Command::WakeUp,
-        83 => Command::JumpCmd,
-        86 => Command::HitCmd,
-        87 => Command::HealCmd,
-        91 => Command::ThrowWaspNest,
-        99 => Command::EnterListen,
-        117 => Command::WhistleCmd,
-        119 => Command::Point,
-        122 => Command::SitDown,
-        131 => Command::EnterAttentiveMode,
-        132 => Command::LeaveAttentiveMode,
-        133 => Command::LeaveAttentiveModeOfficer,
-        134 => Command::LeanOut,
-        135 => Command::LookLeft,
-        136 => Command::LookRight,
-        140 => Command::GatherSoldiers,
-        160 => Command::WaitTimer,
-        161 => Command::Wait,
-        164 => Command::PlayAnim,
-        165 => Command::PlayAnimLoop,
-        _ => panic!("unsupported active original RHcommand value {value}"),
-    }
-}
-
 #[derive(Debug, Deserialize)]
 struct TraceElement {
     entity_id: TraceEntityId,
@@ -871,8 +655,7 @@ struct TraceActor {
     action_state: u32,
     animation: u32,
     command: u16,
-    #[serde(default)]
-    command_name: Option<String>,
+    command_name: String,
     motion_state: u32,
     wait_time: u32,
 }
@@ -894,6 +677,7 @@ struct TraceFrame {
     frame_before: u64,
     frame_after: u64,
     commands: Vec<TraceCommand>,
+    director_completions: Vec<robin_engine::engine::DirectorCompletion>,
     selected_pcs: Vec<TraceEntityId>,
     elements: Vec<TraceElement>,
     rng_draws: TraceRngBatch,
@@ -1111,8 +895,8 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     });
     let header = read_trace_header(&trace_path);
     assert_eq!(
-        header.schema, 6,
-        "unsupported parity trace schema {}; resolved-object-interaction schema 6 is required",
+        header.schema, 7,
+        "unsupported parity trace schema {}; director-completion schema 7 is required",
         header.schema
     );
     validate_trace_start(
@@ -1120,8 +904,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         header.session_index,
         header.initial_frame,
     );
-    let rng_domain_classifier = RngDomainClassifier::for_schema(header.schema);
-    let all_rng_draws = read_all_rng_draws(&trace_path, header.schema, &rng_domain_classifier);
+    let all_rng_draws = read_all_rng_draws(&trace_path);
 
     if let Ok(dir) = std::env::var("ROBINHOOD_DATA_DIR") {
         std::env::set_current_dir(&dir).expect("chdir to ROBINHOOD_DATA_DIR");
@@ -1154,15 +937,13 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     let prefix: TraceRngPrefix = serde_json::from_str(
         &lines
             .next()
-            .expect("schema 2 parity trace has no RNG prefix")
+            .expect("parity trace has no RNG prefix")
             .expect("read parity RNG prefix"),
     )
     .expect("parse parity RNG prefix");
     assert_eq!(prefix.r#type, "rng_prefix");
     assert_eq!(prefix.draws.first_index, 0);
-    let prefix_end = prefix
-        .draws
-        .gameplay_draw_count(header.schema, &rng_domain_classifier);
+    let prefix_end = prefix.draws.gameplay_draw_count();
     if let Some((options, writer)) = &mut dump {
         write_jsonl_record(
             writer,
@@ -1187,6 +968,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         "RNG pre-scan is shorter than prefix"
     );
     let (mut engine, assets, host, background) = initialize_engine(&header, all_rng_draws);
+    engine.set_external_director_completion_replay(true);
     let mut visual =
         visual_window.map(|window| VisualReplay::new(window, host, &engine, background));
     assert_eq!(
@@ -1254,10 +1036,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             }
         }
         let rng_start = gameplay_rng_index;
-        let rng_end = rng_start
-            + frame
-                .rng_draws
-                .gameplay_draw_count(header.schema, &rng_domain_classifier);
+        let rng_end = rng_start + frame.rng_draws.gameplay_draw_count();
         gameplay_rng_index = rng_end;
         let resolved_commands =
             serde_json::to_value(&frame.commands).expect("serialize resolved trace commands");
@@ -1298,8 +1077,18 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         if debug_startup {
             print_startup_actors("before Rust frame 1", &engine, &frame, map);
         }
+        for completion in frame.director_completions.drain(..) {
+            engine
+                .apply_external_director_completion(completion, &mut display, &assets)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "apply original director completion before frame {}: {error}",
+                        frame.frame_before
+                    )
+                });
+        }
         for command in frame.commands.drain(..) {
-            if let Some(command) = command.into_player_command(map, &engine, header.schema) {
+            if let Some(command) = command.into_player_command(map, &engine) {
                 engine.apply_command(&mut display, &mut input, &assets, &command);
             }
         }
@@ -1397,7 +1186,8 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             print_startup_actors("after Rust frame 1", &engine, &frame, map);
         }
 
-        let differences = compare_frame(&engine, &frame, map, header.schema);
+        map.refresh_building_sector_mapping(&engine, &frame);
+        let differences = compare_frame(&engine, &frame, map);
         if let Some((options, writer)) = &mut dump
             && options.includes(frame.frame_after)
         {
@@ -2024,11 +1814,7 @@ fn read_trace_header(trace_path: &std::path::Path) -> TraceHeader {
     serde_json::from_str(&line).expect("parse parity trace header")
 }
 
-fn read_all_rng_draws(
-    trace_path: &std::path::Path,
-    schema: u32,
-    classifier: &RngDomainClassifier,
-) -> Vec<u32> {
+fn read_all_rng_draws(trace_path: &std::path::Path) -> Vec<u32> {
     let metadata = std::fs::metadata(trace_path)
         .unwrap_or_else(|error| panic!("stat parity trace {}: {error}", trace_path.display()));
     let modified = metadata
@@ -2037,11 +1823,7 @@ fn read_all_rng_draws(
         .duration_since(std::time::UNIX_EPOCH)
         .expect("parity trace modification time predates Unix epoch")
         .as_nanos();
-    let fingerprint = format!(
-        "v1:schema={schema}:length={}:modified={modified}:audio_ranges={:?}",
-        metadata.len(),
-        classifier.legacy_audio_symbol_ranges
-    );
+    let fingerprint = format!("v2:schema=7:length={}:modified={modified}", metadata.len(),);
     let mut cache_name = trace_path.as_os_str().to_owned();
     cache_name.push(".rng-cache.json");
     let cache_path = PathBuf::from(cache_name);
@@ -2075,30 +1857,14 @@ fn read_all_rng_draws(
                 );
                 continue;
             }
-            if !batch.domains.is_empty() {
-                assert_eq!(
-                    batch.values.len(),
-                    batch.domains.len(),
-                    "RNG domain stream has a different length than its values"
-                );
-                result.extend(batch.values.into_iter().zip(batch.domains).filter_map(
-                    |(value, domain)| (domain == TraceRngDomain::Simulation).then_some(value),
-                ));
-            } else {
-                assert_eq!(
-                    schema, 2,
-                    "schema {schema} RNG batches must include stable draw domains"
-                );
-                result.extend(
-                    batch
-                        .values
-                        .into_iter()
-                        .zip(batch.callsite_offsets)
-                        .filter_map(|(value, offset)| {
-                            classifier.is_gameplay(offset).then_some(value)
-                        }),
-                );
-            }
+            assert_eq!(
+                batch.values.len(),
+                batch.domains.len(),
+                "RNG domain stream has a different length than its values"
+            );
+            result.extend(batch.values.into_iter().zip(batch.domains).filter_map(
+                |(value, domain)| (domain == TraceRngDomain::Simulation).then_some(value),
+            ));
         }
     }
     let cache = RngReplayCache {
@@ -2614,6 +2380,60 @@ impl EntityMap {
         }
     }
 
+    /// Learn synthetic Original↔Rust building-sector identities when an actor
+    /// first becomes a hidden building occupant. Neither engine's raw sector
+    /// allocation is stable across implementations, and some buildings have
+    /// no occupant at mission start from which `build` could infer the pair.
+    fn refresh_building_sector_mapping(&mut self, engine: &Engine, frame: &TraceFrame) {
+        for original in frame
+            .elements
+            .iter()
+            .filter(|element| element.actor.is_some() && !element.active)
+        {
+            let Some(&rust_id) = self.entities.get(&original.entity_id) else {
+                continue;
+            };
+            let Some(actual) = engine.get_entity(rust_id) else {
+                continue;
+            };
+            let actual_element = actual.element_data();
+            if actual_element.active || !actual_element.hidden_in_building {
+                continue;
+            }
+            let Some(actual_sector) = actual_element.sector().map(|sector| sector.get()) else {
+                continue;
+            };
+            let expected_position: MapPoint = original.position_map.into();
+            let actual_position = actual_element.position_map();
+            if expected_position.x.to_bits() != actual_position.x.to_bits()
+                || expected_position.y.to_bits() != actual_position.y.to_bits()
+                || original.sector == actual_sector
+            {
+                continue;
+            }
+            if let Some(previous) = self.building_sectors.get(&original.sector) {
+                assert_eq!(
+                    *previous, actual_sector,
+                    "original building sector {} maps to multiple Rust sectors",
+                    original.sector
+                );
+                continue;
+            }
+            if let Some((&other_original, _)) = self
+                .building_sectors
+                .iter()
+                .find(|(_, rust_sector)| **rust_sector == actual_sector)
+            {
+                panic!(
+                    "Rust building sector {actual_sector} maps to both Original sectors \
+                     {other_original} and {}",
+                    original.sector
+                );
+            }
+            self.building_sectors.insert(original.sector, actual_sector);
+        }
+    }
+
     fn refresh_trace_index(&mut self, trace_id: TraceEntityId, creation_order: u32) {
         if let Some(rust_id) = self
             .entities_by_creation_order
@@ -2807,12 +2627,7 @@ fn print_startup_actors(label: &str, engine: &Engine, frame: &TraceFrame, entity
     }
 }
 
-fn compare_frame(
-    engine: &Engine,
-    frame: &TraceFrame,
-    entity_map: &EntityMap,
-    schema: u32,
-) -> Vec<String> {
+fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) -> Vec<String> {
     let mut differences = Vec::new();
     let selected: Vec<EntityId> = frame
         .selected_pcs
@@ -2914,14 +2729,14 @@ fn compare_frame(
         let actual_sector = element.sector().map_or(u16::MAX, |sector| sector.get());
         let mapped_building_sector = expected.sector != actual_sector
             && entity_map.sectors_equivalent(expected.sector, actual_sector);
+        compare(
+            &mut differences,
+            id,
+            "layer",
+            expected.layer,
+            element.layer(),
+        );
         if !mapped_building_sector {
-            compare(
-                &mut differences,
-                id,
-                "layer",
-                expected.layer,
-                element.layer(),
-            );
             compare(
                 &mut differences,
                 id,
@@ -2972,14 +2787,7 @@ fn compare_frame(
                 &mut differences,
                 id,
                 "actor.command",
-                match expected_actor.command_name.as_deref() {
-                    Some(name) => command_from_stable_name(name),
-                    None if schema == 2 => original_active_command_to_rust(expected_actor.command),
-                    None => panic!(
-                        "schema {schema} actor RHcommand {} lacks a stable semantic name",
-                        expected_actor.command
-                    ),
-                },
+                command_from_stable_name(&expected_actor.command_name),
                 engine.actor_command(id),
             );
         }
@@ -3137,31 +2945,11 @@ mod tests {
             callsite_offsets: vec![3_305_465, 123],
             domains: vec![TraceRngDomain::Simulation, TraceRngDomain::Audio],
         };
-        assert_eq!(
-            batch.gameplay_draw_count(3, &RngDomainClassifier::default()),
-            1
-        );
+        assert_eq!(batch.gameplay_draw_count(), 1);
     }
 
     #[test]
-    fn schema_two_audio_callsite_can_be_resolved_from_symbols() {
-        let classifier = RngDomainClassifier::from_nm_output(
-            "00327400 00000040 T _ZN7RHSound9HourglassEv\n\
-             00400000 00000020 T _ZN8NotAudio4DrawEv\n",
-        );
-        assert!(!classifier.is_gameplay(0x0032_7410));
-        assert!(classifier.is_gameplay(0x0040_0010));
-    }
-
-    #[test]
-    fn original_schema_two_baseline_offsets_remain_supported() {
-        assert!(!RngDomainClassifier::default().is_gameplay(3_305_465));
-        assert!(RngDomainClassifier::default().is_gameplay(1));
-    }
-
-    #[test]
-    fn original_equip_bow_command_maps_by_semantic_name() {
-        assert_eq!(original_active_command_to_rust(29), Command::EquipBow);
+    fn original_commands_map_by_semantic_name() {
         assert_eq!(Action::from(TraceAction::Bow), Action::Bow);
         assert_eq!(command_from_stable_name("raise_bow"), Command::RaiseBow);
         assert_eq!(command_from_stable_name("jump"), Command::JumpCmd);
@@ -3169,7 +2957,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_three_resolved_orientation_is_bit_exact() {
+    fn resolved_orientation_is_bit_exact() {
         let command: TraceCommand = serde_json::from_value(serde_json::json!({
             "type": "orient_action_at",
             "action": "bow",

@@ -7,7 +7,7 @@
 use super::movement::GoalShape;
 use super::{EngineInner, HostDisplayState, InputState, LevelAssets};
 use crate::coordinates::MapPoint;
-use crate::element::{ActionState, Command, EntityId, Human as _};
+use crate::element::{Command, EntityId, Human as _};
 use crate::player_command::{PlayerCommand, PlayerInput};
 use crate::profiles::Action;
 use crate::sequence::{
@@ -191,13 +191,11 @@ impl EngineInner {
                 }
             }
             StopPc { pc_id } => {
-                if let Some(entity) = self.get_entity_mut(*pc_id)
-                    && let Some(actor) = entity.actor_data_mut()
-                {
-                    actor.clear_path();
-                    actor.action_state = ActionState::Waiting;
-                    actor.active_movement.clear();
-                }
+                // RHElementActor::Stop leaves the actor's default Wait
+                // element alone. For real movement it rewrites/stops the
+                // sequence so its transition can finish; it does not
+                // directly force the action state to Waiting.
+                self.stop_owner(*pc_id, crate::sequence::SequencePriority::Normal);
             }
 
             // ── Sequence-based interactions ──────────────────────
@@ -1947,16 +1945,7 @@ impl EngineInner {
             Some(e) => {
                 let pos_map = e.element_data().position_map();
                 let gating_pos = if b_use_action_point {
-                    match e.sprite().current_hotspot() {
-                        Some(hp) => {
-                            let ps = e.cxx_position_sprite();
-                            crate::coordinates::MapPoint {
-                                x: ps.x + hp.x,
-                                y: ps.y + hp.y,
-                            }
-                        }
-                        None => pos_map,
-                    }
+                    e.cxx_current_point_map().unwrap_or(pos_map)
                 } else {
                     pos_map
                 };
@@ -2240,11 +2229,10 @@ impl EngineInner {
             crate::order::OrderType::WalkingUpright
         };
 
-        let action_distance =
-            match self.actor_action_distance(actor, crate::order::OrderType::Listening) {
-                Some(distance) => distance,
-                None => return,
-            };
+        // NPC::MouseClicked passes the literal distance 30 to
+        // `AddSequenceWithSeek`; it is intentionally not derived from an
+        // animation profile (the Original even marks that constant FIXME).
+        let action_distance = 30.0;
 
         // Build the composite command sequence.  Level numbers are
         // relative to this sequence; elements at the same level run
@@ -2537,8 +2525,7 @@ impl EngineInner {
             // anchor.
             let (door_handle, door_direction) = self
                 .get_entity(pc_id)
-                .map(|e| e.position_iface())
-                .map(|p| (p.get_door(), p.get_door_direction()))
+                .map(crate::engine::movement::current_door_for_route_source)
                 .unwrap_or((crate::position_interface::DoorHandle::NULL, false));
             let (adj_src_pos, adj_src_sector) = {
                 let adapted = crate::engine::movement::adapt_source_to_current_door(

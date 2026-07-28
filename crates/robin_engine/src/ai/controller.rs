@@ -3373,12 +3373,12 @@ impl AiController {
             }
         } else {
             // Plain return-to-post: no `GOTO_SPECIAL_ACTION`, no
-            // posture gate — just a bare `GoTo(initial_position)`
-            // that relies on the `FIND_ACCESSIBLE` escape hatch.
+            // posture gate — just the Original's bare
+            // `GoTo(initial_position)` with default flags.
             let ip = self.initial_position;
             self.set_ai_state(AiState::Default);
             self.current_substate = Substate::DefaultGotoPost;
-            self.go_to(ip, GotoFlags::FIND_ACCESSIBLE, ctx);
+            self.go_to(ip, GotoFlags::empty(), ctx);
         }
     }
 

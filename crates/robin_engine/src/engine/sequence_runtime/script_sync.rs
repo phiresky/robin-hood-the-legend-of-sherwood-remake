@@ -1,6 +1,54 @@
 use super::*;
 
 impl EngineInner {
+    /// Close only the part of sequence registration that Original executes
+    /// on the current script callback stack.
+    ///
+    /// Immediate commands and RHPRIORITY_WAIT successors recurse inline.
+    /// Ordinary owner/engine commands remain queued for
+    /// SequenceManager::Hourglass, even though the script VM has returned.
+    pub(in crate::engine) fn drain_script_registration_inline_actions(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+    ) -> Result<(), crate::engine::script::ScriptDriverError> {
+        while let Some(action) = self
+            .orders
+            .sequence_manager
+            .pop_pending_registration_inline_action()
+        {
+            let failed_element = synchronous_action_element_ref(&action);
+            let continuation = self
+                .orders
+                .sequence_manager
+                .take_pending_synchronous_actions();
+            let dispatch_result =
+                self.dispatch_script_synchronous_action(sim, assets, action, active_scripts);
+            let result = match dispatch_result {
+                Ok(()) => {
+                    self.drain_script_registration_inline_actions(sim, assets, active_scripts)
+                }
+                Err(mut error) => {
+                    if !error.sequence_element_failed {
+                        if let Some((sequence_id, element_index)) = failed_element {
+                            self.orders
+                                .sequence_manager
+                                .element_impossible(sequence_id, element_index);
+                        }
+                        error.sequence_element_failed = true;
+                    }
+                    Err(error)
+                }
+            };
+            self.orders
+                .sequence_manager
+                .restore_pending_synchronous_actions(continuation);
+            result?;
+        }
+        Ok(())
+    }
+
     /// Drain the sequence work emitted by a script-native callback as a
     /// recursive stack, not a flat FIFO. Each action temporarily detaches its
     /// older siblings; successors and nested callbacks therefore finish before

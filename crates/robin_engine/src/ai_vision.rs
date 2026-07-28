@@ -450,7 +450,7 @@ pub fn compute_object_visibility(q: &ObjectVisibilityQuery<'_>) -> f32 {
         q.sight_obstacles,
         q.fast_grid,
         q.target_los,
-        None,
+        Some((q.viewer_world, q.target_world)),
         dx,
         dy,
         sqr_distance,
@@ -509,7 +509,7 @@ fn is_detecting(
         q.sight_obstacles,
         q.fast_grid,
         q.target_los,
-        Some((q.viewer_world.z, q.target_world.z)),
+        Some((q.viewer_world, q.target_world)),
         view_x,
         view_y,
         sqr_distance,
@@ -532,7 +532,7 @@ fn is_detecting_cone_and_los(
     sight_obstacles: ObstacleList<'_>,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
     target: MapPoint,
-    los_z: Option<(f32, f32)>,
+    los_world: Option<(WorldPoint3D, WorldPoint3D)>,
     view_x: f32,
     view_y: f32,
     sqr_distance: f32,
@@ -565,7 +565,7 @@ fn is_detecting_cone_and_los(
         if det_left < 0.0 || det_right > 0.0 {
             return false;
         }
-        los_clear_for_detection(viewer, target, layer, sight_obstacles, fast_grid, los_z)
+        los_clear_for_detection(viewer, target, layer, sight_obstacles, fast_grid, los_world)
     } else {
         // ── Close-range halfcircle ───────────────────────────────
         //
@@ -579,7 +579,7 @@ fn is_detecting_cone_and_los(
         let view_sector = crate::position_interface::vector_to_sector_0_to_15_iso(view_x, view_y);
         let diff = (view_sector - viewer_direction).rem_euclid(16);
         if matches!(diff, 0 | 1 | 2 | 3 | 4 | 12 | 13 | 14 | 15) {
-            los_clear_for_detection(viewer, target, layer, sight_obstacles, fast_grid, los_z)
+            los_clear_for_detection(viewer, target, layer, sight_obstacles, fast_grid, los_world)
         } else {
             false
         }
@@ -592,13 +592,13 @@ fn los_clear_for_detection(
     layer: u16,
     sight_obstacles: ObstacleList<'_>,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
-    los_z: Option<(f32, f32)>,
+    los_world: Option<(WorldPoint3D, WorldPoint3D)>,
 ) -> bool {
-    if let Some((viewer_z, target_z)) = los_z {
+    if let Some((viewer_world, target_world)) = los_world {
         return crate::sight_obstacle::is_reachable_3d(
             sight_obstacles,
-            [viewer.x, viewer.y, viewer_z],
-            [target.x, target.y, target_z],
+            [viewer_world.x, viewer_world.y, viewer_world.z],
+            [target_world.x, target_world.y, target_world.z],
             crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
         );
     }
@@ -651,12 +651,11 @@ fn is_detecting_180_degrees(q: &VisibilityQuery<'_>) -> bool {
         return false;
     }
 
-    los_clear_spatial(
-        q.viewer_los,
-        q.target_los,
-        q.layer,
+    crate::sight_obstacle::is_reachable_3d(
         q.sight_obstacles,
-        q.fast_grid,
+        [q.viewer_world.x, q.viewer_world.y, q.viewer_world.z],
+        [q.target_world.x, q.target_world.y, q.target_world.z],
+        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
     )
 }
 

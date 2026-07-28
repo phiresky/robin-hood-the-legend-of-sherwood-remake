@@ -22,8 +22,8 @@ use std::ops::Deref;
 
 use super::SimConfig;
 use super::{
-    ConsoleResponse, DevState, EngineError, EngineInner, InputState, LevelAssets, LevelLoadStaging,
-    SideEffects, SimulationRng,
+    ConsoleResponse, DevState, DirectorCompletion, EngineError, EngineInner, InputState,
+    LevelAssets, LevelLoadStaging, SideEffects, SimulationRng,
 };
 use crate::campaign::Campaign;
 use crate::element::EntityId;
@@ -503,6 +503,27 @@ impl Engine {
     }
 
     // ── Tick ────────────────────────────────────────────────────────
+
+    /// Select whether recorded between-frame director events own completion
+    /// timing for camera sequence elements.
+    pub fn set_external_director_completion_replay(&mut self, enabled: bool) {
+        self.inner.set_external_director_completion_replay(enabled);
+    }
+
+    /// Apply one recorded director completion at the pre-Hourglass boundary.
+    ///
+    /// This validates the currently latched sequence command, terminates it,
+    /// and synchronously runs immediate successors before returning.
+    pub fn apply_external_director_completion(
+        &mut self,
+        completion: DirectorCompletion,
+        display: &mut super::HostDisplayState,
+        assets: &LevelAssets,
+    ) -> Result<(), String> {
+        self.require_live_campaign("applying an external director completion");
+        self.inner
+            .apply_external_director_completion(completion, display, assets)
+    }
 
     /// The per-frame simulation tick. The ONLY per-frame sim-state
     /// mutation point; rollback replay re-runs this on a cloned engine

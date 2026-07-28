@@ -289,8 +289,10 @@ impl AiContext {
         );
         let viewer_eye_z =
             self.elevation + crate::stealth::eye_z_for_posture(self.posture, self.self_is_rider);
-        let dx = pt.x - viewer_eye.x;
-        let dy = (pt.y - viewer_eye.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+        let viewer_eye_ground =
+            crate::coordinates::GroundPoint::from_map_and_z(viewer_eye, self.elevation);
+        let dx = pt.x - viewer_eye_ground.x;
+        let dy = (pt.y - viewer_eye_ground.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
         let dz = pt.z - viewer_eye_z;
         let sq_distance = dx * dx + dy * dy + dz * dz;
         if sq_distance > self.sq_self_view_radius {
@@ -298,7 +300,7 @@ impl AiContext {
         }
         crate::sight_obstacle::is_reachable_3d(
             self.obstacle_list(),
-            [viewer_eye.x, viewer_eye.y, viewer_eye_z],
+            [viewer_eye_ground.x, viewer_eye_ground.y, viewer_eye_z],
             [pt.x, pt.y, pt.z],
             crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
         )

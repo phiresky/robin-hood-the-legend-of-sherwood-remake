@@ -2026,6 +2026,13 @@ mod tests {
 
         let mut door_triggers = Vec::new();
         let mut select_triggers = Vec::new();
+        let transition_destination = engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .element_data()
+            .position_map();
         let transition = {
             let actor = engine
                 .world
@@ -2037,6 +2044,7 @@ mod tests {
             EngineInner::advance_door_pass(
                 actor,
                 owner,
+                transition_destination,
                 &mut door_triggers,
                 &mut select_triggers,
                 &mut engine.orders.next_order_id,

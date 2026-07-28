@@ -2892,6 +2892,35 @@ impl SequenceManager {
         self.pending_synchronous_actions.pop_front()
     }
 
+    /// Remove the first action that Original registration executes inline,
+    /// while leaving ordinary manager-Hourglass work queued in order.
+    ///
+    /// This is used at callbacks that occur outside `SequenceManager::Hourglass`
+    /// (notably director completion during Draw and anonymous-timer expiry
+    /// after the manager phase). `ExecutedImmediately()` commands and
+    /// RHPRIORITY_WAIT successors run inline; other priorities stay queued.
+    pub fn pop_pending_registration_inline_action(&mut self) -> Option<SequenceAction> {
+        let index = self
+            .pending_synchronous_actions
+            .iter()
+            .position(|action| match action {
+                SequenceAction::ExecuteImmediateOwner { .. }
+                | SequenceAction::ExecuteImmediateEngine { .. } => true,
+                SequenceAction::InstructOwner {
+                    sequence_id,
+                    element_index,
+                    ..
+                }
+                | SequenceAction::EngineCommand {
+                    sequence_id,
+                    element_index,
+                } => self
+                    .get_element(*sequence_id, *element_index)
+                    .is_some_and(|element| element.priority == SequencePriority::Wait),
+            })?;
+        self.pending_synchronous_actions.remove(index)
+    }
+
     pub fn next_pending_immediate_action(&self) -> Option<&SequenceAction> {
         self.pending_synchronous_actions.front()
     }
@@ -3712,19 +3741,12 @@ impl SequenceManager {
                         SequenceState::InProgress | SequenceState::Postponed
                     )
                     // Only the actor's current default wait is exempt in the
-                    // original. A postponed Wait is real queued actor work.
+                    // original. Default waits are explicitly stamped with
+                    // Wait priority; an authored/scripted Wait is ordinary
+                    // stoppable work even while it is in progress.
                     && !(elem.state == SequenceState::InProgress
-                        && elem.command == Command::Wait)
-                    // `RHSequenceElement::Stop` deliberately keeps an
-                    // in-progress movement alive so its rewritten
-                    // walking/running-to-waiting transition can play.
-                    // `stop_movement_for_owner` has already interrupted
-                    // movement actions without a transition arm; anything
-                    // still InProgress here is the preserved transition.
-                    // Postponed movement has no transition to preserve and
-                    // base `RHSequenceElement::Stop` interrupts it.
-                    && !(elem.state == SequenceState::InProgress
-                        && elem.data.is_movement())
+                        && elem.command == Command::Wait
+                        && elem.priority == SequencePriority::Wait)
                 {
                     targets.push((*seq_id, elem_idx));
                 }
@@ -4206,10 +4228,16 @@ impl SequenceManager {
             // first frame.
             first.reseed_id(crate::order::alloc_order_id(next_order_id));
             changed = true;
-            // Trim trailing orders and shorten the destination to
-            // ~10 units along the current heading.
+            // Trim trailing orders and shorten the movement element's
+            // destination to ~10 units along the current heading.
+            //
+            // Original `StopMovement` calls `SetDestination`, whose inline
+            // setter changes only `mptDestination`; it deliberately does not
+            // rewrite `pOrder->pointDestination2D`.  The transition order
+            // therefore reinitializes the sprite against its old path goal,
+            // while the element retains the shortened logical destination.
             elem.orders.truncate(1);
-            let first = elem.orders.front_mut().expect("truncate kept 1 order");
+            let first = elem.orders.front().expect("truncate kept 1 order");
             let vx = first.target_x - owner_pos.x;
             let vy = first.target_y - owner_pos.y;
             let norm = (vx * vx + vy * vy).sqrt();
@@ -4217,10 +4245,6 @@ impl SequenceManager {
                 let scale = 10.0 / norm;
                 let new_x = owner_pos.x + vx * scale;
                 let new_y = owner_pos.y + vy * scale;
-                first.target_x = new_x;
-                first.target_y = new_y;
-                // Keep the element's own `destination` field in sync
-                // with the current order's point.
                 if let SequenceElementData::Movement { destination, .. } = &mut elem.data {
                     destination.x = new_x;
                     destination.y = new_y;
@@ -5793,7 +5817,7 @@ mod tests {
     }
 
     #[test]
-    fn stop_movement_rewrites_current_order_and_shortens_destination() {
+    fn stop_movement_rewrites_order_and_shortens_only_element_destination() {
         let mut mgr = SequenceManager::new();
         let mut seq = Sequence::new();
         let mut elem = SequenceElement::new_movement(
@@ -5828,7 +5852,11 @@ mod tests {
             first.order_type,
             OrderType::TransitionWalkingUprightWaitingUpright
         );
-        assert!(first.target_x <= 10.0 + 0.001);
+        assert_eq!(first.target_x, 100.0);
+        let SequenceElementData::Movement { destination, .. } = &s.elements[0].data else {
+            panic!("movement data");
+        };
+        assert!(destination.x <= 10.0 + 0.001);
         // Trailing order should have been dropped.
         assert_eq!(s.elements[0].orders.len(), 1);
         assert!(cancellations.is_empty()); // No MoveWaiting — no cancellation.

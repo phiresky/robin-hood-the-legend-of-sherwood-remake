@@ -206,6 +206,17 @@ impl EngineInner {
                 )
                 .expect("mission script vanished while callback was suspended");
             self.drain_script_effects_with_active(sim, assets, active)?;
+            // `Thanx()` launches the recorded sequence directly through the
+            // sequence manager rather than through `ScriptEffects`.  Its
+            // initial WAIT/immediate elements execute from the launch call
+            // stack in the Original, so close that synchronous registration
+            // boundary before returning from (or resuming) the VM callback.
+            //
+            // Without this drain a zone callback that records
+            // LockUser+SendMessage leaves both actions queued until the next
+            // engine hourglass.  Actors then receive one extra movement tick
+            // before the message's synchronous LockAI loop can stop them.
+            self.drain_script_registration_inline_actions(sim, assets, active)?;
             match stop {
                 crate::interp::StopReason::ReturnedValue(value) => return Ok(value),
                 crate::interp::StopReason::Returned => return Ok(0),
@@ -531,6 +542,39 @@ impl EngineInner {
                     self.stop_owner(owner, crate::sequence::SequencePriority::Normal);
                     self.dispatch_condolations_in_script_driver(sim, assets, active)?;
                 }
+                Ok(0)
+            }
+            crate::interp::SynchronousScriptRequest::UnlockAi { actor, .. } => {
+                let owner = self.entity_id_for_actor_handle(actor).ok_or_else(|| {
+                    format!("UnlockAI owner handle {actor} became stale at its synchronous barrier")
+                })?;
+                let unconscious = self
+                    .get_entity(owner)
+                    .and_then(Entity::human_data)
+                    .is_some_and(|human| human.unconscious);
+                let ai = self
+                    .get_entity_mut(owner)
+                    .and_then(Entity::ai_controller_mut)
+                    .ok_or_else(|| {
+                        format!(
+                            "UnlockAI owner {} lost its required NPC AI at its synchronous barrier",
+                            owner.index()
+                        )
+                    })?;
+                if ai.script_locked {
+                    ai.script_unlock(unconscious);
+                } else {
+                    tracing::warn!(owner = owner.index(), "UnlockAI: NPC is not script-locked");
+                }
+                // ScriptUnlockAI synchronously re-enters
+                // Think(EVENT_RETURN_TO_DUTY). Finish that owner-local call,
+                // then materialize any resulting GoTo before resuming the VM.
+                // Normal-priority movement remains registered for
+                // SequenceManager::Hourglass; it is not instructed inline.
+                self.drain_direct_ai_owner_boundary_without_forecast_deferred_instruct(
+                    sim, owner, assets,
+                );
+                self.drain_pending_move_requests_for_owner(owner);
                 Ok(0)
             }
             crate::interp::SynchronousScriptRequest::AssignPath { actor, way, .. } => {

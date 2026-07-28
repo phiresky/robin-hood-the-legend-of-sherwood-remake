@@ -884,15 +884,15 @@ impl NativeContext<'_, '_> {
         // actor is currently straddling a gate (`pTarget->GetDoor()`).
         // Do this before the same-sector fast path and path lookup so
         // recorded/script movement starts from the gate's far side.
-        if let Some((door_handle, door_direction)) = self.get_entity(actor_handle).map(|entity| {
-            let pi = entity.position_iface();
-            (pi.get_door(), pi.get_door_direction())
-        }) && let Some((adapted_source, adapted_sector, adapted_layer)) =
-            crate::engine::adapt_source_to_current_door(
-                &self.script_domains.interactables.doors,
-                door_handle,
-                door_direction,
-            )
+        if let Some((door_handle, door_direction)) = self
+            .get_entity(actor_handle)
+            .map(crate::engine::current_door_for_route_source)
+            && let Some((adapted_source, adapted_sector, adapted_layer)) =
+                crate::engine::adapt_source_to_current_door(
+                    &self.script_domains.interactables.doors,
+                    door_handle,
+                    door_direction,
+                )
         {
             source = (adapted_source.x, adapted_source.y);
             source_sector = adapted_sector;
@@ -2875,23 +2875,30 @@ impl NativeContext<'_, '_> {
 
     /// Common body for the `UnlockAI` script native.
     fn script_unlock_ai(&mut self, actor: i32) {
-        let Some(entity) = self.get_entity_mut(actor) else {
+        let Some(owner) = self.actor_id(actor) else {
             tracing::warn!("UnlockAI: invalid actor handle {actor}");
             return;
         };
 
-        if entity.is_npc() {
-            let is_unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
-            if let Some(ai) = entity.ai_controller_mut() {
-                if ai.script_locked {
-                    ai.script_unlock(is_unconscious);
-                } else {
-                    tracing::warn!("UnlockAI: NPC {actor} is not script-locked");
-                }
-            }
-        } else {
+        if !self
+            .entities
+            .get(owner)
+            .expect("UnlockAI resolved actor disappeared during native dispatch")
+            .is_npc()
+        {
             tracing::warn!("UnlockAI: tried to unlock the AI of a PC ({actor})");
+            return;
         }
+
+        self.pending_yield = Some(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::EngineAction(
+                crate::interp::SynchronousScriptRequest::UnlockAi {
+                    actor,
+                    native_return: 0,
+                },
+            ),
+            resume: crate::interp::ResumePolicy::Fixed(0),
+        });
     }
 
     /// Common body for the `Freeze` script native.  Only PCs have a

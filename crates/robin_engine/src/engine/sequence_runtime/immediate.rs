@@ -112,6 +112,49 @@ impl EngineInner {
         }
     }
 
+    /// Drain only work that legacy sequence registration executes inline,
+    /// leaving ordinary `RegisterSequenceElementToGo` work queued for
+    /// SequenceManager::Hourglass.
+    ///
+    /// `ExecutedImmediately()` commands and RHPRIORITY_WAIT successors run on
+    /// the registration stack. Other priorities cannot start until the next
+    /// manager hourglass when registration occurs after its phase.
+    pub(crate) fn drain_registration_inline_actions_sync(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        display: &mut HostDisplayState,
+        assets: &LevelAssets,
+    ) {
+        while let Some(action) = self
+            .orders
+            .sequence_manager
+            .pop_pending_registration_inline_action()
+        {
+            let continuation = self
+                .orders
+                .sequence_manager
+                .take_pending_synchronous_actions();
+            match action {
+                crate::sequence::SequenceAction::ExecuteImmediateOwner { .. }
+                | crate::sequence::SequenceAction::ExecuteImmediateEngine { .. } => {
+                    self.dispatch_immediate_action(sim, display, assets, action);
+                }
+                crate::sequence::SequenceAction::InstructOwner { .. }
+                | crate::sequence::SequenceAction::EngineCommand { .. } => {
+                    self.dispatch_script_synchronous_action(sim, assets, action, &mut Vec::new())
+                        .unwrap_or_else(|error| {
+                            panic!("inline WAIT successor dispatch failed: {error:?}")
+                        });
+                }
+            }
+            self.dispatch_condolations(sim, assets);
+            self.drain_registration_inline_actions_sync(sim, display, assets);
+            self.orders
+                .sequence_manager
+                .restore_pending_synchronous_actions(continuation);
+        }
+    }
+
     /// Extracted from the `ExecuteImmediateOwner` match arm in
     /// `perform_hourglass_inner`.  Dispatches the owner-immediate
     /// command group (Teleport, LockAi, UnlockAi, ReplaceAnim,
@@ -543,16 +586,6 @@ impl EngineInner {
                 self.actor_wait(owner);
             }
             Command::LockAi | Command::UnlockAi => {
-                let from_lockai_command = self
-                    .orders
-                    .sequence_manager
-                    .current_element_for_actor(owner)
-                    .is_some_and(|(current_seq, current_idx)| {
-                        self.orders
-                            .sequence_manager
-                            .get_element(current_seq, current_idx)
-                            .is_some_and(|element| element.command == Command::LockAi)
-                    });
                 let unconscious = self
                     .get_entity(owner)
                     .and_then(|entity| entity.human_data())
@@ -562,20 +595,28 @@ impl EngineInner {
                     .and_then(crate::element::Entity::ai_controller_mut)
                 {
                     if cmd == Command::LockAi {
-                        // ScriptLockAI calls actor.Stop(NORMAL) while
-                        // the previously selected command is still
-                        // current. Suppress the controller's deferred
-                        // halt and perform that stop synchronously
-                        // below, before this zero-frame LockAI
-                        // terminates and registers its successor.
+                        // This is the `RHCOMMAND_LOCK_AI` ExecuteImmediately
+                        // arm itself. C++ has already selected that incoming
+                        // element as `mpSequenceElement`, so ScriptLockAI sees
+                        // `GetCommand() == LOCK_AI` and deliberately does not
+                        // call Stop(). In particular, it must not cancel
+                        // same-level siblings such as the two TurnElement
+                        // commands in an attached-scroll interaction.
                         ai.script_lock(false, true);
                     } else if ai.script_locked {
                         ai.script_unlock(unconscious);
                     }
                 }
-                if cmd == Command::LockAi && !from_lockai_command {
-                    self.stop_owner(owner, crate::sequence::SequencePriority::Normal);
-                    self.dispatch_condolations(sim, assets);
+                if cmd == Command::UnlockAi {
+                    // ScriptUnlockAI calls Think(EVENT_RETURN_TO_DUTY)
+                    // before returning. Finish the owner-local AI callback,
+                    // but do not instruct any resulting GoTo here:
+                    // RHSequenceManager::RegisterSequenceElementToGo queues
+                    // that ordinary Move for its manager-Hourglass phase.
+                    self.drain_direct_ai_owner_boundary_without_forecast_deferred_instruct(
+                        sim, owner, assets,
+                    );
+                    self.drain_pending_move_requests_for_owner(owner);
                 }
                 self.orders
                     .sequence_manager

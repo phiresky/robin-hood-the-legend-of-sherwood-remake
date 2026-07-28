@@ -961,7 +961,12 @@ impl TurnCommandContext<'_> {
                             antagonist_position.x - position.x,
                             antagonist_position.y - position.y,
                         );
-                        entity.element_data_mut().set_direction_instantly(direction);
+                        // C++ `RHElementActor::Translate(TURN_ELEMENT)`
+                        // calls `SetDirection`, which updates the goal only.
+                        // The actor's later `Turn()` step advances the current
+                        // direction toward it; snapping both values here
+                        // skips that observable turn frame.
+                        entity.element_data_mut().set_direction_goal(direction);
                     }
                 }
                 self.push_order(seq_id, elem_idx, crate::order::OrderType::Turning, false);

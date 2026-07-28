@@ -104,6 +104,8 @@ fn order_uses_distance_motion(order: OrderType) -> bool {
             | OrderType::ClimbingWallDownFast
             | OrderType::ClimbingLadderUp
             | OrderType::ClimbingLadderDown
+            | OrderType::ClimbingLadderUpAlerted
+            | OrderType::ClimbingLadderDownAlerted
             | OrderType::ClimbingLadderUpFast
             | OrderType::ClimbingLadderDownFast
     )
@@ -169,6 +171,22 @@ fn is_fast_climb_action(action: OrderType) -> bool {
     )
 }
 
+fn is_authored_climb_action(action: OrderType) -> bool {
+    matches!(
+        action,
+        OrderType::ClimbingWallUp
+            | OrderType::ClimbingWallDown
+            | OrderType::ClimbingWallUpFast
+            | OrderType::ClimbingWallDownFast
+            | OrderType::ClimbingLadderUp
+            | OrderType::ClimbingLadderDown
+            | OrderType::ClimbingLadderUpAlerted
+            | OrderType::ClimbingLadderDownAlerted
+            | OrderType::ClimbingLadderUpFast
+            | OrderType::ClimbingLadderDownFast
+    )
+}
+
 fn sprite_motion_order_for_nonanimation(order: OrderType) -> OrderType {
     match order {
         // legacy implementation RHNONANIMATION_CLIMBING_*_FAST tokens are dispatch /
@@ -211,7 +229,7 @@ fn is_galopp_decision_frame(current_frame: u16, frame_count: u16) -> bool {
     current_frame == frame_count / 2 - 1 || current_frame == frame_count - 1
 }
 
-fn door_click_polygon_at(doors: &[crate::gate::Door], click: MapPoint) -> Option<u32> {
+pub(super) fn door_click_polygon_at(doors: &[crate::gate::Door], click: MapPoint) -> Option<u32> {
     doors
         .iter()
         .enumerate()
@@ -331,6 +349,7 @@ fn movement_execute_state_effect(
         (OT::RunningUpright, MS::Start) => Some((P::Upright, AS::MovingFast)),
         (OT::WalkingWithSword, MS::Start) => Some((P::Upright, AS::MovingSword)),
         (OT::RunningWithSword, MS::Start) => Some((P::Upright, AS::MovingFastSword)),
+        (OT::ClimbingWallUp | OT::ClimbingWallDown, MS::Start) => Some((P::OnWall, AS::Moving)),
         (
             OT::TransitionWaitingUprightClimbingLadderUp
             | OT::TransitionWaitingUprightClimbingLadderUpAlerted,
@@ -410,6 +429,7 @@ fn is_in_place_movement_transition(order: OrderType) -> bool {
             | OrderType::TransitionCrouchingDown
             | OrderType::TransitionSittingWaitingUpright
             | OrderType::TransitionLeaningOutWaitingAlerted
+            | OrderType::TransitionClimbingWallDownWaitingUpright
             | OrderType::StandingUp
             | OrderType::StandingUpSword
             | OrderType::StandingUpBow
@@ -859,6 +879,29 @@ pub(crate) fn adapt_source_to_current_door(
     } else {
         Some((door.point_out, u16::from(door.sector_out), door.layer_out))
     }
+}
+
+/// Legacy `GetDoor()` source state for route construction.
+///
+/// Rust keeps an executing translated pass in `ActorData` rather than always
+/// mirroring it into `PositionInterface`. Prefer that live pass so commands
+/// issued while crossing a door start from the committed far side.
+pub(crate) fn current_door_for_route_source(
+    entity: &crate::element::Entity,
+) -> (crate::position_interface::DoorHandle, bool) {
+    entity
+        .actor_data()
+        .and_then(|actor| actor.active_door_pass.as_ref())
+        .map(|pass| {
+            (
+                crate::position_interface::DoorHandle(pass.door_index.0),
+                pass.direct,
+            )
+        })
+        .unwrap_or_else(|| {
+            let position = entity.position_iface();
+            (position.get_door(), position.get_door_direction())
+        })
 }
 
 /// Radius for circular dispatch (one third of [`GROUP_LIMIT_MAX`]).
@@ -2203,8 +2246,7 @@ impl EngineInner {
             // valid seed gates.
             let (door_handle, door_direction) = self
                 .get_entity(*pc_id)
-                .map(|e| e.position_iface())
-                .map(|p| (p.get_door(), p.get_door_direction()))
+                .map(current_door_for_route_source)
                 .unwrap_or((crate::position_interface::DoorHandle::NULL, false));
             let (pc_pos, path_src_sector, _path_src_layer) = {
                 let adapted = self.scripts.mission.as_ref().and_then(|_| {
@@ -2238,7 +2280,7 @@ impl EngineInner {
             let level = self.world.fast_grid.level.clone();
             let door_goal_info = door_goal.and_then(|door_idx| {
                 self.scripts.mission.as_ref().and_then(|_| {
-                    crate::gate::find_path_to_door(
+                    let path = crate::gate::find_path_into_door(
                         &self.script_domains.interactables.doors,
                         (pc_pos.x, pc_pos.y),
                         path_src_sector,
@@ -2252,8 +2294,29 @@ impl EngineInner {
                                 .find(|candidate| candidate.sector_number == sector)
                                 .and_then(|candidate| candidate.lift_type)
                         },
-                    )
-                    .map(|(path, pt, sector, layer)| (door_idx, path, pt, sector, layer))
+                    )?;
+                    let terminal = path
+                        .last()
+                        .copied()
+                        .expect("path into a door must contain the goal door");
+                    assert_eq!(
+                        terminal.door_index,
+                        crate::gate::DoorIndex(door_idx),
+                        "path into door {door_idx} ended at {}",
+                        terminal.door_index
+                    );
+                    let door = self
+                        .script_domains
+                        .interactables
+                        .doors
+                        .get(usize::from(terminal.door_index))
+                        .expect("terminal door path index must resolve");
+                    let (point, sector, layer) = if terminal.direct {
+                        (door.point_out, door.sector_out, door.layer_out)
+                    } else {
+                        (door.point_in, door.sector_in, door.layer_in)
+                    };
+                    Some((door_idx, path, (point.x, point.y), u16::from(sector), layer))
                 })
             });
 
@@ -2326,7 +2389,7 @@ impl EngineInner {
                         } else {
                             OrderType::WalkingUpright
                         },
-                        true,
+                        door_goal.is_none(),
                         1.0,
                         if self
                             .get_entity(*pc_id)
@@ -4182,7 +4245,7 @@ impl EngineInner {
                 {
                     if line_id.is_some() && flags.contains(crate::sequence::MoveFlags::LINE) {
                         line_snaps[actor_id] = Some((line_id.unwrap(), *tolerance));
-                    } else if *tolerance > 0.0 && flags.contains(crate::sequence::MoveFlags::SEEK) {
+                    } else if flags.contains(crate::sequence::MoveFlags::SEEK) {
                         // The per-tick seek-arrival predicate (and its
                         // FROZEN-wait sibling) is a SEEK-only
                         // mechanism.  Non-seek `GoNear`-style
@@ -4195,7 +4258,10 @@ impl EngineInner {
                         // snapshot meaningful only for true seeks, so
                         // the downstream tolerance-arrival check can
                         // rely on the creation-slot target observation /
-                        // `shield_destination` being live.
+                        // `shield_destination` being live. Gate-approach
+                        // legs of an entity seek deliberately carry zero
+                        // tolerance, but remain PerformSeek owners and must
+                        // still age the shared refresh countdown.
                         let directional =
                             flags.contains(crate::sequence::MoveFlags::DIRECTIONAL_TOLERANCE);
                         let use_point = flags.contains(crate::sequence::MoveFlags::USE_POINT);
@@ -4577,20 +4643,15 @@ impl EngineInner {
             let live_seek_target = ft.target_id.and_then(|target_id| {
                 self.world.entities.get(target_id).map(|target| {
                     let target_data = target.element_data();
-                    let use_point_offset = if ft.use_point {
-                        target_data
-                            .sprite
-                            .current_hotspot()
-                            .filter(|p| p.x != 0.0 || p.y != 0.0)
-                            .map(|p| MapVec::new(p.x, p.y))
+                    let target_position = target_data.position_map();
+                    let use_point = if ft.use_point {
+                        target
+                            .cxx_current_point_map()
+                            .filter(|point| *point != target_position)
                     } else {
                         None
                     };
-                    (
-                        target_data.position_map(),
-                        target_data.sector(),
-                        use_point_offset,
-                    )
+                    (target_position, target_data.sector(), use_point)
                 })
             });
             let seek_tolerance_reached = |position: MapPoint, self_sector| {
@@ -4601,19 +4662,16 @@ impl EngineInner {
                 if target_sector.is_some() && self_sector != target_sector {
                     false
                 } else {
-                    let target = ft
+                    let target_center = ft
                         .shield_destination
                         .or(live_seek_target.map(|(position, _, _)| position))
                         .expect(
                             "SEEK FinalTol must have shield_destination or a live target position",
                         );
-                    let (target_dx, target_dy) = (target.x - position.x, target.y - position.y);
-                    let use_point_offset = live_seek_target.and_then(|(_, _, offset)| offset);
-                    let (dx_use, dy_use) = if let Some(off) = use_point_offset {
-                        (target_dx + off.x, target_dy + off.y)
-                    } else {
-                        (target_dx, target_dy)
-                    };
+                    let target = live_seek_target
+                        .and_then(|(_, _, point)| point)
+                        .unwrap_or(target_center);
+                    let (dx_use, dy_use) = (target.x - position.x, target.y - position.y);
                     let dy_effective = if ft.directional {
                         const INVERSE_ASPECT_RATIO: f32 = 1.743_446_8;
                         dy_use * INVERSE_ASPECT_RATIO
@@ -4774,6 +4832,26 @@ impl EngineInner {
                     })
                     .unwrap_or(crate::sequence::MoveFlags::empty());
 
+                // Selecting a door-pass Walk successor is not the same as
+                // executing it.  Restore the movement state only when that
+                // concrete order reaches its owner slot; PassingDoor and
+                // transition completion retain their preceding state for the
+                // remainder of the tick in Original.
+                if order_uses_distance_motion(order_action)
+                    && actor.active_door_pass.as_ref().is_some_and(|pass| {
+                        pass.current_action == order_action && pass.saved_action_state.is_some()
+                    })
+                {
+                    let saved = actor
+                        .active_door_pass
+                        .as_mut()
+                        .expect("checked active door pass")
+                        .saved_action_state
+                        .take()
+                        .expect("checked saved door-pass action state");
+                    actor.action_state = saved;
+                }
+
                 // Is this the literal last order in the queue?  The
                 // Movement element's `tolerance` applies to the final
                 // arrival (tolerance applies only on the last order),
@@ -4840,6 +4918,7 @@ impl EngineInner {
                 let advance = Self::advance_door_pass(
                     actor,
                     eid,
+                    goal,
                     &mut door_triggers,
                     &mut select_triggers,
                     &mut self.orders.next_order_id,
@@ -5062,6 +5141,8 @@ impl EngineInner {
                     | OrderType::ClimbingWallDownFast
                     | OrderType::ClimbingLadderUp
                     | OrderType::ClimbingLadderDown
+                    | OrderType::ClimbingLadderUpAlerted
+                    | OrderType::ClimbingLadderDownAlerted
                     | OrderType::ClimbingLadderUpFast
                     | OrderType::ClimbingLadderDownFast => order_action,
                     _ => match action_state {
@@ -5091,18 +5172,26 @@ impl EngineInner {
                 // vector — non-negative means moving down.  Snapshotted
                 // in `lift_translations` so we don't have to re-borrow
                 // `self.world.fast_grid` or the door table mid-loop.
-                match lift_translations[actor_id] {
-                    Some(LiftAnimContext::Upright(lt)) => lt.translate_upright_action(base),
-                    Some(LiftAnimContext::OnClimb {
-                        lift_type,
-                        lift_direction: _,
-                        ladder_dx,
-                        ladder_dy,
-                    }) => {
-                        let going_down = ladder_dx * dx + ladder_dy * dy >= 0.0;
-                        lift_type.translate_climb_action(base, going_down)
+                if is_authored_climb_action(base) {
+                    // DetermineMovementAnimation rewrites the movement
+                    // element once when it is instructed. Every path order
+                    // retains that authored climb direction, even if a later
+                    // waypoint briefly bends the other way.
+                    base
+                } else {
+                    match lift_translations[actor_id] {
+                        Some(LiftAnimContext::Upright(lt)) => lt.translate_upright_action(base),
+                        Some(LiftAnimContext::OnClimb {
+                            lift_type,
+                            lift_direction: _,
+                            ladder_dx,
+                            ladder_dy,
+                        }) => {
+                            let going_down = ladder_dx * dx + ladder_dy * dy >= 0.0;
+                            lift_type.translate_climb_action(base, going_down)
+                        }
+                        None => base,
                     }
-                    None => base,
                 }
             };
             // Advance sprite animation and get per-frame distance.
@@ -5541,7 +5630,7 @@ impl EngineInner {
                         order_action, entity_id
                     );
                 }
-                if transition_has_map_target && speed > 0.0 && dist > 0.01 {
+                if transition_has_map_target && speed > 0.0 {
                     // Match GetIncrementMap(): PerformMotion seeded this
                     // normalized vector when the order began and reuses it
                     // unchanged until anti-collision explicitly rebuilds it.
@@ -5734,6 +5823,7 @@ impl EngineInner {
                             Self::advance_door_pass(
                                 actor,
                                 eid,
+                                goal,
                                 &mut door_triggers,
                                 &mut select_triggers,
                                 &mut self.orders.next_order_id,
@@ -6092,6 +6182,7 @@ impl EngineInner {
                             Self::advance_door_pass(
                                 actor,
                                 eid,
+                                goal,
                                 &mut door_triggers,
                                 &mut select_triggers,
                                 &mut self.orders.next_order_id,
@@ -6755,6 +6846,7 @@ impl EngineInner {
     pub(super) fn advance_door_pass(
         actor: &mut crate::element::ActorData,
         entity_id: EntityId,
+        transition_destination: MapPoint,
         _door_triggers: &mut Vec<(EntityId, crate::gate::DoorIndex, bool, u8)>,
         _select_triggers: &mut Vec<(EntityId, f32)>,
         next_order_id: &mut u32,
@@ -6785,21 +6877,17 @@ impl EngineInner {
                 DoorPassAdvance::ActionPoint { order }
             }
             crate::element::DoorPassStep::Select { speed } => {
-                // Select is dispatched through the Human generic-animation
-                // override rather than the movement owner. Keep its existing
-                // callback plumbing until that non-animation order is
-                // materialized in the generic actor coordinator.
-                // TODO(parity): materialize Select as a real actor order too;
-                // Original gives every non-animation door sub-order its own
-                // Hourglass slot.
-                _select_triggers.push((entity_id, speed));
-                Self::advance_door_pass(
-                    actor,
-                    entity_id,
-                    _door_triggers,
-                    _select_triggers,
-                    next_order_id,
-                )
+                // Original translates SELECT into a real non-animation order:
+                // it is promoted after the preceding walk, executes the Human
+                // hulk side effect in its own actor slot, then resumes the
+                // remaining door chain. Skipping it advances PASSING_DOOR and
+                // its topology swap by one frame.
+                let order_id = crate::order::alloc_order_id(next_order_id);
+                let mut order = crate::order::Order::new(OrderType::Select, 0.0, 0.0, order_id);
+                order.compute_direction = true;
+                order.tolerance = speed;
+                order.completion = crate::order::OrderCompletion::ResumeDoorPass;
+                DoorPassAdvance::ActionPoint { order }
             }
             crate::element::DoorPassStep::Transition { action, reverse } => {
                 // The transition order sits at the front of the
@@ -6811,11 +6899,11 @@ impl EngineInner {
                 // re-enters this function when the animation
                 // finishes.
                 //
-                // Save the walking action_state and flip to Waiting
-                // so `tick_entity_movement` stops advancing and the
-                // animation tick drives the transition sprite.
+                // Save the walking action state for the post-transition
+                // walk.  Merely materializing the successor must not change
+                // it yet: Original does not execute the transition until its
+                // own Hourglass slot starts on the following tick.
                 let saved = actor.action_state;
-                actor.action_state = crate::element::ActionState::Waiting;
                 actor.clear_path();
                 if let Some(dp) = actor.active_door_pass.as_mut() {
                     dp.saved_action_state = Some(saved);
@@ -6823,8 +6911,14 @@ impl EngineInner {
                     dp.current_reverse = reverse;
                 }
                 let order_id = crate::order::alloc_order_id(next_order_id);
-                let mut order = crate::order::Order::new(action, 0.0, 0.0, order_id);
+                let mut order = crate::order::Order::new(
+                    action,
+                    transition_destination.x,
+                    transition_destination.y,
+                    order_id,
+                );
                 order.reverse = reverse;
+                order.compute_direction = false;
                 order.completion = crate::order::OrderCompletion::ResumeDoorPass;
                 tracing::debug!(
                     entity = ?entity_id,
@@ -6843,17 +6937,13 @@ impl EngineInner {
                 compute_direction,
                 tolerance,
             } => {
-                // Restore the pre-transition action_state if we were
-                // paused; the walk animation itself comes from
-                // `current_action` (read by tick_entity_movement via
-                // `door_pass_anim`) so the actor resumes moving with
-                // the correct sprite.
+                // The walk animation itself comes from `current_action`
+                // (read by tick_entity_movement via `door_pass_anim`).  Keep
+                // the saved pre-transition state until this new order is
+                // actually dispatched on the following owner tick.
                 if let Some(dp) = actor.active_door_pass.as_mut() {
                     dp.current_action = action;
                     dp.current_reverse = reverse;
-                    if let Some(saved) = dp.saved_action_state.take() {
-                        actor.action_state = saved;
-                    }
                 }
                 // Hand the Walk destination back to the caller —
                 // advance_door_pass doesn't have sequence_manager
@@ -9412,6 +9502,9 @@ mod line_jump_tests {
         ));
         assert!(is_in_place_movement_transition(
             OrderType::TransitionLeaningOutWaitingAlerted
+        ));
+        assert!(is_in_place_movement_transition(
+            OrderType::TransitionClimbingWallDownWaitingUpright
         ));
         assert!(is_in_place_movement_transition(OrderType::StandingUp));
         assert!(is_in_place_movement_transition(OrderType::StandingUpSword));

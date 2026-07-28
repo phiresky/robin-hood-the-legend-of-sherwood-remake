@@ -327,7 +327,10 @@ impl EngineInner {
             // continuations, so do not let its empty callback steal
             // replacement work which the Halt caller queued beforehand.
             if !from_halt {
-                self.drain_self_stimuli_for_npc(sim, owner, assets);
+                // SendCondolationCard re-enters Think for this owner directly.
+                // Do not resolve unrelated actors' prepared movement forecasts
+                // while closing that native owner-local call stack.
+                self.drain_self_stimuli_for_npc_without_forecast(sim, owner, assets);
                 self.dispatch_pending_waypoint_script_for_owner(sim, owner, assets);
                 self.dispatch_synchronous_owner_moves(sim, assets, owner, active_scripts)?;
             }
@@ -400,7 +403,7 @@ impl EngineInner {
         let from_halt = dispatch.card.from_halt;
         self.send_condolation_card(sim, dispatch.card, assets);
         if !from_halt {
-            self.drain_self_stimuli_for_npc(sim, card_owner, assets);
+            self.drain_self_stimuli_for_npc_without_forecast(sim, card_owner, assets);
             self.dispatch_pending_waypoint_script_for_owner(sim, card_owner, assets);
         }
 

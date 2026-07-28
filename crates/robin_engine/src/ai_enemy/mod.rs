@@ -1004,7 +1004,6 @@ impl EnemyAi {
         // Clear the list.
         self.money_fight_victims.clear();
 
-        let my_pos = ctx.position;
         // Collect (handle, stretched-Y sq_distance) for candidates that
         // pass the 360° detection gate.
         let mut candidates: Vec<(NpcHandle, f32)> = Vec::new();
@@ -1033,9 +1032,16 @@ impl EnemyAi {
                     victim_view.posture,
                     victim_view.is_rider,
                 );
+            let viewer_eye_ground = crate::coordinates::GroundPoint::from_map_and_z(
+                crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y),
+                ctx.elevation,
+            );
+            let target_detection_ground =
+                crate::coordinates::GroundPoint::from_map_and_z(victim_pos, victim_view.elevation);
             // SquareDistance — dx² + (dy * INVERSE_ASPECT_RATIO)².
-            let dx = victim_pos.x - my_pos.x;
-            let dy = (victim_pos.y - my_pos.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+            let dx = target_detection_ground.x - viewer_eye_ground.x;
+            let dy = (target_detection_ground.y - viewer_eye_ground.y)
+                * crate::position_interface::INVERSE_ASPECT_RATIO;
             let dz = target_eye_z - viewer_eye_z;
             let sq = dx * dx + dy * dy + dz * dz;
             if ctx.in_building || sq > ctx.sq_standard_view_radius {
@@ -1043,8 +1049,12 @@ impl EnemyAi {
             }
             if !crate::sight_obstacle::is_reachable_3d(
                 ctx.obstacle_list(),
-                [ctx.position.x, ctx.position.y, viewer_eye_z],
-                [victim_pos.x, victim_pos.y, target_eye_z],
+                [viewer_eye_ground.x, viewer_eye_ground.y, viewer_eye_z],
+                [
+                    target_detection_ground.x,
+                    target_detection_ground.y,
+                    target_eye_z,
+                ],
                 crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
             ) {
                 continue;
@@ -1642,8 +1652,14 @@ impl EnemyAi {
             view.posture,
             view.direction as i16,
         );
-        let dx = target_detection_xy.x - ctx.position.x;
-        let dy = (target_detection_xy.y - ctx.position.y)
+        let viewer_eye_ground = crate::coordinates::GroundPoint::from_map_and_z(
+            crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y),
+            ctx.elevation,
+        );
+        let target_detection_ground =
+            crate::coordinates::GroundPoint::from_map_and_z(target_detection_xy, view.elevation);
+        let dx = target_detection_ground.x - viewer_eye_ground.x;
+        let dy = (target_detection_ground.y - viewer_eye_ground.y)
             * crate::position_interface::INVERSE_ASPECT_RATIO;
         let dz = target_eye_z - viewer_eye_z;
         let sq_distance = dx * dx + dy * dy + dz * dz;
@@ -1662,8 +1678,12 @@ impl EnemyAi {
         // 3D opaque sight-obstacle graph, not the 2D spatial LOS helper.
         let los_clear = crate::sight_obstacle::is_reachable_3d(
             ctx.obstacle_list(),
-            [ctx.position.x, ctx.position.y, viewer_eye_z],
-            [target_detection_xy.x, target_detection_xy.y, target_eye_z],
+            [viewer_eye_ground.x, viewer_eye_ground.y, viewer_eye_z],
+            [
+                target_detection_ground.x,
+                target_detection_ground.y,
+                target_eye_z,
+            ],
             crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
         );
         tracing::trace!(
@@ -2083,11 +2103,15 @@ impl EnemyAi {
         );
         let target_detection_z =
             view.elevation + crate::stealth::detection_z_for_posture(view.posture, view.is_rider);
+        let viewer_eye_ground =
+            crate::coordinates::GroundPoint::from_map_and_z(viewer_eye, ctx.elevation);
+        let target_detection_ground =
+            crate::coordinates::GroundPoint::from_map_and_z(target_detection_xy, view.elevation);
 
         // Aspect-ratio-stretched view vector (`INVERSE_ASPECT_RATIO`
         // on the Y component), from viewer eye to target detection point.
-        let dx = target_detection_xy.x - viewer_eye.x;
-        let dy = (target_detection_xy.y - viewer_eye.y)
+        let dx = target_detection_ground.x - viewer_eye_ground.x;
+        let dy = (target_detection_ground.y - viewer_eye_ground.y)
             * crate::position_interface::INVERSE_ASPECT_RATIO;
         let sq_distance = dx * dx + dy * dy;
         if sq_distance > ctx.sq_self_view_radius {
@@ -2117,10 +2141,10 @@ impl EnemyAi {
 
         crate::sight_obstacle::is_reachable_3d(
             ctx.obstacle_list(),
-            [viewer_eye.x, viewer_eye.y, viewer_eye_z],
+            [viewer_eye_ground.x, viewer_eye_ground.y, viewer_eye_z],
             [
-                target_detection_xy.x,
-                target_detection_xy.y,
+                target_detection_ground.x,
+                target_detection_ground.y,
                 target_detection_z,
             ],
             crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,

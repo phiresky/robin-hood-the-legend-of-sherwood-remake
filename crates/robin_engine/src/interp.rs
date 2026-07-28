@@ -111,6 +111,10 @@ pub enum SynchronousScriptRequest {
         remember_events: bool,
         native_return: i32,
     },
+    UnlockAi {
+        actor: i32,
+        native_return: i32,
+    },
     AssignPath {
         actor: i32,
         way: i32,
@@ -172,6 +176,7 @@ impl SynchronousScriptRequest {
             | Self::SetActorLocation { native_return, .. }
             | Self::SetActorActionState { native_return, .. }
             | Self::LockAi { native_return, .. }
+            | Self::UnlockAi { native_return, .. }
             | Self::AssignPath { native_return, .. } => native_return,
         }
     }

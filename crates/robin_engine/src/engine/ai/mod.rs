@@ -2484,12 +2484,31 @@ impl EngineInner {
         // The 3D anchor feeds the sight-polygon query that decides
         // whether an NPC on the ambush point can be seen; the ID is
         // how AI scripts reference the point.
-        for (idx, ap) in self.ai.global.ambush_points.iter_mut().enumerate() {
-            ap.position_3d = crate::coordinates::WorldPoint3D {
-                x: ap.position.x,
-                y: ap.position.y,
-                z: 32.0,
-            };
+        let ambush_points_3d: Vec<_> = self
+            .ai
+            .global
+            .ambush_points
+            .iter()
+            .map(|ap| {
+                self.position_to_point_3d(
+                    assets,
+                    ap.position.sector,
+                    ap.position.level,
+                    ap.position.x,
+                    ap.position.y,
+                )
+            })
+            .collect();
+        for (idx, (ap, mut point_3d)) in self
+            .ai
+            .global
+            .ambush_points
+            .iter_mut()
+            .zip(ambush_points_3d)
+            .enumerate()
+        {
+            point_3d.z += 32.0;
+            ap.position_3d = point_3d;
             ap.id = idx as u16;
         }
 
@@ -5858,7 +5877,12 @@ impl EngineInner {
         // sequence elements for commands the AI wants to execute.
         for cmd in effects.launch_commands {
             let elem = crate::sequence::SequenceElement::new(1, cmd, Some(npc_id));
-            self.launch_element(elem);
+            let mut sequence = crate::sequence::Sequence::new();
+            sequence.append_element(elem);
+            // AI helpers call LaunchSequenceElement, which registers an
+            // ordinary owned command with SequenceManager. It does not run
+            // the actor's Instruct/arbitration inline at the AI call site.
+            self.launch_sequence(sequence);
         }
 
         // Sequence commands the AI wants to launch on *another*
@@ -8189,7 +8213,6 @@ impl EngineInner {
         for npc_id in npc_ids {
             self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
         }
-        let scratch = self.build_sim_scratch(sim, assets);
         // Collect all pending actions first to avoid borrow issues.
         // Both enemy (soldier) and friendly (civilian) AIs can push
         // cross-NPC actions — e.g. civilians send `CALL_ALERT` /
@@ -8215,6 +8238,11 @@ impl EngineInner {
             return;
         }
 
+        // Building the full AI view resolves prepared building-exit forecasts
+        // and therefore consumes authoritative RNG.  The original only builds
+        // target context while actually delivering a cross-NPC action, so do
+        // not speculate before the empty fast path above.
+        let scratch = self.build_sim_scratch(sim, assets);
         let frame = self.control.frame_counter;
 
         for action in all_actions {
@@ -9776,7 +9804,7 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
-        self.drain_self_stimuli_for_npc_mode(sim, npc_id, assets, false);
+        self.drain_self_stimuli_for_npc_mode(sim, npc_id, assets, false, false);
     }
 
     /// Native `SetAIState` StartThink/EndThink recursion must remain
@@ -9788,7 +9816,7 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
-        self.drain_self_stimuli_for_npc_mode(sim, npc_id, assets, true);
+        self.drain_self_stimuli_for_npc_mode(sim, npc_id, assets, true, false);
     }
 
     fn drain_self_stimuli_for_npc_mode(
@@ -9797,6 +9825,7 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
         owner_local_no_forecast: bool,
+        defer_turn_instruction: bool,
     ) {
         const MAX_REENTRANT_STIMULI: usize = 111;
         let mut dispatched = 0usize;
@@ -9900,9 +9929,20 @@ impl EngineInner {
             // before returning.  Close that window after every recursive
             // stimulus so a newly launched sequence participates in
             // arbitration before the next sibling stimulus is delivered.
-            self.drain_pending_for_npc_mode(sim, npc_id, assets, owner_local_no_forecast, false);
-            self.launch_pending_orders_for_npc(npc_id);
-            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
+            self.drain_pending_for_npc_mode(
+                sim,
+                npc_id,
+                assets,
+                owner_local_no_forecast,
+                defer_turn_instruction,
+            );
+            self.launch_pending_orders_for_npc_mode(npc_id, defer_turn_instruction);
+            self.process_synchronous_reentrant_actions_for_mode(
+                sim,
+                npc_id,
+                assets,
+                defer_turn_instruction,
+            );
             self.dispatch_condolations_for_npc(sim, npc_id, assets);
         }
     }
@@ -10047,6 +10087,15 @@ impl EngineInner {
         self.drain_direct_ai_owner_boundary_mode(sim, npc_id, assets, true, false);
     }
 
+    pub(super) fn drain_direct_ai_owner_boundary_without_forecast_deferred_instruct(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+    ) {
+        self.drain_direct_ai_owner_boundary_mode(sim, npc_id, assets, true, true);
+    }
+
     fn drain_direct_ai_owner_boundary_mode(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -10080,11 +10129,13 @@ impl EngineInner {
                 !ai.outbox.reentrant.self_stimuli.is_empty()
             };
             if has_self_stimuli {
-                if owner_local_no_forecast {
-                    self.drain_self_stimuli_for_npc_without_forecast(sim, npc_id, assets);
-                } else {
-                    self.drain_self_stimuli_for_npc(sim, npc_id, assets);
-                }
+                self.drain_self_stimuli_for_npc_mode(
+                    sim,
+                    npc_id,
+                    assets,
+                    owner_local_no_forecast,
+                    defer_turn_instruction,
+                );
             }
 
             let still_pending = {

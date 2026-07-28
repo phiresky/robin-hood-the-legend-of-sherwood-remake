@@ -8,7 +8,7 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
 
 ## Baseline and contract
 
-- Required Original trace schema: 6
+- Required Original trace schema: 7
 - Required replay start state: `mission_start` with a complete versioned
   campaign snapshot captured before engine initialization, including
   progression, mission state, gang/reservists/mission team, character status
@@ -16,13 +16,17 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   campaign pointers encoded as stable indices. The Original also preserves
   `loaded_save` sessions, but Rust rejects them until live mission-save state
   restoration is implemented.
-- Compatibility: schemas 1–5 are deliberately rejected. Schemas 1–3 cannot
+- Compatibility: schemas 1–6 are deliberately rejected. Schemas 1–3 cannot
   reconstruct an arbitrary campaign and can silently create a plausible but
   different world. Schema 4 has complete campaign state, but was recorded with
   native i686 x87 extended-precision intermediates and is not a valid numeric
   oracle for the scalar-SSE Rust engine. Schema 5 predates complete recording
-  of direct resolved object interactions and their speed changes.
-- Inputs: resolved game commands, applied on their recorded simulation frames
+  of direct resolved object interactions and their speed changes. Schema 6
+  does not record display-driven director completion boundaries, so a
+  host-local camera position can change when gameplay sequences resume.
+- Inputs: resolved game commands, applied on their recorded simulation frames,
+  plus resolved camera-director sequence completions produced between
+  simulation frames and applied before the following frame's commands
 - Start point: each Original engine session has its own numbered file. Menu and
   raw input-device behavior are out of scope.
 - Pathfinding: deterministic synchronous A*, while retaining the Original's
@@ -83,7 +87,7 @@ frame-507 input batch, while `PASS_DOOR` is still selected; that reproduces
 Original's postponed seek and advances the comparison through frame 524. This
 timing was inferred from state and is not a substitute for a schema-6 capture.
 
-The current schema-6 baseline is
+The last schema-6 baseline is
 `original-code/parity-traces/original-fullgame-schema6-session-0001.jsonl`:
 mission `H01_Lin_VL` (Lincoln), 2,315 complete gameplay frames (1 through
 2,315), a complete versioned campaign snapshot, 2,979 filtered simulation RNG
@@ -120,7 +124,49 @@ before gate routing, including the upright move box used for narrow lifts, and
 ordinary wall/ladder moves use the same thick-reachability decision as the
 Original. Schema-6 door and jump overlay hits remain semantic spatial
 selections instead of being forced into a motion-sector override. Replay now
-reaches frame 333.
+reaches frame 333. Authored wall/ladder directions now survive every waypoint
+instead of being retranslated from each local path segment. Door-pass exit
+transitions retain the preceding state until their own execution, preserve
+their in-place destination/facing, and restore movement only when the following
+walk actually executes. Replay now reaches frame 378.
+Door-sector group clicks now retain the clicked door as the terminal gate
+instead of converting it into a walk-to-door point. Normal AI timers read the
+live current order after the actor slot, so a same-frame bored-random reroll
+suppresses side-looking exactly as in the Original. Schema-6 overlay clicks
+outside every sector polygon are accepted only after the canonical door click
+polygon independently validates them. Replay now reaches frame 550.
+Empty cross-NPC action batches no longer build speculative simulation scratch
+state, so they cannot consume unrelated building-exit RNG. Owner-local
+condolation-card drains likewise avoid globally forecasting other actors.
+Building-door `Select` is now a real one-slot non-animation order, including
+its hulk callback, rather than an eagerly executed route step. Building
+sectors are mapped dynamically by inactive actor identity while their layer is
+the authored final conventional layer; sector identity remains isomorphic but
+layer identity is still compared exactly. Cross-sector route construction now
+prefers the actor's live door-pass state when the position interface has not
+yet committed the door, matching `GetDoor()` during building traversal.
+`ChangePosition` treats its encoded sector as a source assertion, preserves
+the current topology and projection plane, and recomputes 3D coordinates at
+the new map point without a destination projection query. Finally, resolved
+`StopPc` follows the full normal-priority sequence stop path: it preserves the
+identity-owned default Wait (and therefore a bored idle), while still
+rewriting/stopping real movement and cancelling pending work. Subsequent
+corrections to synchronous `UnlockAI`, 3D sight coordinates, scroll attachment,
+seek countdown, cutscene locking, and movement-stop recursion advance the
+current baseline through frame 1,255.
+
+Frame 1,256 is not an engine result that schema 6 can reconstruct. The
+Original finishes EdwardZone's script-driven camera slide before that
+hourglass, advances through its 15- and 40-frame timers, unlocks the user and
+all AI, and consumes the corresponding return-to-duty RNG cluster. Rust is
+still 28 timer ticks from the unlock because its camera began from a different
+host viewport. Schema 6 records neither resolved viewport scrolling, camera
+state, nor the display-driven camera-sequence completion event. The trace
+therefore proves the downstream unlock boundary but contains no input from
+which the preceding camera duration can be reproduced. The next schema must
+record this resolved nondeterministic boundary (or make complete camera state
+and input part of the parity contract); no frame-specific timer adjustment is
+acceptable.
 
 The schema-2/3/4 sessions below remain historical evidence for completed parity
 corrections, but are not accepted by the current replay runner.
@@ -158,7 +204,7 @@ including the startup prefix, 706 audio RNG draws, 69 resolved commands, and
 
 | Status | Area | Trace evidence and Original behavior | Rust change / regression coverage |
 | --- | --- | --- | --- |
-| Done | Complete mission-start campaign state | Mission/proto names and an RNG seed cannot reconstruct progressed mission status, the selected team, character inventory/skills, persistent Sherwood production, relics, or script-visible campaign values. Capturing after `RHEngine::Initialize` is also too late because the Original consumes the mission team and marks its descriptions instanced during construction. | Original schema 4 introduced a neutral JSON campaign snapshot captured immediately before engine initialization and written into the trace header after initialization RNG has accumulated into the normal prefix. Schemas 5 and 6 retain that state contract. Rust requires schema 6, validates profile IDs/names and every stored index, reconstructs the complete campaign before level loading, and rejects all older traces. Production script attachments/points remain level-derived exactly as in the Original save format. |
+| Done | Complete mission-start campaign state | Mission/proto names and an RNG seed cannot reconstruct progressed mission status, the selected team, character inventory/skills, persistent Sherwood production, relics, or script-visible campaign values. Capturing after `RHEngine::Initialize` is also too late because the Original consumes the mission team and marks its descriptions instanced during construction. | Original schema 4 introduced a neutral JSON campaign snapshot captured immediately before engine initialization and written into the trace header after initialization RNG has accumulated into the normal prefix. Schema 7 retains that state contract. Rust requires schema 7, validates profile IDs/names and every stored index, reconstructs the complete campaign before level loading, and rejects all older traces. Production script attachments/points remain level-derived exactly as in the Original save format. |
 | Done | Deterministic native floating point | Native i686 GCC defaulted to x87 evaluation even though SSE2 instructions were available. Extended intermediates then depended on compiler register lifetime, so exact frame-state bits could diverge from Rust and change after unrelated Original rebuilds. | Schema 5 captures are built with scalar SSE2 evaluation and FP contraction disabled across every in-tree Original target. Schema 4 recordings are deliberately invalidated; a new schema-5 recording is required rather than teaching Rust to emulate unstable x87 spill behavior. |
 | Done | Mission-start idle ownership | Rust eagerly installed a fallback `Wait` for every actor during level loading. Original actors are constructed without an order and acquire a fallback only from `Actor::Hourglass` when they still have no live order. Startup initialization replaced Rust's eager waits before the first actor tick, but their sprites nevertheless executed once, causing a second `Start` pulse and delaying every idle action point by one frame. | Removed the level-loader fallback pass. The existing per-actor Hourglass path remains the sole lazy fallback, while startup-created actor orders enter the first tick directly. This is a general actor lifecycle correction, not trace-specific identity handling; the schema-5 replay advances from frame 46 through frame 78. |
 | Done | Authored initial `Wait` dispatch | Original `InitState` sets the authored sleeping, sitting, dead, unconscious, or special pose and calls the actor's `Wait`. Priority-`Wait` launch then synchronously executes `NextSequenceElementsGo -> Go -> Instruct` before `InitOneAI` returns. Rust queued that final instruction until the first sequence phase. `Actor::Hourglass` therefore saw the actor as empty, executed a lazy fallback first, and replaced it with the authored order one frame later. Lincoln soldier 64's halberd animation consequently reached its frame-40 gameplay remark one tick late. | AI initialization now closes the synchronous sequence-registration stream after every `InitOneAI`, without touching ordinary deferred sequence elements or pathfinding. The authored order is installed before the first actor tick and no transient fallback is created. This fixes every initial-pose variant governed by the same Original call chain. |
@@ -177,7 +223,7 @@ including the startup prefix, 706 audio RNG draws, 69 resolved commands, and
 | Done | Structured Rust frame dump | Broad parity snapshots did not expose transient AI, sequence, movement, and vision state, forcing repeated one-off logging changes. | `original_parity_replay --dump-jsonl` writes stable JSONL records containing the complete serializable engine snapshot, resolved commands, RNG cursor/batch, entity mapping, and parity differences. `--dump-from`, `--dump-through`, and repeatable `--dump-entity kind:index` filters keep targeted captures manageable; omitting the entity filter retains the whole engine. An ordinary first-divergence run now retains a rolling full-engine window and automatically writes the divergent frame plus its 32 predecessors to a unique temporary JSONL file. Explicit dump and `--scan-all` behavior remains unchanged. |
 | Done | Visual parity replay | A headless mismatch report does not show how the divergent frame looks in motion. | `original_parity_replay --visual` runs the same authoritative resolved-command/RNG replay in the normal window/GPU runner, ignores live gameplay input, renders the decoded map and current sprites at a visible rate, and freezes the first divergent state until the window is closed. Headless remains the default for fast iteration. |
 | Done | Global RNG replay | Bored/waiting choices affect head direction and later AI behavior; reproducing only a seed is insufficient across different implementations. | Rust can consume the trace's filtered global libc `rand()` draw stream and records typed Rust consumption sites. Startup and every frame assert the exact draw cursor. |
-| Done | Stable RNG domains | Rebuilding the Original shifted every raw return-address offset, so the first quiet-music draw was misclassified as simulation RNG despite identical values and state. | Original schema 3 records a parallel `simulation`/`audio` domain for every global libc draw while retaining callsite offsets as diagnostics (`a72d8c0`). Rust consumes stable domains directly. Schema-2 traces can classify audio from symbols in the exact capture executable via `ROBIN_ORIGINAL_BINARY`; the first baseline's reviewed offsets remain supported. A fingerprinted RNG sidecar avoids rescanning multi-gigabyte traces during every first-divergence iteration. |
+| Done | Stable RNG domains | Rebuilding the Original shifted every raw return-address offset, so the first quiet-music draw was misclassified as simulation RNG despite identical values and state. | Original schema 3 introduced a parallel `simulation`/`audio` domain for every global libc draw while retaining callsite offsets as diagnostics (`a72d8c0`). The schema-7-only Rust runner consumes stable domains directly and has no symbol lookup or hard-coded-offset fallback. A fingerprinted RNG sidecar avoids rescanning multi-gigabyte traces during every first-divergence iteration. |
 | Done | Isomorphic identity | Original and Rust IDs and hidden startup objects differ, while the logical world is equivalent. | The runner constructs a mission-start entity bijection from kind, stable data, and creation order. Original's hidden 31-object prefix is retained where creation order is itself gameplay state, such as staggered detection. |
 | Done | Trace command decoding | Raw mouse/keyboard behavior is not under test. The Lincoln capture first emits the recorder's semantic `stop_pc` command at frame 232; the engine command already existed, but the trace-side enum omitted it and aborted before replaying the frame. | Recorded resolved commands, including `StopPc`, are translated through the entity bijection; unsupported command values and malformed or non-contiguous traces fail loudly. |
 | Done | Direct-click resolved commands | Several Original click handlers construct their seek/action sequences directly instead of using the shared `AddInteractionWithSeek` helper. Schema 5 therefore omitted object/net pickup, target actions, corpse/shoulder interactions, one VIP speech route, and associated double-click speed changes. In session 0004 an omitted scroll click remains queued through later door routes and first becomes visible when its seek resumes at frame 508. | Schema 6 records each accepted direct interaction at its source handler, after validation but before launch, and records non-macro double-click `MakeFast` changes. Recording at the generic sequence manager would incorrectly include AI/script work, so shared helper hooks remain in place and only genuine bypasses receive explicit hooks. Original commits `11b05f88`, `f733661d`, and `03340b1b`; Rust rejects schema 5 rather than inventing a target from later state. |
@@ -189,6 +235,11 @@ including the startup prefix, 706 audio RNG draws, 69 resolved commands, and
 | Done | Door-pass successor selection is state-neutral | After frame 129's `PassingDoor`, Rust queued the following `WalkingUpright` order and immediately set the actor to Moving through `apply_door_pass_continue_state`, even though the last executed order was still `PassingDoor`. Original leaves the actor Waiting until the walk's next owner slot returns `RHMOTION_START`. | Door-pass continuation orders are now only installed/selected. Posture and action-state changes remain owned by their authored transition or movement Execute arms; the generic movement `START` handling changes the following walk to Moving on the next frame. Replay advances through frame 208. |
 | Done | Authorized cross-sector formation destinations | The recorded frame-171 group click is `(1789,990)`, but Original's `PerformGroupMove` first places Robin's upright move box at every per-PC formation slot and calls `FindAuthorizedPosition`. On narrow wall sector 77 this shifts the actual authored destination to `(1787.2975,992.0809)`, which is directly thick-reachable. Rust fed the raw click into gate routing, then used a blanket wall/ladder shortcut to hide its missing authorization step. | Every non-door cross-sector formation slot is now resolved through the same move-box authorization used by same-sector movement before gate A*. The resolved point drives the gate goal, final movement element, and marker. Wall/ladder sources no longer bypass the ordinary posture-sized thick-reachability test. Replay advances through frame 266. |
 | Done | Schema-6 semantic overlay identity | The frame-267 command's raw Original sector index `245` has no Rust motion-area counterpart at `(1738,988)`/layer 4 because the selected object is canonical door overlay 22. Treating every recorded group goal as a motion sector either panicked or would erase the door click's routing behavior. | When the command point/layer uniquely identifies a Rust motion area, schema-6 replay still uses its canonical motion-sector override. A unique door or jump overlay instead remains a semantic spatial selection and re-enters the engine's ordinary canonical door/jump hit path. Missing and ambiguous identities still fail loudly. Replay advances through frame 332. The next recorder schema must store this semantic goal explicitly rather than requiring spatial reconstruction. |
+| Done | Authored climb direction survives path bends | PC 126's wall route contains two orders authored as `ClimbingWallUp`; its second waypoint bends briefly in the opposite direction. Original's `DetermineMovementAnimation` translates the movement element once, so both orders remain wall-up. Rust re-ran the lift dot-product for every waypoint, changed the second order to wall-down, reset the sprite row, and moved one frame early at frame 333. | Directional wall/ladder actions—including alerted and fast variants—are now recognized as already translated and remain unchanged at execution. Only generic upright movement is translated from the live lift geometry. Replay advances through frame 354. |
+| Done | Door exit successor state is Execute-owned | At frame 355 the wall-down walk terminates and merely selects `TransitionClimbingWallDownWaitingUpright`. Original remains `OnWall/Moving` until that transition's `DONE`/`TERMINATED` effect; Rust changed to Waiting while constructing the successor. The transition also inherited no destination, which erased its prior goal/facing, and the later `PassingDoor` slot restored Moving while merely selecting the following walk. | Door transitions are materialized at the actor's current destination with direction computation disabled, selection preserves the preceding state, and wall-down exit is explicitly an in-place transition. The saved movement state is restored only when the concrete following distance-motion order reaches its owner slot. Replay advances through frame 377. |
+| Done | Door clicks retain the terminal gate | The frame-267 semantic click targets canonical door 22. Rust used `find_path_to_door`, whose contract deliberately removes that door and returns its near-side anchor, then emitted a plain terminal move. Original group movement uses `FindPathIntoDoor`, retains the target in the gate list, and switches to its `PassDoor` element at frame 378. | Group movement to a selected door now uses the full path-into-door result and disables the redundant trailing point move. The ordinary gate builder emits the target door's approach, assert, pass, and post-pass assert, including its existing lock/lift behavior. Replay advances through frame 391. |
+| Done | Normal AI timer sees same-slot order mutation | Soldier 68's bored idle terminates on frame 392 and the first RNG draw changes its current order to `WaitingUprightBoredRandom`. Original then reaches the NPC timer in the same owner slot; `GetAnimation()` reads that mutated order and suppresses `LookSidewards`. Rust built the timer context from stale `Sprite::last_action`, changed to the looking substate, and reused the next bored-time draw as a look direction. | The normal-timer Think boundary now overrides `AiContext.self_animation` from the live sequence-manager order (or `NonanimationEnd`), matching the existing re-entrant and periodic AI boundaries. Draw ownership returns to the bored timer and replay advances through frame 533. |
+| Done | Door overlays beyond sector polygons | The frame-534 schema-6 command targets a door overlay whose authored click polygon contains `(1928,945)` but whose fast-grid sector polygon does not. The motion/overlay reconstruction rejected it as missing. | When neither a motion nor overlay sector polygon contains a schema-6 destination, replay accepts the semantic spatial route only if the engine's independent canonical door click-polygon lookup resolves the point. Missing hits still panic instead of silently snapping to ordinary terrain. Replay advances through frame 549. |
 | Done | Frame-525 post-seek transition result | PC 126 reaches scroll 111 while its selected seek order is the walking-to-waiting end transition. Original's in-tolerance `PerformSeek` branch skips the transition's sprite motion and launches `TAKE`, but returns `TERMINATED` through the surrounding transition Execute arm; that arm still changes the actor from Moving to Waiting before the interaction is instructed. Rust terminated the seek externally while exposing `IN_PROGRESS`, bypassed the end-transition state effect, and made `TAKE` generate a redundant second transition. | A successful pre-motion entity-seek handoff now exposes `TERMINATED` to its current movement order without advancing the sprite. Pending movement-transition terminal posture/action-state effects run before the deferred post-seek interaction is instructed. This is generic to every post-seek command and end-transition type. The repaired Lincoln diagnostic passes frame 525 and reaches the next RNG mismatch after frame 545. |
 | Done | Live sequence-manager FIFO | A frame-246 cross-sector group move begins with `AssertPosition`, which terminates immediately and opens a normal-priority `Move`. Original `RHSequenceManager::Hourglass` drains its registration list with a live `while` loop, so the successor is instructed to `MoveOk` in the same manager phase even though its first actor execution waits until frame 247. Rust detached the initial queue into a vector and only spliced immediate/Wait callback work, leaving the normal successor `Todo` for one frame. | The Rust sequence phase now continues to a fixed point after every action: re-entrant immediate/Wait actions retain stack-like front precedence, while newly registered normal actions append behind already waiting manager work and still drain in the current frame. Focused ordering tests cover both front and tail rules; replay advances through frame 277. |
 | Done | One door sub-order per actor slot | At frame 278 Rust completed `TransitionWaitingUprightClimbingWallUp`, immediately fired the following `PassingDoor`, and selected `ClimbingWallUp`. Original `Hourglass` executes exactly one current order, then `DoNextOrder` only selects its successor: frame 278 ends on the source side with `PassingDoor` current, frame 279 executes the topology swap without moving, and the climb first executes at frame 280. The premature climb had also masked a missing terminal `OnWall` posture update. | `PassingDoor` is now materialized as a real actor order. Door transitions and walks may install one successor but never execute it in their completion slot; the action point consumes the next owner slot and only installs the climb. Terminal wall-transition side effects are sampled after `TILL_LAST_FRAME` can rewrite the motion result to `Terminated`. A focused low-wall regression covers the three distinct slots; replay advances through frame 279. |
@@ -207,7 +258,7 @@ including the startup prefix, 706 audio RNG draws, 69 resolved commands, and
 | Done | Projectile initialization and inactive retention | Frame 446's Arrow from Soldier 70 to Target 96 had bit-exact flight position and projected velocity, but Rust used that velocity as element facing, left sector empty until landing, deactivated on impact, and physically removed the entity. Original keeps element direction at its constructor default, stores gameplay flight direction separately, exposes trajectory-resolved membership throughout flight, retires the arrow only after one stationary refresh, and retains its inactive slot. | Projectile flight direction is now separate gameplay state used by damage. Trajectory construction installs landing sector/layer without prematurely projecting flight elevation, every Hourglass snapshots old position, ordinary arrow impact uses the delayed stationary retirement boundary, and all projectile removals retain inactive tombstones. The replay matches through frame 460. |
 | Open | Projectile visual refresh phase | Original arrow row/frame mutation belongs to `RHElementArrow::Refresh`, not projectile `Hourglass`; a newly appended arrow's logical trace can therefore precede its first directional visual refresh. Rust currently computes the directional sprite in its simulation tick. | Move projectile row/frame refresh into an explicit renderer/refresh phase (or explicit next-frame pending visual state). Do not infer phase eligibility from trajectory `frame_count`; that counter is projectile motion state, not a scheduling token. |
 | Open | Materialize door `Select` action points | Building-door `Select` is also a real non-animation order in the Original and therefore consumes one actor `Hourglass` slot. Rust still invokes its existing hulk callback while advancing to the next translated door step in the same slot. | Route `Select` through the generic actor coordinator as a queued order, preserving the same one-order-per-slot rule now used by `PassingDoor`, and add a building-door timing regression. |
-| Done | Stable action and command names | Schema 2 stored bare action/command ordinals. The replay confused semantic `RHACTION_BOW = 1` with portrait slot 1, and rebuilt Rust/Original command enums have intentional ordinal differences. | Original schema 3 records stable semantic action names (`da51753`) and command names for actor state and resolved commands (`f7acb56`), retaining ordinals only for diagnostics and rejecting unknown values. Rust now has a semantic `SelectResolvedAction` command; schema-2 decoding remains explicit and source-verified. |
+| Done | Stable action and command names | Schema 2 stored bare action/command ordinals. The replay confused semantic `RHACTION_BOW = 1` with portrait slot 1, and rebuilt Rust/Original command enums have intentional ordinal differences. | Original schema 3 introduced stable semantic action names (`da51753`) and command names for actor state and resolved commands (`f7acb56`). The schema-7 runner requires the semantic fields, ignores diagnostic ordinals, and has no ordinal decoding fallback. Rust has a semantic `SelectResolvedAction` command. |
 | Done | Continuous resolved orientation | Original `PerformOrientation` continuously derives bow aim, throwable facing, help-climb facing, and beggar facing from the cursor without forwarding a messenger command. Schema 2 therefore cannot reproduce PC 198's frame-532 `RaiseBow` transition. | Original schema 3 now emits a bit-exact `orient_action_at` record for each actor immediately before every live gated mutation, including semantic action, resolved 3D target, and map cursor (`867eb4e`). Rust applies that cursor-independent operation to only the mapped PC through the ordinary bow/throw/help/beggar orientation behavior. The old raw orientation event was removed to prevent duplicate application or focus re-resolution. Focused tests cover schema decoding and targeted throw facing. |
 | Done | Empty schema-3 RNG batches | A frame with no libc draws legitimately records empty `values`, `callsite_offsets`, and `domains` arrays. The Rust reader treated the absent draw-domain payload as schema-2 data and demanded a binary classifier even though there was nothing to classify. | Both the streaming replay and its RNG-sidecar scan now accept an entirely empty batch without weakening length/domain validation for nonempty batches. |
 | Done | Parade timer stop gate | At frame 324 Soldier 82's Parade timer expired after the actor had already returned to `WaitingSword`. Original queues `STOP_PARRY_SWORD` only for exactly `RHACTIONSTATE_PARRYING_SWORD`; Rust queued it unconditionally, and terminating the stale element synchronously emitted `EventDone`, reconsidered combat, and consumed three extra RNG draws. | The timer still returns to ordinary swordfight and restarts its 20-tick heartbeat, but emits StopParrySword only from the exact normal-parry state. Regression coverage verifies `WaitingSword` and `ParryingSwordLow` do not stop while `ParryingSword` does. The schema-3 replay advances to frame 337. |
@@ -334,18 +385,26 @@ including the startup prefix, 706 audio RNG draws, 69 resolved commands, and
 | Done | Frame-1390 PC 199 WakeUp facing | Original `RHCOMMAND_WAKE_UP` first sets the rescuer's progressive direction goal toward the target, then queues `Turning → WakingUp`; Rust had queued only the interaction animation. After restoring that order, Rust turned one frame too early because the outgoing entity-target Seek unconditionally advanced anti-vibration turning on its successful terminal-tolerance sample. Original returns from that tolerance branch before its later `Turn`/`PerformMotion` block. | WakeUp translation now books the source-faithful Turning order before WakingUp. Entity-target Seek only turns in its non-arrival branch, so a post-seek interaction takes over without an extra terminal turn. Focused regressions cover both the translated order queue and a tolerance arrival with a primed anti-vibration counter. Replay passes frame 1390. |
 | Done | Frame-1426 PC 198 wake recovery | On WakingUp `Done`, Original sets the living target to lying, clears concussion, and unconditionally calls `target->Wait()`. That fresh priority-Wait replaces the existing unconscious Wait and synchronously translates to StandingUp at frame 1425; StandingUp starts and sets upright posture at frame 1426. Rust used `ensure_wait_element`, which retained the stale BeingUnconscious order until frame 1426 and booked StandingUp one frame late. | Wake completion now launches the ordinary fresh `actor_wait` element, relying on standard equal-priority arbitration and posture-aware Wait translation rather than forcing posture or animation. The regression seeds a live unconscious Wait and proves it is interrupted and synchronously replaced with StandingUp. The normal replay matches all 1,469 frames. |
 | Done | Full-trace scan | The normal first-divergence replay establishes an exact logical match for every recorded frame, including later player interaction, combat, AI, effects, and mission scripting in this capture. | The independent `--scan-all` pass also matches all 1,469 frames without a logical or RNG divergence. Further captures should broaden behavioral coverage beyond this mission-start session. |
+| Done | Schema-6 frame-1128 synchronous `UnlockAI` | The Original native does not merely clear `script_locked`: it synchronously re-enters `Think(EVENT_RETURN_TO_DUTY)`, settles that owner's direct AI work, and registers any resulting `GoTo` before the script VM resumes. Rust resumed the VM first and exposed civilian 53's stale `MoveOk`. | `UnlockAI` now uses an explicit VM synchronization request. The engine validates the required actor/AI, unlocks it, closes the owner-local no-forecast AI boundary, and dispatches script-native movement before resuming the callback. Missing required state is an error rather than a fabricated false result. |
+| Done | Schema-6 frame-1148 world-space sight coordinates | Several elevated visibility and detection paths mixed projected map Y with a retained world Z, counting elevation twice and changing exact cone/range/opaque tests. | AI sight contexts now carry the same full 3D ground/eye coordinates used by the Original and defer projection only to the routines that explicitly require it. The correction is shared across friendly, enemy, post-detection, and soldier helper paths rather than patched for one actor. |
+| Done | Schema-6 frames-1166–1167 scroll and seek state | The attached-scroll interaction relies on the Original's live attachment Boolean, literal 30-unit interaction radius, and wrapping/signed legacy seek countdown. Approximating any of those changed whether the post-seek action launched and on which owner tick. | Rust now synchronizes the attachment flag with script attachment state, uses the source literal for this interaction, and preserves the Original countdown/expiry semantics through the refresh and post-seek boundary. |
+| Done | Schema-6 frame-1188 cutscene lock boundary | EdwardZone launches a recorded sequence directly from `Thanx`. Original closes the initial immediate stack before returning from the VM, so `LockUser` and message 13 synchronously stop every AI before their next actor slots. Rust left those actions queued. | Script callback return/resume now drains synchronous sequence actions. Director-completed sequence successors are likewise closed at the Original between-frame callback boundary, so cutscene locks cannot leak an extra actor movement tick. |
+| Done | Schema-6 frame-1188 movement-stop destination ownership | Original `RHSequenceElementMovement::StopMovement` changes the movement element's `mptDestination` but leaves the surviving transition order's `pointDestination2D` at its old path goal. Rust shortened both and exposed a different goal/increment. | Stopping movement truncates trailing orders and shortens only the element-owned logical destination. The retained transition order remains aimed at its original point, matching the source's distinct setters. |
+| Done | Schema-6 frame-1192 recursive stop through protected movement | A normal/script stop cannot interrupt PC 126's stronger in-progress `PassDoor`, but Original base `Stop` still recurses into and interrupts its weaker queued successor. Rust skipped the movement element entirely, allowing the successor move to survive. | Owner stop always calls the selected element's command-specific stop path. Movement preserves its stronger current transition where required while base recursion still stops weaker descendants; only the identity-owned priority-`Wait` fallback is exempt. |
+| Implemented; capture required | Schema-6 frame-1256 camera completion capture | `CameraGoto` completion is driven by the current host viewport, resolution/clamps, and display passes. Schema 6 contains none of those and records no completion event, so the Original's unlock at frame 1256 cannot be derived from the trace. | Schema 7 records natural `camera_goto` and `zoom_level` director completions during the Original draw and emits them on the following frame. Rust disables autonomous sequence release while Original-director replay is active, validates and applies each recorded completion before that frame's resolved commands, and synchronously closes immediate successors at the same prior-Draw boundary. Schemas 1–6 are rejected rather than inferring completion from selection/RNG consequences or adding a recording-specific timer. A fresh schema-7 capture is required. |
+| Done | Remove obsolete trace compatibility | Supporting incomplete recordings kept symbol-table probing, build-specific RNG offsets, optional semantic command fields, ordinal decoding, and schema-dependent execution paths in the parity runner. Those paths could silently turn a malformed recording into a plausible but invalid replay. | The runner now accepts exactly schema 7. RNG domains and semantic command/action names are mandatory; raw numeric ordinals are ignored as diagnostic producer metadata. Symbol lookup, fixed audio offsets, ordinal fallbacks, and all schema-conditioned replay behavior have been removed. |
 
 ## Workflow
 
 Capture paths are bases rather than individual output files. For example,
-`-PARITYTRACE /tmp/lincoln-schema5.jsonl` writes
-`/tmp/lincoln-schema5-session-0001.jsonl`, then `...-0002.jsonl`, and skips
+`-PARITYTRACE /tmp/lincoln-schema7.jsonl` writes
+`/tmp/lincoln-schema7-session-0001.jsonl`, then `...-0002.jsonl`, and skips
 existing session numbers on later process runs:
 
 ```sh
 ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
   original-code/build/native-full/robin \
-  -PARITYTRACE original-code/parity-traces/original-fullgame-schema5.jsonl \
+  -PARITYTRACE original-code/parity-traces/original-fullgame-schema7.jsonl \
   -PARITYSEED 1
 ```
 
@@ -361,7 +420,7 @@ without modifying the active profile or its save:
 ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
   original-code/build/native-full/robin \
   -PARITYMISSION H01_Lin_VL Lincoln \
-  -PARITYTRACE original-code/parity-traces/original-fullgame-schema5.jsonl \
+  -PARITYTRACE original-code/parity-traces/original-fullgame-schema7.jsonl \
   -PARITYSEED 1
 ```
 
@@ -369,7 +428,7 @@ Build once, then use the first-divergence run for iteration:
 
 ```sh
 cargo build --example original_parity_replay
-TRACE_JSONL=/path/to/schema5-trace.jsonl
+TRACE_JSONL=/path/to/schema7-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay \
   "$TRACE_JSONL"
@@ -391,7 +450,7 @@ To watch that same authoritative replay, add `--visual`. The window freezes on
 the first divergence while the normal logical mismatch report is printed:
 
 ```sh
-TRACE_JSONL=/path/to/schema5-trace.jsonl
+TRACE_JSONL=/path/to/schema7-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay --visual \
   "$TRACE_JSONL"
@@ -401,7 +460,7 @@ After the first-divergence run is clean, collect the first occurrence of every
 remaining compared-field mismatch with:
 
 ```sh
-TRACE_JSONL=/path/to/schema5-trace.jsonl
+TRACE_JSONL=/path/to/schema7-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay --scan-all \
   "$TRACE_JSONL"
@@ -411,7 +470,7 @@ For interactive inspection, start the headless runner paused with its local
 HTTP endpoint:
 
 ```sh
-TRACE_JSONL=/path/to/schema5-trace.jsonl
+TRACE_JSONL=/path/to/schema7-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay \
   --http-server 17640 --start-paused \

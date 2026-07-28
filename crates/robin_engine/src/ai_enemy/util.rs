@@ -303,16 +303,21 @@ pub(crate) fn soldier_detects_target_360(
         + crate::stealth::eye_z_for_posture(crate::element::Posture::Upright, viewer_is_rider);
     let target_z =
         target_ground_z + crate::stealth::detection_z_for_posture(target_posture, target_is_rider);
-    let dx = target_xy.x - viewer_position.x;
-    let dy = (target_xy.y - viewer_position.y) * INVERSE_ASPECT_RATIO;
+    let viewer_ground = crate::coordinates::GroundPoint::from_map_and_z(
+        crate::coordinates::MapPoint::new(viewer_position.x, viewer_position.y),
+        viewer_ground_z,
+    );
+    let target_ground = crate::coordinates::GroundPoint::from_map_and_z(target_xy, target_ground_z);
+    let dx = target_ground.x - viewer_ground.x;
+    let dy = (target_ground.y - viewer_ground.y) * INVERSE_ASPECT_RATIO;
     let dz = target_z - viewer_z;
     if dx * dx + dy * dy + dz * dz > (viewer_radius as f32).powi(2) {
         return false;
     }
     crate::sight_obstacle::is_reachable_3d(
         obstacles,
-        [viewer_position.x, viewer_position.y, viewer_z],
-        [target_xy.x, target_xy.y, target_z],
+        [viewer_ground.x, viewer_ground.y, viewer_z],
+        [target_ground.x, target_ground.y, target_z],
         crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
     )
 }

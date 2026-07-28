@@ -309,6 +309,16 @@ impl EngineInner {
 
         // Build ctx and stop the timer under a single mut borrow.
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
+        // Actor::Hourglass runs before this NPC timer boundary and may
+        // replace the current order without advancing the sprite yet (the
+        // bored -> bored-random reroll is the common case). Original
+        // GetAnimation() reads that live order, not Sprite::last_action.
+        let live_animation = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(npc_id)
+            .map(|(_, _, order)| order.order_type)
+            .unwrap_or(crate::order::OrderType::NonanimationEnd);
         let building_sector = self
             .world
             .entities
@@ -337,6 +347,7 @@ impl EngineInner {
                 self.control.sim_config.difficulty,
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
+            ctx.self_animation = live_animation;
             ctx.enter_swordfight_pending = self
                 .orders
                 .sequence_manager

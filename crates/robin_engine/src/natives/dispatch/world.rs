@@ -628,6 +628,23 @@ impl NativeContext<'_, '_> {
                         self.script_domains.scrolls.attachment_dirty.insert(npc_h);
                     }
                 }
+                // `RHElementActorNPC::AttachScroll` updates the NPC's
+                // attached-scroll pointer immediately.  Keep the entity-side
+                // predicate in sync with the script-handle map: input
+                // resolution, contextual actions, damage, and scroll-read
+                // dispatch all query this flag just as Original queries
+                // `mpAttachedScroll`.
+                match self.get_entity_mut(npc_h) {
+                    Some(Entity::Soldier(soldier)) => {
+                        soldier.npc.scroll_attached = scroll_h != 0;
+                    }
+                    Some(Entity::Civilian(civilian)) => {
+                        civilian.npc.scroll_attached = scroll_h != 0;
+                    }
+                    Some(_) | None => {
+                        unreachable!("AttachScrollToNPC validated an NPC before mutation")
+                    }
+                }
                 0
             }
 

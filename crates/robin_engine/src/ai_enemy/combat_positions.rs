@@ -40,8 +40,14 @@ fn phalanx_member_detects_360(
     );
     let target_z =
         target.elevation + crate::stealth::detection_z_for_posture(target.posture, target.is_rider);
-    let dx = target_xy.x - member.position.x;
-    let dy = (target_xy.y - member.position.y) * INVERSE_ASPECT_RATIO;
+    let viewer_ground = crate::coordinates::GroundPoint::from_map_and_z(
+        crate::coordinates::MapPoint::new(member.position.x, member.position.y),
+        member.elevation,
+    );
+    let target_ground =
+        crate::coordinates::GroundPoint::from_map_and_z(target_xy, target.elevation);
+    let dx = target_ground.x - viewer_ground.x;
+    let dy = (target_ground.y - viewer_ground.y) * INVERSE_ASPECT_RATIO;
     let dz = target_z - viewer_eye_z;
     if dx * dx + dy * dy + dz * dz > member.sq_view_radius {
         return false;
@@ -49,8 +55,8 @@ fn phalanx_member_detects_360(
 
     crate::sight_obstacle::is_reachable_3d(
         obstacles,
-        [member.position.x, member.position.y, viewer_eye_z],
-        [target_xy.x, target_xy.y, target_z],
+        [viewer_ground.x, viewer_ground.y, viewer_eye_z],
+        [target_ground.x, target_ground.y, target_z],
         crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
     )
 }
@@ -79,8 +85,12 @@ fn phalanx_member_detects_180(
     );
     let target_z =
         target.elevation + crate::stealth::detection_z_for_posture(target.posture, target.is_rider);
-    let dx = target_xy.x - viewer_xy.x;
-    let dy = (target_xy.y - viewer_xy.y) * INVERSE_ASPECT_RATIO;
+    let viewer_ground =
+        crate::coordinates::GroundPoint::from_map_and_z(viewer_xy, member.elevation);
+    let target_ground =
+        crate::coordinates::GroundPoint::from_map_and_z(target_xy, target.elevation);
+    let dx = target_ground.x - viewer_ground.x;
+    let dy = (target_ground.y - viewer_ground.y) * INVERSE_ASPECT_RATIO;
     let sq_distance = dx * dx + dy * dy;
     if sq_distance > member.sq_view_radius {
         return false;
@@ -105,8 +115,8 @@ fn phalanx_member_detects_180(
 
     crate::sight_obstacle::is_reachable_3d(
         obstacles,
-        [viewer_xy.x, viewer_xy.y, viewer_z],
-        [target_xy.x, target_xy.y, target_z],
+        [viewer_ground.x, viewer_ground.y, viewer_z],
+        [target_ground.x, target_ground.y, target_z],
         crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
     )
 }

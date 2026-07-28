@@ -2808,6 +2808,21 @@ impl Entity {
         SpriteTopLeft::new((map.x - center.x).floor(), (map.y - center.y).floor())
     }
 
+    /// C++ `RHSprite::GetCurrentPointMap()` equivalent.
+    ///
+    /// Sprite-script hotspots are relative to the integer sprite top-left,
+    /// not to the entity's map position.  Keeping that distinction matters
+    /// for `RHMOVE_USE_POINT` seeks: the original compares and paths toward
+    /// this map-space point.
+    pub fn cxx_current_point_map(&self) -> Option<MapPoint> {
+        let hotspot = self.sprite().current_hotspot()?;
+        let sprite_position = self.cxx_position_sprite();
+        Some(MapPoint::new(
+            sprite_position.x + hotspot.x,
+            sprite_position.y + hotspot.y,
+        ))
+    }
+
     /// Ground/world-XY position: `(world.x, world.y)`.
     pub fn ground_position(&self) -> GroundPoint {
         let map = self.element_data().position_map();

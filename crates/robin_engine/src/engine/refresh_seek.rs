@@ -93,11 +93,14 @@ impl crate::engine::EngineInner {
         let owner_move_box = *owner_entity.position_iface().get_move_box();
 
         if flags.contains(MoveFlags::USE_POINT) {
-            let current_point = target_elem
-                .sprite
-                .current_hotspot()
-                .filter(|p| p.x != 0.0 || p.y != 0.0)
-                .map(|p| target_pos + MapVec::new(p.x, p.y))
+            // C++ `GetCurrentPointMap()` starts at integer
+            // `GetPositionSprite()` (`floor(position_map - center)`) and
+            // adds the current row's hotspot. It disables USE_POINT only
+            // when that complete map-space point equals PositionMap; a zero
+            // local hotspot alone is not the disabling condition.
+            let current_point = target_entity
+                .cxx_current_point_map()
+                .filter(|point| *point != target_pos)
                 .unwrap_or(target_pos);
             let mut target_box = owner_move_box.translated(current_point);
             if self.world.fast_grid.find_authorized_position_toward(
@@ -498,12 +501,13 @@ impl crate::engine::EngineInner {
         let (owner_pos, owner_sector, door_handle, door_direction) = match self.get_entity(owner) {
             Some(e) => {
                 let elem = e.element_data();
-                let pi = e.position_iface();
+                let (door_handle, door_direction) =
+                    super::movement::current_door_for_route_source(e);
                 (
                     elem.position_map(),
                     elem.sector(),
-                    pi.get_door(),
-                    pi.get_door_direction(),
+                    door_handle,
+                    door_direction,
                 )
             }
             None => {

@@ -1836,6 +1836,12 @@ impl FriendlyAi {
                             crate::element::Posture::Upright,
                             ctx.self_is_rider,
                         );
+                    let viewer_eye_xy = crate::stealth::eye_point_xy(
+                        crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y),
+                        crate::element::Posture::Upright,
+                        ctx.direction as i16,
+                        false,
+                    );
                     let target_detection_xy = crate::stealth::detection_point_xy(
                         crate::coordinates::MapPoint::new(view.position.x, view.position.y),
                         view.posture,
@@ -1843,15 +1849,27 @@ impl FriendlyAi {
                     );
                     let target_eye_z = view.elevation
                         + crate::stealth::detection_z_for_posture(view.posture, view.is_rider);
-                    let dx = target_detection_xy.x - my_pos.x;
-                    let dy = (target_detection_xy.y - my_pos.y)
+                    let viewer_eye_ground = crate::coordinates::GroundPoint::from_map_and_z(
+                        viewer_eye_xy,
+                        ctx.elevation,
+                    );
+                    let target_detection_ground = crate::coordinates::GroundPoint::from_map_and_z(
+                        target_detection_xy,
+                        view.elevation,
+                    );
+                    let dx = target_detection_ground.x - viewer_eye_ground.x;
+                    let dy = (target_detection_ground.y - viewer_eye_ground.y)
                         * crate::position_interface::INVERSE_ASPECT_RATIO;
                     let dz = target_eye_z - viewer_eye_z;
                     if dx * dx + dy * dy + dz * dz <= sq_view_radius
                         && crate::sight_obstacle::is_reachable_3d(
                             ctx.obstacle_list(),
-                            [ctx.position.x, ctx.position.y, viewer_eye_z],
-                            [target_detection_xy.x, target_detection_xy.y, target_eye_z],
+                            [viewer_eye_ground.x, viewer_eye_ground.y, viewer_eye_z],
+                            [
+                                target_detection_ground.x,
+                                target_detection_ground.y,
+                                target_eye_z,
+                            ],
                             crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
                         )
                     {

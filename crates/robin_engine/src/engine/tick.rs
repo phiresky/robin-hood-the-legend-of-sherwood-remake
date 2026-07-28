@@ -1289,6 +1289,15 @@ impl EngineInner {
         let sim = self.control.simulation_context();
         let sim = &sim;
 
+        // Director work runs after the preceding PerformHourglass and can
+        // complete a CameraGoto/ZoomLevel sequence element there.  Original
+        // `SetState(Terminated) -> Ready() -> Go()` executes immediate
+        // successors before the next actor Hourglass.  Close that between-
+        // frame callback stack now: this preserves the post-Hourglass state
+        // boundary while ensuring LockUser/SendMessage/Timer successors run
+        // before any actor receives the next movement tick.
+        self.drain_pending_immediate_actions_sync(sim, display, assets);
+
         let code = self.perform_hourglass_inner(sim, display, assets, dev);
 
         // Post-tick sim mutations that used to live in `game_session`
@@ -4152,15 +4161,12 @@ impl EngineInner {
         // sequence actually completed.
         self.drain_pending_self_stimuli(sim, assets);
 
-        // ── End-of-tick immediate-action drain ──────────────────────
-        // Catch any `register_element_to_go` calls that happened
-        // in post-action passes (condolation fan-out, self-stimulus
-        // drains, etc.) without piggybacking on the
-        // hourglass action-loop drain.  Close the immediate-side-
-        // effect window before returning control to the host
-        // renderer so post-tick state reads see the immediate side
-        // effects.
-        self.drain_pending_immediate_actions_sync(sim, display, assets);
+        // ── End-of-tick registration-inline drain ───────────────────
+        // Anonymous timers run after SequenceManager::Hourglass. Preserve
+        // only work Original registration executes on that callback stack:
+        // ExecutedImmediately commands and direct RHPRIORITY_WAIT Go calls.
+        // Ordinary successors stay queued for the next manager hourglass.
+        self.drain_registration_inline_actions_sync(sim, display, assets);
     }
 
     /// Auto-leave disguise/stealth posture if the entity is in one and
@@ -4775,6 +4781,10 @@ impl EngineInner {
             self.advance_jump_step(entity_id);
         }
 
+        for (entity_id, speed) in outcomes.select_hulk {
+            self.apply_select_hulk(entity_id, speed);
+        }
+
         for entity_id in outcomes.resume_door_pass {
             self.apply_door_pass_transition_completion_side_effects(assets, entity_id);
             // Advance through Transition / PassingDoor / Walk steps.
@@ -4787,12 +4797,14 @@ impl EngineInner {
                 let Some(entity) = self.world.entities.get_mut(entity_id) else {
                     continue;
                 };
+                let transition_destination = entity.element_data().position_map();
                 let Some(actor) = entity.actor_data_mut() else {
                     continue;
                 };
                 let adv = Self::advance_door_pass(
                     actor,
                     entity_id,
+                    transition_destination,
                     &mut door_triggers,
                     &mut select_triggers,
                     &mut self.orders.next_order_id,

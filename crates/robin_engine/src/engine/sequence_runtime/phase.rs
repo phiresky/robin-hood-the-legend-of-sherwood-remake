@@ -507,7 +507,7 @@ impl EngineInner {
                         Command::ChangePosition => {
                             if let crate::sequence::SequenceElementData::Movement {
                                 destination,
-                                layer,
+                                layer: _,
                                 sector,
                                 direction,
                                 ..
@@ -535,9 +535,18 @@ impl EngineInner {
                                     assets,
                                     owner,
                                     super::special_motion::SpecialMovePosition::Map(dest),
-                                    Some(*layer),
-                                    tgt_sector.map(u16::from),
-                                    Some(dest),
+                                    // The encoded topology is the expected
+                                    // source, not a destination assignment.
+                                    // C++ only changes the map point here.
+                                    None,
+                                    None,
+                                    // C++ ChangePosition keeps the current
+                                    // obstacle/plane and recomputes the 3D
+                                    // position against it. This matters for
+                                    // geometry-less building sectors, whose
+                                    // elevation comes from the plane selected
+                                    // while entering the building.
+                                    None,
                                     "ChangePosition",
                                 );
                                 if let Some(entity) = self.world.entities.get_mut(owner) {

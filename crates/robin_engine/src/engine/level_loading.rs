@@ -1719,10 +1719,14 @@ impl EngineInner {
             }
         }
 
-        // `lift_layer = special_layer - 1 = motion_data.layers.len()`.
+        // The proto count includes the lift layer:
+        // `lift_layer = special_layer - 1 = motion_data.layers.len() - 1`.
         // Computing it from the raw motion data keeps this pass
         // independent of `fast_grid` init order.
-        let building_lift_layer = md.layers.len() as u16;
+        let building_lift_layer = u16::try_from(md.layers.len())
+            .expect("motion layer count exceeds u16")
+            .checked_sub(1)
+            .expect("building mission has no lift layer");
 
         // Allocate one sector per Building entry, in proto order, and rewrite
         // each of its doors in place.  StandaloneDoors entries are left alone:
@@ -1759,9 +1763,11 @@ impl EngineInner {
         let grid_w = level_w / 64;
         let grid_h = level_h / 64;
         self.world.fast_grid.size_map(grid_w, grid_h);
-        self.world
-            .fast_grid
-            .allocate_layers(motion_data.layers.len() as u16);
+        let conventional_layers = u16::try_from(motion_data.layers.len())
+            .expect("motion layer count exceeds u16")
+            .checked_sub(1)
+            .expect("motion data has no lift layer");
+        self.world.fast_grid.allocate_layers(conventional_layers);
 
         // Register the already-loaded sight obstacles with the grid so
         // per-cell queries (`get_obstacle_indices`) can restrict the

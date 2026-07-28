@@ -69,7 +69,7 @@ pub(crate) use commands::command_action_distance_animation;
 pub use commands::{coin_pickup_target, object_pickup_command};
 pub use console_dispatch::ConsoleResponse;
 pub use global_options::*;
-pub(crate) use movement::adapt_source_to_current_door;
+pub(crate) use movement::{adapt_source_to_current_door, current_door_for_route_source};
 pub use peripherals::{CameraDisplayState, DebugFlags, DevState, HostDisplayState};
 pub use rollback_safe::{
     Engine, EngineArgs, GroundMarkSpriteData, LevelLoadArgs, MinimapWidgetSetup,
@@ -2976,6 +2976,12 @@ impl EngineInner {
     /// Spatial acceleration grid (sectors, masks, jump lines, doors).
     pub fn fast_grid(&self) -> &FastFindGrid {
         &self.world.fast_grid
+    }
+
+    /// Canonical door selected by the same click-polygon fallback used by
+    /// group movement when no fast-grid sector polygon contains the point.
+    pub fn group_move_door_at(&self, point: crate::coordinates::MapPoint) -> Option<u32> {
+        movement::door_click_polygon_at(&self.script_domains.interactables.doors, point)
     }
 
     /// A* waypoint pathfinder.

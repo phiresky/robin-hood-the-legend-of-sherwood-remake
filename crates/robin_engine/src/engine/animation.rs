@@ -3407,6 +3407,9 @@ pub(super) struct AnimCompletionOutcomes {
     pub unlock_door_done: Vec<crate::gate::DoorIndex>,
     /// Entities whose door-pass chain should continue.
     pub resume_door_pass: Vec<EntityId>,
+    /// PC/Human SELECT action points whose hulk flash starts in this owner
+    /// slot. The stored float is the authored door-pass speed.
+    pub select_hulk: Vec<(EntityId, f32)>,
     /// Entities whose active jump should advance to the next step.
     pub next_jump_step: Vec<EntityId>,
     /// C++ `PLAY_CUSTOM_FREEZE` launches a follow-up
@@ -3570,12 +3573,13 @@ impl EngineInner {
             .orders
             .sequence_manager
             .current_order_for_actor(entity_id)
-            .and_then(|(seq_id, elem_idx, _order)| {
+            .and_then(|(seq_id, elem_idx, order)| {
                 self.orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .map(|element| {
                         !element.data.is_movement()
+                            || order.order_type == OrderType::Select
                             || matches!(element.command, Command::WaitTimer | Command::WaitFreeLift)
                     })
             })
@@ -3952,6 +3956,7 @@ impl EngineInner {
                     order_id,
                     order_antagonist,
                     order_completion,
+                    order_tolerance,
                     defer_initial_turn_step,
                 ) = if let Some((seq_id, elem_idx, order)) = order_snapshot {
                     (
@@ -3960,6 +3965,7 @@ impl EngineInner {
                         Some(order.order_id),
                         order.antagonist,
                         Some(order.completion.clone()),
+                        order.tolerance,
                         order.defer_initial_turn_step,
                     )
                 } else {
@@ -3969,6 +3975,7 @@ impl EngineInner {
                         None,
                         None,
                         None,
+                        0.0,
                         false,
                     )
                 };
@@ -4231,6 +4238,17 @@ impl EngineInner {
                         } else {
                             Some(MotionState::Terminated)
                         }
+                    } else if anim_type == OrderType::Select {
+                        // SELECT is a real non-animation order in the
+                        // translated door chain. It starts the Human/PC hulk
+                        // effect and terminates in this owner slot without
+                        // dispatching a sprite animation.
+                        if order_is_initialising {
+                            completion_outcomes
+                                .select_hulk
+                                .push((entity_id, order_tolerance));
+                        }
+                        Some(MotionState::Terminated)
                     } else if matches!(anim_type, OrderType::DrinkingAle)
                         && order_is_initialising
                         && drinking_ale_antagonist_inactive
