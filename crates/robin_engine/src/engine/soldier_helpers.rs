@@ -1381,7 +1381,10 @@ impl EngineInner {
                     sim,
                     pc_id,
                     path,
-                    GoalShape::Point(MapPoint::new(goal.x, goal.y)),
+                    GoalShape::Point {
+                        point: MapPoint::new(goal.x, goal.y),
+                        tolerance: 0.0,
+                    },
                     goal.level,
                     crate::order::OrderType::RunningUpright,
                     true,

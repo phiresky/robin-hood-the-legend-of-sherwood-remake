@@ -2614,7 +2614,10 @@ impl EngineInner {
                     )
                 } else {
                     (
-                        GoalShape::Point(MapPoint::new(target_pos.x, target_pos.y)),
+                        GoalShape::Point {
+                            point: MapPoint::new(target_pos.x, target_pos.y),
+                            tolerance: seek_tolerance,
+                        },
                         target_layer,
                     )
                 };

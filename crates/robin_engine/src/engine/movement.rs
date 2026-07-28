@@ -594,8 +594,9 @@ pub(crate) fn mercenary_formation_destinations(
 /// trailing-step shape.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum GoalShape {
-    /// Point-goal. The actor walks to this map point after the last gate.
-    Point(MapPoint),
+    /// Point-goal. The actor walks to this map point after the last gate,
+    /// retaining the caller's arrival tolerance (notably for AI `GoNear`).
+    Point { point: MapPoint, tolerance: f32 },
     /// Entity-target seek goal.  The trailing MOVE keeps the target
     /// element, SEEK flag, and tolerance so arrival uses the same
     /// live target-distance predicate as a plain `Command::Seek`.
@@ -949,7 +950,7 @@ impl GoalShape {
     /// The point used for pathfinding / the final MOVE's destination.
     pub(crate) fn goal_point(&self) -> MapPoint {
         match *self {
-            GoalShape::Point(p) => p,
+            GoalShape::Point { point, .. } => point,
             GoalShape::Seek { point, .. } => point,
             GoalShape::Door { far_side_point, .. } => far_side_point,
             GoalShape::Line { midpoint, .. } => midpoint,
@@ -2451,7 +2452,10 @@ impl EngineInner {
                             far_side_is_building: door_far_side_is_building.unwrap_or(false),
                         }
                     } else {
-                        GoalShape::Point(resolved_dest)
+                        GoalShape::Point {
+                            point: resolved_dest,
+                            tolerance: 0.0,
+                        }
                     };
                     let _ = self.build_gate_movement_sequence(
                         sim,
@@ -3162,13 +3166,14 @@ impl EngineInner {
                 .unwrap_or(false);
 
             match goal {
-                GoalShape::Point(_) | GoalShape::Seek { .. } => {
+                GoalShape::Point { .. } | GoalShape::Seek { .. } => {
                     if move_after_last_door && !last_into_building {
                         let (seek_target, seek_tolerance, seek_flags) = match goal {
                             GoalShape::Seek {
                                 target, tolerance, ..
                             } => (Some(target), tolerance, trailing_flags | MoveFlags::SEEK),
-                            _ => (None, 0.0, trailing_flags),
+                            GoalShape::Point { tolerance, .. } => (None, tolerance, trailing_flags),
+                            _ => unreachable!("point/seek trailing branch"),
                         };
                         let mut final_move = SequenceElement::new_movement(
                             level,
@@ -3915,7 +3920,10 @@ impl EngineInner {
                 sim,
                 entity_id,
                 gate_path,
-                GoalShape::Point(dest),
+                GoalShape::Point {
+                    point: dest,
+                    tolerance: intent.tolerance,
+                },
                 goal_layer,
                 action,
                 true,
