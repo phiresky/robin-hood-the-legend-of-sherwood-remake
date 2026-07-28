@@ -206,15 +206,14 @@ mission `H01_Lin_VL` (Lincoln), 3,087 contiguous simulated frames (0 through
 3,086), four recorded director completions, and 4,224 filtered simulation RNG
 draws. It is a direct `mission_start` capture with the complete campaign,
 resolved-command, director-completion, simulation-body, and global-RNG
-contracts. Replay currently matches through frame 2,283. At frame 2,136,
-soldier 78 in the Original accumulated enough partial visibility of PC 126 on
-an adjoining elevation to enter `DefaultLookingShadow`; Rust's enemy optical
-pass rejected the PC solely because its movement layer differed. Original
-human visibility has no such layer gate: it compares full 3D eye/detection
-points and lets opaque line of sight decide. Removing the invented gate
-restores the general stairs/roof/ledge case. The first remaining divergence is
-soldier 79 entering an attentive AI state at frame 2,284 while Rust remains in
-`DefaultLookingShadow`.
+contracts. Replay currently matches through frame 2,306. The frame-2,284
+crossbowman divergence combined three general elevation/combat-context errors:
+hearing mixed map and world coordinates, loaded bow users were not marked as
+archers in persistent AI state, and tactical fighter snapshots imposed a
+same-layer restriction absent from the Original's global fighter registry.
+With those corrected, soldier 79 hears and sees PC 126, selects the Original
+archer retreat decision, and enters `AttackingArcherRetireFromCombat`. The
+first remaining divergence is PC 126's exact movement position at frame 2,307.
 
 ## Change ledger
 
@@ -424,6 +423,9 @@ soldier 79 entering an attentive AI state at frame 2,284 while Rust remains in
 | Done | Cancelled pathfinder head occupancy | Original `CancelPathRequest` does not remove a matching list head: it ignores that result when ready, deletes only later matching requests, and lets the stale head occupy the call's single completion slot. Rust deleted every matching queued/in-flight request, allowing a replacement request to start and complete one frame early. | The deterministic synchronous queue now preserves a cancelled head as stale while deleting later same-owner requests. Synchronous delivery remains allowed only when no older in-flight result consumed the barrier's one-result slot. Replay advances through frame 2,131. |
 | Done | Ready-before-postponed owner FIFO | When a non-interruptible `PassDoor` terminates, Original `SetState(TERMINATED)` calls sequence `Ready` before `StartPostponedSequenceElement`. The stale route's newly-ready successor is therefore registered before the newer cross-postponed route; normal equal-priority arbitration then lets the newer route interrupt the stale successor. Rust extracted the cross-postponed handle from the middle of its deferred queue, reversed those two instructions, and let the stale frame-1,909 route interrupt the frame-2,074 replacement. | Synchronous owner-boundary dispatch now removes and executes same-owner deferred actions through the released successor in their existing manager-FIFO order, without moving foreign-owner work. Already-terminal postponed links remain a no-op. A focused sequence-manager regression covers `Ready` successor → cross-postponed successor ordering. Replay advances through frame 2,135. |
 | Done | Cross-layer human visibility | At frame 2,136 Original soldier 78's Enemy suspect total crossed the shadow threshold after clear visibility samples of PC 126 on a neighboring elevated movement layer. Rust unconditionally zeroed and discarded cached visibility whenever target and observer layer IDs differed, despite matching positions and view direction. | The enemy optical pass no longer invents a same-layer requirement. The shared visibility query already uses full 3D eye/detection points and exact 3D opaque reachability, matching Original `ComputeVisibility(RHElementActorHuman*)` and covering stairs, roofs, and adjoining elevations generally. Replay advances through frame 2,283. |
+| Done | Elevated acoustic distance | At frame 2,284 soldier 79 and PC 126 were geometrically close on adjoining elevations. Original `GetHearVolume` subtracts full world-space listener and source positions. Rust started from projected map Y, subtracted source elevation again, and made the pair hundreds of units farther apart, suppressing `EVENT_HEAR`. | Acoustic distance and sound-cover sampling now use the listener's full world X/Y/Z, while only the broad `IsInsideMyHearNoiseBox` prefilter remains in projected map coordinates. This matches the Original coordinate split for all elevated sound sources rather than special-casing the recorded actors. |
+| Done | Profile-driven archer identity | Soldier 79 uses the Crossbowman profile with shooting weapon 4. Original `IsArcher()` is exactly `GetBow() != NULL`, established when profile weapons are initialized. Rust derived that fact in transient snapshots but left the persistent `EnemyAi.is_archer_unit` false after mission loading, so the same attentive stimulus entered swordfight behavior. | Mission loading validates every nonzero shooting-weapon reference and initializes persistent archer identity from the resolved bow profile. Missing required bow data now fails loudly. The ordinary AI decision tree therefore sees the same role as transient combat snapshots. |
+| Done | Global cross-layer fighter overview | Original `FillListWithAllNearFighters` scans the engine-wide camp fighter arrays, applies stretched-Y max-norm distance and `IsAbleToFight`, and has no logical-layer test. Friendly additions require active swordfight because self is inserted first; enemy additions do not. Rust rebuilt queued-Think tactical data from a stale detection list in one path and discarded every cross-layer fighter in the live path, hiding PC 126 from `ArcherIsToNearToEnemy`. | Both tactical snapshot paths now follow the global registry semantics without a layer gate, retain the Original friendly-swordfight condition, and rebuild hostile PCs independently of the prior Them list. Required primary targets missing from the resulting fighter view panic instead of silently selecting another tactic. Replay advances through frame 2,306. |
 
 ## Workflow
 

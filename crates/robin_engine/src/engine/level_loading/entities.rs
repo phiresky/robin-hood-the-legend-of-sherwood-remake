@@ -585,6 +585,17 @@ impl EngineInner {
                 ai.soldier_profile_endurance = p.endurance;
                 ai.is_vip = p.vip;
                 ai.hth_weapon_id = p.hth_weapon_id;
+                ai.is_archer_unit = if p.shooting_weapon_id == 0 {
+                    false
+                } else {
+                    profiles.get_bow(p.shooting_weapon_id).unwrap_or_else(|| {
+                        panic!(
+                            "soldier profile {} requires missing bow profile {}",
+                            raw.profile_number, p.shooting_weapon_id
+                        )
+                    });
+                    true
+                };
                 if let Some(weapon) = profiles.get_hth_weapon(p.hth_weapon_id) {
                     ai.sword_range =
                         weapon.distance[crate::weapons::WeaponDistance::Default as usize];

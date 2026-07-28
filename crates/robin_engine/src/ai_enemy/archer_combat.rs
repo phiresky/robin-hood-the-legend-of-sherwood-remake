@@ -212,10 +212,8 @@ impl EnemyAi {
     /// Returns `false` early if a shield bearer is covering us
     /// (`shield_bearer_before_me != 0`) or if we are a Royalist on a
     /// Sherwood Forest level (`IsMerryManForest`).  Returns `false` if
-    /// the enemy snapshot is not visible this tick — there is no usable
-    /// direction/action-state, so the original caller would have crashed on
-    /// a NULL `pEnemy`; mirroring that we conservatively report "not
-    /// too near".
+    /// Panics if the required primary target is absent from the live fighter
+    /// registry, matching the original's unconditional pointer dereference.
     pub fn archer_is_too_near_to_enemy(
         &self,
         pos_me: &Position,
@@ -235,9 +233,12 @@ impl EnemyAi {
             return false;
         }
 
-        let Some(enemy) = self.find_fighter(enemy_handle, tick) else {
-            return false;
-        };
+        let enemy = self.find_fighter(enemy_handle, tick).unwrap_or_else(|| {
+            panic!(
+                "archer {} requires missing primary-target fighter {}",
+                self.base.me, enemy_handle
+            )
+        });
 
         // Vector from enemy to me (note the original name
         // `vEnemyToMe = posMe - Position(pEnemy)` is the vector pointing

@@ -1909,7 +1909,6 @@ impl EngineInner {
             return Vec::new();
         };
         let me_pos_pt = soldier.element.position_map();
-        let my_layer = soldier.element.layer();
         let my_camp = soldier.soldier.cached_camp;
         let me_handle = enemy_ai.base.me;
 
@@ -2171,7 +2170,7 @@ impl EngineInner {
             if other_id.index() == me_handle {
                 continue;
             }
-            if s.element.layer() != my_layer {
+            if s.soldier.cached_camp == my_camp && s.human.opponents.is_empty() {
                 continue;
             }
             let p = s.element.position_map();
@@ -2191,9 +2190,6 @@ impl EngineInner {
                 let Some(Entity::Pc(pc)) = self.world.entities.get(pc_id) else {
                     continue;
                 };
-                if pc.element.layer() != my_layer {
-                    continue;
-                }
                 let p = pc.element.position_map();
                 let dx = p.x - me_pos_pt.x;
                 let dy = (p.y - me_pos_pt.y) * crate::position_interface::INVERSE_ASPECT_RATIO;

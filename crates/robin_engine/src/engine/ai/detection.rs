@@ -871,7 +871,7 @@ impl EngineInner {
         // Read NPC state. The state gate is sampled once before the enemy-list
         // loop, as in the original outer
         // `if (mCurrentState != STATE_ATTACKING)`.
-        let (position, elevation, current_state, expects_pc_detectables) = {
+        let (position_map, position_world, current_state, expects_pc_detectables) = {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
@@ -908,7 +908,7 @@ impl EngineInner {
             };
             (
                 entity.element_data().position_map(),
-                entity.element_data().position().z,
+                entity.element_data().position(),
                 npc.ai_state(),
                 expects_pc_detectables,
             )
@@ -934,7 +934,7 @@ impl EngineInner {
             .feedback
             .sound_sim
             .sources
-            .max_noise_covering_volume_for_3d(position.x, position.y, elevation);
+            .max_noise_covering_volume_for_3d(position_world.x, position_world.y, position_world.z);
 
         let (deafness, pc_target_ids) = {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
@@ -1027,8 +1027,8 @@ impl EngineInner {
                     // map coords. Outside this box original RefreshDetection
                     // does not call UpdateHearing, so the latch is untouched.
                     let noise = pc.produced_noise;
-                    let dx = noise.origin.x - position.x;
-                    let dy_raw = noise.origin.y - position.y;
+                    let dx = noise.origin.x - position_map.x;
+                    let dy_raw = noise.origin.y - position_map.y;
                     let half_x = pc_volume as f32 + 100.0;
                     let half_y = pc_volume as f32 * crate::position_interface::ASPECT_RATIO + 100.0;
                     if dx.abs() > half_x || dy_raw.abs() > half_y {
@@ -1039,10 +1039,10 @@ impl EngineInner {
                         // no logical-layer rejection, so nearby cross-layer
                         // sounds remain audible when their actual geometry is.
                         let source_elevation = noise.elevation as f32;
-                        let dy_stretched = (position.y - noise.origin.y - source_elevation)
+                        let dy_stretched = (position_world.y - noise.origin.y - source_elevation)
                             * crate::position_interface::INVERSE_ASPECT_RATIO;
-                        let dx_3d = position.x - noise.origin.x;
-                        let dz = elevation - source_elevation;
+                        let dx_3d = position_world.x - noise.origin.x;
+                        let dz = position_world.z - source_elevation;
                         let modified_volume = pc_volume as f32 * HEARING_FACTOR;
                         let max_norm = dx_3d.abs().max(dy_stretched.abs()).max(dz.abs());
                         let distance =
@@ -2645,7 +2645,9 @@ impl EngineInner {
                     }
 
                     // Friendly soldiers from the same-camp fighter
-                    // registry (excluding self).
+                    // registry (excluding self). Original inserts self first,
+                    // which makes FillListWithAllNearFighters require every
+                    // additional same-camp fighter to be swordfighting.
                     // ReconsiderSwordfightObservation rebuilds the
                     // us-list by scanning all nearby same-camp
                     // fighters every time; using the previous Rust
@@ -2653,10 +2655,11 @@ impl EngineInner {
                     // let multiple observers miss a friend already
                     // walking / running / charging the same target.
                     for ss in soldier_snapshots {
-                        if ss.id.index() == me_handle || ss.camp != my_camp || !ss.able_to_fight {
-                            continue;
-                        }
-                        if ss.layer != my_layer {
+                        if ss.id.index() == me_handle
+                            || ss.camp != my_camp
+                            || !ss.able_to_fight
+                            || !ss.is_swordfighting
+                        {
                             continue;
                         }
                         let dx = ss.position.x - eye.x;
@@ -2728,15 +2731,15 @@ impl EngineInner {
                         });
                     }
 
-                    // Hostile PCs from the them-list.
-                    for &enemy_handle in &enemy_ai.list_them {
-                        let Some(pc) = pc_snapshots.iter().find(|p| p.id.index() == enemy_handle)
-                        else {
-                            continue;
-                        };
-                        if pc.layer != my_layer {
+                    // Hostile PCs from the global fighter registry. Original
+                    // FAST_OVERVIEW rebuilds mlistThem from every nearby
+                    // enemy-camp fighter; it does not use the NPC's prior
+                    // detection list.
+                    for pc in pc_snapshots {
+                        if !pc.able_to_fight {
                             continue;
                         }
+                        let enemy_handle = pc.id.index();
                         let dx = pc.position.x - eye.x;
                         let dy = (pc.position.y - eye.y)
                             * crate::position_interface::INVERSE_ASPECT_RATIO;
