@@ -8,7 +8,7 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
 
 ## Baseline and contract
 
-- Required Original trace schema: 8
+- Required Original trace schema: 9
 - Required replay start state: `mission_start` with a complete versioned
   campaign snapshot captured before engine initialization, including
   progression, mission state, gang/reservists/mission team, character status
@@ -16,7 +16,7 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   campaign pointers encoded as stable indices. The Original also preserves
   `loaded_save` sessions, but Rust rejects them until live mission-save state
   restoration is implemented.
-- Compatibility: schemas 1–6 are deliberately rejected. Schemas 1–3 cannot
+- Compatibility: schemas 1–8 are deliberately rejected. Schemas 1–3 cannot
   reconstruct an arbitrary campaign and can silently create a plausible but
   different world. Schema 4 has complete campaign state, but was recorded with
   native i686 x87 extended-precision intermediates and is not a valid numeric
@@ -24,6 +24,9 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   of direct resolved object interactions and their speed changes. Schema 6
   does not record display-driven director completion boundaries, so a
   host-local camera position can change when gameplay sequences resume.
+  Schema 7 lacks the explicit simulation-body gate. Schema 8 reaches the
+  current Lincoln divergence but cannot distinguish path-input or live
+  motion-grid differences, so it is retained only as historical evidence.
 - Inputs: resolved game commands, applied on their recorded simulation frames,
   plus resolved camera-director sequence completions produced between
   simulation frames and applied before the following frame's commands
@@ -200,7 +203,7 @@ including the startup prefix, 706 audio RNG draws, 69 resolved commands, and
 `cache_hit: false`. Both the normal first-divergence replay and the independent
 `--scan-all` pass match the whole recording.
 
-The active schema-8 baseline is
+The last schema-8 baseline is
 `original-code/parity-traces/original-fullgame-schema8-session-0001.jsonl`:
 mission `H01_Lin_VL` (Lincoln), 3,087 contiguous simulated frames (0 through
 3,086), four recorded director completions, and 4,224 filtered simulation RNG
@@ -220,11 +223,16 @@ Rust accepts the first proposed straight retreat from `(709,1292)` to
 `(652.55054,1324.378)` on layer 4 with half-diagonal `(6,4)` and therefore
 never invokes A*. Its thick corridor contains eight active motion-line
 candidates, none of which intersects either side or has its tested endpoint
-inside. The Original instead emits graph waypoints, so either its resolved
-retreat candidate or its active motion-line geometry differs. The current
-schema does not record either value; do not force this route or special-case
-the actor. Generic trace-level path smoothing and reachability-candidate
-diagnostics are retained while the recorder contract is expanded.
+inside. The Original instead emits graph waypoints. A source audit proved that
+the Original and Rust static line geometry, corridor construction,
+intersection arithmetic, and owner-relative fighter position agree for the
+observed Rust request; the retreat endpoint derives bit-for-bit from the
+correct pre-owner-slot PC position. Therefore no speculative reachability or
+fighter-timing change is warranted. Schema 9 now records the complete oriented
+motion-line grid, sparse active-line changes, and ordered queued/completed path
+requests (including the exact source, goal, half diagonal, flags, validity,
+and waypoints). A new schema-9 capture is required to identify the remaining
+general difference.
 
 ## Change ledger
 
@@ -439,18 +447,19 @@ diagnostics are retained while the recorder contract is expanded.
 | Done | Global cross-layer fighter overview | Original `FillListWithAllNearFighters` scans the engine-wide camp fighter arrays, applies stretched-Y max-norm distance and `IsAbleToFight`, and has no logical-layer test. Friendly additions require active swordfight because self is inserted first; enemy additions do not. Rust rebuilt queued-Think tactical data from a stale detection list in one path and discarded every cross-layer fighter in the live path, hiding PC 126 from `ArcherIsToNearToEnemy`. | Both tactical snapshot paths now follow the global registry semantics without a layer gate, retain the Original friendly-swordfight condition, and rebuild hostile PCs independently of the prior Them list. Required primary targets missing from the resulting fighter view panic instead of silently selecting another tactic. Replay advances through frame 2,306. |
 | Done | Pre-door lift animation translation | PC 126 exited a stair lift at frame 2,307. Original calls `DetermineMovementAnimation` while the actor is still in the lift sector, rewrites the PassDoor element from `WalkingUpright` to `WalkingStairs`, and therefore keeps the stair row and its authored distances across both door segments. Rust selected the action from actor state alone, switched to upright walking outside, and moved exactly 80% as far. | Lift animation translation is now shared by ordinary movement and PassDoor construction, samples the actor's pre-callback current sector, preserves fast movement, and writes the translated action back through the linked movement element before installing orders. The later forced-crouch rewrite remains authoritative. Replay advances through frame 2,311. |
 | Done | Compound seek timer ownership | The entity-target seek armed its 25-tick refresh countdown before constructing a multi-element route. It aged to 16, remained frozen during PassDoor, and Original resumed the concrete `MOVE | SEEK` leg by decrementing 16 to 15 at frame 2,312. Rust generically rearmed every concrete child at path completion and exposed 24. | The outer `SEEK` translation now owns the initial target snapshot/countdown, explicit `RefreshSeek` owns every resample/rearm, and generated `MOVE | SEEK` children preserve both across door and path boundaries. This also prevents a later compound leg from silently shifting the target-movement reference point. Replay advances through frame 2,317. |
+| Implemented; capture required | Generic motion-grid and path-request oracle | Schema 8 showed different retreat routing but did not expose the exact request accepted by the Original or the live obstacle-line set. Static source/data analysis showed no difference for the request reconstructed from Rust, making a gameplay change unjustified. | Original schema 9 records every oriented motion line and initial active state, sparse activation changes, and ordered queued/completed path requests with all behavior-relevant inputs and output waypoints (`a33e7de2`). The Rust runner maps line identity isomorphically by geometry plus repulsive behavior, compares live activation every frame, requires schema 9, and includes Original path events in automatic surrounding-frame dumps (`88872ec42`). |
 
 ## Workflow
 
 Capture paths are bases rather than individual output files. For example,
-`-PARITYTRACE /tmp/lincoln-schema8.jsonl` writes
-`/tmp/lincoln-schema8-session-0001.jsonl`, then `...-0002.jsonl`, and skips
+`-PARITYTRACE /tmp/lincoln-schema9.jsonl` writes
+`/tmp/lincoln-schema9-session-0001.jsonl`, then `...-0002.jsonl`, and skips
 existing session numbers on later process runs:
 
 ```sh
 ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
   original-code/build/native-full/robin \
-  -PARITYTRACE original-code/parity-traces/original-fullgame-schema8.jsonl \
+  -PARITYTRACE original-code/parity-traces/original-fullgame-schema9.jsonl \
   -PARITYSEED 1
 ```
 
@@ -466,7 +475,7 @@ without modifying the active profile or its save:
 ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
   original-code/build/native-full/robin \
   -PARITYMISSION H01_Lin_VL Lincoln \
-  -PARITYTRACE original-code/parity-traces/original-fullgame-schema8.jsonl \
+  -PARITYTRACE original-code/parity-traces/original-fullgame-schema9.jsonl \
   -PARITYSEED 1
 ```
 
@@ -474,7 +483,7 @@ Build once, then use the first-divergence run for iteration:
 
 ```sh
 cargo build --example original_parity_replay
-TRACE_JSONL=/path/to/schema8-trace.jsonl
+TRACE_JSONL=/path/to/schema9-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay \
   "$TRACE_JSONL"
@@ -496,7 +505,7 @@ To watch that same authoritative replay, add `--visual`. The window freezes on
 the first divergence while the normal logical mismatch report is printed:
 
 ```sh
-TRACE_JSONL=/path/to/schema8-trace.jsonl
+TRACE_JSONL=/path/to/schema9-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay --visual \
   "$TRACE_JSONL"
@@ -506,7 +515,7 @@ After the first-divergence run is clean, collect the first occurrence of every
 remaining compared-field mismatch with:
 
 ```sh
-TRACE_JSONL=/path/to/schema8-trace.jsonl
+TRACE_JSONL=/path/to/schema9-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay --scan-all \
   "$TRACE_JSONL"
@@ -516,7 +525,7 @@ For interactive inspection, start the headless runner paused with its local
 HTTP endpoint:
 
 ```sh
-TRACE_JSONL=/path/to/schema8-trace.jsonl
+TRACE_JSONL=/path/to/schema9-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay \
   --http-server 17640 --start-paused \
