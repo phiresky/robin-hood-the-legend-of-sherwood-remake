@@ -3109,6 +3109,89 @@ impl SequenceManager {
         }))
     }
 
+    /// Remove and return this owner's deferred actions through an exact
+    /// target, preserving their relative manager-FIFO order.
+    ///
+    /// `SetState(TERMINATED)` registers the finishing sequence's newly-ready
+    /// elements before `StartPostponedSequenceElement` registers a released
+    /// cross-sequence successor.  A synchronous owner boundary must therefore
+    /// not pluck that successor out of the middle of `elements_to_go`: doing
+    /// so lets the old sequence run after the replacement and interrupt it.
+    /// Foreign-owner entries remain in place.
+    pub fn take_deferred_owner_actions_through(
+        &mut self,
+        owner: EntityId,
+        target_sequence_id: SequenceId,
+        target_element_index: usize,
+    ) -> Result<Vec<SequenceAction>, String> {
+        let target = (target_sequence_id, target_element_index);
+        let target_element = self
+            .get_element(target_sequence_id, target_element_index)
+            .ok_or_else(|| {
+                format!("missing deferred target {target_sequence_id:?}/{target_element_index}")
+            })?;
+        if target_element.owner != Some(owner) {
+            return Err(format!(
+                "deferred target {target_sequence_id:?}/{target_element_index} belongs to {:?}, expected {owner:?}",
+                target_element.owner
+            ));
+        }
+        if !matches!(
+            target_element.state,
+            SequenceState::Todo | SequenceState::Postponed
+        ) {
+            if let Some(position) = self
+                .elements_to_go
+                .iter()
+                .position(|handle| *handle == target)
+            {
+                self.elements_to_go.remove(position);
+            }
+            return Ok(Vec::new());
+        }
+        if target_element.executed_immediately() {
+            return Err(format!(
+                "deferred target {target_sequence_id:?}/{target_element_index} unexpectedly executes immediately"
+            ));
+        }
+        let target_position = self
+            .elements_to_go
+            .iter()
+            .position(|handle| *handle == target)
+            .ok_or_else(|| {
+                format!(
+                    "live deferred target {target_sequence_id:?}/{target_element_index} is absent from elements_to_go"
+                )
+            })?;
+
+        let handles: Vec<_> = self
+            .elements_to_go
+            .iter()
+            .take(target_position + 1)
+            .copied()
+            .filter(|(sequence_id, element_index)| {
+                self.get_element(*sequence_id, *element_index)
+                    .is_some_and(|element| element.owner == Some(owner))
+            })
+            .collect();
+
+        if !handles.contains(&target) {
+            return Err(format!(
+                "deferred target {target_sequence_id:?}/{target_element_index} does not belong to {owner:?}"
+            ));
+        }
+
+        let mut actions = Vec::with_capacity(handles.len());
+        for (sequence_id, element_index) in handles {
+            if let Some(action) =
+                self.take_deferred_owner_action(owner, sequence_id, element_index)?
+            {
+                actions.push(action);
+            }
+        }
+        Ok(actions)
+    }
+
     // ─── State change callbacks ─────────────────────────────────
 
     /// Called by the engine when an element has finished (terminated).
@@ -4958,6 +5041,47 @@ mod tests {
             SequenceAction::InstructOwner { element_index, .. } => assert_eq!(*element_index, 1),
             other => panic!("expected InstructOwner for element 1, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn released_cross_postponed_action_keeps_owner_fifo_behind_ready_successor() {
+        let mut mgr = SequenceManager::new();
+        let owner = EntityId::Pc(crate::entity_id::PcId(0));
+
+        let mut old = Sequence::new();
+        old.append_element(make_simple_element(1, Command::PassDoor, Some(owner)));
+        old.append_element(make_simple_element(2, Command::Move, Some(owner)));
+        let old_id = mgr.launch_sequence(old);
+        let _ = mgr.hourglass();
+        mgr.element_in_progress(old_id, 0);
+
+        let replacement_id =
+            mgr.launch_element(make_simple_element(1, Command::AssertPosition, Some(owner)));
+        let _ = mgr.hourglass();
+        mgr.postpone_element(replacement_id, 0);
+        mgr.get_element_mut(old_id, 0).unwrap().cross_postponed = Some((replacement_id, 0));
+
+        mgr.element_terminated(old_id, 0);
+        finish_test_condolations(&mut mgr);
+
+        let actions = mgr
+            .take_deferred_owner_actions_through(owner, replacement_id, 0)
+            .unwrap();
+        assert!(matches!(
+            actions.as_slice(),
+            [
+                SequenceAction::InstructOwner {
+                    sequence_id: first_sequence,
+                    element_index: 1,
+                    ..
+                },
+                SequenceAction::InstructOwner {
+                    sequence_id: second_sequence,
+                    element_index: 0,
+                    ..
+                }
+            ] if *first_sequence == old_id && *second_sequence == replacement_id
+        ));
     }
 
     #[test]

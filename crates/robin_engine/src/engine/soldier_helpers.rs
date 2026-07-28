@@ -446,22 +446,24 @@ impl EngineInner {
             .finish_pending_condolation(dispatch);
 
         // SetState(TERMINATED) resumes after SendCondolationCard with
-        // Ready(), then StartPostponedSequenceElement(). Promote that exact
-        // released element before this actor boundary closes, so a postponed
-        // movement's path request is available at the next
-        // ProcessPathRequests phase without reordering unrelated work.
+        // Ready(), then StartPostponedSequenceElement(). Promote this owner's
+        // queued work through that released element before the actor boundary
+        // closes. Ready registered the old sequence's successors first, so
+        // preserving that owner-local FIFO is essential: extracting only the
+        // postponed successor would let the stale sequence run afterwards and
+        // interrupt the replacement route.
         if !from_halt && let Some((sequence_id, element_index)) = cross_postponed_successor {
-            let action = self
+            let actions = self
                 .orders
                 .sequence_manager
-                .take_deferred_owner_action(card_owner, sequence_id, element_index)
+                .take_deferred_owner_actions_through(card_owner, sequence_id, element_index)
                 .unwrap_or_else(|detail| {
                     panic!(
                         "condolation owner {} postponed successor dispatch failed: {detail}",
                         card_owner.index()
                     )
                 });
-            if let Some(action) = action {
+            for action in actions {
                 self.dispatch_script_synchronous_action(sim, assets, action, &mut active_scripts)
                     .unwrap_or_else(|error| {
                         panic!(
