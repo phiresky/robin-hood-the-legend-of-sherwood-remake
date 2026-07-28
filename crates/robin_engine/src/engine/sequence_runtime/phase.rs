@@ -102,6 +102,26 @@ impl EngineInner {
                         return;
                     }
                     let seek_distance = tolerance.max(4.0);
+                    let target_position = self
+                        .get_entity(target)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "entity-target Seek owner {owner:?} requires missing target {target:?}"
+                            )
+                        })
+                        .element_data()
+                        .position_map();
+                    if let Some(actor) = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(|entity| entity.actor_data_mut())
+                    {
+                        actor.seek_target = Some(target);
+                        actor.last_seek_target_position = target_position;
+                        actor.wait_time = 0;
+                        actor.seek_refresh_wait = 25;
+                    }
                     if self.try_dispatch_cross_sector_entity_seek(
                         sim,
                         assets,
@@ -137,15 +157,6 @@ impl EngineInner {
                         *destination = resolved.destination;
                         *tolerance = resolved.tolerance;
                         *speed_factor = resolved.speed_factor;
-                    }
-                    if let Some(actor) = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(|entity| entity.actor_data_mut())
-                    {
-                        actor.wait_time = 0;
-                        actor.seek_refresh_wait = 25;
                     }
                     if resolved.stop_npc {
                         self.send_seek_stop_to_npc(target);

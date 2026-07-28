@@ -396,9 +396,8 @@ impl crate::engine::EngineInner {
         // Stamp the new last-seek-position so the next tick's
         // threshold check measures against this launch, and re-arm
         // `seek_refresh_wait` (every refresh re-arms the countdown).
-        // `try_dispatch_move_path` will overwrite both when the new
-        // element dispatches, but stamp them here too so a dispatch
-        // failure still leaves coherent state.
+        // Concrete MOVE|SEEK elements deliberately preserve both values;
+        // RefreshSeek is the source boundary that resamples and rearms them.
         if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {

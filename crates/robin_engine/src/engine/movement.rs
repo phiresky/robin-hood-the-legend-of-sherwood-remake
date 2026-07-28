@@ -31,6 +31,83 @@ enum LiftAnimContext {
     },
 }
 
+/// Apply the lift-sector portion of Original
+/// `RHElementActor::DetermineMovementAnimation`.
+///
+/// The current actor sector is authoritative. In particular, an actor leaving
+/// a lift translates its movement action before the door callback changes the
+/// sector, while an actor approaching the lift from outside does not.
+pub(super) fn determine_lift_movement_animation_for(
+    entity: &crate::element::Entity,
+    fast_grid: &crate::fast_find_grid::FastFindGrid,
+    posture_after: crate::element::Posture,
+    action: OrderType,
+    destination: MapPoint,
+) -> OrderType {
+    use crate::element::Posture;
+
+    let elem = entity.element_data();
+    let posture = if posture_after == Posture::Undefined {
+        elem.posture
+    } else {
+        posture_after
+    };
+    let Some(sector_handle) = elem.sector() else {
+        return action;
+    };
+    let sector_number = crate::sector::SectorNumber::new(i16::from(sector_handle));
+    let Some(sector) = fast_grid
+        .level
+        .sector_number_map
+        .get(&sector_number)
+        .and_then(|&index| fast_grid.level.sectors.get(index))
+    else {
+        return action;
+    };
+    let Some(lift_type) = sector.lift_type else {
+        return action;
+    };
+
+    match posture {
+        Posture::Upright => lift_type.translate_upright_action(action),
+        Posture::OnWall | Posture::OnLadder => {
+            if !matches!(
+                (posture, lift_type),
+                (Posture::OnWall, crate::sector::LiftType::Wall)
+                    | (Posture::OnLadder, crate::sector::LiftType::Ladder)
+            ) {
+                tracing::warn!(
+                    ?posture,
+                    ?lift_type,
+                    sector = %sector.sector_number,
+                    "DetermineMovementAnimation: climb posture does not match lift sector"
+                );
+                return action;
+            }
+            let low = sector.low_exit_point.unwrap_or_else(|| {
+                panic!(
+                    "DetermineMovementAnimation: lift sector {} missing low exit point",
+                    sector.sector_number
+                )
+            });
+            let high = sector.high_exit_point.unwrap_or_else(|| {
+                panic!(
+                    "DetermineMovementAnimation: lift sector {} missing high exit point",
+                    sector.sector_number
+                )
+            });
+            let position = elem.position_map();
+            let ladder_dx = low.x - high.x;
+            let ladder_dy = low.y - high.y;
+            let movement_dx = destination.x - position.x;
+            let movement_dy = destination.y - position.y;
+            let going_down = ladder_dx * movement_dx + ladder_dy * movement_dy >= 0.0;
+            lift_type.translate_climb_action(action, going_down)
+        }
+        _ => action,
+    }
+}
+
 #[cfg(test)]
 mod line_crossing_eligibility_tests {
     use super::actor_line_crossing_eligible;
@@ -1532,75 +1609,16 @@ impl EngineInner {
         action: OrderType,
         destination: MapPoint,
     ) -> OrderType {
-        use crate::element::Posture;
-
         let Some(entity) = self.world.entities.get(owner) else {
             return action;
         };
-        let elem = entity.element_data();
-        // legacy implementation `Instruct` stamps the current posture before
-        // `DetermineMovementAnimation`. Some postponed Rust movement
-        // elements can still be Undefined here, so use the same effective
-        // actor posture instead of treating Undefined as upright.
-        let posture = if posture_after == Posture::Undefined {
-            elem.posture
-        } else {
-            posture_after
-        };
-        let Some(sector_handle) = elem.sector() else {
-            return action;
-        };
-        let Some(sector) =
-            self.grid_sector_by_number(crate::sector::SectorNumber::new(i16::from(sector_handle)))
-        else {
-            return action;
-        };
-        let Some(lift_type) = sector.lift_type else {
-            return action;
-        };
-
-        match posture {
-            Posture::Upright => lift_type.translate_upright_action(action),
-            Posture::OnWall | Posture::OnLadder => {
-                if !matches!(
-                    (posture, lift_type),
-                    (Posture::OnWall, crate::sector::LiftType::Wall)
-                        | (Posture::OnLadder, crate::sector::LiftType::Ladder)
-                ) {
-                    tracing::warn!(
-                        ?owner,
-                        ?posture,
-                        ?lift_type,
-                        sector = %sector.sector_number,
-                        "DetermineMovementAnimation: climb posture does not match lift sector"
-                    );
-                    return action;
-                }
-                let (pt_low, pt_high) = self.lift_endpoint_points(sector.sector_number);
-                let position = elem.position_map();
-                let ladder_dx = pt_low.x - pt_high.x;
-                let ladder_dy = pt_low.y - pt_high.y;
-                let movement_dx = destination.x - position.x;
-                let movement_dy = destination.y - position.y;
-                let going_down = ladder_dx * movement_dx + ladder_dy * movement_dy >= 0.0;
-                let translated = lift_type.translate_climb_action(action, going_down);
-                tracing::debug!(
-                    ?owner,
-                    ?posture,
-                    ?action,
-                    ?translated,
-                    sector = %sector.sector_number,
-                    ladder_dx,
-                    ladder_dy,
-                    movement_dx,
-                    movement_dy,
-                    going_down,
-                    "DetermineMovementAnimation: translated lift movement action"
-                );
-                translated
-            }
-            _ => action,
-        }
+        determine_lift_movement_animation_for(
+            entity,
+            &self.world.fast_grid,
+            posture_after,
+            action,
+            destination,
+        )
     }
 
     pub(crate) fn apply_sword_movement_start_initiative_transfer(&mut self, entity_id: EntityId) {
@@ -8623,20 +8641,6 @@ impl EngineInner {
         // `InsertTransitionStart` does.
         let have_start_transition = had_launch_transition || inserted_path_start_transition;
 
-        // For seek elements with an entity target, snapshot the
-        // target's current map position onto the actor so the
-        // per-tick `tick_refresh_seeks` scan can detect when the
-        // target has moved > 10 units and re-route.
-        let seek_snapshot: Option<(crate::coordinates::MapPoint, Option<EntityId>)> =
-            if elem_flags.contains(crate::sequence::MoveFlags::SEEK) {
-                elem_antagonist.and_then(|id| {
-                    self.get_entity(id)
-                        .map(|e| (e.element_data().position_map(), Some(id)))
-                })
-            } else {
-                None
-            };
-
         // Update actor state. When a startup transition was prepended,
         // leave `action_state` alone so the transition's `MS::Done`
         // handler flips it on completion. Sword movement without a startup
@@ -8653,13 +8657,11 @@ impl EngineInner {
                 };
             }
             actor.active_movement = ActiveMovement::new(seq_id, elem_idx);
-            if let Some((target_pos, target_id)) = seek_snapshot {
-                actor.last_seek_target_position = target_pos;
-                actor.seek_target = target_id;
-                // TIME_SEEK_REFRESH = 25.
-                actor.wait_time = 0;
-                actor.seek_refresh_wait = 25;
-            }
+            // The outer SEEK translation or RefreshSeek owns the target
+            // snapshot and TIME_SEEK_REFRESH assignment. AppendMoveToSequence
+            // creates one or more concrete MOVE|SEEK elements without
+            // resampling either value, so a route through a door retains the
+            // original target reference and accumulated countdown.
             // `sequence_element_started` flips true once the movement
             // element promotes to InProgress.  Read by
             // `non_interruptable_guard` to gate the PASS_DOOR + MOVE

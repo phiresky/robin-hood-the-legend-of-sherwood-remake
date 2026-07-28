@@ -538,6 +538,7 @@ fn translate_default(ctx: &DoorPassContext) -> VecDeque<DoorPassStep> {
 /// instead of the upstream-chosen `ctx.action`.
 struct BuiltDoorPass {
     pass: ActiveDoorPass,
+    root_action: OrderType,
     post_chain_action_recursive: Option<OrderType>,
 }
 
@@ -678,6 +679,8 @@ impl<'a> PassDoorLaunchContext<'a> {
         }
 
         let mut built = self.build_door_pass(entity_id, door_index, direct, flags);
+        self.sequence_manager
+            .set_action_recursive(seq_id, elem_idx, built.root_action);
         if let Some(override_action) = built.post_chain_action_recursive {
             self.sequence_manager
                 .set_action_recursive(seq_id, elem_idx, override_action);
@@ -813,7 +816,7 @@ impl PassDoorLaunchContext<'_> {
         // the stairs translator routes them through the sword/shield
         // branch instead of the plain walk/run branch.
         let is_fast = flags.contains(crate::sequence::MoveFlags::FAST);
-        let action = if is_carrying {
+        let mut action = if is_carrying {
             OrderType::WalkingCarryingOnShoulders
         } else if matches!(
             action_state,
@@ -837,8 +840,20 @@ impl PassDoorLaunchContext<'_> {
             // always a walk regardless of the fast flag.
             OrderType::WalkingWithShield
         } else {
-            OrderType::WalkingUpright
+            if is_fast {
+                OrderType::RunningUpright
+            } else {
+                OrderType::WalkingUpright
+            }
         };
+        let destination = if direct { pt_in } else { pt_out };
+        action = super::movement::determine_lift_movement_animation_for(
+            entity,
+            self.fast_grid,
+            entity.element_data().posture,
+            action,
+            destination,
+        );
 
         let sector_out_forces_crouch = self.sector_forces_crouch(door_sector_out);
         let sector_in_forces_crouch = self.sector_forces_crouch(sector_in);
@@ -947,6 +962,7 @@ impl PassDoorLaunchContext<'_> {
                 current_reverse: false,
                 saved_action_state: None,
             },
+            root_action: action,
             post_chain_action_recursive,
         }
     }

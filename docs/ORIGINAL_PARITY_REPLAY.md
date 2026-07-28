@@ -206,14 +206,16 @@ mission `H01_Lin_VL` (Lincoln), 3,087 contiguous simulated frames (0 through
 3,086), four recorded director completions, and 4,224 filtered simulation RNG
 draws. It is a direct `mission_start` capture with the complete campaign,
 resolved-command, director-completion, simulation-body, and global-RNG
-contracts. Replay currently matches through frame 2,306. The frame-2,284
+contracts. Replay currently matches through frame 2,317. The frame-2,284
 crossbowman divergence combined three general elevation/combat-context errors:
 hearing mixed map and world coordinates, loaded bow users were not marked as
 archers in persistent AI state, and tactical fighter snapshots imposed a
 same-layer restriction absent from the Original's global fighter registry.
 With those corrected, soldier 79 hears and sees PC 126, selects the Original
 archer retreat decision, and enters `AttackingArcherRetireFromCombat`. The
-first remaining divergence is PC 126's exact movement position at frame 2,307.
+next two differences were a lift-exit animation translation and a seek timer
+that was rearmed when a compound route resumed after that door. The first
+remaining divergence is soldier 79's archer-retreat waypoint at frame 2,318.
 
 ## Change ledger
 
@@ -426,6 +428,8 @@ first remaining divergence is PC 126's exact movement position at frame 2,307.
 | Done | Elevated acoustic distance | At frame 2,284 soldier 79 and PC 126 were geometrically close on adjoining elevations. Original `GetHearVolume` subtracts full world-space listener and source positions. Rust started from projected map Y, subtracted source elevation again, and made the pair hundreds of units farther apart, suppressing `EVENT_HEAR`. | Acoustic distance and sound-cover sampling now use the listener's full world X/Y/Z, while only the broad `IsInsideMyHearNoiseBox` prefilter remains in projected map coordinates. This matches the Original coordinate split for all elevated sound sources rather than special-casing the recorded actors. |
 | Done | Profile-driven archer identity | Soldier 79 uses the Crossbowman profile with shooting weapon 4. Original `IsArcher()` is exactly `GetBow() != NULL`, established when profile weapons are initialized. Rust derived that fact in transient snapshots but left the persistent `EnemyAi.is_archer_unit` false after mission loading, so the same attentive stimulus entered swordfight behavior. | Mission loading validates every nonzero shooting-weapon reference and initializes persistent archer identity from the resolved bow profile. Missing required bow data now fails loudly. The ordinary AI decision tree therefore sees the same role as transient combat snapshots. |
 | Done | Global cross-layer fighter overview | Original `FillListWithAllNearFighters` scans the engine-wide camp fighter arrays, applies stretched-Y max-norm distance and `IsAbleToFight`, and has no logical-layer test. Friendly additions require active swordfight because self is inserted first; enemy additions do not. Rust rebuilt queued-Think tactical data from a stale detection list in one path and discarded every cross-layer fighter in the live path, hiding PC 126 from `ArcherIsToNearToEnemy`. | Both tactical snapshot paths now follow the global registry semantics without a layer gate, retain the Original friendly-swordfight condition, and rebuild hostile PCs independently of the prior Them list. Required primary targets missing from the resulting fighter view panic instead of silently selecting another tactic. Replay advances through frame 2,306. |
+| Done | Pre-door lift animation translation | PC 126 exited a stair lift at frame 2,307. Original calls `DetermineMovementAnimation` while the actor is still in the lift sector, rewrites the PassDoor element from `WalkingUpright` to `WalkingStairs`, and therefore keeps the stair row and its authored distances across both door segments. Rust selected the action from actor state alone, switched to upright walking outside, and moved exactly 80% as far. | Lift animation translation is now shared by ordinary movement and PassDoor construction, samples the actor's pre-callback current sector, preserves fast movement, and writes the translated action back through the linked movement element before installing orders. The later forced-crouch rewrite remains authoritative. Replay advances through frame 2,311. |
+| Done | Compound seek timer ownership | The entity-target seek armed its 25-tick refresh countdown before constructing a multi-element route. It aged to 16, remained frozen during PassDoor, and Original resumed the concrete `MOVE | SEEK` leg by decrementing 16 to 15 at frame 2,312. Rust generically rearmed every concrete child at path completion and exposed 24. | The outer `SEEK` translation now owns the initial target snapshot/countdown, explicit `RefreshSeek` owns every resample/rearm, and generated `MOVE | SEEK` children preserve both across door and path boundaries. This also prevents a later compound leg from silently shifting the target-movement reference point. Replay advances through frame 2,317. |
 
 ## Workflow
 
