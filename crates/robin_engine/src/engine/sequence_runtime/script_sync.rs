@@ -267,6 +267,22 @@ impl EngineInner {
                     .dispatch(owner, command, sequence_id, element_index);
                 } else if matches!(
                     command,
+                    Command::ParrySword | Command::ParrySwordLow | Command::StopParrySword
+                ) {
+                    match command {
+                        Command::ParrySword => {
+                            self.dispatch_parry_sword(owner, false, sequence_id, element_index);
+                        }
+                        Command::ParrySwordLow => {
+                            self.dispatch_parry_sword(owner, true, sequence_id, element_index);
+                        }
+                        Command::StopParrySword => {
+                            self.dispatch_stop_parry(owner, sequence_id, element_index);
+                        }
+                        _ => unreachable!(),
+                    }
+                } else if matches!(
+                    command,
                     Command::Wait | Command::WaitTimer | Command::WaitFreeLift
                 ) {
                     WaitCommandContext {

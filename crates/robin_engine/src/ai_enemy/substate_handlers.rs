@@ -1876,9 +1876,9 @@ impl EnemyAi {
                         if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::EnemySeekLook, 0..2)
                             != 0
                         {
-                            LookDirection::LeftRight
-                        } else {
                             LookDirection::RightLeft
+                        } else {
+                            LookDirection::LeftRight
                         },
                     );
                     self.base
@@ -1887,9 +1887,7 @@ impl EnemyAi {
             }
 
             Substate::SeekingJustWatchingSidewards => {
-                if stimulus_type == StimulusType::EventDone
-                    || stimulus_type == StimulusType::EventTimer
-                {
+                if stimulus_type == StimulusType::EventDone {
                     self.base.number_of_looks = self.base.number_of_looks.saturating_sub(1);
                     if self.base.number_of_looks > 0 {
                         self.set_state(AiState::Seeking, Substate::SeekingJustWatching);

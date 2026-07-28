@@ -241,7 +241,7 @@ mission `H01_Lin_VL` (Lincoln), 7,128 contiguous gameplay frames (0 through
 a direct `mission_start` capture with the complete schema-9 campaign,
 resolved-command, director-completion, simulation-body, motion-grid,
 path-request, and global-RNG contracts. Replay currently matches through frame
-3,424. The corrections since frame 1,929 cover positive integer hearing
+3,541. The corrections since frame 1,929 cover positive integer hearing
 thresholds, stale ability retirement, boundary-inclusive sector membership,
 synchronous released-Seek translation, nested owner-card FIFO closure,
 creation-slot entity-seek refresh, stable base seek distance, and
@@ -264,9 +264,12 @@ cross-postponement cleanup. The next correction preserves the two distinct
 Original statement orders around `Face` and `SetState`: a Turn instructed
 before an attentive-mode transition retains its direction side effect, while
 a Turn registered after that transition remains inert while postponed and
-applies its stored direction only when later instructed. The first remaining
-divergence is soldier 67 choosing `LookRight` instead of `LookLeft` at frame
-3,425.
+applies its stored direction only when later instructed. The following combat
+section corrected two inverted random look choices, removed a non-Original
+timer exit from a side-looking state, completed synchronous postponed Turn and
+parry dispatch, and restored per-frame principal-opponent facing during normal
+parry holds. The first remaining divergence is soldier 67 selecting
+`StopParrySword` while the Original still selects `ParrySword` at frame 3,542.
 
 ## Change ledger
 
@@ -511,6 +514,8 @@ divergence is soldier 67 choosing `LookRight` instead of `LookLeft` at frame
 | Done | Execute-entry timer ownership | At frame 2,766 soldier 78 entered `Execute` on a `WaitTimer` with one tick left. A synchronous WaitingSword callback interrupted that element before Rust's post-Execute modifier scanned for the live command, so the final decrement was skipped. C++ retains the selected `mpSequenceElement` pointer while the current Actor Hourglass stack unwinds. | `ActorExecuteResult`'s entry element is now the fallback command identity when no genuinely instructed live replacement exists. The selected timer consumes its final tick, while any resulting completion still targets the then-live element under the existing base-Actor rule. |
 | Done | Terminal cross-postponement cleanup | A lethal injury postponed soldier 78's active strike, then the same stop cascade interrupted that strike. Rust cleared incoming cross-links only for directly stopped targets, not cascade-stopped descendants. Friday cleanup removed the dead strike sequence, leaving the injury with a dangling target that panicked when the dying animation completed at frame 2,831. | The central sequence state-transition processor now removes every incoming cross-postponement link as soon as its target becomes Terminated, Interrupted, or Impossible. Direct and cascaded stops therefore share the same pointer-lifetime rule, and periodic cleanup cannot invalidate a live link. Replay advances through frame 3,364. |
 | Done | Authored SetState/Face instruction order | `SeekingHeardstepsPreReactiontime` has opposite call order in its two branches. The investigate branch calls `Face` then `SetState`: the Turn is instructed, writes its direction, and is subsequently postponed by `EnterAttentiveMode`. The ignore branch calls `SetState` then `Face`: attentive mode registers first, so the later Turn loses priority arbitration before translation and must not change direction until it resumes. Rust batched all Face orders before the attentive request and also wrote direction before arbitration. | Face intents record whether they were authored after the pending attentive boundary. The drain registers pre-boundary work first, attentive mode second, and following Turns in manager FIFO without eager instruction. Immediate Turns now install their direction property before arbitration and change the actor only when instruction succeeds. The synchronous postponed-successor path supports Turn translation on resume. No actor, frame, or replay identity is involved; replay advances through frame 3,424. |
+| Done | Seeking side-look choices and completion | Two `rand() & 1` translations inverted `LOOK_LEFT_RIGHT` and `LOOK_RIGHT_LEFT`. At frame 3,425 an even recorded draw therefore selected `LookRight` first instead of `LookLeft`. Rust also treated the ten-frame timer launched beside `SeekingJustWatchingSidewards` as a completion event, while Original leaves that substate only on the look sequence's `EVENT_DONE`. | Both affected seeking call sites now preserve their distinct Original odd/even mappings; an audit confirmed every other random LookSidewards mapping and the downstream command expansion. `SeekingJustWatchingSidewards` ignores timer expiry and waits for actual sequence completion. Replay advances beyond frame 3,435 without RNG or lifecycle drift. |
+| Done | Synchronous parry resume and live facing | An attentive-mode condolation synchronously resumed a postponed parry through `Ready -> Go -> Instruct`, but Rust's owner-boundary dispatcher supported the ordinary hourglass parry commands only and panicked. Once resumed, Rust called `Turn()` during `ParryingSword` but did not refresh its goal as PC 126 moved, leaving soldier 67 one direction sector behind at frame 3,516. | Synchronous owner dispatch routes ParrySword, low parry, and stop-parry through their normal translators. Normal parry holds now recompute their direction goal from the live principal opponent before every Turn, sharing the existing WaitingSword geometry; low parry remains unchanged as in Original. Replay advances through frame 3,541. |
 
 ## Workflow
 
@@ -556,6 +561,19 @@ On the first logical or RNG divergence, this default run writes a complete
 JSONL snapshot for the divergent frame and its 32 predecessors to a unique
 temporary path and prints that path. Use the explicit `--dump-jsonl` options
 only when a different frame range or entity filter is needed.
+
+For long traces where only the first divergent frame is needed, skip the
+33-frame rolling engine snapshot:
+
+```sh
+ROBINHOOD_DATA_DIR=datadirs/fullgame_gog \
+  target/debug/examples/original_parity_replay --no-auto-dump \
+  "$TRACE_JSONL"
+```
+
+This retains first-divergence comparison and reporting, but does not write the
+automatic engine dump. Re-run a narrowed range with `--dump-jsonl` when the
+full diagnostic state is needed.
 
 To inspect the authoritative global RNG stream during an Original replay, set
 `ROBIN_TRACE_RNG=1`. Each consumed draw reports its zero-based stream index,

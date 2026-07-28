@@ -3815,11 +3815,15 @@ impl EngineInner {
                 None
             };
 
-            // RHElementActorHuman::Execute sets the WaitingSword direction
-            // goal toward the live principal opponent before Turn() and
-            // PerformAction(). A stale opponent reference is an invariant
+            // RHElementActorHuman::Execute sets the WaitingSword and
+            // ParryingSword direction goal toward the live principal
+            // opponent before Turn() and PerformAction(). Low parry does not
+            // share this arm. A stale opponent reference is an invariant
             // failure here: the Original dereferences it directly.
-            let facing_opponent = if anim_type == OrderType::WaitingSword {
+            let facing_opponent = if matches!(
+                anim_type,
+                OrderType::WaitingSword | OrderType::ParryingSword
+            ) {
                 entity
                     .human_data()
                     .and_then(|human| human.opponents.first().copied())
