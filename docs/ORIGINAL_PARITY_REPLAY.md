@@ -216,6 +216,15 @@ archer retreat decision, and enters `AttackingArcherRetireFromCombat`. The
 next two differences were a lift-exit animation translation and a seek timer
 that was rearmed when a compound route resumed after that door. The first
 remaining divergence is soldier 79's archer-retreat waypoint at frame 2,318.
+Rust accepts the first proposed straight retreat from `(709,1292)` to
+`(652.55054,1324.378)` on layer 4 with half-diagonal `(6,4)` and therefore
+never invokes A*. Its thick corridor contains eight active motion-line
+candidates, none of which intersects either side or has its tested endpoint
+inside. The Original instead emits graph waypoints, so either its resolved
+retreat candidate or its active motion-line geometry differs. The current
+schema does not record either value; do not force this route or special-case
+the actor. Generic trace-level path smoothing and reachability-candidate
+diagnostics are retained while the recorder contract is expanded.
 
 ## Change ledger
 

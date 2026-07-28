@@ -1736,21 +1736,35 @@ impl PathFinderRuntime {
             return;
         }
 
+        tracing::trace!(path_before = ?path, "smooth_path: begin");
         let mut i = 0;
         while i + 2 < path.len() {
             let first = path[i];
+            let middle = path[i + 1];
             let last = path[i + 2];
 
             let small_vec = MapVec::new(0.5e-4 * (last.x - first.x), 0.5e-4 * (last.y - first.y));
             let p1 = MapPoint::new(first.x + small_vec.x, first.y + small_vec.y);
             let p2 = MapPoint::new(last.x - small_vec.x, last.y - small_vec.y);
 
-            if self.is_reachable_grid(grid, p1, p2) {
+            let reachable = self.is_reachable_grid(grid, p1, p2);
+            tracing::trace!(
+                index = i,
+                ?first,
+                ?middle,
+                ?last,
+                probe_start = ?p1,
+                probe_end = ?p2,
+                reachable,
+                "smooth_path: tested waypoint shortcut"
+            );
+            if reachable {
                 path.remove(i + 1);
             } else {
                 i += 1;
             }
         }
+        tracing::trace!(path_after = ?path, "smooth_path: end");
     }
 
     // ── Reachability checks ──────────────────────────────────────
@@ -1796,6 +1810,26 @@ impl PathFinderRuntime {
             corridor.seg2,
             &corridor.bbox,
         );
+
+        if tracing::enabled!(tracing::Level::TRACE) {
+            let lines: Vec<_> = line_indices
+                .iter()
+                .map(|&idx| {
+                    let line = &grid.level.lines[usize::from(idx)];
+                    (idx, line.a, line.b)
+                })
+                .collect();
+            tracing::trace!(
+                ?p1,
+                ?p2,
+                layer = self.current_layer,
+                seg1 = ?corridor.seg1,
+                seg2 = ?corridor.seg2,
+                bbox = ?corridor.bbox,
+                candidates = ?lines,
+                "is_reachable_grid: collected active motion lines"
+            );
+        }
 
         if line_indices.is_empty() {
             return true;
