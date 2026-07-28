@@ -2,8 +2,12 @@ This document lists ALL KNOWN versions of this game and how they differ.
 
 TLDR: either get the Leicester demo from
 https://www.moddb.com/games/robin-hood-the-legend-of-sherwood/downloads/robin-hood-the-legend-of-sherwood-demo-robin-hood-the-legend-of-sherwood
+
 or buy the full game from GOG:
 https://www.gog.com/en/game/robin_hood
+
+
+I DO NOT recommend buying the [steam version](https://store.steampowered.com/app/46560/Robin_Hood_The_Legend_of_Sherwood/) of this game. It does not properly work on modern Windows and the publishers do not seem to care about fixing it. Buy the GOG version.
 
 # Language Codes
 
