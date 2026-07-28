@@ -395,6 +395,73 @@ content in separate zip files.
 
 - Bonus zips: soundtrack, wallpapers, artworks, avatars, manual
 
+### German retail vs. GOG game executable
+
+The German retail and GOG executables are related but are not the same build. This
+comparison excludes the retail launch/CD-check code and compares the actual game
+payload from `robin hood.icd` with `datadirs/fullgame_gog/Game.exe`.
+
+    German retail payload:
+        build timestamp:  2002-10-17 12:48:01
+        file size:        2,891,776 bytes
+        SHA256:           0dfffe2e9cd502cb11ab2373427277d1d1b8752da77ad9c04c30a26de7fb0365
+        .text size:       2,570,713 bytes
+
+    GOG Game.exe:
+        build timestamp:  2003-01-15 16:21:56
+        file size:        2,899,968 bytes
+        SHA256:           b0963242470d96cdd8021e2cb81ccbc5e26b4fb2cb122febdec50ad30774f08e
+        .text size:       2,580,025 bytes
+
+The GOG build therefore contains 9,312 additional bytes of executable code. A
+normalized x86 comparison found 4,809 of 5,790 direct-call-delimited regions
+(83.1%) with exactly the same instruction and operand shapes after removing
+relocated addresses. These matches cover at least 55.5% of the retail `.text`
+section. This is a conservative lower bound: one changed instruction causes its
+whole call-delimited region to be counted as different.
+
+Confirmed code changes include:
+
+- **Wide-character font rendering.** The retail code measures and draws narrow
+  strings with `GetTextExtentPoint32A`, `DrawTextA`, and `TextOutA`. The
+  corresponding GOG path accepts a 16-bit character, masks it with `0xffff`, and
+  calls `GetTextExtentPoint32W`, `DrawTextW`, and `TextOutW` with a character
+  count of one.
+- **Additional international fonts.** GOG adds load/unload code and paths for
+  `0051EU__.ttf`, `1141EU__.ttf`, `CloisterBlackEU.ttf`, `MERLINN.TTF`,
+  `MSGOTHIC.TTF`, `MSMINCHO.TTF`, `KAIU.TTF`, and `MINGLIU.TTF`. It imports
+  `AddFontResourceA` and `RemoveFontResourceA`; the retail payload does not.
+- **Cinematic positioning.** GOG calls `_BinkGetSummary@8` after opening a
+  cinematic and computes `(480 - video_height) / 2`, apparently to center the
+  video vertically. The retail build has neither the call nor this calculation.
+- **Developer console additions.** GOG contains the `OPTIMIZE` frame-cache
+  allocator command and the `CHROMA` sprite hue/saturation/value command. Their
+  implementation and diagnostic strings are absent from the retail payload.
+
+The retail-only imports `GetDriveTypeA`, `GetVolumeInformationA`,
+`GetFileVersionInfoA`, `GetFileVersionInfoSizeA`, `VerQueryValueA`,
+`SetErrorMode`, and `lstrcpyA` belong to launch/version/CD-specific code and were
+not treated as game-logic differences.
+
+Both payloads are optimized 32-bit release builds compiled predominantly with
+Microsoft Visual C++ 6.0:
+
+- PE linker version `6.0`
+- VC6 C and C++ compiler build `8168`
+- Microsoft `Linker600` build `8447`
+
+Their decoded Microsoft Rich headers also contain a few statically linked
+objects produced by Visual Studio .NET 2002-era `Utc13` tools. The retail build
+contains builds `8830`/`9466`, while GOG contains builds `9178`/`9210`. Thus the
+main game compiler and linker are the same generation, but some linked
+components and the game source differ.
+
+Despite the executable differences, `DATA/robinhood.bks` and
+`DATA/robinhood.dic` are byte-identical between these two installations:
+
+    robinhood.bks SHA256: 0d836524f7fcd01a04efb7b8e10deef1395132b1e944094306e236bf085d0e8f
+    robinhood.dic SHA256: 85ab438ed158c6f842f9d1e4ea4309d405e23f71f30c868f8a970b64128a3bc4
+
 ## Windows — Steam release
 
 Steam store release published by Microids. The store page lists English, French,
