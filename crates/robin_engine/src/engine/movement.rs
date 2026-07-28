@@ -1815,18 +1815,35 @@ impl EngineInner {
         // stale seek hanging when the same-sector shortcut was
         // direct-pathfinder rather than a proper Move element.
 
-        // Collect each PC's current map position, layer, and sector.
+        // Collect each PC's effective route-source position, layer, and
+        // sector. While a non-interruptible door pass is active, a newly
+        // issued move cannot begin until that pass reaches its committed far
+        // side. Original input dispatch observes that committed door side
+        // when `PerformGroupMove` calls `AppendMoveToSequence`; using the
+        // actor's still-visible near-side sector here would incorrectly
+        // classify a return click as a same-sector Move and lose the reverse
+        // gate traversal before the command is postponed.
         let positions: Vec<(EntityId, MapPoint, u16, u16)> = pc_ids
             .iter()
             .filter_map(|&pc_id| {
                 self.get_entity(pc_id).map(|e| {
                     let elem = e.element_data();
-                    (
-                        pc_id,
-                        elem.position_map(),
-                        elem.layer(),
-                        elem.sector().map(u16::from).unwrap_or(0),
-                    )
+                    let (position, sector, layer) = {
+                        let (door_handle, door_direction) = current_door_for_route_source(e);
+                        adapt_source_to_current_door(
+                            &self.script_domains.interactables.doors,
+                            door_handle,
+                            door_direction,
+                        )
+                        .unwrap_or_else(|| {
+                            (
+                                elem.position_map(),
+                                elem.sector().map(u16::from).unwrap_or(0),
+                                elem.layer(),
+                            )
+                        })
+                    };
+                    (pc_id, position, layer, sector)
                 })
             })
             .collect();

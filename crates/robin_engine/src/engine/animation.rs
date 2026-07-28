@@ -3815,18 +3815,37 @@ impl EngineInner {
                 None
             };
 
-            // RHElementActorHuman::Execute sets the WaitingSword and
-            // ParryingSword direction goal toward the live principal
-            // opponent before Turn() and PerformAction(). Low parry does not
-            // share this arm. A stale opponent reference is an invariant
+            // RHElementActorHuman::Execute refreshes combat-facing goals
+            // before Turn() and PerformAction(). WaitingSword, normal parry,
+            // and smalltalk parries face the live principal opponent;
+            // smalltalk strikes face their order antagonist. Normal low parry
+            // does not share either arm. A stale reference is an invariant
             // failure here: the Original dereferences it directly.
+            let is_swordfighting = entity
+                .human_data()
+                .is_some_and(|human| !human.opponents.is_empty());
             let facing_opponent = if matches!(
                 anim_type,
-                OrderType::WaitingSword | OrderType::ParryingSword
+                OrderType::WaitingSword
+                    | OrderType::ParryingSword
+                    | OrderType::ParryingLeftSmalltalk
+                    | OrderType::ParryingRightSmalltalk
+                    | OrderType::ParryingLowLeftSmalltalk
+                    | OrderType::ParryingLowRightSmalltalk
             ) {
                 entity
                     .human_data()
                     .and_then(|human| human.opponents.first().copied())
+            } else if is_swordfighting
+                && matches!(
+                    anim_type,
+                    OrderType::StrikingLeftSmalltalk
+                        | OrderType::StrikingRightSmalltalk
+                        | OrderType::StrikingLowLeftSmalltalk
+                        | OrderType::StrikingLowRightSmalltalk
+                )
+            {
+                order.antagonist
             } else if anim_type == OrderType::TransitionRaisingSword
                 && actor.execute_order_initialising
             {

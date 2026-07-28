@@ -468,12 +468,18 @@ impl SmalltalkCommandContext<'_> {
             return;
         }
 
-        let order = crate::order::Order::new(
+        let mut order = crate::order::Order::new(
             order_type,
             0.0,
             0.0,
             crate::order::alloc_order_id(self.next_order_id),
         );
+        // RHElementActorHuman::Translate stores the interaction antagonist on
+        // every smalltalk strike/parry order. Execute uses it for live strike
+        // facing and later wound geometry; parry variants retain the same
+        // authored pointer even though their live facing uses the principal
+        // opponent.
+        order.antagonist = Some(antagonist);
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
         self.sequence_manager.element_in_progress(seq_id, elem_idx);
     }
