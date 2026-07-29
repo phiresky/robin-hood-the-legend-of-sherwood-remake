@@ -1663,10 +1663,11 @@ impl EngineInner {
         // Z offset on the target to avoid false positives when the
         // target stands exactly on top of an obstacle surface.
         //
-        // `compute_bow_point` adds a shoot-mode-specific Z offset
+        // `compute_bow_point` starts from the actor's base 3D position and
+        // adds a shoot-mode-specific Z offset
         // (+40 Normal, +50 Long, +40 plus a 20-unit forward XY shift
-        // for Down) on top of the hand point so low parapets and
-        // chest-high walls are cleared.
+        // for Down), matching C++ `ComputeBowPoint`; the current hand point
+        // is only used by the range calculation above.
         if !forest_target {
             let direction = shooter.element_data().direction();
             let Some(sprite_hand_point) =
@@ -1681,7 +1682,7 @@ impl EngineInner {
                 return (BowTarget::Invalid, ShootMode::Normal);
             };
             let bow_point = crate::bow_shot::compute_bow_point(
-                hand_point,
+                shooter.element_data().position(),
                 shoot_mode,
                 direction,
                 sprite_hand_point,
@@ -2687,6 +2688,12 @@ impl EngineInner {
             action_state,
             ActionState::AimingWithBow | ActionState::AimingWithBowUp
         ) {
+            tracing::trace!(
+                ?pc_id,
+                ?action_state,
+                ?target_3d,
+                "resolved bow aim skipped outside aiming state"
+            );
             return;
         }
 
@@ -2695,6 +2702,10 @@ impl EngineInner {
             .sequence_manager
             .current_order_for_actor(pc_id)
             .map(|(_, _, o)| o.order_type);
+        let shoot_pending = self
+            .orders
+            .sequence_manager
+            .element_is_about_to_be_launched(pc_id, Command::ShootBow);
         if !matches!(
             current_anim,
             Some(
@@ -2703,11 +2714,16 @@ impl EngineInner {
                     | OrderType::AimingWithBowAnonymous
                     | OrderType::AimingWithBowUpAnonymous
             )
-        ) || self
-            .orders
-            .sequence_manager
-            .element_is_about_to_be_launched(pc_id, Command::ShootBow)
+        ) || shoot_pending
         {
+            tracing::trace!(
+                ?pc_id,
+                ?action_state,
+                ?current_anim,
+                shoot_pending,
+                ?target_3d,
+                "resolved bow aim skipped by animation or pending-shot gate"
+            );
             return;
         }
 
@@ -2722,8 +2738,17 @@ impl EngineInner {
             pc.element.sprite.position_iface.turn();
         }
 
-        let (_bow_status, shoot_mode) =
+        let (bow_status, shoot_mode) =
             self.can_shoot_with_bow_at_point(assets, pc_id, target_3d, false);
+        tracing::trace!(
+            ?pc_id,
+            ?action_state,
+            ?current_anim,
+            ?bow_status,
+            ?shoot_mode,
+            ?target_3d,
+            "resolved bow aim"
+        );
         let command = match (action_state, shoot_mode, current_anim) {
             (ActionState::AimingWithBow, ShootMode::Long, Some(OrderType::AimingWithBow)) => {
                 Some(Command::RaiseBow)
