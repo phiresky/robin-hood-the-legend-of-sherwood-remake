@@ -5521,8 +5521,13 @@ impl EngineInner {
             // dispatched via tick_move maps to TillLastFrame.
             let is_movement_anim = order_uses_distance_motion(order_action);
             let is_transition_anim = !is_movement_anim;
-            let fast_sword_motion = action_state == crate::element::ActionState::MovingFastSword
-                || order_action == OrderType::RunningWithSword
+            // RHElementActorHuman::Execute selects FAST solely from the
+            // current logical movement token. The actor can still be in
+            // MOVING_FAST_SWORD when a newly selected WALKING_WITH_SWORD
+            // order starts; carrying that old state into the method choice
+            // would execute the walking order twice before its START side
+            // effect changes the state to MOVING_SWORD.
+            let fast_sword_motion = order_action == OrderType::RunningWithSword
                 || door_pass_anim == Some(OrderType::RunningWithSword);
             // Fast stairs/ladder/wall actions are non-animation dispatch
             // tokens: the Original executes the ordinary sprite motion
