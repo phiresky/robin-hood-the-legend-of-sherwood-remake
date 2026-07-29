@@ -7640,6 +7640,10 @@ impl EngineInner {
         struct NpcSnap {
             position: Position,
             direction: u16,
+            ground_z: f32,
+            posture: crate::element::Posture,
+            is_rider: bool,
+            in_building: bool,
             ai_state: AiState,
             is_alive: bool,
             is_active: bool,
@@ -7698,6 +7702,10 @@ impl EngineInner {
                         level: layer,
                     },
                     direction: dir as u16,
+                    ground_z: entity.element_data().position().z,
+                    posture: entity.element_data().posture,
+                    is_rider: entity.soldier_data().is_some_and(|soldier| soldier.rider),
+                    in_building: self.entity_data_inside_building(entity.element_data()),
                     ai_state,
                     is_alive: !entity.is_dead(),
                     is_active: entity.is_active(),
@@ -7763,8 +7771,6 @@ impl EngineInner {
                     )
                 });
                 let chief_pos = chief_snap.position;
-                let chief_view_radius = chief_snap.view_radius as f32;
-                let chief_view_radius_sq = chief_view_radius * chief_view_radius;
                 let obstacles_owned = scratch.ai_sight_obstacles.clone();
                 let obstacles = obstacles_owned.list();
 
@@ -7784,32 +7790,27 @@ impl EngineInner {
                             && snap.ai_state == AiState::Default
                             && (snap.is_civilian || snap.is_able_to_fight);
                         if admit {
-                            // `is_detecting_360_degrees`: isometric
-                            // squared distance vs view radius² + opaque
-                            // LOS via `FastFindGrid::is_reachable`.
-                            let dx = snap.position.x - chief_pos.x;
-                            let dy = snap.position.y - chief_pos.y;
-                            let sqr_dist =
-                                crate::position_interface::vector_square_norm_iso(dx, dy);
-                            if sqr_dist > chief_view_radius_sq {
-                                admit = false;
-                            } else {
-                                let viewer =
-                                    crate::coordinates::MapPoint::new(chief_pos.x, chief_pos.y);
-                                let target = crate::coordinates::MapPoint::new(
-                                    snap.position.x,
-                                    snap.position.y,
-                                );
-                                if !crate::ai_vision::los_clear_spatial(
-                                    viewer,
-                                    target,
-                                    chief_pos.level,
-                                    obstacles,
-                                    &self.world.fast_grid,
-                                ) {
-                                    admit = false;
-                                }
-                            }
+                            // `IsDetecting360Degrees(RHElementActorHuman*)`
+                            // uses the chief's upright eye point and the
+                            // member's posture-dependent detection point for
+                            // both its 3-D distance and opaque-obstacle ray.
+                            // A projected 2-D polygon test is not equivalent:
+                            // low obstacles can cross the ground segment while
+                            // remaining below both endpoints' sight line.
+                            admit = crate::ai_enemy::soldier_detects_target_360(
+                                chief_snap.position,
+                                chief_snap.ground_z,
+                                chief_snap.is_rider,
+                                chief_snap.view_radius,
+                                chief_snap.in_building,
+                                snap.position,
+                                snap.ground_z,
+                                snap.posture,
+                                snap.is_rider,
+                                snap.direction as i16,
+                                snap.in_building,
+                                obstacles,
+                            );
                         }
                         if admit {
                             ai.patrol.push(member);
@@ -7947,23 +7948,19 @@ impl EngineInner {
                     && member_s.is_alive
                     && member_s.ai_state == AiState::Default
                 {
-                    let dx = member_s.position.x - chief_s.position.x;
-                    let dy = member_s.position.y - chief_s.position.y;
-                    let sqr_dist = crate::position_interface::vector_square_norm_iso(dx, dy);
-                    let radius = chief_s.view_radius as f32;
-                    if sqr_dist > radius * radius {
-                        continue;
-                    }
-                    let viewer =
-                        crate::coordinates::MapPoint::new(chief_s.position.x, chief_s.position.y);
-                    let target =
-                        crate::coordinates::MapPoint::new(member_s.position.x, member_s.position.y);
-                    if !crate::ai_vision::los_clear_spatial(
-                        viewer,
-                        target,
-                        chief_s.position.level,
+                    if !crate::ai_enemy::soldier_detects_target_360(
+                        chief_s.position,
+                        chief_s.ground_z,
+                        chief_s.is_rider,
+                        chief_s.view_radius,
+                        chief_s.in_building,
+                        member_s.position,
+                        member_s.ground_z,
+                        member_s.posture,
+                        member_s.is_rider,
+                        member_s.direction as i16,
+                        member_s.in_building,
                         obstacles,
-                        &self.world.fast_grid,
                     ) {
                         continue;
                     }

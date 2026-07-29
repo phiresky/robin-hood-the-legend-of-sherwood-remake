@@ -241,7 +241,7 @@ mission `H01_Lin_VL` (Lincoln), 7,128 contiguous gameplay frames (0 through
 a direct `mission_start` capture with the complete schema-9 campaign,
 resolved-command, director-completion, simulation-body, motion-grid,
 path-request, and global-RNG contracts. Replay currently matches through frame
-3,878. The corrections since frame 1,929 cover positive integer hearing
+3,990. The corrections since frame 1,929 cover positive integer hearing
 thresholds, stale ability retirement, boundary-inclusive sector membership,
 synchronous released-Seek translation, nested owner-card FIFO closure,
 creation-slot entity-seek refresh, stable base seek distance, and
@@ -268,8 +268,12 @@ applies its stored direction only when later instructed. The following combat
 section corrected two inverted random look choices, removed a non-Original
 timer exit from a side-looking state, completed synchronous postponed Turn and
 parry dispatch, and restored per-frame principal-opponent facing during normal
-parry holds. The first remaining divergence is soldier 67 selecting
-`StopParrySword` while the Original still selects `ParrySword` at frame 3,542.
+parry holds. Subsequent corrections preserve alert-report dialogue statement
+ordering, load the real mission speech durations in the replay tool, and use
+the Original's full 3-D actor visibility calculation when patrols admit or
+reacquire members. The first remaining divergence is soldier 62 retaining
+`MoveOk`/`DefaultEnroute` while the Original has selected
+`Turn`/`DefaultTurning` at frame 3,991.
 
 ## Change ledger
 
@@ -524,6 +528,7 @@ parry holds. The first remaining divergence is soldier 67 selecting
 | Done | Contextual NPC facing and direct report calls | At frame 3,879 an officer already faced the reporting soldier. Original's `Face(RHElement*)` includes target elevation and `FaceTo` returns immediately for an already-facing Waiting/Bored actor; Rust's flattened camp-snapshot helper always queued a Turn. The report dialogue also invented a fallback-to-sender rule for two direct `Think(CALL_YOURTALK_1)` calls, which can bounce an unhandled call forever even though the Original ignores their return values. | NPC-facing call sites now use the live entity-aware facing path and its already-facing shortcut. Direct report-dialogue calls have no fallback; only Original call sites that inspect or deliberately redirect a rejected result retain one. |
 | Done | Replay-tool mission speech metadata | The parity example constructed the engine directly but skipped the normal mission-audio loading phase. Every NPC voice therefore received a zero-frame simulated duration, and the reporting soldier's `EVENT_MYTALK_1` arrived at frame 3,900 instead of the Original sample completion at frame 3,947. The installed voice samples also live under the registered locale's `Data/Sounds/Exclamations` tree while `actors.res` stores paths relative to `Exclamations`. | Direct-engine tools can invoke the normal headless mission-audio setup, and the parity runner registers the installed language directory first. Sample resolution supports the Original `actors.res` relative-path convention for both deterministic duration decoding and live playback. The Lincoln replay now loads 2,324 speech-duration entries instead of treating all dialogue as absent. |
 | Done | Re-entrant alert-report statement order | When the first report line finishes, Original calls the officer with `CALL_REPORT`, then `CALL_YOURTALK_1`, and only after both nested calls return changes the soldier from report-start to report-point. The blipped officer rejects its reply immediately and calls the soldier back while that soldier is deliberately still in report-start, where the callback is ignored. Rust committed report-point before draining either cross-NPC call, accepted the nested callback, and completed the point action at frame 3,947. | The second direct officer call now carries a typed caller continuation. The ordered synchronous drain closes both recipient stacks before committing report-point and its timer; the non-point branch likewise preserves its distinct Original order of local state change before `CALL_REPORT`. Replay advances through frame 3,975. |
+| Done | Patrol admission uses full 3-D actor visibility | Officer 71's authored patrol is rebuilt at frame 3,862. Original `IsDetecting360Degrees(RHElementActorHuman*)` tests the upright chief eye point against each member's posture-dependent detection point; its recorded `(2142,1221,265) -> (2025,1169,265)` ray to soldier 69 is clear. Rust instead tested the projected ground segment against 2-D obstacle polygons, classified that duty soldier as missed, and omitted him from the later alert group at frame 3,976. | Initial patrol admission and missed-member reacquisition now share the existing actor-accurate 3-D distance and opaque-ray implementation, including posture, rider height, direction-dependent detection point, and building gates. No patrol, actor, or trace identity is special-cased. Replay passes the alert-group transition and advances through frame 3,990. |
 
 ## Workflow
 
