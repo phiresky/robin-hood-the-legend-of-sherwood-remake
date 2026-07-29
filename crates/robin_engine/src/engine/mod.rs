@@ -1862,6 +1862,14 @@ impl EngineInner {
             | SequenceState::Interrupted
             | SequenceState::Terminated
             | SequenceState::Done => {
+                tracing::trace!(
+                    ?owner,
+                    ?new_seq,
+                    new_idx,
+                    command = ?new_elem.command,
+                    state = ?new_elem.state,
+                    "arbitrate_instruct skipped a non-pending element"
+                );
                 return false;
             }
         }

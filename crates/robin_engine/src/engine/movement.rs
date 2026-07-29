@@ -485,6 +485,43 @@ fn age_seek_refresh_wait(wait: u32) -> u32 {
     wait.wrapping_sub(1)
 }
 
+/// Number of times the Original actor `Execute` arm invokes `PerformSeek` for
+/// one execution of this movement order when `RHMOVE_SEEK` is set.
+///
+/// The flag alone is not enough: authored wall and ladder orders retain it
+/// while their Execute arms call `PerformMotion` directly. Conversely,
+/// `RHNONANIMATION_RUNNING_STAIRS` literally calls `PerformSeek` twice.
+#[inline]
+fn perform_seek_calls_per_execute(order: OrderType) -> u32 {
+    match order {
+        OrderType::TransitionWalkingUprightWaitingUpright
+        | OrderType::TransitionRunningUprightWaitingUpright
+        | OrderType::TransitionWaitingUprightWalkingUpright
+        | OrderType::TransitionWaitingUprightRunningUpright
+        | OrderType::TransitionWalkingUprightRunningUpright
+        | OrderType::TransitionRunningUprightWalkingUpright
+        | OrderType::TransitionWaitingCrouchedWalkingCrouched
+        | OrderType::TransitionWalkingCrouchedWaitingCrouched
+        | OrderType::TransitionWalkingUprightWalkingCrouched
+        | OrderType::TransitionWalkingCrouchedWalkingUpright
+        | OrderType::TransitionRunningUprightWalkingCrouched
+        | OrderType::TransitionWalkingCrouchedRunningUpright
+        | OrderType::WalkingUpright
+        | OrderType::RunningUpright
+        | OrderType::WalkingCrouched
+        | OrderType::WalkingAlerted
+        | OrderType::WalkingStairs
+        | OrderType::WalkingStairsAlerted
+        | OrderType::WalkingCarryingOnShoulders
+        | OrderType::WalkingWithCorpse
+        | OrderType::WalkingWithSword
+        | OrderType::RunningWithSword
+        | OrderType::WalkingWithShield => 1,
+        OrderType::RunningStairs => 2,
+        _ => 0,
+    }
+}
+
 fn original_final_path_metadata(
     raw_waypoint_count: usize,
     tolerance: f32,
@@ -4474,6 +4511,19 @@ impl EngineInner {
                         // None and there's no shield destination), so
                         // the seek-arrival predicate doesn't fire.
                         if resolved_target_id.is_some() || seek_shield {
+                            // Original keeps an interaction following an
+                            // entity Seek in `mpPostSeekSequence`. Gate-route
+                            // construction in Rust currently represents that
+                            // continuation as later elements of the same
+                            // sequence. Treat either representation as a live
+                            // post-seek handoff: PerformSeek returns before
+                            // aging `mulWaitTime` when tolerance is reached.
+                            let has_post_seek = actor.post_seek_sequence.is_some()
+                                || self
+                                    .orders
+                                    .sequence_manager
+                                    .get_sequence(seq_id)
+                                    .is_some_and(|sequence| elem_idx + 1 < sequence.elements.len());
                             final_tolerances[actor_id] = FinalTol {
                                 // `mfSeekDistance` remains the unadapted
                                 // interaction radius.  RefreshSeek may halve
@@ -4488,7 +4538,7 @@ impl EngineInner {
                                 use_point,
                                 shield_destination: seek_shield.then_some(*destination),
                                 last_seek_target_position: actor.last_seek_target_position,
-                                has_post_seek: actor.post_seek_sequence.is_some(),
+                                has_post_seek,
                             };
                         }
                     }
@@ -4940,6 +4990,7 @@ impl EngineInner {
                     .get_element(selected.seq_id, selected.elem_idx)
                     .filter(|element| {
                         element.owner == Some(entity_id)
+                            && element.state == crate::sequence::SequenceState::InProgress
                             && element.data.is_movement()
                             && element
                                 .current_order()
@@ -5160,19 +5211,30 @@ impl EngineInner {
                 entity.element_data().position_map(),
                 entity.element_data().sector(),
             );
-            // Original's entity-target PerformSeek ages this countdown
-            // before dispatching the current movement order. Keep it ahead
-            // of transition and zero-motion early returns; a successful
-            // pre-motion post-seek arrival is the one path that returns
-            // before the decrement.
-            if ft.target_id.is_some() && !(tolerance_arrival && ft.has_post_seek) {
+            // Original ages this countdown only inside `PerformSeek`, and
+            // dispatches there by the current animation arm rather than by
+            // RHMOVE_SEEK alone. Cross-sector wall/ladder orders therefore
+            // retain the flag but freeze this counter while their Execute
+            // arms call PerformMotion directly. Keep the actual decrement
+            // ahead of transition and zero-motion early returns; a successful
+            // pre-motion post-seek arrival is the one path that returns before
+            // it.
+            let perform_seek_calls = perform_seek_calls_per_execute(order_action);
+            if ft.target_id.is_some()
+                && active_move_flags.contains(crate::sequence::MoveFlags::SEEK)
+                && perform_seek_calls != 0
+                && !(tolerance_arrival && ft.has_post_seek)
+            {
                 let actor = entity.actor_data_mut().expect("movement owner is actor");
                 let wait_before = actor.seek_refresh_wait;
-                actor.seek_refresh_wait = age_seek_refresh_wait(actor.seek_refresh_wait);
+                for _ in 0..perform_seek_calls {
+                    actor.seek_refresh_wait = age_seek_refresh_wait(actor.seek_refresh_wait);
+                }
                 tracing::trace!(
                     entity = ?entity_id,
                     wait_before,
                     wait_after = actor.seek_refresh_wait,
+                    perform_seek_calls,
                     tolerance_arrival,
                     has_post_seek = ft.has_post_seek,
                     "entity-target PerformSeek aged refresh countdown"

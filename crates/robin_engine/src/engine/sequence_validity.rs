@@ -220,15 +220,32 @@ impl EngineInner {
             // ── Take ─────────────────────────────────────────────
             Command::Take => {
                 let Some(victim_id) = interaction_victim_id(element) else {
+                    tracing::trace!(?actor_id, "Take validity failed: missing victim");
                     return false;
                 };
                 let Some(object) = self.get_entity(victim_id) else {
+                    tracing::trace!(
+                        ?actor_id,
+                        ?victim_id,
+                        "Take validity failed: missing object"
+                    );
                     return false;
                 };
                 if !object.is_object() {
+                    tracing::trace!(
+                        ?actor_id,
+                        ?victim_id,
+                        kind = ?object.kind(),
+                        "Take validity failed: victim is not an object"
+                    );
                     return false;
                 }
                 let Some(obj_data) = object.object_data() else {
+                    tracing::trace!(
+                        ?actor_id,
+                        ?victim_id,
+                        "Take validity failed: object payload is missing"
+                    );
                     return false;
                 };
 
@@ -270,12 +287,24 @@ impl EngineInner {
                     // Scrolls track their own status field rather than
                     // the generic `taken` flag.
                     ObjectType::Scroll => {
-                        if !object.is_active()
-                            || self.scroll_status(victim_id) == ScrollStatus::Taken
-                        {
+                        let status = self.scroll_status(victim_id);
+                        if !object.is_active() || status == ScrollStatus::Taken {
+                            tracing::trace!(
+                                ?actor_id,
+                                ?victim_id,
+                                active = object.is_active(),
+                                ?status,
+                                "Take validity failed: scroll is unavailable"
+                            );
                             return false;
                         }
                         if check_position && dist_sq > 900.0 {
+                            tracing::trace!(
+                                ?actor_id,
+                                ?victim_id,
+                                dist_sq,
+                                "Take validity failed: scroll is out of range"
+                            );
                             return false;
                         }
                         true
