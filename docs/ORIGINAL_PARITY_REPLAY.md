@@ -8,7 +8,7 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
 
 ## Baseline and contract
 
-- Required Original trace schema: 9
+- Required Original trace schema: 10
 - Required replay start state: `mission_start` with a complete versioned
   campaign snapshot captured before engine initialization, including
   progression, mission state, gang/reservists/mission team, character status
@@ -16,7 +16,7 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   campaign pointers encoded as stable indices. The Original also preserves
   `loaded_save` sessions, but Rust rejects them until live mission-save state
   restoration is implemented.
-- Compatibility: schemas 1–8 are deliberately rejected. Schemas 1–3 cannot
+- Compatibility: schemas 1–9 are deliberately rejected. Schemas 1–3 cannot
   reconstruct an arbitrary campaign and can silently create a plausible but
   different world. Schema 4 has complete campaign state, but was recorded with
   native i686 x87 extended-precision intermediates and is not a valid numeric
@@ -27,6 +27,9 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   Schema 7 lacks the explicit simulation-body gate. Schema 8 reaches the
   current Lincoln divergence but cannot distinguish path-input or live
   motion-grid differences, so it is retained only as historical evidence.
+  Schema 9 adds that path oracle but can omit action selection/cancellation
+  resolved inside a raw mouse message. Schema 10 records those authoritative
+  nested resolved inputs.
 - Inputs: resolved game commands, applied on their recorded simulation frames,
   plus resolved camera-director sequence completions produced between
   simulation frames and applied before the following frame's commands
@@ -308,6 +311,8 @@ Original while Rust remains in `Wait`.
 | Done | Non-interruptible admission precedes transitions | A second Take command arrives at frame 589 while PC 126 is executing a non-interruptible wall `PassDoor`. Original stamps the incoming Seek's live state, then handles the non-interruptible current element before `GenerateTransition`: the Seek is postponed, equal-normal priority replaces the older postponed group Move, and release at frame 610 lowers the Seek and arms `TIME_SEEK_REFRESH=25`. Rust's deferred manager path tried to generate a transition from temporary `Flying` posture first, marked the Seek impossible, resumed the stale group Move, and retained the prior scroll seek countdown at 10. | Deferred `InstructOwner` now applies the shared non-interruptible guard before transition generation and settles any card caused by replacement of an older postponed command at that exact boundary. Ordinary priority arbitration retains its later transition-first ordering. This covers all commands arriving through the sequence-manager queue during door passes, not just Take/Seek; replay advances through frame 747. |
 | Done | Bow line-of-fire origin uses actor elevation once | At frame 748 PC 126 moves the cursor from a long-shot target to a normal-shot target. Original `ComputeBowPoint` starts independently from the actor's base elevation, finds the normal trajectory clear, and launches `LowerBow`. Rust passed the already elevated hand point to a helper that expects the actor base position, added the 25-unit hand elevation a second time, intersected obstacle 77, and incorrectly upgraded the shot to Long. | Cursor bow LOS now passes the actor's base 3-D position to the same `compute_bow_point` convention already used by the combat path. Hand position remains the source for range and shoot-mode distance only. Generic trace events expose the bow-aim gates and resolved classification without any replay-specific branch. Replay advances through frame 767. |
 | Done | Aspect-corrected 3-D patrol ordering | Officer 71 reinitializes its patrol at frame 763. Original `InitializePatrol` orders admitted members using `SquareDistance`: full 3-D ground-position deltas with world Y stretched by `INVERSE_ASPECT_RATIO`, and inserts equal-distance members before existing entries. Rust used a stable sort of raw projected-map `dx² + dy²`, making soldiers 74/70 the leading pair instead of 70/69. The next eighth-frame formation refresh consequently sent the only available row to the wrong members and left soldier 69 waiting. | Patrol reinitialization reconstructs world Y from map Y and elevation, includes the Z delta, applies the Original aspect stretch, and reproduces its strict-greater insertion/tie behavior before the unchanged left/right determinant pass. This is shared by every patrol rebuild and contains no actor or trace identity. Replay advances through frame 788. |
+| Recording required | Nested resolved action cancellation | At frame 789 the user right-clicks while Bow is selected. Original `PerformMouseRightClick` finds an empty shoot list and forwards `MSG_SELECT_ACTION(NoAction)` inside the root raw-mouse dispatch; `SelectAction → UnSelectAction` then launches `UnequipBow`. The recorder admitted nested character selection only, so the frame retained its earlier automatic bow orientation but omitted the authoritative cancellation. Inferring it from the later actor command would be replay-specific and invalid. | Original now sends every depth-two PC message under a raw-mouse input root through the existing semantic `RecordInputMessage` filter, which records this as `cancel_action` without admitting deeper simulation callbacks. Rust accepts the Original's global no-PC cancel shape and maps it to `UnselectAllActions`. Schema 10 invalidates incomplete older traces, so a fresh capture is required. Original commits: `2bc07664`, `a087cc3a`. |
+| Done | Authoritative per-frame PC ammunition comparison | The broad Rust engine dump exposed an entity-local legacy ammo mirror containing zero while the authoritative campaign character still contained the correct one remaining arrow. The logical comparator previously ignored the trace's complete `pc.ammo` payload, making a real campaign-counter divergence capable of hiding until a later ability decision. | The parity view now compares all nine recorded ammunition counters against the Rust campaign character status every frame. Missing PC/campaign mappings fail loudly. The current replay's authoritative counters match; the stale diagnostic mirror is not used as gameplay state. |
 | Done | Complete mission-start campaign state | Mission/proto names and an RNG seed cannot reconstruct progressed mission status, the selected team, character inventory/skills, persistent Sherwood production, relics, or script-visible campaign values. Capturing after `RHEngine::Initialize` is also too late because the Original consumes the mission team and marks its descriptions instanced during construction. | Original schema 4 introduced a neutral JSON campaign snapshot captured immediately before engine initialization and written into the trace header after initialization RNG has accumulated into the normal prefix. Schema 8 retains that state contract. Rust requires schema 8, validates profile IDs/names and every stored index, reconstructs the complete campaign before level loading, and rejects all older traces. Production script attachments/points remain level-derived exactly as in the Original save format. |
 | Done | Deterministic native floating point | Native i686 GCC defaulted to x87 evaluation even though SSE2 instructions were available. Extended intermediates then depended on compiler register lifetime, so exact frame-state bits could diverge from Rust and change after unrelated Original rebuilds. | Schema 5 captures are built with scalar SSE2 evaluation and FP contraction disabled across every in-tree Original target. Schema 4 recordings are deliberately invalidated; a new schema-5 recording is required rather than teaching Rust to emulate unstable x87 spill behavior. |
 | Done | Compiler-independent signed numeric conversions | Several Original paths converted negative floating-point values directly to unsigned integers, which is undefined and changed behavior between the shipped GCC 2.95–3.3 builds and the current compiler. The camera magnitude check consequently cancelled left/up scrolling; diagonal NPC hearing, unusually short jump timing, and negative anti-aliased-line increments had the same latent dependency. | Original now compares camera magnitudes as floats, rejects non-positive perceived noise before conversion, clamps jump waits before conversion, and converts signed fixed-point renderer increments through `SLONG` before their intentional modulo-`ULONG` representation. Alpha interpolation also avoids shifting a negative signed value. Ordinary positive truncation and modular renderer stepping remain unchanged. Original commits: `501e2b4b` and `0233a0f7`. |
@@ -566,14 +571,14 @@ Original while Rust remains in `Wait`.
 ## Workflow
 
 Capture paths are bases rather than individual output files. For example,
-`-PARITYTRACE /tmp/lincoln-schema9.jsonl` writes
-`/tmp/lincoln-schema9-session-0001.jsonl`, then `...-0002.jsonl`, and skips
+`-PARITYTRACE /tmp/lincoln-schema10.jsonl` writes
+`/tmp/lincoln-schema10-session-0001.jsonl`, then `...-0002.jsonl`, and skips
 existing session numbers on later process runs:
 
 ```sh
 ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
   original-code/build/native-full/robin \
-  -PARITYTRACE original-code/parity-traces/original-fullgame-schema9.jsonl \
+  -PARITYTRACE original-code/parity-traces/original-fullgame-schema10.jsonl \
   -PARITYSEED 1
 ```
 
@@ -589,7 +594,7 @@ without modifying the active profile or its save:
 ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
   original-code/build/native-full/robin \
   -PARITYMISSION H01_Lin_VL Lincoln \
-  -PARITYTRACE original-code/parity-traces/original-fullgame-schema9.jsonl \
+  -PARITYTRACE original-code/parity-traces/original-fullgame-schema10.jsonl \
   -PARITYSEED 1
 ```
 
@@ -597,14 +602,14 @@ Build once, then use the first-divergence run for iteration:
 
 ```sh
 cargo build --example original_parity_replay
-TRACE_JSONL=/path/to/schema9-trace.jsonl
+TRACE_JSONL=/path/to/schema10-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay \
   "$TRACE_JSONL"
 ```
 
 The first run converts the JSONL source into an adjacent
-`*.parity-cache-v1.native-bincode.zst` file. The cache contains the typed trace
+`*.parity-cache-v2.native-bincode.zst` file. The cache contains the typed trace
 header, RNG prefix/suffix, and every frame as length-delimited native bincode
 records inside a streaming zstd level-0 payload. Subsequent runs read only that
 cache. Its source-length and modification-time fingerprint automatically
@@ -641,7 +646,7 @@ To watch that same authoritative replay, add `--visual`. The window freezes on
 the first divergence while the normal logical mismatch report is printed:
 
 ```sh
-TRACE_JSONL=/path/to/schema9-trace.jsonl
+TRACE_JSONL=/path/to/schema10-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay --visual \
   "$TRACE_JSONL"
@@ -651,7 +656,7 @@ After the first-divergence run is clean, collect the first occurrence of every
 remaining compared-field mismatch with:
 
 ```sh
-TRACE_JSONL=/path/to/schema9-trace.jsonl
+TRACE_JSONL=/path/to/schema10-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay --scan-all \
   "$TRACE_JSONL"
@@ -661,7 +666,7 @@ For interactive inspection, start the headless runner paused with its local
 HTTP endpoint:
 
 ```sh
-TRACE_JSONL=/path/to/schema9-trace.jsonl
+TRACE_JSONL=/path/to/schema10-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay \
   --http-server 17640 --start-paused \

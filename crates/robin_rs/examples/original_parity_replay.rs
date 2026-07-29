@@ -101,8 +101,8 @@ enum TraceStartState {
 
 fn validate_trace_schema(schema: u32) {
     assert_eq!(
-        schema, 9,
-        "unsupported parity trace schema {schema}; motion-grid/path-event schema 9 is required"
+        schema, 10,
+        "unsupported parity trace schema {schema}; complete resolved-input schema 10 is required"
     );
 }
 
@@ -485,6 +485,10 @@ enum TraceCommand {
         pc: TraceEntityId,
         action: TraceAction,
     },
+    CancelAction {
+        #[serde(default)]
+        pc: Option<TraceEntityId>,
+    },
     OrientActionAt {
         action: TraceAction,
         actor: TraceEntityId,
@@ -768,6 +772,12 @@ impl TraceCommand {
                 pc_id: entity_map.translate(pc),
                 action: action.into(),
             },
+            Self::CancelAction { pc } => match pc {
+                Some(pc) => PlayerCommand::CancelAction {
+                    pc_id: entity_map.translate(pc),
+                },
+                None => PlayerCommand::UnselectAllActions,
+            },
             Self::OrientActionAt {
                 action,
                 actor,
@@ -840,6 +850,8 @@ struct TraceElement {
     #[serde(default)]
     human: Option<TraceHuman>,
     #[serde(default)]
+    pc: Option<TraceElementPc>,
+    #[serde(default)]
     ai: Option<TraceAi>,
 }
 
@@ -857,6 +869,24 @@ struct TraceActor {
 struct TraceHuman {
     life_points: i16,
     dead: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TraceElementPc {
+    ammo: TraceElementAmmo,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TraceElementAmmo {
+    ales: u16,
+    apples: u16,
+    arrows: u16,
+    nets: u16,
+    plants: u16,
+    purses: u16,
+    rations: u16,
+    stones: u16,
+    wasp_nests: u16,
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -879,8 +909,8 @@ struct TraceFrame {
     path_events: Vec<TracePathEvent>,
 }
 
-const TRACE_CACHE_VERSION: u32 = 1;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v1.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 2;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v2.native-bincode.zst";
 const TRACE_CACHE_ZSTD_LEVEL: i32 = 0;
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -3474,6 +3504,30 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
                 actual.is_dead(),
             );
         }
+        if let Some(expected_pc) = &expected.pc {
+            use robin_engine::profiles::Action;
+
+            let ammo = &expected_pc.ammo;
+            for (field, expected_count, action) in [
+                ("ales", ammo.ales, Action::Ale),
+                ("apples", ammo.apples, Action::Apple),
+                ("arrows", ammo.arrows, Action::Bow),
+                ("nets", ammo.nets, Action::Net),
+                ("plants", ammo.plants, Action::Heal),
+                ("purses", ammo.purses, Action::Purse),
+                ("rations", ammo.rations, Action::Eat),
+                ("stones", ammo.stones, Action::Stone),
+                ("wasp_nests", ammo.wasp_nests, Action::WaspNest),
+            ] {
+                compare(
+                    &mut differences,
+                    id,
+                    &format!("pc.ammo.{field}"),
+                    expected_count,
+                    engine.get_pc_ammo_count(id, action),
+                );
+            }
+        }
         if let Some(expected_ai) = &expected.ai {
             let actual_ai = actual
                 .ai_controller()
@@ -3588,8 +3642,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schema_nine_is_required() {
-        validate_trace_schema(9);
+    fn schema_ten_is_required() {
+        validate_trace_schema(10);
     }
 
     #[test]
@@ -3621,9 +3675,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "schema 8; motion-grid/path-event schema 9 is required")]
-    fn schema_eight_is_rejected() {
-        validate_trace_schema(8);
+    #[should_panic(expected = "schema 9; complete resolved-input schema 10 is required")]
+    fn schema_nine_is_rejected() {
+        validate_trace_schema(9);
     }
 
     #[test]
@@ -3721,6 +3775,16 @@ mod tests {
         assert_eq!(command_from_stable_name("raise_bow"), Command::RaiseBow);
         assert_eq!(command_from_stable_name("jump"), Command::JumpCmd);
         assert_eq!(command_from_stable_name("roll"), Command::Jump);
+    }
+
+    #[test]
+    fn global_action_cancel_accepts_the_original_no_pc_shape() {
+        let command: TraceCommand = serde_json::from_value(serde_json::json!({
+            "type": "cancel_action",
+            "original_action": 0
+        }))
+        .expect("parse Original global action cancellation");
+        assert!(matches!(command, TraceCommand::CancelAction { pc: None }));
     }
 
     #[test]

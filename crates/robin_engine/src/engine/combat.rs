@@ -885,6 +885,32 @@ impl EngineInner {
         }
     }
 
+    /// Return one PC's authoritative campaign-side ammunition counter.
+    ///
+    /// PC entities intentionally do not duplicate these counters: the
+    /// campaign character status is the live source, as in the Original.
+    /// Debug/parity consumers need the same lookup rather than a stale
+    /// entity-local mirror.
+    pub fn get_pc_ammo_count(&self, pc_id: EntityId, action: crate::profiles::Action) -> u16 {
+        let pc = match self.get_entity(pc_id) {
+            Some(Entity::Pc(pc)) => pc,
+            Some(entity) => panic!(
+                "get_pc_ammo_count expected PC {pc_id:?}, found {:?}",
+                entity.kind()
+            ),
+            None => panic!("get_pc_ammo_count PC {pc_id:?} is missing"),
+        };
+        self.pc_description_for_pc_data(&pc.pc)
+            .unwrap_or_else(|| {
+                panic!(
+                    "get_pc_ammo_count PC {pc_id:?} profile {} has no campaign character status",
+                    pc.pc.profile_index
+                )
+            })
+            .status
+            .get_ammo(action)
+    }
+
     /// Decrement the shooter's bow ammo by 1 after a shot.
     ///
     /// PCs hit the campaign-side PcStatus; NPC soldiers
