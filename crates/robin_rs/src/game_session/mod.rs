@@ -19,6 +19,7 @@ mod replay_init;
 mod runtime;
 mod setup;
 pub(crate) use setup::initial_sim_config;
+pub use setup::{load_fixed_vip_name_map, load_peasant_name_pool};
 mod terminal_debriefing;
 mod tick;
 

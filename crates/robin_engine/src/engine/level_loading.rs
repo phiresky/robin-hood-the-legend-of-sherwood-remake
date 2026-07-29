@@ -1541,7 +1541,7 @@ impl EngineInner {
         // master even though target loading requests FrameKind::Animation.
         Self::preload_accessory_sprite_prototypes(assets);
 
-        self.spawn_civilians_and_rescue_pcs_stage(assets, &loaded, config)?;
+        self.spawn_civilians_and_rescue_pcs_stage(sim, assets, &loaded, config)?;
         progress(1.0);
 
         self.spawn_soldiers_stage(assets, &loaded, config)?;

@@ -91,6 +91,7 @@ impl EngineInner {
 
     pub(super) fn spawn_civilians_and_rescue_pcs_stage(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &mut LevelAssets,
         loaded: &crate::level_data::LoadedLevel,
         config: SimConfig,
@@ -245,7 +246,6 @@ impl EngineInner {
                     reason: "profile is missing from the loaded CPF".to_owned(),
                 }
             })?;
-
             let mut sprite = crate::sprite::Sprite::default();
             if let Err(e) = sprite.load_frame_info(
                 assets.sprite_scriptor_mut(),
@@ -406,12 +406,74 @@ impl EngineInner {
                         idx
                     }
                     _ => {
+                        let mut status =
+                            crate::pc_status::PcStatus::from_profile(profile, true, difficulty);
+                        if profile.vip {
+                            // Original maps the seven fixed French profile
+                            // identities to localized menu IDs 144..150 and
+                            // performs no random draws.
+                            status.name = assets
+                                .fixed_vip_names
+                                .get(&profile.profile_name)
+                                .cloned()
+                                .ok_or_else(|| EngineError::MissionLevelStage {
+                                    stage: "rescue PCs",
+                                    reason: format!(
+                                        "missing localized fixed VIP name for profile {:?}",
+                                        profile.profile_name
+                                    ),
+                                })?;
+                        } else {
+                            const ORIGINAL_NAME_COUNT: usize = 22;
+                            const MAX_ATTEMPTS: usize = 10;
+                            if assets.peasant_firstnames.len() != ORIGINAL_NAME_COUNT
+                                || assets.peasant_surnames.len() != ORIGINAL_NAME_COUNT
+                            {
+                                return Err(EngineError::MissionLevelStage {
+                                    stage: "rescue PCs",
+                                    reason: format!(
+                                        "Original rescue-PC name generation requires 22 firstnames \
+                                         and 22 surnames, loaded {}/{}",
+                                        assets.peasant_firstnames.len(),
+                                        assets.peasant_surnames.len(),
+                                    ),
+                                });
+                            }
+
+                            let mut generated = None;
+                            for _ in 0..MAX_ATTEMPTS {
+                                // RHPCStatus::GenerateName calls rand() once
+                                // for each half, in this exact order.
+                                let first_idx = crate::sim_rng::usize(
+                                    sim,
+                                    crate::sim_rng::RngSite::RescuePcFirstName,
+                                    0..ORIGINAL_NAME_COUNT,
+                                );
+                                let surname_idx = crate::sim_rng::usize(
+                                    sim,
+                                    crate::sim_rng::RngSite::RescuePcSurname,
+                                    0..ORIGINAL_NAME_COUNT,
+                                );
+                                let name = format!(
+                                    "{} {}",
+                                    assets.peasant_firstnames[first_idx],
+                                    assets.peasant_surnames[surname_idx],
+                                );
+                                if !campaign.is_peasant_name_registered(&name) {
+                                    // Register immediately: every later PRIS
+                                    // constructor checks the names accepted by
+                                    // all earlier constructors in source order.
+                                    campaign.register_peasant_name(name.clone());
+                                    generated = Some(name);
+                                    break;
+                                }
+                            }
+                            status.name = generated.unwrap_or_else(|| "Misteryman".to_owned());
+                        }
                         let desc = crate::campaign::PcDescription {
                             character_profile_idx: Some(profile_idx),
                             instanced: false,
-                            status: crate::pc_status::PcStatus::from_profile(
-                                profile, true, difficulty,
-                            ),
+                            status,
                         };
                         campaign.add_to_characters(desc, &profiles)
                     }

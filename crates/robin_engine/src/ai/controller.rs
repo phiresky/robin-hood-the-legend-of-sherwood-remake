@@ -3309,6 +3309,7 @@ impl AiController {
         let hiking_paths = &ctx.hiking_paths;
 
         if self.has_patrol_path {
+            let mut initial_nearest_waypoint_distance = f32::MAX;
             // Initialize patrol path if not yet done.
             if self.patrol_path.is_none() {
                 self.patrol_path = self
@@ -3342,6 +3343,7 @@ impl AiController {
                         }
                     }
                 }
+                initial_nearest_waypoint_distance = min_dist;
 
                 path.set_current_index(best_index);
 
@@ -3379,14 +3381,11 @@ impl AiController {
                     && is_frame_zero
                     && let Some(ref mut path) = self.patrol_path
                 {
-                    let dir_norm = if let Some(wp) = path.current_waypoint(hiking_paths) {
-                        let dx = (wp.x as f32 - ctx.position.x).abs();
-                        let dy = (wp.y as f32 - ctx.position.y).abs();
-                        dx.max(dy)
-                    } else {
-                        f32::MAX
-                    };
-                    if dir_norm < 50.0 {
+                    // Original tests the vector to the nearest waypoint as
+                    // computed before it may advance past that waypoint for
+                    // the actual GoTo. Recomputing against the advanced
+                    // waypoint can incorrectly suppress history seeding.
+                    if initial_nearest_waypoint_distance < 50.0 {
                         path.initialize_history_entries_on_path(hiking_paths);
                     }
                 }
@@ -3690,11 +3689,14 @@ impl AiController {
 
         if near_point_backwards {
             // Just turn to face the officer instead of walking backward
-            self.face_position(Position {
-                x: patrol_chief_position.x,
-                y: patrol_chief_position.y,
-                ..ctx.position
-            });
+            self.face_position_with_ctx(
+                Position {
+                    x: patrol_chief_position.x,
+                    y: patrol_chief_position.y,
+                    ..ctx.position
+                },
+                ctx,
+            );
             return;
         }
 

@@ -7701,9 +7701,6 @@ impl EngineInner {
                                     .map(|entity| entity.position_iface().map_goal())
                             })
                             .flatten();
-                        if let Some(entity) = self.world.entities.get_mut(entity_id) {
-                            entity.position_iface_mut().turn();
-                        }
                         self.halt_actor(entity_id);
                         if interrupts_retained_stop_transition
                             && let Some(entity) = self.world.entities.get_mut(entity_id)

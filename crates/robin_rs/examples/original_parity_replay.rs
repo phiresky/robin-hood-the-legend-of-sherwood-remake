@@ -1521,7 +1521,6 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             );
             std::panic::resume_unwind(payload);
         }
-        let _ = engine.perform_post_initialize(&mut display, &assets);
         map.extend_runtime_entities(&engine, &frame);
         if let Some(visual) = &mut visual
             && !visual.render(&engine)
@@ -1683,6 +1682,11 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     .or_insert_with(|| (frame.frame_after, difference.clone()));
             }
             if scan_all && visual.is_none() {
+                // RHGame records the authoritative frame immediately after
+                // PerformHourglass, then runs the one-shot PostInitialize
+                // hook after refresh/sound. Apply that boundary only after
+                // comparing this frame, before advancing to the next one.
+                let _ = engine.perform_post_initialize(&mut display, &assets);
                 continue;
             }
             let mut fields = BTreeMap::<&str, usize>::new();
@@ -1743,6 +1747,10 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             }
             return 1;
         }
+        // Original captures the frame above before its post-refresh
+        // PostInitialize hook. The hook's effects belong to the starting
+        // state of the next recorded frame, not the frame just compared.
+        let _ = engine.perform_post_initialize(&mut display, &assets);
         if let Some(step) = &mut active_http_step {
             step.remaining -= 1;
             if step.remaining == 0 {
@@ -2868,6 +2876,13 @@ fn initialize_engine(
     let profiles = Arc::new(pm);
     let mut assets = LevelAssets::new();
     assets.profile_manager = profiles.clone();
+    let mut text_res = robin_assets::resource_manager::ResourceManager::new();
+    text_res
+        .attach_resource_file("Data/Text/Level.res")
+        .expect("load Data/Text/Level.res for Original rescue-PC names");
+    (assets.peasant_firstnames, assets.peasant_surnames) =
+        robin_rs::game_session::load_peasant_name_pool(&mut text_res);
+    assets.fixed_vip_names = robin_rs::game_session::load_fixed_vip_name_map(&mut text_res);
     let mut host = Host::scratch(1024.0, 768.0);
     host.frame_holder_mut()
         .initialize_sprite_bank(".")

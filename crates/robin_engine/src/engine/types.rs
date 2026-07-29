@@ -844,6 +844,9 @@ pub struct LevelAssets {
     pub peasant_firstnames: Vec<String>,
     /// Localized peasant surname pool (menu text IDs 122-143).
     pub peasant_surnames: Vec<String>,
+    /// Fixed VIP profile identity to localized status name (menu text
+    /// IDs 144-150). Fresh VIP descriptions consume no RNG.
+    pub fixed_vip_names: std::collections::BTreeMap<String, String>,
     /// Preloaded accessory-sprite prototypes, one per projectile
     /// `ObjectType` (arrow, stone, apple, net, wasp-nest, purse, coin,
     /// ale, cape). Loaded once at mission init via
@@ -975,6 +978,7 @@ impl LevelAssets {
             pixel_opacity: None,
             peasant_firstnames: Vec::new(),
             peasant_surnames: Vec::new(),
+            fixed_vip_names: std::collections::BTreeMap::new(),
             accessory_sprite_prototypes: std::collections::HashMap::new(),
             exclamation_durations: std::sync::Arc::new(std::collections::BTreeMap::new()),
             source_durations: std::sync::Arc::new(std::collections::BTreeMap::new()),

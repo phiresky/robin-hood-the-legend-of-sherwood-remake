@@ -665,6 +665,18 @@ impl EngineInner {
                         })
                         .collect()
                 };
+                // RHElementActorPC keeps the campaign description's
+                // RHPCStatus as its live status object. Seed the entity-owned
+                // mirror from that same description rather than PcData's
+                // full-health/empty-pocket defaults.
+                let pc_status = self
+                    .mission_domain
+                    .campaign
+                    .characters
+                    .get(char_idx)
+                    .expect("beam-me campaign character disappeared after validation")
+                    .status
+                    .clone();
                 let entity = Entity::Pc(crate::element::ActorPc {
                     element: crate::element::ElementData {
                         kind: crate::element::ElementKind::ActorPc,
@@ -689,6 +701,7 @@ impl EngineInner {
                         ..Default::default()
                     },
                     pc: crate::element::PcData {
+                        life_points: pc_status.life_points,
                         robin: is_robin,
                         profile_index: profile_idx,
                         list_index,
@@ -700,6 +713,17 @@ impl EngineInner {
                         beam_me_index: beam_me.index as i16,
                         disabled_actions,
                         disabled_actions_temp: vec![false; crate::profiles::NUMBER_OF_PC_ACTIONS],
+                        ammo: crate::element::PcAmmoData {
+                            ales: pc_status.num_ales,
+                            arrows: pc_status.num_arrows,
+                            apples: pc_status.num_apples,
+                            rations: pc_status.num_rations,
+                            stones: pc_status.num_stones,
+                            wasp_nests: pc_status.num_wasp_nests,
+                            nets: pc_status.num_nets,
+                            plants: pc_status.num_plants,
+                            purses: pc_status.num_purses,
+                        },
                         // Kept for save/restore parity.
                         initial_action: beam_me.action,
                         ..Default::default()

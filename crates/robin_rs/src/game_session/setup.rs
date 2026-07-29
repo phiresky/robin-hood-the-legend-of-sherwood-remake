@@ -1110,7 +1110,7 @@ pub(super) fn extract_titbit_row_frame_counts(cursor_res: &mut ResourceManager) 
 /// `Level.res` — the civilian display-name branch.  Sub-IDs 100-121
 /// hold firstnames, 122-143 surnames, under one of three menu text
 /// tables (full / demo / demo2).
-fn load_peasant_name_pool(text_res: &mut ResourceManager) -> (Vec<String>, Vec<String>) {
+pub fn load_peasant_name_pool(text_res: &mut ResourceManager) -> (Vec<String>, Vec<String>) {
     use crate::ui_panel::{MENU_TEXT_TABLE_ID, MENU_TEXT_TABLE_ID_DEMO, MENU_TEXT_TABLE_ID_DEMO2};
     const FIRSTNAME_BASE: usize = 100;
     const SURNAME_BASE: usize = 122;
@@ -1135,6 +1135,43 @@ fn load_peasant_name_pool(text_res: &mut ResourceManager) -> (Vec<String>, Vec<S
         .filter_map(|i| fetch(text_res, SURNAME_BASE + i))
         .collect();
     (firstnames, surnames)
+}
+
+/// Load the fixed localized VIP names selected by
+/// `RHPCStatus::GenerateName`. Keys are the canonical French profile
+/// identities stored in CPF and mission data.
+pub fn load_fixed_vip_name_map(
+    text_res: &mut ResourceManager,
+) -> std::collections::BTreeMap<String, String> {
+    use crate::ui_panel::{MENU_TEXT_TABLE_ID, MENU_TEXT_TABLE_ID_DEMO, MENU_TEXT_TABLE_ID_DEMO2};
+    const VIP_NAME_BASE: usize = 144;
+    const PROFILE_NAMES: [&str; 7] = [
+        "Robin des bois",
+        "Robin des villes",
+        "Will Ecarlate",
+        "Petit Jean",
+        "Frere Tuck",
+        "Lady Marianne",
+        "Stutely",
+    ];
+    let table_ids = [
+        MENU_TEXT_TABLE_ID,
+        MENU_TEXT_TABLE_ID_DEMO,
+        MENU_TEXT_TABLE_ID_DEMO2,
+    ];
+
+    PROFILE_NAMES
+        .into_iter()
+        .enumerate()
+        .filter_map(|(offset, profile_name)| {
+            table_ids.iter().find_map(|&table_id| {
+                text_res
+                    .get_string(table_id, VIP_NAME_BASE + offset)
+                    .ok()
+                    .map(|localized| (profile_name.to_owned(), localized.to_string()))
+            })
+        })
+        .collect()
 }
 
 /// Run the CPU-only loading phase: sprite bank, campaign install +
@@ -1347,6 +1384,7 @@ pub(super) fn load_level_and_sprite_bank(
     // `load_level()` → `load_mission_script()` so the level loader
     // does not re-load it.
     (assets.peasant_firstnames, assets.peasant_surnames) = load_peasant_name_pool(text_res);
+    assets.fixed_vip_names = load_fixed_vip_name_map(text_res);
 
     let level_directory = game.global_options.level_directory.clone();
 
