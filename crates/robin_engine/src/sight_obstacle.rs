@@ -566,6 +566,17 @@ impl SightObstacle {
         compute_plane_z(&self.top_plane_points, x, y)
     }
 
+    /// Compute the top-plane Z at an isometrically projected map point.
+    ///
+    /// The input Y is `world_y - z`, so resolving the world-space plane
+    /// requires the same `(1 - bz)` correction as the Original's
+    /// `PositionToPoint3D`. Use [`Self::compute_top_z`] instead when Y is
+    /// already a world/ground coordinate.
+    pub fn compute_top_z_from_projection(&self, x: f32, projected_y: f32) -> f32 {
+        crate::position_interface::PlaneZCoeffs::from_plane_points(&self.top_plane_points)
+            .compute_z(x, projected_y)
+    }
+
     /// Compute Z height of the bottom plane at ground position (x, y).
     pub fn compute_bottom_z(&self, x: f32, y: f32) -> f32 {
         compute_plane_z(&self.bottom_plane_points, x, y)
@@ -1008,6 +1019,14 @@ pub fn is_reachable_3d(
             continue;
         }
         if obs.is_blocking_ray_3d(origin, destination) {
+            tracing::trace!(
+                obstacle_index = __idx,
+                obstacle_id = obs.id,
+                ?origin,
+                ?destination,
+                type_mask,
+                "3D sight ray blocked"
+            );
             return false;
         }
     }

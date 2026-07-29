@@ -837,8 +837,7 @@ impl NativeContext<'_, '_> {
                     crate::engine::Ambiance::Night | crate::engine::Ambiance::Fog
                 );
                 let effective_view_radius = crate::ai_vision::compute_view_radius(
-                    viewer_eye,
-                    viewer_eye_3d.z,
+                    viewer_eye_3d,
                     view_radius,
                     view_forward,
                     real_half_aperture,

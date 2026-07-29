@@ -1733,8 +1733,11 @@ impl EnemyAi {
             })
         });
         let effective_view_radius = crate::ai_vision::compute_view_radius(
-            ctx.self_eye_position,
-            ctx.self_eye_z,
+            crate::coordinates::WorldPoint3D::new(
+                ctx.self_eye_position.x,
+                ctx.self_eye_position.y + ctx.elevation,
+                ctx.self_eye_z,
+            ),
             ctx.self_view_radius,
             (ctx.self_view_direction[0], ctx.self_view_direction[1]),
             ctx.self_real_half_aperture,

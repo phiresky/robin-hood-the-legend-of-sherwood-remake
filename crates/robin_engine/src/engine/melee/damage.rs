@@ -1498,7 +1498,7 @@ impl EngineInner {
                                     "falling-hit goal references missing obstacle {obstacle_index}"
                                 )
                             })
-                            .compute_top_z(goal_x, goal_y);
+                            .compute_top_z_from_projection(goal_x, goal_y);
                         (
                             crate::position_interface::ObstacleHandle::new(obstacle_index),
                             z,

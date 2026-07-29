@@ -231,7 +231,7 @@ impl AiContext {
                         continue;
                     }
                     let z_max = obstacle.box_3d_max[2];
-                    let z = obstacle.compute_top_z(position.x, position.y);
+                    let z = obstacle.compute_top_z_from_projection(position.x, position.y);
                     match best {
                         None => best = Some((z_max, z)),
                         Some((prev_z_max, _)) if z_max > prev_z_max => best = Some((z_max, z)),

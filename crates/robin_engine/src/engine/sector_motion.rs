@@ -115,7 +115,7 @@ impl EngineInner {
                     Some(obs_idx) => self
                         .sight_obstacles(assets)
                         .get(obs_idx as usize)
-                        .map(|obs| obs.compute_top_z(x, y))
+                        .map(|obs| obs.compute_top_z_from_projection(x, y))
                         .unwrap_or(0.0),
                     None => 0.0,
                 }

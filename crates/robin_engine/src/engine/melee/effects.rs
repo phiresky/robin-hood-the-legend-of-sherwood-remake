@@ -1004,7 +1004,7 @@ impl EngineInner {
                     let z = self
                         .sight_obstacles(assets)
                         .get(obs_idx as usize)
-                        .map(|obs| obs.compute_top_z(goal_x, goal_y))
+                        .map(|obs| obs.compute_top_z_from_projection(goal_x, goal_y))
                         .unwrap_or(0.0);
                     (crate::position_interface::ObstacleHandle::new(obs_idx), z)
                 }

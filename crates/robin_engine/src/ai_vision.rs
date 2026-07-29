@@ -703,12 +703,16 @@ pub fn distance_sharpness(sqr_distance: f32, view_radius: f32) -> f32 {
 /// and subtracts the obstacle's top-plane Z from the screen-space
 /// reference points so distance falloff stays consistent.
 ///
+/// `eye_world` must be the full world-space point returned by
+/// `ComputeEyesPoint`. Obstacle planes and shadow-sector barycentres use
+/// world coordinates; passing the isometrically projected map Y here mixes
+/// coordinate spaces whenever the viewer is elevated.
+///
 /// The per-frame cache from the legacy implementation is
 /// intentionally skipped — we recompute once per call.
 #[allow(clippy::too_many_arguments)]
 pub fn compute_view_radius(
-    eye: MapPoint,
-    eye_z: f32,
+    eye_world: WorldPoint3D,
     view_radius: u16,
     view_forward: (f32, f32),
     half_aperture: f32,
@@ -728,15 +732,18 @@ pub fn compute_view_radius(
     let base_radius = if let Some(obs) = target_obstacle {
         let origin = obs.top_plane_origin();
         let normal = obs.top_plane_normal();
-        let rel = [eye.x - origin[0], eye.y - origin[1], eye_z - origin[2]];
+        let rel = [
+            eye_world.x - origin[0],
+            eye_world.y - origin[1],
+            eye_world.z - origin[2],
+        ];
         let f_distance = rel[0] * normal[0] + rel[1] * normal[1] + rel[2] * normal[2];
         if f_distance.abs() >= r {
             return 0.0;
         }
         (r * r - f_distance * f_distance).sqrt()
     } else {
-        let sq = r * r - eye_z * eye_z;
-        if sq > 0.0 { sq.sqrt() } else { 0.0 }
+        (r * r - eye_world.z * eye_world.z).abs().sqrt()
     };
 
     if !is_night_or_fog {
@@ -749,19 +756,19 @@ pub fn compute_view_radius(
     let (fx, fy) = view_forward;
     let half_r = 0.5 * base_radius;
     let mut pt_ref = MapPoint {
-        x: eye.x + half_r * fx,
-        y: eye.y + half_r * fy,
+        x: eye_world.x + half_r * fx,
+        y: eye_world.y + half_r * fy,
     };
 
     let (lx, ly) = rotate_unit(fx, fy, half_aperture);
     let (rx, ry) = rotate_unit(fx, fy, -half_aperture);
     let mut pt_left = MapPoint {
-        x: eye.x + half_r * lx,
-        y: eye.y + half_r * ly,
+        x: eye_world.x + half_r * lx,
+        y: eye_world.y + half_r * ly,
     };
     let mut pt_right = MapPoint {
-        x: eye.x + half_r * rx,
-        y: eye.y + half_r * ry,
+        x: eye_world.x + half_r * rx,
+        y: eye_world.y + half_r * ry,
     };
 
     // When the target sits on a projection obstacle, subtract the
@@ -824,7 +831,7 @@ pub fn compute_view_radius(
         // correctly rejected instead of passing a 2D-only test.
         let los_ok = crate::sight_obstacle::is_reachable_3d(
             sight_obstacles,
-            [eye.x, eye.y, eye_z],
+            [eye_world.x, eye_world.y, eye_world.z],
             bary_3d,
             crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
         );

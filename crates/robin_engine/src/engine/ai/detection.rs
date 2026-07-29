@@ -1554,8 +1554,7 @@ impl EngineInner {
         // get a per-target re-call below, so the night/fog modulation
         // accounts for the target's elevation.
         let effective_view_radius_ground = ai_vision::compute_view_radius(
-            eye,
-            eye_z,
+            visibility_world_point(eye, ground_z, eye_z),
             view_radius,
             view_forward,
             real_half_aperture,
@@ -1831,8 +1830,7 @@ impl EngineInner {
                         .and_then(|h| sight_obstacles.get(usize::from(h)))
                         .map(|obs| {
                             ai_vision::compute_view_radius(
-                                eye,
-                                eye_z,
+                                visibility_world_point(eye, ground_z, eye_z),
                                 view_radius,
                                 view_forward,
                                 real_half_aperture,
@@ -1889,7 +1887,22 @@ impl EngineInner {
                         target_unconscious: target.unconscious,
                         target_passing_door: target.passing_door,
                     };
-                    ai_vision::compute_visibility(&q)
+                    let visibility = ai_vision::compute_visibility(&q);
+                    tracing::trace!(
+                        observer = ?npc_id,
+                        target = ?target_id,
+                        modified_frame,
+                        effective_view_radius,
+                        visibility,
+                        viewer_x = q.viewer_world.x,
+                        viewer_y = q.viewer_world.y,
+                        viewer_z = q.viewer_world.z,
+                        target_x = q.target_world.x,
+                        target_y = q.target_world.y,
+                        target_z = q.target_world.z,
+                        "Enemy optical visibility refresh"
+                    );
+                    visibility
                 } else {
                     0.0
                 };
@@ -3249,8 +3262,7 @@ impl EngineInner {
             crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
         );
         let effective_view_radius_ground = ai_vision::compute_view_radius(
-            eye,
-            eye_z,
+            visibility_world_point(eye, ground_z, eye_z),
             view_radius,
             view_forward,
             real_half_aperture,
@@ -3273,8 +3285,7 @@ impl EngineInner {
                     let h = t.obstacle_idx?;
                     let obs = obstacles.get(usize::from(h))?;
                     let r = ai_vision::compute_view_radius(
-                        eye,
-                        eye_z,
+                        visibility_world_point(eye, ground_z, eye_z),
                         view_radius,
                         view_forward,
                         real_half_aperture,
