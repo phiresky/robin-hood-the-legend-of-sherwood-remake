@@ -1402,6 +1402,36 @@ impl EngineInner {
 
         let mut tick = AiPerTickData::stub();
         tick.profile_manager = Some(assets.profile_manager.clone());
+        // `SeekArea` scans the live global NPC register at the call site.
+        // Despite the old local name "visible friends", the Original applies
+        // no visibility, camp, layer, posture, or AI-state filter here: every
+        // other soldier with alert status above green and raw map-space
+        // distance below 500 contributes to the point-count multiplier.
+        // Build this for every Think boundary, not only RefreshDetection,
+        // because timer/report callbacks also enter SeekArea synchronously.
+        for (other_id, other) in self.world.entities.soldiers() {
+            if other_id == npc_id {
+                continue;
+            }
+            let Some(other_ai) = other.npc.ai_brain.enemy() else {
+                continue;
+            };
+            if other_ai.base.current_music_alert_status == crate::ai::AlertLevel::Green {
+                continue;
+            }
+            let delta = other.element.position_map() - me_pos;
+            if delta.x * delta.x + delta.y * delta.y >= 500.0 * 500.0 {
+                continue;
+            }
+            tick.visible_seeking_friends += 1;
+            if other_ai.base.current_substate.is_seek_area()
+                && other_ai
+                    .seek_flags
+                    .contains(crate::ai_enemy::SeekFlags::LOOK_FOR_HELP_AFTER)
+            {
+                tick.friend_seek_clears_help_flag = true;
+            }
+        }
         tick.camp_soldiers =
             self.build_camp_soldier_tick_infos(npc_id, my_camp, scratch, build_forecasts);
         if build_forecasts

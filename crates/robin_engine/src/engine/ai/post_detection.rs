@@ -83,8 +83,6 @@ fn overlay_final_detection_scan(
 
     // These are also products of RefreshDetection's completed detectable-list
     // walk rather than properties of the stimulus target.
-    live.visible_seeking_friends = aggregate.visible_seeking_friends;
-    live.friend_seek_clears_help_flag = aggregate.friend_seek_clears_help_flag;
     live.camp_ko_money_fighters = aggregate.camp_ko_money_fighters.clone();
 }
 

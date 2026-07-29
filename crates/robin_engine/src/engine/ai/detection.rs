@@ -2286,8 +2286,6 @@ impl EngineInner {
                 tick_data.has_officer_nearby = false;
                 tick_data.simple_soldiers_near = false;
                 tick_data.friends_nearer_to_enemy = 0;
-                tick_data.visible_seeking_friends = 0;
-                tick_data.friend_seek_clears_help_flag = false;
 
                 // Also add visible PCs to us-list (they fight on our
                 // side when the NPC is Royalist, but for Lacklandists
@@ -2367,21 +2365,6 @@ impl EngineInner {
                             if to_enemy_sq < best_score {
                                 tick_data.friends_nearer_to_enemy += 1;
                             }
-                        }
-                    }
-
-                    // Visible friends in alert > Green that
-                    // contribute to the seek-area point-factor
-                    // multiplier.
-                    if ss.alert_status != crate::ai::AlertLevel::Green {
-                        tick_data.visible_seeking_friends += 1;
-
-                        // If any friend is currently in a seek-area
-                        // substate AND will look for help afterwards,
-                        // clear our local LOOK_FOR_HELP flag so help
-                        // isn't requested twice.
-                        if ss.ai_substate.is_seek_area() && ss.seek_flag_look_for_help {
-                            tick_data.friend_seek_clears_help_flag = true;
                         }
                     }
 
