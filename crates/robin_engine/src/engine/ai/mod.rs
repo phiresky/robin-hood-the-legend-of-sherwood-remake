@@ -7860,22 +7860,41 @@ impl EngineInner {
                     }
                 }
 
-                // Sort patrol members by distance to chief
-                // (square-distance, stable sort).
+                // `InitializePatrol` orders members with
+                // `SquareDistance`: subtract the full 3-D ground
+                // positions, stretch world Y by the inverse isometric
+                // aspect ratio, then take the squared norm.  Map Y is
+                // `world_y - z`, so reconstruct world Y before taking
+                // the delta.
+                //
+                // Preserve the Original's insertion semantics too:
+                // it advances only while `new_distance > old_distance`,
+                // so a tie is inserted before existing entries.
                 let snap_ref = &snaps;
-                ai.patrol.sort_by(|a, b| {
-                    let da = snap_ref.get(a).map_or(f32::MAX, |s| {
-                        let dx = s.position.x - chief_pos.x;
-                        let dy = s.position.y - chief_pos.y;
-                        dx * dx + dy * dy
+                let patrol_distance = |member: EntityId| {
+                    let snap = snap_ref.get(&member).unwrap_or_else(|| {
+                        panic!(
+                            "patrol member {} is missing its owner-boundary snapshot",
+                            member.index()
+                        )
                     });
-                    let db = snap_ref.get(b).map_or(f32::MAX, |s| {
-                        let dx = s.position.x - chief_pos.x;
-                        let dy = s.position.y - chief_pos.y;
-                        dx * dx + dy * dy
-                    });
-                    da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-                });
+                    let dx = snap.position.x - chief_pos.x;
+                    let dy_world =
+                        (snap.position.y + snap.ground_z) - (chief_pos.y + chief_snap.ground_z);
+                    let dy = dy_world * crate::position_interface::INVERSE_ASPECT_RATIO;
+                    let dz = snap.ground_z - chief_snap.ground_z;
+                    dx * dx + dy * dy + dz * dz
+                };
+                let mut sorted_patrol = Vec::with_capacity(ai.patrol.len());
+                for member in std::mem::take(&mut ai.patrol) {
+                    let distance = patrol_distance(member);
+                    let insert_at = sorted_patrol
+                        .iter()
+                        .position(|&existing| distance <= patrol_distance(existing))
+                        .unwrap_or(sorted_patrol.len());
+                    sorted_patrol.insert(insert_at, member);
+                }
+                ai.patrol = sorted_patrol;
 
                 // Arrange left/right pairs: for each pair, ensure
                 // even-index member is to the left of the odd-index
