@@ -5653,6 +5653,13 @@ impl EngineInner {
             let dest_already_at_pos =
                 motion_method != MotionMethod::TillLastFrame && elem.position_map() == goal;
             let sprite = &mut elem.sprite;
+            // FaceOpponent / FaceDangerPoint calls Turn before PerformSeek
+            // tests its entity-target tolerance. Preserve that turn on the
+            // successful pre-motion branch; the ordinary branch below already
+            // performs the effective per-frame turn before PerformMotion.
+            if tolerance_arrival && is_combat {
+                let _ = sprite.position_iface.turn();
+            }
             // Entity-target PerformSeek returns from its successful
             // pre-motion tolerance branch without calling PerformMotion.
             // Besides avoiding displacement, this preserves the prior sprite
