@@ -112,10 +112,14 @@ fn validate_trace_start(start_state: TraceStartState, session_index: u32, initia
             initial_frame, 0,
             "parity session {session_index} is marked mission_start but begins at frame {initial_frame}"
         ),
-        TraceStartState::LoadedSave => panic!(
-            "parity session {session_index} starts from a loaded mission save at frame \
-             {initial_frame}; restoring live Original mission saves in Rust is not implemented"
-        ),
+        // A loaded automatic mission-start save is reconstructible from the
+        // schema-10 campaign/config/RNG prefix and the ordinary mission
+        // loader. Do not reject loaded sessions solely because of their
+        // provenance: the normal setup-draw and first-frame isomorphic state
+        // comparisons below remain authoritative and fail loudly for a
+        // genuinely mid-mission save whose live state is not represented by
+        // the header.
+        TraceStartState::LoadedSave => {}
     }
 }
 
@@ -3753,8 +3757,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "starts from a loaded mission save at frame 1234")]
-    fn loaded_save_is_rejected_explicitly() {
+    fn loaded_save_is_admitted_to_strict_reconstruction() {
         validate_trace_start(TraceStartState::LoadedSave, 7, 1234);
     }
 
