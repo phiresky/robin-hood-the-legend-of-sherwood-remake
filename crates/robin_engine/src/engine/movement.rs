@@ -8326,34 +8326,73 @@ impl EngineInner {
             return;
         }
 
-        // Resolve the new material once at the actor's just-updated
-        // position.  Run the polygon containment test against the
-        // line's source sector and fall back to the obstacle's
-        // material when outside, then to the grid's default material
-        // when no obstacle is set.  `MaterialSectors::material_at`
-        // collapses the polygon scan + default-material fallback;
-        // the obstacle-based fallback is then applied on top when no
-        // sound polygon matches and the actor has an active obstacle.
-        let polygon_material = assets.material_sectors.material_at(new_pos);
-        let new_material = if polygon_material == assets.material_sectors.default_material {
-            // No SECTOR_SOUND polygon matched; apply the obstacle
-            // fallback.  Without an obstacle pointer the default-
-            // material returned by `material_at` is left in place.
-            let obstacle_handle = self
-                .get_entity(entity_id)
-                .and_then(|e| e.element_data().obstacle_index());
-            match obstacle_handle {
-                Some(handle) => {
-                    let idx: usize = handle.into();
-                    self.sight_obstacles(assets)
-                        .get(idx)
-                        .map(|obs| crate::element::GameMaterial::from_u32(obs.material as u32))
-                        .unwrap_or(polygon_material)
+        let obstacle_material = self
+            .get_entity(entity_id)
+            .and_then(|e| e.element_data().obstacle_index())
+            .map(|handle| {
+                let idx: usize = handle.into();
+                self.sight_obstacles(assets)
+                    .get(idx)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "entity {} references missing sight obstacle {idx}",
+                            entity_id.index()
+                        )
+                    })
+                    .material
+            })
+            .map(|raw| crate::element::GameMaterial::from_u32(raw as u32))
+            .unwrap_or(assets.material_sectors.default_material);
+
+        // Original sorts non-elevation crossings by intersection distance
+        // from the old actor position, then processes each crossed line's
+        // exact owning material sector. The last processed line wins.
+        let movement = crate::geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
+        let mut crossed: Vec<(f32, crate::fast_find_grid::LineIndex)> = indices
+            .into_iter()
+            .filter_map(|line_index| {
+                let line = &self.world.fast_grid.level.lines[usize::from(line_index)];
+                let old_dx = old_pos.x - line.a.x;
+                let old_dy = old_pos.y - line.a.y;
+                let line_dx = line.b.x - line.a.x;
+                let line_dy = line.b.y - line.a.y;
+                // Original removes crossings whose old position lies exactly
+                // on the line to avoid processing the same boundary twice.
+                if line_dx * old_dy - line_dy * old_dx == 0.0 {
+                    return None;
                 }
-                None => polygon_material,
-            }
-        } else {
-            polygon_material
+                let point = crate::geo2d::segment_intersection(movement, line.segment()).point()?;
+                let dx = point.x - old_pos.x;
+                let dy = point.y - old_pos.y;
+                Some((dx * dx + dy * dy, line_index))
+            })
+            .collect();
+        crossed.sort_by(|(left, _), (right, _)| left.total_cmp(right));
+        let crossing_count = crossed.len();
+
+        let mut new_material = None;
+        for (_, line_index) in crossed {
+            let line = &self.world.fast_grid.level.lines[usize::from(line_index)];
+            let raw_index = line.sound_material_sector_index.unwrap_or_else(|| {
+                panic!("LINE_SOUND {line_index:?} has no owning material sector")
+            });
+            let sector = assets
+                .all_material_sectors
+                .get(usize::from(raw_index))
+                .and_then(Option::as_ref)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "LINE_SOUND {line_index:?} references missing material sector {raw_index}"
+                    )
+                });
+            new_material = Some(if sector.contains(new_pos) {
+                sector.material
+            } else {
+                obstacle_material
+            });
+        }
+        let Some(new_material) = new_material else {
+            return;
         };
 
         if let Some(entity) = self.get_entity_mut(entity_id) {
@@ -8366,7 +8405,7 @@ impl EngineInner {
                     ?entity_id,
                     ?prev,
                     ?new_material,
-                    crossings = indices.len(),
+                    crossings = crossing_count,
                     "check_for_sound_line_crossing: refreshed material"
                 );
             }

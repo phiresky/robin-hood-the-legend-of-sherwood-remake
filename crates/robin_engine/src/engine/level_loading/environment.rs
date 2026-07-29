@@ -75,40 +75,17 @@ impl EngineInner {
             .as_ref()
             .map(|m| m.default_material)
             .unwrap_or(0);
+        let raw_material_default = crate::element::GameMaterial::from_u32(default_material_code);
         assets.material_sectors = crate::material_sectors::MaterialSectors::build_from_raw(
             &filtered_material_sectors,
             default_material_code,
         );
-
-        // Build LINE_SOUND grid lines for every SIGHT-listed material
-        // polygon: for every material index in the SIGHT chunk's list,
-        // build a non-motion LINE_SOUND line per polygon edge at
-        // layer 0.  Without this, the actor-side `CheckForLineCrossing`
-        // LINE_SOUND arm has nothing to detect and cross-zone material
-        // refresh stalls — actors keep the material from their last
-        // elevation crossing or door-pass even after walking onto a
-        // different sound-material polygon.
-        //
-        // The polygon goes to both layers (so mouse picking and sight
-        // queries see it) but lines only go to layer 0 (sound
-        // boundaries are layer-flat in the shipped data).  We only
-        // need the lines for the per-tick crossing dispatch — the
-        // polygon containment scan still runs through `MaterialSectors`.
-        for ms in &assets.material_sectors.sectors {
-            if ms.points.len() < 2 {
-                continue;
-            }
-            self.world.fast_grid.add_sector_lines_for_sound(
-                0, // layer 0
-                &ms.points, true, // material polygons are always active in shipped levels
-            );
-        }
-        if !assets.material_sectors.sectors.is_empty() {
-            tracing::debug!(
-                "Registered LINE_SOUND grid lines for {} SIGHT-listed material polygons",
-                assets.material_sectors.sectors.len()
-            );
-        }
+        assets.all_material_sectors = loaded
+            .proto
+            .material_sectors
+            .iter()
+            .map(|raw| crate::material_sectors::MaterialSector::from_raw(raw, raw_material_default))
+            .collect();
 
         // Warn when the mission header's control CRC differs from the
         // proto-level misc chunk's CRC — a cheap sanity check that the
@@ -478,7 +455,6 @@ impl EngineInner {
         // regardless of SIGHT-list inclusion.  The SIGHT filter only
         // gates the global SECTOR_SOUND fast-find registry (already
         // applied above for `assets.material_sectors`).
-        let raw_material_default = crate::element::GameMaterial::from_u32(default_material_code);
         let all_material_sectors = &loaded.proto.material_sectors;
         let static_obstacles: Vec<crate::sight_obstacle::SightObstacle> = loaded
             .proto
@@ -823,6 +799,7 @@ impl EngineInner {
         // sector check return "no sector".
         self.set_level_size(bg_pixel_dims.0, bg_pixel_dims.1);
         self.build_motion_stage(assets, staging);
+        self.register_sound_material_lines(assets, loaded);
 
         // Set forest_level from proto misc — must happen before entity
         // spawning uses it to decide CHARACTER vs CHARACTER_BLIPPED.
@@ -830,5 +807,60 @@ impl EngineInner {
             loaded.proto.misc.as_ref().is_some_and(|m| m.forest_level);
 
         Ok(())
+    }
+
+    /// Register every Original LINE_SOUND edge after the fast grid has
+    /// allocated its block/layer arrays.
+    ///
+    /// The SIGHT chunk first associates a list of material sectors with
+    /// the default ground projection at layer 0, then each sight obstacle
+    /// associates its own material list with that obstacle's projection
+    /// layer. Original registers both sets independently and each line
+    /// retains its owning `RHSectorMaterial`.
+    fn register_sound_material_lines(
+        &mut self,
+        assets: &LevelAssets,
+        loaded: &crate::level_data::LoadedLevel,
+    ) {
+        let mut registered_polygons = 0usize;
+        let mut register =
+            |grid: &mut crate::fast_find_grid::FastFindGrid, raw_index: u16, layer: u16| {
+                let Some(sector) = assets
+                    .all_material_sectors
+                    .get(usize::from(raw_index))
+                    .and_then(Option::as_ref)
+                else {
+                    tracing::error!(
+                        "LINE_SOUND references missing or degenerate material sector {raw_index}"
+                    );
+                    return;
+                };
+                grid.add_sector_lines_for_sound(layer, &sector.points, raw_index, true);
+                registered_polygons += 1;
+            };
+
+        for &raw_index in &loaded.proto.sight_material_indices {
+            register(&mut self.world.fast_grid, raw_index, 0);
+        }
+
+        for (obstacle_index, obstacle) in loaded.proto.sight_obstacles.iter().enumerate() {
+            if obstacle.material_indices.is_empty() {
+                continue;
+            }
+            let Some((_, layer)) = obstacle.projection_area else {
+                tracing::error!(
+                    "sight obstacle {obstacle_index} has material sectors but no projection layer"
+                );
+                continue;
+            };
+            for &raw_index in &obstacle.material_indices {
+                register(&mut self.world.fast_grid, raw_index, layer);
+            }
+        }
+
+        tracing::debug!(
+            registered_polygons,
+            "Registered source-associated LINE_SOUND material polygons"
+        );
     }
 }

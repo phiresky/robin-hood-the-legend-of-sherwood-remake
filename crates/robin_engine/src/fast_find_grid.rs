@@ -267,10 +267,15 @@ pub struct GridLine {
     pub script_zone_index: Option<u16>,
     /// Whether this is a sound-material boundary line (`LINE_SOUND`),
     /// constructed for any non-motion sound-sector polygon edge.  When an
-    /// actor crosses this line, the engine refreshes the actor's
-    /// `material` field from the new SECTOR_SOUND polygon containment
-    /// (or falls back to the obstacle / default material).
+    /// actor crosses this line, the engine applies the exact owning
+    /// SECTOR_SOUND sector, matching `RHLine::GetSector()` in Original.
     pub is_sound: bool,
+    /// Raw CHUNK_MATERIAL index owning this LINE_SOUND edge.
+    ///
+    /// Original stores a pointer to the complete `RHSectorMaterial` on
+    /// every line. Keeping the authored index preserves that association
+    /// without cloning the polygon into every edge.
+    pub sound_material_sector_index: Option<u16>,
     /// Outward normal (for repulsive lines, used in `FindAutorizedPosition`).
     pub normal: MapVec,
     /// Map-space bounding box of the segment (pre-computed for fast rejection).
@@ -303,6 +308,7 @@ impl GridLine {
             is_script: false,
             script_zone_index: None,
             is_sound: false,
+            sound_material_sector_index: None,
             left_obstacle_index: None,
             right_obstacle_index: None,
             normal,
@@ -372,9 +378,10 @@ impl GridLine {
     /// `MaterialSectors::material_at(actor_pos)` which combines the
     /// polygon containment test with the obstacle/default fallback in
     /// one call.
-    pub fn new_sound(a: MapPoint, b: MapPoint) -> Self {
+    pub fn new_sound(a: MapPoint, b: MapPoint, material_sector_index: u16) -> Self {
         let mut line = Self::new(a, b, false);
         line.is_sound = true;
+        line.sound_material_sector_index = Some(material_sector_index);
         line
     }
 
@@ -2397,6 +2404,7 @@ impl FastFindGrid {
         &mut self,
         layer: u16,
         points: &[MapPoint],
+        material_sector_index: u16,
         sector_active: bool,
     ) -> Vec<LineIndex> {
         if points.len() < 2 {
@@ -2405,7 +2413,7 @@ impl FastFindGrid {
         let mut indices = Vec::with_capacity(points.len());
         let mut last = points[points.len() - 1];
         for &current in points {
-            let line = GridLine::new_sound(last, current);
+            let line = GridLine::new_sound(last, current, material_sector_index);
             let idx = self.add_line(line, layer);
             self.set_line_active(idx, sector_active);
             indices.push(idx);

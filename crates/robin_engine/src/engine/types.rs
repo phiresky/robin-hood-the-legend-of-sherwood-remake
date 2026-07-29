@@ -881,6 +881,12 @@ pub struct LevelAssets {
     /// `ProtoData::material_sectors` + `ProtoMisc::default_material` at
     /// level load.
     pub material_sectors: crate::material_sectors::MaterialSectors,
+    /// Complete CHUNK_MATERIAL table in authored index order.
+    ///
+    /// LINE_SOUND edges retain indices into this table, just as Original
+    /// retains an `RHSectorMaterial*` on each line. `None` represents a
+    /// degenerate authored polygon which cannot produce boundary lines.
+    pub all_material_sectors: Vec<Option<crate::material_sectors::MaterialSector>>,
     /// Static sight obstacles loaded from the level (3D occluders).
     /// Wrapped in `Arc` so cloning `LevelAssets` is a refcount bump
     /// rather than a 600+ KB deep copy. Mutated only at level load
@@ -975,6 +981,7 @@ impl LevelAssets {
             sound_source_required_ids: std::collections::BTreeSet::new(),
             water_zones: crate::water_zones::WaterZones::new(),
             material_sectors: crate::material_sectors::MaterialSectors::new(),
+            all_material_sectors: Vec::new(),
             static_sight_obstacles: std::sync::Arc::new(Vec::new()),
         }
     }
