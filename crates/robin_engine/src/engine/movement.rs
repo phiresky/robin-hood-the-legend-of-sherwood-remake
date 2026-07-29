@@ -7123,6 +7123,15 @@ impl EngineInner {
                     .get_entity(target)
                     .map(|e| e.element_data().position_map())
                     .unwrap_or_default();
+                // The transition-arrival refresh arms SetMovingActionState
+                // before calling RefreshSeek, just like the ordinary
+                // PerformSeek target-drift branch.
+                if let Some(actor) = self
+                    .get_entity_mut(owner)
+                    .and_then(|entity| entity.actor_data_mut())
+                {
+                    actor.action_state = actor.action_state.set_moving(false, false);
+                }
                 self.apply_seek_refresh(
                     sim,
                     assets,

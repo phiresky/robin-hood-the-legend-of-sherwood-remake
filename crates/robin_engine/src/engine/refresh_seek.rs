@@ -321,6 +321,12 @@ impl crate::engine::EngineInner {
             new_y = new_target_pos.y,
             "owner-slot seek target moved >10u; re-launching seek",
         );
+        // PerformSeek restores the actor's moving state immediately before
+        // RefreshSeek. This is observable on the refresh frame even though
+        // the replacement path does not execute until a later owner slot.
+        if let Some(actor) = self.get_entity_mut(owner).and_then(|e| e.actor_data_mut()) {
+            actor.action_state = actor.action_state.set_moving(false, false);
+        }
         self.apply_seek_refresh(
             sim,
             assets,
