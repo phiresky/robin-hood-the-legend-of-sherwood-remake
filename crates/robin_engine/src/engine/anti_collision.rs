@@ -382,9 +382,12 @@ fn entity_is_rider(entity: &Entity) -> bool {
 /// Convert a 16-sector compass direction (0 = north / -Y, CW) into a
 /// unit vector.
 fn direction_vector(dir: u16) -> (f32, f32) {
-    // Sector → angle: 0 = -Y (north), 4 = +X (east), 8 = +Y (south), 12 = -X (west).
-    let angle = std::f32::consts::PI * (dir as f32) / 8.0 - std::f32::consts::FRAC_PI_2;
-    (angle.cos(), angle.sin())
+    // `RHElement::GetDirectionVector` calls
+    // `SetSector0to15(direction, ASPECT_RATIO)`: the compass table is
+    // Euclidean in X, but its Y component is compressed for the isometric
+    // map. This matters for the offset repulsive center of sitting actors.
+    let (x, y) = crate::element_kinds::direction_vector_16(dir as i16);
+    (x, y * crate::position_interface::ASPECT_RATIO)
 }
 
 /// Gather the disturbing-actor filter for the anti-collision loop. Mobile

@@ -8103,7 +8103,7 @@ impl EngineInner {
             // Dispatch CALL_PATROL_COORDINATE through the script filter.
             let stimulus = Stimulus::with_position(StimulusType::CallPatrolCoordinate, cmd.target);
             self.dispatch_think_with_drain_mode(
-                sim, minion_id, &stimulus, &ctx, &tick_data, assets, false, true,
+                sim, minion_id, &stimulus, &ctx, &tick_data, assets, true, true,
             );
             // `CoordinatePatrol` constructs its Move element inline in the
             // original, making `GetCommand()` report MOVE_OK immediately.
@@ -10483,7 +10483,16 @@ impl EngineInner {
             .unwrap_or(crate::order::OrderType::NonanimationEnd);
 
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
-        let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+        // The16thFrame's only combat-context consumer is
+        // RefreshArrowProtection. Original gathers its live fighter data
+        // without ForecastDestinationForIA, so resolving door exits here
+        // would consume unrelated BuildingExitGate RNG merely because an
+        // idle soldier reached its staggered periodic slot.
+        let tick_data = if matches!(entity, Entity::Soldier(_)) {
+            self.build_npc_tick_data_without_forecasts(sim, npc_id, &scratch, assets)
+        } else {
+            crate::ai::AiPerTickData::stub()
+        };
 
         let building_sector = self
             .world
