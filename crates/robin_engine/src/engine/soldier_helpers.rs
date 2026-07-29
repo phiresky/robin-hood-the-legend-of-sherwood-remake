@@ -487,6 +487,16 @@ impl EngineInner {
         // postponed successor would let the stale sequence run afterwards and
         // interrupt the replacement route.
         if !from_halt && let Some((sequence_id, element_index)) = cross_postponed_successor {
+            // StartPostponedSequenceElement calls the owner's Instruct again.
+            // RHElementActor::Instruct unconditionally snapshots the actor's
+            // *current* posture and action state before it regenerates /
+            // translates the released command. Refresh the snapshot here,
+            // after the blocker's condolence stack has applied its terminal
+            // state effects and before this successor reaches its deferred
+            // InstructOwner action. Otherwise a Move postponed by
+            // EnterSwordfight can resume with its pre-sword upright action
+            // instead of being rewritten to sword movement.
+            self.stamp_element_transition_state(card_owner, sequence_id, element_index);
             let actions = self
                 .orders
                 .sequence_manager
