@@ -6215,6 +6215,7 @@ impl EngineInner {
                                 })
                             });
                         let next_order_id = &mut self.orders.next_order_id;
+                        let mut continuation_door_action = None;
                         if let Some(element) = self
                             .orders
                             .sequence_manager
@@ -6243,10 +6244,27 @@ impl EngineInner {
                                 let mut continuation = element.orders.front().unwrap().clone();
                                 continuation.order_type = animation;
                                 continuation.reseed_id(crate::order::alloc_order_id(next_order_id));
+                                continuation_door_action = Some((animation, continuation.reverse));
                                 element.insert_order(insertion, continuation);
                             } else {
                                 element.orders.truncate(1);
                             }
+                        }
+                        // Original stores the complete translated door route
+                        // in the movement element, so changing to this copied
+                        // successor changes the one authoritative current
+                        // action. Rust keeps the untranslated route tail in a
+                        // parallel ActiveDoorPass. Keep its animation mirror
+                        // in lockstep with the concrete continuation order:
+                        // lift handling and the next Execute slot both consult
+                        // it before dispatching sprite motion.
+                        if let Some((animation, reverse)) = continuation_door_action
+                            && let Some(pass) = entity
+                                .actor_data_mut()
+                                .and_then(|actor| actor.active_door_pass.as_mut())
+                        {
+                            pass.current_action = animation;
+                            pass.current_reverse = reverse;
                         }
                     }
                     let eid = entity_id;
