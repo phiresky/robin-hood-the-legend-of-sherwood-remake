@@ -2407,7 +2407,7 @@ impl EnemyAi {
                     StimulusType::CallCoordinate => {
                         // Soldier has arrived and reported
                         self.set_state(AiState::Seeking, Substate::SeekingOfficerInstructSoldier);
-                        self.base.point_to(self.base.alert_soldiers_point);
+                        self.base.point_to(self.base.alert_soldiers_point, ctx);
                         self.base.launch_timer(20, ctx.frame);
                     }
                     _ => {}
@@ -2909,7 +2909,7 @@ impl EnemyAi {
                     } else {
                         self.base.say(Remark::OfficerSendsOutGroup);
                     }
-                    self.base.point_to(self.base.seek_position);
+                    self.base.point_to(self.base.seek_position, ctx);
                 }
             }
 
@@ -3419,7 +3419,7 @@ impl EnemyAi {
                 match stimulus_type {
                     StimulusType::CallYourTalk1 | StimulusType::EventTimer => {
                         self.base.say(Remark::TellsOfficerWhere);
-                        self.base.point_to(self.base.seek_position);
+                        self.base.point_to(self.base.seek_position, ctx);
                     }
                     StimulusType::EventDone => {
                         self.set_state(
@@ -4104,7 +4104,7 @@ impl EnemyAi {
                         } else {
                             view.initial_position
                         };
-                        self.base.point_to(target);
+                        self.base.point_to(target, ctx);
                     }
                     self.set_state(
                         AiState::Seeking,
@@ -4192,7 +4192,7 @@ impl EnemyAi {
                         );
                     }
                     self.base.say(Remark::CivDenunciates);
-                    self.base.point_to(self.base.seek_position);
+                    self.base.point_to(self.base.seek_position, ctx);
                 }
             }
 

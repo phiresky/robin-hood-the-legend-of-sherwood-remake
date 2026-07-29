@@ -308,7 +308,33 @@ impl EngineInner {
                     // of `apply_command`; no append here to avoid
                     // duplicating the dotted-chain step.
                 }
-                self.apply_interaction_with_seek(sim, *actor, *target, *command, *running);
+                // Schema-9 records every resolved interaction under one
+                // command shape, although the Original has several route
+                // constructors. HIT_TARGET is unambiguously emitted by
+                // RHElementTarget::MouseClicked, whose ordinary click path
+                // directly builds AppendMoveToSequence rather than calling
+                // AddInteractionWithSeek.
+                if *command == Command::HitTarget
+                    && matches!(
+                        self.get_entity(*target),
+                        Some(crate::element::Entity::Target(_))
+                    )
+                    && !self.players.qa_recording_for.contains(actor)
+                {
+                    if *running {
+                        self.actor_make_fast(sim, *actor);
+                    } else if self
+                        .apply_target_interaction_route(sim, *actor, *target, *command, *running)
+                    {
+                        self.hero_speaking(
+                            assets,
+                            *actor,
+                            crate::engine::melee::HERO_ACCEPT_COMMAND,
+                        );
+                    }
+                } else {
+                    self.apply_interaction_with_seek(sim, *actor, *target, *command, *running);
+                }
             }
             LaunchGroundTarget {
                 actor,
@@ -2079,6 +2105,132 @@ impl EngineInner {
         } else {
             self.launch_element(interaction);
         }
+    }
+
+    /// Reproduce `RHElementTarget::MouseClicked`'s ordinary (non-QA) route:
+    /// synchronously construct `AppendMoveToSequence(..., victim=target,
+    /// tolerance=0)`, then turn to the target hotspot and perform the
+    /// resolved interaction.
+    fn apply_target_interaction_route(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        actor: EntityId,
+        target: EntityId,
+        command: Command,
+        running: bool,
+    ) -> bool {
+        let (actor_pos, actor_sector, actor_posture, actor_auth, door, door_direction) = {
+            let entity = self
+                .get_entity(actor)
+                .unwrap_or_else(|| panic!("target interaction requires missing actor {actor:?}"));
+            let (door, door_direction) = super::movement::current_door_for_route_source(entity);
+            (
+                entity.element_data().position_map(),
+                entity
+                    .element_data()
+                    .sector()
+                    .unwrap_or_else(|| panic!("target interaction actor {actor:?} has no sector")),
+                entity.element_data().posture,
+                entity.actor_auth_info(),
+                door,
+                door_direction,
+            )
+        };
+        let (target_pos, target_sector, target_layer, target_point) = {
+            let entity = self
+                .get_entity(target)
+                .unwrap_or_else(|| panic!("target interaction requires missing target {target:?}"));
+            (
+                entity.element_data().position_map(),
+                entity.element_data().sector().unwrap_or_else(|| {
+                    panic!("target interaction target {target:?} has no sector")
+                }),
+                entity.element_data().layer(),
+                entity.cxx_current_point_map().unwrap_or_else(|| {
+                    panic!("target interaction target {target:?} has no current point")
+                }),
+            )
+        };
+
+        let action = if running {
+            crate::order::OrderType::RunningUpright
+        } else if actor_posture == crate::element::Posture::Crouched {
+            crate::order::OrderType::WalkingCrouched
+        } else {
+            crate::order::OrderType::WalkingUpright
+        };
+
+        let gate_path = if actor_sector == target_sector {
+            Vec::new()
+        } else {
+            let (source_pos, source_sector) = super::movement::adapt_source_to_current_door(
+                &self.script_domains.interactables.doors,
+                door,
+                door_direction,
+            )
+            .map(|(position, sector, _)| (position, sector))
+            .unwrap_or((actor_pos, u16::from(actor_sector)));
+            let level = self.world.fast_grid.level.clone();
+            let Some(path) = crate::gate::find_path_gates(
+                &self.script_domains.interactables.doors,
+                (source_pos.x, source_pos.y),
+                source_sector,
+                (target_pos.x, target_pos.y),
+                u16::from(target_sector),
+                Some(&actor_auth),
+                false,
+                &|sector| {
+                    level
+                        .sectors
+                        .iter()
+                        .find(|candidate| candidate.sector_number == sector)
+                        .and_then(|candidate| candidate.lift_type)
+                },
+            ) else {
+                tracing::warn!(
+                    ?actor,
+                    ?target,
+                    ?command,
+                    "RHElementTarget click could not construct its gate route"
+                );
+                return false;
+            };
+            path
+        };
+
+        let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(actor));
+        turn.set_property(
+            Field::CameraPoint,
+            FieldValue::GeoPoint2D {
+                x: target_point.x,
+                y: target_point.y,
+            },
+        );
+        let interaction = SequenceElement::new_interaction(2, command, Some(actor), Some(target));
+
+        self.build_gate_movement_sequence(
+            sim,
+            actor,
+            gate_path,
+            GoalShape::Target {
+                point: target_pos,
+                target,
+                tolerance: 0.0,
+            },
+            target_layer,
+            action,
+            true,
+            1.0,
+            MoveFlags::empty(),
+            Vec::new(),
+            vec![turn, interaction],
+            false,
+            false,
+        )
+        .unwrap_or_else(|| {
+            panic!("target interaction route for {actor:?} -> {target:?} was empty")
+        });
+        true
     }
 
     /// Fire `EVENT_STOP` on a target NPC that a PC is currently

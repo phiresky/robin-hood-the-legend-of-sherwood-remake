@@ -1871,7 +1871,7 @@ impl EnemyAi {
                 if accepted {
                     self.base
                         .say_with_flags(Remark::SendsCharlyToOfficer, SpeechFlags::MYTALK_2);
-                    self.base.point_to(self.officers_position);
+                    self.base.point_to(self.officers_position, ctx);
                 }
             }
             ThinkResultContinuation::OfficerInstructedGroupSoldier { last } => {

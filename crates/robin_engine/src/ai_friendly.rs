@@ -978,7 +978,7 @@ impl FriendlyAi {
                     );
                     self.base.say(Remark::CivDenunciates);
                     let seek_pos = self.base.seek_position;
-                    self.base.point_to(seek_pos);
+                    self.base.point_to(seek_pos, ctx);
                 }
             }
 

@@ -171,8 +171,6 @@ impl EngineInner {
                         actor.seek_target = None;
                         actor.last_seek_target_position = stored_destination;
                         actor.seek_distance = tolerance;
-                        actor.wait_time = 0;
-                        actor.seek_refresh_wait = 25;
                     }
                     stored_destination
                 }

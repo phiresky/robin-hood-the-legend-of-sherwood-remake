@@ -605,6 +605,15 @@ pub(crate) enum GoalShape {
         target: EntityId,
         tolerance: f32,
     },
+    /// Direct entity-target route built by `RHElementTarget::MouseClicked`.
+    /// Unlike `Seek`, the target pointer is retained on each ordinary MOVE
+    /// but `RHMOVE_SEEK` is not set and the actor's seek-refresh state is not
+    /// touched.
+    Target {
+        point: MapPoint,
+        target: EntityId,
+        tolerance: f32,
+    },
     /// Door-goal.  The gate path's final element is the goal door
     /// itself.  `far_side_point` describes the point the actor lands
     /// at after passing through.  When the far-side sector is a
@@ -952,6 +961,7 @@ impl GoalShape {
         match *self {
             GoalShape::Point { point, .. } => point,
             GoalShape::Seek { point, .. } => point,
+            GoalShape::Target { point, .. } => point,
             GoalShape::Door { far_side_point, .. } => far_side_point,
             GoalShape::Line { midpoint, .. } => midpoint,
         }
@@ -2835,10 +2845,13 @@ impl EngineInner {
             level += 1;
         }
 
-        let seek_goal = match goal {
+        let entity_goal = match goal {
             GoalShape::Seek {
                 target, tolerance, ..
-            } => Some((target, tolerance)),
+            } => Some((target, tolerance, true)),
+            GoalShape::Target {
+                target, tolerance, ..
+            } => Some((target, tolerance, false)),
             _ => None,
         };
 
@@ -2946,7 +2959,7 @@ impl EngineInner {
                 level += 1;
             } else {
                 // MOVE to gate entry point on the source side.
-                let gate_seek_target = seek_goal.map(|(target, _)| target);
+                let gate_seek_target = entity_goal.map(|(target, _, _)| target);
                 let mut m = SequenceElement::new_movement(
                     level,
                     Command::Move,
@@ -3166,14 +3179,17 @@ impl EngineInner {
                 .unwrap_or(false);
 
             match goal {
-                GoalShape::Point { .. } | GoalShape::Seek { .. } => {
+                GoalShape::Point { .. } | GoalShape::Seek { .. } | GoalShape::Target { .. } => {
                     if move_after_last_door && !last_into_building {
                         let (seek_target, seek_tolerance, seek_flags) = match goal {
                             GoalShape::Seek {
                                 target, tolerance, ..
                             } => (Some(target), tolerance, trailing_flags | MoveFlags::SEEK),
+                            GoalShape::Target {
+                                target, tolerance, ..
+                            } => (Some(target), tolerance, trailing_flags),
                             GoalShape::Point { tolerance, .. } => (None, tolerance, trailing_flags),
-                            _ => unreachable!("point/seek trailing branch"),
+                            _ => unreachable!("point/entity trailing branch"),
                         };
                         let mut final_move = SequenceElement::new_movement(
                             level,
@@ -3207,9 +3223,17 @@ impl EngineInner {
                         && initial_flags.contains(MoveFlags::SEEK)
                         && let Some(last_shot) = gate_shots.last()
                     {
-                        let (seek_target, seek_tolerance, seek_flags) = seek_goal
-                            .map(|(target, tolerance)| {
-                                (Some(target), tolerance, trailing_flags | MoveFlags::SEEK)
+                        let (seek_target, seek_tolerance, seek_flags) = entity_goal
+                            .map(|(target, tolerance, is_seek)| {
+                                (
+                                    Some(target),
+                                    tolerance,
+                                    if is_seek {
+                                        trailing_flags | MoveFlags::SEEK
+                                    } else {
+                                        trailing_flags
+                                    },
+                                )
                             })
                             .unwrap_or((None, 0.0, trailing_flags));
                         let point_in = {

@@ -241,7 +241,7 @@ mission `H01_Lin_VL` (Lincoln), 7,128 contiguous gameplay frames (0 through
 a direct `mission_start` capture with the complete schema-9 campaign,
 resolved-command, director-completion, simulation-body, motion-grid,
 path-request, and global-RNG contracts. Replay currently matches through frame
-3,990. The corrections since frame 1,929 cover positive integer hearing
+4,061. The corrections since frame 1,929 cover positive integer hearing
 thresholds, stale ability retirement, boundary-inclusive sector membership,
 synchronous released-Seek translation, nested owner-card FIFO closure,
 creation-slot entity-seek refresh, stable base seek distance, and
@@ -271,14 +271,18 @@ parry dispatch, and restored per-frame principal-opponent facing during normal
 parry holds. Subsequent corrections preserve alert-report dialogue statement
 ordering, load the real mission speech durations in the replay tool, and use
 the Original's full 3-D actor visibility calculation when patrols admit or
-reacquire members. The first remaining divergence is soldier 62 retaining
-`MoveOk`/`DefaultEnroute` while the Original has selected
-`Turn`/`DefaultTurning` at frame 3,991.
+reacquire members. Later corrections restore common route `SetState` and
+same-frame Turn ordering, officer formation ordering, attentive-command
+resume, direct target-click routing, and atomic NPC PointTo sequencing. The
+first remaining divergence is PC 126's direction goal at frame 4,062:
+Original retains 14 while Rust selects 7.
 
 ## Change ledger
 
 | Status | Area | Trace evidence and Original behavior | Rust change / regression coverage |
 | --- | --- | --- | --- |
+| Done | Direct target-click route identity | At frame 4,035 schema 9 recorded `HIT_TARGET` for target 99. Rust replayed it through the generic `AddInteractionWithSeek` model and armed the shared seek-refresh timer to 25, while Original retained 8. `RHElementTarget::MouseClicked` instead calls `AppendMoveToSequence` directly with the target as `pVictim`, tolerance zero, and no `RHMOVE_SEEK`, then appends Turn and HitTarget. | Gate-route goals now distinguish a target-bearing ordinary Move from an entity Seek: the target pointer survives gate approaches and the final move without seek flags or refresh state. Schema-9 `HIT_TARGET` commands use this source-backed route, including the Original double-click acceleration and acceptance bark. The trace's generic `launch_interaction` shape cannot distinguish every other default-target click from an active ability against that same target; a future schema must record resolved route provenance instead of inferring it from command and entity kind. Replay advances through frame 4,035. |
+| Done | Atomic NPC `PointTo` sequence | At frame 4,046 soldier 94's report timer called `Say` then `PointTo`. Original resolves one full-position direction and launches a single two-level sequence containing Turn then Point. Rust emitted two independent single-order Generic sequences; Point interrupted Turn immediately and its same-frame completion advanced the report from point substate 97 to end substate 98. | `AiController::point_to` now resolves the 3-D/isometric sector once at the call boundary, stores it on both authored elements, and sends one `Turn -> Point` sequence through the existing full-sequence outbox. Point cannot start or emit `EVENT_DONE` before Turn completes. All enemy and civilian PointTo callers share the correction; replay advances through frame 4,061. |
 | Done | Complete mission-start campaign state | Mission/proto names and an RNG seed cannot reconstruct progressed mission status, the selected team, character inventory/skills, persistent Sherwood production, relics, or script-visible campaign values. Capturing after `RHEngine::Initialize` is also too late because the Original consumes the mission team and marks its descriptions instanced during construction. | Original schema 4 introduced a neutral JSON campaign snapshot captured immediately before engine initialization and written into the trace header after initialization RNG has accumulated into the normal prefix. Schema 8 retains that state contract. Rust requires schema 8, validates profile IDs/names and every stored index, reconstructs the complete campaign before level loading, and rejects all older traces. Production script attachments/points remain level-derived exactly as in the Original save format. |
 | Done | Deterministic native floating point | Native i686 GCC defaulted to x87 evaluation even though SSE2 instructions were available. Extended intermediates then depended on compiler register lifetime, so exact frame-state bits could diverge from Rust and change after unrelated Original rebuilds. | Schema 5 captures are built with scalar SSE2 evaluation and FP contraction disabled across every in-tree Original target. Schema 4 recordings are deliberately invalidated; a new schema-5 recording is required rather than teaching Rust to emulate unstable x87 spill behavior. |
 | Done | Compiler-independent signed numeric conversions | Several Original paths converted negative floating-point values directly to unsigned integers, which is undefined and changed behavior between the shipped GCC 2.95–3.3 builds and the current compiler. The camera magnitude check consequently cancelled left/up scrolling; diagonal NPC hearing, unusually short jump timing, and negative anti-aliased-line increments had the same latent dependency. | Original now compares camera magnitudes as floats, rejects non-positive perceived noise before conversion, clamps jump waits before conversion, and converts signed fixed-point renderer increments through `SLONG` before their intentional modulo-`ULONG` representation. Alpha interpolation also avoids shifting a negative signed value. Ordinary positive truncation and modular renderer stepping remain unchanged. Original commits: `501e2b4b` and `0233a0f7`. |

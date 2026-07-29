@@ -1094,8 +1094,10 @@ impl EngineInner {
                 .orders
                 .sequence_manager
                 .get_element(sequence_id, data.active_movement.element_index)
-            && let crate::sequence::SequenceElementData::Movement { flags, .. } = &element.data
+            && let crate::sequence::SequenceElementData::Movement { flags, element, .. } =
+                &element.data
             && flags.contains(crate::sequence::MoveFlags::SEEK)
+            && element.is_some()
         {
             return data.seek_refresh_wait;
         }

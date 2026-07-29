@@ -1133,7 +1133,7 @@ impl EnemyAi {
                         .or_else(|| ctx.entity_view(target).map(|view| view.position))
                         .unwrap_or(ctx.position);
                     self.set_state(AiState::Attacking, Substate::AttackingTowerGuardAlert);
-                    self.base.point_to(self.base.seek_position);
+                    self.base.point_to(self.base.seek_position, ctx);
                 }
 
                 Decision::TowerGuardObserve => {

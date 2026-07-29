@@ -3148,21 +3148,28 @@ impl AiController {
     /// toward the point, but the position-taking `SetViewTarget`
     /// overload is a stub in the original game as well, so we skip
     /// it.)
-    pub fn point_to(&mut self, pos: Position) {
-        use crate::order::OrderType;
-        // Pre-turn so the pointing anim fires already facing the
-        // target. The Turning-order's own `already_facing`
-        // short-circuit isn't worth wiring here — callers already
-        // queue `pending_halt` / `stop_all` before `point_to` via the
-        // instruct flow, so the Turn will run cleanly.
-        self.outbox
-            .actor
-            .orders
-            .push(AiOrderIntent::face_toward(pos.x, pos.y));
-        self.outbox
-            .actor
-            .orders
-            .push(AiOrderIntent::new(OrderType::Pointing, pos.x, pos.y));
+    pub fn point_to(&mut self, pos: Position, ctx: &AiContext) {
+        use crate::element::Command;
+        use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
+
+        let owner = self
+            .owner_entity_id
+            .expect("PointTo requires an AI controller bound to an owner");
+        let target = ctx.position_to_point_3d(pos);
+        let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
+            pos.x - ctx.position.x,
+            (pos.y - ctx.position.y) + (target.z - ctx.elevation),
+        );
+        let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(owner));
+        turn.set_property(Field::Direction, FieldValue::Integer(direction as u32));
+        let mut point = SequenceElement::new_generic(2, Command::Point, Some(owner));
+        // Original resolves the sector once and stores it on both elements.
+        point.set_property(Field::Direction, FieldValue::Integer(direction as u32));
+
+        let mut sequence = Sequence::new();
+        sequence.append_element(turn);
+        sequence.append_element(point);
+        self.outbox.actor.launch_sequences.push(sequence);
     }
 
     // -- Alert status --
