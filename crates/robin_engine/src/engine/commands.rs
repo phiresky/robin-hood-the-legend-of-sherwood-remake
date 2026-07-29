@@ -3056,23 +3056,11 @@ impl EngineInner {
 
         let mut sequence = Sequence::new();
         sequence.append_element(seek_elem);
-        let seek_seq = self.launch_sequence(sequence);
-
-        // Translation remains deferred to SequenceManager::Hourglass, like
-        // Original LaunchSequenceElement. If the current blocker already owns
-        // a postponed chain, however, RHSequenceElement::Postpone arbitrates
-        // this newly registered seek against that chain before the blocker
-        // releases it. Preserve that nested admission now: a newer Normal
-        // input seek replaces an older postponed Preference strike instead of
-        // letting the stale strike resume and displace the input at manager
-        // tail.
-        let current_has_postponed = self
-            .current_sequence_element_for_actor(pc_id)
-            .and_then(|(seq, idx)| self.orders.sequence_manager.get_element(seq, idx))
-            .is_some_and(|element| element.cross_postponed.is_some());
-        if current_has_postponed {
-            self.arbitrate_instruct(seek_seq, 0);
-        }
+        // LaunchSequenceElement registers this seek at the sequence manager's
+        // tail. It does not arbitrate it synchronously against an older
+        // postponed chain: if that chain is released before Hourglass reaches
+        // this new seek, the older successor is instructed first.
+        self.launch_sequence(sequence);
     }
 
     /// Build a `Seek(dest) → DropAle` compound sequence and launch
