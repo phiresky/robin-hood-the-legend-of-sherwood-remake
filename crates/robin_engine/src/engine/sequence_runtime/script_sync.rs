@@ -283,6 +283,22 @@ impl EngineInner {
                     }
                 } else if matches!(
                     command,
+                    Command::EnterAttentiveMode
+                        | Command::LeaveAttentiveMode
+                        | Command::LeaveAttentiveModeOfficer
+                ) {
+                    // A terminal owner card can synchronously resume an
+                    // attentive-mode successor through Ready -> Go ->
+                    // Instruct. Keep that re-entrant path on the same
+                    // translator as the ordinary manager hourglass.
+                    NpcAttentionCommandContext {
+                        entities: &mut self.world.entities,
+                        sequence_manager: &mut self.orders.sequence_manager,
+                        next_order_id: &mut self.orders.next_order_id,
+                    }
+                    .dispatch(owner, command, sequence_id, element_index);
+                } else if matches!(
+                    command,
                     Command::Wait | Command::WaitTimer | Command::WaitFreeLift
                 ) {
                     WaitCommandContext {

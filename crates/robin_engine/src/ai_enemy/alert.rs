@@ -488,10 +488,14 @@ impl EnemyAi {
         let my_pos = ctx.position;
         let officer_in_building = ctx.in_building;
 
-        let mut alerted: Vec<(HumanHandle, f32)> = self
-            .alerted_us
+        // Preserve engine/acceptance order for the average-direction sum.
+        // Original accumulates it while accepting soldiers, before inserting
+        // them into its distance-sorted list.
+        let accepted_handles = self.alerted_us.clone();
+        let mut alerted: Vec<(HumanHandle, f32, usize)> = accepted_handles
             .iter()
-            .map(|handle| {
+            .enumerate()
+            .map(|(acceptance_index, handle)| {
                 let soldier = tick
                     .camp_soldiers
                     .iter()
@@ -503,17 +507,27 @@ impl EnemyAi {
                         )
                     });
                 let dx = soldier.position.x - my_pos.x;
-                let dy = soldier.position.y - my_pos.y;
-                (*handle, dx * dx + dy * dy)
+                let dy = (soldier.position.y - my_pos.y)
+                    * crate::position_interface::INVERSE_ASPECT_RATIO;
+                (*handle, dx * dx + dy * dy, acceptance_index)
             })
             .collect();
-        alerted.sort_by(|(_, lhs), (_, rhs)| lhs.total_cmp(rhs));
-        self.alerted_us = alerted.iter().map(|(handle, _)| *handle).collect();
+        // The C++ comment claims increasing distance, but the insertion loop
+        // advances while `new_distance < existing_distance`: farthest first.
+        // Equal-distance newcomers are inserted before older entries.
+        alerted.sort_by(
+            |(_, lhs_distance, lhs_index), (_, rhs_distance, rhs_index)| {
+                rhs_distance
+                    .total_cmp(lhs_distance)
+                    .then_with(|| rhs_index.cmp(lhs_index))
+            },
+        );
+        self.alerted_us = alerted.iter().map(|(handle, _, _)| *handle).collect();
 
         let (avg_dir_vec_x, avg_dir_vec_y) = if officer_in_building {
             (0.0, 0.0)
         } else {
-            self.alerted_us
+            accepted_handles
                 .iter()
                 .fold((0.0, 0.0), |(sum_x, sum_y), handle| {
                     let soldier = tick
