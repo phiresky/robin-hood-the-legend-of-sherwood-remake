@@ -868,17 +868,32 @@ impl TargetInteractionContext<'_> {
             self.sequence_manager.element_terminated(seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
         }
-        let order_type = match owner_command {
-            Command::HitTarget => crate::order::OrderType::HittingTarget,
-            Command::HandleTarget => crate::order::OrderType::HandlingTarget,
-            Command::UseLever => crate::order::OrderType::UsingLever,
-            Command::TakeTarget => crate::order::OrderType::TakingTarget,
-            Command::SearchCmd => crate::order::OrderType::Searching,
+        let order_types: &[crate::order::OrderType] = match owner_command {
+            // RHElementActorPC::Translate(HIT_TARGET) raises the sword,
+            // performs the target hit, then lowers it again. Besides the
+            // visible transitions, those orders drive WaitingSword back to
+            // Waiting at the same points as the original action-state
+            // machine.
+            Command::HitTarget => &[
+                crate::order::OrderType::TransitionRaisingSword,
+                crate::order::OrderType::HittingTarget,
+                crate::order::OrderType::TransitionLoweringSword,
+            ],
+            Command::HandleTarget => &[crate::order::OrderType::HandlingTarget],
+            Command::UseLever => &[crate::order::OrderType::UsingLever],
+            Command::TakeTarget => &[crate::order::OrderType::TakingTarget],
+            Command::SearchCmd => &[crate::order::OrderType::Searching],
             _ => unreachable!("non-target command passed to target interaction context"),
         };
-        let id = crate::order::alloc_order_id(self.next_order_id);
-        let order = crate::order::Order::new(order_type, 0.0, 0.0, id).with_antagonist(target);
-        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+        for &order_type in order_types {
+            let id = crate::order::alloc_order_id(self.next_order_id);
+            let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
+            order.compute_direction = false;
+            if order_type == crate::order::OrderType::HittingTarget || order_types.len() == 1 {
+                order.antagonist = Some(target);
+            }
+            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+        }
         self.sequence_manager.element_in_progress(seq_id, elem_idx);
         OwnerActionBarrier::Reach
     }

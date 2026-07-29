@@ -3604,6 +3604,7 @@ impl EngineInner {
             validated_antagonist,
             waiting_sword_direction_goal,
             pc_taking_direction_goal,
+            pc_target_direction_goal,
         ) = {
             let entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
                 panic!(
@@ -3898,6 +3899,39 @@ impl EngineInner {
             } else {
                 None
             };
+            // HIT_TARGET / HANDLE_TARGET use the target sprite row's live
+            // action hotspot, not the target's interaction PositionMap. The
+            // original intentionally uses GetSector0to15() without the
+            // isometric aspect argument for this screen-space vector.
+            let target_direction = if entity.is_pc()
+                && actor.execute_order_initialising
+                && matches!(
+                    anim_type,
+                    OrderType::HittingTarget | OrderType::HandlingTarget
+                ) {
+                validated_antagonist.map(|antagonist_id| {
+                    let antagonist = self.world.entities.get(antagonist_id).unwrap_or_else(|| {
+                        panic!(
+                            "actor {entity_id:?} {anim_type:?} antagonist \
+                                 {antagonist_id:?} is missing at legacy slot {}",
+                            entity_id.index()
+                        )
+                    });
+                    let from = entity.element_data().position_map();
+                    let to = antagonist.cxx_current_point_map().unwrap_or_else(|| {
+                        panic!(
+                            "actor {entity_id:?} {anim_type:?} target {antagonist_id:?} \
+                             has no current sprite hotspot"
+                        )
+                    });
+                    crate::position_interface::vector_to_sector_0_to_15(
+                        to.x - from.x,
+                        to.y - from.y,
+                    )
+                })
+            } else {
+                None
+            };
 
             (
                 principal_frames,
@@ -3906,6 +3940,7 @@ impl EngineInner {
                 validated_antagonist,
                 waiting_sword_direction,
                 taking_direction,
+                target_direction,
             )
         };
 
@@ -4213,6 +4248,9 @@ impl EngineInner {
                     if let Some(direction) = pc_taking_direction_goal {
                         entity.element_data_mut().set_direction_goal(direction);
                     }
+                    if let Some(direction) = pc_target_direction_goal {
+                        entity.element_data_mut().set_direction_goal(direction);
+                    }
                     if order_is_initialising
                         && anim_type == OrderType::Pointing
                         && let Some(direction) = pointing_direction_goal
@@ -4367,6 +4405,8 @@ impl EngineInner {
                                 | OrderType::TakingCrouched
                                 | OrderType::DrinkingAle
                                 | OrderType::TakingNet
+                                | OrderType::HittingTarget
+                                | OrderType::HandlingTarget
                                 | OrderType::UnlockingDoor
                                 | OrderType::UnlockingTrap
                                 | OrderType::BeingUnconsciousSword
@@ -4412,6 +4452,7 @@ impl EngineInner {
                         // configured animation.
                         let mut wasp_still_turning = false;
                         let mut pc_taking_still_turning = false;
+                        let mut pc_target_still_turning = false;
                         if needs_turn {
                             let still_turning = entity.position_iface_mut().turn();
                             if matches!(anim_type, OrderType::GettingFreeFromWasp) {
@@ -4424,6 +4465,14 @@ impl EngineInner {
                                 )
                             {
                                 pc_taking_still_turning = still_turning;
+                            }
+                            if owner_is_pc
+                                && matches!(
+                                    anim_type,
+                                    OrderType::HittingTarget | OrderType::HandlingTarget
+                                )
+                            {
+                                pc_target_still_turning = still_turning;
                             }
                         }
                         let row = entity.element_data().direction() as u16;
@@ -4471,6 +4520,11 @@ impl EngineInner {
                             let (played, progression) = if wasp_still_turning {
                                 (OrderType::TurningAlerted, FrameProgression::Default)
                             } else if pc_taking_still_turning {
+                                (
+                                    sprite_anim_for_order(sprite, effective_anim, owner_is_pc),
+                                    FrameProgression::FrozenFirstFrame,
+                                )
+                            } else if pc_target_still_turning {
                                 (
                                     sprite_anim_for_order(sprite, effective_anim, owner_is_pc),
                                     FrameProgression::FrozenFirstFrame,

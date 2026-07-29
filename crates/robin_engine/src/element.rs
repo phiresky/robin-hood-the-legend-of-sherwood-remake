@@ -2809,9 +2809,18 @@ impl Entity {
     ///
     /// `Sprite::center` is the anchor loaded from the sprite data and used by
     /// rendering/input. C++ computes sprite position as
-    /// `position_map - sprite_center`, so reconstruct that here.
+    /// `position_map - sprite_center`, so reconstruct that here. Targets keep
+    /// their visible sprite anchor separate from their interaction point:
+    /// `RHElementTarget::InitializeFromFile` computes the sprite position from
+    /// the authored 3D placement, then overwrites only `PositionMap` with the
+    /// action point and marks both values computed. `sprite_visual_map_position`
+    /// preserves that distinction.
     pub fn cxx_position_sprite(&self) -> SpriteTopLeft {
-        let map = self.element_data().position_map();
+        let map = if self.is_fx_target() {
+            self.sprite_visual_map_position()
+        } else {
+            self.element_data().position_map()
+        };
         let center = self.sprite().center;
         SpriteTopLeft::new((map.x - center.x).floor(), (map.y - center.y).floor())
     }
