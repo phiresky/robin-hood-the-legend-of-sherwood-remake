@@ -1436,14 +1436,10 @@ impl EngineInner {
 
             // ── Purse: COINS_PER_PURSE * COIN_VALUE to ransom + counter ──
             // For a fresh world purse we always credit the full value.
-            ObjectType::BonusPurse | ObjectType::Purse => {
+            ObjectType::Purse => {
                 let value = crate::inventory::COINS_PER_PURSE as u32 * crate::inventory::COIN_VALUE;
                 self.add_campaign_value(crate::campaign::CampaignValue::Ransom, value as i32);
                 self.spawn_take_counter(pos, blayer, value as u16);
-                // Increment purse ammo without adding quantity — the PC's
-                // purse ammo already reflects the pickup for HUD
-                // purposes.
-                self.handle_bonus_pickup(assets, pc_id, crate::profiles::Action::Purse, 0);
                 remove = true;
             }
 

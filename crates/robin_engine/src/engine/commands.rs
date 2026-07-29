@@ -2024,7 +2024,13 @@ impl EngineInner {
             _ => {}
         }
 
-        let needs_seek = dist > action_distance || !same_sector;
+        // Object clicks are a distinct Original path:
+        // RHElementObject::MouseClicked always constructs a SEEK element and
+        // hangs TAKE off its post-seek sequence, even when the actor is
+        // already within `GetRadius() + 15`. The immediately-satisfied seek
+        // still has one authoritative frame of lifecycle (MOVE_OK and the
+        // seek refresh wait counter) before the TAKE is launched.
+        let needs_seek = command == Command::Take || dist > action_distance || !same_sector;
         tracing::trace!(
             ?actor,
             ?target,

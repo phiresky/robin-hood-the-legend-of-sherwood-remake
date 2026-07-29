@@ -1310,18 +1310,6 @@ impl EngineInner {
             return seq_id;
         }
 
-        let runtime_movement_before_arbitration = self
-            .world
-            .entities
-            .get(owner)
-            .and_then(Entity::actor_data)
-            .and_then(|actor| {
-                actor
-                    .active_movement
-                    .sequence_id
-                    .map(|sequence| (sequence, actor.active_movement.element_index))
-            });
-
         // Auto-insert the exit / posture / enter transition sub-orders
         // before the command's own Translate runs.  Returning false
         // means no valid transition exists — set the element Impossible
@@ -1334,30 +1322,6 @@ impl EngineInner {
         }
 
         self.arbitrate_instruct(seq_id, elem_idx);
-        let interrupted_runtime_movement =
-            runtime_movement_before_arbitration.is_some_and(|(sequence, element)| {
-                self.orders
-                    .sequence_manager
-                    .get_element(sequence, element)
-                    .is_none_or(|movement| {
-                        !matches!(
-                            movement.state,
-                            crate::sequence::SequenceState::Todo
-                                | crate::sequence::SequenceState::InProgress
-                                | crate::sequence::SequenceState::Postponed
-                        )
-                    })
-            });
-        if interrupted_runtime_movement && let Some(entity) = self.world.entities.get_mut(owner) {
-            // Actor::SendCondolationCard belongs to the outgoing runtime
-            // `mpSequenceElement`, not to the incoming element that priority
-            // arbitration has already selected. Apply its base-class goal
-            // cleanup synchronously; the queued derived callback is drained
-            // at the following instruction boundary.
-            entity
-                .position_iface_mut()
-                .set_map_goal(crate::coordinates::MapPoint::ZERO);
-        }
         seq_id
     }
 

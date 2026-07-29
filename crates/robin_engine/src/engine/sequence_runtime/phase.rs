@@ -345,16 +345,6 @@ impl EngineInner {
                     // Outside that special arm, Original generates the
                     // incoming element's transition orders before normal
                     // priority comparison with the selected element.
-                    let runtime_movement_before_arbitration = self
-                        .world
-                        .entities
-                        .get(owner)
-                        .and_then(Entity::actor_data)
-                        .and_then(|actor| {
-                            actor.active_movement.sequence_id.map(|movement_seq| {
-                                (movement_seq, actor.active_movement.element_index)
-                            })
-                        });
                     if needs_transition && !self.generate_transition(owner, seq_id, elem_idx) {
                         self.orders
                             .sequence_manager
@@ -380,17 +370,6 @@ impl EngineInner {
                     // here. In particular, an interrupted combat action's
                     // EventDone/Reconsider RNG must run before incoming
                     // damage translation and its damage/provoke RNG.
-                    //
-                    // `active_movement` is the actor's native
-                    // `mpSequenceElement`, even after priority arbitration
-                    // has already made the incoming element the manager's
-                    // current choice. If arbitration just interrupted that
-                    // runtime-selected movement, Actor::SendCondolationCard
-                    // clears its sprite goal before the derived NPC callback
-                    // and before the incoming command is translated. The
-                    // deferred card cannot recover this ownership from the
-                    // manager's new current element, so apply the actor-base
-                    // side effect at this exact synchronous boundary.
                     self.orders
                         .sequence_manager
                         .begin_instruct_callback(owner, seq_id, elem_idx);
@@ -398,27 +377,6 @@ impl EngineInner {
                     self.orders
                         .sequence_manager
                         .end_instruct_callback(owner, seq_id, elem_idx);
-                    let interrupted_runtime_movement = runtime_movement_before_arbitration
-                        .is_some_and(|(movement_seq, movement_idx)| {
-                            self.orders
-                                .sequence_manager
-                                .get_element(movement_seq, movement_idx)
-                                .is_none_or(|movement| {
-                                    !matches!(
-                                        movement.state,
-                                        crate::sequence::SequenceState::Todo
-                                            | crate::sequence::SequenceState::InProgress
-                                            | crate::sequence::SequenceState::Postponed
-                                    )
-                                })
-                        });
-                    if interrupted_runtime_movement
-                        && let Some(entity) = self.world.entities.get_mut(owner)
-                    {
-                        entity
-                            .position_iface_mut()
-                            .set_map_goal(crate::coordinates::MapPoint::ZERO);
-                    }
                     // Skip elements whose state moved to terminal /
                     // interrupted while an earlier action in this batch
                     // arbitrated against them. Without this, the loop

@@ -1801,9 +1801,11 @@ impl EnemyAi {
                     self.base.set_emoticon(EmoticonType::QuestionMark);
                     if do_not_investigate {
                         self.set_state(AiState::Seeking, Substate::SeekingJustWatching);
-                        self.base.face_position(self.base.seek_position);
+                        self.base
+                            .face_position_3d_with_ctx(self.base.seek_position, ctx);
                     } else {
-                        self.base.face_position(self.base.seek_position);
+                        self.base
+                            .face_position_3d_with_ctx(self.base.seek_position, ctx);
                         self.set_state(AiState::Seeking, Substate::SeekingHeardstepsReactiontime);
                     }
                     self.base
