@@ -13,7 +13,7 @@ impl EngineInner {
         &mut self,
         assets: &mut LevelAssets,
         loaded: &mut crate::level_data::LoadedLevel,
-        script_enabled: bool,
+        _script_enabled: bool,
     ) {
         // The SIGHT chunk lists which CHUNK_MATERIAL sectors participate
         // in spatial material queries — only those are registered into
@@ -174,105 +174,11 @@ impl EngineInner {
                 std::sync::Arc::make_mut(&mut assets.scripts.location_sectors).push(sec.sector_ref);
             }
 
-            // Register script zone sectors on the fast-find grid so we can
-            // do point-in-polygon occupant checks during gameplay.
-            std::sync::Arc::make_mut(&mut assets.scripts.zone_grid_indices).clear();
-            self.script_domains.zones.scripts.clear();
-            for sec in &so.sectors {
-                // Nudge every polygon vertex by `Y += 0.000348367f` to
-                // avoid integer-aligned vertices confusing point-in-polygon
-                // tests against actor positions on integer Y boundaries.
-                let pts: Vec<MapPoint> = sec
-                    .polygon
-                    .points
-                    .iter()
-                    .map(|&(x, y)| MapPoint::new(x as f32, y as f32 + 0.000348367))
-                    .collect();
-                let mut bbox = MapBBox::new();
-                for &p in &pts {
-                    bbox.expand_point(p);
-                }
-
-                // When scripts are disabled (`-NOSCRIPT`), the sector is
-                // flagged unassociated even if a script class is named.
-                let mut script_data = crate::sector::ScriptSectorData::new();
-                script_data.script_associated = sec.script_class.is_some() && script_enabled;
-                script_data.script_class_name = sec.script_class.clone();
-
-                // Script sectors default to `CROSS | SCRIPT`; the CROSS bit
-                // is cleared when the sector has no script class bound.
-                let mut sector_type = crate::sector::SectorType::SCRIPT;
-                if script_data.script_associated {
-                    sector_type |= crate::sector::SectorType::CROSS;
-                }
-
-                // We keep the grid registration unconditionally to preserve
-                // the 1:1 index mapping between `script_zone_grid_indices`
-                // and the script sector index space (a sparse form would
-                // ripple through `tick_zone_occupants` and zone-script
-                // handle math).  `GridSector::contains_point` already
-                // returns `false` for polygons with fewer than 3 vertices,
-                // so a degenerate sector is effectively empty — but we
-                // still surface the authoring error loudly.
-                if pts.len() < 3 {
-                    tracing::error!(
-                        "Script sector (class {:?}, layer {}) has only {} polygon \
-                         points — containment tests will never match (need >= 3)",
-                        sec.script_class,
-                        sec.layer,
-                        pts.len(),
-                    );
-                }
-
-                let grid_idx = self.world.fast_grid.add_sector(
-                    crate::fast_find_grid::GridSector {
-                        points: pts,
-                        bounding_box: bbox,
-                        sector_type,
-                        layer: sec.layer,
-                        sector_number: crate::sector::SectorNumber::new(-1), // script sectors don't have proto sector numbers
-                        door_index: None,
-                        lift_type: None,
-                        lift_direction: 0,
-                        force_crouched: false,
-                        building_index: None,
-                        low_exit_point: None,
-                        high_exit_point: None,
-                        lowest_door_index: None,
-                        jump_line_indices: Vec::new(),
-                        gate_indices: Vec::new(),
-                        underlying_sector: None,
-                    },
-                    sec.layer,
-                );
-                std::sync::Arc::make_mut(&mut assets.scripts.zone_grid_indices).push(grid_idx);
-                let zone_idx = self.script_domains.zones.scripts.len();
-                self.script_domains.zones.scripts.push(script_data);
-
-                // Each polygon edge becomes a `LINE_SCRIPT | LINE_CROSS`
-                // line carrying a back-pointer to the owning script zone
-                // so the actor zone-crossing dispatch in `engine::script`
-                // can fire on cross.
-                if let Ok(zone_idx_u16) = u16::try_from(zone_idx) {
-                    self.world.fast_grid.add_sector_lines_for_script(
-                        grid_idx,
-                        sec.layer,
-                        zone_idx_u16,
-                        true, // script sectors default to active
-                    );
-                } else {
-                    tracing::warn!(
-                        "Script zone index {} exceeds u16::MAX; skipping LINE_SCRIPT wiring",
-                        zone_idx
-                    );
-                }
-            }
-            if !assets.scripts.zone_grid_indices.is_empty() {
-                tracing::info!(
-                    "Registered {} script zone sectors on grid",
-                    assets.scripts.zone_grid_indices.len()
-                );
-            }
+            // Geometry is registered by `register_script_zone_geometry`
+            // after the proto motion grid allocates its layers and blocks.
+            // Registering here would leave the global sector/line objects
+            // alive while `allocate_layers` silently discards all of their
+            // spatial indices.
         }
 
         // Store hiking paths for patrol route lookups by AI.
@@ -608,6 +514,181 @@ impl EngineInner {
         tracing::info!("Loaded {} sight obstacles for AI line-of-sight", n);
     }
 
+    /// Register mission script sectors only after the proto motion pass has
+    /// allocated the fast-grid layer and block arrays.
+    ///
+    /// Original loads its spatial grid before mission script geometry. Rust's
+    /// environment metadata pass runs earlier, so doing this work there left
+    /// the global sector/line objects alive but lost every per-layer and
+    /// per-block index when `FastFindGrid::allocate_layers` replaced those
+    /// arrays.
+    fn register_script_zone_geometry(
+        &mut self,
+        assets: &mut LevelAssets,
+        loaded: &crate::level_data::LoadedLevel,
+    ) {
+        std::sync::Arc::make_mut(&mut assets.scripts.zone_grid_indices).clear();
+        self.script_domains.zones.scripts.clear();
+
+        let Some(script_objects) = loaded.mission.script_objects.as_ref() else {
+            return;
+        };
+        let script_enabled = self.control.sim_config.script_enabled;
+        for sec in &script_objects.sectors {
+            // Original nudges the polygon away from integer-aligned actor
+            // positions before building the script sector.
+            let pts: Vec<MapPoint> = sec
+                .polygon
+                .points
+                .iter()
+                .map(|&(x, y)| MapPoint::new(x as f32, y as f32 + 0.000348367))
+                .collect();
+            let mut bbox = MapBBox::new();
+            for &point in &pts {
+                bbox.expand_point(point);
+            }
+
+            let mut script_data = crate::sector::ScriptSectorData::new();
+            script_data.script_associated = sec.script_class.is_some() && script_enabled;
+            script_data.script_class_name = sec.script_class.clone();
+
+            let mut sector_type = crate::sector::SectorType::SCRIPT;
+            if script_data.script_associated {
+                sector_type |= crate::sector::SectorType::CROSS;
+            }
+            if pts.len() < 3 {
+                tracing::error!(
+                    "Script sector (class {:?}, layer {}) has only {} polygon points — \
+                     containment tests will never match (need >= 3)",
+                    sec.script_class,
+                    sec.layer,
+                    pts.len(),
+                );
+            }
+
+            let grid_idx = self.world.fast_grid.add_sector(
+                crate::fast_find_grid::GridSector {
+                    points: pts,
+                    bounding_box: bbox,
+                    sector_type,
+                    layer: sec.layer,
+                    sector_number: crate::sector::SectorNumber::new(-1),
+                    door_index: None,
+                    lift_type: None,
+                    lift_direction: 0,
+                    force_crouched: false,
+                    building_index: None,
+                    low_exit_point: None,
+                    high_exit_point: None,
+                    lowest_door_index: None,
+                    jump_line_indices: Vec::new(),
+                    gate_indices: Vec::new(),
+                    underlying_sector: None,
+                },
+                sec.layer,
+            );
+            std::sync::Arc::make_mut(&mut assets.scripts.zone_grid_indices).push(grid_idx);
+            let zone_idx = self.script_domains.zones.scripts.len();
+            self.script_domains.zones.scripts.push(script_data);
+
+            let zone_idx_u16 = u16::try_from(zone_idx).unwrap_or_else(|_| {
+                panic!("script zone index {zone_idx} exceeds the u16 Original index domain")
+            });
+            self.world.fast_grid.add_sector_lines_for_script(
+                grid_idx,
+                sec.layer,
+                zone_idx_u16,
+                true,
+            );
+        }
+
+        if !assets.scripts.zone_grid_indices.is_empty() {
+            tracing::info!(
+                "Registered {} script zone sectors after motion-grid allocation",
+                assets.scripts.zone_grid_indices.len()
+            );
+        }
+    }
+
+    /// Resolve tactic archery layers after motion-sector numbers exist.
+    ///
+    /// The mission metadata pass preserves the raw archery topology before
+    /// motion loading, but cannot resolve a sector number to its authored
+    /// layer at that point. Leaving its temporary zero values in place made
+    /// every elevated archery way behave as layer 0.
+    fn resolve_archery_layers_after_motion(
+        &mut self,
+        loaded: &crate::level_data::LoadedLevel,
+    ) -> Result<(), EngineError> {
+        let Some(tactic) = loaded.mission.tactic_data.as_ref() else {
+            return Ok(());
+        };
+        if self.ai.global.archery_sectors.len() != tactic.archery_sectors.len() {
+            return Err(EngineError::MissionLevelStage {
+                stage: "archery tactic layers",
+                reason: format!(
+                    "runtime archery sector count {} differs from authored count {}",
+                    self.ai.global.archery_sectors.len(),
+                    tactic.archery_sectors.len()
+                ),
+            });
+        }
+
+        let resolve_layer = |sector_number: u16| -> Result<u16, EngineError> {
+            let number = crate::sector::SectorNumber::new(sector_number as i16);
+            let sector_idx = self
+                .world
+                .fast_grid
+                .level
+                .sector_number_map
+                .get(&number)
+                .copied()
+                .ok_or_else(|| EngineError::MissionLevelStage {
+                    stage: "archery tactic layers",
+                    reason: format!(
+                        "authored archery point references missing motion sector {sector_number}"
+                    ),
+                })?;
+            self.world
+                .fast_grid
+                .level
+                .sectors
+                .get(sector_idx)
+                .map(|sector| sector.layer)
+                .ok_or_else(|| EngineError::MissionLevelStage {
+                    stage: "archery tactic layers",
+                    reason: format!(
+                        "motion sector {sector_number} maps to missing grid index {sector_idx}"
+                    ),
+                })
+        };
+
+        for (runtime, raw) in self
+            .ai
+            .global
+            .archery_sectors
+            .iter_mut()
+            .zip(&tactic.archery_sectors)
+        {
+            if runtime.points.len() != raw.points.len() {
+                return Err(EngineError::MissionLevelStage {
+                    stage: "archery tactic layers",
+                    reason: format!(
+                        "archery sector {} runtime point count {} differs from authored count {}",
+                        raw.sector_ref,
+                        runtime.points.len(),
+                        raw.points.len()
+                    ),
+                });
+            }
+            runtime.layer = resolve_layer(raw.sector_ref)?;
+            for (point, raw_point) in runtime.points.iter_mut().zip(&raw.points) {
+                point.position.level = resolve_layer(raw_point.sector)?;
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn load_sound_sources_stage(
         &mut self,
         assets: &mut LevelAssets,
@@ -800,6 +881,8 @@ impl EngineInner {
         self.set_level_size(bg_pixel_dims.0, bg_pixel_dims.1);
         self.build_motion_stage(assets, staging);
         self.register_sound_material_lines(assets, loaded);
+        self.register_script_zone_geometry(assets, loaded);
+        self.resolve_archery_layers_after_motion(loaded)?;
 
         // Set forest_level from proto misc — must happen before entity
         // spawning uses it to decide CHARACTER vs CHARACTER_BLIPPED.
