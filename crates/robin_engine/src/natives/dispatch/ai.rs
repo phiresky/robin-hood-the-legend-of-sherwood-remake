@@ -426,18 +426,22 @@ impl NativeContext<'_, '_> {
                 // full `broadcast_noise` path (deafness, state
                 // filter, `AddNoiseToDisplay`), identical to the
                 // gameplay callsites.
-                let layer = self
-                    .resolve_location_layer_sector(loc)
-                    .map(|(l, _s)| l)
-                    .unwrap_or(0);
+                let Some((layer, sector)) = self.resolve_location_layer_sector(loc) else {
+                    tracing::error!(
+                        "Script error: MakeNoise location {loc} has no layer/sector metadata"
+                    );
+                    return 0;
+                };
                 self.emit_engine(EngineCommand::MakeNoise {
                     noise_type,
                     x: origin_x,
                     y: origin_y,
                     layer,
+                    sector,
                 });
                 tracing::debug!(
-                    "MakeNoise: scripted {noise_type:?} at ({origin_x},{origin_y}) layer {layer}"
+                    "MakeNoise: scripted {noise_type:?} at ({origin_x},{origin_y}) \
+                     layer {layer} sector {sector}"
                 );
                 0
             }

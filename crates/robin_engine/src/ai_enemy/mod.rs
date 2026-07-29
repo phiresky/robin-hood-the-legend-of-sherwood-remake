@@ -2637,6 +2637,17 @@ impl EnemyAi {
         // notification for the post-think dispatcher to drain in
         // order.
         if self.base.current_substate != substate {
+            // Calls made before SetState (most importantly StopAll) belong
+            // inside the synchronous SetState boundary. Detach that prefix
+            // so the engine applies it before FilterAIEvent and before the
+            // attentive-mode tail below. Leaving an empty prefix as `None`
+            // avoids an unnecessary recursive drain.
+            let actor_effects_before_callback = self
+                .base
+                .outbox
+                .actor
+                .has_boundary_work()
+                .then(|| std::mem::take(&mut self.base.outbox.actor));
             let source = match state {
                 AiState::Attacking | AiState::Menacing | AiState::Fleeing => {
                     AiStateChangeSource::from_optional_human(self.base.primary_target)
@@ -2653,7 +2664,7 @@ impl EnemyAi {
                     incoming_state: state,
                     incoming_substate: substate,
                     source,
-                    actor_effects_before_callback: Default::default(),
+                    actor_effects_before_callback,
                 }));
         }
 

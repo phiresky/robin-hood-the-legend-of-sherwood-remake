@@ -5247,6 +5247,15 @@ impl EngineInner {
         };
         if take_halt {
             self.halt_actor(npc_id);
+            // `StopAll` calls `Stop(PREFERENCE)` synchronously before the
+            // handler continues into SetState/SetAttentiveMode and other
+            // replacement work. Deliver the halt condolence at that same
+            // barrier: actor-base cleanup must clear a selected movement's
+            // cached goal before a newly launched attentive transition can
+            // become the selected element. `from_halt` suppresses the NPC
+            // EventDone/Impossible callbacks while retaining that base
+            // selected-element cleanup.
+            self.dispatch_condolations_for_npc(sim, npc_id, assets);
         }
 
         // The halt application above is a real same-frame barrier: only now
@@ -8213,8 +8222,13 @@ impl EngineInner {
             // `get_hear_volume` formula.
             let modified_volume = volume as f32 * HEARING_FACTOR;
             let dx = npc_pos.x - origin.x;
-            let dy_stretched =
-                (npc_pos.y - origin.y - elev_f) * crate::position_interface::INVERSE_ASPECT_RATIO;
+            // `GetPosition()` and the constructed noise origin are both
+            // world-space points `(map_x, map_y + z, z)`.  Compare their
+            // full Y coordinates before applying the isometric stretch.
+            // Using the listener's map Y directly makes vertically offset
+            // listeners spuriously too far from one-shot noises.
+            let dy_stretched = (npc_pos.y + npc_elev - origin.y - elev_f)
+                * crate::position_interface::INVERSE_ASPECT_RATIO;
             // `distance = position - origin` with `origin.z =
             // elevation`, so dz = listener.z - source.elevation.
             let dz = npc_elev - elev_f;
@@ -8265,6 +8279,40 @@ impl EngineInner {
             if let Some(ai) = entity.ai_controller_mut() {
                 ai.outbox.detection.stimuli.push(stimulus);
             }
+        }
+    }
+
+    /// Broadcast a one-shot noise and synchronously run every listener's
+    /// queued `EVENT_HEAR`, in NPC creation order.
+    ///
+    /// Original `RHElementActorNPC::Noise` calls `Think` inside the broadcast
+    /// loop. Script natives and other in-frame callbacks therefore observe
+    /// the listeners' RNG draws, state transitions, and launched sequences
+    /// before returning. The ordinary queued form remains available to owner
+    /// phases that already provide their own synchronous drain boundary.
+    pub(super) fn broadcast_noise_synchronously(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        noise_type: crate::ai::NoiseType,
+        origin: crate::coordinates::MapPoint,
+        origin_layer: u16,
+        volume: u16,
+        elevation: u16,
+        source_entity: Option<EntityId>,
+    ) {
+        self.broadcast_noise(
+            noise_type,
+            origin,
+            origin_layer,
+            volume,
+            elevation,
+            source_entity,
+        );
+
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        for npc_id in npc_ids {
+            self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None, None);
         }
     }
 

@@ -2611,6 +2611,28 @@ impl EngineInner {
     /// [`EngineInner::process_pending_ai_orders`] whenever a movement
     /// order arrives without `GotoFlags::NO_HALT`.
     pub(crate) fn halt_actor(&mut self, owner: EntityId) {
+        // Snapshot the actor-base selected movement before Stop tears down the
+        // sequence-manager identity. Original SendCondolationCard clears the
+        // sprite goal synchronously when this exact selected element is
+        // interrupted. Rust delivers that card later, by which point a
+        // replacement transition may already be selected and obscure the
+        // relationship.
+        let selected_movement = self
+            .get_entity(owner)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                actor
+                    .active_movement
+                    .sequence_id
+                    .map(|seq| (seq, actor.active_movement.element_index))
+            })
+            .zip(
+                self.orders
+                    .sequence_manager
+                    .current_element_for_actor(owner),
+            )
+            .is_some_and(|(movement, selected)| movement == selected);
+
         if let Some(entity) = self.get_entity_mut(owner)
             && let Some(ai) = entity.ai_controller_mut()
         {
@@ -2619,6 +2641,11 @@ impl EngineInner {
         self.orders.sequence_manager.set_halt_pending(true);
 
         self.stop_owner(owner, crate::sequence::SequencePriority::Preference);
+        if selected_movement && let Some(entity) = self.get_entity_mut(owner) {
+            entity
+                .position_iface_mut()
+                .set_map_goal(crate::coordinates::MapPoint::ZERO);
+        }
 
         // `MaybeCancelPathRequest` fires from movement-element
         // interrupt.  When halt interrupts the actor's Move element,

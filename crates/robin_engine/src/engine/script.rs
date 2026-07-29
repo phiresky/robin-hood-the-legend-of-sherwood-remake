@@ -3914,6 +3914,7 @@ impl EngineInner {
                     x,
                     y,
                     layer,
+                    sector,
                 } => {
                     // Delegate to the shared broadcast path so scripted
                     // noises get the same AI dispatch and debug overlay
@@ -3928,15 +3929,35 @@ impl EngineInner {
                         // doesn't silently broadcast zero-volume noise.
                         _ => parameters_ai::NOISE_VOLUME_PLOUF,
                     } as u16;
-                    // Scripted noises (LOGS / DRAWBRIDGE) don't carry an
-                    // elevation through the EngineCommand — these
-                    // always broadcast at elevation 0.
-                    self.broadcast_noise(
+                    // `RHElementActorNPC::Noise(type, position)` resolves the
+                    // script point through `PositionToPoint3D` before the
+                    // hearing test.  Preserve the location sector so noises
+                    // on roofs and other raised projection areas originate at
+                    // their actual elevation.
+                    let source = self.position_to_point_3d(
+                        assets,
+                        crate::position_interface::SectorHandle::new(sector),
+                        layer,
+                        x,
+                        y,
+                    );
+                    tracing::debug!(
+                        noise_type = ?noise_type,
+                        x,
+                        y,
+                        layer,
+                        sector,
+                        elevation = source.z,
+                        "dispatching scripted noise"
+                    );
+                    self.broadcast_noise_synchronously(
+                        sim,
+                        assets,
                         noise_type,
                         crate::coordinates::MapPoint::new(x, y),
                         layer,
                         volume,
-                        0,
+                        source.z as u16,
                         None,
                     );
                 }
