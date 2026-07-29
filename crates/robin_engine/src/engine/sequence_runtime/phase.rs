@@ -328,9 +328,23 @@ impl EngineInner {
                     if needs_transition && is_deferred_sword_damage {
                         self.stamp_element_transition_state(owner, seq_id, elem_idx);
                     }
-                    // Original `RHElementActor::Instruct` generates the
-                    // incoming element's transition orders before comparing
-                    // priorities with the selected element.
+                    // Original `RHElementActor::Instruct` handles a selected
+                    // NON_INTERRUPTABLE element before GenerateTransition.
+                    // This matters for commands arriving while a door pass
+                    // temporarily owns a posture (Flying/OnWall) from which
+                    // the incoming command cannot yet generate its ordinary
+                    // posture transition. The command is postponed and only
+                    // generates that transition after the door pass releases
+                    // it. The guard can also interrupt an older postponed
+                    // equal-priority command, so settle any resulting card at
+                    // this exact Instruct boundary.
+                    if self.non_interruptable_guard(owner, seq_id, elem_idx) {
+                        self.dispatch_condolations(sim, assets);
+                        continue;
+                    }
+                    // Outside that special arm, Original generates the
+                    // incoming element's transition orders before normal
+                    // priority comparison with the selected element.
                     if needs_transition && !self.generate_transition(owner, seq_id, elem_idx) {
                         self.orders
                             .sequence_manager
