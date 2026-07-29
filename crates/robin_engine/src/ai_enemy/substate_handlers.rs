@@ -1813,15 +1813,14 @@ impl EnemyAi {
 
             Substate::SeekingHeardstepsReactiontime => {
                 if stimulus_type == StimulusType::EventTimer {
-                    self.go_near(
+                    self.go_to(
                         AiState::Seeking,
                         Substate::SeekingHeardsteps,
                         self.base.seek_position,
-                        parameters_ai::AI_MIN_SEARCHNOISE_DISTANCE,
-                        GotoFlags::RUN,
+                        GotoFlags::empty(),
                         ctx,
                     );
-                    self.base.launch_timer(10, ctx.frame);
+                    self.base.launch_timer(200, ctx.frame);
                 }
             }
 
