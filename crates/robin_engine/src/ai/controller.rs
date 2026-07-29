@@ -3018,6 +3018,22 @@ impl AiController {
         self.face_position_impl(pos, ctx, target.z - ctx.elevation, false);
     }
 
+    /// Face a position whose authoritative elevation travels separately.
+    ///
+    /// `RHnoise` stores both `posOrigin` and `uwElevation`. The Original can
+    /// normally recover the same height through `posOrigin.pSector` when it
+    /// calls `Face(RHposition)`, but replay-normalized positions do not retain
+    /// that pointer identity. Use the recorded elevation instead of treating
+    /// a sector-less noise position as ground level.
+    pub fn face_position_at_elevation_with_ctx(
+        &mut self,
+        pos: Position,
+        elevation: f32,
+        ctx: &AiContext,
+    ) {
+        self.face_position_impl(pos, ctx, elevation - ctx.elevation, false);
+    }
+
     /// Turn to face another entity. Feeds the target's elevation into
     /// the 2D projection so the face accounts for height differences.
     ///

@@ -2040,7 +2040,11 @@ impl EnemyAi {
                     self.base.seek_position = noise.origin;
                     self.base.stop_all();
                     if self.base.current_state != AiState::Sleeping {
-                        self.base.face_position(noise.origin);
+                        self.base.face_position_at_elevation_with_ctx(
+                            noise.origin,
+                            noise.elevation as f32,
+                            ctx,
+                        );
                     }
                     self.base.say(Remark::HearsNoise);
                     self.base
@@ -2063,7 +2067,11 @@ impl EnemyAi {
                     // the middle of a seek).
                     self.set_state(AiState::Seeking, Substate::SeekingHeardstepsReactiontime);
                     self.base.say(Remark::HearsNoise);
-                    self.base.face_position(noise.origin);
+                    self.base.face_position_at_elevation_with_ctx(
+                        noise.origin,
+                        noise.elevation as f32,
+                        ctx,
+                    );
                     self.base.launch_timer(1, ctx.frame);
                 } else {
                     // Idle / officer → curious-react into the wondering
@@ -2114,7 +2122,11 @@ impl EnemyAi {
                     if noise.noise_type != NoiseType::Aaargh {
                         self.base.say(Remark::HearsNoise);
                     }
-                    self.base.face_position(noise.origin);
+                    self.base.face_position_at_elevation_with_ctx(
+                        noise.origin,
+                        noise.elevation as f32,
+                        ctx,
+                    );
                     self.base.launch_timer(1, ctx.frame);
                 } else {
                     if noise.noise_type != NoiseType::Aaargh {
@@ -2140,7 +2152,11 @@ impl EnemyAi {
                 self.base.set_emoticon(EmoticonType::QuestionMark);
                 self.set_state(AiState::Wondering, Substate::WonderingWatching);
                 self.base.seek_position = noise.origin;
-                self.base.face_position(noise.origin);
+                self.base.face_position_at_elevation_with_ctx(
+                    noise.origin,
+                    noise.elevation as f32,
+                    ctx,
+                );
                 self.base.launch_timer(50, ctx.frame);
             }
 
@@ -2150,7 +2166,11 @@ impl EnemyAi {
                 self.base.stop_all();
                 self.set_state(AiState::Wondering, Substate::WonderingWatching);
                 self.base.seek_position = noise.origin;
-                self.base.face_position(noise.origin);
+                self.base.face_position_at_elevation_with_ctx(
+                    noise.origin,
+                    noise.elevation as f32,
+                    ctx,
+                );
                 self.base.launch_timer(
                     70 + crate::sim_rng::u32(
                         sim,
