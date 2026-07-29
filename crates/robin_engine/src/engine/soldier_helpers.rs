@@ -171,7 +171,41 @@ impl EngineInner {
             Command::LeaveAttentiveMode
         };
 
+        let interrupts_retained_movement_exit = self
+            .world
+            .entities
+            .get(entity_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                actor
+                    .active_movement
+                    .sequence_id
+                    .map(|sequence| (sequence, actor.active_movement.element_index))
+            })
+            .and_then(|(sequence, element)| {
+                self.orders.sequence_manager.get_element(sequence, element)
+            })
+            .and_then(|element| element.orders.front())
+            .is_some_and(|order| {
+                matches!(
+                    order.order_type,
+                    OrderType::TransitionWalkingUprightWaitingUpright
+                        | OrderType::TransitionRunningUprightWaitingUpright
+                        | OrderType::TransitionWalkingCrouchedWaitingCrouched
+                )
+            });
         self.launch_element(SequenceElement::new(1, command, Some(entity_id)));
+        if interrupts_retained_movement_exit
+            && let Some(entity) = self.world.entities.get_mut(entity_id)
+        {
+            // Launching attentive mode against an already-running
+            // transition-to-waiting interrupts that selected movement
+            // outright. Actor::SendCondolationCard clears its goal before
+            // the attentive element becomes authoritative.
+            entity
+                .position_iface_mut()
+                .set_map_goal(crate::coordinates::MapPoint::ZERO);
+        }
 
         if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(entity_id)
             && let Some(enemy) = s.npc.ai_brain.enemy_mut()

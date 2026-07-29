@@ -1310,6 +1310,18 @@ impl EngineInner {
             return seq_id;
         }
 
+        let runtime_movement_before_arbitration = self
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                actor
+                    .active_movement
+                    .sequence_id
+                    .map(|sequence| (sequence, actor.active_movement.element_index))
+            });
+
         // Auto-insert the exit / posture / enter transition sub-orders
         // before the command's own Translate runs.  Returning false
         // means no valid transition exists — set the element Impossible
@@ -1322,6 +1334,30 @@ impl EngineInner {
         }
 
         self.arbitrate_instruct(seq_id, elem_idx);
+        let interrupted_runtime_movement =
+            runtime_movement_before_arbitration.is_some_and(|(sequence, element)| {
+                self.orders
+                    .sequence_manager
+                    .get_element(sequence, element)
+                    .is_none_or(|movement| {
+                        !matches!(
+                            movement.state,
+                            crate::sequence::SequenceState::Todo
+                                | crate::sequence::SequenceState::InProgress
+                                | crate::sequence::SequenceState::Postponed
+                        )
+                    })
+            });
+        if interrupted_runtime_movement && let Some(entity) = self.world.entities.get_mut(owner) {
+            // Actor::SendCondolationCard belongs to the outgoing runtime
+            // `mpSequenceElement`, not to the incoming element that priority
+            // arbitration has already selected. Apply its base-class goal
+            // cleanup synchronously; the queued derived callback is drained
+            // at the following instruction boundary.
+            entity
+                .position_iface_mut()
+                .set_map_goal(crate::coordinates::MapPoint::ZERO);
+        }
         seq_id
     }
 
@@ -2634,12 +2670,14 @@ impl EngineInner {
                     .sequence_id
                     .map(|seq| (seq, actor.active_movement.element_index))
             })
-            .zip(
+            .filter(|&(sequence, element)| {
                 self.orders
                     .sequence_manager
-                    .current_element_for_actor(owner),
-            )
-            .is_some_and(|(movement, selected)| movement == selected);
+                    .get_element(sequence, element)
+                    .is_some_and(|element| {
+                        element.state == crate::sequence::SequenceState::InProgress
+                    })
+            });
 
         if let Some(entity) = self.get_entity_mut(owner)
             && let Some(ai) = entity.ai_controller_mut()
@@ -2649,7 +2687,21 @@ impl EngineInner {
         self.orders.sequence_manager.set_halt_pending(true);
 
         self.stop_owner(owner, crate::sequence::SequencePriority::Preference);
-        if selected_movement && let Some(entity) = self.get_entity_mut(owner) {
+        // Stop can retain the selected movement element by replacing its
+        // current walking order with a transition-to-waiting order. Original
+        // has not called Actor::SendCondolationCard in that case, so the
+        // sprite's live movement goal remains owned by the retained element
+        // until the transition finishes. Clear it synchronously only when the
+        // stop actually detached the element selected before Halt.
+        let selected_movement_was_detached = selected_movement.is_some_and(|movement| {
+            let remains_live = self
+                .orders
+                .sequence_manager
+                .get_element(movement.0, movement.1)
+                .is_some_and(|element| element.state == crate::sequence::SequenceState::InProgress);
+            !remains_live
+        });
+        if selected_movement_was_detached && let Some(entity) = self.get_entity_mut(owner) {
             entity
                 .position_iface_mut()
                 .set_map_goal(crate::coordinates::MapPoint::ZERO);

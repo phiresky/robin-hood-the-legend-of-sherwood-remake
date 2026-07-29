@@ -5686,8 +5686,85 @@ impl EngineInner {
             let first_frame_dist_raw = frame_dist_raw;
             let first_direction_differs_from_goal =
                 sprite.position_iface.get_direction() != sprite.position_iface.get_direction_goal();
+            // Fast climb Execute contains two literal PerformMotion calls, but
+            // returns immediately when the first one reaches the order goal.
+            // Project that first call through the same anti-collision query
+            // used by the committed movement below.  Deferring all position
+            // work until after both sprite calls otherwise advances the
+            // animation counter once too often on a terminal first call; the
+            // next climb order can then move one simulation frame early.
+            let first_fast_call_terminates = if !tolerance_arrival
+                && fast_climb_motion
+                && motion_state != MotionState::Terminated
+            {
+                let first_speed = scaled_motion_distance(
+                    first_frame_dist_raw,
+                    speed_factor,
+                    is_transition_anim,
+                    first_direction_differs_from_goal,
+                );
+                if first_speed == 0.0 {
+                    false
+                } else {
+                    let mut projected = sprite.position_iface.clone();
+                    let increment = projected.get_increment_map();
+                    let anti_on = projected.is_anti_collision_on();
+                    let (dx_step, dy_step) = if anti_on
+                        && let Some(mover_snap) =
+                            anti_snapshots.get(actor_id).and_then(|slot| slot.as_ref())
+                    {
+                        let move_box = *projected.get_move_box();
+                        let half_diagonal = projected.get_half_diagonal();
+                        let mut state = super::anti_collision::AntiCollisionState {
+                            pi: &mut projected,
+                            move_box,
+                            half_diagonal,
+                            goal_map: goal,
+                        };
+                        super::anti_collision::apply_anti_collision_step(
+                            mover_snap,
+                            anti_snapshots.as_slice(),
+                            &self.ai.global.repulsive_points,
+                            prepared
+                                .mobile_points_by_layer
+                                .get(&mover_snap.layer)
+                                .map(Vec::as_slice)
+                                .unwrap_or(&[]),
+                            prepared
+                                .mobile_lines_by_layer
+                                .get(&mover_snap.layer)
+                                .map(Vec::as_slice)
+                                .unwrap_or(&[]),
+                            prepared
+                                .mobile_polygons_by_layer
+                                .get(&mover_snap.layer)
+                                .map(Vec::as_slice)
+                                .unwrap_or(&[]),
+                            Some(&self.world.fast_grid),
+                            Some(&mut state),
+                            increment.x,
+                            increment.y,
+                            first_speed,
+                            true,
+                        )
+                    } else {
+                        (increment.x * first_speed, increment.y * first_speed)
+                    };
+                    let mut projected_position = projected.map_position();
+                    projected_position.x += dx_step;
+                    projected_position.y += dy_step;
+                    projected.set_map_position(projected_position);
+                    projected.is_goal_reached(&self.world.fast_grid, None)
+                }
+            } else {
+                false
+            };
             let mut second_frame_dist_raw = None;
-            if !tolerance_arrival && fast_climb_motion && motion_state != MotionState::Terminated {
+            if !tolerance_arrival
+                && fast_climb_motion
+                && motion_state != MotionState::Terminated
+                && !first_fast_call_terminates
+            {
                 let _ = sprite.position_iface.turn();
                 let (second_state, second_distance) = sprite.perform_motion(
                     sim,
@@ -6168,6 +6245,7 @@ impl EngineInner {
                     // Matches the `DoorPassAdvance::Done` arm below but for
                     // the transition-terminated path.
                     if is_final_waypoint {
+                        let mut clear_completed_movement_goal = false;
                         let advance = if actor.active_door_pass.is_some() {
                             Self::advance_door_pass(
                                 actor,
@@ -6224,6 +6302,7 @@ impl EngineInner {
                                     };
                                 actor.active_movement.clear();
                                 actor.active_door_pass = None;
+                                clear_completed_movement_goal = true;
                             }
                             DoorPassAdvance::NoActive => {
                                 tracing::warn!(
@@ -6231,6 +6310,15 @@ impl EngineInner {
                                     "DoorPass: transition-terminated movement lost active pass"
                                 );
                             }
+                        }
+                        if clear_completed_movement_goal {
+                            // Actor::SendCondolationCard runs synchronously
+                            // when this retained stop transition completes and
+                            // clears the selected movement's sprite goal before
+                            // NPC callbacks can select replacement work.
+                            entity
+                                .position_iface_mut()
+                                .set_map_goal(crate::coordinates::MapPoint::ZERO);
                         }
                     }
                 }
@@ -7574,13 +7662,22 @@ impl EngineInner {
                     } else {
                         crate::element::Command::Turn
                     };
-                    let current_is_movement = self
+                    let current_movement = self
                         .orders
                         .sequence_manager
                         .current_element_for_actor(entity_id)
                         .and_then(|(seq, idx)| self.orders.sequence_manager.get_element(seq, idx))
-                        .is_some_and(|element| element.data.is_movement());
-                    if current_is_movement {
+                        .filter(|element| element.data.is_movement());
+                    if let Some(current_movement) = current_movement {
+                        let interrupts_retained_stop_transition =
+                            current_movement.orders.front().is_some_and(|order| {
+                                matches!(
+                                    order.order_type,
+                                    OrderType::TransitionWalkingUprightWaitingUpright
+                                        | OrderType::TransitionRunningUprightWaitingUpright
+                                        | OrderType::TransitionWalkingCrouchedWaitingCrouched
+                                )
+                            });
                         // FaceTo interrupts the movement and installs its
                         // transition early enough for this actor slot, while
                         // retaining the movement goal cached by the sprite.
@@ -7590,7 +7687,13 @@ impl EngineInner {
                         // Face has already cleared the selected movement goal,
                         // so sampling here naturally retains zero instead of
                         // resurrecting the old destination.
-                        let retained_goal = (!had_explicit_halt)
+                        // A second Halt against an already-retained
+                        // transition-to-waiting is different: it interrupts
+                        // that selected element outright, so Actor's
+                        // condolence clears the goal before the Turn is
+                        // instructed.
+                        let retained_goal = (!had_explicit_halt
+                            && !interrupts_retained_stop_transition)
                             .then(|| {
                                 self.world
                                     .entities
@@ -7602,6 +7705,13 @@ impl EngineInner {
                             entity.position_iface_mut().turn();
                         }
                         self.halt_actor(entity_id);
+                        if interrupts_retained_stop_transition
+                            && let Some(entity) = self.world.entities.get_mut(entity_id)
+                        {
+                            entity
+                                .position_iface_mut()
+                                .set_map_goal(crate::coordinates::MapPoint::ZERO);
+                        }
                         let direction = intent.explicit_direction.or_else(|| {
                             self.world.entities.get(entity_id).map(|entity| {
                                 let position = entity.element_data().position_map();
