@@ -1876,9 +1876,19 @@ impl EngineInner {
                 // anti-collision pushes actors off walls instead of
                 // letting them scrape along.
                 let poly = &area.polygon;
-                for i in 0..poly.points.len() {
-                    let (x1, y1) = poly.points[i];
-                    let (x2, y2) = poly.points[(i + 1) % poly.points.len()];
+                for current in 0..poly.points.len() {
+                    // Original AddSectorLines seeds pointLast from the final
+                    // polygon vertex, so the closing edge is inserted first,
+                    // followed by 0→1, 1→2, ... . FindAutorizedPosition
+                    // applies intersecting line pushes in this insertion
+                    // order, making the cyclic edge order observable.
+                    let previous = if current == 0 {
+                        poly.points.len() - 1
+                    } else {
+                        current - 1
+                    };
+                    let (x1, y1) = poly.points[previous];
+                    let (x2, y2) = poly.points[current];
                     let mut line = crate::fast_find_grid::GridLine::new(
                         MapPoint::new(x1 as f32, y1 as f32),
                         MapPoint::new(x2 as f32, y2 as f32),
@@ -1948,9 +1958,19 @@ impl EngineInner {
                     let mut poly_pts: Vec<MapPoint> = Vec::with_capacity(obs_poly.points.len());
                     let mut line_indices: Vec<crate::fast_find_grid::LineIndex> =
                         Vec::with_capacity(obs_poly.points.len());
-                    for i in 0..obs_poly.points.len() {
-                        let (x1, y1) = obs_poly.points[i];
-                        let (x2, y2) = obs_poly.points[(i + 1) % obs_poly.points.len()];
+                    for &(x, y) in &obs_poly.points {
+                        let p = MapPoint::new(x as f32, y as f32);
+                        bbox.expand_point(p);
+                        poly_pts.push(p);
+                    }
+                    for current in 0..obs_poly.points.len() {
+                        let previous = if current == 0 {
+                            obs_poly.points.len() - 1
+                        } else {
+                            current - 1
+                        };
+                        let (x1, y1) = obs_poly.points[previous];
+                        let (x2, y2) = obs_poly.points[current];
                         let mut line = crate::fast_find_grid::GridLine::new(
                             MapPoint::new(x1 as f32, y1 as f32),
                             MapPoint::new(x2 as f32, y2 as f32),
@@ -1960,9 +1980,6 @@ impl EngineInner {
                         line.set_repulsive(true);
                         let line_idx = self.world.fast_grid.add_line(line, layer_idx as u16);
                         line_indices.push(line_idx);
-                        let p = MapPoint::new(x1 as f32, y1 as f32);
-                        bbox.expand_point(p);
-                        poly_pts.push(p);
                     }
                     // Obstacle-corner repulsive points: `det(v1, v2) > 0`
                     // marks the convex outward corners of the obstacle
