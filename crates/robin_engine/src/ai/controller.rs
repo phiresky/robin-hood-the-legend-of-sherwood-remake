@@ -3027,7 +3027,12 @@ impl AiController {
         let Some(view) = ctx.entity_view(handle) else {
             return;
         };
-        let elevation_delta = view.elevation - ctx.elevation;
+        // The inline Original overload forwards
+        // `(SWORD)pElement->GetElevation()` to Face(RHposition, SWORD).
+        // Preserve that truncation before subtracting the viewer elevation;
+        // fractional projection-plane Z can move a boundary vector into the
+        // adjacent 16-sector direction.
+        let elevation_delta = (view.elevation as i16) as f32 - ctx.elevation;
         let target_pos = view.position;
         self.face_position_impl(target_pos, ctx, elevation_delta, false);
     }
@@ -3037,7 +3042,7 @@ impl AiController {
         let Some(view) = ctx.entity_view(handle) else {
             return;
         };
-        let elevation_delta = view.elevation - ctx.elevation;
+        let elevation_delta = (view.elevation as i16) as f32 - ctx.elevation;
         self.face_position_impl(view.position, ctx, elevation_delta, true);
     }
 

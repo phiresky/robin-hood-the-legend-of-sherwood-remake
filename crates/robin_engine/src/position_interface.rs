@@ -1688,9 +1688,9 @@ fn vector_to_sector_0_to_15_with_aspect(x: f32, y: f32, aspect_ratio: f32) -> i1
     // Preserve `SBGeoVector2D::GetSector0to15`'s literal half-plane
     // classifier. An atan/round implementation is mathematically similar but
     // disagrees on f32 boundary vectors produced by anti-collision.
-    const SIN_PI_SIXTEENTH: f32 = 0.195_090_32;
-    const COS_PI_SIXTEENTH: f32 = 0.980_785_25;
-    const TAN_PI_EIGHTH: f32 = 0.414_213_57;
+    const SIN_PI_SIXTEENTH: f32 = 0.195_090_322_016_12;
+    const COS_PI_SIXTEENTH: f32 = 0.980_785_280_403_23;
+    const TAN_PI_EIGHTH: f32 = 0.414_213_562_373_09;
 
     // Preserve Original's left-associative f32 operation order. Scaling Y by
     // the reciprocal before calling the aspect-1 classifier is algebraically
