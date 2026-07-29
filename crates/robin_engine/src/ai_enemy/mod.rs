@@ -3547,11 +3547,20 @@ impl EnemyAi {
         self.base.return_to_duty_common_stuff(sim, flags, ctx);
 
         // `ReturnToDutyCommonStuff` calls the virtual Enemy `SetState` in
-        // C++. The shared Rust base performs the state assignment directly,
-        // so preserve the corresponding callback item explicitly. Without
-        // this final FIFO entry, an older queued transition (notably the
-        // init-time Default/Enroute transition) is restored after the common
-        // code has already advanced the live state to Default/GotoRoute.
+        // C++. The shared Rust base performs the state assignment directly.
+        // Restore the Enemy override's attentive-mode tail: every Default
+        // substate requests ordinary (or forced) attention, which may launch
+        // LeaveAttentiveMode alongside the return route. This is deliberately
+        // queued after the common routine has built that route, matching the
+        // observable sequence-manager registration order of the virtual call.
+        self.base.outbox.actor.set_attentive_mode =
+            Some(AttentiveModeEffect::new(self.forced_attentive, false));
+
+        // Preserve the corresponding script callback item explicitly.
+        // Without this final FIFO entry, an older queued transition (notably
+        // the init-time Default/Enroute transition) is restored after the
+        // common code has already advanced the live state to
+        // Default/GotoRoute.
         let incoming_state = self.base.current_state;
         let incoming_substate = self.base.current_substate;
         if outgoing_substate != incoming_substate {
