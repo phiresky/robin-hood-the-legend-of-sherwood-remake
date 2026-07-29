@@ -147,6 +147,7 @@ impl FriendlyAi {
                 incoming_state: state,
                 incoming_substate: substate,
                 source,
+                actor_effects_before_callback: Default::default(),
             }));
 
         self.base.set_ai_state(state);
@@ -1388,6 +1389,7 @@ impl FriendlyAi {
                             incoming_state: self.base.current_state,
                             incoming_substate: self.base.current_substate,
                             source: crate::ai::AiStateChangeSource::SelfActor,
+                            actor_effects_before_callback: Default::default(),
                         }),
                     );
                 }
@@ -2788,16 +2790,15 @@ mod tests {
             ai.base.current_substate,
             Substate::WonderingCivilianBodyReactiontime,
         );
-        assert!(
-            ai.base
-                .outbox
-                .reentrant
-                .owner_work
-                .contains(&AiOwnerWork::Speech(AiSpeechAttempt {
+        assert!(ai.base.outbox.reentrant.owner_work.iter().any(|work| {
+            matches!(
+                work,
+                AiOwnerWork::Speech(AiSpeechAttempt {
                     remark: Remark::CivSeesBody,
                     flags: 0,
-                }))
-        );
+                })
+            )
+        }));
         assert_eq!(
             ai.base.my_reconnaissance_report.report_type,
             ReportType::Body
@@ -2844,16 +2845,15 @@ mod tests {
         // AlertSoldier returns false (stub) → should panic
         assert_eq!(ai.base.current_state, AiState::Fleeing);
         assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
-        assert!(
-            ai.base
-                .outbox
-                .reentrant
-                .owner_work
-                .contains(&AiOwnerWork::Speech(AiSpeechAttempt {
+        assert!(ai.base.outbox.reentrant.owner_work.iter().any(|work| {
+            matches!(
+                work,
+                AiOwnerWork::Speech(AiSpeechAttempt {
                     remark: Remark::CivPanic,
                     flags: 0,
-                }))
-        );
+                })
+            )
+        }));
     }
 
     #[test]
@@ -2880,16 +2880,15 @@ mod tests {
             ai.base.current_substate,
             Substate::WonderingChildApproachingWhistling,
         );
-        assert!(
-            ai.base
-                .outbox
-                .reentrant
-                .owner_work
-                .contains(&AiOwnerWork::Speech(AiSpeechAttempt {
+        assert!(ai.base.outbox.reentrant.owner_work.iter().any(|work| {
+            matches!(
+                work,
+                AiOwnerWork::Speech(AiSpeechAttempt {
                     remark: Remark::CivWhistling,
                     flags: 0,
-                }))
-        );
+                })
+            )
+        }));
     }
 
     #[test]

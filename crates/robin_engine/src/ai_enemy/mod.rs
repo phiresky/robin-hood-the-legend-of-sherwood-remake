@@ -2653,6 +2653,7 @@ impl EnemyAi {
                     incoming_state: state,
                     incoming_substate: substate,
                     source,
+                    actor_effects_before_callback: Default::default(),
                 }));
         }
 
@@ -3564,6 +3565,7 @@ impl EnemyAi {
                     incoming_state,
                     incoming_substate,
                     source: AiStateChangeSource::SelfActor,
+                    actor_effects_before_callback: Default::default(),
                 }));
         }
     }
@@ -4567,16 +4569,20 @@ mod tests {
         // The transition queues an inline FilterAIEvent notification
         // for the post-think dispatcher to drain (matching the reference
         // `RHArtificialMalignity::SetState` at L9226).
+        let [AiOwnerWork::StateChange(notification)] =
+            ai.base.outbox.reentrant.owner_work.as_slice()
+        else {
+            panic!("expected one SetState notification");
+        };
+        assert_eq!(notification.outgoing_state, AiState::Default);
+        assert_eq!(notification.outgoing_substate, Substate::DefaultOnPost);
+        assert_eq!(notification.incoming_state, AiState::Attacking);
         assert_eq!(
-            ai.base.outbox.reentrant.owner_work,
-            vec![AiOwnerWork::StateChange(AiStateChangeNotification {
-                outgoing_state: AiState::Default,
-                outgoing_substate: Substate::DefaultOnPost,
-                incoming_state: AiState::Attacking,
-                incoming_substate: Substate::AttackingSwordfight,
-                source: AiStateChangeSource::Null,
-            })]
+            notification.incoming_substate,
+            Substate::AttackingSwordfight
         );
+        assert_eq!(notification.source, AiStateChangeSource::Null);
+        assert!(notification.actor_effects_before_callback.is_none());
     }
 
     #[test]

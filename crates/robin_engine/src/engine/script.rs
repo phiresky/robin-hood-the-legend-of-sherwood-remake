@@ -1751,7 +1751,6 @@ impl EngineInner {
         if new_action == old_action {
             return;
         }
-
         if let Err(error) = self.call_script_vm(
             sim,
             assets,
@@ -2809,6 +2808,10 @@ impl EngineInner {
 
             let notification = match work {
                 crate::ai::AiOwnerWork::StateChange(notification) => notification,
+                crate::ai::AiOwnerWork::ResumeGotoRouteReachPoint => {
+                    self.resume_goto_route_reach_point_for_npc(sim, owner, assets);
+                    continue;
+                }
                 crate::ai::AiOwnerWork::Speech(attempt) => {
                     // A rejected Say invokes MYTALK synchronously before Say
                     // returns. Detach the outer statement tail so recursive
@@ -2892,7 +2895,14 @@ impl EngineInner {
             // pure-Rust handler queued after SetState. Detach that later tail
             // while the VM runs, then splice recursively produced work ahead
             // of it.
-            let (owner_kind, is_scripted, later_work) = {
+            let (
+                owner_kind,
+                is_scripted,
+                later_work,
+                later_actor_effects,
+                later_self_stimuli,
+                later_cross_npc_actions,
+            ) = {
                 let entity = self.world.entities.get_mut(owner).unwrap_or_else(|| {
                     panic!(
                         "AI SetState owner {} disappeared before callback {}",
@@ -2928,11 +2938,35 @@ impl EngineInner {
                     .ai_controller_mut()
                     .unwrap_or_else(|| panic!("AI SetState owner {} lost its AI", owner.index()));
                 let later_work = std::mem::take(&mut ai.outbox.reentrant.owner_work);
+                let (later_actor_effects, later_self_stimuli, later_cross_npc_actions) =
+                    if let Some(prefix) = notification.actor_effects_before_callback.clone() {
+                        (
+                            Some(std::mem::replace(&mut ai.outbox.actor, prefix)),
+                            Some(std::mem::take(&mut ai.outbox.reentrant.self_stimuli)),
+                            Some(std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions)),
+                        )
+                    } else {
+                        (None, None, None)
+                    };
                 let is_scripted = entity
                     .actor_data()
                     .is_some_and(|actor| !actor.script_class.is_empty());
-                (owner_kind, is_scripted, later_work)
+                (
+                    owner_kind,
+                    is_scripted,
+                    later_work,
+                    later_actor_effects,
+                    later_self_stimuli,
+                    later_cross_npc_actions,
+                )
             };
+
+            // Effects issued before SetState are already inside the Original
+            // call stack. Settle that prefix while keeping the pure-Rust
+            // caller tail detached from the synchronous script callback.
+            if later_actor_effects.is_some() {
+                self.drain_pending_for_npc_mode(sim, owner, assets, owner_local_no_forecast, false);
+            }
 
             let source = match notification.source {
                 crate::ai::AiStateChangeSource::SelfActor => handle,
@@ -2956,7 +2990,8 @@ impl EngineInner {
                 // direct state mutation after SetState returned (Original's
                 // one-point macro completion does this before re-entering
                 // EVENT_REACHPOINT).
-                self.world
+                let ai = self
+                    .world
                     .entities
                     .get_mut(owner)
                     .and_then(Entity::ai_controller_mut)
@@ -2966,11 +3001,23 @@ impl EngineInner {
                             owner.index(),
                             work_index
                         )
-                    })
-                    .outbox
-                    .reentrant
-                    .owner_work
-                    .extend(later_work);
+                    });
+                ai.outbox.reentrant.owner_work.extend(later_work);
+                if let Some(later_actor_effects) = later_actor_effects {
+                    ai.outbox
+                        .reentrant
+                        .self_stimuli
+                        .extend(later_self_stimuli.expect("isolated SetState self-stimulus tail"));
+                    ai.outbox
+                        .reentrant
+                        .cross_npc_actions
+                        .extend(later_cross_npc_actions.expect("isolated SetState cross-NPC tail"));
+                    debug_assert!(
+                        !ai.outbox.actor.has_boundary_work(),
+                        "non-scripted SetState prefix left undrained actor effects"
+                    );
+                    ai.outbox.actor = later_actor_effects;
+                }
                 continue;
             }
 
@@ -3058,6 +3105,12 @@ impl EngineInner {
                     "AI SetState FilterAIEvent callback failed"
                 );
             }
+            // Native calls made by FilterAIEvent are still inside SetState
+            // and therefore observe the outgoing pair. Close callback-local
+            // recursive stimuli before committing the incoming pair.
+            if later_actor_effects.is_some() {
+                self.drain_self_stimuli_for_npc_without_forecast(sim, owner, assets);
+            }
 
             let entity = self.world.entities.get_mut(owner).unwrap_or_else(|| {
                 panic!(
@@ -3096,7 +3149,35 @@ impl EngineInner {
             };
             ai.set_ai_state(notification.incoming_state);
             ai.current_substate = notification.incoming_substate;
+
+            let ai = self
+                .world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "AI SetState owner {} vanished after callback settlement {}",
+                        owner.index(),
+                        work_index
+                    )
+                });
             ai.outbox.reentrant.owner_work.extend(later_work);
+            if let Some(later_actor_effects) = later_actor_effects {
+                ai.outbox
+                    .reentrant
+                    .self_stimuli
+                    .extend(later_self_stimuli.expect("isolated SetState self-stimulus tail"));
+                ai.outbox
+                    .reentrant
+                    .cross_npc_actions
+                    .extend(later_cross_npc_actions.expect("isolated SetState cross-NPC tail"));
+                debug_assert!(
+                    !ai.outbox.actor.has_boundary_work(),
+                    "SetState callback left actor effects outside its synchronous barrier"
+                );
+                ai.outbox.actor = later_actor_effects;
+            }
         }
 
         let still_pending = self

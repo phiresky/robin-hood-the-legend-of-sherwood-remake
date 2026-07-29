@@ -5188,7 +5188,7 @@ impl EngineInner {
         self.drain_pending_for_npc_mode(sim, npc_id, assets, false, false);
     }
 
-    fn drain_pending_for_npc_mode(
+    pub(super) fn drain_pending_for_npc_mode(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
@@ -8862,6 +8862,15 @@ impl EngineInner {
         } else {
             self.dispatch_filtered_stimulus(sim, assets, npc_id, stimulus, ctx, tick_data)
         };
+
+        // `RHArtificialIntelligence::ExecuteWaypointScript` invokes the
+        // waypoint VM directly from the active Think handler. Close that
+        // authored callback before the generic post-Think effect drain:
+        // script natives such as AssignPath recursively enter
+        // EVENT_RETURN_TO_DUTY before later orders or condolations from the
+        // outer handler can settle.
+        self.dispatch_pending_waypoint_script_for_owner(sim, npc_id, assets);
+
         // A missing entity or NPC shell without AI is a legitimate unhandled
         // no-op. An existing AI may also return false after running a handler,
         // so only the entry-state no-AI case can skip the synchronous drain.
@@ -10002,6 +10011,11 @@ impl EngineInner {
                 self.dispatch_filtered_stimulus(sim, assets, npc_id, &stimulus, &ctx, &tick_data);
             }
 
+            // A recursive Think can itself reach an authored waypoint. The
+            // Original runs ReachPoint on this same call stack, before the
+            // recursive Think's generic effects are allowed to escape.
+            self.dispatch_pending_waypoint_script_for_owner(sim, npc_id, assets);
+
             // Original Think calls execute their engine-facing side effects
             // before returning.  Close that window after every recursive
             // stimulus so a newly launched sequence participates in
@@ -10172,6 +10186,65 @@ impl EngineInner {
         assets: &LevelAssets,
     ) {
         self.drain_direct_ai_owner_boundary_mode(sim, npc_id, assets, true, true);
+    }
+
+    /// Continue common route-arrival code after its virtual SetState barrier.
+    ///
+    /// This is a fresh engine-facing context because `FilterAIEvent` may have
+    /// synchronously reassigned the patrol path or otherwise mutated the
+    /// actor before Original resumes the caller after `SetState`.
+    pub(super) fn resume_goto_route_reach_point_for_npc(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+    ) {
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let frame = self.control.frame_counter;
+        let in_uninterruptible_command = self.is_very_very_busy(npc_id);
+        let live_animation = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(npc_id)
+            .map(|(_, _, order)| order.order_type)
+            .unwrap_or(crate::order::OrderType::NonanimationEnd);
+        let ctx = {
+            let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
+                panic!(
+                    "route-arrival continuation owner {} disappeared",
+                    npc_id.index()
+                )
+            });
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let mut ctx = build_ai_context_from_entity(
+                entity,
+                frame,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.hiking_paths,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            ctx.in_uninterruptible_command = in_uninterruptible_command;
+            ctx.self_animation = live_animation;
+            ctx
+        };
+        self.world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "route-arrival continuation owner {} lost its AI",
+                    npc_id.index()
+                )
+            })
+            .resume_goto_route_reach_point(sim, &ctx);
     }
 
     fn drain_direct_ai_owner_boundary_mode(

@@ -573,6 +573,37 @@ impl AiController {
         self.current_state = state;
     }
 
+    /// Model a virtual Enemy/Friendly `SetState` call made by common
+    /// `RHArtificialIntelligence` code.
+    ///
+    /// The C++ override calls the actor's `FilterAIEvent` before assigning the
+    /// incoming pair. Rust cannot re-enter the script VM while this controller
+    /// is borrowed, so preserve the actor-effect prefix and queue an
+    /// owner-local barrier. Effects issued by statements after this call stay
+    /// in the live outbox and are hidden until the callback returns.
+    fn suspend_goto_route_reach_point_for_set_state(&mut self, state: AiState, substate: Substate) {
+        if self.current_substate != substate {
+            let actor_effects_before_callback = std::mem::take(&mut self.outbox.actor);
+            self.outbox
+                .reentrant
+                .owner_work
+                .push(AiOwnerWork::StateChange(AiStateChangeNotification {
+                    outgoing_state: self.current_state,
+                    outgoing_substate: self.current_substate,
+                    incoming_state: state,
+                    incoming_substate: substate,
+                    source: AiStateChangeSource::SelfActor,
+                    actor_effects_before_callback: Some(actor_effects_before_callback),
+                }));
+        }
+        self.set_ai_state(state);
+        self.current_substate = substate;
+        self.outbox
+            .reentrant
+            .owner_work
+            .push(AiOwnerWork::ResumeGotoRouteReachPoint);
+    }
+
     // -- Locks --
 
     pub fn non_script_lock(&mut self, flags: AiLockFlags) {
@@ -1610,10 +1641,11 @@ impl AiController {
     /// The per-waypoint VM instance lives on `MissionScript` (keyed by
     /// `(path_idx, wp_idx)`), so we can't dispatch from the AI layer
     /// directly. Instead we record the intent on
-    /// `pending_waypoint_script_reach_point`; the engine drains it
-    /// right after `think()` returns, calls `ReachPoint(actor)` on the
-    /// bound instance, and then fires `EventAfterScriptGoOn` unless the
-    /// script put us into `DefaultScriptDriven`.
+    /// `pending_waypoint_script_reach_point`; the engine closes it
+    /// immediately after the raw handler releases its borrow, before the
+    /// generic post-Think drain. It calls `ReachPoint(actor)` on the bound
+    /// instance, then fires `EventAfterScriptGoOn` unless the script put us
+    /// into `DefaultScriptDriven`.
     pub fn execute_waypoint_script(&mut self, path_idx: PathId, wp_idx: u8) {
         self.outbox.reentrant.waypoint_script_reach_point = Some((path_idx, wp_idx));
     }
@@ -3055,6 +3087,19 @@ impl AiController {
             .push(AiOrderIntent::face_direction(direction as i16));
     }
 
+    fn launch_turn_direction_deferred(&mut self, direction: u16) {
+        let mut intent = AiOrderIntent::face_direction(direction as i16);
+        // This models a direct `LaunchSequenceElement(TURN)`, not `FaceTo`.
+        // The latter halts the actor before registering its sequence, while
+        // the route-arrival handler deliberately leaves any earlier
+        // same-frame deferred element in the manager FIFO. Priority
+        // arbitration at the later Instruct boundary decides which turn
+        // survives.
+        intent.no_halt = true;
+        intent.defer_instruction = true;
+        self.outbox.actor.orders.push(intent);
+    }
+
     fn face_to_same_direction_can_short_circuit(ctx: &AiContext) -> bool {
         matches!(
             ctx.self_action_state,
@@ -3735,67 +3780,11 @@ impl AiController {
             // ─── Return to route (has patrol path) ──────────────────
             Substate::DefaultGotoRoute => {
                 if stimulus_type == StimulusType::EventReachPoint {
-                    self.set_ai_state(AiState::Default);
-                    self.current_substate = Substate::DefaultGotoRouteTurn;
-
-                    // Calls `InitializePatrol()` here to rebuild the
-                    // coordinate-patrol member list. Raise the
-                    // one-shot flag so `tick_patrol_coordination`
-                    // Phase 3 picks it up next pass.
-                    self.needs_patrol_reinit = true;
-
-                    // Turn to face the direction from the previous waypoint,
-                    // but only at a waypoint that carries command data.  The
-                    // Original checks both `path.Size() > 1` and
-                    // `currentWaypoint->uwSizeOfData > 0`; simple waypoints
-                    // synchronously feed EVENT_DONE back into the AI without
-                    // launching a Turn element.
-                    if let Some(ref mut path) = self.patrol_path {
-                        let current_has_command =
-                            path.current_waypoint(hiking_paths).is_some_and(|waypoint| {
-                                !matches!(
-                                    waypoint.command,
-                                    crate::level_data::WaypointCommand::None
-                                )
-                            });
-                        if path.size > 1 && current_has_command {
-                            // Get the previous waypoint to compute the turn
-                            // direction. Original performs `--path`, reads the
-                            // waypoint, then performs `++path` on the *live*
-                            // RHPath. At either endpoint that round trip also
-                            // reverses the path's traversal direction, which
-                            // controls DIR_FORWARD/DIR_BACKWARD waypoint
-                            // macros. Preserve that iterator side effect.
-                            path.retreat();
-                            let previous_waypoint =
-                                path.current_waypoint(hiking_paths).map(|wp| (wp.x, wp.y));
-                            path.advance();
-                            if let Some((prev_x, prev_y)) = previous_waypoint {
-                                let dx = ctx.position.x - prev_x as f32;
-                                let dy = ctx.position.y - prev_y as f32;
-                                let sector =
-                                    crate::position_interface::vector_to_sector_0_to_15(dx, dy);
-                                // This is deliberately not `FaceTo`: Original
-                                // constructs and launches RHCOMMAND_TURN
-                                // directly here.  In particular, an actor
-                                // already facing the route direction must
-                                // still keep the Turn alive until its actor
-                                // sequence completes; FaceTo's waiting/bored
-                                // same-direction shortcut would recursively
-                                // synthesize EVENT_DONE and enter the waypoint
-                                // macro in this same owner boundary.
-                                self.launch_turn_direction_unconditionally(sector as u16);
-                            } else {
-                                // No previous waypoint, skip turn.
-                                self.think_event_done_on_self(sim, ctx);
-                            }
-                        } else {
-                            // Single waypoint path — skip turn.
-                            self.think_event_done_on_self(sim, ctx);
-                        }
-                    } else {
-                        self.think_event_done_on_self(sim, ctx);
-                    }
+                    self.suspend_goto_route_reach_point_for_set_state(
+                        AiState::Default,
+                        Substate::DefaultGotoRouteTurn,
+                    );
+                    return false;
                 }
             }
 
@@ -3910,9 +3899,9 @@ impl AiController {
                                 // `execute_waypoint_script` queues a
                                 // `ReachPoint(actor)` dispatch against
                                 // the instance bound at level load;
-                                // the engine drains it post-think and
-                                // fires `EventAfterScriptGoOn` if the
-                                // script didn't lock us into
+                                // the engine closes it at the raw Think
+                                // boundary and fires `EventAfterScriptGoOn`
+                                // if the script didn't lock us into
                                 // `DefaultScriptDriven`.
                                 let path_idx = path.hiking_path_index;
                                 let wp_idx = path.current_waypoint_index;
@@ -4111,6 +4100,82 @@ impl AiController {
         }
 
         false
+    }
+
+    /// Resume the portion of Original's `SUBSTATE_DEFAULT_GOTOROUTE`
+    /// `EVENT_REACHPOINT` handler that follows its virtual `SetState`.
+    ///
+    /// The engine calls this only after `FilterAIEvent` and the incoming
+    /// `DefaultGotoRouteTurn` commit have completed. Keeping this as a
+    /// continuation is necessary because the no-turn arm recursively invokes
+    /// `Think(EVENT_DONE)` and must not observe the pre-callback Rust state.
+    pub(crate) fn resume_goto_route_reach_point(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        ctx: &AiContext,
+    ) {
+        self.needs_patrol_reinit = true;
+        let hiking_paths = &ctx.hiking_paths;
+
+        if let Some(ref mut path) = self.patrol_path {
+            let current_has_command = path.current_waypoint(hiking_paths).is_some_and(|waypoint| {
+                !matches!(waypoint.command, crate::level_data::WaypointCommand::None)
+            });
+            if path.size > 1 && current_has_command {
+                // Original performs `--path`, reads the previous waypoint,
+                // then `++path` on the live RHPath. Preserve the iterator's
+                // endpoint direction side effect.
+                path.retreat();
+                let previous_waypoint = path.current_waypoint(hiking_paths).map(|wp| (wp.x, wp.y));
+                path.advance();
+                if let Some((prev_x, prev_y)) = previous_waypoint {
+                    let dx = ctx.position.x - prev_x as f32;
+                    let dy = ctx.position.y - prev_y as f32;
+                    let sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy);
+                    self.launch_turn_direction_deferred(sector as u16);
+                } else {
+                    self.think_event_done_on_self(sim, ctx);
+                }
+            } else {
+                self.think_event_done_on_self(sim, ctx);
+            }
+        } else {
+            self.think_event_done_on_self(sim, ctx);
+        }
+
+        // The outer Enemy/Friendly `Think` had to release its borrow before
+        // the engine could run SetState's callback, so its ordinary EndThink
+        // already ran before this continuation. Close completion flags raised
+        // by the resumed tail at the same logical EndThink boundary.
+        self.finish_suspended_common_handler();
+    }
+
+    fn finish_suspended_common_handler(&mut self) {
+        debug_assert_eq!(
+            self.think_recursion_depth, 0,
+            "route-arrival continuation resumed before the suspended Think unwound"
+        );
+        if self.couldnt_reachpoint {
+            self.couldnt_reachpoint = false;
+            self.outbox
+                .reentrant
+                .self_stimuli
+                .push(StimulusType::EventCouldntReachPoint);
+        }
+        if self.already_on_point {
+            self.already_on_point = false;
+            self.outbox
+                .reentrant
+                .self_stimuli
+                .push(StimulusType::EventReachPoint);
+        }
+        if self.already_turned {
+            self.already_turned = false;
+            self.outbox
+                .reentrant
+                .self_stimuli
+                .push(StimulusType::EventDone);
+        }
     }
 
     /// Advance past the current waypoint and continue walking.

@@ -1090,6 +1090,7 @@ fn owner_fifo_preserves_and_hashes_say_setstate_both_orders() {
         incoming_state: AiState::Seeking,
         incoming_substate: Substate::SeekingHeardsteps,
         source: AiStateChangeSource::SelfActor,
+        actor_effects_before_callback: Default::default(),
     });
     let speech = AiOwnerWork::Speech(AiSpeechAttempt {
         remark: Remark::Arrow,
@@ -1097,14 +1098,20 @@ fn owner_fifo_preserves_and_hashes_say_setstate_both_orders() {
     });
 
     let mut say_then_state = AiOutbox::default();
-    say_then_state.reentrant.owner_work = vec![speech, state];
+    say_then_state.reentrant.owner_work = vec![speech.clone(), state.clone()];
     let mut state_then_say = AiOutbox::default();
     state_then_say.reentrant.owner_work = vec![state, speech];
 
     let encoded = serde_json::to_string(&say_then_state).expect("serialize owner FIFO");
     let decoded: AiOutbox = serde_json::from_str(&encoded).expect("deserialize owner FIFO");
-    assert_eq!(decoded.reentrant.owner_work, vec![speech, state]);
-    assert_eq!(state_then_say.reentrant.owner_work, vec![state, speech]);
+    assert!(matches!(
+        decoded.reentrant.owner_work.as_slice(),
+        [AiOwnerWork::Speech(_), AiOwnerWork::StateChange(_)]
+    ));
+    assert!(matches!(
+        state_then_say.reentrant.owner_work.as_slice(),
+        [AiOwnerWork::StateChange(_), AiOwnerWork::Speech(_)]
+    ));
     assert_ne!(
         robin_util::state_hash::compute(&say_then_state),
         robin_util::state_hash::compute(&state_then_say),
@@ -1138,6 +1145,7 @@ fn clear_all_pending_clears_every_outbox_barrier() {
             incoming_state: AiState::Seeking,
             incoming_substate: Substate::SeekingHeardsteps,
             source: AiStateChangeSource::SelfActor,
+            actor_effects_before_callback: Default::default(),
         }));
     ai.outbox
         .reentrant

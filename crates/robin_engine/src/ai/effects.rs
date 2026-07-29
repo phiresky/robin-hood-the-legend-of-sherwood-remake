@@ -101,15 +101,21 @@ pub struct AiReentrantOutbox {
     pub waypoint_script_reach_point: Option<(PathId, u8)>,
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
-)]
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub enum AiOwnerWork {
     StateChange(AiStateChangeNotification),
+    /// Continue the common `EVENT_REACHPOINT` route handler after its
+    /// virtual `SetState` callback has returned and committed.
+    ResumeGotoRouteReachPoint,
     Speech(AiSpeechAttempt),
-    RestoreDetectableObjects { knocked_out_in_money_fight: bool },
+    RestoreDetectableObjects {
+        knocked_out_in_money_fight: bool,
+    },
     InformResurrection,
-    LaunchTimer { frames: u32, current_frame: u32 },
+    LaunchTimer {
+        frames: u32,
+        current_frame: u32,
+    },
     SetEyeStatus(crate::element::EyeStatus),
 }
 
@@ -127,15 +133,18 @@ pub struct AiSpeechAttempt {
 /// borrow, so the engine records both sides of the transition. The callback
 /// barrier temporarily restores `outgoing_*`, invokes `FilterAIEvent`, then
 /// re-resolves the typed AI owner and commits `incoming_*`.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
-)]
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct AiStateChangeNotification {
     pub outgoing_state: AiState,
     pub outgoing_substate: Substate,
     pub incoming_state: AiState,
     pub incoming_substate: Substate,
     pub source: AiStateChangeSource,
+    /// Actor effects issued before the corresponding Original `SetState`
+    /// call. The live actor outbox then contains only statements executed
+    /// after SetState returned, which must remain hidden until the
+    /// synchronous script callback has completed.
+    pub actor_effects_before_callback: Option<AiActorOutbox>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]

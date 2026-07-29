@@ -671,6 +671,12 @@ pub struct AiOrderIntent {
     pub target_actor: Option<u32>,
     pub compute_direction: bool,
     pub defer_initial_turn_step: bool,
+    /// Keep this ordinary actor command on `SequenceManager`'s deferred
+    /// instruction queue. Common AI handlers launch these turns inline in
+    /// C++, but `LaunchSequenceElement` does not call `Go` until the manager's
+    /// later Hourglass pass.
+    #[serde(default)]
+    pub defer_instruction: bool,
     /// This Face was authored after a same-call SetState changed attentive
     /// mode. The engine must apply that attentive transition before
     /// instructing the Turn.
@@ -726,6 +732,7 @@ impl AiOrderIntent {
             target_actor: None,
             compute_direction: true,
             defer_initial_turn_step: false,
+            defer_instruction: false,
             after_attentive_mode: false,
             fast_turn: false,
             explicit_direction: None,

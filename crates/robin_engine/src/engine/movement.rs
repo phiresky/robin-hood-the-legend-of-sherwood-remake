@@ -7525,7 +7525,7 @@ impl EngineInner {
                                 )
                             })
                         });
-                        if defer_standalone_turn {
+                        if defer_standalone_turn || intent.defer_instruction {
                             self.launch_turn_sequence_deferred_no_transitions(
                                 entity_id,
                                 turn_command,
@@ -7573,7 +7573,7 @@ impl EngineInner {
                         if !intent.no_halt {
                             self.halt_actor(entity_id);
                         }
-                        if defer_standalone_turn {
+                        if defer_standalone_turn || intent.defer_instruction {
                             self.launch_turn_sequence_deferred_no_transitions(
                                 entity_id,
                                 turn_command,
