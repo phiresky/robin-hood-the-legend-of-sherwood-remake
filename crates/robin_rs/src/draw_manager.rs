@@ -267,17 +267,19 @@ impl DrawManager {
         color: u16,
     ) {
         // cos(55°), the game's isometric projection angle.
-        const ISOMETRIC_MINOR_AXIS_RATIO: f64 = 0.573576436351046096108031912826158;
+        const ISOMETRIC_MINOR_AXIS_RATIO: f64 = 0.573576436351046096108031912826158f32 as f64;
 
         let center = self.map_to_screen(position);
         // Cast through u16 to truncate to 16 bits.
         let r = if self.zoom_factor != 1.0 {
-            (radius as f32 * self.zoom_factor) as u16 as i32
+            // Windows retail promotes the stored binary32 zoom to x87
+            // extended precision and converts only the product.
+            (radius as f64 * self.zoom_factor as f64) as u16 as i32
         } else {
             radius as i32
         };
 
-        let ry = (r as f64 * ISOMETRIC_MINOR_AXIS_RATIO) as f32 as i32;
+        let ry = (r as f64 * ISOMETRIC_MINOR_AXIS_RATIO) as i32;
         draw_ellipse_gpu(renderer, center.x, center.y, r, ry, color);
     }
 

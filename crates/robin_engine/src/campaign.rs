@@ -26,12 +26,7 @@ pub const COEFFICIENT_RESERVIST_HAND_TO_HAND: f32 = 1.5;
 pub const COEFFICIENT_RESERVIST_BOW: f32 = 1.5;
 
 /// Life-point multiplier applied to a reservist's life when they
-/// return to the gang.  Note the original engine casts this `1.5f` to a
-/// signed integer **before** the multiplication, which truncates to
-/// `1` — the scaling is a no-op and is followed by a clamp to
-/// `LIFEPOINTS_PC`.  [`Campaign::move_to_gang`] reproduces that
-/// truncation so we match the original (buggy) behaviour exactly
-/// rather than "fixing" it silently.
+/// return to the gang.
 pub const COEFFICIENT_RESERVIST_LIFE: f32 = 1.5;
 
 // ─── Enums ───────────────────────────────────────────────────────
@@ -271,12 +266,9 @@ fn default_production_sectors() -> Vec<crate::sector_production::SectorProductio
 /// - Medium: unmodified
 /// - Hard: doubled penalty (`1.0 - 2.0 * (1.0 - ratio)`), clamped to 0
 ///
-/// Result is `min_team + (u16)warcrime * (max_team - min_team)`.
-///
-/// NOTE: warcrime is cast to `u16` *before* multiplying, which truncates
-/// any fractional value to 0. This means bonus peasants beyond
-/// `min_team` are only awarded when warcrime is exactly 1.0 (all
-/// soldiers left alive). This matches the original behavior.
+/// Windows retail computes the complete fractional range contribution
+/// before converting it to an integer:
+/// `min_team + (u16)(warcrime * (max_team - min_team))`.
 pub fn calculate_warcrime_recruitment(
     living_soldiers: u32,
     dead_soldiers: u32,
@@ -285,18 +277,20 @@ pub fn calculate_warcrime_recruitment(
     max_new_team_members: u16,
 ) -> u32 {
     let total = dead_soldiers + living_soldiers;
+    // The Windows executable keeps this calculation in x87 extended
+    // precision through the final conversion.
     let mut warcrime = if total != 0 {
-        living_soldiers as f32 / total as f32
+        living_soldiers as f64 / total as f64
     } else {
-        0.0
+        0.0f64
     };
 
     match difficulty {
         DifficultyLevel::Easy => {
-            warcrime = 1.0 - difficulty_params::EASY_CARNAGE * (1.0 - warcrime);
+            warcrime = 1.0 - difficulty_params::EASY_CARNAGE as f64 * (1.0 - warcrime);
         }
         DifficultyLevel::Hard => {
-            warcrime = 1.0 - difficulty_params::HARD_CARNAGE * (1.0 - warcrime);
+            warcrime = 1.0 - difficulty_params::HARD_CARNAGE as f64 * (1.0 - warcrime);
             if warcrime < 0.0 {
                 warcrime = 0.0;
             }
@@ -304,11 +298,9 @@ pub fn calculate_warcrime_recruitment(
         DifficultyLevel::Medium => {}
     }
 
-    // Truncate to u16 before multiplying (likely a bug, but we match
-    // the original behavior).
-    let warcrime_int = warcrime as u16;
     let range = max_new_team_members.saturating_sub(min_new_team_members);
-    (min_new_team_members + warcrime_int * range) as u32
+    let bonus = (warcrime * range as f64) as u16;
+    (min_new_team_members + bonus) as u32
 }
 
 impl Campaign {
@@ -692,13 +684,10 @@ impl Campaign {
                     .human_status
                     .scale_experience(SkillName::Bow, COEFFICIENT_RESERVIST_BOW);
 
-                // Update life points.  The original casts the coefficient
-                // to a signed integer before multiplying, which truncates
-                // 1.5 to 1 — the scaling is a no-op and only the clamp
-                // to `LIFEPOINTS_PC` has effect.  Mirror that truncation
-                // exactly.
-                let coeff = COEFFICIENT_RESERVIST_LIFE as i16;
-                desc.status.life_points = desc.status.life_points.saturating_mul(coeff);
+                // Windows retail multiplies in floating point and converts
+                // the completed value back to SWORD.
+                desc.status.life_points =
+                    (desc.status.life_points as f64 * COEFFICIENT_RESERVIST_LIFE as f64) as i16;
                 if desc.status.life_points > LIFEPOINTS_PC {
                     desc.status.life_points = LIFEPOINTS_PC;
                 }
@@ -2491,6 +2480,29 @@ mod tests {
     }
 
     #[test]
+    fn returning_reservist_scales_fractional_stats_before_conversion() {
+        let profiles = crate::profiles::ProfileManager::new();
+        let mut c = Campaign::new();
+        let mut desc = PcDescription {
+            character_profile_idx: Some(CharacterProfileIdx(0)),
+            ..Default::default()
+        };
+        desc.status.life_points = 50;
+        desc.status.human_status.hand_to_hand.capacity = 10;
+        desc.status.human_status.hand_to_hand.experience = 80;
+        c.characters.push(desc);
+        c.gang_indices.push(0);
+
+        c.move_to_reservists(0);
+        c.move_to_gang(0, &profiles);
+
+        let status = &c.characters[0].status;
+        assert_eq!(status.life_points, 75);
+        assert_eq!(status.human_status.hand_to_hand.capacity, 11);
+        assert_eq!(status.human_status.hand_to_hand.experience, 20);
+    }
+
+    #[test]
     fn campaign_from_profiles_seeds_only_forest_robin() {
         let profiles = profile_manager_with_robin_party();
         let c = Campaign::from_profiles(&profiles, DifficultyLevel::Medium);
@@ -2693,10 +2705,9 @@ mod tests {
 
     #[test]
     fn warcrime_half_alive_medium() {
-        // Half alive → warcrime = 0.5 → (u16)0.5 = 0 → min
-        // (truncation means fractional warcrime gives no bonus)
+        // Half alive → min + trunc(0.5 * (max-min)) = 2 + 1.
         let count = calculate_warcrime_recruitment(5, 5, DifficultyLevel::Medium, 2, 5);
-        assert_eq!(count, 2);
+        assert_eq!(count, 3);
     }
 
     #[test]
@@ -2708,9 +2719,9 @@ mod tests {
 
     #[test]
     fn warcrime_all_dead_easy() {
-        // Easy: warcrime = 1.0 - 0.5*(1.0-0.0) = 0.5 → (u16)0.5 = 0 → min
+        // Easy: warcrime = 0.5 → min + trunc(0.5 * 3) = 3.
         let count = calculate_warcrime_recruitment(0, 10, DifficultyLevel::Easy, 2, 5);
-        assert_eq!(count, 2);
+        assert_eq!(count, 3);
     }
 
     #[test]

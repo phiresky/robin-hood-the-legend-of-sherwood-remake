@@ -225,10 +225,9 @@ impl BowState {
     ///
     /// Bilinear interpolation over distance-ratio and skill-level.
     ///
-    /// Includes the integer truncation of the distance ratio:
-    /// `(distance / range) as u32 * 100`.  This truncates the 0.0–1.0
-    /// float to 0 before multiplying, so all in-range distances
-    /// effectively use the `Distance0` bucket.
+    /// Windows retail multiplies the floating-point distance ratio by
+    /// 100 before converting it to the integer percentage used to
+    /// select a distance bucket.
     pub fn get_hit_chance(&self, profile: &BowProfile, ability: u32, distance: u32) -> u32 {
         assert!(ability <= 100);
 
@@ -240,8 +239,9 @@ impl BowState {
             return 0;
         }
 
-        // Truncate to integer BEFORE multiplying by 100.
-        let distance_ratio = ((distance as f32 / range as f32) as u32 * 100) as f32;
+        // Windows retail keeps the division and scale in x87 extended
+        // precision until the integer conversion.
+        let distance_ratio = (distance as f64 / range as f64 * 100.0) as u32 as f32;
         let dr = distance_ratio as u32;
 
         // Distance-key bracket (each bucket spans 20 %-points of range).
@@ -618,6 +618,15 @@ mod tests {
         let bow = BowState::new(0, &p, 10);
         // ability=0 (beginner), distance=0 → hit_chance[Beginner][Distance0] = 100
         assert_eq!(bow.get_hit_chance(&p, 0, 0), 100);
+    }
+
+    #[test]
+    fn bow_hit_chance_uses_fractional_distance_bucket() {
+        let p = make_bow_profile();
+        let bow = BowState::new(0, &p, 10);
+        // Half of the 200-unit normal range is the 50% point. For a
+        // beginner that interpolates halfway between 80 and 70.
+        assert_eq!(bow.get_hit_chance(&p, 0, 100), 75);
     }
 
     #[test]

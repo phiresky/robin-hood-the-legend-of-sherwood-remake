@@ -952,16 +952,16 @@ impl AiController {
 
     /// Interpolate between two values based on a parameter in 0..100.
     ///
-    /// `0.01f * param` is cast to `u16` (truncation toward zero), so
-    /// for `param ∈ [0, 99]` the cast yields `0` and the function
-    /// returns `value_at_0`; only `param == 100` yields `1` and returns
-    /// `value_at_100`. This is therefore a step function, not a linear
-    /// interpolation, despite its name. The truncation is preserved for
-    /// bit-for-bit parity with original behaviour.
+    /// Windows retail completes the interpolation in x87 extended
+    /// precision before converting the nonnegative result to `u16`.
+    /// Promoting the authored `0.01f` constant to `f64` preserves its
+    /// exact binary32 value while avoiding intermediate binary32
+    /// rounding, which reproduces that instruction sequence.
     pub fn value_between(value_at_0: u16, value_at_100: u16, param: u8) -> u16 {
         debug_assert!(param <= 100);
-        let p = (0.01f32 * param as f32) as u16;
-        value_at_0.wrapping_add(value_at_100.wrapping_sub(value_at_0).wrapping_mul(p))
+        let scale = 0.01f32 as f64;
+        (value_at_0 as f64 + (value_at_100 as f64 - value_at_0 as f64) * scale * param as f64)
+            as u16
     }
 
     // -- Bored time --

@@ -71,13 +71,16 @@ pub fn npc_tint(
 
     match alert {
         AlertLevel::Green => {
-            // `(value as u16 * 0.001f) * 32`: the truncation-before-multiply
-            // means the index is effectively `(value / 1000) * 32` — 0 for
-            // values < 1000, 32+ otherwise. The first write clamps to 31;
-            // the sorrow pass does not, so cap explicitly here to stay in
-            // bounds.
-            let idx1 = ((max_suspect as u32 / 1000) * 32).min(31) as usize;
-            let idx2 = ((sorrow_level as u32 / 1000) * 32).min(31) as usize;
+            // Windows retail completes both floating-point scales before
+            // converting to the 32-entry table index.
+            // Promote the authored binary32 constant to model the
+            // Windows x87 instruction sequence without intermediate
+            // binary32 rounding.
+            let scale = 0.001f32 as f64;
+            let idx1 = (max_suspect as f64 * scale * 32.0) as usize;
+            let idx2 = (sorrow_level as f64 * scale * 32.0) as usize;
+            let idx1 = idx1.min(31);
+            let idx2 = idx2.min(31);
             GREEN_ALERT_TABLE[idx1.max(idx2)]
         }
         AlertLevel::Yellow => YELLOW_ALERT,
@@ -183,9 +186,8 @@ mod tests {
     }
 
     #[test]
-    fn green_suspect_clamps_to_last_entry() {
-        // Any suspect/sorrow ≥ 1000 truncates to index 32 before the
-        // clamp, landing on GREEN_ALERT_TABLE[31].
+    fn green_suspect_interpolates_across_table() {
+        // Values at or above 1000 clamp to the final table entry.
         let hi = npc_tint(
             AlertLevel::Green,
             EyeStatus::LookForward,
@@ -205,7 +207,17 @@ mod tests {
             1500,
         );
         assert_eq!(sorrow, GREEN_ALERT_TABLE[31]);
-        // Below threshold stays at index 0.
+        // Intermediate values select intermediate entries.
+        let halfway = npc_tint(
+            AlertLevel::Green,
+            EyeStatus::LookForward,
+            400.0,
+            400.0,
+            500,
+            0,
+        );
+        assert_eq!(halfway, GREEN_ALERT_TABLE[16]);
+
         let calm = npc_tint(
             AlertLevel::Green,
             EyeStatus::LookForward,
@@ -214,6 +226,6 @@ mod tests {
             999,
             999,
         );
-        assert_eq!(calm, GREEN_ALERT_TABLE[0]);
+        assert_eq!(calm, GREEN_ALERT_TABLE[31]);
     }
 }

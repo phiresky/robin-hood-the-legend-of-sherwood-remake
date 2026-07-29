@@ -161,15 +161,14 @@ impl HumanStatus {
 
     /// Scale experience by a coefficient. Overflow rolls into capacity.
     ///
-    /// Note: the coefficient is truncated to an integer *before*
-    /// multiplying, so a fractional coefficient like `1.5` becomes
-    /// `*=1` (no-op). Bug-for-bug behaviour: the only callers pass
-    /// `COEFFICIENT_RESERVIST_HAND_TO_HAND` / `_BOW = 1.5`, so
-    /// floating-point math here would observably scale reservist
-    /// promotion experience by 1.5× instead of leaving it untouched.
+    /// Windows retail multiplies in floating point and converts the
+    /// completed value back to `ULONG`.
     pub fn scale_experience(&mut self, name: SkillName, coefficient: f32) {
         let skill = self.skill_mut(name);
-        skill.experience *= coefficient as u32;
+        // Promote the binary32 argument without changing its value; the
+        // Windows executable performs the multiplication in x87 extended
+        // precision and converts only the product.
+        skill.experience = (skill.experience as f64 * coefficient as f64) as u32;
 
         if skill.capacity < 100 && skill.experience >= 100 {
             skill.capacity += skill.experience / 100;
@@ -528,16 +527,14 @@ mod tests {
     }
 
     #[test]
-    fn scale_experience_fractional_coefficient_truncates_to_noop() {
-        // The coefficient is truncated to integer before multiplying,
-        // so the reservist promotion coefficient `1.5` becomes `*=1`.
-        // Without the truncation, experience=80 * 1.5 = 120 would roll
-        // capacity from 10 → 11 with experience=20.
+    fn scale_experience_fractional_coefficient_scales_before_conversion() {
+        // Windows retail computes 80 * 1.5 = 120 before converting,
+        // then rolls the extra 100 into capacity.
         let mut hs = HumanStatus::from_profile_stats(10, 0);
         hs.hand_to_hand.experience = 80;
         hs.scale_experience(SkillName::HandToHand, 1.5);
-        assert_eq!(hs.hand_to_hand.experience, 80);
-        assert_eq!(hs.hand_to_hand.capacity, 10);
+        assert_eq!(hs.hand_to_hand.experience, 20);
+        assert_eq!(hs.hand_to_hand.capacity, 11);
     }
 
     #[test]

@@ -129,14 +129,15 @@ fn consideration_accumulator() {
 
 #[test]
 fn value_between() {
-    // Truncation: param < 100 → value_at_0, == 100 → value_at_100.
-    // See `AiController::value_between` for context.
-    assert_eq!(AiController::value_between(0, 100, 50), 0);
+    // The Windows x87 path retains the slightly-low binary32 value of
+    // 0.01 through the complete expression before truncating.
+    assert_eq!(AiController::value_between(0, 100, 50), 49);
     assert_eq!(AiController::value_between(0, 100, 0), 0);
-    assert_eq!(AiController::value_between(0, 100, 99), 0);
-    assert_eq!(AiController::value_between(0, 100, 100), 100);
-    assert_eq!(AiController::value_between(10, 90, 50), 10);
-    assert_eq!(AiController::value_between(10, 90, 100), 90);
+    assert_eq!(AiController::value_between(0, 100, 99), 98);
+    assert_eq!(AiController::value_between(0, 100, 100), 99);
+    assert_eq!(AiController::value_between(10, 90, 50), 49);
+    assert_eq!(AiController::value_between(10, 90, 100), 89);
+    assert_eq!(AiController::value_between(90, 10, 50), 50);
 }
 
 #[test]

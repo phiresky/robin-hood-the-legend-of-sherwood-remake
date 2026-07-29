@@ -47,3 +47,6 @@
 /tmp/
 /binaries
 /.codex
+
+# Local API credentials
+/concept-maps/.env
