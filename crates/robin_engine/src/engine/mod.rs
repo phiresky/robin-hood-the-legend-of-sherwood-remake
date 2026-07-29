@@ -502,6 +502,42 @@ impl EngineInner {
         // fallback.
         self.init_ai(sim, assets);
 
+        // Original closes mission loading by centering on and selecting the
+        // playable PC with the greatest character-profile priority. This is
+        // authoritative selection state even before the first input frame.
+        let initial_pc = self
+            .world
+            .pc_ids
+            .iter()
+            .copied()
+            .filter_map(|pc_id| {
+                let Entity::Pc(pc) = self.world.entities.get(pc_id)? else {
+                    return None;
+                };
+                if !pc.pc.playable {
+                    return None;
+                }
+                let priority = assets
+                    .profile_manager
+                    .get_character(pc.pc.profile_index)?
+                    .priority;
+                Some((pc_id, priority))
+            })
+            .max_by_key(|&(_, priority)| priority)
+            .map(|(pc_id, _)| pc_id);
+        if let Some(pc_id) = initial_pc {
+            assert!(
+                self.is_pc_selectable(assets, pc_id),
+                "highest-priority playable PC {pc_id:?} is not selectable after mission initialization"
+            );
+            self.select_pc(assets, 0, pc_id, false, false);
+            assert_eq!(
+                self.players.seats[0].selection.as_slice(),
+                &[pc_id],
+                "initial PC selection message did not select its target"
+            );
+        }
+
         // Update player's ears position.
         self.update_sound_listener_position();
 
