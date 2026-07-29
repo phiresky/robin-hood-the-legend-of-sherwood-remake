@@ -165,7 +165,10 @@ impl RepulsiveLine {
             action_radius: ar,
             force_a: fa,
             force_b: fb,
-            is_total: true,
+            // RHRepulsiveLine constructors start with RHLine's zero type and
+            // add LINE_REPULSIVE only. Unlike RHRepulsivePoint, a line is
+            // therefore one-sided unless a caller explicitly sets TOTAL.
+            is_total: false,
             is_area: false,
         }
     }
@@ -272,10 +275,12 @@ mod tests {
     #[test]
     fn line_is_deviating_between() {
         let l = RepulsiveLine::new(map_pt(0.0, 0.0), map_pt(10.0, 0.0), 2.0, 5.0);
-        // Point near midpoint, on +normal side → Some
-        assert!(l.is_deviating(map_pt(5.0, 3.0)).is_some());
+        // The default normal is (0, -1), and constructor-created lines are
+        // one-sided like the original RHRepulsiveLine.
+        assert!(l.is_deviating(map_pt(5.0, -3.0)).is_some());
+        assert!(l.is_deviating(map_pt(5.0, 3.0)).is_none());
         // Point past the segment endpoints → None
-        assert!(l.is_deviating(map_pt(20.0, 3.0)).is_none());
+        assert!(l.is_deviating(map_pt(20.0, -3.0)).is_none());
     }
 
     #[test]
