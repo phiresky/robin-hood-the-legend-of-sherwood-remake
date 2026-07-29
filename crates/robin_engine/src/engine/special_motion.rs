@@ -151,8 +151,14 @@ impl EngineInner {
             elem.update_grid_cell();
         }
 
-        if let Some(obstacle) = obstacle {
-            self.set_obstacle_and_material(assets, entity_id, obstacle);
+        // SetPositionMap + ComputePositionAll in the Original recomputes 3D
+        // from the sprite's currently installed plane. A probe that falls
+        // just outside the projection polygon (door midpoints commonly sit
+        // on that boundary) therefore does not clear the old obstacle/plane.
+        // Only replace projection state when this operation resolves a real
+        // successor obstacle.
+        if let Some(Some(obstacle)) = obstacle {
+            self.set_obstacle_and_material(assets, entity_id, Some(obstacle));
             if let Some(entity) = self.get_entity_mut(entity_id) {
                 let point = position.map_point();
                 entity.element_data_mut().set_position_map(point);

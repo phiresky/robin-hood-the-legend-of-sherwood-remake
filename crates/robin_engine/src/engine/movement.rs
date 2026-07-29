@@ -5875,10 +5875,23 @@ impl EngineInner {
             // into the state-effect result now.
             let entity_target_seek = active_move_flags.contains(crate::sequence::MoveFlags::SEEK)
                 && ft.target_id.is_some();
+            // With anti-collision disabled the committed step is exactly
+            // `increment * speed`. Original PerformMotion applies that step,
+            // then tests the order's ordinary tolerance before returning to
+            // Execute. Account for an imminent tolerance arrival here so a
+            // fresh walking order that terminates on its first call does not
+            // expose the START-only Moving state. Door-pass approach points
+            // intentionally rely on this (their distance is often exactly
+            // the authored tolerance).
+            let reaches_order_tolerance_this_step = !is_transition_anim
+                && speed > 0.0
+                && order_tolerance > 0.0
+                && !sprite.position_iface.is_anti_collision_on()
+                && dist <= speed + order_tolerance;
             let state_effect_motion = movement_execute_visible_motion(
                 order_action,
                 motion_state,
-                !is_transition_anim && dist <= speed,
+                !is_transition_anim && (dist <= speed || reaches_order_tolerance_this_step),
                 entity_target_seek,
             );
             // The initiative handoff belongs to the Human Execute START arm,
@@ -6144,11 +6157,22 @@ impl EngineInner {
                     }
                     movement_state_effects.push((entity_id, posture, next_action_state));
                 }
+                let door_transition_state_effect_due =
+                    matches!(motion_state, MotionState::Terminated)
+                        || matches!(motion_state, MotionState::Done)
+                            && matches!(
+                                anim,
+                                OrderType::TransitionClimbingLadderDownWaitingUpright
+                                    | OrderType::TransitionClimbingLadderDownWaitingUprightAlerted
+                            );
                 if door_pass_anim.is_some()
-                    && matches!(motion_state, MotionState::Terminated)
+                    && door_transition_state_effect_due
                     && matches!(
                         anim,
                         OrderType::TransitionWaitingUprightClimbingWallUp
+                            | OrderType::TransitionWaitingCrouchedClimbingLadderDown
+                            | OrderType::TransitionClimbingLadderDownWaitingUpright
+                            | OrderType::TransitionClimbingLadderDownWaitingUprightAlerted
                             | OrderType::TransitionClimbingWallUpWaitingCrouched
                             | OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
                             | OrderType::TransitionWaitingCrouchedClimbingWallDown
