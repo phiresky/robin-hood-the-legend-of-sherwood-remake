@@ -39,8 +39,55 @@ struct TraceHeader {
     start_state: TraceStartState,
     initial_frame: u64,
     synchronous_pathfinding: bool,
+    sim_config: TraceSimConfig,
     campaign: TraceCampaign,
     motion_grid: TraceMotionGrid,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TraceSimConfig {
+    difficulty: TraceDifficulty,
+    script_enabled: bool,
+    highlander: bool,
+    highlander2: bool,
+    golden_eye: bool,
+    ignore_default_loose: bool,
+    bypass_fog_sprites_crash: bool,
+    amount_of_speaking: u16,
+}
+
+impl TraceSimConfig {
+    fn to_sim_config(&self, synchronous_pathfinding: bool) -> robin_engine::engine::SimConfig {
+        robin_engine::engine::SimConfig {
+            difficulty: self.difficulty.into(),
+            script_enabled: self.script_enabled,
+            highlander: self.highlander,
+            highlander2: self.highlander2,
+            golden_eye: self.golden_eye,
+            ignore_default_loose: self.ignore_default_loose,
+            bypass_fog_sprites_crash: self.bypass_fog_sprites_crash,
+            amount_of_speaking: self.amount_of_speaking,
+            synchronous_pathfinding,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(rename_all = "snake_case")]
+enum TraceDifficulty {
+    Easy,
+    Medium,
+    Hard,
+}
+
+impl From<TraceDifficulty> for robin_engine::player_profile::DifficultyLevel {
+    fn from(value: TraceDifficulty) -> Self {
+        match value {
+            TraceDifficulty::Easy => Self::Easy,
+            TraceDifficulty::Medium => Self::Medium,
+            TraceDifficulty::Hard => Self::Hard,
+        }
+    }
 }
 
 #[derive(
@@ -2843,10 +2890,9 @@ fn initialize_engine(
         titbit_row_frame_counts: Vec::new(),
         rng_seed: header.rng_seed,
         original_rng_replay: Some(rng_prefix),
-        sim_config: robin_engine::engine::SimConfig {
-            synchronous_pathfinding: true,
-            ..Default::default()
-        },
+        sim_config: header
+            .sim_config
+            .to_sim_config(header.synchronous_pathfinding),
     })
     .expect("initialize engine");
     robin_rs::game_session::setup_mission_audio_for_tool(
@@ -3544,6 +3590,34 @@ mod tests {
     #[test]
     fn schema_nine_is_required() {
         validate_trace_schema(9);
+    }
+
+    #[test]
+    fn recorded_sim_config_restores_every_authoritative_field() {
+        let config = TraceSimConfig {
+            difficulty: TraceDifficulty::Hard,
+            script_enabled: false,
+            highlander: true,
+            highlander2: true,
+            golden_eye: true,
+            ignore_default_loose: true,
+            bypass_fog_sprites_crash: true,
+            amount_of_speaking: 2,
+        }
+        .to_sim_config(true);
+
+        assert_eq!(
+            config.difficulty,
+            robin_engine::player_profile::DifficultyLevel::Hard
+        );
+        assert!(!config.script_enabled);
+        assert!(config.highlander);
+        assert!(config.highlander2);
+        assert!(config.golden_eye);
+        assert!(config.ignore_default_loose);
+        assert!(config.bypass_fog_sprites_crash);
+        assert_eq!(config.amount_of_speaking, 2);
+        assert!(config.synchronous_pathfinding);
     }
 
     #[test]

@@ -19,6 +19,7 @@ use crate::player_profile::DifficultyLevel;
 pub struct SimConfig {
     pub difficulty: DifficultyLevel,
     pub script_enabled: bool,
+    pub highlander: bool,
     pub highlander2: bool,
     pub golden_eye: bool,
     pub ignore_default_loose: bool,
@@ -37,6 +38,7 @@ impl SimConfig {
         Self {
             difficulty,
             script_enabled: options.script_enabled,
+            highlander: options.highlander,
             highlander2: options.highlander2,
             golden_eye: options.golden_eye,
             ignore_default_loose: options.ignore_default_loose,
@@ -83,6 +85,7 @@ pub struct GlobalOptions {
     pub sound_enabled: bool,
     pub check_sound_data: bool,
     pub patch_characters: bool,
+    pub highlander: bool,
     pub highlander2: bool,
     pub whatsup: bool,
     pub debug_surfaces: bool,
@@ -118,6 +121,7 @@ impl Default for GlobalOptions {
             sound_enabled: true,
             check_sound_data: false,
             patch_characters: false,
+            highlander: false,
             highlander2: false,
             whatsup: false,
             debug_surfaces: false,

@@ -685,6 +685,7 @@ impl EngineInner {
                     },
                     human: crate::element::HumanData {
                         time_hulk: crate::element::HULK_LENGTH,
+                        invulnerable: self.control.sim_config.highlander,
                         ..Default::default()
                     },
                     pc: crate::element::PcData {
@@ -695,6 +696,7 @@ impl EngineInner {
                         has_lockpick,
                         has_climb,
                         has_jump,
+                        immortal: self.control.sim_config.highlander,
                         beam_me_index: beam_me.index as i16,
                         disabled_actions,
                         disabled_actions_temp: vec![false; crate::profiles::NUMBER_OF_PC_ACTIONS],

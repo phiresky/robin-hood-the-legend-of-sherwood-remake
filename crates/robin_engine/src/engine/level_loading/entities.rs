@@ -443,6 +443,7 @@ impl EngineInner {
                 },
                 human: crate::element::HumanData {
                     time_hulk: crate::element::HULK_LENGTH,
+                    invulnerable: config.highlander,
                     ..Default::default()
                 },
                 pc: crate::element::PcData {
@@ -453,6 +454,7 @@ impl EngineInner {
                     has_lockpick,
                     has_climb,
                     has_jump,
+                    immortal: config.highlander,
                     // This PC is a rescue target, not initially
                     // controllable.  The portrait bar will pick this up
                     // via entity state sync.
