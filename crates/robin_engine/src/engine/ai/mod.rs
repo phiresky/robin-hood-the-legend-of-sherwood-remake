@@ -5372,6 +5372,27 @@ impl EngineInner {
             self.stop_owner(target_id, crate::sequence::SequencePriority::Normal);
         }
 
+        // The near-enemy EventView path calls
+        // `SetState(ATTACKING, REACTIONTIME)` before BattleDecisions reaches
+        // BeginSwordfight. SetState synchronously registers
+        // ENTER_ATTENTIVE_MODE; BeginSwordfight registers
+        // ENTER_SWORDFIGHT afterward, so the attentive lean-forward element
+        // is authoritative and the fight waits behind it. Rust batches both
+        // effects in one outbox; preserve that authored order instead of
+        // draining the core swordfight channel first.
+        let attentive_request = {
+            let mut take = None;
+            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
+                && let Some(base) = s.npc.ai_brain.base_mut()
+            {
+                take = base.outbox.actor.set_attentive_mode.take();
+            }
+            take
+        };
+        if let Some(request) = attentive_request {
+            self.set_soldier_attentive_mode(npc_id, request.target, request.fast_officer_variant);
+        }
+
         // Process enter_swordfight.  Two shapes:
         //   * Engage(target) — engagement against a specific opponent.
         //     Original `BeginSwordfight` launches ENTER_SWORDFIGHT; it
@@ -5610,41 +5631,6 @@ impl EngineInner {
         // Think boundary. The returned sequence actions remain registered for
         // the later SequenceManager::Hourglass instruction phase.
         let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
-
-        // Process pending `set_attentive_mode(target, fast_officer)`:
-        //   * Flip `will_be_attentive = target`.
-        //   * If `target != attentive`, book an
-        //     `ENTER_/LEAVE_ATTENTIVE_MODE` sequence element whose
-        //     `translate` inserts the appropriate
-        //     TRANSITION_WAITING_UPRIGHT_WAITING_ALERTED (or reverse /
-        //     officer) animation.
-        // The Rust port doesn't have a full sequence-command path for
-        // these yet, so we book the transition animation directly via
-        // `active_ai_anim` when the soldier is idle; the `execute`
-        // side-effect handler (animation.rs) flips `attentive` when
-        // the transition reaches DONE/TERMINATED.  When the soldier
-        // is NOT idle (already has `active_ai_anim` or `combat_anim`)
-        // we snap the flags instead so the next combat decision sees
-        // the correct state — the "Consider as done" branch.
-        let attentive_request = {
-            let mut take = None;
-            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
-                && let Some(base) = s.npc.ai_brain.base_mut()
-            {
-                take = base.outbox.actor.set_attentive_mode.take();
-            }
-            take
-        };
-        if let Some(request) = attentive_request {
-            // Route the request through the sequence pipeline
-            // so the order-driven animation handler runs —
-            // identical to any other `set_soldier_attentive_mode`
-            // call.  `translate` handles the "posture isn't upright" /
-            // "already busy" gating when the dispatcher runs next
-            // tick; snapping the flag immediately here would race
-            // that.
-            self.set_soldier_attentive_mode(npc_id, request.target, request.fast_officer_variant);
-        }
 
         if !orders_after_attentive.is_empty() {
             let ai = self
@@ -6667,7 +6653,7 @@ impl EngineInner {
         assets: &LevelAssets,
         source: EntityId,
     ) {
-        let scratch = self.build_sim_scratch(sim, assets);
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
         let view_radius = if self.ai.standard_view_polygon_radius > 0 {
             self.ai.standard_view_polygon_radius as f32
         } else {
@@ -6805,12 +6791,16 @@ impl EngineInner {
             // Civilian EventPanic: FriendlyAi — no combat tick data
             // consumed, stub is correct.
             let tick_data = AiPerTickData::stub();
-            self.dispatch_filtered_stimulus(sim, assets, npc_id, &stimulus, &ctx, &tick_data);
-
-            // Drain the resulting `PanicRequest`: find a door, or fall
-            // back to the `FleeingPanic` run-segment state machine.
-            self.process_pending_begin_panic_for(sim, assets, npc_id, &ctx);
-            self.process_pending_panic_seek_fallback_for(npc_id, &ctx);
+            // `NearbyCiviliansPanic` directly calls `pNPC->Think(stimulus)`.
+            // Close that recipient's complete owner-local Think boundary:
+            // EVENT_PANIC chooses a door and queues GoTo, whose movement
+            // element and synchronous path request must exist before the
+            // caller resumes. A raw dispatch plus manual PanicRequest drain
+            // left the GoTo stranded in the civilian outbox until its next
+            // owner slot.
+            self.dispatch_think_with_drain_without_forecast(
+                sim, npc_id, &stimulus, &ctx, &tick_data, assets,
+            );
         }
     }
 

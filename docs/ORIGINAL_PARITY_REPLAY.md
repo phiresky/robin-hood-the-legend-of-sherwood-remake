@@ -333,10 +333,26 @@ Mission-start reconstruction is exact through frame 317. Restoring post-motion
 script geometry exposed two previously masked lifecycle differences before the
 current frame-318 facing mismatch.
 
+The companion Nottingham mission-start trace is
+`original-code/parity-traces/original-fullgame-schema10-round2-session-0002.jsonl`:
+2,398 contiguous frames and 8,875 simulation RNG draws. Replay is exact through
+frame 389 after owner-local AI/RNG, seated-repulsion, and attentive-mode
+ordering corrections. The capture is deliberately invalid from frame 390:
+Original `NearbyCiviliansPanic` tagged its `EVENT_PANIC` payload as
+`INFO_HUMAN`, while `RHArtificialBonhomie::Think` read those same union bytes as
+an `INFO_POS` `RHposition`. Its escape-door choice therefore depended on
+pointer/stale bytes and process address layout. Original now records the
+caller's actual `Position(mpMe)` in the stimulus; Rust already uses that
+semantic position. No pointer-derived replay compatibility is permitted, and a
+fresh Nottingham recording is required for authoritative coverage after frame
+389.
+
 ## Change ledger
 
 | Status | Area | Trace evidence and Original behavior | Rust change / regression coverage |
 | --- | --- | --- | --- |
+| Done | Authored attentive-before-swordfight ordering | At Nottingham frame 390 a near-enemy `EventView` calls `SetState(ATTACKING, REACTIONTIME)` before `BattleDecisions -> BeginSwordfight`. Original synchronously registers `ENTER_ATTENTIVE_MODE` first, then registers `ENTER_SWORDFIGHT`; Rust collected both effects but drained swordfight first, making the PC and soldier enter combat before the authored attentive transition. | The owner-local effect drain now applies the pending attentive request before its later swordfight request. This preserves call order for every near-enemy reaction and removes the PC 252 / soldier 131 command divergences without actor-specific logic. |
+| Recording required | Typed civilian panic stimulus | `NearbyCiviliansPanic` called `stimulus.Set(EVENT_PANIC, mpMe)`, selecting the human-pointer union member, but the civilian panic handler reads `stimulusInfo.posPosition`. Nottingham frame 390 consequently selected an escape door from pointer/stale-memory-derived coordinates; the result is not a deterministic gameplay rule. | Original now calls `stimulus.Set(EVENT_PANIC, Position(mpMe))`, selecting the position payload consumed by the handler. Rust closes the recipient's complete owner-local `Think(EVENT_PANIC)` boundary so state, speech, door choice, and queued movement settle synchronously. The old trace is invalid from frame 390 and must not be patched with its accidental door identity. |
 | Done | Source-associated `LINE_SOUND` material crossings | PC 126 enters obstacle 62's local Grass polygon between frames 94 and 95. Original stores the owning `RHSectorMaterial*` on every boundary line and changes the PC to dry grass, producing run volume 150; soldier 64's frame-100 phased hearing check is then barely in range. Rust synthesized only globally listed lines at layer 0 before fast-grid allocation, lost their block registration, omitted obstacle-local polygons, and globally re-queried material instead of using the crossed owner. | The complete authored material table now remains index-addressable. Global and per-obstacle sound polygons register after motion-grid allocation on the same layers as Original; each edge carries its raw material index. Crossing removes old-position boundary repeats, sorts by intersection distance, and applies each exact sector with obstacle/default fallback. The schema-10 baseline advances from frame 99 through frame 123. |
 | Done | Initialized pass-door AI destination direction | At frame 124 Original `AI::Position` consults `RHSequenceElementMovement::GetDirection` while PC 126 passes door 73. The pass-door constructor never initialized `mswDirection`, so stale heap contents selected `point_out` despite an authored direct traversal. That moved the requested facing across the direction-14/15 boundary and changed soldier 64's reaction substate. | Original commit `d1a6e049` initializes the member and assigns the attached gate's direct/indirect direction. Rust already uses that authored direction. Rust facing also preserves Original's explicit target-elevation-to-`SWORD` conversion and exact `SBGeoVector2D` classifier literals. The replacement trace passes this boundary; no replay-specific emulation of the old undefined value was added. |
 | Done | Heard-steps investigation launch | At frame 167 soldier 64's reaction timer enters `SUBSTATE_SEEKING_HEARDSTEPS`. Original calls ordinary `GoTo(mposSeekPosition)` with no flags and launches a 200-frame timer. Rust used `GoNear` with the search-noise tolerance and a 10-frame timer; because the soldier was already within that tolerance, it immediately synthesized `EVENT_REACHPOINT` and advanced to `SeekingJustWatching`. | The heard-steps reaction now launches the exact ordinary, zero-flag `GoTo` and 200-frame timer. This preserves `special_action`'s normal close-point gate and applies to every soldier investigating a heard footstep. Replay advances from frame 166 through frame 190. |
