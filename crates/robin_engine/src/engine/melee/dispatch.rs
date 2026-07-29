@@ -52,6 +52,24 @@ impl EngineInner {
             return;
         }
 
+        // Delayed AI strikes are authored as WAIT_TIMER -> SWORDSTRIKE.
+        // Original leaves the special-strike substate when that preparation
+        // element hands off to the actual strike. A direct counter-strike has
+        // no preceding wait and remains special until its EventDone.
+        let follows_preparation_wait = elem_idx > 0
+            && self
+                .orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx - 1)
+                .is_some_and(|element| element.command == Command::WaitTimer);
+        if follows_preparation_wait
+            && let Some(crate::element::Entity::Soldier(soldier)) =
+                self.world.entities.get_mut(owner)
+            && let crate::element::AiBrain::Enemy(ai) = &mut soldier.npc.ai_brain
+        {
+            ai.finish_special_strike_preparation(self.control.frame_counter);
+        }
+
         if strike == SwordStrike::A {
             if can_enter_swordfight_with(
                 &self.world.entities,

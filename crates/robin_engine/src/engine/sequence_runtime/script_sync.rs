@@ -308,6 +308,23 @@ impl EngineInner {
                         profiles: &assets.profile_manager,
                     }
                     .dispatch(owner, command, sequence_id, element_index);
+                } else if matches!(
+                    command,
+                    Command::ReceiveSwordDamage
+                        | Command::ReceiveDamage
+                        | Command::ReceiveArrowDamage
+                        | Command::ReceiveStoneDamage
+                        | Command::ReceiveHitDamage
+                        | Command::ReceiveMobileDamage
+                        | Command::ReceiveNet
+                ) {
+                    // Ready()/StartPostponedSequenceElement() is re-entrant
+                    // in Original. A damage element released by the
+                    // terminating attack can therefore reach the victim's
+                    // Instruct/Translate callback before the attacker's
+                    // condolence stack returns. Use the same damage
+                    // translator as the ordinary manager Hourglass path.
+                    self.dispatch_receive_damage(sim, assets, owner, sequence_id, element_index);
                 } else {
                     return Err(format!(
                         "unsupported synchronous owner command {command:?} at {sequence_id:?}/{element_index}"

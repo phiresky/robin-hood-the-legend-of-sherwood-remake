@@ -714,6 +714,22 @@ impl EngineInner {
             }
         }
 
+        // Release the implementation-side latch before the strike's
+        // EventDone re-enters ordinary swordfight AI. Otherwise that
+        // reconsideration incorrectly believes a strike is still pending and
+        // suppresses the next source-authorized proposal.
+        if command.is_swordstrike()
+            && matches!(
+                terminal_state,
+                SequenceState::Terminated | SequenceState::Interrupted
+            )
+            && let Some(crate::element::Entity::Soldier(soldier)) =
+                self.world.entities.get_mut(owner)
+            && let crate::element::AiBrain::Enemy(ai) = &mut soldier.npc.ai_brain
+        {
+            ai.pending_special_strike = false;
+        }
+
         // Skip the per-command Think dispatch when further real
         // actions follow in the chain, or when we're tearing the
         // sequence down from inside a `Halt()` call.
