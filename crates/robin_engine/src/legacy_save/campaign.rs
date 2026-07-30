@@ -941,23 +941,23 @@ mod tests {
     }
 
     #[test]
-    fn golden_nottingham_restart_campaign_boundaries() {
+    fn golden_nottingham_continue_campaign_boundaries() {
         let Some(path) =
-            repository_fixture("datadirs/fullgame_linux/Data/Savegame/Profile_001/Restart")
+            repository_fixture("datadirs/fullgame_linux/Data/Savegame/Profile_001/Continue")
         else {
             return;
         };
         let (header, campaigns) = read_fixture(&path);
         assert_eq!(header.mission_id, 16723);
         assert_eq!(campaigns.backup.start_offset, 16);
-        assert_eq!(campaigns.backup.end_offset, 3981);
-        assert_eq!(campaigns.live.start_offset, 3981);
-        assert_eq!(campaigns.live.end_offset, 7946);
-        assert_eq!(campaigns.engine_offset, 7946);
+        assert_eq!(campaigns.backup.end_offset, 3597);
+        assert_eq!(campaigns.live.start_offset, 3597);
+        assert_eq!(campaigns.live.end_offset, 7178);
+        assert_eq!(campaigns.engine_offset, 7178);
         assert_eq!(campaigns.backup.campaign.missions.len(), 63);
         assert_eq!(campaigns.live.campaign.missions.len(), 63);
-        assert_eq!(campaigns.backup.campaign.characters.len(), 11);
-        assert_eq!(campaigns.live.campaign.characters.len(), 11);
+        assert_eq!(campaigns.backup.campaign.characters.len(), 8);
+        assert_eq!(campaigns.live.campaign.characters.len(), 8);
         assert_eq!(campaigns.live.campaign.current_mission, Some(30));
         if let Some(profiles) = read_fixture_profiles() {
             let bootstrap = campaigns
@@ -969,7 +969,7 @@ mod tests {
             assert_eq!(bootstrap.identity.campaign_mission_index, 30);
             assert!(!bootstrap.identity.proto_level_filename.is_empty());
             assert!(!bootstrap.identity.mission_filename.is_empty());
-            assert_eq!(bootstrap.campaign.characters.len(), 11);
+            assert_eq!(bootstrap.campaign.characters.len(), 8);
         }
         assert!(campaigns.engine_offset < std::fs::metadata(path).unwrap().len());
     }
