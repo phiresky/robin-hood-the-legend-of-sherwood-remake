@@ -41,7 +41,7 @@ use crate::fast_find_grid::GRID_CELL_SIZE;
 use crate::jump_line::JumpLineIndex;
 use crate::movement::{ActiveMovement, ActiveShot};
 use crate::order::OrderType;
-use crate::position_interface::PositionInterface;
+use crate::position_interface::{PositionInterface, SectorHandle};
 use crate::profiles::{
     Action, CharacterProfile, CharacterProfileIdx, CivilianProfileIdx, SoldierProfileIdx,
 };
@@ -842,6 +842,83 @@ pub enum SmalltalkHint {
     Legs,
 }
 
+/// Exact mutable `RHRepulsivePoint` state owned by a Human.
+///
+/// The normal anti-collision projection is rebuilt from posture every frame,
+/// but Original saves retain the complete owner object.  Keeping the complete
+/// state here lets a mid-frame load resume before that refresh without
+/// inventing geometry or dropping the Original affect-mask.
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct HumanRepulsivePointState {
+    pub position: MapPoint,
+    pub concave: bool,
+    pub limit_left: MapPoint,
+    pub limit_right: MapPoint,
+    pub action_radius: f32,
+    pub force_a: f32,
+    pub force_b: f32,
+    pub radius: f32,
+    pub id: u32,
+    pub affects_pcs: bool,
+    pub affects_soldiers: bool,
+    pub affects_civilians: bool,
+    pub affects_animals: bool,
+}
+
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct HumanShieldPointState {
+    pub obstacle: [f32; 4],
+    pub polygon: MapPoint,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct HumanPlaneState {
+    pub a: WorldPoint3D,
+    pub b: WorldPoint3D,
+    pub normal: WorldPoint3D,
+    pub origin: WorldPoint3D,
+    pub u: WorldPoint3D,
+    pub v: WorldPoint3D,
+    pub az: f32,
+    pub bz: f32,
+    pub dz: f32,
+    pub d: f32,
+}
+
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct HumanBoundingBox2State {
+    pub top_left: MapPoint,
+    pub bottom_right: MapPoint,
+    pub bounds_are_set: bool,
+}
+
+/// Exact serialized `RHSightObstacle` owned by a Human.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct HumanShieldState {
+    pub points: [HumanShieldPointState; 4],
+    pub top_plane: HumanPlaneState,
+    pub bottom_plane: HumanPlaneState,
+    pub box_3d: [f32; 6],
+    pub ground_box: HumanBoundingBox2State,
+    pub screen_box: HumanBoundingBox2State,
+    pub on_ground: bool,
+}
+
+/// Serialized progress of a Human's in-flight multi-victim sword strike.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct HumanSwordSweepState {
+    pub victims: Vec<EntityId>,
+    pub initial_angle: f32,
+    pub current_angle: f32,
+    pub final_angle: f32,
+}
+
 /// Human-level data.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct HumanData {
@@ -852,6 +929,8 @@ pub struct HumanData {
     pub concussion_healing_timeout: u16,
     pub tiredness: u16,
     pub unconscious: bool,
+    pub already_detectable_body: bool,
+    pub detectable_list_index: u16,
 
     // Sword strikes
     pub sword_strike_boredom: Vec<u16>,
@@ -904,6 +983,19 @@ pub struct HumanData {
     pub time_hulk: u32,
     pub hulk_level: u16,
     pub hulk_direction: bool,
+    pub hulk_speed: f32,
+
+    /// Original owner-local state which is either consumed before, or rebuilt
+    /// by, the corresponding Rust subsystem after a loaded frame.
+    pub repulsive_point: HumanRepulsivePointState,
+    pub building_sector: Option<SectorHandle>,
+    /// `CHECKENUM(mCurrentlyProducedNoise)` in the Original accidentally
+    /// serialized only the first word (`posOrigin.x`).  The rest is refreshed
+    /// by Human noise production and is intentionally not fabricated.
+    pub produced_noise_first_word: f32,
+    pub shield: HumanShieldState,
+    pub sword_sweep: HumanSwordSweepState,
+    pub pending_shoots: Vec<crate::sequence::SequenceElementRef>,
 }
 
 impl Default for HumanData {
@@ -914,6 +1006,8 @@ impl Default for HumanData {
             concussion_healing_timeout: 0,
             tiredness: 0,
             unconscious: false,
+            already_detectable_body: false,
+            detectable_list_index: 0,
             sword_strike_boredom: Vec::new(),
             stuck_under_nets_counter: 0,
             hollow_man: false,
@@ -934,6 +1028,13 @@ impl Default for HumanData {
             time_hulk: 0,
             hulk_level: 0,
             hulk_direction: false,
+            hulk_speed: 1.0,
+            repulsive_point: HumanRepulsivePointState::default(),
+            building_sector: None,
+            produced_noise_first_word: 0.0,
+            shield: HumanShieldState::default(),
+            sword_sweep: HumanSwordSweepState::default(),
+            pending_shoots: Vec::new(),
         }
     }
 }
@@ -1005,6 +1106,30 @@ impl PcAmmoData {
     }
 }
 
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct PcPortraitQuickIconState {
+    pub titbit_id: u32,
+    pub running: bool,
+}
+
+/// Engine-owned copy of the Original portrait state needed by save adoption.
+///
+/// The renderer may project this into a host widget, but simulation adoption
+/// must not lose it merely because no widget exists in a headless replay.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct PcPortraitState {
+    pub quantities: [u16; 3],
+    pub two_buttons_mode: bool,
+    pub displayed: bool,
+    pub burned: bool,
+    pub open: bool,
+    pub life_level: f32,
+    pub trumpet_enabled: bool,
+    pub quick_icons: [PcPortraitQuickIconState; 3],
+}
+
 /// PC-level data.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct PcData {
@@ -1040,7 +1165,12 @@ pub struct PcData {
     /// Stored sequences for each QA slot (up to 3). When the player
     /// replays a QA, the engine launches the sequence from this slot.
     pub quick_action_sequences: Vec<Option<crate::sequence::Sequence>>,
+    pub quick_seek_sequences: Vec<Option<crate::sequence::Sequence>>,
+    pub quick_action_special_counts: Vec<u16>,
+    pub quick_action_buttons: Vec<u16>,
+    pub quick_action_interactors: Vec<Option<EntityId>>,
     pub titbits: Vec<u32>,
+    pub portrait: PcPortraitState,
 
     // Detection
     pub head_seen: bool,
@@ -1072,6 +1202,7 @@ pub struct PcData {
     /// layer when the danger is across a chasm / off a balcony.
     pub shield_danger_point_layer: u16,
     pub shield_protected: Option<EntityId>,
+    pub shield_protector: Option<EntityId>,
 
     // Guard
     pub guard: Option<EntityId>,
@@ -1085,6 +1216,7 @@ pub struct PcData {
     // Ammo dropping
     pub last_ammo_dropping_position: MapPoint,
     pub last_dropped_ammo: Option<EntityId>,
+    pub update_last_dropped_ammo: bool,
     pub last_dropping_direction: u8,
 
     /// References character profile.
@@ -1151,7 +1283,12 @@ impl Default for PcData {
             ammo: PcAmmoData::default(),
             quick_action_types: Vec::new(),
             quick_action_sequences: vec![None, None, None],
+            quick_seek_sequences: vec![None, None, None],
+            quick_action_special_counts: vec![0; 3],
+            quick_action_buttons: vec![0; 3],
+            quick_action_interactors: vec![None; 3],
             titbits: Vec::new(),
+            portrait: PcPortraitState::default(),
             head_seen: false,
             belt_seen: false,
             feet_seen: false,
@@ -1164,11 +1301,13 @@ impl Default for PcData {
             shield_danger_point: WorldPoint3D::default(),
             shield_danger_point_layer: 0,
             shield_protected: None,
+            shield_protector: None,
             guard: None,
             time_till_reinforcement: 0xFFFF_FFFF,
             work_icon: WorkIcon::default(),
             last_ammo_dropping_position: MapPoint::default(),
             last_dropped_ammo: None,
+            update_last_dropped_ammo: false,
             last_dropping_direction: 0,
             profile_index: CharacterProfileIdx(0),
             kind: None,

@@ -310,6 +310,27 @@ fn convert_sequence(
     ))
 }
 
+/// Convert one owner-local sequence which is serialized inline rather than
+/// owned by `RHSequenceManager`.
+///
+/// PC quick-action and quick-seek slots use `Serialize(file, false)`, so their
+/// element-link fields are deliberately absent and must not be resolved
+/// against the manager pointer space.
+pub(crate) fn convert_owner_local_sequence(
+    saved: &LegacyInlineSequence,
+    entities: &LegacyEntityFixups,
+    topology: &LegacySequenceTopology,
+) -> Result<Sequence, LegacySequenceAdoptError> {
+    convert_sequence(
+        saved,
+        false,
+        entities,
+        topology,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn convert_element(
     sequence_id: u32,
