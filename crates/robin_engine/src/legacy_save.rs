@@ -17,6 +17,8 @@
 pub mod campaign;
 pub mod elements;
 pub mod engine;
+pub mod payload_actors;
+pub mod payload_base;
 
 use serde::{Deserialize, Serialize};
 

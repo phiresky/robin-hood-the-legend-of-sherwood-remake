@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
 
-use super::payload_base::{read_element_ref, LegacyElementRef, LegacyPoint2, LegacyPoint3};
 use super::LegacySaveAbiProfile;
+use super::payload_base::{LegacyElementRef, LegacyPoint2, LegacyPoint3, read_element_ref};
 
 const PC_ACTION_COUNT: usize = 3;
 const QUICK_ACTION_MEMORY_COUNT: usize = 3;
@@ -644,7 +644,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     use super::*;
-    use crate::sbfile::{SbFile, SB_FILE_READ};
+    use crate::sbfile::{SB_FILE_READ, SbFile};
 
     fn push_u16(bytes: &mut Vec<u8>, value: u16) {
         bytes.extend_from_slice(&value.to_le_bytes());
