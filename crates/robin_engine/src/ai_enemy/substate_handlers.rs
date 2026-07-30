@@ -4964,7 +4964,7 @@ impl EnemyAi {
                         let dx = target_pos.x - ctx.position.x;
                         let dy = target_pos.y - ctx.position.y;
                         let dir = vec_to_sector(dx, dy);
-                        self.base.face_direction(dir, ctx);
+                        self.base.set_direction_goal(dir);
                         // Shield obstacle is recomputed each frame by
                         // EngineInner::update_shield_obstacles — no explicit call needed.
                         self.base.launch_timer(30, ctx.frame);
@@ -5118,7 +5118,7 @@ impl EnemyAi {
                                 let dx = target_pos.x - ctx.position.x;
                                 let dy = target_pos.y - ctx.position.y;
                                 let dir = vec_to_sector(dx, dy);
-                                self.base.face_direction(dir, ctx);
+                                self.base.set_direction_goal(dir);
                                 // Shield obstacle is recomputed each frame by
                                 // EngineInner::update_shield_obstacles — no explicit call needed.
                                 self.base.launch_timer(20, ctx.frame);

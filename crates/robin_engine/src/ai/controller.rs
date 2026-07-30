@@ -3088,7 +3088,17 @@ impl AiController {
         let dx = view.position.x - ctx.position.x;
         let dy = view.position.y - ctx.position.y;
         let direction = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
-        self.outbox.actor.set_direction = Some(direction as i16);
+        self.set_direction_goal(direction as u16);
+    }
+
+    /// Match a direct Original `RHElement::SetDirection(UWORD)` call.
+    ///
+    /// This writes the progressive direction goal only. It must not launch a
+    /// standalone Turn sequence: callers such as shield maintenance update
+    /// their collision geometry in place while the selected waiting-shield
+    /// animation performs any needed rotation.
+    pub fn set_direction_goal(&mut self, direction: u16) {
+        self.outbox.actor.set_direction = Some((direction & 15) as i16);
     }
 
     // -- Self-stimuli --

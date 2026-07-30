@@ -1805,7 +1805,15 @@ boundary for every human, including NPC soldiers. Applying it when the command
 was dispatched changed direction too early; omitting it for NPCs left a shield
 bearer one sector away once raising began. Linux2 Profile 002 save 003 now
 passes the direction transition at frame 13795 and advances to a later
-independent command-timing difference at frame 13814.
+command-timing difference at frame 13814.
+
+Shield-maintenance timers use a different Original operation:
+`RHElement::SetDirection` updates the progressive goal and calls
+`UpdateShield` without launching a `Turn` sequence. Rust now represents this
+direct write explicitly and uses it for both a lone shield bearer protecting
+an archer and an established phalanx. Save 003 consequently keeps the
+`WaitingShield` command at frame 13814 and advances to an independent door
+movement difference at frame 13821.
 
 ## Current Linux-v48 loaded-save result
 
