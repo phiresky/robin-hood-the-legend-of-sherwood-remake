@@ -11,10 +11,11 @@ use crate::engine::{Engine, EngineInner, LevelAssets};
 
 use super::{
     LegacySaveAbiProfile,
-    adopt::{LegacyEntityFixups, derive_position_topology, preflight_initialized_v48_adoption},
+    adopt::{LegacyEntityFixups, derive_position_topology},
     adopt_actor_ownership::LegacyActorOwnershipAdoptionPlan,
     adopt_camera::{LegacyCameraAdoptionPlan, LegacyCameraHostState},
     adopt_campaign::LegacyCampaignAdoptionPlan,
+    adopt_dynamic_elements::LegacyDynamicElementAdoptionPlan,
     adopt_elements::LegacyStaticElementAdoption,
     adopt_grid::{LegacyFastFindGridAdoptionPlan, LegacyGridHostState},
     adopt_hiking_tail::{LegacyHikingTailAdoptionPlan, LegacyTrajectoryHostOutput},
@@ -36,6 +37,7 @@ use super::{
     adopt_tail_runtime::LegacyTailRuntimeAdoptionPlan,
     adopt_vm_arena::LegacyVmArenaPlan,
     body::LegacySaveBody,
+    topology_adapter::derive_static_element_topology,
 };
 
 #[derive(Debug, Error)]
@@ -68,6 +70,7 @@ pub(crate) struct LegacyKnownAdoptionPlan {
     simple: LegacySimpleAdoptionPlan,
     tail_basic: LegacyTailBasicAdoptionPlan,
     post_load: LegacyPostLoadAdoptionPlan,
+    post_dynamic_creation_counter: u32,
 }
 
 impl LegacyKnownAdoptionPlan {
@@ -76,6 +79,8 @@ impl LegacyKnownAdoptionPlan {
         assets: &LevelAssets,
         body: &LegacySaveBody,
         rng_policy: LegacyRngRestorePolicy,
+        entities: LegacyEntityFixups,
+        post_dynamic_creation_counter: u32,
     ) -> Result<Self, LegacyKnownAdoptionError> {
         if body.header.abi_profile != LegacySaveAbiProfile::PortLinuxI386V48 {
             return Err(LegacyKnownAdoptionError {
@@ -91,10 +96,6 @@ impl LegacyKnownAdoptionPlan {
                 &assets.profile_manager,
                 body.header.mission_id,
             ),
-        )?;
-        let entities: LegacyEntityFixups = stage(
-            "element identities",
-            preflight_initialized_v48_adoption(engine, assets, body),
         )?;
         let position_topology = stage(
             "position topology",
@@ -275,6 +276,7 @@ impl LegacyKnownAdoptionPlan {
             simple,
             tail_basic,
             post_load,
+            post_dynamic_creation_counter,
         })
     }
 
@@ -286,6 +288,7 @@ impl LegacyKnownAdoptionPlan {
     ) -> LegacyKnownHostState {
         self.campaign.apply(engine);
         engine.apply_legacy_linux_preamble_state(self.preamble);
+        engine.world.next_original_creation_order = self.post_dynamic_creation_counter;
         let preamble = self.preamble_services.apply(engine);
         let camera = self.camera.apply(engine);
         self.elements.apply(engine);
@@ -331,11 +334,15 @@ pub fn preflight_known_linux_v48_adoption(
     assets: &LevelAssets,
     body: &LegacySaveBody,
 ) -> Result<(), LegacyKnownAdoptionError> {
+    let (candidate, entities, post_dynamic_creation_counter) =
+        prepare_dynamic_candidate(engine, assets, body)?;
     LegacyKnownAdoptionPlan::preflight(
-        engine.legacy_adoption_inner(),
+        &candidate,
         assets,
         body,
         LegacyRngRestorePolicy::PreserveRecordedGlobalDrawStream,
+        entities,
+        post_dynamic_creation_counter,
     )
     .map(drop)
 }
@@ -346,11 +353,46 @@ pub(crate) fn adopt_known_linux_v48_candidate(
     body: &LegacySaveBody,
     rng_policy: LegacyRngRestorePolicy,
 ) -> Result<LegacyKnownHostState, LegacyKnownAdoptionError> {
-    let mut candidate = engine.legacy_adoption_inner().clone();
-    let plan = LegacyKnownAdoptionPlan::preflight(&candidate, assets, body, rng_policy)?;
+    let (mut candidate, entities, post_dynamic_creation_counter) =
+        prepare_dynamic_candidate(engine, assets, body)?;
+    let plan = LegacyKnownAdoptionPlan::preflight(
+        &candidate,
+        assets,
+        body,
+        rng_policy,
+        entities,
+        post_dynamic_creation_counter,
+    )?;
     let host = plan.apply(&mut candidate, assets);
+    host.grid.clone().apply(&mut candidate);
     engine.install_legacy_adoption_inner(candidate);
     Ok(host)
+}
+
+fn prepare_dynamic_candidate(
+    engine: &Engine,
+    assets: &LevelAssets,
+    body: &LegacySaveBody,
+) -> Result<(EngineInner, LegacyEntityFixups, u32), LegacyKnownAdoptionError> {
+    let mut candidate = engine.legacy_adoption_inner().clone();
+    let static_topology = stage(
+        "static element topology",
+        derive_static_element_topology(&candidate, assets),
+    )?;
+    let dynamic = stage(
+        "dynamic elements",
+        LegacyDynamicElementAdoptionPlan::preflight(
+            &candidate,
+            assets,
+            &body.element_envelope,
+            &static_topology,
+            &body.campaigns.live.campaign.characters,
+            body.engine.creation_counter,
+        ),
+    )?;
+    let post_dynamic_creation_counter = dynamic.post_load_creation_counter();
+    let entities = dynamic.apply(&mut candidate);
+    Ok((candidate, entities, post_dynamic_creation_counter))
 }
 
 fn stage<T, E: std::fmt::Display>(
