@@ -3857,7 +3857,23 @@ impl EnemyAi {
                             // all soldiers to go home" without an
                             // implementation; preserve the shipped
                             // reload-and-wait behavior.
-                            self.set_state(self.previous_state, self.previous_substate);
+                            let previous_state =
+                                AiState::try_from(self.previous_state as u32).unwrap_or_else(|_| {
+                                    panic!(
+                                        "live mPreviousState contains invalid Original enum word {}",
+                                        self.previous_state
+                                    )
+                                });
+                            let previous_substate = Substate::try_from(
+                                self.previous_substate as u32,
+                            )
+                            .unwrap_or_else(|_| {
+                                panic!(
+                                    "live mPreviousSubstate contains invalid Original enum word {}",
+                                    self.previous_substate
+                                )
+                            });
+                            self.set_state(previous_state, previous_substate);
                             self.base.launch_timer(10, ctx.frame);
                         }
                         _ => {

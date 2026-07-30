@@ -122,8 +122,16 @@ pub struct EnemyAi {
     pub search_charly_way: Vec<Position>,
     pub officers_position: Position,
 
-    pub previous_state: AiState,
-    pub previous_substate: Substate,
+    /// Raw serialized storage for Original's `mPreviousState`.
+    ///
+    /// The Original constructor leaves this field indeterminate and still
+    /// serializes all four bytes. It only becomes semantically live after
+    /// `EventSeesCharlyStandardProcedure` assigns it together with
+    /// `previous_substate`.
+    pub previous_state: i32,
+    /// Raw serialized storage for Original's `mPreviousSubstate`; see
+    /// [`Self::previous_state`].
+    pub previous_substate: i32,
 
     pub reported_to_officer: bool,
 
@@ -323,8 +331,8 @@ impl Default for EnemyAi {
             gather_position_instructed: false,
             search_charly_way: Vec::new(),
             officers_position: Position::default(),
-            previous_state: AiState::Default,
-            previous_substate: Substate::DefaultOnPost,
+            previous_state: AiState::Default as i32,
+            previous_substate: Substate::DefaultOnPost as i32,
             reported_to_officer: false,
             missed_soldier_timer: 0,
             old_money: 0,

@@ -540,8 +540,8 @@ enum ConvertedLocalAi {
         gather_direction: u16,
         gather_position_instructed: bool,
         officers_position: Position,
-        previous_state: AiState,
-        previous_substate: Substate,
+        previous_state: i32,
+        previous_substate: i32,
         reported_to_officer: bool,
         missed_soldier_timer: u16,
         old_money: u16,
@@ -1596,16 +1596,13 @@ fn convert_local_ai(
                     creation_order,
                     "local_ai.enemy.officers_position.sector",
                 )?,
-                previous_state: ai_state(
-                    tail.previous_state,
-                    creation_order,
-                    "local_ai.enemy.previous_state",
-                )?,
-                previous_substate: substate(
-                    tail.previous_substate,
-                    creation_order,
-                    "local_ai.enemy.previous_substate",
-                )?,
+                // Both fields are uninitialized by
+                // `RHArtificialMalignity::RHArtificialMalignity`, then
+                // serialized as complete four-byte enum storage. Preserve
+                // their raw words until the one runtime branch in which the
+                // Original treats the pair as live.
+                previous_state: preserve_previous_enemy_state_word(tail.previous_state),
+                previous_substate: preserve_previous_enemy_state_word(tail.previous_substate),
                 reported_to_officer: tail.reported_to_officer,
                 missed_soldier_timer: tail.missed_soldier_timer,
                 old_money: tail.old_money,
@@ -2449,6 +2446,15 @@ fn ai_state(
 /// member before `StartThink`; serialization nevertheless writes its complete
 /// four-byte storage word.
 fn preserve_old_ai_state(raw: i32) -> i32 {
+    raw
+}
+
+/// Preserve the indeterminate `RHArtificialMalignity` previous-state pair.
+///
+/// Original initializes neither member in its constructor. The pair is
+/// assigned atomically before the only branch that consumes it, so arbitrary
+/// saved words are inert unless that branch is live.
+fn preserve_previous_enemy_state_word(raw: i32) -> i32 {
     raw
 }
 
@@ -3691,6 +3697,17 @@ mod tests {
     fn linux_v48_old_ai_state_preserves_indeterminate_storage_bits() {
         assert_eq!(preserve_old_ai_state(0x0096_0003), 0x0096_0003);
         assert_eq!(preserve_old_ai_state(0x5a3b_010e), 0x5a3b_010e);
+    }
+
+    #[test]
+    fn linux_v48_previous_enemy_state_preserves_indeterminate_storage_bits() {
+        assert_eq!(
+            (
+                preserve_previous_enemy_state_word(72),
+                preserve_previous_enemy_state_word(0x5a3b_010e)
+            ),
+            (72, 0x5a3b_010e),
+        );
     }
 
     #[test]

@@ -1321,8 +1321,8 @@ impl EnemyAi {
                     }
 
                     // Only on first battle decision entry.
-                    if self.previous_substate == Substate::AttackingReactiontime
-                        || self.previous_substate == Substate::AttackingReactiontimeRunning
+                    if self.previous_substate == Substate::AttackingReactiontime as i32
+                        || self.previous_substate == Substate::AttackingReactiontimeRunning as i32
                     {
                         if self.is_vip {
                             self.base.say(Remark::VipProudDontFight);

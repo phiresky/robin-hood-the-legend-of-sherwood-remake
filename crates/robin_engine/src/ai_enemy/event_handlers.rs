@@ -164,8 +164,8 @@ impl EnemyAi {
             } else {
                 // Stash previous state, unalert seekers, transition to
                 // SEEKING_DETECTED_CHARLY.
-                self.previous_state = self.base.current_state;
-                self.previous_substate = self.base.current_substate;
+                self.previous_state = self.base.current_state as i32;
+                self.previous_substate = self.base.current_substate as i32;
                 self.base.outbox.actor.unalert_near_charly_seekers =
                     Some(CharlySeekerTarget::Npc(charly));
                 self.set_state(AiState::Seeking, Substate::SeekingDetectedCharly);
