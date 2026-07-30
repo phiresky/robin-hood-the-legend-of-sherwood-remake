@@ -2111,6 +2111,13 @@ impl EngineInner {
                 {
                     ai.reconcile_special_strike(has_active, current_frame);
                 }
+                // `reconcile_special_strike` stands in for cancellation paths
+                // whose Original sequence teardown synchronously reaches
+                // Think(EVENT_DONE).  Any resulting SetState therefore also
+                // has to run its FilterAIEvent callback before this boundary
+                // returns; otherwise owner-local work survives the later
+                // global melee pass and is observed a frame late.
+                self.drain_ai_owner_work_for(sim, assets, npc_id);
             }
         }
 

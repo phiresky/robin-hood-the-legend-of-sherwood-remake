@@ -20,7 +20,7 @@ impl EngineInner {
     /// Handles the `SwordstrikeThrustA..I` strike commands.
     pub(crate) fn dispatch_sword_strike(
         &mut self,
-        _sim: &crate::sim_rng::SimulationContext,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
         target: EntityId,
@@ -68,6 +68,14 @@ impl EngineInner {
             && let crate::element::AiBrain::Enemy(ai) = &mut soldier.npc.ai_brain
         {
             ai.finish_special_strike_preparation(self.control.frame_counter);
+        }
+        if follows_preparation_wait {
+            // Rust performs the Original EVENT_DONE transition at this
+            // successor-instruction boundary. `SetState` calls the scripted
+            // FilterAIEvent inline in the Original, so do not leave that
+            // owner-local callback queued for the NPC Hourglass: the active
+            // strike lock can legitimately make that Hourglass return early.
+            self.drain_ai_owner_work_for(sim, assets, owner);
         }
 
         if strike == SwordStrike::A {

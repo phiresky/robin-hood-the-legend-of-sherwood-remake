@@ -2640,6 +2640,39 @@ mod tests {
     }
 
     #[test]
+    fn special_strike_cancellation_closes_its_set_state_callback_boundary() {
+        let mut engine = make_engine();
+        let (attacker, _) = make_enemy_strike_pair(&mut engine, false);
+        let assets = assets_with_sword_profile(7, 30);
+        {
+            let ai = engine
+                .get_entity_mut(attacker)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap();
+            ai.begin_special_strike();
+            ai.base.outbox.reentrant.owner_work.clear();
+        }
+
+        engine.with_simulation_context(|engine, sim| {
+            engine.tick_enemy_sword_attacks(sim, &assets);
+        });
+
+        let ai = engine
+            .get_entity(attacker)
+            .and_then(Entity::enemy_ai)
+            .unwrap();
+        assert!(!ai.pending_special_strike);
+        assert_eq!(
+            ai.base.current_substate,
+            crate::ai::Substate::AttackingSwordfight
+        );
+        assert!(
+            ai.base.outbox.reentrant.owner_work.is_empty(),
+            "the cancellation SetState callback must run synchronously"
+        );
+    }
+
+    #[test]
     fn sword_strike_consideration_latch_is_one_shot_when_honour_rejects() {
         let mut engine = make_engine();
         let (attacker, target) = make_enemy_strike_pair(&mut engine, true);
