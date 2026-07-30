@@ -1215,6 +1215,11 @@ pub fn find_path_gates(
         } else {
             current.sector_out
         };
+        let entry_sector = if cur_state.direct {
+            current.sector_out
+        } else {
+            current.sector_in
+        };
         if exit_sector == goal_sector {
             if cur_state.score < best_goal_score {
                 best_goal_score = cur_state.score;
@@ -1225,6 +1230,12 @@ pub fn find_path_gates(
 
         // Expand neighbors via gate links.
         for link in &current.gate_links {
+            // RHFastFindGrid selects GetLinkedGates(mbDirect): after
+            // traversing the current gate, only links in the sector on the
+            // exit side are reachable.
+            if link.via_sector != exit_sector {
+                continue;
+            }
             let next_idx = link.other_door;
             if Some(next_idx) == cur_state.prev_gate {
                 continue;
@@ -1261,6 +1272,16 @@ pub fn find_path_gates(
                 // Inconsistent link; skip
                 continue;
             };
+            // Original: do not use a link that immediately returns to the
+            // sector from which the current gate was entered.
+            let next_exit_sector = if next_direct {
+                next.sector_in
+            } else {
+                next.sector_out
+            };
+            if next_exit_sector == entry_sector {
+                continue;
+            }
 
             let new_dist_from_source =
                 cur_state.distance_from_source + link.distance + current.penalty;
@@ -1340,6 +1361,7 @@ pub fn find_path_into_door(
     goal_door_index: DoorIndex,
     auth: Option<&ActorAuthInfo>,
     allow_leave_map: bool,
+    building_is_authorized: &impl Fn(SectorNumber) -> bool,
     sector_lift_type: &impl Fn(SectorNumber) -> Option<LiftType>,
 ) -> Option<Vec<GatePathStep>> {
     let source = MapPoint::new(source.0, source.1);
@@ -1357,7 +1379,7 @@ pub fn find_path_into_door(
                 goal_door,
                 true,
                 a,
-                true,
+                building_is_authorized(goal_door.sector_in),
                 allow_leave_map,
                 sector_lift_type,
             )
@@ -1409,7 +1431,7 @@ pub fn find_path_into_door(
                 door,
                 direct_candidate,
                 a,
-                true,
+                !direct_candidate || building_is_authorized(door.sector_in),
                 allow_leave_map,
                 sector_lift_type,
             ) {
@@ -1463,8 +1485,24 @@ pub fn find_path_into_door(
 
         let current = &doors[usize::from(current_idx)];
         let cur_state = state[usize::from(current_idx)];
+        let exit_sector = if cur_state.direct {
+            current.sector_in
+        } else {
+            current.sector_out
+        };
+        let entry_sector = if cur_state.direct {
+            current.sector_out
+        } else {
+            current.sector_in
+        };
 
         for link in &current.gate_links {
+            // RHFastFindGrid selects GetLinkedGates(mbDirect): after
+            // traversing the current gate, only links in the sector on the
+            // exit side are reachable.
+            if link.via_sector != exit_sector {
+                continue;
+            }
             let next_idx = link.other_door;
             if Some(next_idx) == cur_state.prev_gate {
                 continue;
@@ -1475,16 +1513,11 @@ pub fn find_path_into_door(
             };
             if let Some(a) = auth {
                 let next_direct = next.sector_out == link.via_sector;
-                // Neighbour expansion does NOT test building capacity
-                // (seed pass did).  Letting at-capacity buildings be
-                // traversed during expansion keeps paths that don't
-                // terminate *at* the capped door; the final-entry
-                // capacity check happens at dispatch time.
                 if !is_actor_authorized_for_gate(
                     next,
                     next_direct,
                     a,
-                    false,
+                    !next_direct || building_is_authorized(next.sector_in),
                     allow_leave_map,
                     sector_lift_type,
                 ) {
@@ -1500,6 +1533,16 @@ pub fn find_path_into_door(
             } else {
                 continue;
             };
+            // Original: do not use a link that immediately returns to the
+            // sector from which the current gate was entered.
+            let next_exit_sector = if next_direct {
+                next.sector_in
+            } else {
+                next.sector_out
+            };
+            if next_exit_sector == entry_sector {
+                continue;
+            }
 
             // Penalty is NOT accumulated into g(n) for door-targeted A*
             // (sector-targeted A* does add penalty into g(n)).
@@ -1564,6 +1607,7 @@ pub fn find_path_to_door(
     goal_door_index: DoorIndex,
     auth: Option<&ActorAuthInfo>,
     allow_leave_map: bool,
+    building_is_authorized: &impl Fn(SectorNumber) -> bool,
     sector_lift_type: &impl Fn(SectorNumber) -> Option<LiftType>,
 ) -> Option<(Vec<GatePathStep>, (f32, f32), u16, u16)> {
     let full = find_path_into_door(
@@ -1573,6 +1617,7 @@ pub fn find_path_to_door(
         goal_door_index,
         auth,
         allow_leave_map,
+        building_is_authorized,
         sector_lift_type,
     )?;
     if full.is_empty() {

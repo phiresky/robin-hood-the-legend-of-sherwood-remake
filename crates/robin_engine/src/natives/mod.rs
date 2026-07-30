@@ -793,6 +793,39 @@ impl NativeContext<'_, '_> {
             .is_some_and(|kind| kind.sector_type.is_building())
     }
 
+    fn building_sector_is_authorized(&self, sector: crate::sector::SectorNumber) -> bool {
+        let sector_data = self
+            .sector_kind(u16::from(sector))
+            .unwrap_or_else(|| panic!("building door references missing sector {sector}"));
+        let occupant_count = if let Some(building_index) = sector_data.building_index {
+            self.script_domains
+                .buildings
+                .occupants
+                .get(usize::from(building_index.get()))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "building sector {sector} references missing building {}",
+                        building_index.get()
+                    )
+                })
+                .len()
+        } else {
+            // TODO(original-parity): attach every door-authored building
+            // sector to canonical BuildingState during level loading. A few
+            // loaded sectors lack the attachment; count their live actors by
+            // sector rather than fabricating an empty building.
+            self.occupied_entities()
+                .filter(|(_, entity)| {
+                    entity
+                        .element_data()
+                        .sector()
+                        .is_some_and(|actor_sector| u16::from(actor_sector) == u16::from(sector))
+                })
+                .count()
+        };
+        occupant_count < usize::from(u16::MAX)
+    }
+
     fn sector_is_ladder_lift(&self, sector: u16) -> bool {
         self.sector_kind(sector)
             .is_some_and(|kind| kind.lift_type == Some(crate::sector::LiftType::Ladder))
@@ -960,6 +993,7 @@ impl NativeContext<'_, '_> {
                         door_idx,
                         auth.as_ref(),
                         allow_leave_map,
+                        &|sector| self.building_sector_is_authorized(sector),
                         &|sector| self.sector_lift_type(sector),
                     )
                 })

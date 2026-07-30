@@ -1251,6 +1251,48 @@ pub(crate) fn build_line_jump_click_sequence(
 }
 
 impl EngineInner {
+    /// Match `RHSectorBuilding::IsAuthorized()` for gate pathfinding.
+    ///
+    /// The original initializes every building's maximum occupancy to
+    /// `u16::MAX`; the occupant list remains live and is still consulted.
+    pub(super) fn building_sector_is_authorized(
+        &self,
+        sector_number: crate::sector::SectorNumber,
+    ) -> bool {
+        let sector = self
+            .grid_sector_by_number(sector_number)
+            .unwrap_or_else(|| panic!("building door references missing sector {sector_number}"));
+        let occupant_count = if let Some(building_index) = sector.building_index {
+            self.script_domains
+                .buildings
+                .occupants
+                .get(usize::from(building_index.get()))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "building sector {sector_number} references missing building {}",
+                        building_index.get()
+                    )
+                })
+                .len()
+        } else {
+            // TODO(original-parity): attach every door-authored building
+            // sector to canonical BuildingState during level loading. A few
+            // loaded sectors lack the attachment; count their live actors by
+            // sector rather than fabricating an empty building.
+            self.world
+                .entities
+                .actors()
+                .filter(|(_, entity)| {
+                    entity
+                        .element_data()
+                        .sector()
+                        .is_some_and(|sector| u16::from(sector) == u16::from(sector_number))
+                })
+                .count()
+        };
+        occupant_count < usize::from(u16::MAX)
+    }
+
     fn live_mobile_geometry(&self) -> LiveMobileGeometry {
         let mut prepared = LiveMobileGeometry {
             mobile_lines_by_layer: std::collections::BTreeMap::new(),
@@ -2410,6 +2452,7 @@ impl EngineInner {
                         crate::gate::DoorIndex(door_idx),
                         pc_auth.as_ref(),
                         false,
+                        &|sector| self.building_sector_is_authorized(sector),
                         &|sector| {
                             level
                                 .sectors
@@ -3903,14 +3946,43 @@ impl EngineInner {
             x: intent.target_x,
             y: intent.target_y,
         };
-        let (source, source_layer, source_sector) = {
+        let (raw_source, raw_source_layer, raw_source_sector, door_handle, door_direction) = {
             let Some(entity) = self.get_entity(entity_id) else {
                 tracing::warn!("do_launch_ai_move: entity {:?} not found", entity_id);
                 return None;
             };
             let ed = entity.element_data();
-            (ed.position_map(), ed.layer(), ed.sector())
+            let (door_handle, door_direction) = current_door_for_route_source(entity);
+            (
+                ed.position_map(),
+                ed.layer(),
+                ed.sector(),
+                door_handle,
+                door_direction,
+            )
         };
+        // RHSequence::AppendMoveToSequence adapts a source that is currently
+        // crossing a gate to the committed far side before comparing sectors
+        // or searching the gate graph.
+        let (source, source_layer, source_sector) = self
+            .scripts
+            .mission
+            .as_ref()
+            .and_then(|_| {
+                adapt_source_to_current_door(
+                    &self.script_domains.interactables.doors,
+                    door_handle,
+                    door_direction,
+                )
+            })
+            .map(|(point, sector, layer)| {
+                (
+                    point,
+                    layer,
+                    crate::position_interface::SectorHandle::new(sector),
+                )
+            })
+            .unwrap_or((raw_source, raw_source_layer, raw_source_sector));
         let goal_layer = intent.target_layer.unwrap_or(source_layer);
         let goal_sector = intent.target_sector.or(source_sector);
         let move_flags =
@@ -3933,28 +4005,53 @@ impl EngineInner {
                 .get_entity(entity_id)
                 .map(|entity| entity.actor_auth_info());
             let level = self.world.fast_grid.level.clone();
-            // TODO(original-parity): AppendMoveToSequence routes an authored
-            // door-sector destination through FindPathIntoDoor and stops at
-            // that door. AI GoTo currently exercises ordinary area/building
-            // destinations here; preserve the full destination topology now
-            // so the door-goal branch can be shared with player routing.
+            // AppendMoveToSequence treats a door sector as a door-identity
+            // goal. A sector-only FindPathGates search cannot represent that
+            // terminal condition because a door sector is not an ordinary
+            // motion area.
+            let door_goal = self
+                .grid_sector_by_number(crate::sector::SectorNumber::new(
+                    u16::from(goal_sector) as i16
+                ))
+                .filter(|sector| sector.sector_type.is_door())
+                .and_then(|sector| sector.door_index)
+                .map(crate::gate::DoorIndex);
             let gate_path = self.scripts.mission.as_ref().and_then(|_| {
-                crate::gate::find_path_gates(
-                    &self.script_domains.interactables.doors,
-                    (source.x, source.y),
-                    u16::from(source_sector),
-                    (dest.x, dest.y),
-                    u16::from(goal_sector),
-                    auth.as_ref(),
-                    move_flags.contains(crate::sequence::MoveFlags::MAP),
-                    &|sector| {
-                        level
-                            .sectors
-                            .iter()
-                            .find(|candidate| candidate.sector_number == sector)
-                            .and_then(|candidate| candidate.lift_type)
-                    },
-                )
+                if let Some(door_index) = door_goal {
+                    crate::gate::find_path_into_door(
+                        &self.script_domains.interactables.doors,
+                        (source.x, source.y),
+                        u16::from(source_sector),
+                        door_index,
+                        auth.as_ref(),
+                        move_flags.contains(crate::sequence::MoveFlags::MAP),
+                        &|sector| self.building_sector_is_authorized(sector),
+                        &|sector| {
+                            level
+                                .sectors
+                                .iter()
+                                .find(|candidate| candidate.sector_number == sector)
+                                .and_then(|candidate| candidate.lift_type)
+                        },
+                    )
+                } else {
+                    crate::gate::find_path_gates(
+                        &self.script_domains.interactables.doors,
+                        (source.x, source.y),
+                        u16::from(source_sector),
+                        (dest.x, dest.y),
+                        u16::from(goal_sector),
+                        auth.as_ref(),
+                        move_flags.contains(crate::sequence::MoveFlags::MAP),
+                        &|sector| {
+                            level
+                                .sectors
+                                .iter()
+                                .find(|candidate| candidate.sector_number == sector)
+                                .and_then(|candidate| candidate.lift_type)
+                        },
+                    )
+                }
             });
             let Some(gate_path) = gate_path else {
                 tracing::warn!(
@@ -3977,17 +4074,29 @@ impl EngineInner {
             } else {
                 Vec::new()
             };
-            return self.build_gate_movement_sequence(
-                sim,
-                entity_id,
-                gate_path,
+            let goal = door_goal.map_or(
                 GoalShape::Point {
                     point: dest,
                     tolerance: intent.tolerance,
                 },
+                |door_index| GoalShape::Door {
+                    door_index,
+                    // These fields only serve the move-after-last-door
+                    // variant. AppendMoveToSequence sets that false for a
+                    // door-sector goal because the gate path is inclusive.
+                    far_side_point: dest,
+                    far_side_layer: goal_layer,
+                    far_side_is_building: false,
+                },
+            );
+            return self.build_gate_movement_sequence(
+                sim,
+                entity_id,
+                gate_path,
+                goal,
                 goal_layer,
                 action,
-                true,
+                door_goal.is_none(),
                 intent.speed_factor,
                 move_flags,
                 prefix,

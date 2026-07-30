@@ -6950,6 +6950,12 @@ impl EngineInner {
         // "not this building" filter used by `GetNearestDoor`.
         let my_building = ctx.in_building.then_some(ctx.building_sector).flatten();
         let my_layer = ctx.position.level;
+        let actor_auth = self
+            .world
+            .entities
+            .get(npc_id)
+            .unwrap_or_else(|| panic!("panic requester {npc_id:?} disappeared"))
+            .actor_auth_info();
 
         // Pre-compute the set of house sector indices that contain a
         // PC (the `dangerous_house` set).  Snapshot it here so the
@@ -6974,6 +6980,23 @@ impl EngineInner {
             } else {
                 std::collections::HashSet::new()
             };
+        let authorized_building_doors: std::collections::BTreeSet<crate::gate::DoorIndex> = self
+            .script_domains
+            .interactables
+            .doors
+            .iter()
+            .enumerate()
+            .filter_map(|(index, door)| {
+                (door.door_type == crate::gate::DoorType::Building
+                    && door.is_actor_authorized(
+                        true,
+                        &actor_auth,
+                        self.building_sector_is_authorized(door.sector_in),
+                        false,
+                    ))
+                .then_some(crate::gate::DoorIndex(index as u32))
+            })
+            .collect();
 
         // Pick the best door.  `directed` gates the dot-product
         // filter: when a panic center is known, first try to find a
@@ -6987,7 +7010,7 @@ impl EngineInner {
                 if !matches!(door.door_type, crate::gate::DoorType::Building) {
                     continue;
                 }
-                if !door.npc_villain_authorized_direct {
+                if !authorized_building_doors.contains(&door.door_index) {
                     continue;
                 }
                 if my_building == crate::position_interface::SectorHandle::new(door.sector_in) {
@@ -7075,43 +7098,78 @@ impl EngineInner {
                 "Panic door entry",
             );
             self.drain_ai_owner_work_for(sim, assets, npc_id);
-            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                panic!(
-                    "panic owner {} disappeared before state tail",
-                    npc_id.index()
-                )
-            });
-            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                panic!("panic owner {} lost AI before state tail", npc_id.index())
-            });
-            ai.set_alert_status(request.alert);
-            ai.lasting_panic_runs = 0;
-            ai.go_to(door_in, crate::ai::GotoFlags::RUN, ctx);
+            {
+                let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+                    panic!(
+                        "panic owner {} disappeared before state tail",
+                        npc_id.index()
+                    )
+                });
+                let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+                    panic!("panic owner {} lost AI before state tail", npc_id.index())
+                });
+                ai.set_alert_status(request.alert);
+                ai.lasting_panic_runs = 0;
+                ai.go_to(door_in, crate::ai::GotoFlags::RUN, ctx);
+            }
 
-            // Post-GoTo `couldnt_reachpoint` fallback.  Pathfinding
-            // here runs asynchronously so the flag will usually only
-            // be set from a prior tick's failed GoTo, but the retry
-            // is kept for parity.  If the directed attempt was
-            // unreachable, drop the dot-product filter and try again;
-            // if even that fails, fall through to the no-door
-            // branch.
-            if ai.couldnt_reachpoint {
-                ai.couldnt_reachpoint = false;
+            // RHArtificialIntelligence::Panic observes GoTo's path result
+            // immediately and may retry without the directed-door filter in
+            // the same call. Resolve this owner's queued move before reading
+            // `couldnt_reachpoint`.
+            self.launch_pending_orders_for_npc(npc_id);
+            self.drain_pending_move_requests_for_owner(sim, npc_id);
+            let couldnt_reachpoint = self
+                .world
+                .entities
+                .get(npc_id)
+                .and_then(Entity::ai_controller)
+                .unwrap_or_else(|| panic!("panic owner {} lost AI after GoTo", npc_id.index()))
+                .couldnt_reachpoint;
+            if couldnt_reachpoint {
+                self.world
+                    .entities
+                    .get_mut(npc_id)
+                    .and_then(Entity::ai_controller_mut)
+                    .unwrap_or_else(|| {
+                        panic!("panic owner {} lost AI after failed GoTo", npc_id.index())
+                    })
+                    .couldnt_reachpoint = false;
                 if directed_after_door_pick
                     && let Some((retry_door, _)) = pick_door(&self.ai.global.door_seek_infos, false)
                 {
-                    let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                        return;
-                    };
-                    let Some(ai) = entity.ai_controller_mut() else {
-                        return;
-                    };
-                    ai.directed_panic = false;
-                    ai.go_to(retry_door, crate::ai::GotoFlags::RUN, ctx);
-                    if !ai.couldnt_reachpoint {
+                    {
+                        let Some(entity) = self.world.entities.get_mut(npc_id) else {
+                            return;
+                        };
+                        let Some(ai) = entity.ai_controller_mut() else {
+                            return;
+                        };
+                        ai.directed_panic = false;
+                        ai.go_to(retry_door, crate::ai::GotoFlags::RUN, ctx);
+                    }
+                    self.launch_pending_orders_for_npc(npc_id);
+                    self.drain_pending_move_requests_for_owner(sim, npc_id);
+                    let retry_failed = self
+                        .world
+                        .entities
+                        .get(npc_id)
+                        .and_then(Entity::ai_controller)
+                        .unwrap_or_else(|| {
+                            panic!("panic owner {} lost AI after retry GoTo", npc_id.index())
+                        })
+                        .couldnt_reachpoint;
+                    if !retry_failed {
                         return;
                     }
-                    ai.couldnt_reachpoint = false;
+                    self.world
+                        .entities
+                        .get_mut(npc_id)
+                        .and_then(Entity::ai_controller_mut)
+                        .unwrap_or_else(|| {
+                            panic!("panic owner {} lost AI after failed retry", npc_id.index())
+                        })
+                        .couldnt_reachpoint = false;
                     self.begin_panic_no_door_branch(
                         sim,
                         assets,
