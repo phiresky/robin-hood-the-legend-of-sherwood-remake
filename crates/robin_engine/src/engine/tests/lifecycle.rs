@@ -1235,6 +1235,54 @@ fn deferred_face_to_generates_live_exit_transition_and_keeps_resolved_direction(
 }
 
 #[test]
+fn deferred_face_to_does_not_overwrite_a_newer_live_movement_goal() {
+    use crate::coordinates::MapPoint;
+    use crate::element::{ActionState, Posture};
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut display = HostDisplayState::default();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .action_state = ActionState::Moving;
+
+    let stale_retained_goal = MapPoint::new(70.0, 80.0);
+    let live_goal = MapPoint::new(90.0, 100.0);
+    engine.launch_turn_sequence_deferred_no_transitions(
+        owner,
+        crate::element::Command::Turn,
+        Some(9),
+        0.0,
+        0.0,
+        Some(stale_retained_goal),
+    );
+
+    // The outgoing actor slot may run after FaceTo registers its deferred
+    // Turn and advance the movement goal before SequenceManager instructs it.
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .position_iface_mut()
+        .set_map_goal(live_goal);
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .position_iface()
+            .map_goal(),
+        live_goal,
+        "deferred Turn instruction must not replace a goal advanced by the outgoing actor slot"
+    );
+}
+
+#[test]
 fn deferred_standalone_face_to_waits_for_manager_while_walking() {
     use crate::coordinates::MapPoint;
     use crate::element::{ActionState, Command, Posture};

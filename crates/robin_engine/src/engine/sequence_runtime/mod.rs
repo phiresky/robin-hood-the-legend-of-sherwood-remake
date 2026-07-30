@@ -958,7 +958,16 @@ impl TurnCommandContext<'_> {
                         );
                         entity.element_data_mut().set_direction_goal(direction);
                     }
-                    if let Some((x, y)) = retained_movement_goal {
+                    if let Some((x, y)) = retained_movement_goal
+                        && entity.position_iface().map_goal() == crate::coordinates::MapPoint::ZERO
+                    {
+                        // Deferred FaceTo caches the outgoing movement goal
+                        // because eager Rust halt cleanup can erase it before
+                        // Turn is instructed. The outgoing actor slot can
+                        // still advance its live sprite goal in the meantime,
+                        // though. Original StopMovement leaves that newer
+                        // goal in place, so only repair an actually-cleared
+                        // goal here.
                         entity
                             .position_iface_mut()
                             .set_map_goal(crate::coordinates::MapPoint::new(x, y));
