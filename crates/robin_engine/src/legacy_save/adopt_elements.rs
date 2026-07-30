@@ -10,19 +10,25 @@ use std::num::NonZeroU32;
 use thiserror::Error;
 
 use crate::{
-    coordinates::MapPoint,
-    element::{ActionState, Detectable, DetectableType, EntityId, NpcData, OutlineColorName},
+    ai::{AiController, AiState, AlertLevel, Attitude, GotoFlags, Position, Substate},
+    coordinates::{GroundPoint, MapPoint, MapVec},
+    element::{
+        ActionState, AiBrain, Detectable, DetectableType, EntityId, EyeStatus, NpcData,
+        OutlineColorName,
+    },
     engine::EngineInner,
     order::OrderType,
-    position_interface::PositionInterfaceV48State,
+    position_interface::{PositionInterfaceV48State, SectorHandle},
 };
 
 use super::{
     adopt::{
         preflight_v48_position, LegacyEntityFixups, LegacyPositionTopology, LegacySaveAdoptError,
     },
+    payload_ai::{LegacyAiPosition, LegacyLocalAiCommon, LegacyLocalAiTail},
     payload_base::{
-        LegacyActorPayload, LegacyElementPayloadBase, LegacyNpcPayload, LegacySpritePayload,
+        LegacyActorPayload, LegacyElementPayloadBase, LegacyNpcPayload, LegacyNpcView,
+        LegacySpritePayload,
     },
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
     payload_objects::LegacyObjectItemPayload,
@@ -42,12 +48,13 @@ pub const REMAINING_COMMON_ELEMENT_FIELDS: &[&str] = &[
     "RHElementActor::mbIsSurrendering",
     "RHElementActor::mfDistanceToBoundary",
     "RHElementActor::mmotionState",
-    "RHElementActor bypass / railroad / seek-sector state",
+    "RHElementActor seek layer, bypass/railroad flags, seek-to-point/check-jump, bypass exit/reference, and material/seek sectors",
     "RHElementActor sequence/order pointers and inline post-seek sequence",
     "RHElementActor script member variables",
     "RHElementActorNPC::mpAttachedScroll identity (Rust currently retains only attached/not attached)",
     "RHElementActorNPC::muwBodyVisitors",
-    "RHElementActorNPC view, initial-position, and local-AI state",
+    "RHElementActorNPC view iterator/crazy-cone/future-aperture/radius-reduction/sniper fields absent from Rust",
+    "RHElementActorNPC local-AI path/macro bytecode, stimuli, relationship lists, reconnaissance, remarks/log, patrol, and most subclass state",
     "RHElementActorNPC leaf Soldier/Civilian state",
 ];
 
@@ -108,6 +115,39 @@ pub enum LegacyElementAdoptError {
         "saved actor creation order {creation_order} has last order ID zero, which Rust cannot represent distinctly from no order"
     )]
     ZeroLastOrderId { creation_order: u32 },
+    #[error(
+        "saved element creation order {creation_order} field {field} references sector {index}, but initialized topology has {count} sector slots"
+    )]
+    MissingSector {
+        creation_order: u32,
+        field: &'static str,
+        index: u16,
+        count: usize,
+    },
+    #[error(
+        "saved NPC creation order {creation_order} has {saved_kind} local AI but its initialized Rust entity has {runtime_kind}"
+    )]
+    AiKindMismatch {
+        creation_order: u32,
+        saved_kind: &'static str,
+        runtime_kind: &'static str,
+    },
+    #[error(
+        "saved NPC creation order {creation_order} local-AI owner resolves to {actual:?}; expected itself ({expected})"
+    )]
+    AiOwnerMismatch {
+        creation_order: u32,
+        expected: EntityId,
+        actual: Option<EntityId>,
+    },
+    #[error(
+        "saved element creation order {creation_order} field {field} has invalid bit flags 0x{value:x}"
+    )]
+    InvalidFlags {
+        creation_order: u32,
+        field: &'static str,
+        value: u16,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -193,6 +233,115 @@ struct ConvertedNpc {
     worst_detectable_type: DetectableType,
     custom_values: [i32; 10],
     gave_money: bool,
+    view: ConvertedNpcView,
+    initial_position_x: f32,
+    initial_position_y: f32,
+    initial_position_sector: Option<SectorHandle>,
+    initial_position_level: u16,
+    initial_view_direction: MapVec,
+    local_ai: ConvertedLocalAi,
+}
+
+#[derive(Clone, Debug)]
+struct ConvertedNpcView {
+    eye_status: EyeStatus,
+    transition: bool,
+    alpha: u16,
+    half_angle: f32,
+    angle_step: f32,
+    angle: f32,
+    half_aperture: f32,
+    real_half_aperture: f32,
+    direction: [f32; 2],
+    stare: GroundPoint,
+    follow_target: Option<EntityId>,
+    radius_goal: u16,
+    radius: u16,
+    radius_step: u16,
+    long_range: f32,
+    real_radius: u16,
+    drunkenness: [f32; 4],
+    leaning: bool,
+}
+
+#[derive(Clone, Debug)]
+enum ConvertedLocalAi {
+    Friendly {
+        common: ConvertedLocalAiCommon,
+        fleeing_seen_enemy_counter: u16,
+        beggar_dont_talk_counter: u16,
+    },
+    Enemy {
+        common: ConvertedLocalAiCommon,
+        frame_when_enemy_detected: u32,
+        fleeing_seen_enemy_counter: u16,
+        pc_missed: bool,
+        current_task_priority: u16,
+        minimal_task_priority: u16,
+        new_task_priority: u16,
+        seen_dead_body: bool,
+        seeking_charly: bool,
+        reported_to_officer: bool,
+        missed_soldier_timer: u16,
+        old_money: u16,
+        shield_bearer_direction: u16,
+        phalanx_aborted: bool,
+        changed_to_alert_path: bool,
+        enemy_seen_below: bool,
+        enemy_had_this_elevation: u16,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct ConvertedLocalAiCommon {
+    last_goto_destination: Position,
+    last_goto_flags: GotoFlags,
+    stuck_counter: u16,
+    current_state: AiState,
+    old_state: AiState,
+    current_substate: Substate,
+    current_music_alert_status: AlertLevel,
+    view_alert_status: AlertLevel,
+    substate_at_last_timer_launch: Substate,
+    attitude: Attitude,
+    blood_alcohol: u8,
+    initial_action: u32,
+    number_of_looks: u8,
+    can_move: bool,
+    macro_in_progress: bool,
+    number_of_remaining_macro_bytes: u16,
+    timer_is_running: bool,
+    when_does_timer_ring: u32,
+    macro_timer_is_running: bool,
+    when_does_macro_timer_ring: u32,
+    standing_around_timer: u16,
+    sorrow_level: u16,
+    is_master: bool,
+    first_try: bool,
+    panic_center_x: f32,
+    panic_center_y: f32,
+    lasting_panic_runs: u8,
+    directed_panic: bool,
+    couldnt_reachpoint: bool,
+    already_on_point: bool,
+    already_turned: bool,
+    likes_to_sit_around: bool,
+    special_action: bool,
+    friends_are_alerted: bool,
+    is_stay_at_home: bool,
+    was_busy: bool,
+    script_locked: bool,
+    remember_events: bool,
+    leave_house_number: u16,
+    inside_halt_method: bool,
+    macro_started_in_this_frame: bool,
+    default_path_walking_flags: GotoFlags,
+    next_macro_rand: u8,
+    next_macro_rand_forecasted: bool,
+    knocked_out_in_money_fight: bool,
+    got_beggar_trick: bool,
+    patrol_stopped: bool,
+    patrol_direction: u16,
 }
 
 impl LegacyStaticElementAdoption {
@@ -238,7 +387,18 @@ impl LegacyStaticElementAdoption {
                     .map(|actor| convert_actor(actor, creation_order, entities))
                     .transpose()?,
                 npc: npc
-                    .map(|npc| convert_npc(npc, creation_order, entities))
+                    .map(|npc| {
+                        convert_npc(
+                            npc,
+                            runtime
+                                .npc_data()
+                                .expect("NPC kind was validated immediately above"),
+                            entity_id,
+                            creation_order,
+                            entities,
+                            position_topology,
+                        )
+                    })
                     .transpose()?,
             });
         }
@@ -437,8 +597,11 @@ fn convert_actor(
 
 fn convert_npc(
     saved: &LegacyNpcPayload,
+    runtime: &NpcData,
+    entity_id: EntityId,
     creation_order: u32,
     entities: &LegacyEntityFixups,
+    topology: &LegacyPositionTopology,
 ) -> Result<ConvertedNpc, LegacyElementAdoptError> {
     let mut detectable_lists = Vec::with_capacity(DetectableType::COUNT);
     let mut detection_suspects = [0; DetectableType::COUNT];
@@ -490,10 +653,44 @@ fn convert_npc(
         )?,
         custom_values: saved.custom_values,
         gave_money: saved.gave_money,
+        view: convert_npc_view(
+            &saved.view,
+            entities.resolve_element(saved.mobile_target)?,
+            creation_order,
+        )?,
+        initial_position_x: saved.initial_position.x,
+        initial_position_y: saved.initial_position.y,
+        initial_position_sector: sector(
+            saved.initial_position.sector.0,
+            topology,
+            creation_order,
+            "initial_position.sector",
+        )?,
+        initial_position_level: saved.initial_position.level,
+        initial_view_direction: MapVec::new(saved.initial_view.x, saved.initial_view.y),
+        local_ai: convert_local_ai(
+            &saved.local_ai,
+            runtime,
+            entity_id,
+            creation_order,
+            entities,
+            topology,
+            alert_level(saved.view.alert_status, creation_order, "view.alert_status")?,
+        )?,
     })
 }
 
 fn apply_npc(npc: &mut NpcData, saved: ConvertedNpc) {
+    let ai_initial_position = Position {
+        x: saved.initial_position_x,
+        y: saved.initial_position_y,
+        sector: saved.initial_position_sector,
+        level: saved.initial_position_level,
+    };
+    let ai_initial_view_direction = crate::position_interface::vector_to_sector_0_to_15(
+        saved.initial_view_direction.x * crate::position_interface::ASPECT_RATIO,
+        saved.initial_view_direction.y,
+    ) as u16;
     npc.life_points = saved.life;
     npc.number_of_arrows = saved.arrows;
     npc.direction_old = saved.old_direction;
@@ -510,6 +707,324 @@ fn apply_npc(npc: &mut NpcData, saved: ConvertedNpc) {
     npc.worst_detected_type = saved.worst_detectable_type;
     npc.custom_values = saved.custom_values;
     npc.has_given_money_to_beggar = saved.gave_money;
+    npc.initial_position_x = saved.initial_position_x;
+    npc.initial_position_y = saved.initial_position_y;
+    npc.initial_position_sector = saved.initial_position_sector;
+    npc.initial_position_level = saved.initial_position_level;
+    npc.initial_view_direction = saved.initial_view_direction;
+    npc.eye_status = saved.view.eye_status;
+    npc.view_transition = saved.view.transition;
+    npc.view_alpha_start = saved.view.alpha;
+    npc.view_half_angle_range = saved.view.half_angle;
+    npc.view_angle_step = saved.view.angle_step;
+    npc.view_angle = saved.view.angle;
+    npc.half_aperture = saved.view.half_aperture;
+    npc.real_half_aperture = saved.view.real_half_aperture;
+    npc.view_direction = saved.view.direction;
+    npc.stare_point = saved.view.stare;
+    npc.follow_target = saved.view.follow_target;
+    npc.view_radius_goal = saved.view.radius_goal;
+    npc.view_radius_base = saved.view.radius;
+    npc.view_radius_step = saved.view.radius_step;
+    npc.view_longrange_radius_factor = saved.view.long_range;
+    npc.view_radius = saved.view.real_radius;
+    npc.drunken_cone_iterators = saved.view.drunkenness;
+    npc.view_lean_out = saved.view.leaning;
+    apply_local_ai(&mut npc.ai_brain, saved.local_ai);
+    let ai = ai_base_mut(&mut npc.ai_brain)
+        .expect("preflighted local-AI kind cannot become None in candidate engine");
+    ai.initial_position = ai_initial_position;
+    ai.initial_view_direction = ai_initial_view_direction;
+}
+
+fn convert_npc_view(
+    saved: &LegacyNpcView,
+    follow_target: Option<EntityId>,
+    creation_order: u32,
+) -> Result<ConvertedNpcView, LegacyElementAdoptError> {
+    Ok(ConvertedNpcView {
+        eye_status: eye_status(saved.status, creation_order)?,
+        transition: saved.transitioning,
+        alpha: saved.alpha,
+        half_angle: saved.half_angle,
+        angle_step: saved.angle_step,
+        angle: saved.angle,
+        half_aperture: saved.half_aperture,
+        real_half_aperture: saved.real_half_aperture,
+        direction: [saved.direction.x, saved.direction.y],
+        stare: GroundPoint::new(saved.stare.x, saved.stare.y),
+        // The raw pointer echo inside LegacyNpcView is ABI residue;
+        // LegacyNpcPayload::mobile_target is the authoritative pointer fixup.
+        follow_target,
+        radius_goal: saved.radius_goal,
+        radius: saved.radius,
+        radius_step: saved.radius_step,
+        long_range: saved.long_range,
+        real_radius: saved.real_radius,
+        drunkenness: saved.drunkenness,
+        leaning: saved.leaning,
+    })
+}
+
+fn convert_local_ai(
+    saved: &super::payload_ai::LegacyLocalAiPayload,
+    runtime: &NpcData,
+    entity_id: EntityId,
+    creation_order: u32,
+    entities: &LegacyEntityFixups,
+    topology: &LegacyPositionTopology,
+    view_alert_status: AlertLevel,
+) -> Result<ConvertedLocalAi, LegacyElementAdoptError> {
+    let owner = entities.resolve_ai_element(saved.common.owner)?;
+    if owner != Some(entity_id) {
+        return Err(LegacyElementAdoptError::AiOwnerMismatch {
+            creation_order,
+            expected: entity_id,
+            actual: owner,
+        });
+    }
+    let common =
+        convert_local_ai_common(&saved.common, creation_order, topology, view_alert_status)?;
+    match (&saved.tail, &runtime.ai_brain) {
+        (LegacyLocalAiTail::Friendly(tail), AiBrain::Friendly(_)) => {
+            Ok(ConvertedLocalAi::Friendly {
+                common,
+                fleeing_seen_enemy_counter: tail.fleeing_seen_enemy_counter,
+                beggar_dont_talk_counter: tail.beggar_dont_talk_counter,
+            })
+        }
+        (LegacyLocalAiTail::Enemy(tail), AiBrain::Enemy(_)) => Ok(ConvertedLocalAi::Enemy {
+            common,
+            frame_when_enemy_detected: tail.frame_when_enemy_detected,
+            fleeing_seen_enemy_counter: tail.fleeing_seen_enemy_counter,
+            pc_missed: tail.pc_missed,
+            current_task_priority: tail.current_task_priority,
+            minimal_task_priority: tail.minimal_task_priority,
+            new_task_priority: tail.new_task_priority,
+            seen_dead_body: tail.seen_dead_body,
+            seeking_charly: tail.seeking_charly,
+            reported_to_officer: tail.reported_to_officer,
+            missed_soldier_timer: tail.missed_soldier_timer,
+            old_money: tail.old_money,
+            shield_bearer_direction: tail.shield_bearer_direction,
+            phalanx_aborted: tail.phalanx_aborted,
+            changed_to_alert_path: tail.changed_to_alert_path,
+            enemy_seen_below: tail.enemy_seen_below,
+            enemy_had_this_elevation: tail.enemy_had_this_elevation,
+        }),
+        (LegacyLocalAiTail::Friendly(_), brain) => Err(LegacyElementAdoptError::AiKindMismatch {
+            creation_order,
+            saved_kind: "Friendly",
+            runtime_kind: ai_brain_kind(brain),
+        }),
+        (LegacyLocalAiTail::Enemy(_), brain) => Err(LegacyElementAdoptError::AiKindMismatch {
+            creation_order,
+            saved_kind: "Enemy",
+            runtime_kind: ai_brain_kind(brain),
+        }),
+    }
+}
+
+fn convert_local_ai_common(
+    saved: &LegacyLocalAiCommon,
+    creation_order: u32,
+    topology: &LegacyPositionTopology,
+    view_alert_status: AlertLevel,
+) -> Result<ConvertedLocalAiCommon, LegacyElementAdoptError> {
+    Ok(ConvertedLocalAiCommon {
+        last_goto_destination: ai_position(
+            saved.last_goto_destination,
+            topology,
+            creation_order,
+            "local_ai.last_goto_destination.sector",
+        )?,
+        last_goto_flags: goto_flags(
+            saved.last_goto_flags,
+            creation_order,
+            "local_ai.last_goto_flags",
+        )?,
+        stuck_counter: saved.stuck_counter,
+        current_state: ai_state(
+            saved.current_state,
+            creation_order,
+            "local_ai.current_state",
+        )?,
+        old_state: ai_state(saved.old_state, creation_order, "local_ai.old_state")?,
+        current_substate: substate(
+            saved.current_substate,
+            creation_order,
+            "local_ai.current_substate",
+        )?,
+        current_music_alert_status: alert_level(
+            saved.current_music_alert_status as u32,
+            creation_order,
+            "local_ai.current_music_alert_status",
+        )?,
+        view_alert_status,
+        substate_at_last_timer_launch: substate(
+            saved.substate_at_last_timer_launch,
+            creation_order,
+            "local_ai.substate_at_last_timer_launch",
+        )?,
+        attitude: attitude(saved.attitude, creation_order, "local_ai.attitude")?,
+        blood_alcohol: saved.blood_alcohol,
+        initial_action: u32::try_from(saved.initial_action).map_err(|_| {
+            LegacyElementAdoptError::UnknownEnum {
+                creation_order,
+                field: "local_ai.initial_action",
+                value: saved.initial_action as u32,
+            }
+        })?,
+        number_of_looks: saved.number_of_looks,
+        can_move: saved.can_move,
+        macro_in_progress: saved.macro_in_progress,
+        number_of_remaining_macro_bytes: saved.remaining_macro_bytes,
+        timer_is_running: saved.timer_is_running,
+        when_does_timer_ring: saved.timer_ring_frame,
+        macro_timer_is_running: saved.macro_timer_is_running,
+        when_does_macro_timer_ring: saved.macro_timer_ring_frame,
+        standing_around_timer: saved.standing_around_timer,
+        sorrow_level: saved.sorrow_level,
+        is_master: saved.is_master,
+        first_try: saved.first_try,
+        panic_center_x: saved.panic_center_x,
+        panic_center_y: saved.panic_center_y,
+        lasting_panic_runs: saved.lasting_panic_runs,
+        directed_panic: saved.directed_panic,
+        couldnt_reachpoint: saved.could_not_reach_point,
+        already_on_point: saved.already_on_point,
+        already_turned: saved.already_turned,
+        likes_to_sit_around: saved.likes_to_sit_around,
+        special_action: saved.special_action,
+        friends_are_alerted: saved.friends_are_alerted,
+        is_stay_at_home: saved.stay_at_home,
+        was_busy: saved.was_busy,
+        script_locked: saved.script_locked,
+        remember_events: saved.remember_events,
+        leave_house_number: saved.leave_house_number,
+        inside_halt_method: saved.inside_halt_method,
+        macro_started_in_this_frame: saved.macro_started_this_frame,
+        default_path_walking_flags: goto_flags(
+            saved.default_path_walking_flags,
+            creation_order,
+            "local_ai.default_path_walking_flags",
+        )?,
+        next_macro_rand: saved.next_macro_rand,
+        next_macro_rand_forecasted: saved.next_macro_rand_forecasted,
+        knocked_out_in_money_fight: saved.knocked_out_in_money_fight,
+        got_beggar_trick: saved.got_beggar_trick,
+        patrol_stopped: saved.patrol_stopped,
+        patrol_direction: saved.patrol_direction,
+    })
+}
+
+fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
+    match (brain, saved) {
+        (
+            AiBrain::Friendly(ai),
+            ConvertedLocalAi::Friendly {
+                common,
+                fleeing_seen_enemy_counter,
+                beggar_dont_talk_counter,
+            },
+        ) => {
+            apply_local_ai_common(&mut ai.base, common);
+            ai.fleeing_seen_enemy_counter = fleeing_seen_enemy_counter;
+            ai.beggar_dont_talk_counter = beggar_dont_talk_counter;
+        }
+        (
+            AiBrain::Enemy(ai),
+            ConvertedLocalAi::Enemy {
+                common,
+                frame_when_enemy_detected,
+                fleeing_seen_enemy_counter,
+                pc_missed,
+                current_task_priority,
+                minimal_task_priority,
+                new_task_priority,
+                seen_dead_body,
+                seeking_charly,
+                reported_to_officer,
+                missed_soldier_timer,
+                old_money,
+                shield_bearer_direction,
+                phalanx_aborted,
+                changed_to_alert_path,
+                enemy_seen_below,
+                enemy_had_this_elevation,
+            },
+        ) => {
+            apply_local_ai_common(&mut ai.base, common);
+            ai.base.frame_when_enemy_detected = frame_when_enemy_detected;
+            ai.fleeing_seen_enemy_counter = fleeing_seen_enemy_counter;
+            ai.pc_missed = pc_missed;
+            ai.current_task_priority = current_task_priority;
+            ai.minimal_task_priority = minimal_task_priority;
+            ai.new_task_priority = new_task_priority;
+            ai.seen_dead_body = seen_dead_body;
+            ai.seeking_charly = seeking_charly;
+            ai.reported_to_officer = reported_to_officer;
+            ai.missed_soldier_timer = missed_soldier_timer;
+            ai.old_money = old_money;
+            ai.shield_bearer_direction = shield_bearer_direction;
+            ai.phalanx_aborted = phalanx_aborted;
+            ai.changed_to_alert_path = changed_to_alert_path;
+            ai.enemy_seen_below = enemy_seen_below;
+            ai.enemy_had_this_elevation = enemy_had_this_elevation;
+        }
+        _ => unreachable!("preflighted local-AI kind changed in candidate engine"),
+    }
+}
+
+fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
+    ai.last_goto_destination = saved.last_goto_destination;
+    ai.last_goto_flags = saved.last_goto_flags;
+    ai.stuck_counter = saved.stuck_counter;
+    ai.current_state = saved.current_state;
+    ai.old_state = saved.old_state;
+    ai.current_substate = saved.current_substate;
+    ai.current_music_alert_status = saved.current_music_alert_status;
+    ai.view_alert_status = saved.view_alert_status;
+    ai.substate_at_last_timer_launch = saved.substate_at_last_timer_launch;
+    ai.attitude = saved.attitude;
+    ai.blood_alcohol = saved.blood_alcohol;
+    ai.initial_action = saved.initial_action;
+    ai.number_of_looks = saved.number_of_looks;
+    ai.can_move = saved.can_move;
+    ai.macro_in_progress = saved.macro_in_progress;
+    ai.number_of_remaining_macro_bytes = saved.number_of_remaining_macro_bytes;
+    ai.timer_is_running = saved.timer_is_running;
+    ai.when_does_timer_ring = saved.when_does_timer_ring;
+    ai.macro_timer_is_running = saved.macro_timer_is_running;
+    ai.when_does_macro_timer_ring = saved.when_does_macro_timer_ring;
+    ai.standing_around_timer = saved.standing_around_timer;
+    ai.sorrow_level = saved.sorrow_level;
+    ai.is_master = saved.is_master;
+    ai.first_try = saved.first_try;
+    ai.panic_center_x = saved.panic_center_x;
+    ai.panic_center_y = saved.panic_center_y;
+    ai.lasting_panic_runs = saved.lasting_panic_runs;
+    ai.directed_panic = saved.directed_panic;
+    ai.couldnt_reachpoint = saved.couldnt_reachpoint;
+    ai.already_on_point = saved.already_on_point;
+    ai.already_turned = saved.already_turned;
+    ai.likes_to_sit_around = saved.likes_to_sit_around;
+    ai.special_action = saved.special_action;
+    ai.friends_are_alerted = saved.friends_are_alerted;
+    ai.is_stay_at_home = saved.is_stay_at_home;
+    ai.was_busy = saved.was_busy;
+    ai.script_locked = saved.script_locked;
+    ai.remember_events = saved.remember_events;
+    ai.leave_house_number = saved.leave_house_number;
+    ai.inside_halt_method = saved.inside_halt_method;
+    ai.macro_started_in_this_frame = saved.macro_started_in_this_frame;
+    ai.default_path_walking_flags = saved.default_path_walking_flags;
+    ai.next_macro_rand = saved.next_macro_rand;
+    ai.next_macro_rand_forecasted = saved.next_macro_rand_forecasted;
+    ai.knocked_out_in_money_fight = saved.knocked_out_in_money_fight;
+    ai.got_the_beggar_trick = saved.got_beggar_trick;
+    ai.patrol_stopped = saved.patrol_stopped;
+    ai.patrol_direction = saved.patrol_direction;
 }
 
 fn payload_parts(
@@ -608,6 +1123,156 @@ fn detectable_type(
     }
 }
 
+fn eye_status(value: u8, creation_order: u32) -> Result<EyeStatus, LegacyElementAdoptError> {
+    match value {
+        0 => Ok(EyeStatus::Closed),
+        1 => Ok(EyeStatus::LookForward),
+        2 => Ok(EyeStatus::LookToTheLeft),
+        3 => Ok(EyeStatus::LookToTheRight),
+        4 => Ok(EyeStatus::LookDownwards),
+        5 => Ok(EyeStatus::DieOrGetUnconscious),
+        6 => Ok(EyeStatus::Follow),
+        7 => Ok(EyeStatus::Stare),
+        8 => Ok(EyeStatus::ViewconeGrow),
+        value => Err(LegacyElementAdoptError::UnknownEnum {
+            creation_order,
+            field: "view.status",
+            value: u32::from(value),
+        }),
+    }
+}
+
+fn alert_level(
+    value: u32,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<AlertLevel, LegacyElementAdoptError> {
+    AlertLevel::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
+        creation_order,
+        field,
+        value,
+    })
+}
+
+fn ai_state(
+    value: i32,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<AiState, LegacyElementAdoptError> {
+    let raw = u32::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
+        creation_order,
+        field,
+        value: value as u32,
+    })?;
+    AiState::try_from(raw).map_err(|_| LegacyElementAdoptError::UnknownEnum {
+        creation_order,
+        field,
+        value: raw,
+    })
+}
+
+fn substate(
+    value: i32,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<Substate, LegacyElementAdoptError> {
+    let raw = u32::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
+        creation_order,
+        field,
+        value: value as u32,
+    })?;
+    Substate::try_from(raw).map_err(|_| LegacyElementAdoptError::UnknownEnum {
+        creation_order,
+        field,
+        value: raw,
+    })
+}
+
+fn attitude(
+    value: i32,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<Attitude, LegacyElementAdoptError> {
+    let raw = u32::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
+        creation_order,
+        field,
+        value: value as u32,
+    })?;
+    Attitude::try_from(raw).map_err(|_| LegacyElementAdoptError::UnknownEnum {
+        creation_order,
+        field,
+        value: raw,
+    })
+}
+
+fn goto_flags(
+    value: u16,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<GotoFlags, LegacyElementAdoptError> {
+    GotoFlags::from_bits(value).ok_or(LegacyElementAdoptError::InvalidFlags {
+        creation_order,
+        field,
+        value,
+    })
+}
+
+fn sector(
+    value: Option<u16>,
+    topology: &LegacyPositionTopology,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<Option<SectorHandle>, LegacyElementAdoptError> {
+    value
+        .map(|index| {
+            if usize::from(index) >= topology.sector_count {
+                return Err(LegacyElementAdoptError::MissingSector {
+                    creation_order,
+                    field,
+                    index,
+                    count: topology.sector_count,
+                });
+            }
+            SectorHandle::new(index).ok_or(LegacyElementAdoptError::MissingSector {
+                creation_order,
+                field,
+                index,
+                count: topology.sector_count,
+            })
+        })
+        .transpose()
+}
+
+fn ai_position(
+    saved: LegacyAiPosition,
+    topology: &LegacyPositionTopology,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<Position, LegacyElementAdoptError> {
+    Ok(Position {
+        x: saved.x,
+        y: saved.y,
+        sector: sector(saved.sector.0, topology, creation_order, field)?,
+        level: saved.level,
+    })
+}
+
+fn ai_brain_kind(brain: &AiBrain) -> &'static str {
+    match brain {
+        AiBrain::None => "None",
+        AiBrain::Enemy(_) => "Enemy",
+        AiBrain::Friendly(_) => "Friendly",
+    }
+}
+
+fn ai_base_mut(brain: &mut AiBrain) -> Option<&mut AiController> {
+    match brain {
+        AiBrain::None => None,
+        AiBrain::Enemy(ai) => Some(&mut ai.base),
+        AiBrain::Friendly(ai) => Some(&mut ai.base),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -632,5 +1297,27 @@ mod tests {
         assert_eq!(outline(3, 31).unwrap(), OutlineColorName::Striking);
         assert_eq!(outline(4, 31).unwrap(), OutlineColorName::Parrying);
         assert!(outline(5, 31).is_err());
+    }
+
+    #[test]
+    fn original_eye_status_values_match_rhviewparameters_order() {
+        assert_eq!(eye_status(0, 31).unwrap(), EyeStatus::Closed);
+        assert_eq!(eye_status(1, 31).unwrap(), EyeStatus::LookForward);
+        assert_eq!(eye_status(6, 31).unwrap(), EyeStatus::Follow);
+        assert_eq!(eye_status(8, 31).unwrap(), EyeStatus::ViewconeGrow);
+        assert!(eye_status(9, 31).is_err());
+    }
+
+    #[test]
+    fn local_ai_flags_preserve_the_complete_original_word() {
+        assert_eq!(
+            goto_flags(GotoFlags::RUN.bits(), 31, "flags").unwrap(),
+            GotoFlags::RUN
+        );
+        assert_eq!(
+            goto_flags(u16::MAX, 31, "flags").unwrap().bits(),
+            u16::MAX,
+            "Original defines all sixteen walking-flag bits"
+        );
     }
 }
