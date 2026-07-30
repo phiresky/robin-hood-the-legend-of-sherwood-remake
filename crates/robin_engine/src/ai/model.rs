@@ -1972,6 +1972,12 @@ pub enum StimulusInfo {
     Combat(CombatInfo),
     DoorCombat(DoorCombatInfo),
     Index(u16),
+    /// Exact invalid `RHStimulus::mType` storage from an old native save.
+    ///
+    /// Original's default constructor did not initialize `mType`. Such a
+    /// stimulus reaches the default/no-event dispatch path if it was queued,
+    /// but retaining the raw word keeps the imported state inspectable.
+    LegacyInvalidType(i32),
 }
 
 // ---------------------------------------------------------------------------
@@ -2063,6 +2069,7 @@ impl Stimulus {
                 a.goal.x == b.goal.x && a.goal.y == b.goal.y
             }
             (StimulusInfo::Index(a), StimulusInfo::Index(b)) => a == b,
+            (StimulusInfo::LegacyInvalidType(a), StimulusInfo::LegacyInvalidType(b)) => a == b,
             _ => false,
         }
     }

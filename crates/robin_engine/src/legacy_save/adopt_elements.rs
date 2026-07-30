@@ -3390,12 +3390,28 @@ fn convert_stimulus(
             actual: actual_name,
         });
     }
+    let (stimulus_type, info) = match stimulus_type(
+        saved.stimulus_type,
+        creation_order,
+        "local_ai.stimulus_queue.stimulus_type",
+    ) {
+        Ok(stimulus_type) => (stimulus_type, info),
+        Err(_) if is_uninitialized_default_stimulus(saved) => {
+            // `RHStimulus::RHStimulus` initialized exactly these four
+            // surrounding fields but omitted `mType`. If such a default
+            // stimulus was delayed, its arbitrary enum storage was serialized
+            // as an active queue entry. Original dispatch gives an unknown
+            // type the same default path as `NO_EVENT`; retain the raw word in
+            // the payload rather than inventing a low-byte event.
+            (
+                StimulusType::NoEvent,
+                StimulusInfo::LegacyInvalidType(saved.stimulus_type),
+            )
+        }
+        Err(error) => return Err(error),
+    };
     Ok(Stimulus {
-        stimulus_type: stimulus_type(
-            saved.stimulus_type,
-            creation_order,
-            "local_ai.stimulus_queue.stimulus_type",
-        )?,
+        stimulus_type,
         info,
         owner: element_handle(
             entities.resolve_element(saved.owner)?,
@@ -3405,6 +3421,13 @@ fn convert_stimulus(
         )?,
         to_whole_patrol: saved.to_whole_patrol,
     })
+}
+
+fn is_uninitialized_default_stimulus(saved: &LegacyStimulus) -> bool {
+    saved.info_type == 0
+        && matches!(saved.info, LegacyStimulusInfo::None)
+        && saved.owner.0.is_none()
+        && !saved.to_whole_patrol
 }
 
 fn ai_brain_kind(brain: &AiBrain) -> &'static str {
@@ -3708,6 +3731,24 @@ mod tests {
             ),
             (72, 0x5a3b_010e),
         );
+    }
+
+    #[test]
+    fn invalid_stimulus_is_dormant_only_with_exact_constructor_shape() {
+        let mut saved = LegacyStimulus {
+            to_whole_patrol: false,
+            stimulus_type: -282_591_232,
+            info_type: 0,
+            owner: super::super::payload_base::LegacyElementRef(None),
+            info: LegacyStimulusInfo::None,
+        };
+        assert!(is_uninitialized_default_stimulus(&saved));
+
+        saved.to_whole_patrol = true;
+        assert!(!is_uninitialized_default_stimulus(&saved));
+        saved.to_whole_patrol = false;
+        saved.owner = super::super::payload_base::LegacyElementRef(Some(103));
+        assert!(!is_uninitialized_default_stimulus(&saved));
     }
 
     #[test]
