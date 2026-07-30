@@ -3,17 +3,17 @@
 //! `RHArtificialIntelligence::SerializeThisAI` writes a common prefix and then
 //! calls a virtual subclass serializer. The subclass identity is not present
 //! in the stream, so callers must derive it from the owning element class.
-//! This module deliberately stops at that exact virtual-call boundary until
-//! the complete malignity tail (including personal seek-point bodies) is
-//! available; it never scans for a later fingerprint or guesses byte counts.
+//! The common reader exposes that exact virtual-call boundary for diagnostics;
+//! [`LegacyLocalAiPayload`] continues through either complete v48 subclass.
+//! No decoder scans for a later fingerprint or guesses byte counts.
 
 use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
 
 use super::payload_base::{
-    LegacyAiElementRef, LegacyElementRef, LegacySectorRef, read_ai_element_ref, read_element_ref,
-    read_sector_ref,
+    LegacyAiElementRef, LegacyElementRef, LegacyLineRef, LegacySectorRef, read_ai_element_ref,
+    read_element_ref, read_line_ref, read_sector_ref,
 };
 
 const AI_FINGERPRINT: [u8; 16] = hex16("02c3dacf6a5a1868e649569740c7fe14");
@@ -24,6 +24,10 @@ const PATH_FINGERPRINT: [u8; 16] = hex16("f2781c304bb147aa1defc89ab1033082");
 const HUMANS_LIST_FINGERPRINT: [u8; 16] = hex16("e1edc9e0991a413e5577613783f4333d");
 const NPC_LIST_FINGERPRINT: [u8; 16] = hex16("d36d2f762287f69bcb71a45982dde0ca");
 const OBJECT_LIST_FINGERPRINT: [u8; 16] = hex16("ee2a8180604e52d16d2844512ba84d7f");
+const BONHOMIE_FINGERPRINT: [u8; 16] = hex16("6a8a5ae26b698c516e64d1767753cd9d");
+const MALIGNITY_FINGERPRINT: [u8; 16] = hex16("4a5e5b668d2eb6d3b8ec78313111c571");
+const SEEK_POINT_ALL_FINGERPRINT: [u8; 16] = hex16("a9b877b827568572a12866cfa54c26ac");
+const SEEK_POINT_STATUS_FINGERPRINT: [u8; 16] = hex16("1d8f13888a44ed97abc70ec98d7132a1");
 
 const fn hex16(value: &str) -> [u8; 16] {
     let bytes = value.as_bytes();
@@ -60,6 +64,10 @@ pub struct LegacyLocalAiLimits {
     pub element_lists: usize,
     pub stimulus_queue: usize,
     pub reconnaissance_bodies: usize,
+    pub enemy_positions: usize,
+    pub ambush_statuses: usize,
+    pub seek_point_ids: usize,
+    pub seek_directions: usize,
 }
 
 impl Default for LegacyLocalAiLimits {
@@ -71,6 +79,10 @@ impl Default for LegacyLocalAiLimits {
             element_lists: 65_535,
             stimulus_queue: 65_535,
             reconnaissance_bodies: 65_535,
+            enemy_positions: 65_535,
+            ambush_statuses: 65_535,
+            seek_point_ids: 65_535,
+            seek_directions: 65_535,
         }
     }
 }
@@ -196,6 +208,134 @@ pub struct LegacyReconnaissanceReport {
 pub struct LegacyLocalAiSubclassBoundary {
     pub kind: LegacyLocalAiKind,
     pub byte_offset: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LegacySeekPoint {
+    pub position_x: f32,
+    pub position_y: f32,
+    pub position_level: u16,
+    pub position_sector: LegacySectorRef,
+    pub frame_when_fully_interesting: u32,
+    pub directions: Vec<u16>,
+    pub last_calculated_interest: u8,
+    pub locked: bool,
+    /// `SerializeAllData` ends by serializing the status a second time.
+    pub repeated_frame_when_fully_interesting: u32,
+    pub repeated_last_calculated_interest: u8,
+    pub repeated_locked: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LegacyFriendlyAiTail {
+    pub fleeing_seen_enemy_counter: u16,
+    pub beggar_dont_talk_counter: u16,
+    pub wants_to_talk: bool,
+    pub last_talk_partner: LegacyAiElementRef,
+    pub can_go_away: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LegacyShootingPointRef {
+    pub sector_index: u16,
+    pub point_index: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LegacyEnemyAiTail {
+    pub last_stimulus_dispatched_to_patrol: LegacyStimulus,
+    pub frame_when_missed_charly: u32,
+    pub heard_nets: Vec<LegacyAiElementRef>,
+    pub frame_when_enemy_detected: u32,
+    pub fleeing_seen_enemy_counter: u16,
+    pub other_seen_ale: Vec<LegacyAiElementRef>,
+    pub pc_gone_away_direction: u16,
+    pub detected_something_there: LegacyAiPosition,
+    pub missed_pc: LegacyAiElementRef,
+    pub last_seek_direction_index: u8,
+    pub beggar_to_examine: LegacyAiElementRef,
+    pub pc_missed: bool,
+    pub search_charly_way: Vec<LegacyAiPosition>,
+    pub current_task_priority: u16,
+    pub minimal_task_priority: u16,
+    pub new_task_priority: u16,
+    pub number_of_different_checkpoints: u8,
+    pub delta_sorrow_level: u16,
+    pub missed_in_action: Vec<LegacyAiElementRef>,
+    pub other_bodies_to_examine: Vec<LegacyAiElementRef>,
+    pub beggars_to_control: Vec<LegacyAiElementRef>,
+    pub thirsty: bool,
+    pub old_life_points: u8,
+    pub initial_life_points: u8,
+    pub them: Vec<LegacyAiElementRef>,
+    pub old_odds: i16,
+    pub position_change_locked_for_test: bool,
+    pub ambush_point_array_reset: bool,
+    pub ambush_point_statuses: Vec<i32>,
+    pub seek_point_ids: Vec<u32>,
+    pub actual_seek_point_id: u32,
+    pub seek_point_view_directions_before_personal_points: Vec<u16>,
+    pub personal_seek_point_1: Option<LegacySeekPoint>,
+    pub personal_seek_point_2: Option<LegacySeekPoint>,
+    pub seek_center: LegacyAiPosition,
+    pub seek_point_view_directions: Vec<u16>,
+    pub positions_of_beggars_to_control: Vec<LegacyAiPosition>,
+    pub seek_flags: u16,
+    pub forced_next_battle_decision: i32,
+    pub reset_battle_decision: bool,
+    pub synchronize_index: u16,
+    pub seen_dead_body: bool,
+    pub seeking_charly: bool,
+    pub initial_view_cone: i32,
+    pub repeated_seek_flags: u16,
+    pub company_number: u16,
+    pub left_combat_neighbour: LegacyAiElementRef,
+    pub right_combat_neighbour: LegacyAiElementRef,
+    pub attentive: bool,
+    pub will_be_attentive: bool,
+    pub forced_attentive: bool,
+    pub guarded_pc: LegacyAiElementRef,
+    pub tower_guard: bool,
+    pub combat_trainer: bool,
+    pub gather_position: LegacyAiPosition,
+    pub gather_direction: u16,
+    pub gather_position_instructed: bool,
+    pub officers_position: LegacyAiPosition,
+    pub previous_state: i32,
+    pub previous_substate: i32,
+    pub reported_to_officer: bool,
+    pub missed_soldier_timer: u16,
+    pub old_money: u16,
+    pub other_seen_money: Vec<LegacyAiElementRef>,
+    pub money_fight_enemies: Vec<LegacyAiElementRef>,
+    pub money_fight_victims: Vec<LegacyAiElementRef>,
+    pub archer_behind_me: LegacyAiElementRef,
+    pub shield_bearer_before_me: LegacyAiElementRef,
+    pub already_seen_bodies: Vec<LegacyAiElementRef>,
+    pub jump_line: LegacyLineRef,
+    pub shield_bearer_direction: u16,
+    pub phalanx_aborted: bool,
+    pub changed_to_alert_path: bool,
+    pub shooting_point: Option<LegacyShootingPointRef>,
+    pub archery_sector: Option<u16>,
+    pub archery_sector_index: u16,
+    pub archery_point_index: u16,
+    pub archery_point_increment: i8,
+    pub enemy_seen_below: bool,
+    pub enemy_had_this_elevation: u16,
+    pub known_enemy_strike_commands: [i32; 3],
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum LegacyLocalAiTail {
+    Friendly(LegacyFriendlyAiTail),
+    Enemy(LegacyEnemyAiTail),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LegacyLocalAiPayload {
+    pub common: LegacyLocalAiCommon,
+    pub tail: LegacyLocalAiTail,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -573,9 +713,421 @@ impl LegacyLocalAiCommon {
     }
 }
 
-fn read_ai_position(
+impl LegacyLocalAiPayload {
+    pub fn read(
+        reader: &mut LegacyReader<'_>,
+        config: &LegacyLocalAiDecodeConfig,
+    ) -> LegacyResult<Self> {
+        let common = LegacyLocalAiCommon::read(reader, config)?;
+        let tail = LegacyLocalAiTail::read(reader, common.subclass, &config.limits)?;
+        Ok(Self { common, tail })
+    }
+}
+
+impl LegacyLocalAiTail {
+    pub fn read(
+        reader: &mut LegacyReader<'_>,
+        boundary: LegacyLocalAiSubclassBoundary,
+        limits: &LegacyLocalAiLimits,
+    ) -> LegacyResult<Self> {
+        let offset = reader.offset();
+        if offset != boundary.byte_offset {
+            return Err(reader.invalid_value(
+                offset,
+                "subclass.byte_offset",
+                offset,
+                "current reader offset equal to the common AI subclass boundary",
+            ));
+        }
+        match boundary.kind {
+            LegacyLocalAiKind::Friendly => {
+                read_friendly_tail(reader).map(LegacyLocalAiTail::Friendly)
+            }
+            LegacyLocalAiKind::Enemy => {
+                read_enemy_tail(reader, limits).map(LegacyLocalAiTail::Enemy)
+            }
+        }
+    }
+}
+
+fn read_friendly_tail(reader: &mut LegacyReader<'_>) -> LegacyResult<LegacyFriendlyAiTail> {
+    reader.scope("friendly", |reader| {
+        reader.read_signature(
+            "fingerprint",
+            BONHOMIE_FINGERPRINT,
+            "RHArtificialBonhomie fingerprint",
+        )?;
+        Ok(LegacyFriendlyAiTail {
+            fleeing_seen_enemy_counter: reader.read_u16("fleeing_seen_enemy_counter")?,
+            beggar_dont_talk_counter: reader.read_u16("beggar_dont_talk_counter")?,
+            wants_to_talk: reader.read_bool("wants_to_talk")?,
+            last_talk_partner: read_ai_element_ref(reader, "last_talk_partner")?,
+            can_go_away: reader.read_bool("can_go_away")?,
+        })
+    })
+}
+
+fn read_enemy_tail(
+    reader: &mut LegacyReader<'_>,
+    limits: &LegacyLocalAiLimits,
+) -> LegacyResult<LegacyEnemyAiTail> {
+    reader.scope("enemy", |reader| {
+        reader.read_signature(
+            "fingerprint",
+            MALIGNITY_FINGERPRINT,
+            "RHArtificialMalignity fingerprint",
+        )?;
+        let last_stimulus_dispatched_to_patrol = reader
+            .scope("last_stimulus_dispatched_to_patrol", |reader| {
+                read_stimulus(reader, limits.element_lists)
+            })?;
+        let frame_when_missed_charly = reader.read_u32("frame_when_missed_charly")?;
+        let heard_nets = read_ai_ref_list(
+            reader,
+            "heard_nets",
+            OBJECT_LIST_FINGERPRINT,
+            limits.element_lists,
+        )?;
+        let frame_when_enemy_detected = reader.read_u32("frame_when_enemy_detected")?;
+        let fleeing_seen_enemy_counter = reader.read_u16("fleeing_seen_enemy_counter")?;
+        let other_seen_ale = read_ai_ref_list(
+            reader,
+            "other_seen_ale",
+            OBJECT_LIST_FINGERPRINT,
+            limits.element_lists,
+        )?;
+        let pc_gone_away_direction = reader.read_u16("pc_gone_away_direction")?;
+        let detected_something_there = read_ai_position(reader, "detected_something_there")?;
+        let missed_pc = read_ai_element_ref(reader, "missed_pc")?;
+        let last_seek_direction_index = reader.read_u8("last_seek_direction_index")?;
+        let beggar_to_examine = read_ai_element_ref(reader, "beggar_to_examine")?;
+        let pc_missed = reader.read_bool("pc_missed")?;
+        let search_charly_way =
+            read_ai_position_list(reader, "search_charly_way", limits.enemy_positions)?;
+        let current_task_priority = reader.read_u16("current_task_priority")?;
+        let minimal_task_priority = reader.read_u16("minimal_task_priority")?;
+        let new_task_priority = reader.read_u16("new_task_priority")?;
+        let number_of_different_checkpoints = reader.read_u8("number_of_different_checkpoints")?;
+        let delta_sorrow_level = reader.read_u16("delta_sorrow_level")?;
+        let missed_in_action = read_ai_ref_list(
+            reader,
+            "missed_in_action",
+            NPC_LIST_FINGERPRINT,
+            limits.element_lists,
+        )?;
+        let other_bodies_to_examine = read_ai_ref_list(
+            reader,
+            "other_bodies_to_examine",
+            HUMANS_LIST_FINGERPRINT,
+            limits.element_lists,
+        )?;
+        let beggars_to_control = read_ai_ref_list(
+            reader,
+            "beggars_to_control",
+            HUMANS_LIST_FINGERPRINT,
+            limits.element_lists,
+        )?;
+        let thirsty = reader.read_bool("thirsty")?;
+        let old_life_points = reader.read_u8("old_life_points")?;
+        let initial_life_points = reader.read_u8("initial_life_points")?;
+        let them = read_ai_ref_list(
+            reader,
+            "them",
+            HUMANS_LIST_FINGERPRINT,
+            limits.element_lists,
+        )?;
+        let old_odds = reader.read_i16("old_odds")?;
+        let position_change_locked_for_test =
+            reader.read_bool("position_change_locked_for_test")?;
+        let ambush_point_array_reset = reader.read_bool("ambush_point_array_reset")?;
+        let ambush_point_statuses =
+            read_i32_list(reader, "ambush_point_statuses", limits.ambush_statuses)?;
+        let seek_point_ids = read_u32_list(reader, "seek_point_ids", limits.seek_point_ids)?;
+        let actual_seek_point_id = reader.read_u32("actual_seek_point_id")?;
+        let seek_point_view_directions_before_personal_points = read_u16_list(
+            reader,
+            "seek_point_view_directions_before_personal_points",
+            limits.seek_directions,
+        )?;
+        let personal_seek_point_1 =
+            read_optional_seek_point(reader, "personal_seek_point_1", limits)?;
+        let personal_seek_point_2 =
+            read_optional_seek_point(reader, "personal_seek_point_2", limits)?;
+        let seek_center = read_ai_position(reader, "seek_center")?;
+        let seek_point_view_directions =
+            read_u16_list(reader, "seek_point_view_directions", limits.seek_directions)?;
+        let positions_of_beggars_to_control = read_ai_position_list(
+            reader,
+            "positions_of_beggars_to_control",
+            limits.enemy_positions,
+        )?;
+        let seek_flags = reader.read_u16("seek_flags")?;
+        let forced_next_battle_decision = reader.read_i32("forced_next_battle_decision")?;
+        let reset_battle_decision = reader.read_bool("reset_battle_decision")?;
+        let synchronize_index = reader.read_u16("synchronize_index")?;
+        let seen_dead_body = reader.read_bool("seen_dead_body")?;
+        let seeking_charly = reader.read_bool("seeking_charly")?;
+        let initial_view_cone = reader.read_i32("initial_view_cone")?;
+        let repeated_seek_flags = reader.read_u16("repeated_seek_flags")?;
+        let company_number = reader.read_u16("company_number")?;
+        let left_combat_neighbour = read_ai_element_ref(reader, "left_combat_neighbour")?;
+        let right_combat_neighbour = read_ai_element_ref(reader, "right_combat_neighbour")?;
+        let attentive = reader.read_bool("attentive")?;
+        let will_be_attentive = reader.read_bool("will_be_attentive")?;
+        let forced_attentive = reader.read_bool("forced_attentive")?;
+        let guarded_pc = read_ai_element_ref(reader, "guarded_pc")?;
+        let tower_guard = reader.read_bool("tower_guard")?;
+        let combat_trainer = reader.read_bool("combat_trainer")?;
+        let gather_position = read_ai_position(reader, "gather_position")?;
+        let gather_direction = reader.read_u16("gather_direction")?;
+        let gather_position_instructed = reader.read_bool("gather_position_instructed")?;
+        let officers_position = read_ai_position(reader, "officers_position")?;
+        let previous_state = reader.read_i32("previous_state")?;
+        let previous_substate = reader.read_i32("previous_substate")?;
+        let reported_to_officer = reader.read_bool("reported_to_officer")?;
+        let missed_soldier_timer = reader.read_u16("missed_soldier_timer")?;
+        let old_money = reader.read_u16("old_money")?;
+        let other_seen_money = read_ai_ref_list(
+            reader,
+            "other_seen_money",
+            OBJECT_LIST_FINGERPRINT,
+            limits.element_lists,
+        )?;
+        let money_fight_enemies = read_ai_ref_list(
+            reader,
+            "money_fight_enemies",
+            NPC_LIST_FINGERPRINT,
+            limits.element_lists,
+        )?;
+        let money_fight_victims = read_ai_ref_list(
+            reader,
+            "money_fight_victims",
+            NPC_LIST_FINGERPRINT,
+            limits.element_lists,
+        )?;
+        let archer_behind_me = read_ai_element_ref(reader, "archer_behind_me")?;
+        let shield_bearer_before_me = read_ai_element_ref(reader, "shield_bearer_before_me")?;
+        let already_seen_bodies = read_ai_ref_list(
+            reader,
+            "already_seen_bodies",
+            HUMANS_LIST_FINGERPRINT,
+            limits.element_lists,
+        )?;
+        let jump_line = read_line_ref(reader, "jump_line")?;
+        let shield_bearer_direction = reader.read_u16("shield_bearer_direction")?;
+        let phalanx_aborted = reader.read_bool("phalanx_aborted")?;
+        let changed_to_alert_path = reader.read_bool("changed_to_alert_path")?;
+        let shooting_sector = reader.read_u16("shooting_point.sector_index")?;
+        let shooting_point = if shooting_sector == 666 {
+            None
+        } else {
+            Some(LegacyShootingPointRef {
+                sector_index: shooting_sector,
+                point_index: reader.read_u16("shooting_point.point_index")?,
+            })
+        };
+        let raw_archery_sector = reader.read_u16("archery_sector")?;
+        let archery_sector = (raw_archery_sector != 666).then_some(raw_archery_sector);
+        let archery_sector_index = reader.read_u16("archery_sector_index")?;
+        let archery_point_index = reader.read_u16("archery_point_index")?;
+        let archery_point_increment = reader.read_i8("archery_point_increment")?;
+        let enemy_seen_below = reader.read_bool("enemy_seen_below")?;
+        let enemy_had_this_elevation = reader.read_u16("enemy_had_this_elevation")?;
+        let known_enemy_strike_commands = [
+            reader.read_i32("known_enemy_strike_commands[0]")?,
+            reader.read_i32("known_enemy_strike_commands[1]")?,
+            reader.read_i32("known_enemy_strike_commands[2]")?,
+        ];
+
+        Ok(LegacyEnemyAiTail {
+            last_stimulus_dispatched_to_patrol,
+            frame_when_missed_charly,
+            heard_nets,
+            frame_when_enemy_detected,
+            fleeing_seen_enemy_counter,
+            other_seen_ale,
+            pc_gone_away_direction,
+            detected_something_there,
+            missed_pc,
+            last_seek_direction_index,
+            beggar_to_examine,
+            pc_missed,
+            search_charly_way,
+            current_task_priority,
+            minimal_task_priority,
+            new_task_priority,
+            number_of_different_checkpoints,
+            delta_sorrow_level,
+            missed_in_action,
+            other_bodies_to_examine,
+            beggars_to_control,
+            thirsty,
+            old_life_points,
+            initial_life_points,
+            them,
+            old_odds,
+            position_change_locked_for_test,
+            ambush_point_array_reset,
+            ambush_point_statuses,
+            seek_point_ids,
+            actual_seek_point_id,
+            seek_point_view_directions_before_personal_points,
+            personal_seek_point_1,
+            personal_seek_point_2,
+            seek_center,
+            seek_point_view_directions,
+            positions_of_beggars_to_control,
+            seek_flags,
+            forced_next_battle_decision,
+            reset_battle_decision,
+            synchronize_index,
+            seen_dead_body,
+            seeking_charly,
+            initial_view_cone,
+            repeated_seek_flags,
+            company_number,
+            left_combat_neighbour,
+            right_combat_neighbour,
+            attentive,
+            will_be_attentive,
+            forced_attentive,
+            guarded_pc,
+            tower_guard,
+            combat_trainer,
+            gather_position,
+            gather_direction,
+            gather_position_instructed,
+            officers_position,
+            previous_state,
+            previous_substate,
+            reported_to_officer,
+            missed_soldier_timer,
+            old_money,
+            other_seen_money,
+            money_fight_enemies,
+            money_fight_victims,
+            archer_behind_me,
+            shield_bearer_before_me,
+            already_seen_bodies,
+            jump_line,
+            shield_bearer_direction,
+            phalanx_aborted,
+            changed_to_alert_path,
+            shooting_point,
+            archery_sector,
+            archery_sector_index,
+            archery_point_index,
+            archery_point_increment,
+            enemy_seen_below,
+            enemy_had_this_elevation,
+            known_enemy_strike_commands,
+        })
+    })
+}
+
+fn read_optional_seek_point(
     reader: &mut LegacyReader<'_>,
     field: &'static str,
+    limits: &LegacyLocalAiLimits,
+) -> LegacyResult<Option<LegacySeekPoint>> {
+    reader.scope(field, |reader| {
+        if reader.read_bool("present")? {
+            read_seek_point(reader, limits).map(Some)
+        } else {
+            Ok(None)
+        }
+    })
+}
+
+fn read_seek_point(
+    reader: &mut LegacyReader<'_>,
+    limits: &LegacyLocalAiLimits,
+) -> LegacyResult<LegacySeekPoint> {
+    reader.read_signature(
+        "fingerprint",
+        SEEK_POINT_ALL_FINGERPRINT,
+        "RHSeekPoint::SerializeAllData fingerprint",
+    )?;
+    let position_x = reader.read_f32("position.x")?;
+    let position_y = reader.read_f32("position.y")?;
+    let position_level = reader.read_u16("position.level")?;
+    let position_sector = read_sector_ref(reader, "position.sector")?;
+    let frame_when_fully_interesting = reader.read_u32("frame_when_fully_interesting")?;
+    let directions = read_u16_list(reader, "directions", limits.seek_directions)?;
+    let last_calculated_interest = reader.read_u8("last_calculated_interest")?;
+    let locked = reader.read_bool("locked")?;
+    reader.read_signature(
+        "status.fingerprint",
+        SEEK_POINT_STATUS_FINGERPRINT,
+        "RHSeekPoint fingerprint",
+    )?;
+    let repeated_frame_when_fully_interesting =
+        reader.read_u32("status.frame_when_fully_interesting")?;
+    let repeated_last_calculated_interest = reader.read_u8("status.last_calculated_interest")?;
+    let repeated_locked = reader.read_bool("status.locked")?;
+    Ok(LegacySeekPoint {
+        position_x,
+        position_y,
+        position_level,
+        position_sector,
+        frame_when_fully_interesting,
+        directions,
+        last_calculated_interest,
+        locked,
+        repeated_frame_when_fully_interesting,
+        repeated_last_calculated_interest,
+        repeated_locked,
+    })
+}
+
+fn read_ai_position_list(
+    reader: &mut LegacyReader<'_>,
+    field: &'static str,
+    maximum: usize,
+) -> LegacyResult<Vec<LegacyAiPosition>> {
+    reader.scope(field, |reader| {
+        let count = reader.read_count_u32("count", maximum)?;
+        let mut values = reserve(reader, "items", count)?;
+        for index in 0..count {
+            values.push(read_ai_position(reader, format!("items[{index}]"))?);
+        }
+        Ok(values)
+    })
+}
+
+fn read_u16_list(
+    reader: &mut LegacyReader<'_>,
+    field: &'static str,
+    maximum: usize,
+) -> LegacyResult<Vec<u16>> {
+    reader.scope(field, |reader| {
+        let count = reader.read_count_u32("count", maximum)?;
+        let mut values = reserve(reader, "items", count)?;
+        for index in 0..count {
+            values.push(reader.read_u16(format_args!("items[{index}]"))?);
+        }
+        Ok(values)
+    })
+}
+
+fn read_u32_list(
+    reader: &mut LegacyReader<'_>,
+    field: &'static str,
+    maximum: usize,
+) -> LegacyResult<Vec<u32>> {
+    reader.scope(field, |reader| {
+        let count = reader.read_count_u32("count", maximum)?;
+        let mut values = reserve(reader, "items", count)?;
+        for index in 0..count {
+            values.push(reader.read_u32(format_args!("items[{index}]"))?);
+        }
+        Ok(values)
+    })
+}
+
+fn read_ai_position(
+    reader: &mut LegacyReader<'_>,
+    field: impl Into<String>,
 ) -> LegacyResult<LegacyAiPosition> {
     reader.scope(field, |reader| {
         reader.read_signature(
@@ -878,40 +1430,6 @@ fn reserve<T>(
     Ok(values)
 }
 
-// Remaining exact subclass grammars at `LegacyLocalAiSubclassBoundary`:
-//
-// Friendly (`RHArtificialBonhomie::SerializeExactlyThisAI`, v48):
-// fingerprint; fleeing-seen-enemy counter u16; beggar-don't-talk counter
-// u16; wants-to-talk bool; AI-local last-talk-partner u16; can-go-away bool.
-//
-// Enemy (`RHArtificialMalignity::SerializeExactlyThisAI`, v48):
-// fingerprint; last dispatched stimulus; missed-Charly frame u32; object-ref
-// list of heard nets; enemy-detected frame u32; fleeing counter u16;
-// other-seen-ale object-ref list; gone-away direction u16; AI position;
-// missed-PC AI ref; last seek direction u8; beggar AI ref; PC-missed bool;
-// search-Charly AI-position list; three u16 priorities; checkpoint count u8;
-// delta sorrow u16; missed-in-action NPC list; bodies and beggars human
-// lists; thirsty bool; two life-point u8s; opponents human list; old odds
-// i16; position-change lock bool; ambush reset bool; u32 ambush-status list;
-// u32 seek-point-ID list and actual ID; u32 u16-direction list; two optional
-// `RHSeekPoint::SerializeAllData` bodies; seek-center AI position; another
-// u32/u16 direction list; beggar-control AI-position list; seek flags u16;
-// forced battle decision i32; reset-decision bool; synchronize index u16;
-// seen-dead-body and seeking-Charly bools; initial view cone i32; repeated
-// seek flags u16; company number u16; left/right combat-neighbour AI refs;
-// three attentive bools; guarded-PC AI ref; tower-guard and trainer bools;
-// gather AI position, gather direction u16 and instructed bool; officer AI
-// position; previous state/substate i32s; reported bool; missed-soldier timer
-// and old money u16s; other-money object list; money-enemy and victim NPC
-// lists; archer/shield-bearer AI refs; already-seen-bodies human list; line
-// reference (u16 layer + i16 index); shield direction u16; phalanx-aborted and
-// alert-path-changed bools; optional shooting-point encoded as sector u16
-// (666 null) plus point u16; archery-sector u16 (666 null); archery sector and
-// point indices u16; signed point increment i8; enemy-below bool; enemy
-// elevation u16; and three known-enemy-strike command i32s. The optional
-// seek-point serializer dependencies are why the decoder stops before the
-// subclass today.
-
 #[cfg(test)]
 mod tests {
     use std::io::Write;
@@ -1056,6 +1574,127 @@ mod tests {
         bytes
     }
 
+    fn append_friendly_tail(bytes: &mut Vec<u8>) {
+        bytes.extend_from_slice(&BONHOMIE_FINGERPRINT);
+        u16(bytes, 51);
+        u16(bytes, 52);
+        bytes.push(1);
+        u16(bytes, 53);
+        bytes.push(0);
+    }
+
+    fn append_none_stimulus(bytes: &mut Vec<u8>) {
+        bytes.extend_from_slice(&STIMULUS_FINGERPRINT);
+        bytes.push(0);
+        i32(bytes, 61);
+        i32(bytes, 0);
+        u32(bytes, u32::MAX);
+    }
+
+    fn append_seek_point(bytes: &mut Vec<u8>, seed: u16) {
+        bytes.extend_from_slice(&SEEK_POINT_ALL_FINGERPRINT);
+        f32(bytes, seed as f32);
+        f32(bytes, -(seed as f32));
+        u16(bytes, seed);
+        u16(bytes, u16::MAX);
+        u32(bytes, u32::from(seed) + 100);
+        u32(bytes, 2);
+        u16(bytes, seed + 1);
+        u16(bytes, seed + 2);
+        bytes.push(seed as u8);
+        bytes.push(1);
+        bytes.extend_from_slice(&SEEK_POINT_STATUS_FINGERPRINT);
+        u32(bytes, u32::from(seed) + 200);
+        bytes.push(seed as u8 + 3);
+        bytes.push(0);
+    }
+
+    fn append_enemy_tail(bytes: &mut Vec<u8>, personal_points: bool) {
+        bytes.extend_from_slice(&MALIGNITY_FINGERPRINT);
+        append_none_stimulus(bytes);
+        u32(bytes, 62);
+        ai_list(bytes, OBJECT_LIST_FINGERPRINT);
+        u32(bytes, 63);
+        u16(bytes, 64);
+        ai_list(bytes, OBJECT_LIST_FINGERPRINT);
+        u16(bytes, 65);
+        position(bytes);
+        u16(bytes, 54_321);
+        bytes.push(1);
+        u16(bytes, 54_321);
+        bytes.push(0);
+        u32(bytes, 0); // search Charly positions
+        u16(bytes, 66);
+        u16(bytes, 67);
+        u16(bytes, 68);
+        bytes.push(2);
+        u16(bytes, 69);
+        ai_list(bytes, NPC_LIST_FINGERPRINT);
+        ai_list(bytes, HUMANS_LIST_FINGERPRINT);
+        ai_list(bytes, HUMANS_LIST_FINGERPRINT);
+        bytes.extend_from_slice(&[0, 70, 71]);
+        ai_list(bytes, HUMANS_LIST_FINGERPRINT);
+        u16(bytes, (-2_i16) as u16);
+        bytes.extend_from_slice(&[0, 1]);
+        u32(bytes, 0); // ambush statuses
+        u32(bytes, 0); // seek-point IDs
+        u32(bytes, 6666);
+        u32(bytes, 0); // directions before personal points
+        bytes.push(personal_points as u8);
+        if personal_points {
+            append_seek_point(bytes, 72);
+        }
+        bytes.push(personal_points as u8);
+        if personal_points {
+            append_seek_point(bytes, 82);
+        }
+        position(bytes);
+        u32(bytes, 0); // seek directions
+        u32(bytes, 0); // beggar positions
+        u16(bytes, 90);
+        i32(bytes, 91);
+        bytes.push(0);
+        u16(bytes, 92);
+        bytes.extend_from_slice(&[1, 0]);
+        i32(bytes, 93);
+        u16(bytes, 94);
+        u16(bytes, 95);
+        u16(bytes, 54_321);
+        u16(bytes, 54_321);
+        bytes.extend_from_slice(&[1, 0, 1]);
+        u16(bytes, 54_321);
+        bytes.extend_from_slice(&[0, 1]);
+        position(bytes);
+        u16(bytes, 96);
+        bytes.push(1);
+        position(bytes);
+        i32(bytes, 97);
+        i32(bytes, 98);
+        bytes.push(0);
+        u16(bytes, 99);
+        u16(bytes, 100);
+        ai_list(bytes, OBJECT_LIST_FINGERPRINT);
+        ai_list(bytes, NPC_LIST_FINGERPRINT);
+        ai_list(bytes, NPC_LIST_FINGERPRINT);
+        u16(bytes, 54_321);
+        u16(bytes, 54_321);
+        ai_list(bytes, HUMANS_LIST_FINGERPRINT);
+        u16(bytes, u16::MAX);
+        u16(bytes, (-1_i16) as u16);
+        u16(bytes, 101);
+        bytes.extend_from_slice(&[0, 1]);
+        u16(bytes, 666);
+        u16(bytes, 666);
+        u16(bytes, 102);
+        u16(bytes, 103);
+        bytes.push((-1_i8) as u8);
+        bytes.push(0);
+        u16(bytes, 104);
+        i32(bytes, 105);
+        i32(bytes, 106);
+        i32(bytes, 107);
+    }
+
     #[test]
     fn decodes_common_prefix_and_preserves_overlap_at_subclass_boundary() {
         let bytes = minimal_common();
@@ -1126,6 +1765,71 @@ mod tests {
             .unwrap_err();
             assert_eq!(error.offset, 0);
             assert_eq!(error.field, "fingerprint");
+        });
+    }
+
+    #[test]
+    fn decodes_complete_friendly_tail() {
+        let mut bytes = minimal_common();
+        append_friendly_tail(&mut bytes);
+        with_reader(&bytes, |reader| {
+            let decoded = LegacyLocalAiPayload::read(
+                reader,
+                &LegacyLocalAiDecodeConfig::for_kind(LegacyLocalAiKind::Friendly),
+            )
+            .unwrap();
+            assert_eq!(reader.offset(), bytes.len() as u64);
+            let LegacyLocalAiTail::Friendly(tail) = decoded.tail else {
+                panic!("expected friendly tail");
+            };
+            assert_eq!(tail.fleeing_seen_enemy_counter, 51);
+            assert_eq!(tail.last_talk_partner, LegacyAiElementRef(Some(53)));
+            assert!(!tail.can_go_away);
+        });
+    }
+
+    #[test]
+    fn decodes_complete_enemy_tail_without_personal_seek_points() {
+        let mut bytes = minimal_common();
+        append_enemy_tail(&mut bytes, false);
+        with_reader(&bytes, |reader| {
+            let decoded = LegacyLocalAiPayload::read(
+                reader,
+                &LegacyLocalAiDecodeConfig::for_kind(LegacyLocalAiKind::Enemy),
+            )
+            .unwrap();
+            assert_eq!(reader.offset(), bytes.len() as u64);
+            let LegacyLocalAiTail::Enemy(tail) = decoded.tail else {
+                panic!("expected enemy tail");
+            };
+            assert!(tail.personal_seek_point_1.is_none());
+            assert!(tail.personal_seek_point_2.is_none());
+            assert_eq!(tail.actual_seek_point_id, 6666);
+            assert_eq!(tail.archery_point_increment, -1);
+            assert_eq!(tail.known_enemy_strike_commands, [105, 106, 107]);
+        });
+    }
+
+    #[test]
+    fn decodes_complete_enemy_tail_with_both_personal_seek_points() {
+        let mut bytes = minimal_common();
+        append_enemy_tail(&mut bytes, true);
+        with_reader(&bytes, |reader| {
+            let decoded = LegacyLocalAiPayload::read(
+                reader,
+                &LegacyLocalAiDecodeConfig::for_kind(LegacyLocalAiKind::Enemy),
+            )
+            .unwrap();
+            assert_eq!(reader.offset(), bytes.len() as u64);
+            let LegacyLocalAiTail::Enemy(tail) = decoded.tail else {
+                panic!("expected enemy tail");
+            };
+            let first = tail.personal_seek_point_1.unwrap();
+            let second = tail.personal_seek_point_2.unwrap();
+            assert_eq!(first.directions, vec![73, 74]);
+            assert_eq!(first.repeated_frame_when_fully_interesting, 272);
+            assert_eq!(second.directions, vec![83, 84]);
+            assert_eq!(second.repeated_last_calculated_interest, 85);
         });
     }
 }
