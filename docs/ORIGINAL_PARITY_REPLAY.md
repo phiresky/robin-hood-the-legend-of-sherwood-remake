@@ -1405,6 +1405,19 @@ Execute aborts and releases the now-invalid Tie order rather than playing its
 unused animation tail. Linux3 Profile 003 save 011 exercises these fixes with
 a tie that was already in progress when the save was written.
 
+### Profile-derived beam-me capacity in loaded-save replay
+
+The standalone parity runner loaded `profile.cpf` directly but omitted the
+normal game bootstrap's `ProfileManager::import_beam_mes` enrichment pass.
+Consequently every mission reported a deployment capacity of zero. In
+Sherwood's deployment-zone script, even an empty mission team then satisfied
+`GetSizeOfMissionTeam() >= GetNumberOfBeamMes()`, incorrectly sending an
+entering PC away and consuming a `Rand` draw.
+
+The runner now imports beam-me metadata from `Data/Levels` before restoring the
+campaign, exactly like the ordinary game startup path. Linux3 Profile 003 save
+056 consequently matches every recorded frame.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

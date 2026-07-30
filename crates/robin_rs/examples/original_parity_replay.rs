@@ -3150,6 +3150,7 @@ fn initialize_engine(
     )
     .expect("open profile.cpf");
     pm.load_all_legacy_cpf(&mut cpf).expect("parse profile.cpf");
+    pm.import_beam_mes("Data/Levels");
 
     let campaign = restore_campaign(&header.campaign, &pm);
     let mission_idx = campaign
