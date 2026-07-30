@@ -9,6 +9,7 @@
 #![deny(unused_must_use)]
 
 pub mod abilities;
+pub mod actor_state;
 pub mod ai;
 pub mod ai_detectable_filter;
 pub mod ai_enemy;

@@ -50,6 +50,12 @@ pub enum MotionState {
     Error,
 }
 
+impl Default for MotionState {
+    fn default() -> Self {
+        Self::Done
+    }
+}
+
 // ---------------------------------------------------------------------------
 // MotionMethod
 // ---------------------------------------------------------------------------
@@ -280,6 +286,8 @@ pub struct Sprite {
     pub current_frame: u16,
     /// Sub-frame counter (ticks within the current frame's delay).
     pub frame_count: u16,
+    /// Remaining flight ticks (`RHSprite::muwFrameCountDown`).
+    pub flight_frame_countdown: u16,
 
     /// Width of the current sprite frame.
     pub current_width: u16,
@@ -377,6 +385,7 @@ struct SpriteSnapshotRef<'a> {
     current_row: u16,
     current_frame: u16,
     frame_count: u16,
+    flight_frame_countdown: u16,
     current_width: u16,
     current_height: u16,
     last_action: OrderType,
@@ -403,6 +412,7 @@ struct SpriteSnapshot {
     current_row: u16,
     current_frame: u16,
     frame_count: u16,
+    flight_frame_countdown: u16,
     current_width: u16,
     current_height: u16,
     last_action: OrderType,
@@ -430,6 +440,7 @@ impl Sprite {
             current_row: self.current_row,
             current_frame: self.current_frame,
             frame_count: self.frame_count,
+            flight_frame_countdown: self.flight_frame_countdown,
             current_width: self.current_width,
             current_height: self.current_height,
             last_action: self.last_action,
@@ -472,6 +483,7 @@ impl<'de> Deserialize<'de> for Sprite {
             current_row: snapshot.current_row,
             current_frame: snapshot.current_frame,
             frame_count: snapshot.frame_count,
+            flight_frame_countdown: snapshot.flight_frame_countdown,
             current_width: snapshot.current_width,
             current_height: snapshot.current_height,
             last_action: snapshot.last_action,
@@ -505,6 +517,7 @@ impl robin_util::state_hash::StateHash for Sprite {
         self.current_row.state_hash(state);
         self.current_frame.state_hash(state);
         self.frame_count.state_hash(state);
+        self.flight_frame_countdown.state_hash(state);
         self.current_width.state_hash(state);
         self.current_height.state_hash(state);
         self.last_action.state_hash(state);
@@ -533,6 +546,7 @@ impl Default for Sprite {
             current_row: 0,
             current_frame: 0,
             frame_count: 0xFFFF,
+            flight_frame_countdown: 0,
             current_width: 0,
             current_height: 0,
             last_action: OrderType::NonanimationEnd,

@@ -576,6 +576,7 @@ pub struct ActiveDoorPass {
 /// Actor-level data.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct ActorData {
+    pub continuation: crate::actor_state::ActorContinuationState,
     pub old_action: Animation,
     pub is_ignored_for_anti_collision: bool,
 
@@ -764,6 +765,7 @@ pub struct ActorData {
 impl Default for ActorData {
     fn default() -> Self {
         Self {
+            continuation: crate::actor_state::ActorContinuationState::default(),
             old_action: Animation::default(),
             is_ignored_for_anti_collision: false,
             action_state: ActionState::default(),

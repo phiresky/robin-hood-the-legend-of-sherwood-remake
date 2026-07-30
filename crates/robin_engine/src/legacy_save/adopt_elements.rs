@@ -10,6 +10,7 @@ use std::num::NonZeroU32;
 use thiserror::Error;
 
 use crate::{
+    actor_state::ActorContinuationState,
     ai::{
         AiController, AiGlobalState, AiState, AlertLevel, Attitude, CombatInfo, DoorCombatInfo,
         GotoFlags, Hint, Noise, NoiseType, PathHistoryEntry, PathId, PatrolPath, Position,
@@ -25,6 +26,7 @@ use crate::{
     level_data::WaypointCommand,
     order::OrderType,
     position_interface::{PositionInterfaceV48State, SectorHandle},
+    sprite::MotionState,
 };
 
 use super::{
@@ -37,7 +39,7 @@ use super::{
     },
     payload_base::{
         LegacyActorPayload, LegacyAiElementRef, LegacyElementPayloadBase, LegacyNpcPayload,
-        LegacyNpcView, LegacySpritePayload,
+        LegacyNpcView, LegacyPoint2, LegacySpritePayload,
     },
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
     payload_objects::LegacyObjectItemPayload,
@@ -52,12 +54,6 @@ use super::{
 pub const REMAINING_COMMON_ELEMENT_FIELDS: &[&str] = &[
     "RHElement::mbPositionMapDelayed / mptPositionMapDelayed",
     "RHElement::mbPositionDelayed / mptPositionDelayed",
-    "RHSprite::muwFrameCountDown",
-    "RHElementActor::mbIsAboutToSurrender",
-    "RHElementActor::mbIsSurrendering",
-    "RHElementActor::mfDistanceToBoundary",
-    "RHElementActor::mmotionState",
-    "RHElementActor seek layer, bypass/railroad flags, seek-to-point/check-jump, bypass exit/reference, and material/seek sectors",
     "RHElementActor sequence/order pointers and inline post-seek sequence",
     "RHElementActor script member variables",
     "RHElementActorNPC::mpAttachedScroll identity (Rust currently retains only attached/not attached)",
@@ -133,6 +129,31 @@ pub enum LegacyElementAdoptError {
         field: &'static str,
         index: u16,
         count: usize,
+    },
+    #[error(
+        "saved element creation order {creation_order} field {field} references layer {index}, but initialized topology has {count} layers"
+    )]
+    MissingLayer {
+        creation_order: u32,
+        field: &'static str,
+        index: u16,
+        count: usize,
+    },
+    #[error(
+        "saved element creation order {creation_order} field {field} contains non-finite value {value}"
+    )]
+    NonFinite {
+        creation_order: u32,
+        field: &'static str,
+        value: f32,
+    },
+    #[error(
+        "saved actor creation order {creation_order} writes inconsistent duplicate distance-to-boundary values {first} and {second}"
+    )]
+    DistanceToBoundaryMismatch {
+        creation_order: u32,
+        first: f32,
+        second: f32,
     },
     #[error(
         "saved NPC creation order {creation_order} has {saved_kind} local AI but its initialized Rust entity has {runtime_kind}"
@@ -295,6 +316,7 @@ struct ConvertedSprite {
     current_row: u16,
     current_frame: u16,
     frame_count: u16,
+    flight_frame_countdown: u16,
     current_height: u16,
     current_width: u16,
     last_action: OrderType,
@@ -312,6 +334,7 @@ struct ConvertedSprite {
 
 #[derive(Clone, Debug)]
 struct ConvertedActor {
+    continuation: ActorContinuationState,
     last_order_id: Option<NonZeroU32>,
     old_action: OrderType,
     action_state: ActionState,
@@ -620,7 +643,15 @@ impl LegacyStaticElementAdoption {
                 creation_order,
                 element: convert_element(base, creation_order, entities, position_topology)?,
                 actor: actor
-                    .map(|actor| convert_actor(actor, creation_order, entities))
+                    .map(|actor| {
+                        convert_actor(
+                            actor,
+                            creation_order,
+                            entities,
+                            position_topology,
+                            engine.world.fast_grid.level.layers.len(),
+                        )
+                    })
                     .transpose()?,
                 npc: npc
                     .map(|npc| {
@@ -670,6 +701,7 @@ impl LegacyStaticElementAdoption {
             sprite.current_row = converted.element.sprite.current_row;
             sprite.current_frame = converted.element.sprite.current_frame;
             sprite.frame_count = converted.element.sprite.frame_count;
+            sprite.flight_frame_countdown = converted.element.sprite.flight_frame_countdown;
             sprite.current_height = converted.element.sprite.current_height;
             sprite.current_width = converted.element.sprite.current_width;
             sprite.last_action = converted.element.sprite.last_action;
@@ -696,6 +728,7 @@ impl LegacyStaticElementAdoption {
                 let actor = entity
                     .actor_data_mut()
                     .expect("preflighted v48 actor changed kind in candidate engine");
+                actor.continuation = saved.continuation;
                 actor.last_execute_order_id = saved.last_order_id;
                 actor.old_action = saved.old_action;
                 actor.action_state = saved.action_state;
@@ -781,6 +814,7 @@ fn convert_sprite(
         current_row: saved.current_row,
         current_frame: saved.current_frame,
         frame_count: saved.frame_count,
+        flight_frame_countdown: saved.frame_count_down,
         current_height: saved.current_height,
         current_width: saved.current_width,
         last_action: order_type(saved.last_action, creation_order, "last_action")?,
@@ -801,13 +835,87 @@ fn convert_actor(
     saved: &LegacyActorPayload,
     creation_order: u32,
     entities: &LegacyEntityFixups,
+    topology: &LegacyPositionTopology,
+    layer_count: usize,
 ) -> Result<ConvertedActor, LegacyElementAdoptError> {
     let last_order_id = match saved.last_order_id {
         u32::MAX => None,
         0 => return Err(LegacyElementAdoptError::ZeroLastOrderId { creation_order }),
         value => NonZeroU32::new(value),
     };
+    finite(
+        saved.distance_to_boundary_first,
+        creation_order,
+        "distance_to_boundary_first",
+    )?;
+    finite(
+        saved.distance_to_boundary_second,
+        creation_order,
+        "distance_to_boundary_second",
+    )?;
+    if saved.distance_to_boundary_first.to_bits() != saved.distance_to_boundary_second.to_bits() {
+        return Err(LegacyElementAdoptError::DistanceToBoundaryMismatch {
+            creation_order,
+            first: saved.distance_to_boundary_first,
+            second: saved.distance_to_boundary_second,
+        });
+    }
+    finite_point(saved.bypass_exit, creation_order, "bypass_exit")?;
+    finite_point(
+        saved.position_at_last_distance_request,
+        creation_order,
+        "position_at_last_distance_request",
+    )?;
+    for point in &saved.bypass_points {
+        finite_point(*point, creation_order, "bypass_points")?;
+    }
+    if saved.seek_to_point && usize::from(saved.seek_layer) >= layer_count {
+        return Err(LegacyElementAdoptError::MissingLayer {
+            creation_order,
+            field: "seek_layer",
+            index: saved.seek_layer,
+            count: layer_count,
+        });
+    }
+    let menacer = checked_reference(
+        entities.resolve_element(saved.menacer)?,
+        ReferenceKind::Npc,
+        creation_order,
+        "menacer",
+    )?;
+    let motion_state = motion_state(saved.motion_state, creation_order)?;
+    let continuation = ActorContinuationState {
+        about_to_surrender: saved.about_to_surrender,
+        surrendering: saved.surrendering,
+        menacer,
+        distance_to_boundary: saved.distance_to_boundary_second,
+        position_at_last_distance_request: MapPoint::new(
+            saved.position_at_last_distance_request.x,
+            saved.position_at_last_distance_request.y,
+        ),
+        motion_state,
+        seek_layer: saved.seek_layer,
+        seek_to_point: saved.seek_to_point,
+        seek_sector: sector(saved.seek_sector.0, topology, creation_order, "seek_sector")?,
+        check_for_jump: saved.check_for_jump,
+        bypassing: saved.bypassing,
+        on_railroad: saved.on_railroad,
+        bypass_exit: MapPoint::new(saved.bypass_exit.x, saved.bypass_exit.y),
+        bypass_reference: entities.resolve_element(saved.bypass_reference)?,
+        bypass_points: saved
+            .bypass_points
+            .iter()
+            .map(|point| MapPoint::new(point.x, point.y))
+            .collect(),
+        material_sector: sector(
+            saved.material_sector.0,
+            topology,
+            creation_order,
+            "material_sector",
+        )?,
+    };
     Ok(ConvertedActor {
+        continuation,
         last_order_id,
         old_action: order_type(saved.old_action, creation_order, "old_action")?,
         action_state: ActionState::try_from(saved.action_state).map_err(|_| {
@@ -1911,6 +2019,47 @@ fn order_type(
         field,
         value,
     })
+}
+
+fn motion_state(value: u32, creation_order: u32) -> Result<MotionState, LegacyElementAdoptError> {
+    match value {
+        0 => Ok(MotionState::Done),
+        1 => Ok(MotionState::Start),
+        2 => Ok(MotionState::InProgress),
+        3 => Ok(MotionState::Terminated),
+        4 => Ok(MotionState::Aborted),
+        5 => Ok(MotionState::Error),
+        value => Err(LegacyElementAdoptError::UnknownEnum {
+            creation_order,
+            field: "motion_state",
+            value,
+        }),
+    }
+}
+
+fn finite(
+    value: f32,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<(), LegacyElementAdoptError> {
+    if value.is_finite() {
+        Ok(())
+    } else {
+        Err(LegacyElementAdoptError::NonFinite {
+            creation_order,
+            field,
+            value,
+        })
+    }
+}
+
+fn finite_point(
+    point: LegacyPoint2,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<(), LegacyElementAdoptError> {
+    finite(point.x, creation_order, field)?;
+    finite(point.y, creation_order, field)
 }
 
 fn detectable_type(
