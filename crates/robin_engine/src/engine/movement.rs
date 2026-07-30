@@ -5217,6 +5217,7 @@ impl EngineInner {
                 order_reverse,
                 transition_distance_continuation,
                 next_destination_same_action,
+                legacy_serialized_order_chain,
             ) = {
                 let actor = match entity.actor_data_mut() {
                     Some(a) => a,
@@ -5328,6 +5329,11 @@ impl EngineInner {
                         _ => None,
                     })
                     .unwrap_or(crate::sequence::MoveFlags::empty());
+                let legacy_serialized_order_chain = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .is_some_and(|element| element.legacy_v48.is_some());
 
                 // Selecting a door-pass Walk successor is not the same as
                 // executing it.  Restore the movement state only when that
@@ -5389,6 +5395,7 @@ impl EngineInner {
                     order_reverse,
                     transition_distance_continuation,
                     next_destination_same_action,
+                    legacy_serialized_order_chain,
                 )
             };
 
@@ -5403,6 +5410,39 @@ impl EngineInner {
 
             if order_action == OrderType::PassingDoor {
                 let eid = entity_id;
+                if entity
+                    .actor_data()
+                    .expect("door-pass action point owner is not an actor")
+                    .active_door_pass
+                    .is_none()
+                {
+                    assert!(
+                        legacy_serialized_order_chain,
+                        "runtime door-pass action point {order_action:?} for {eid:?} lost its active pass"
+                    );
+                    // Original saves the complete translated order queue,
+                    // PositionInterface door pointer/direction, and the
+                    // actor's direct flag. It has no separate ActiveDoorPass.
+                    // Execute that authoritative queue directly: the first
+                    // PassingDoor consumes the saved door and changes sector;
+                    // a later one sees NULL and merely restores
+                    // anti-collision.
+                    let door = entity.position_iface().get_door();
+                    if door.is_null() {
+                        entity.position_iface_mut().set_anti_collision_on(true);
+                    } else {
+                        let direct = entity.position_iface().get_door_direction();
+                        door_triggers.push((eid, crate::gate::DoorIndex::from(door.0), direct, 0));
+                        entity.position_iface_mut().clear_door();
+                    }
+                    self.orders.messenger.send(crate::messenger::Message::new(
+                        crate::messenger::MessageType::Simple(
+                            crate::messenger::SimpleMessage::Stature,
+                        ),
+                    ));
+                    order_pops.push((move_seq_id, move_elem_idx));
+                    continue;
+                }
                 let actor = entity
                     .actor_data_mut()
                     .expect("door-pass action point owner is not an actor");
@@ -5461,6 +5501,9 @@ impl EngineInner {
                         );
                     }
                 }
+                self.orders.messenger.send(crate::messenger::Message::new(
+                    crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::Stature),
+                ));
                 order_pops.push((move_seq_id, move_elem_idx));
                 continue;
             }

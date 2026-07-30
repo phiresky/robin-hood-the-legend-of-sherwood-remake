@@ -1159,6 +1159,28 @@ Save 040 advances from frame 267 to 381, where it joins the independent
 smalltalk strike/AI mismatch; save 064 advances past frame 5,992 and exposes an
 independent missing synchronous `LookLeft` route.
 
+### Loaded PassDoor queues without runtime sidecars
+
+Linux3 Profile 003 saves 000, 001, 015, 017, 032, 050, and 052 all loaded an
+InProgress `PassDoor` element whose current order was `PassingDoor`, then
+panicked because `ActorData::active_door_pass` was absent. That sidecar is a
+Rust translation aid and has no Original serialized counterpart. Original
+serializes the already-translated order queue, `RHPositionInterface::mpDoor`
+plus its direction, and `RHElementActor::mbPassingDoorDirectly`. On the first
+`RHNONANIMATION_PASSING_DOOR`, a non-null saved door is consumed and performs
+the sector/layer change; the later action point sees a null door and only
+re-enables anti-collision.
+
+Legacy-adopted movement elements now execute their authoritative serialized
+queue directly when no runtime pass sidecar exists. A non-null restored door
+queues the normal shared door callback and is then cleared; a null door
+restores anti-collision. Runtime-created passes retain strict sidecar
+invariants, and both paths forward Original's stature message. Saves 000 and
+001 subsequently match every recorded frame. The other five all pass their
+startup door action and reach independent later divergences between frames
+2,192 and 9,271 (save 052 instead reaches its later RNG exhaustion at frame
+4,060).
+
 ### Large-window compressed trace input
 
 The expanded Linux2/Linux3 corpus includes single-frame zstd streams whose
