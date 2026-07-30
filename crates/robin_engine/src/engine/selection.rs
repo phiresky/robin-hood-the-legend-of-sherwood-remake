@@ -641,6 +641,8 @@ impl EngineInner {
                 // Reset shield protection for the fresh activation.
                 self.world.shield.is_protected = true;
                 self.world.shield.protected_pc = None;
+                self.world.shield.danger_point = crate::coordinates::WorldPoint3D::default();
+                self.world.shield.danger_point_layer = 0;
             }
             _ => {}
         }

@@ -1580,6 +1580,35 @@ impl MissionScript {
         self.instance.vm.heap = heap;
     }
 
+    /// Identity and mutable heap of one mission-authored hiking waypoint VM.
+    ///
+    /// Original v48 saves serialize these instances in hiking-path order,
+    /// before the engine-global VM. Legacy adoption maps that ordinal topology
+    /// back to the stable `(PathId, waypoint)` owner and validates the class
+    /// before replacing any heap bytes.
+    pub(crate) fn waypoint_vm_class_and_heap(
+        &self,
+        path: crate::ai::PathId,
+        waypoint: u8,
+    ) -> Option<(&crate::scb::ClassEntry, &[u8])> {
+        let instance = self.waypoint_instances.get(&(path, waypoint))?;
+        let class = &self.manager.program.scb.classes[instance.class_idx()];
+        Some((class, &instance.vm.heap))
+    }
+
+    pub(crate) fn replace_waypoint_vm_heap(
+        &mut self,
+        path: crate::ai::PathId,
+        waypoint: u8,
+        heap: Vec<u8>,
+    ) -> bool {
+        let Some(instance) = self.waypoint_instances.get_mut(&(path, waypoint)) else {
+            return false;
+        };
+        instance.vm.heap = heap;
+        true
+    }
+
     pub(super) fn push_active_driver_frame(&mut self, frame: crate::natives::ScriptCallFrame) {
         self.call_stack.push(frame);
     }
@@ -2027,6 +2056,12 @@ pub struct ShieldState {
     /// The PC whose defensive arc is being honoured. `None` means no
     /// PC is protecting.
     pub protected_pc: Option<crate::element::EntityId>,
+    /// Last danger point resolved by the two-click shield protocol. Original
+    /// serializes this even while the first click is pending.
+    pub danger_point: crate::coordinates::WorldPoint3D,
+    /// Selected map layer paired with `danger_point`. Original resets its
+    /// selected-layer scratch to zero after loading a save.
+    pub danger_point_layer: u16,
 }
 
 // ─── Element index ───────────────────────────────────────────────────

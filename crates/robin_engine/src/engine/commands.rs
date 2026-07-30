@@ -3187,6 +3187,12 @@ impl EngineInner {
 
         self.world.shield.is_protected = true;
         self.world.shield.protected_pc = Some(protected_pc);
+        self.world.shield.danger_point = crate::coordinates::WorldPoint3D {
+            x: danger_point.x,
+            y: danger_point.y,
+            z: 0.0,
+        };
+        self.world.shield.danger_point_layer = danger_point_layer;
 
         // Stamp the new danger point on the acting PC so
         // `sync_danger_point_titbits` refreshes the `DangerPoint`

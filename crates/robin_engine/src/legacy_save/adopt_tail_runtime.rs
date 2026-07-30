@@ -120,6 +120,7 @@ pub(crate) struct LegacyTailRuntimeAdoptionPlan {
 #[derive(Debug)]
 struct PlannedGlobalVm {
     heap: Vec<u8>,
+    preserved_location_prefix: usize,
     computed_locations: Vec<Option<ComputedScriptLocation>>,
 }
 
@@ -133,8 +134,35 @@ impl LegacyTailRuntimeAdoptionPlan {
         entities: &LegacyEntityFixups,
         sequences: &LegacySequenceAdoptionPlan,
     ) -> Result<Self, LegacyTailRuntimeAdoptError> {
+        Self::preflight_with_location_prefix(
+            engine,
+            assets,
+            global_members,
+            script_globals,
+            timers,
+            entities,
+            sequences,
+            0,
+        )
+    }
+
+    /// Preflight after the HikingGuide plan. Waypoint-native Location objects
+    /// are allocated first and therefore form the handle-arena prefix used by
+    /// global VM member handles.
+    pub(crate) fn preflight_with_location_prefix(
+        engine: &EngineInner,
+        assets: &LevelAssets,
+        global_members: Option<&LegacyVmMemberSection>,
+        script_globals: &LegacyScriptGlobals,
+        timers: &LegacyTimerSequenceState,
+        entities: &LegacyEntityFixups,
+        sequences: &LegacySequenceAdoptionPlan,
+        preserved_location_prefix: usize,
+    ) -> Result<Self, LegacyTailRuntimeAdoptError> {
         let global_vm = global_members
-            .map(|members| preflight_global_vm(engine, assets, members, entities))
+            .map(|members| {
+                preflight_global_vm(engine, assets, members, entities, preserved_location_prefix)
+            })
             .transpose()?;
 
         let mut planned_timers = Vec::with_capacity(timers.timer_elements.len());
@@ -195,7 +223,24 @@ impl LegacyTailRuntimeAdoptionPlan {
                 .as_mut()
                 .expect("preflighted global VM disappeared");
             mission.replace_global_vm_heap(global.heap);
-            mission.state.computed_locations = global.computed_locations;
+            // HikingGuide waypoint VMs are deserialized first and can own
+            // native Location pointers which remain valid even though
+            // Original clears its location-storage index immediately before
+            // loading the global VM. The Rust handle arena keeps those live
+            // objects as a prefix and appends global allocations in load
+            // order.
+            assert!(
+                mission.state.computed_locations.len() >= global.preserved_location_prefix,
+                "preflighted HikingGuide Location prefix disappeared"
+            );
+            mission
+                .state
+                .computed_locations
+                .truncate(global.preserved_location_prefix);
+            mission
+                .state
+                .computed_locations
+                .extend(global.computed_locations);
         }
         engine.scripts.globals = self.script_globals;
         engine.orders.timer_elements = self.timers;
@@ -208,6 +253,7 @@ fn preflight_global_vm(
     assets: &LevelAssets,
     saved: &LegacyVmMemberSection,
     entities: &LegacyEntityFixups,
+    preserved_location_prefix: usize,
 ) -> Result<PlannedGlobalVm, LegacyTailRuntimeAdoptError> {
     let mission = engine
         .scripts
@@ -288,7 +334,12 @@ fn preflight_global_vm(
                 )?
             }
             (LegacyVmMemberKind::Location, LegacyVmMemberValue::Location(location)) => {
-                let storage_index = computed_locations.len();
+                let storage_index = preserved_location_prefix
+                    .checked_add(computed_locations.len())
+                    .ok_or_else(|| LegacyTailRuntimeAdoptError::HandleIndexOverflow {
+                        member: saved_member.schema.name.clone(),
+                        index: usize::MAX,
+                    })?;
                 let bits = if let Some(location) = location {
                     if let Some(sector) = location.sector.0 {
                         if usize::from(sector) >= sector_count {
@@ -348,6 +399,7 @@ fn preflight_global_vm(
 
     Ok(PlannedGlobalVm {
         heap,
+        preserved_location_prefix,
         computed_locations,
     })
 }
@@ -503,7 +555,7 @@ mod tests {
     #[test]
     fn global_vm_preflight_preserves_raw_bits_and_null_location_allocation_hole() {
         let (engine, assets, saved) = global_vm_fixture();
-        let planned = preflight_global_vm(&engine, &assets, &saved, &empty_fixups()).unwrap();
+        let planned = preflight_global_vm(&engine, &assets, &saved, &empty_fixups(), 0).unwrap();
         assert_eq!(&planned.heap[0..4], &0x89ab_cdef_u32.to_le_bytes());
         assert_eq!(&planned.heap[4..8], &0_u32.to_le_bytes());
         assert_eq!(planned.computed_locations.len(), 1);
@@ -515,7 +567,7 @@ mod tests {
         let (engine, assets, mut saved) = global_vm_fixture();
         saved.members[0].schema.name = "wrong".to_owned();
         assert!(matches!(
-            preflight_global_vm(&engine, &assets, &saved, &empty_fixups()),
+            preflight_global_vm(&engine, &assets, &saved, &empty_fixups(), 0),
             Err(LegacyTailRuntimeAdoptError::GlobalVmSchemaMismatch { index: 0, .. })
         ));
         let (_, heap) = engine
