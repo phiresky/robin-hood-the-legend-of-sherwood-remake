@@ -15,6 +15,8 @@
 //! the engine state.
 
 pub mod campaign;
+pub mod elements;
+pub mod engine;
 
 use serde::{Deserialize, Serialize};
 
