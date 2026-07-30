@@ -3019,7 +3019,10 @@ fn convert_waypoint_macro_cursor(
     macro_in_progress: bool,
     creation_order: u32,
 ) -> Result<(Vec<u8>, usize), LegacyElementAdoptError> {
-    let inactive = !macro_in_progress;
+    // ExecuteNextMacroCommand tests the signed remaining-byte count before
+    // dereferencing mpubMacroCommand. A zero-byte macro therefore has a
+    // dormant pointer even if mbMacroInProgress still contains true.
+    let inactive = !macro_in_progress || remaining == 0;
     let macro_data = match command {
         WaypointCommand::Macro(data) => data,
         WaypointCommand::None if inactive => return Ok((Vec::new(), offset)),
@@ -3786,11 +3789,14 @@ mod tests {
             convert_waypoint_macro_cursor(&command, 12_304, 1, false, 89).unwrap();
         assert_eq!(bytes.len(), 26);
         assert_eq!(offset, 12_304);
+        let (bytes, offset) = convert_waypoint_macro_cursor(&command, 12_304, 0, true, 89).unwrap();
+        assert_eq!(bytes.len(), 26);
+        assert_eq!(offset, 12_304);
         assert!(matches!(
-            convert_waypoint_macro_cursor(&command, 12_304, 0, true, 89),
+            convert_waypoint_macro_cursor(&command, 12_304, 1, true, 89),
             Err(LegacyElementAdoptError::InvalidMacroCursor {
                 offset: 12_304,
-                remaining: 0,
+                remaining: 1,
                 length: 26,
                 ..
             })
