@@ -1815,6 +1815,20 @@ an archer and an established phalanx. Save 003 consequently keeps the
 `WaitingShield` command at frame 13814 and advances to an independent door
 movement difference at frame 13821.
 
+### Manager-instructed loaded elements resolve owner priority
+
+`RHElementActor::Instruct` calls the virtual `DeterminePriority` chain when an
+element still carries `RHPRIORITY_NOT_YET_SET`. Eager Rust launch wrappers
+already did this, but a successor in a prebuilt or loaded sequence can arrive
+directly from the sequence-manager Hourglass.
+
+The ordered `InstructOwner` boundary now resolves those elements too, before
+the non-interruptible guard and ordinary arbitration. This restores the
+Original `PASS_DOOR` priority: an AI reaction Move issued while a door pass is
+active is postponed rather than interrupting the traversal. Linux2 Profile
+002 save 003 now passes frame 13821 and advances to an independent
+movement-goal difference at frame 13828.
+
 ### A prepared sequence shape does not universally close the special-strike state
 
 `WaitTimer -> swordstrike` identifies an AI-prepared strike, but it does not by
