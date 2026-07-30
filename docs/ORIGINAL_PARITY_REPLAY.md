@@ -1643,6 +1643,23 @@ hotspot queries. Position changes invalidate the cache; the target-specific
 action-point overwrite deliberately preserves it, matching the Original's
 split placement. Save 055 now matches every recorded frame.
 
+### Destination forecasts require the live C++ door pointer
+
+`RHElementActorHuman::ForecastDestinationForIA` first reads `GetDoor()`. It
+uses the current position, sector, and layer without any building-exit RNG
+when that pointer is null, even if other door-passage bookkeeping has not yet
+been retired.
+
+Rust built forecast input from its higher-level `active_door_pass` mirror
+alone. Linux3 Profile 003 Restart contains a civilian whose saved passage
+mirror still names building door 13 while the authoritative serialized
+position-interface door is null. Merely constructing a global AI snapshot
+therefore selected a random alternate building gate one frame after the
+Original had stopped doing so. Forecast extraction now exposes a door pass
+only while the position interface has a live door, including the duplicated
+camp-soldier snapshot path. A focused regression preserves both the null-door
+fallback and the live-door forecast case.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

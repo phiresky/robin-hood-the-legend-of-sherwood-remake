@@ -472,6 +472,7 @@ pub(super) fn extract_forecast_input(entity: &Entity) -> Option<crate::ai::Forec
     let door_pass = actor
         .active_door_pass
         .as_ref()
+        .filter(|_| !entity.position_iface().get_door().is_null())
         .map(|dp| (dp.door_index, dp.direct));
     let forecasted_z = entity.position_iface().get_forecasted_movement().z;
     Some(crate::ai::ForecastInput {
@@ -1786,6 +1787,7 @@ impl EngineInner {
                     .actor
                     .active_door_pass
                     .as_ref()
+                    .filter(|_| !s.element.sprite.position_iface.get_door().is_null())
                     .map(|dp| (dp.door_index, dp.direct));
                 let input = crate::ai::ForecastInput {
                     position_map_x: pos_now.x,

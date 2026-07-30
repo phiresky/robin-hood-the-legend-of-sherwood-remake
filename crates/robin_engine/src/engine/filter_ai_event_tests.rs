@@ -5087,6 +5087,10 @@ fn install_unrelated_multi_exit_building_actor(engine: &mut EngineInner) -> Enti
         current_reverse: false,
         saved_action_state: None,
     });
+    pc.element
+        .sprite
+        .position_iface
+        .set_door_for_test(crate::position_interface::DoorHandle(0));
 
     let building_sector = SectorNumber::new(8);
     engine.script_domains.interactables.doors = vec![
@@ -5128,6 +5132,49 @@ fn install_unrelated_multi_exit_building_actor(engine: &mut EngineInner) -> Enti
         underlying_sector: None,
     });
     door_actor
+}
+
+#[test]
+fn destination_forecast_ignores_a_stale_door_pass_without_a_live_door() {
+    use crate::element::ActiveDoorPass;
+    use crate::gate::DoorIndex;
+    use std::collections::VecDeque;
+
+    let mut actor = make_pc(true);
+    let Entity::Pc(pc) = &mut actor else {
+        unreachable!("PC fixture changed kind")
+    };
+    pc.actor.active_door_pass = Some(ActiveDoorPass {
+        door_index: DoorIndex(7),
+        direct: true,
+        steps: VecDeque::new(),
+        triggers_fired: 0,
+        current_action: crate::order::OrderType::WalkingUpright,
+        current_reverse: false,
+        saved_action_state: None,
+    });
+
+    assert_eq!(
+        super::ai::extract_forecast_input(&actor)
+            .expect("actor has forecast state")
+            .door_pass,
+        None,
+        "Original ForecastDestinationForIA falls back when GetDoor() is NULL"
+    );
+
+    let Entity::Pc(pc) = &mut actor else {
+        unreachable!("PC fixture changed kind")
+    };
+    pc.element
+        .sprite
+        .position_iface
+        .set_door_for_test(crate::position_interface::DoorHandle(7));
+    assert_eq!(
+        super::ai::extract_forecast_input(&actor)
+            .expect("actor has forecast state")
+            .door_pass,
+        Some((DoorIndex(7), true))
+    );
 }
 
 #[test]
