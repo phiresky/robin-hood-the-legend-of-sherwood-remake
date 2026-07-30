@@ -827,6 +827,24 @@ For every newly fixed divergence:
 5. Re-run from mission start because an earlier fix can change all later state.
 6. Update the clean prefix, ledger status, and remaining first divergence here.
 
+### Linux-v48 AI `mOldState` storage
+
+Profile 011 creation order 85 stores `local_ai.old_state = 119`, outside the
+seven-value `RHaIState` domain. Auditing every neighboring field and NPC shows
+that initialized Linux enum records are full clean 32-bit values; the earlier
+signed-low-word interpretation was incorrect. `RHArtificialIntelligence`
+initializes `mCurrentState` but never initializes `mOldState`; `StartThink` is
+its only assignment, and the Original has no reads of the member. Other NPCs in
+the same fixture contain arbitrary full storage words such as `0x00960003` and
+`0x5a3b010e`, confirming constructor indeterminacy rather than a packed-enum
+ABI.
+
+Rust retains `old_state` as the exact signed 32-bit storage word, overwrites it
+with the current valid state at the same pre-filter `StartThink` boundary, and
+never fabricates a valid enum for untouched brains. All behaviorally consumed
+neighboring enums validate their complete serialized word instead of masking
+corruption through low-16-bit truncation.
+
 ## Coverage limits
 
 A clean baseline proves exact parity only for the state fields serialized by the

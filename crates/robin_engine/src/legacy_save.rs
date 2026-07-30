@@ -25,6 +25,7 @@ pub mod adopt_hiking_tail;
 pub mod adopt_object_leaves;
 pub mod adopt_paths;
 pub mod adopt_pc_human;
+pub mod adopt_post_load;
 pub mod adopt_preamble;
 pub mod adopt_preamble_services;
 pub mod adopt_sequences;

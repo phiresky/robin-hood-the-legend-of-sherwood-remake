@@ -3721,6 +3721,103 @@ impl EngineInner {
         pc.actor.produced_noise = Some(crate::ai::Noise { volume, ..noise });
     }
 
+    /// Rebuild every PC's non-serialized produced-noise fields after Original
+    /// save pointer fixup.
+    ///
+    /// `RHEngine::Serialize` walks every human here, but
+    /// `RHElementActorHuman::RefreshProducedNoise` immediately returns for
+    /// NPCs. The remaining PC walk must use stable Original creation order.
+    pub(crate) fn refresh_legacy_loaded_produced_noise(&mut self) {
+        let pc_ids = self
+            .world
+            .entities
+            .occupied()
+            .filter_map(|(id, entity)| entity.is_pc().then_some(id))
+            .collect::<Vec<_>>();
+        for pc_id in pc_ids {
+            self.refresh_pc_produced_noise_for(pc_id);
+        }
+    }
+
+    /// Complete remarks which were active in an Original save.
+    ///
+    /// Original clears the remark latch and invokes
+    /// `InformAIOnFinishedRemark` inline during local-AI deserialization.
+    /// Ordinary state adoption has already installed the cleared latch; this
+    /// method reproduces only the synchronous MYTALK callback, in serialized
+    /// element order, before the later global RNG reseed.
+    pub(crate) fn complete_legacy_loaded_remarks(
+        &mut self,
+        completions: &[(EntityId, u16)],
+        assets: &LevelAssets,
+    ) {
+        self.with_simulation_context(|engine, sim| {
+            for &(owner, raw_flags) in completions {
+                let (current_remark, current_flags) = engine
+                    .world
+                    .entities
+                    .get(owner)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "preflighted loaded-remark owner {} disappeared",
+                            owner.index()
+                        )
+                    })
+                    .ai_controller()
+                    .map(|ai| (ai.current_remark, ai.current_remark_flags))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "preflighted loaded-remark owner {} lost its AI",
+                            owner.index()
+                        )
+                    });
+                assert_eq!(
+                    current_remark,
+                    crate::ai::Remark::TheSoundOfSilence,
+                    "loaded-remark owner {} must be cleared before its callback",
+                    owner.index()
+                );
+                assert_eq!(
+                    current_flags,
+                    0,
+                    "loaded-remark owner {} flags must be cleared before its callback",
+                    owner.index()
+                );
+
+                let Some(stimulus_type) = Self::speech_finished_stimulus(
+                    crate::ai::SpeechFlags::from_bits_truncate(raw_flags),
+                ) else {
+                    continue;
+                };
+                let scratch = engine.build_sim_scratch(sim, assets);
+                let in_uninterruptible_command = engine.is_very_very_busy(owner);
+                let entity =
+                    engine.world.entities.get(owner).unwrap_or_else(|| {
+                        panic!("loaded-remark owner {} disappeared", owner.index())
+                    });
+                let building_sector = engine.entity_building_sector(entity.element_data().sector());
+                let mut ctx = build_ai_context_from_entity(
+                    entity,
+                    engine.control.frame_counter,
+                    building_sector,
+                    engine.world.weather.is_forest_level,
+                    engine.world.weather.ambiance,
+                    engine.ai.standard_view_polygon_radius,
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
+                    &engine.world.fast_grid,
+                    &assets.hiking_paths,
+                    &engine.ai.global.all_soldier_handles,
+                    engine.control.sim_config.difficulty,
+                );
+                ctx.in_uninterruptible_command = in_uninterruptible_command;
+                let tick_data = engine.build_npc_tick_data(sim, owner, &scratch, assets);
+                let stimulus = crate::ai::Stimulus::new(stimulus_type);
+                engine.dispatch_think_with_drain(sim, owner, &stimulus, &ctx, &tick_data, assets);
+            }
+        });
+    }
+
     /// Test whether the entity is inside a building: the
     /// building-sector flag OR the door-transit branch — true during
     /// the few frames an actor is on a door whose inside-sector is a

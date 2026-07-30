@@ -182,14 +182,6 @@ pub enum LegacyElementAdoptError {
         value: i32,
     },
     #[error(
-        "saved NPC creation order {creation_order} has in-progress remark {remark}; Original completes it and dispatches AI event flags 0x{flags:x} while loading, which is not yet part of atomic adoption"
-    )]
-    UnsupportedRemarkCompletion {
-        creation_order: u32,
-        remark: u32,
-        flags: u16,
-    },
-    #[error(
         "saved NPC creation order {creation_order} stimulus declares info type {declared}, but decoded payload is {actual}"
     )]
     StimulusInfoMismatch {
@@ -1702,6 +1694,12 @@ fn convert_local_ai_common(
 ) -> Result<ConvertedLocalAiCommon, LegacyElementAdoptError> {
     let (macro_command, macro_command_offset) =
         convert_macro_command(saved, creation_order, &assets.hiking_paths)?;
+    let saved_current_remark = remark(
+        saved.current_remark,
+        creation_order,
+        "local_ai.current_remark",
+    )?;
+    let completes_saved_remark = saved_current_remark != Remark::TheSoundOfSilence;
     Ok(ConvertedLocalAiCommon {
         last_goto_destination: ai_position(
             saved.last_goto_destination,
@@ -1723,7 +1721,14 @@ fn convert_local_ai_common(
                     .map(|value| value as u32)
             })
             .collect::<Result<Vec<_>, _>>()?,
-        current_remark_flags: saved.current_remark_flags,
+        // Original clears the latch immediately before its synchronous
+        // InformAIOnFinishedRemark call. The dedicated post-load plan owns
+        // that callback and retains the saved flags separately.
+        current_remark_flags: if completes_saved_remark {
+            0
+        } else {
+            saved.current_remark_flags
+        },
         current_state: ai_state(
             saved.current_state,
             creation_order,
@@ -1901,21 +1906,7 @@ fn convert_local_ai_common(
             creation_order,
             "local_ai.default_path_walking_flags",
         )?,
-        current_remark: {
-            let current = remark(
-                saved.current_remark,
-                creation_order,
-                "local_ai.current_remark",
-            )?;
-            if current != Remark::TheSoundOfSilence {
-                return Err(LegacyElementAdoptError::UnsupportedRemarkCompletion {
-                    creation_order,
-                    remark: current as u32,
-                    flags: saved.current_remark_flags,
-                });
-            }
-            current
-        },
+        current_remark: Remark::TheSoundOfSilence,
         next_macro_rand: saved.next_macro_rand,
         next_macro_rand_forecasted: saved.next_macro_rand_forecasted,
         knocked_out_in_money_fight: saved.knocked_out_in_money_fight,
