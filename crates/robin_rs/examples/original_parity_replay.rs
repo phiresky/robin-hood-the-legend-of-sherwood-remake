@@ -1509,7 +1509,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         header.session_index,
         header.initial_frame,
     );
-    let _initial_save = decode_and_validate_initial_save(&header);
+    let initial_save = decode_and_validate_initial_save(&header);
     let all_rng_draws = read_all_rng_draws(&cache_path);
 
     if let Ok(dir) = std::env::var("ROBINHOOD_DATA_DIR") {
@@ -1562,7 +1562,26 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     );
     let rewind_loaded_save_rng =
         header.start_state == TraceStartState::LoadedSave && prefix_end == 0;
-    let (mut engine, assets, host, background) = initialize_engine(&header, all_rng_draws.clone());
+    let (mut engine, assets, host, background, mission_scb) =
+        initialize_engine(&header, all_rng_draws.clone());
+    if let Some(initial_save) = initial_save {
+        let save = robin_engine::legacy_save::initialized::decode_initialized_v48_save(
+            initial_save,
+            format!("{}#initial_save", trace_path.display()),
+            &engine,
+            &assets,
+            &mission_scb,
+            &robin_engine::legacy_save::body::LegacySaveBodyLimits::default(),
+        )
+        .unwrap_or_else(|error| panic!("decode schema-11 initial_save body: {error}"));
+        eprintln!(
+            "decoded schema-11 Original save through byte {} ({} elements)",
+            save.end_offset,
+            save.element_envelope.records.len()
+        );
+        // TODO(legacy-save-adoption): resolve creation-order references and
+        // apply the typed body before replaying the first loaded-save frame.
+    }
     if rewind_loaded_save_rng {
         let setup_draws = engine
             .original_rng_replay_cursor()
@@ -3064,6 +3083,7 @@ fn initialize_engine(
     LevelAssets,
     Host,
     robin_engine::engine::level_loading::PreDecodedBackground,
+    robin_engine::scb::ScbFile,
 ) {
     let mut pm = robin_engine::profiles::ProfileManager::new();
     let mut cpf = robin_engine::sbfile::SbFile::open(
@@ -3121,7 +3141,9 @@ fn initialize_engine(
     let scb = robin_assets::scb::parse_bytes(&bytes).expect("parse mission script");
     assets.scripts.mission_programs = Arc::new(std::collections::BTreeMap::from([(
         mission_name,
-        Arc::new(robin_engine::script_manager::ScriptProgram::from_scb(scb)),
+        Arc::new(robin_engine::script_manager::ScriptProgram::from_scb(
+            scb.clone(),
+        )),
     )]));
 
     let loaded = robin_engine::engine::level_loading::load_mission_for_campaign(
@@ -3170,7 +3192,7 @@ fn initialize_engine(
         &profiles,
         "Data/Sounds",
     );
-    (engine, assets, host, background)
+    (engine, assets, host, background, scb)
 }
 
 struct EntityMap {
