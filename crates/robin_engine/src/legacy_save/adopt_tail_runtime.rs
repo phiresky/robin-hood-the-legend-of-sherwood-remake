@@ -102,7 +102,7 @@ pub enum LegacyTailRuntimeAdoptError {
     #[error("saved camera-present flag contains a null sequence-element pointer")]
     NullCameraReference,
     #[error(
-        "saved camera sequence resolves to command {command:?} in state {state:?}; expected an in-progress CameraGoto or ZoomLevel"
+        "saved camera sequence resolves to command {command:?} in state {state:?}; expected a nonterminal CameraGoto or ZoomLevel"
     )]
     InvalidCameraElement {
         command: Command,
@@ -174,7 +174,10 @@ impl LegacyTailRuntimeAdoptionPlan {
                     .resolve_element("camera_element", saved_ref)?
                     .ok_or(LegacyTailRuntimeAdoptError::NullCameraReference)?;
                 if !matches!(element.command, Command::CameraGoto | Command::ZoomLevel)
-                    || element.state != SequenceState::InProgress
+                    || !matches!(
+                        element.state,
+                        SequenceState::InProgress | SequenceState::Todo | SequenceState::Postponed
+                    )
                 {
                     return Err(LegacyTailRuntimeAdoptError::InvalidCameraElement {
                         command: element.command,
