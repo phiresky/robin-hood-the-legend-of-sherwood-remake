@@ -12,9 +12,10 @@ use crate::legacy_io::{LegacyReader, LegacyResult};
 use super::LegacySaveAbiProfile;
 use super::elements::LegacyElementClass;
 use super::payload_base::{
-    LegacyDecodedSection, LegacyElementPayloadBase, LegacyElementRef, LegacyFxPayload,
-    LegacyPayloadLimits, LegacyPoint2, read_element_ref,
+    LegacyElementPayloadBase, LegacyElementRef, LegacyFxPayload, LegacyPayloadLimits, LegacyPoint2,
+    read_element_ref,
 };
+use super::payload_vm::LegacyVmMemberSection;
 
 const FINGERPRINT_OBJECT: [u8; 16] = hex16("90062155c12beef1e93d3c32cb21776f");
 const FINGERPRINT_SCROLL: [u8; 16] = hex16("b02a77c4c704497d4cf06c506b5166e7");
@@ -51,7 +52,7 @@ pub trait LegacyNonActorPayloadDecodeContext {
         reader: &mut LegacyReader<'_>,
         creation_order: u32,
         class: LegacyElementClass,
-    ) -> LegacyResult<Option<LegacyDecodedSection>>;
+    ) -> LegacyResult<Option<LegacyVmMemberSection>>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -245,7 +246,7 @@ pub struct LegacyScrollPayload {
     pub start_offset: u64,
     pub status: u32,
     pub script_hourglass_timeout: u32,
-    pub script_members: Option<LegacyDecodedSection>,
+    pub script_members: Option<LegacyVmMemberSection>,
     pub object: LegacyObjectPayload,
     pub end_offset: u64,
 }
@@ -293,7 +294,7 @@ pub struct LegacyTargetPayload {
     pub start_offset: u64,
     pub animation: u32,
     pub progression: u32,
-    pub script_members: Option<LegacyDecodedSection>,
+    pub script_members: Option<LegacyVmMemberSection>,
     pub linked_fxs: Vec<LegacyElementRef>,
     pub fx: LegacyFxPayload,
     pub end_offset: u64,
@@ -490,7 +491,7 @@ mod tests {
             _reader: &mut LegacyReader<'_>,
             _creation_order: u32,
             _class: LegacyElementClass,
-        ) -> LegacyResult<Option<LegacyDecodedSection>> {
+        ) -> LegacyResult<Option<LegacyVmMemberSection>> {
             Ok(None)
         }
     }
@@ -571,7 +572,7 @@ mod tests {
                 reader: &mut LegacyReader<'_>,
                 creation_order: u32,
                 class: LegacyElementClass,
-            ) -> LegacyResult<Option<LegacyDecodedSection>> {
+            ) -> LegacyResult<Option<LegacyVmMemberSection>> {
                 assert_eq!(creation_order, 77);
                 assert_eq!(class, LegacyElementClass::Target);
                 assert_eq!(reader.read_u32("marker")?, 0xfeed_beef);

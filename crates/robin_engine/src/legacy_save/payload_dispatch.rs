@@ -19,8 +19,7 @@ use super::payload_actors::{
     read_civilian_payload, read_pc_payload, read_soldier_payload,
 };
 use super::payload_base::{
-    LegacyDecodedSection, LegacyHumanPayload, LegacyNpcPayload, LegacyPayloadDecodeContext,
-    LegacyPayloadLimits,
+    LegacyHumanPayload, LegacyNpcPayload, LegacyPayloadDecodeContext, LegacyPayloadLimits,
 };
 use super::payload_nonactors::{
     LegacyBonusPayload, LegacyNonActorPayloadDecodeContext, LegacyNonActorPayloadLimits,
@@ -30,6 +29,12 @@ use super::payload_nonactors::{
 };
 use super::payload_objects::{
     LegacyObjectItemPayload, LegacyObjectPayloadLimits, read_object_item_payload,
+};
+use super::payload_sequences::LegacyInlineSequence;
+#[cfg(test)]
+use super::{
+    payload_ai::LegacyLocalAiPayload,
+    payload_vm::LegacyVmMemberSection,
 };
 
 /// All mission-initialized information needed while decoding element payloads.
@@ -80,7 +85,7 @@ pub struct LegacyElementPayloadRecord {
 /// Concrete payloads supported by shipped v48 saves.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum LegacyElementPayload {
-    ActorPc(LegacyPcPayload<LegacyHumanPayload, LegacyDecodedSection>),
+    ActorPc(LegacyPcPayload<LegacyHumanPayload, LegacyInlineSequence>),
     ActorNpcSoldier(LegacySoldierPayload<LegacyNpcPayload>),
     ActorNpcCivilian(LegacyCivilianPayload<LegacyNpcPayload>),
     ObjectItem(LegacyObjectItemPayload),
@@ -338,21 +343,23 @@ mod tests {
             &self,
             _reader: &mut LegacyReader<'_>,
             _script_class: &str,
-        ) -> LegacyResult<LegacyDecodedSection> {
+        ) -> LegacyResult<LegacyVmMemberSection> {
             unreachable!("synthetic dispatcher tests contain no actor payload")
         }
 
         fn read_inline_sequence(
             &self,
             _reader: &mut LegacyReader<'_>,
-        ) -> LegacyResult<LegacyDecodedSection> {
+        ) -> LegacyResult<LegacyInlineSequence> {
             unreachable!("synthetic dispatcher tests contain no inline sequence")
         }
 
         fn read_local_ai(
             &self,
             _reader: &mut LegacyReader<'_>,
-        ) -> LegacyResult<LegacyDecodedSection> {
+            _creation_order: u32,
+            _class: LegacyElementClass,
+        ) -> LegacyResult<Box<LegacyLocalAiPayload>> {
             unreachable!("synthetic dispatcher tests contain no local AI")
         }
     }
@@ -363,7 +370,7 @@ mod tests {
             _reader: &mut LegacyReader<'_>,
             _creation_order: u32,
             _class: LegacyElementClass,
-        ) -> LegacyResult<Option<LegacyDecodedSection>> {
+        ) -> LegacyResult<Option<LegacyVmMemberSection>> {
             Ok(None)
         }
     }

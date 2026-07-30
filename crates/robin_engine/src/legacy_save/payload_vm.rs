@@ -12,10 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::legacy_io::{LegacyReader, LegacyResult};
 use crate::scb::{MemberVariable, ScbFile, TypeTag};
 
-use super::payload_base::{
-    LegacyContextValue, LegacyDecodedSection, LegacyElementRef, LegacyNamedValue, LegacyPoint2,
-    LegacySectorRef,
-};
+use super::payload_base::{LegacyElementRef, LegacyPoint2, LegacySectorRef};
 
 const NULL_U32: u32 = u32::MAX;
 const NULL_U16: u16 = u16::MAX;
@@ -97,73 +94,6 @@ pub struct LegacyVmMemberSection {
     pub members: Vec<LegacyVmMemberState>,
 }
 
-impl LegacyVmMemberSection {
-    /// Adapt the typed result to the payload context's common diagnostic form.
-    pub fn into_decoded_section(self) -> LegacyDecodedSection {
-        let fields = self
-            .members
-            .into_iter()
-            .map(|member| LegacyNamedValue {
-                name: member.schema.name,
-                value: member.value.into_context_value(),
-            })
-            .collect();
-        LegacyDecodedSection {
-            schema: format!("vm_class:{}", self.class_name),
-            fields,
-        }
-    }
-}
-
-impl LegacyVmMemberValue {
-    fn into_context_value(self) -> LegacyContextValue {
-        match self {
-            Self::Raw32 { bits } => LegacyContextValue::U32(bits),
-            Self::ActorRef(reference) | Self::ScrollRef(reference) => {
-                LegacyContextValue::ElementRef(reference)
-            }
-            Self::Location(None) => LegacyContextValue::Reference {
-                kind: "Location".to_owned(),
-                id: None,
-            },
-            Self::Location(Some(location)) => LegacyContextValue::Struct(vec![
-                LegacyNamedValue {
-                    name: "legacy_dummy".to_owned(),
-                    value: LegacyContextValue::Bool(location.legacy_dummy),
-                },
-                LegacyNamedValue {
-                    name: "position".to_owned(),
-                    value: LegacyContextValue::Struct(vec![
-                        LegacyNamedValue {
-                            name: "x".to_owned(),
-                            value: LegacyContextValue::F32(location.position.x),
-                        },
-                        LegacyNamedValue {
-                            name: "y".to_owned(),
-                            value: LegacyContextValue::F32(location.position.y),
-                        },
-                    ]),
-                },
-                LegacyNamedValue {
-                    name: "layer".to_owned(),
-                    value: LegacyContextValue::U32(u32::from(location.layer)),
-                },
-                LegacyNamedValue {
-                    name: "active".to_owned(),
-                    value: LegacyContextValue::Bool(location.active),
-                },
-                LegacyNamedValue {
-                    name: "sector".to_owned(),
-                    value: LegacyContextValue::Reference {
-                        kind: "Sector".to_owned(),
-                        id: location.sector.0.map(u32::from),
-                    },
-                },
-            ]),
-        }
-    }
-}
-
 /// Adapter over the mission SCB used by payload decode contexts.
 pub struct LegacyVmMemberDecoder<'a> {
     scb: &'a ScbFile,
@@ -211,15 +141,6 @@ impl<'a> LegacyVmMemberDecoder<'a> {
             class_name: schema.class_name,
             members,
         })
-    }
-
-    pub fn read_decoded_section(
-        &self,
-        reader: &mut LegacyReader<'_>,
-        class_name: &str,
-    ) -> LegacyResult<LegacyDecodedSection> {
-        self.read_class_members(reader, class_name)
-            .map(LegacyVmMemberSection::into_decoded_section)
     }
 
     fn schema_for_class(

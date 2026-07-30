@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 use crate::legacy_io::{LegacyReader, LegacyResult};
 
 use super::elements::LegacyElementClass;
+use super::payload_ai::LegacyLocalAiPayload;
+use super::payload_sequences::LegacyInlineSequence;
+use super::payload_vm::LegacyVmMemberSection;
 
 const NULL_U32: u32 = u32::MAX;
 const FINGERPRINT_ELEMENT: [u8; 16] = hex16("7730a5b25924f7a72c4926ef69f7700f");
@@ -74,32 +77,6 @@ impl Default for LegacyPayloadLimits {
     }
 }
 
-/// Concrete, serializable output returned by schema-dependent context readers.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LegacyDecodedSection {
-    pub schema: String,
-    pub fields: Vec<LegacyNamedValue>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LegacyNamedValue {
-    pub name: String,
-    pub value: LegacyContextValue,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum LegacyContextValue {
-    Bool(bool),
-    I32(i32),
-    U32(u32),
-    F32(f32),
-    String(String),
-    ElementRef(LegacyElementRef),
-    Reference { kind: String, id: Option<u32> },
-    List(Vec<LegacyContextValue>),
-    Struct(Vec<LegacyNamedValue>),
-}
-
 /// Mission-initialized metadata required by portions of the legacy grammar
 /// that are not self-describing on disk.
 pub trait LegacyPayloadDecodeContext {
@@ -112,16 +89,21 @@ pub trait LegacyPayloadDecodeContext {
         &self,
         reader: &mut LegacyReader<'_>,
         script_class: &str,
-    ) -> LegacyResult<LegacyDecodedSection>;
+    ) -> LegacyResult<LegacyVmMemberSection>;
 
     /// Decode the full inline `RHSequence::Serialize(file, false)` body.
     fn read_inline_sequence(
         &self,
         reader: &mut LegacyReader<'_>,
-    ) -> LegacyResult<LegacyDecodedSection>;
+    ) -> LegacyResult<LegacyInlineSequence>;
 
     /// Decode `RHArtificialIntelligence::SerializeThisAI`.
-    fn read_local_ai(&self, reader: &mut LegacyReader<'_>) -> LegacyResult<LegacyDecodedSection>;
+    fn read_local_ai(
+        &self,
+        reader: &mut LegacyReader<'_>,
+        creation_order: u32,
+        class: LegacyElementClass,
+    ) -> LegacyResult<Box<LegacyLocalAiPayload>>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -815,10 +797,10 @@ pub struct LegacyActorPayload {
     pub wait_sequence_element: LegacySequenceElementRef,
     pub order: LegacyOrderRef,
     pub sequence_element_started: bool,
-    pub post_seek_sequence: Option<LegacyDecodedSection>,
+    pub post_seek_sequence: Option<LegacyInlineSequence>,
     pub bypass_points: Vec<LegacyPoint2>,
     pub script_class: String,
-    pub script_members: Option<LegacyDecodedSection>,
+    pub script_members: Option<LegacyVmMemberSection>,
     pub element: LegacyElementPayloadBase,
 }
 
@@ -1373,7 +1355,7 @@ pub struct LegacyNpcPayload {
     pub initial_position: LegacyNpcInitialPosition,
     pub initial_view: LegacyPoint2,
     pub fried: bool,
-    pub local_ai: LegacyDecodedSection,
+    pub local_ai: Box<LegacyLocalAiPayload>,
     pub old_deafness: u16,
     pub old_frame: u32,
     pub detectable_buckets: [LegacyDetectableBucket; 6],
@@ -1416,7 +1398,9 @@ impl LegacyNpcPayload {
         })?;
         let initial_view = read_point2(reader, "initial_view")?;
         let fried = reader.read_bool("fried")?;
-        let local_ai = reader.scope("local_ai", |reader| context.read_local_ai(reader))?;
+        let local_ai = reader.scope("local_ai", |reader| {
+            context.read_local_ai(reader, expected_creation_order, expected_class)
+        })?;
         let old_deafness = reader.read_u16("old_deafness")?;
         let old_frame = reader.read_u32("old_frame")?;
         let mut buckets = Vec::with_capacity(6);
