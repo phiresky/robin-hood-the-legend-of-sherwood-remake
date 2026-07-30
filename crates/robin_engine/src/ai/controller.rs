@@ -3808,28 +3808,15 @@ impl AiController {
 
             Substate::DefaultGotoPostTurn => {
                 if stimulus_type == StimulusType::EventDone {
-                    // When `GoTo` was launched with `GOTO_SPECIAL_ACTION`,
-                    // the launched sequence already carried the
-                    // post-arrival TURN element (set above as
-                    // `face_direction(initial_view_direction)`) and a
-                    // trailing `SIT_DOWN` / `ENTER_LEISURE` element so
-                    // the seated / leisure transition animation plays.
-                    // Queue the matching `Command::SitDown` /
-                    // `Command::EnterLeisure` here so the engine's
-                    // animation driver flips posture → Sitting / Leisure
-                    // on completion. Earlier code wrote `pending_posture`
-                    // directly which snapped the actor to the seated
-                    // frame instead of playing the transition.
+                    // `GoTo(..., GOTO_SPECIAL_ACTION)` already appended the
+                    // authored Turn and SitDown/EnterLeisure commands. This
+                    // EventDone is their completion callback; Original
+                    // writes the final posture directly instead of launching
+                    // a second transition sequence.
                     if self.likes_to_sit_around {
-                        self.outbox
-                            .actor
-                            .launch_commands
-                            .push(crate::element::Command::SitDown);
+                        self.outbox.actor.posture = Some(crate::element::Posture::Sitting);
                     } else if self.special_action {
-                        self.outbox
-                            .actor
-                            .launch_commands
-                            .push(crate::element::Command::EnterLeisure);
+                        self.outbox.actor.posture = Some(crate::element::Posture::Leisure);
                     }
                     self.set_ai_state(AiState::Default);
                     self.current_substate = Substate::DefaultOnPost;
