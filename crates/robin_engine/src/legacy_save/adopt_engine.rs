@@ -16,7 +16,7 @@ use super::{
     adopt_camera::{LegacyCameraAdoptionPlan, LegacyCameraHostState},
     adopt_campaign::LegacyCampaignAdoptionPlan,
     adopt_elements::LegacyStaticElementAdoption,
-    adopt_grid::LegacyFastFindGridAdoptionPlan,
+    adopt_grid::{LegacyFastFindGridAdoptionPlan, LegacyGridHostState},
     adopt_hiking_tail::{LegacyHikingTailAdoptionPlan, LegacyTrajectoryHostOutput},
     adopt_object_leaves::LegacyObjectLeafAdoptionPlan,
     adopt_paths::{LegacyPathAdoptionPlan, preflight_v48_paths},
@@ -145,7 +145,12 @@ impl LegacyKnownAdoptionPlan {
         let grid = stage(
             "FastFindGrid",
             LegacyFastFindGridAdoptionPlan::preflight(
-                engine, assets, &body.grid, &entities, &vm_arena,
+                engine,
+                assets,
+                &body.grid,
+                &entities,
+                &position_topology,
+                &vm_arena,
             ),
         )?;
         let sequences = stage(
@@ -265,7 +270,7 @@ impl LegacyKnownAdoptionPlan {
         let camera = self.camera.apply(engine);
         self.elements.apply(engine);
         self.object_leaves.apply(engine);
-        self.grid.apply(engine);
+        let grid = self.grid.apply(engine);
         self.sequences.apply(engine);
         self.actor_ownership.apply(engine);
         self.pc_human.apply(engine);
@@ -278,6 +283,7 @@ impl LegacyKnownAdoptionPlan {
         LegacyKnownHostState {
             preamble,
             camera,
+            grid,
             simple: host,
             trajectory,
         }
@@ -287,6 +293,7 @@ impl LegacyKnownAdoptionPlan {
 pub(crate) struct LegacyKnownHostState {
     pub preamble: LegacyPreambleHostState,
     pub camera: LegacyCameraHostState,
+    pub grid: LegacyGridHostState,
     pub simple: LegacySimpleHostState,
     pub trajectory: LegacyTrajectoryHostOutput,
 }

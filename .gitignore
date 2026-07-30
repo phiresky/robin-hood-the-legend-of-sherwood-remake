@@ -45,6 +45,7 @@
 /.zprofile
 /.zshrc
 /tmp/
+/.codex-tmp/
 /binaries
 /.codex
 
