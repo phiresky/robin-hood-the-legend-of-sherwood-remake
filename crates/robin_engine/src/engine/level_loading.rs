@@ -374,6 +374,134 @@ fn append_door_constructor(
     }
 }
 
+#[cfg(test)]
+mod legacy_grid_topology_tests {
+    use super::*;
+    use crate::level_data::{
+        ProtoGridChunk, RawBuildingEntry, RawDoor, RawJumpLine, RawJumpLinePair, RawJumpZone,
+        RawLift, SectorPolygon,
+    };
+
+    fn door(has_click_sector: bool) -> RawDoor {
+        RawDoor {
+            door_type: 0,
+            active: true,
+            locked_pc: false,
+            unlockable: false,
+            locked_npc_villain: false,
+            locked_npc_civilian: false,
+            locked_pc_after_patch: false,
+            unlockable_after_patch: false,
+            locked_npc_villain_after_patch: false,
+            locked_npc_civilian_after_patch: false,
+            door_sector: SectorPolygon {
+                points: has_click_sector
+                    .then_some(vec![(0, 0), (1, 0), (0, 1)])
+                    .unwrap_or_default(),
+            },
+            point_out: (0, 0),
+            sector_out: 0,
+            layer_out: 0,
+            point_mid: (0, 0),
+            point_in: (0, 0),
+            sector_in: 0,
+            layer_in: 0,
+        }
+    }
+
+    fn jump_line() -> RawJumpLine {
+        RawJumpLine {
+            point_a: (0, 0, 0),
+            point_b: (1, 0, 0),
+            jump_zone_index: 0,
+        }
+    }
+
+    #[test]
+    fn constructor_holes_only_enter_sparse_array_when_later_add_exposes_them() {
+        let mut builder = LegacySectorTopologyBuilder::default();
+        builder.construct();
+        let door = builder.construct();
+        builder.add(door, LegacyGridSectorAsset::Door);
+        builder.construct();
+
+        assert_eq!(
+            builder.slots,
+            vec![
+                LegacyGridSectorAsset::NullOrOrdinary,
+                LegacyGridSectorAsset::Door,
+            ]
+        );
+    }
+
+    #[test]
+    fn retains_mixed_door_jump_order_and_sparse_special_sector_slots() {
+        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        loaded.proto.grid_chunk_order = vec![
+            ProtoGridChunk::Lift,
+            ProtoGridChunk::Building,
+            ProtoGridChunk::Jump,
+        ];
+        loaded.proto.lifts.push(RawLift {
+            motion_area_index: 0,
+            lift_type: 1,
+            doors: vec![door(false), door(true)],
+            direction: 0,
+        });
+        loaded.proto.buildings = vec![
+            RawBuildingEntry::Building {
+                doors: vec![door(true)],
+            },
+            RawBuildingEntry::StandaloneDoors {
+                doors: vec![door(false)],
+            },
+        ];
+        loaded.proto.jump_zones.push(RawJumpZone {
+            polygon: SectorPolygon {
+                points: vec![(0, 0), (1, 0), (0, 1)],
+            },
+            sector: 0,
+            layer: 0,
+            helper_needed: false,
+        });
+        loaded.proto.jump_line_pairs.push(RawJumpLinePair {
+            line1: jump_line(),
+            line2: jump_line(),
+            jump_long: false,
+        });
+
+        let mut assets = LevelAssets::new();
+        retain_legacy_grid_topology(&mut assets, &loaded, false).unwrap();
+        let topology = assets.legacy_grid_topology.unwrap();
+
+        assert_eq!(
+            topology.gates,
+            vec![
+                LegacyGridGateAsset::Door,
+                LegacyGridGateAsset::Door,
+                LegacyGridGateAsset::Door,
+                LegacyGridGateAsset::Door,
+                LegacyGridGateAsset::Stateless,
+            ]
+        );
+        assert_eq!(
+            topology.sectors,
+            vec![
+                // Lift associated-sector and empty lift-door holes.
+                LegacyGridSectorAsset::NullOrOrdinary,
+                LegacyGridSectorAsset::NullOrOrdinary,
+                LegacyGridSectorAsset::Door,
+                // Building is constructed before its door, then added after it.
+                LegacyGridSectorAsset::Building,
+                LegacyGridSectorAsset::Door,
+                // Empty standalone door exposed by the later jump-zone AddSector.
+                LegacyGridSectorAsset::NullOrOrdinary,
+                LegacyGridSectorAsset::NullOrOrdinary,
+            ]
+        );
+    }
+}
+
 impl MissionLevelBuilder {
     fn new(
         mission_name: &str,
