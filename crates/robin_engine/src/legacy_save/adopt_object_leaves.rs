@@ -555,11 +555,19 @@ fn preflight_object_item(
 ) -> Result<PlannedLeaf, LegacyObjectLeafAdoptError> {
     let (object, saved_kind, predicate): (&LegacyObjectPayload, &'static str, fn(&Entity) -> bool) =
         match saved {
-            LegacyObjectItemPayload::Object(object) => (object, "object", Entity::is_bonus),
-            LegacyObjectItemPayload::Ale(payload) => (&payload.object, "ale", Entity::is_bonus),
-            LegacyObjectItemPayload::SpyCape(payload) => {
-                (&payload.object, "spy cape", Entity::is_bonus)
-            }
+            // Rust stores plain RHElementObject-derived leaves in the
+            // `Entity::Bonus` representation too. Their ElementKind remains
+            // ObjectOther, so the semantic `Entity::is_bonus` predicate
+            // intentionally returns false for them.
+            LegacyObjectItemPayload::Object(object) => (object, "object", |entity| {
+                matches!(entity, Entity::Bonus(_))
+            }),
+            LegacyObjectItemPayload::Ale(payload) => (&payload.object, "ale", |entity| {
+                matches!(entity, Entity::Bonus(_))
+            }),
+            LegacyObjectItemPayload::SpyCape(payload) => (&payload.object, "spy cape", |entity| {
+                matches!(entity, Entity::Bonus(_))
+            }),
             LegacyObjectItemPayload::Arrow(payload) => {
                 (&payload.projectile.object, "arrow", Entity::is_projectile)
             }
