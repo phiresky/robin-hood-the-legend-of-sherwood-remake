@@ -650,7 +650,7 @@ impl AiController {
         if !from_lockai_command {
             // Cancel the NPC's current order. The engine drains
             // `pending_halt` in post-think.
-            self.outbox.actor.halt = true;
+            self.outbox.actor.queue_halt();
         }
         self.break_macro();
     }
@@ -2608,7 +2608,7 @@ impl AiController {
         if in_charly_look {
             self.set_checkpoint_charly(0);
         }
-        self.outbox.actor.halt = true;
+        self.outbox.actor.queue_halt();
         // Skip BreakMacro when we're in a CheckFor look or being
         // instructed by an officer — these substates need the
         // in-flight macro to survive the halt.

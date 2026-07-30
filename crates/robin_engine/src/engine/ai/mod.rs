@@ -5581,7 +5581,7 @@ impl EngineInner {
         // `try_dispatch_move_path`s onto the actor a few ticks later,
         // restoring `active_movement` and re-driving the run animation
         // — the visual "stuck in running pose" symptom.
-        let (take_halt, preserve_goal_for_raise_shield) = {
+        let (halt_count, preserve_goal_for_raise_shield) = {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
@@ -5589,9 +5589,9 @@ impl EngineInner {
                 return;
             };
             let preserve_goal = ai.outbox.actor.take_preserve_goal_for_raise_shield();
-            (ai.outbox.actor.take_halt(), preserve_goal)
+            (ai.outbox.actor.take_halt_count(), preserve_goal)
         };
-        if take_halt {
+        if halt_count != 0 {
             // StopAll normally clears an interrupted movement's cached goal.
             // The Original shield path is different: StopAll is immediately
             // followed by the non-directional RaiseShield element, leaving
@@ -5606,7 +5606,10 @@ impl EngineInner {
                     .position_iface()
                     .map_goal()
             });
-            self.halt_actor(npc_id);
+            for _ in 0..halt_count {
+                self.halt_actor(npc_id);
+                self.dispatch_condolations_for_npc(sim, npc_id, assets);
+            }
             // `StopAll` calls `Stop(PREFERENCE)` synchronously before the
             // handler continues into SetState/SetAttentiveMode and other
             // replacement work. Deliver the halt condolence at that same
@@ -5615,7 +5618,6 @@ impl EngineInner {
             // become the selected element. `from_halt` suppresses the NPC
             // EventDone/Impossible callbacks while retaining that base
             // selected-element cleanup.
-            self.dispatch_condolations_for_npc(sim, npc_id, assets);
             if let Some(goal) = preserved_goal {
                 self.world
                     .entities
@@ -5973,7 +5975,7 @@ impl EngineInner {
         self.launch_pending_orders_for_npc_mode_after_halt(
             npc_id,
             defer_turn_instruction,
-            take_halt,
+            halt_count != 0,
         );
         // Original GoTo constructs and launches its movement sequence inline
         // inside the AI call. Promote this owner's queued intent now so path

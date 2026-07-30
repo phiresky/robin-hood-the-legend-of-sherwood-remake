@@ -236,6 +236,12 @@ pub struct AiActorOutbox {
     pub lower_shield: bool,
     pub deactivate: bool,
     pub halt: bool,
+    /// Additional synchronous `Halt()` calls coalesced into this deferred
+    /// outbox. The original applies every call, which matters when the first
+    /// stop rewrites a movement into a waiting transition and the second stop
+    /// then interrupts that transition.
+    #[serde(default)]
+    pub additional_halts: u8,
     /// Preserve the interrupted movement goal across the next Halt because
     /// an AI-issued RaiseShield command immediately takes ownership.
     pub preserve_goal_for_raise_shield: bool,
@@ -276,6 +282,18 @@ pub struct AiActorOutbox {
 }
 
 impl AiActorOutbox {
+    /// Queue one synchronous actor `Halt()` without losing multiplicity.
+    pub fn queue_halt(&mut self) {
+        if self.halt {
+            self.additional_halts = self
+                .additional_halts
+                .checked_add(1)
+                .expect("too many actor Halt calls in one AI drain");
+        } else {
+            self.halt = true;
+        }
+    }
+
     /// Queue `Focus(element)` with Original's synchronous last-write-wins
     /// semantics. A Think call can issue `Focus(NULL)` and then focus a new
     /// target before the deferred engine drain.
@@ -386,7 +404,18 @@ impl AiActorOutbox {
     /// Drain actor halt alone. Its application can re-enter engine sequence
     /// handling, so the later movement-prefix barrier must not be taken yet.
     pub(crate) fn take_halt(&mut self) -> bool {
+        self.additional_halts = 0;
         std::mem::take(&mut self.halt)
+    }
+
+    /// Drain every synchronous `Halt()` accumulated before this boundary.
+    pub(crate) fn take_halt_count(&mut self) -> u8 {
+        if !std::mem::take(&mut self.halt) {
+            debug_assert_eq!(self.additional_halts, 0);
+            return 0;
+        }
+        1u8.checked_add(std::mem::take(&mut self.additional_halts))
+            .expect("actor Halt count overflow")
     }
 
     pub(crate) fn take_preserve_goal_for_raise_shield(&mut self) -> bool {
