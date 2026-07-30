@@ -15,6 +15,7 @@ use thiserror::Error;
 
 use crate::{
     element::{ActionState, Command, EntityId, Posture},
+    engine::{EngineInner, LegacyGridGateAsset, LevelAssets},
     gate::DoorIndex,
     jump_line::JumpLineIndex,
     order::{Order, OrderType},
@@ -40,11 +41,84 @@ use super::{
 #[derive(Clone, Debug, Default)]
 pub struct LegacySequenceTopology {
     /// Complete Original `marrayGates` order mapped to Rust door/gate IDs.
-    pub gates: Vec<DoorIndex>,
+    pub gates: Vec<Option<DoorIndex>>,
     /// Exact Original `(layer, index-in-layer)` line identity.
     pub lines: BTreeMap<(u16, i16), JumpLineIndex>,
     /// Sparse Original `marraySectors` bound.
     pub sector_count: usize,
+}
+
+impl LegacySequenceTopology {
+    /// Reconstruct the mission-created pointer spaces used by sequences.
+    ///
+    /// Original gate order includes stateless jump gates. Rust's door table
+    /// omits them, so the retained gate array must keep explicit empty slots
+    /// or every later saved door pointer shifts identity.
+    pub fn derive(
+        engine: &EngineInner,
+        assets: &LevelAssets,
+    ) -> Result<Self, LegacySequenceAdoptError> {
+        let retained = assets.legacy_grid_topology.as_ref().ok_or_else(|| {
+            LegacySequenceAdoptError::MissingTopology {
+                field: "sequence.topology",
+                identity: "retained Original grid topology".to_owned(),
+            }
+        })?;
+        let mut door_ordinal = 0u32;
+        let gates = retained
+            .gates
+            .iter()
+            .map(|gate| match gate {
+                LegacyGridGateAsset::Door => {
+                    let door = DoorIndex(door_ordinal);
+                    door_ordinal += 1;
+                    Some(door)
+                }
+                LegacyGridGateAsset::Stateless => None,
+            })
+            .collect::<Vec<_>>();
+        if door_ordinal as usize != engine.script_domains.interactables.doors.len() {
+            return Err(LegacySequenceAdoptError::MissingTopology {
+                field: "sequence.topology.gates",
+                identity: format!(
+                    "{} retained doors versus {} initialized doors",
+                    door_ordinal,
+                    engine.script_domains.interactables.doors.len()
+                ),
+            });
+        }
+
+        let mut next_in_layer = BTreeMap::<u16, i16>::new();
+        let mut lines = BTreeMap::new();
+        for (runtime_index, line) in engine.world.fast_grid.level.jump_lines.iter().enumerate() {
+            let index_in_layer = next_in_layer.entry(line.layer).or_default();
+            let runtime_index = u32::try_from(runtime_index).map_err(|_| {
+                LegacySequenceAdoptError::MissingTopology {
+                    field: "sequence.topology.lines",
+                    identity: "runtime jump-line index exceeds u32".to_owned(),
+                }
+            })?;
+            let handle = JumpLineIndex::new(runtime_index).ok_or_else(|| {
+                LegacySequenceAdoptError::MissingTopology {
+                    field: "sequence.topology.lines",
+                    identity: "runtime jump-line index equals null sentinel".to_owned(),
+                }
+            })?;
+            lines.insert((line.layer, *index_in_layer), handle);
+            *index_in_layer = index_in_layer.checked_add(1).ok_or_else(|| {
+                LegacySequenceAdoptError::MissingTopology {
+                    field: "sequence.topology.lines",
+                    identity: format!("layer {} contains more than i16::MAX lines", line.layer),
+                }
+            })?;
+        }
+
+        Ok(Self {
+            gates,
+            lines,
+            sector_count: retained.sectors.len(),
+        })
+    }
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -111,10 +185,7 @@ impl LegacySequenceAdoptionPlan {
                     .enumerate()
                     .find(|(_, element)| element.id == id)
                     .map(|(element_index, element)| {
-                        (
-                            SequenceElementRef::new(sequence.id, element_index),
-                            element,
-                        )
+                        (SequenceElementRef::new(sequence.id, element_index), element)
                     })
             })
             .ok_or(LegacySequenceAdoptError::MissingIdentity { field, id })?;
@@ -716,12 +787,16 @@ fn resolve_gate(
     };
     let index =
         usize::try_from(raw).map_err(|_| invalid(field, raw, "a non-negative gate-array index"))?;
-    topology.gates.get(index).copied().map(Some).ok_or_else(|| {
-        LegacySequenceAdoptError::MissingTopology {
+    topology
+        .gates
+        .get(index)
+        .copied()
+        .flatten()
+        .map(Some)
+        .ok_or_else(|| LegacySequenceAdoptError::MissingTopology {
             field,
-            identity: format!("gate index {index}"),
-        }
-    })
+            identity: format!("door gate at Original gate index {index}"),
+        })
 }
 
 fn resolve_line(
@@ -988,10 +1063,23 @@ mod tests {
 
     fn topology() -> LegacySequenceTopology {
         LegacySequenceTopology {
-            gates: vec![DoorIndex(7)],
+            gates: vec![Some(DoorIndex(7))],
             lines: [((2, 3), JumpLineIndex::new(5).unwrap())].into(),
             sector_count: 6,
         }
+    }
+
+    #[test]
+    fn stateless_gate_slot_does_not_shift_following_door_identity() {
+        let topology = LegacySequenceTopology {
+            gates: vec![None, Some(DoorIndex(0)), Some(DoorIndex(1))],
+            ..Default::default()
+        };
+        assert!(resolve_gate("movement.gate", LegacyGateRef(Some(0)), &topology).is_err());
+        assert_eq!(
+            resolve_gate("movement.gate", LegacyGateRef(Some(2)), &topology).unwrap(),
+            Some(DoorIndex(1))
+        );
     }
 
     #[test]
