@@ -1140,6 +1140,20 @@ divergent frame. The diagnostic no longer uses the host temporary directory,
 so full-corpus work stays inside the workspace and concurrent replays do not
 clobber a shared path.
 
+### Linux-v48 gameplay posture restoration
+
+Original stores an actor's posture in `RHPositionInterface`; Rust additionally
+keeps a gameplay-facing copy in `ElementData`. Loaded-save adoption previously
+restored only the position-interface field, leaving the gameplay copy at its
+mission-initialized value. That split changed visibility events and AI state,
+which in turn changed the global RNG draw order several frames later.
+
+Adoption now synchronizes both Rust posture representations directly from the
+serialized posture for every entity kind. This is restoration of one Original
+field into Rust's two representations, not a runtime transition: it therefore
+bypasses the normal posture transition guards while the detached save candidate
+is installed.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
