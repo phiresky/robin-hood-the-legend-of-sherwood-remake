@@ -1300,7 +1300,6 @@ pub enum Command {
     Turn,
     TurnElement,
     TurnFast,
-    Jump,
     EquipBow,
     EquipBowUp,
     EquipBowDown,
@@ -1348,6 +1347,8 @@ pub enum Command {
     TakeWhisky,
     GetKilledAtBottom,
     WakeUp,
+    /// Dead Original ABI slot `RHCOMMAND_ROLL`.
+    Roll,
     CrouchDown,
     CrouchUp,
     ActionAvailable,
@@ -1370,8 +1371,6 @@ pub enum Command {
     ClimbDownFromShoulders,
     EnterBeggar,
     LeaveBeggar,
-    LeaveSpy,
-    LeaveTree,
     EnterListen,
     LeaveListen,
     TakeCorpse,
@@ -1418,6 +1417,12 @@ pub enum Command {
     StopSleep,
     BeggarShowFace,
     EnterLeisure,
+    /// ABI placeholder for Original's misspelled
+    /// `RHCOMMAND_ANNIMAL_AFFRAID`.
+    ///
+    /// No shipped mission creates animal actors, but omitting the dead
+    /// discriminant shifts every following serialized command.
+    AnimalAfraid,
     Speak,
     ActivateArrow,
     ActivateSword,
@@ -1451,6 +1456,13 @@ pub enum Command {
     RaiseShieldInstantly,
     RefreshSeek,
     ShootBowOnce,
+    /// Rust-only direct jump command. Original's serialized jump command is
+    /// [`Self::JumpCmd`].
+    Jump,
+    /// Rust-only command for leaving the spy disguise.
+    LeaveSpy,
+    /// Rust-only command for leaving a tree disguise.
+    LeaveTree,
 }
 
 /// Payload of the sequence `SendMessage` command.
@@ -1631,7 +1643,20 @@ bitflags! {
 
 #[cfg(test)]
 mod tests {
-    use super::ActionState;
+    use super::{ActionState, Command};
+
+    #[test]
+    fn command_discriminants_retain_original_dead_animal_slot() {
+        assert_eq!(Command::EnterLeisure as i32, 144);
+        assert_eq!(Command::AnimalAfraid as i32, 145);
+        assert_eq!(Command::Speak as i32, 146);
+        assert_eq!(Command::WaitTimer as i32, 160);
+        assert_eq!(Command::Wait as i32, 161);
+        assert_eq!(Command::ShootBowOnce as i32, 178);
+        assert_eq!(Command::Jump as i32, 179);
+        assert_eq!(Command::LeaveSpy as i32, 180);
+        assert_eq!(Command::LeaveTree as i32, 181);
+    }
 
     /// Branch-for-branch verification of `set_moving`.
     #[test]
