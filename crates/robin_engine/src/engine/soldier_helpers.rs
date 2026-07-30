@@ -649,17 +649,6 @@ impl EngineInner {
         let card_element = (seq_id, usize::from(elem_idx));
         let selected_card_remains_authoritative =
             was_selected && selected_element.is_none_or(|selected| selected == card_element);
-        let replacement_movement_goal =
-            selected_element.and_then(|(replacement_seq, replacement_idx)| {
-                (replacement_seq != seq_id || replacement_idx != elem_idx as usize)
-                    .then(|| {
-                        self.orders
-                            .sequence_manager
-                            .get_element(replacement_seq, replacement_idx)
-                            .and_then(|element| element.retained_movement_goal)
-                    })
-                    .flatten()
-            });
         if let Some(entity) = self.world.entities.get_mut(owner) {
             let active_movement_matches = entity.actor_data().is_some_and(|actor| {
                 actor.active_movement.sequence_id == Some(seq_id)
@@ -676,8 +665,6 @@ impl EngineInner {
                 entity
                     .position_iface_mut()
                     .set_map_goal(crate::coordinates::MapPoint::ZERO);
-            } else if active_movement_matches && let Some(goal) = replacement_movement_goal {
-                entity.position_iface_mut().set_map_goal(goal);
             }
 
             // Rust's movement tracker is separate from Original's selected

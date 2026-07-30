@@ -1357,8 +1357,27 @@ Mission bootstrap now performs the Original admission gates, 3-D distance
 ordering, left/right pair arrangement, and chief-link writes synchronously.
 Ordinary runtime patrol refresh remains owner-ticked. Linux3 Profile 003
 saves 028, 029, 054, and 063 all consume the exact recorded mission-start RNG
-prefix; saves 028, 029, and 063 then match every recorded frame, while save
-054 reaches its independent frame-312 movement-goal divergence.
+prefix; saves 028, 029, and 063 then match every recorded frame.
+
+### Deferred movement-replacement goal ownership
+
+An AI movement replacement may be registered before the outgoing actor's
+creation slot and instructed after it. If the outgoing movement reaches an
+intermediate waypoint in that slot, `PerformMotion`/`DoNextOrder` leaves the
+sprite goal at the newly selected waypoint. Original then selects the pending
+replacement before interrupting the old movement, so the old condolence card
+does not own—and therefore does not clear or restore—the sprite goal.
+
+Rust carried a queue-time snapshot of the outgoing goal into the replacement
+to compensate for an earlier eager-cleanup difference. It unconditionally
+restored that stale snapshot when the A* request became `MoveWaiting`, erasing
+any waypoint advancement between registration and instruction. Replacement
+handoff now uses the snapshot only when eager cleanup actually left a zero
+goal; a nonzero live goal remains authoritative until the new path installs
+its first concrete order. This is the general selected-element ownership rule,
+independent of patrols or replay identities. Linux3 Profile 003 save 054 now
+passes its former frame-312 goal divergence.
+
 
 ## Current Linux-v48 loaded-save result
 

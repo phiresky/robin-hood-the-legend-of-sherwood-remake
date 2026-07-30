@@ -9422,11 +9422,17 @@ impl EngineInner {
                 .element_in_progress(seq_id, elem_idx);
             if let Some(goal) = retained_movement_goal
                 && let Some(entity) = self.world.entities.get_mut(owner)
+                && entity.position_iface().map_goal() == MapPoint::ZERO
             {
                 // A pending replacement owns the actor now, but has no
                 // concrete waypoint with which to initialize the sprite.
-                // Keep the outgoing movement's cached goal until path
-                // completion installs the replacement's first order.
+                // Restore the outgoing movement's cached goal only when
+                // eager Rust cleanup already erased it. The replacement can
+                // be queued before the outgoing actor slot and instructed
+                // afterward; in that interval the live movement may advance
+                // to another waypoint. Original leaves that newer sprite
+                // goal untouched because the interrupted element is no
+                // longer selected.
                 entity.position_iface_mut().set_map_goal(goal);
             }
             self.orders.pending_path_requests.enqueue(request);
