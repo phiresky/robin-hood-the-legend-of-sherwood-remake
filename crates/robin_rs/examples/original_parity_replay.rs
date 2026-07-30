@@ -2400,8 +2400,16 @@ fn write_automatic_rolling_dump(
         "automatic parity dump requires at least one captured frame"
     );
     let prefix = format!("robin-parity-divergence-frame-{divergent_frame}-");
-    let dump_dir = std::env::current_dir()
-        .expect("resolve workspace for automatic parity dump")
+    // Replay changes cwd to the selected data directory during engine setup,
+    // so current_dir is not a stable workspace anchor here. Prefer the source
+    // trace's repository ancestor and retain the compile-time workspace as a
+    // fallback for traces recorded outside this checkout.
+    let workspace_root = trace_path
+        .ancestors()
+        .find(|ancestor| ancestor.join(".git").exists())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    let dump_dir = workspace_root
         .join(".codex-tmp")
         .join("parity-dumps");
     std::fs::create_dir_all(&dump_dir).expect("create workspace automatic parity dump directory");
