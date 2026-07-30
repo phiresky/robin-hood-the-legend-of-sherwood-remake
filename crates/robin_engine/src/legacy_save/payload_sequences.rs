@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use crate::legacy_io::{LegacyReader, LegacyResult};
 
 use super::payload_base::{
-    read_element_ref, read_line_ref, read_sector_ref, LegacyElementRef, LegacyLineRef,
-    LegacyPoint2, LegacyPoint3, LegacySectorRef,
+    LegacyElementRef, LegacyLineRef, LegacyPoint2, LegacyPoint3, LegacySectorRef, read_element_ref,
+    read_line_ref, read_sector_ref,
 };
 
 const FINGERPRINT_SEQUENCE: [u8; 16] = hex16("462542ef9f0ef300dff9647c2091d151");
@@ -730,7 +730,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     use super::*;
-    use crate::sbfile::{SbFile, SB_FILE_READ};
+    use crate::sbfile::{SB_FILE_READ, SbFile};
 
     fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
         let mut fixture = NamedTempFile::new().unwrap();

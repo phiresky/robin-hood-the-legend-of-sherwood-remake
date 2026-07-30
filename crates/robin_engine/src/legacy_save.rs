@@ -19,6 +19,10 @@ pub mod elements;
 pub mod engine;
 pub mod payload_actors;
 pub mod payload_base;
+pub mod payload_nonactors;
+pub mod payload_objects;
+pub mod payload_sequences;
+pub mod payload_vm;
 
 use serde::{Deserialize, Serialize};
 
