@@ -123,14 +123,14 @@ impl EngineInner {
                     frame = self.control.frame_counter,
                     "Move path dispatch failed; queuing 100-frame failed_path timeout"
                 );
-                self.orders
-                    .failed_path_requests
-                    .push(crate::engine::movement::FailedPathRequest {
+                self.orders.failed_path_requests.push(
+                    crate::engine::movement::FailedPathRequest::synthetic(
                         owner,
                         seq_id,
                         elem_idx,
-                        first_fail_frame: self.control.frame_counter,
-                    });
+                        self.control.frame_counter,
+                    ),
+                );
                 self.orders
                     .sequence_manager
                     .element_in_progress(seq_id, elem_idx);

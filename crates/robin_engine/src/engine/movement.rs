@@ -702,6 +702,41 @@ pub(crate) struct FailedPathRequest {
     /// Universal frame counter at failure time.  Ages out at
     /// `first_fail_frame + 100`.
     pub(crate) first_fail_frame: u32,
+    /// Exact `RHpathRequest` payload retained for save/replay parity.
+    ///
+    /// Runtime failures produced by an actual A* request and all imported v48
+    /// failures populate this. A few Rust-only dispatch failures occur before
+    /// an Original request could be constructed and therefore use `None`.
+    /// TODO(path-dispatch): remove those synthetic timeout entries or give
+    /// them an explicit non-Original state instead of sharing this queue.
+    pub(crate) authoritative_request: Option<PendingPathRequest>,
+}
+
+impl FailedPathRequest {
+    pub(crate) fn from_pending(request: PendingPathRequest, first_fail_frame: u32) -> Self {
+        Self {
+            owner: request.owner,
+            seq_id: request.seq_id,
+            elem_idx: request.elem_idx,
+            first_fail_frame,
+            authoritative_request: Some(request),
+        }
+    }
+
+    pub(crate) fn synthetic(
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        first_fail_frame: u32,
+    ) -> Self {
+        Self {
+            owner,
+            seq_id,
+            elem_idx,
+            first_fail_frame,
+            authoritative_request: None,
+        }
+    }
 }
 
 /// Snapshot of one legacy `RHpathRequest` waiting for A*.
@@ -720,11 +755,20 @@ pub(crate) struct PendingPathRequest {
     pub(crate) source: MapPoint,
     pub(crate) dest: MapPoint,
     pub(crate) layer: u16,
+    /// Original `RHpathRequest::uwArea`; despite the name this is the actor's
+    /// sector number and is converted to a graph-area index during A*.
     pub(crate) sector: u16,
+    /// Exact serialized `RHpathRequest::uwSector`. Original request creation
+    /// does not initialize this member and pathfinding never reads it, but v48
+    /// saves nevertheless contain it.
+    pub(crate) legacy_sector: u16,
     pub(crate) half_diagonal_idx: u16,
     pub(crate) use_first_point: bool,
     pub(crate) move_action: OrderType,
     pub(crate) speed: crate::pathfinder::PathFinderSpeed,
+    pub(crate) reverse: bool,
+    pub(crate) tolerance: f32,
+    pub(crate) antagonist: Option<EntityId>,
     pub(crate) is_pass_door: bool,
     pub(crate) elem_flags: crate::sequence::MoveFlags,
     pub(crate) sword_movement_context: bool,
@@ -755,7 +799,22 @@ pub(crate) struct PendingPathRequestQueue {
 }
 
 impl PendingPathRequestQueue {
-    pub(super) fn has_in_flight(&self) -> bool {
+    /// Restore the exact post-save FIFO. The Original writer excludes an
+    /// ignored/in-flight head and writes the remaining list in order, so every
+    /// deserialized request is waiting and no completion result is present.
+    pub(crate) fn restore_v48_waiting(waiting: Vec<PendingPathRequest>) -> Self {
+        Self {
+            waiting,
+            in_flight: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn v48_waiting(&self) -> &[PendingPathRequest] {
+        &self.waiting
+    }
+
+    pub(crate) fn has_in_flight(&self) -> bool {
         self.in_flight.is_some()
     }
 
@@ -9115,6 +9174,9 @@ impl EngineInner {
             dest,
             layer: entity_layer,
             sector: entity_sector,
+            // Original leaves `uwSector` uninitialized and never reads it.
+            // Rust initializes the otherwise dormant serialized member.
+            legacy_sector: 0,
             half_diagonal_idx: pf_idx,
             use_first_point,
             move_action,
@@ -9123,6 +9185,33 @@ impl EngineInner {
             } else {
                 crate::pathfinder::PathFinderSpeed::Medium
             },
+            reverse: elem_flags.contains(crate::sequence::MoveFlags::REVERSED),
+            tolerance: self
+                .orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .and_then(|element| match &element.data {
+                    crate::sequence::SequenceElementData::Movement { tolerance, .. } => {
+                        Some(*tolerance)
+                    }
+                    _ => None,
+                })
+                .unwrap_or(0.0),
+            antagonist: self
+                .orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .and_then(|element| match &element.data {
+                    crate::sequence::SequenceElementData::Movement { element, .. }
+                        if !elem_flags.contains(crate::sequence::MoveFlags::SEEK)
+                            || !elem_flags.contains(crate::sequence::MoveFlags::USE_POINT) =>
+                    {
+                        Some(*element)
+                    }
+                    crate::sequence::SequenceElementData::Movement { .. } => Some(None),
+                    _ => None,
+                })
+                .flatten(),
             is_pass_door,
             elem_flags,
             sword_movement_context,
@@ -9181,10 +9270,14 @@ impl EngineInner {
             dest: _,
             layer: entity_layer,
             sector: _,
+            legacy_sector: _,
             half_diagonal_idx: _,
             use_first_point,
             move_action,
             speed: _,
+            reverse,
+            tolerance,
+            antagonist,
             is_pass_door,
             elem_flags,
             sword_movement_context,
@@ -9249,35 +9342,13 @@ impl EngineInner {
         // the antagonist itself); otherwise the movement element's
         // `element` (antagonist) rides along on the final order so
         // downstream consumers (touch-on-Done etc.) can resolve it.
-        let (elem_tolerance, elem_flags, elem_antagonist) = self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .and_then(|e| match &e.data {
-                crate::sequence::SequenceElementData::Movement {
-                    tolerance,
-                    flags,
-                    element,
-                    ..
-                } => Some((*tolerance, *flags, *element)),
-                _ => None,
-            })
-            .unwrap_or((0.0, crate::sequence::MoveFlags::empty(), None));
-        let reverse = elem_flags.contains(crate::sequence::MoveFlags::REVERSED);
-        let antagonist = if elem_flags.contains(crate::sequence::MoveFlags::SEEK)
-            && elem_flags.contains(crate::sequence::MoveFlags::USE_POINT)
-        {
-            None
-        } else {
-            elem_antagonist
-        };
         // ProcessPathRequests only stamps tolerance and antagonist when the
         // raw C++ path contains more than one point. Decide this before
         // removing a leading source waypoint: raw [source, goal] emits one
         // order with metadata, while a direct raw [goal] order keeps the
         // RHOrder constructor defaults.
         let (final_order_tolerance, final_order_antagonist) =
-            original_final_path_metadata(waypoints.len(), elem_tolerance, antagonist);
+            original_final_path_metadata(waypoints.len(), tolerance, antagonist);
 
         // `use_first_point` handling: the emission loop starts at
         // index 0 if set, otherwise 1.
@@ -9735,10 +9806,14 @@ mod path_request_timing_tests {
             dest: MapPoint::new(20.0, 20.0),
             layer: 0,
             sector: 0,
+            legacy_sector: 0,
             half_diagonal_idx: 0,
             use_first_point: false,
             move_action: OrderType::WalkingUpright,
             speed,
+            reverse: false,
+            tolerance: 0.0,
+            antagonist: None,
             is_pass_door: false,
             elem_flags: crate::sequence::MoveFlags::empty(),
             sword_movement_context: false,
@@ -9825,12 +9900,9 @@ mod path_request_timing_tests {
             .expect("launched movement element");
         element.state = crate::sequence::SequenceState::InProgress;
         element.command = crate::element::Command::MoveWaiting;
-        orders.failed_path_requests.push(FailedPathRequest {
-            owner,
-            seq_id: sequence_id,
-            elem_idx: 0,
-            first_fail_frame: 10,
-        });
+        orders
+            .failed_path_requests
+            .push(FailedPathRequest::synthetic(owner, sequence_id, 0, 10));
 
         let at_boundary =
             MovementContext::new(110, &mut world, &mut orders).take_expired_failures();

@@ -18,6 +18,7 @@ pub mod adopt;
 pub mod adopt_campaign;
 pub mod adopt_elements;
 pub mod adopt_grid;
+pub mod adopt_paths;
 pub mod adopt_preamble;
 pub mod adopt_sequences;
 pub mod adopt_simple;

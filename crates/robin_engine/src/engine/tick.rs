@@ -2557,14 +2557,12 @@ impl EngineInner {
                     sector = request.sector,
                     "path scheduling barrier: pathfind FAILED",
                 );
-                self.orders
-                    .failed_path_requests
-                    .push(super::movement::FailedPathRequest {
-                        owner: request.owner,
-                        seq_id: request.seq_id,
-                        elem_idx: request.elem_idx,
-                        first_fail_frame: self.control.frame_counter,
-                    });
+                self.orders.failed_path_requests.push(
+                    super::movement::FailedPathRequest::from_pending(
+                        request,
+                        self.control.frame_counter,
+                    ),
+                );
             }
             None => {}
         }

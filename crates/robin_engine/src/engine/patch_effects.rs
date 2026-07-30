@@ -427,12 +427,12 @@ impl EngineInner {
                         );
                         // Re-translate failed — slide into MOVE_WAITING.
                         self.orders.failed_path_requests.push(
-                            crate::engine::movement::FailedPathRequest {
-                                owner: id,
+                            crate::engine::movement::FailedPathRequest::synthetic(
+                                id,
                                 seq_id,
                                 elem_idx,
-                                first_fail_frame: self.control.frame_counter,
-                            },
+                                self.control.frame_counter,
+                            ),
                         );
                     }
                 }
