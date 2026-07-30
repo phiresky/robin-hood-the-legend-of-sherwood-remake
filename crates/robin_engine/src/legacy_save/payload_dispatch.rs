@@ -193,22 +193,43 @@ fn read_concrete_payload<C: LegacyElementPayloadDecodeContext>(
                 reader,
                 abi_profile,
                 &limits.actors,
-                |reader, _abi_profile| {
-                    LegacyHumanPayload::read(reader, &limits.base, context, creation_order, class)
+                |reader, abi_profile| {
+                    LegacyHumanPayload::read(
+                        reader,
+                        abi_profile,
+                        &limits.base,
+                        context,
+                        creation_order,
+                        class,
+                    )
                 },
                 |reader, _abi_profile| context.read_inline_sequence(reader, creation_order, class),
             )?;
             LegacyElementPayload::ActorPc(payload)
         }
         LegacyElementClass::ActorNpcSoldier => {
-            let payload = read_soldier_payload(reader, abi_profile, |reader, _abi_profile| {
-                LegacyNpcPayload::read(reader, &limits.base, context, creation_order, class)
+            let payload = read_soldier_payload(reader, abi_profile, |reader, abi_profile| {
+                LegacyNpcPayload::read(
+                    reader,
+                    abi_profile,
+                    &limits.base,
+                    context,
+                    creation_order,
+                    class,
+                )
             })?;
             LegacyElementPayload::ActorNpcSoldier(payload)
         }
         LegacyElementClass::ActorNpcCivilian => {
-            let payload = read_civilian_payload(reader, abi_profile, |reader, _abi_profile| {
-                LegacyNpcPayload::read(reader, &limits.base, context, creation_order, class)
+            let payload = read_civilian_payload(reader, abi_profile, |reader, abi_profile| {
+                LegacyNpcPayload::read(
+                    reader,
+                    abi_profile,
+                    &limits.base,
+                    context,
+                    creation_order,
+                    class,
+                )
             })?;
             LegacyElementPayload::ActorNpcCivilian(payload)
         }

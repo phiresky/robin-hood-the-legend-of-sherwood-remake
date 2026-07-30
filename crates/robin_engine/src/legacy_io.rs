@@ -149,6 +149,10 @@ impl<'a> LegacyReader<'a> {
         Ok(f32::from_le_bytes(self.read_array(field)?))
     }
 
+    pub fn read_f64(&mut self, field: impl fmt::Display) -> LegacyResult<f64> {
+        Ok(f64::from_le_bytes(self.read_array(field)?))
+    }
+
     /// The original format stores C++ `bool` in one byte. As in SBFile and
     /// the original runtime, any non-zero authored byte normalizes to `true`.
     pub fn read_bool(&mut self, field: impl fmt::Display) -> LegacyResult<bool> {

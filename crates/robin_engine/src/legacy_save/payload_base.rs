@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
 
+use super::LegacySaveAbiProfile;
 use super::elements::LegacyElementClass;
 use super::payload_ai::LegacyLocalAiPayload;
 use super::payload_sequences::LegacyInlineSequence;
@@ -957,12 +958,38 @@ pub struct LegacyRepulsivePoint {
 }
 
 impl LegacyRepulsivePoint {
-    fn read(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
+    fn read(reader: &mut LegacyReader<'_>, wide_geometry: bool) -> LegacyResult<Self> {
+        let position = if wide_geometry {
+            LegacyPoint2 {
+                x: reader.read_f64("position.x")? as f32,
+                y: reader.read_f64("position.y")? as f32,
+            }
+        } else {
+            read_point2(reader, "position")?
+        };
+        let concave = reader.read_bool("concave")?;
+        let (limit_left, limit_right) = if wide_geometry {
+            (
+                LegacyPoint2 {
+                    x: reader.read_f64("limit_left.x")? as f32,
+                    y: reader.read_f64("limit_left.y")? as f32,
+                },
+                LegacyPoint2 {
+                    x: reader.read_f64("limit_right.x")? as f32,
+                    y: reader.read_f64("limit_right.y")? as f32,
+                },
+            )
+        } else {
+            (
+                read_point2(reader, "limit_left")?,
+                read_point2(reader, "limit_right")?,
+            )
+        };
         Ok(Self {
-            position: read_point2(reader, "position")?,
-            concave: reader.read_bool("concave")?,
-            limit_left: read_point2(reader, "limit_left")?,
-            limit_right: read_point2(reader, "limit_right")?,
+            position,
+            concave,
+            limit_left,
+            limit_right,
             action_radius: reader.read_f32("action_radius")?,
             force_a: reader.read_f32("force_a")?,
             force_b: reader.read_f32("force_b")?,
@@ -1075,6 +1102,7 @@ pub struct LegacyHumanPayload {
 impl LegacyHumanPayload {
     pub fn read(
         reader: &mut LegacyReader<'_>,
+        abi_profile: LegacySaveAbiProfile,
         limits: &LegacyPayloadLimits,
         context: &dyn LegacyPayloadDecodeContext,
         expected_creation_order: u32,
@@ -1117,7 +1145,12 @@ impl LegacyHumanPayload {
         let hulk_direction = reader.read_bool("hulk_direction")?;
         let hulk_speed = reader.read_f32("hulk_speed")?;
         let carrier = read_element_ref(reader, "carrier")?;
-        let repulsive_point = reader.scope("repulsive_point", LegacyRepulsivePoint::read)?;
+        let repulsive_point = reader.scope("repulsive_point", |reader| {
+            LegacyRepulsivePoint::read(
+                reader,
+                abi_profile == LegacySaveAbiProfile::RetailWindowsX86V48,
+            )
+        })?;
         let small_repulsive_radius = reader.read_bool("small_repulsive_radius")?;
         let building = read_sector_ref(reader, "building")?;
         let currently_produced_noise_first_word =
@@ -1383,6 +1416,7 @@ pub struct LegacyNpcPayload {
 impl LegacyNpcPayload {
     pub fn read(
         reader: &mut LegacyReader<'_>,
+        abi_profile: LegacySaveAbiProfile,
         limits: &LegacyPayloadLimits,
         context: &dyn LegacyPayloadDecodeContext,
         expected_creation_order: u32,
@@ -1458,6 +1492,7 @@ impl LegacyNpcPayload {
         let human = reader.scope("human", |reader| {
             LegacyHumanPayload::read(
                 reader,
+                abi_profile,
                 limits,
                 context,
                 expected_creation_order,
@@ -1772,6 +1807,40 @@ mod tests {
             assert_eq!(error.offset, 0);
             assert_eq!(error.field, "items.count");
             assert!(error.to_string().contains("caller-supplied limit"));
+        });
+    }
+
+    #[test]
+    fn windows_human_repulsive_point_reads_wide_geometry() {
+        let mut bytes = Vec::new();
+        for value in [1.25_f64, -2.5, 3.5, 4.5, 5.5, 6.5] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+            if value == -2.5 {
+                bytes.push(1);
+            }
+        }
+        for value in [7.5_f32, 8.5, 9.5, 10.5] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        bytes.extend_from_slice(&42_u32.to_le_bytes());
+        bytes.extend_from_slice(&[1, 0, 1, 0]);
+
+        with_reader(&bytes, |reader| {
+            let point = LegacyRepulsivePoint::read(reader, true).unwrap();
+            assert_eq!(point.position, LegacyPoint2 { x: 1.25, y: -2.5 });
+            assert!(point.concave);
+            assert_eq!(point.limit_left, LegacyPoint2 { x: 3.5, y: 4.5 });
+            assert_eq!(point.limit_right, LegacyPoint2 { x: 5.5, y: 6.5 });
+            assert_eq!(point.action_radius, 7.5);
+            assert_eq!(point.force_a, 8.5);
+            assert_eq!(point.force_b, 9.5);
+            assert_eq!(point.radius, 10.5);
+            assert_eq!(point.id, 42);
+            assert!(point.affects_pcs);
+            assert!(!point.affects_soldiers);
+            assert!(point.affects_civilians);
+            assert!(!point.affects_animals);
+            assert_eq!(reader.offset(), bytes.len() as u64);
         });
     }
 
