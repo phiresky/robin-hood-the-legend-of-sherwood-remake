@@ -560,6 +560,16 @@ impl SbFileSystem {
 }
 
 impl SbFile {
+    /// Construct a read-only legacy stream from already owned bytes.
+    ///
+    /// Embedded Original checkpoints (for example schema-11 parity traces)
+    /// should not need a temporary filesystem round trip merely to use the
+    /// same positional/versioned reader as on-disk saves. `display_path` is
+    /// retained only for structured diagnostics.
+    pub fn from_owned_bytes(bytes: Vec<u8>, display_path: impl Into<String>) -> Self {
+        Self::from_bytes(bytes, display_path.into())
+    }
+
     fn from_bytes(bytes: Vec<u8>, path: String) -> Self {
         let size = bytes.len() as u64;
         SbFile {
