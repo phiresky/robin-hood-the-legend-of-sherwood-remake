@@ -351,6 +351,33 @@ mod mobile_owner_boundary_tests {
     }
 
     #[test]
+    fn production_walk_uses_saved_original_creation_order_not_rust_slots() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let first = engine.add_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
+        let second = engine.add_entity(mobile_fx(1, MapPoint::new(10.0, 0.0)));
+        let third = engine.add_entity(mobile_fx(2, MapPoint::new(20.0, 0.0)));
+        engine.world.install_original_creation_orders(
+            [(first, 80), (second, 42), (third, 61)]
+                .into_iter()
+                .collect(),
+            81,
+        );
+
+        let visited = std::cell::RefCell::new(Vec::new());
+        engine.tick_actor_animation_action_change_slots_with_hooks(
+            &sim_context,
+            &LevelAssets::default(),
+            |_, owner| visited.borrow_mut().push(owner),
+            |_, _| {},
+            |_, _, _, _, _, _, _| {},
+            |_, _| {},
+        );
+
+        assert_eq!(*visited.borrow(), vec![second, third, first]);
+    }
+
+    #[test]
     fn reached_waypoint_uses_old_child_speed_then_new_speed_next_tick() {
         crate::sim_rng::with_seed(17, |sim| {
             let mut engine = EngineInner::new();
@@ -2966,15 +2993,22 @@ impl EngineInner {
         }
     }
 
-    /// Run the bounded base-actor Hourglass slice in live legacy creation
+    /// Run the bounded base-actor Hourglass slice in live Original element
     /// order: generic animation/Execute, synchronous combat-injury Think,
     /// completion/priority effects, then `ActionChange`.
     ///
-    /// The loop deliberately rereads the live slot-array length and resolves
-    /// each slot through `id_at_legacy_slot`, matching the original engine's
-    /// mutable element-array walk. Generic animation eligibility does not gate
-    /// `ActionChange`; inactive, frozen, moving, active-shot, and active-melee
-    /// actors still reach the callback boundary.
+    /// `RHEngine::SerializeElements` sorts `marrayElements` by
+    /// `mulCreationOrder` before writing a save, and the loaded compact array
+    /// retains that order. Rust entity IDs keep the initialized mission's
+    /// stable sparse slots, so their numeric order is not the loaded
+    /// `marrayElements` order. Walk the authoritative Original creation
+    /// identities instead. The local vector is compacted after every callback
+    /// and newly constructed elements are appended, preserving the Original
+    /// loop's observable mutation behavior.
+    ///
+    /// Generic animation eligibility does not gate `ActionChange`; inactive,
+    /// frozen, moving, active-shot, and active-melee actors still reach the
+    /// callback boundary.
     #[cfg(test)]
     pub(super) fn tick_actor_animation_action_change_slots(
         &mut self,
@@ -3025,9 +3059,18 @@ impl EngineInner {
         ),
         mut after_slot: impl FnMut(&mut Self, EntityId),
     ) {
+        let mut original_slots = self
+            .world
+            .entities
+            .occupied()
+            .map(|(entity_id, _)| entity_id)
+            .collect::<Vec<_>>();
+        original_slots.sort_by_key(|&entity_id| self.world.original_creation_order(entity_id));
+        let mut observed_creation_counter = self.world.next_original_creation_order;
         let mut slot = 0;
-        while slot < self.world.entities.len() {
-            if let Some(entity_id) = self.world.entities.id_at_legacy_slot(slot as u32) {
+        while slot < original_slots.len() {
+            let entity_id = original_slots[slot];
+            if self.world.entities.get(entity_id).is_some() {
                 #[cfg(test)]
                 CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|captured| {
                     if let Some(entities) = captured.borrow_mut().as_mut() {
@@ -3040,7 +3083,7 @@ impl EngineInner {
                     .get(entity_id)
                     .unwrap_or_else(|| {
                         panic!(
-                            "actor animation coordinator lost entity {entity_id:?} resolved from legacy slot {slot}"
+                            "actor animation coordinator lost entity {entity_id:?} resolved from Original element slot {slot}"
                         )
                     });
                 let actor_enters_hourglass = entity.actor_data().is_some()
@@ -3247,6 +3290,21 @@ impl EngineInner {
                         } else {
                             self.tick_actor_animation_for(sim, assets, entity_id)
                         };
+                    if execute_result
+                        .as_ref()
+                        .is_some_and(|result| result.motion == crate::sprite::MotionState::Start)
+                        && self
+                            .world
+                            .entities
+                            .get(entity_id)
+                            .is_some_and(Entity::is_pc)
+                    {
+                        // RHElementActorPC::Execute owns eventual strike /
+                        // execution remarks. Their 50% RNG draw and speech
+                        // side effects occur synchronously before the next
+                        // element's Hourglass slot.
+                        self.tick_pc_combat_anim_speech_for_owner(sim, assets, entity_id);
+                    }
                     // Original clears mbSequenceElementStarted immediately
                     // after Execute returns. It means "the selected element
                     // has not had its first owner slot yet", not "this
@@ -3382,6 +3440,33 @@ impl EngineInner {
                     non_actor_slot(self, entity_id);
                 }
             }
+
+            // Original RemoveElement compacts marrayElements immediately, so
+            // incrementing the loop index skips the element shifted into the
+            // removed position. Retaining before incrementing reproduces that
+            // behavior. RegisterElement appends newly created elements; their
+            // monotonically increasing creation identities let us discover
+            // only the new tail without confusing stable Rust slots for
+            // Original array positions.
+            original_slots.retain(|&id| self.world.entities.get(id).is_some());
+            if self.world.next_original_creation_order != observed_creation_counter {
+                assert!(
+                    self.world.next_original_creation_order > observed_creation_counter,
+                    "Original creation counter moved backwards during Hourglass"
+                );
+                original_slots.extend(
+                    self.world
+                        .original_creation_order_by_entity
+                        .iter()
+                        .filter_map(|(&id, &creation_order)| {
+                            (creation_order >= observed_creation_counter
+                                && self.world.entities.get(id).is_some())
+                            .then_some(id)
+                        }),
+                );
+                original_slots.sort_by_key(|&id| self.world.original_creation_order(id));
+                observed_creation_counter = self.world.next_original_creation_order;
+            }
             slot += 1;
         }
 
@@ -3392,10 +3477,10 @@ impl EngineInner {
     }
 
     /// Fuse the supported Actor → Human → PC/NPC Hourglass slices into one
-    /// live legacy-slot walk. The underlying actor coordinator owns the
-    /// `while slot < entities.len()` loop, including holes and callback-spawned
-    /// later slots; this hook closes the derived tail before it increments the
-    /// slot.
+    /// live Original-element walk. The underlying actor coordinator owns the
+    /// compact creation-ordered loop, including removals and callback-spawned
+    /// tail elements; this hook closes the derived tail before it increments
+    /// the slot.
     pub(super) fn tick_actor_owner_envelopes_with_display(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -3535,6 +3620,17 @@ impl EngineInner {
                 engine.tick_entity_movement_owner(sim, assets, owner, movement);
                 if let Some(selection) = melee {
                     engine.tick_selected_melee_owner(sim, assets, owner, selection);
+                    if engine
+                        .world
+                        .entities
+                        .get(owner)
+                        .is_some_and(Entity::is_pc)
+                    {
+                        // The PC override wraps Human::Execute. Therefore its
+                        // START-edge remark follows Human's strike warning,
+                        // but still belongs to this actor's live slot.
+                        engine.tick_pc_combat_anim_speech_for_owner(sim, assets, owner);
+                    }
                 }
                 if let Some((_, _, order_id)) = bow {
                     engine.tick_bow_shot_for(sim, assets, owner, order_id);

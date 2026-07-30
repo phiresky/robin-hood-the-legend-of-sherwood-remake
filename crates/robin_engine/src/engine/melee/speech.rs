@@ -371,6 +371,30 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) {
+        self.tick_pc_combat_anim_speech_matching(sim, assets, None);
+    }
+
+    /// Run the PC Execute-owned combat-speech edge for one actor immediately
+    /// after its sprite reports `MotionState::Start`.
+    ///
+    /// Original: `RHElementActorPC::Execute` uses
+    /// `DoActionAndEventuallyPlayRemark`, so its RNG draw and `HeroSpeaking`
+    /// side effects happen before the next element's Hourglass slot.
+    pub(crate) fn tick_pc_combat_anim_speech_for_owner(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        self.tick_pc_combat_anim_speech_matching(sim, assets, Some(owner));
+    }
+
+    fn tick_pc_combat_anim_speech_matching(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        only_owner: Option<EntityId>,
+    ) {
         use crate::order::OrderType as OT;
 
         // Collect transitions first to avoid borrow conflicts with hero_speaking.
@@ -387,6 +411,9 @@ impl EngineInner {
         > = {
             let mut m = std::collections::HashMap::new();
             for &pc_id in &self.world.pc_ids {
+                if only_owner.is_some_and(|owner| owner != pc_id) {
+                    continue;
+                }
                 if let Some((seq_id, elem_idx, o)) =
                     self.orders.sequence_manager.current_order_for_actor(pc_id)
                 {
@@ -403,6 +430,9 @@ impl EngineInner {
         };
 
         for (id, pc) in self.world.entities.pcs_mut() {
+            if only_owner.is_some_and(|owner| owner != EntityId::from(id)) {
+                continue;
+            }
             let (cur_id, cur_ot, cur_command) = match cur_orders.get(&id.into()) {
                 Some((id, ot, command)) => (id.get(), Some(*ot), Some(*command)),
                 None => (0, None, None),

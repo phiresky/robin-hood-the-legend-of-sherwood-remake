@@ -1723,6 +1723,23 @@ opaque-LOS 360-degree query as the other synchronous AI callers. Restart now
 passes the patrol transition and advances from frame 121 to the next unrelated
 movement divergence at frame 193.
 
+### Static repulsion keeps the motion sector's oriented boundary normal
+
+`RHRepulsiveLine::InitializeNormal` deliberately orients an AREA motion
+sector's boundary normal opposite to a solid obstacle's boundary normal.
+Rust's canonical `GridLine` retained that distinction, but the anti-collision
+gather rebuilt a new repulsive line from endpoints and thereby assigned every
+boundary the solid-obstacle orientation.
+
+Linux3 Profile 003 Restart exposed the loss when Soldier 75 recovered from a
+deviation beside an AREA corner. The reversed normal made the boundary
+one-sided in the wrong direction, so Rust resumed the straight route while
+the Original continued around the corner. Level repulsive-line conversion now
+copies the already-oriented grid normal and records whether it is the AREA
+orientation. A focused geometry test covers both orientations. Restart now
+passes frame 193 and advances to a separate patrol-route transition at frame
+240.
+
 ### Release posture transitions reject unsupported tied commands
 
 The Original `MakePostureTransition` switch has debug assertions in its
@@ -1736,6 +1753,29 @@ Both the upright and crouched transition checks now preserve the Original
 release result for unsupported postures, with a debug diagnostic instead of
 inventing an order or aborting the replay. Linux3 Profile 001 save 018,
 including its loaded tied soldier, now matches every recorded frame.
+
+### Loaded Hourglass traversal follows Original creation identity
+
+`RHEngine::SerializeElements` sorts its compact element array by
+`mulCreationOrder` before writing a save. The loaded array retains that order,
+and `PerformHourglass` walks it directly. Rust deliberately retains the
+initialized mission's sparse entity identities during save adoption, so
+numeric Rust slots need not have the saved array order.
+
+The actor/non-actor owner walk now sorts live entities by the restored Original
+creation identity. It also mirrors the mutable compact-array loop: removals
+compact immediately, while elements constructed during callbacks join the
+monotonic creation-order tail. A focused regression installs a saved order
+which differs from Rust slot order and verifies the production walk. Linux2
+Profile 002 save 038 consequently assigns simultaneous smalltalk initiatives
+to the same PCs as the Original and advances beyond frame 5615.
+
+PC strike remarks now close at the same owner boundary. The Original PC
+`Execute` override evaluates its eventual-remark RNG immediately after the
+wrapped human strike `Execute` returns `START`; Rust previously scanned all PCs
+in the later global melee tail. Both generic and active-melee START edges now
+settle the owning PC before the next Original creation slot, while the global
+tail remains responsible for DONE-edge arrow-extraction remarks.
 
 ## Current Linux-v48 loaded-save result
 
