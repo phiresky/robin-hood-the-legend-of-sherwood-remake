@@ -367,11 +367,18 @@ impl LiftWaitCommandContext<'_> {
         };
 
         if authorized {
+            let owner_is_pc = self
+                .entities
+                .get(owner)
+                .unwrap_or_else(|| {
+                    panic!("WAIT_FREE_LIFT owner {owner:?} vanished during reservation")
+                })
+                .is_pc();
             let lift = self.fast_grid.lift_state_mut(grid_idx as u32);
             if is_high {
-                lift.set_occupied_downwards(true);
+                lift.set_occupied_downwards(true, owner_is_pc);
             } else {
-                lift.set_occupied_upwards(true);
+                lift.set_occupied_upwards(true, owner_is_pc);
             }
             let actor = self
                 .entities

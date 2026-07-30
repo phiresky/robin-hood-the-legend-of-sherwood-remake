@@ -8,6 +8,8 @@
 use thiserror::Error;
 
 use crate::{
+    ai::{Position, RepulsivePoint},
+    coordinates::MapVec,
     element::{Entity, EntityId},
     engine::{EngineInner, LegacyGridGateAsset, LevelAssets},
     fast_find_grid::LiftRuntimeState,
@@ -17,7 +19,8 @@ use crate::{
 
 use super::{
     LegacySaveAbiProfile,
-    adopt::{LegacyEntityFixups, LegacySaveAdoptError},
+    adopt::{LegacyEntityFixups, LegacyPositionTopology, LegacySaveAdoptError},
+    adopt_elements::{LegacyElementAdoptError, LegacyElementBaseAdoption},
     adopt_vm_arena::{LegacyVmArenaError, LegacyVmArenaOwner, LegacyVmArenaPlan},
     gate_topology::{LegacyGateOrderError, derive_legacy_gate_order},
     post_grid::{
@@ -36,6 +39,8 @@ pub enum LegacyGridAdoptError {
     Topology(#[from] LegacyTopologyAdapterError),
     #[error(transparent)]
     Reference(#[from] LegacySaveAdoptError),
+    #[error(transparent)]
+    Element(#[from] LegacyElementAdoptError),
     #[error("cannot map Original FastFindGrid gate identity: {0}")]
     GateOrder(#[from] LegacyGateOrderError),
     #[error(
@@ -82,17 +87,12 @@ pub enum LegacyGridAdoptError {
         saved: bool,
         runtime: bool,
     },
-    #[error(
-        "saved lift sector {sector_index} has {occupants_pc} PC occupants; Rust LiftRuntimeState has no lossless PC-occupancy field"
-    )]
-    UnsupportedLiftPcOccupancy {
-        sector_index: usize,
-        occupants_pc: u16,
+    #[error("saved static repulsive point {index} field {field} contains non-finite value {value}")]
+    NonFiniteStaticRepulsivePoint {
+        index: usize,
+        field: &'static str,
+        value: f32,
     },
-    #[error(
-        "save contains {count} static repulsive points; Rust's script-point model drops serialized wedge/force coefficients"
-    )]
-    UnsupportedStaticRepulsivePoints { count: usize },
     #[error("initialized grid runtime array {field} is shorter than required index {index}")]
     MissingRuntimeIndex { field: &'static str, index: usize },
     #[error("saved patch {patch_index} has invalid changing-obstacle topology: {detail}")]
@@ -121,6 +121,7 @@ pub struct LegacyFastFindGridAdoptionPlan {
     door_sectors: Vec<(usize, bool)>,
     buildings: Vec<PlannedBuilding>,
     lifts: Vec<(u32, LiftRuntimeState)>,
+    static_repulsive_points: Vec<RepulsivePoint>,
     line_active: Vec<bool>,
     sector_active: Vec<bool>,
     mask_active: Vec<bool>,
@@ -135,6 +136,7 @@ struct PlannedPatch {
     applied: bool,
     in_transition: bool,
     locked: bool,
+    display_doors: bool,
     occupants: Vec<OccupantId>,
     fx: Option<PlannedPatchFx>,
 }
@@ -142,8 +144,24 @@ struct PlannedPatch {
 #[derive(Clone, Debug)]
 struct PlannedPatchFx {
     entity_id: EntityId,
+    element: LegacyElementBaseAdoption,
     force_display: bool,
     restore_background: bool,
+}
+
+/// Presentation state emitted by grid adoption and installed only after the
+/// candidate simulation has been atomically accepted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LegacyGridHostState {
+    display_doors: Vec<(usize, bool)>,
+}
+
+impl LegacyGridHostState {
+    pub(crate) fn apply(self, engine: &mut EngineInner) {
+        for (patch_index, display_doors) in self.display_doors {
+            engine.script_domains.interactables.patches[patch_index].display_doors = display_doors;
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -180,6 +198,7 @@ impl LegacyFastFindGridAdoptionPlan {
         assets: &LevelAssets,
         state: &LegacyFastFindGridState,
         entities: &LegacyEntityFixups,
+        position_topology: &LegacyPositionTopology,
         vm_arena: &LegacyVmArenaPlan,
     ) -> Result<Self, LegacyGridAdoptError> {
         if state.abi_profile != LegacySaveAbiProfile::PortLinuxI386V48 {
@@ -187,13 +206,7 @@ impl LegacyFastFindGridAdoptionPlan {
                 profile: state.abi_profile,
             });
         }
-        if !state.static_repulsive_points.is_empty() {
-            // TODO(save-import): preserve all serialized RHRepulsivePoint
-            // coefficients in the Rust runtime before accepting these.
-            return Err(LegacyGridAdoptError::UnsupportedStaticRepulsivePoints {
-                count: state.static_repulsive_points.len(),
-            });
-        }
+        let static_repulsive_points = preflight_static_repulsive_points(state)?;
 
         let decoded_topology = derive_grid_topology(engine, assets)?;
         let retained = assets
@@ -217,13 +230,14 @@ impl LegacyFastFindGridAdoptionPlan {
                 })?;
             preflight_patch_runtime_indices(engine, runtime)?;
             let occupants = resolve_patch_occupants(engine, entities, saved)?;
-            let fx = preflight_patch_fx(engine, entities, patch_index, saved)?;
+            let fx = preflight_patch_fx(engine, entities, position_topology, patch_index, saved)?;
             patches.push(PlannedPatch {
                 patch_index,
                 active: saved.active_now,
                 applied: saved.applied_now,
                 in_transition: saved.in_transition_now,
                 locked: saved.locked,
+                display_doors: saved.display_doors,
                 occupants,
                 fx,
             });
@@ -425,21 +439,13 @@ impl LegacyFastFindGridAdoptionPlan {
                     });
                 }
                 LegacySpecialSectorState::Lift {
-                    sector_index,
+                    sector_index: _,
                     occupants_pc,
                     occupants,
                     occupied_upwards,
                     occupied_downwards,
                     wait_time,
                 } => {
-                    if *occupants_pc != 0 {
-                        // TODO(save-import): add the Original's separate PC
-                        // occupancy counter to LiftRuntimeState.
-                        return Err(LegacyGridAdoptError::UnsupportedLiftPcOccupancy {
-                            sector_index: *sector_index,
-                            occupants_pc: *occupants_pc,
-                        });
-                    }
                     let runtime_index = runtime_special.lifts[lift_ordinal];
                     lift_ordinal += 1;
                     let runtime_index = u32::try_from(runtime_index).map_err(|_| {
@@ -562,6 +568,7 @@ impl LegacyFastFindGridAdoptionPlan {
             door_sectors,
             buildings,
             lifts,
+            static_repulsive_points,
             line_active: runtime_grid.line_active,
             sector_active: runtime_grid.sector_active,
             mask_active: runtime_grid.mask_active,
@@ -575,12 +582,13 @@ impl LegacyFastFindGridAdoptionPlan {
     /// Patch-dependent grid flags and door swap baselines are reconstructed
     /// before the independently serialized door fields overwrite current
     /// authorization, matching Original load order.
-    pub fn apply(self, engine: &mut EngineInner) {
+    pub(crate) fn apply(self, engine: &mut EngineInner) -> LegacyGridHostState {
         engine.world.fast_grid.line_active = self.line_active;
         engine.world.fast_grid.sector_active = self.sector_active;
         engine.world.fast_grid.mask_active = self.mask_active;
         engine.world.static_sight_obstacle_active = self.sight_obstacle_active;
         engine.world.pathfinder = self.pathfinder;
+        engine.ai.global.repulsive_points = self.static_repulsive_points;
 
         for planned in &self.patches {
             let patch = &engine.script_domains.interactables.patches[planned.patch_index];
@@ -592,16 +600,22 @@ impl LegacyFastFindGridAdoptionPlan {
             }
         }
 
+        let mut display_doors = Vec::with_capacity(self.patches.len());
         for planned in self.patches {
-            let patch = &mut engine.script_domains.interactables.patches[planned.patch_index];
-            patch.active = planned.active;
-            patch.applied = planned.applied;
-            patch.in_transition = planned.in_transition;
-            patch.locked = planned.locked;
-            patch.occupants = planned.occupants;
-            // Presentation-only cache: the Rust host recomputes it locally.
-            patch.display_doors = false;
+            display_doors.push((planned.patch_index, planned.display_doors));
+            {
+                let patch = &mut engine.script_domains.interactables.patches[planned.patch_index];
+                patch.active = planned.active;
+                patch.applied = planned.applied;
+                patch.in_transition = planned.in_transition;
+                patch.locked = planned.locked;
+                patch.occupants = planned.occupants;
+                // Host output is installed only after the candidate is
+                // accepted; it never enters simulation snapshots or hashes.
+                patch.display_doors = false;
+            }
             if let Some(fx) = planned.fx {
+                fx.element.apply(engine);
                 let Entity::Fx(entity) = engine
                     .world
                     .entities
@@ -645,7 +659,8 @@ impl LegacyFastFindGridAdoptionPlan {
                 planned.arrow_reserve;
         }
         for (sector_index, lift) in self.lifts {
-            if lift.occupants == 0
+            if lift.occupants_pc == 0
+                && lift.occupants == 0
                 && !lift.occupied_upwards
                 && !lift.occupied_downwards
                 && lift.wait_time == 0
@@ -655,6 +670,7 @@ impl LegacyFastFindGridAdoptionPlan {
                 engine.world.fast_grid.lift_state.insert(sector_index, lift);
             }
         }
+        LegacyGridHostState { display_doors }
     }
 }
 
@@ -821,21 +837,19 @@ fn resolve_actor_occupants(
 fn preflight_patch_fx(
     engine: &EngineInner,
     entities: &LegacyEntityFixups,
+    position_topology: &LegacyPositionTopology,
     patch_index: usize,
     saved: &LegacyPatchState,
 ) -> Result<Option<PlannedPatchFx>, LegacyGridAdoptError> {
     let Some(fx) = &saved.fx else {
         return Ok(None);
     };
-    // The nested LegacyElementPayloadBase belongs to entity adoption. This
-    // grid plan owns only RHPatchFX's patch attachment and leaf flags.
-    // TODO(save-import): compose the entity-base plan here once patch-owned FX
-    // elements are included in the unified element adopter.
-    let entity_id = entities
-        .resolve_element(super::payload_base::LegacyElementRef(Some(
-            fx.element.creation_order,
-        )))?
-        .expect("patch FX creation order is non-null");
+    // RHPatch::Serialize writes this common base after the ordinary element
+    // stream. It therefore composes with, and overwrites, that earlier copy
+    // exactly as it does during Original load.
+    let element =
+        LegacyElementBaseAdoption::preflight(engine, &fx.element, entities, position_topology)?;
+    let entity_id = element.entity_id();
     if !matches!(engine.world.entities.get(entity_id), Some(Entity::Fx(_))) {
         return Err(LegacyGridAdoptError::MissingPatchFx {
             patch_index,
@@ -855,9 +869,65 @@ fn preflight_patch_fx(
     }
     Ok(Some(PlannedPatchFx {
         entity_id,
+        element,
         force_display: fx.force_display,
         restore_background: fx.restore_background,
     }))
+}
+
+fn preflight_static_repulsive_points(
+    state: &LegacyFastFindGridState,
+) -> Result<Vec<RepulsivePoint>, LegacyGridAdoptError> {
+    state
+        .static_repulsive_points
+        .iter()
+        .enumerate()
+        .map(|(index, saved)| {
+            for (field, value) in [
+                ("position.x", saved.point.position.x),
+                ("position.y", saved.point.position.y),
+                ("limit_left.x", saved.point.limit_left.x),
+                ("limit_left.y", saved.point.limit_left.y),
+                ("limit_right.x", saved.point.limit_right.x),
+                ("limit_right.y", saved.point.limit_right.y),
+                ("action_radius", saved.point.action_radius),
+                ("force_a", saved.point.force_a),
+                ("force_b", saved.point.force_b),
+                ("radius", saved.point.radius),
+            ] {
+                if !value.is_finite() {
+                    return Err(LegacyGridAdoptError::NonFiniteStaticRepulsivePoint {
+                        index,
+                        field,
+                        value,
+                    });
+                }
+            }
+            let flags = i32::from(saved.point.affects_pcs)
+                | (i32::from(saved.point.affects_soldiers) << 1)
+                | (i32::from(saved.point.affects_civilians) << 2)
+                | (i32::from(saved.point.affects_animals) << 3);
+            Ok(RepulsivePoint {
+                // Script handles are signed i32 but Original owns an ULONG;
+                // this bit-preserving cast keeps all 2^32 identities.
+                id: saved.point.id as i32,
+                position: Position {
+                    x: saved.point.position.x,
+                    y: saved.point.position.y,
+                    level: saved.layer,
+                    sector: None,
+                },
+                radius: saved.point.radius,
+                action_radius: saved.point.action_radius,
+                force_a: saved.point.force_a,
+                force_b: saved.point.force_b,
+                concave: saved.point.concave,
+                limit_left: MapVec::new(saved.point.limit_left.x, saved.point.limit_left.y),
+                limit_right: MapVec::new(saved.point.limit_right.x, saved.point.limit_right.y),
+                flags,
+            })
+        })
+        .collect()
 }
 
 fn preflight_patch_runtime_indices(
@@ -1013,6 +1083,15 @@ mod tests {
         }
     }
 
+    fn empty_position_topology() -> LegacyPositionTopology {
+        LegacyPositionTopology {
+            sector_count: 0,
+            doors: Vec::new(),
+            projection_areas: Vec::new(),
+            sight_obstacles: Vec::new(),
+        }
+    }
+
     #[test]
     fn rejects_wrong_abi_before_touching_topology() {
         let mut state = empty_state();
@@ -1022,6 +1101,7 @@ mod tests {
             &LevelAssets::new(),
             &state,
             &empty_fixups(),
+            &empty_position_topology(),
             &LegacyVmArenaPlan::empty_for_tests(),
         )
         .unwrap_err();
@@ -1029,39 +1109,78 @@ mod tests {
     }
 
     #[test]
-    fn rejects_lossy_static_repulsive_points_before_mutation() {
+    fn preserves_all_static_repulsive_point_state() {
         let mut state = empty_state();
         state
             .static_repulsive_points
             .push(LegacyLayeredRepulsivePoint {
                 point: LegacyRepulsivePoint {
                     position: LegacyPoint2 { x: 1.0, y: 2.0 },
-                    concave: false,
-                    limit_left: LegacyPoint2 { x: 0.0, y: 0.0 },
-                    limit_right: LegacyPoint2 { x: 0.0, y: 0.0 },
+                    concave: true,
+                    limit_left: LegacyPoint2 { x: -8.0, y: 9.0 },
+                    limit_right: LegacyPoint2 { x: 10.0, y: -11.0 },
                     action_radius: 3.0,
                     force_a: 4.0,
                     force_b: 5.0,
                     radius: 6.0,
-                    id: 7,
+                    id: u32::MAX,
                     affects_pcs: true,
+                    affects_soldiers: true,
+                    affects_civilians: true,
+                    affects_animals: true,
+                },
+                layer: 0,
+            });
+        let points = preflight_static_repulsive_points(&state).unwrap();
+        assert_eq!(points.len(), 1);
+        let point = &points[0];
+        assert_eq!(point.id, -1);
+        assert_eq!((point.position.x, point.position.y), (1.0, 2.0));
+        assert_eq!(point.position.level, 0);
+        assert_eq!(point.action_radius, 3.0);
+        assert_eq!(point.force_a, 4.0);
+        assert_eq!(point.force_b, 5.0);
+        assert_eq!(point.radius, 6.0);
+        assert!(point.concave);
+        assert_eq!(point.limit_left, MapVec::new(-8.0, 9.0));
+        assert_eq!(point.limit_right, MapVec::new(10.0, -11.0));
+        assert_eq!(point.flags, 0xf);
+    }
+
+    #[test]
+    fn rejects_non_finite_static_repulsive_state_before_apply() {
+        let mut state = empty_state();
+        state
+            .static_repulsive_points
+            .push(LegacyLayeredRepulsivePoint {
+                point: LegacyRepulsivePoint {
+                    position: LegacyPoint2 {
+                        x: f32::NAN,
+                        y: 0.0,
+                    },
+                    concave: false,
+                    limit_left: LegacyPoint2 { x: 0.0, y: 0.0 },
+                    limit_right: LegacyPoint2 { x: 0.0, y: 0.0 },
+                    action_radius: 1.0,
+                    force_a: 1.0,
+                    force_b: 0.0,
+                    radius: 0.0,
+                    id: 1,
+                    affects_pcs: false,
                     affects_soldiers: false,
                     affects_civilians: false,
                     affects_animals: false,
                 },
                 layer: 0,
             });
-        let error = LegacyFastFindGridAdoptionPlan::preflight(
-            &EngineInner::new(),
-            &LevelAssets::new(),
-            &state,
-            &empty_fixups(),
-            &LegacyVmArenaPlan::empty_for_tests(),
-        )
-        .unwrap_err();
+
         assert!(matches!(
-            error,
-            LegacyGridAdoptError::UnsupportedStaticRepulsivePoints { count: 1 }
+            preflight_static_repulsive_points(&state),
+            Err(LegacyGridAdoptError::NonFiniteStaticRepulsivePoint {
+                index: 0,
+                field: "position.x",
+                ..
+            })
         ));
     }
 
@@ -1141,6 +1260,7 @@ mod tests {
                 applied: true,
                 in_transition: false,
                 locked: true,
+                display_doors: true,
                 occupants: vec![OccupantId(9)],
                 fx: None,
             }],
@@ -1175,19 +1295,27 @@ mod tests {
                     wait_time: 17,
                 },
             )],
+            static_repulsive_points: vec![RepulsivePoint::new(
+                11,
+                Position::default(),
+                2.0,
+                3.0,
+                5,
+            )],
             line_active: vec![false, true],
             sector_active: vec![false, true, true],
             mask_active: vec![false, true],
             sight_obstacle_active: vec![false, true],
             pathfinder: crate::pathfinder::PathFinder::new(),
         };
-        plan.apply(&mut engine);
+        let host = plan.apply(&mut engine);
 
         let patch = &engine.script_domains.interactables.patches[0];
         assert!(!patch.active);
         assert!(patch.applied);
         assert!(patch.locked);
         assert_eq!(patch.occupants, [OccupantId(9)]);
+        assert!(!patch.display_doors);
         assert_eq!(engine.world.fast_grid.sector_active, [false, true, false]);
         assert_eq!(engine.world.fast_grid.line_active, [false, true]);
         assert_eq!(engine.world.fast_grid.mask_active, [false, true]);
@@ -1208,9 +1336,15 @@ mod tests {
         assert_eq!(engine.script_domains.buildings.occupants[0], [0x1000_0009]);
         assert!(engine.script_domains.buildings.arrow_reserves[0]);
         let lift = engine.world.fast_grid.lift_state.get(&2).unwrap();
+        assert_eq!(lift.occupants_pc, 0);
         assert_eq!(lift.occupants, 2);
         assert!(lift.occupied_upwards);
         assert_eq!(lift.wait_time, 17);
+        assert_eq!(engine.ai.global.repulsive_points.len(), 1);
+        assert_eq!(engine.ai.global.repulsive_points[0].id, 11);
+
+        host.apply(&mut engine);
+        assert!(engine.script_domains.interactables.patches[0].display_doors);
     }
 
     #[test]

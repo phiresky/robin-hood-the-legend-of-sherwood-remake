@@ -1277,11 +1277,17 @@ impl EngineInner {
                         .map(|lt| lt.is_wall_or_ladder())
                         .unwrap_or(false)
                 {
+                    let is_pc = self
+                        .get_entity(entity_id)
+                        .unwrap_or_else(|| {
+                            panic!("PassDoor lift occupant {entity_id:?} vanished before release")
+                        })
+                        .is_pc();
                     let st = self.world.fast_grid.lift_state_mut(grid_idx as u32);
                     if is_lift_high {
-                        st.set_occupied_upwards(false);
+                        st.set_occupied_upwards(false, is_pc);
                     } else {
-                        st.set_occupied_downwards(false);
+                        st.set_occupied_downwards(false, is_pc);
                     }
                 }
                 // Clear the actor's active_lift marker — they're no

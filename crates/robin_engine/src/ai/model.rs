@@ -1,4 +1,5 @@
 use super::*;
+use crate::coordinates::MapVec;
 
 // AI State
 // ---------------------------------------------------------------------------
@@ -2402,10 +2403,47 @@ pub struct RepulsivePoint {
     pub position: Position,
     /// Inner radius — strong repulsion zone.
     pub radius: f32,
-    /// Outer radius — weaker repulsion zone.
+    /// Total outer action radius, including `radius`, matching
+    /// `RHRepulsivePoint::mfActionRadius`.
     pub action_radius: f32,
+    /// Linear falloff coefficients serialized by `RHRepulsivePoint`.
+    pub force_a: f32,
+    pub force_b: f32,
+    /// Serialized action-field geometry. Static script points are total
+    /// circles in the Original, but retaining these fields is required for
+    /// lossless save adoption.
+    pub concave: bool,
+    pub limit_left: MapVec,
+    pub limit_right: MapVec,
     /// Flags (affects PCs, soldiers, etc.).
     pub flags: i32,
+}
+
+impl RepulsivePoint {
+    /// Construct the total-circle point produced by the Original's
+    /// `RHFastFindGrid::AddStaticRepulsivePoint`.
+    pub fn new(
+        id: i32,
+        position: Position,
+        radius: f32,
+        action_radius_input: f32,
+        flags: i32,
+    ) -> Self {
+        let (action_radius, radius, force_a, force_b) =
+            crate::rhline::repulsive_set_force(radius, action_radius_input);
+        Self {
+            id,
+            position,
+            radius,
+            action_radius,
+            force_a,
+            force_b,
+            concave: false,
+            limit_left: MapVec::ZERO,
+            limit_right: MapVec::ZERO,
+            flags,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -828,13 +828,15 @@ impl NativeContext<'_, '_> {
                 let ai_global = self.ai_global_mut();
                 let id = ai_global.next_repulsive_point_id;
                 ai_global.next_repulsive_point_id += 1;
-                ai_global.repulsive_points.push(crate::ai::RepulsivePoint {
-                    id,
-                    position,
-                    radius,
-                    action_radius,
-                    flags,
-                });
+                ai_global
+                    .repulsive_points
+                    .push(crate::ai::RepulsivePoint::new(
+                        id,
+                        position,
+                        radius,
+                        action_radius,
+                        flags,
+                    ));
                 id
             }
             DeleteRepulsivePoint => {

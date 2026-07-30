@@ -787,6 +787,9 @@ pub struct LevelGrid {
     Debug, Clone, Copy, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash,
 )]
 pub struct LiftRuntimeState {
+    /// Number of `occupants` which are PCs. The Original retains this
+    /// independently for `RHSectorLift::IsOccupiedByPC`.
+    pub occupants_pc: u16,
     pub occupants: u16,
     pub occupied_upwards: bool,
     pub occupied_downwards: bool,
@@ -815,9 +818,12 @@ impl LiftRuntimeState {
     }
 
     /// Mark an actor as entering/leaving the lift going downwards.
-    pub fn set_occupied_downwards(&mut self, entering: bool) {
+    pub fn set_occupied_downwards(&mut self, entering: bool, is_pc: bool) {
         if entering {
             self.occupants += 1;
+            if is_pc {
+                self.occupants_pc += 1;
+            }
             self.occupied_downwards = true;
             self.wait_time = 100;
         } else {
@@ -826,6 +832,9 @@ impl LiftRuntimeState {
             // Wall routes deliberately exercise that behavior because,
             // unlike ladder routes, they do not reserve the lift first.
             self.occupants = self.occupants.saturating_sub(1);
+            if is_pc {
+                self.occupants_pc = self.occupants_pc.saturating_sub(1);
+            }
             if self.occupants == 0 {
                 self.wait_time = 0;
                 self.occupied_downwards = false;
@@ -835,15 +844,21 @@ impl LiftRuntimeState {
     }
 
     /// Mark an actor as entering/leaving the lift going upwards.
-    pub fn set_occupied_upwards(&mut self, entering: bool) {
+    pub fn set_occupied_upwards(&mut self, entering: bool, is_pc: bool) {
         if entering {
             self.occupants += 1;
+            if is_pc {
+                self.occupants_pc += 1;
+            }
             self.occupied_upwards = true;
             self.wait_time = 80;
         } else {
             // See `set_occupied_downwards`: an unmatched release is an
             // intentional no-op in the Original's counter arithmetic.
             self.occupants = self.occupants.saturating_sub(1);
+            if is_pc {
+                self.occupants_pc = self.occupants_pc.saturating_sub(1);
+            }
             if self.occupants == 0 {
                 self.wait_time = 0;
                 self.occupied_downwards = false;
@@ -3412,7 +3427,7 @@ mod tests {
             ..LiftRuntimeState::default()
         };
 
-        lift.set_occupied_downwards(false);
+        lift.set_occupied_downwards(false, false);
 
         assert_eq!(lift.occupants, 0);
         assert!(!lift.occupied_downwards);
@@ -3429,12 +3444,30 @@ mod tests {
             ..LiftRuntimeState::default()
         };
 
-        lift.set_occupied_upwards(false);
+        lift.set_occupied_upwards(false, false);
 
         assert_eq!(lift.occupants, 0);
         assert!(!lift.occupied_downwards);
         assert!(!lift.occupied_upwards);
         assert_eq!(lift.wait_time, 0);
+    }
+
+    #[test]
+    fn lift_tracks_pc_occupancy_independently() {
+        let mut lift = LiftRuntimeState::default();
+
+        lift.set_occupied_upwards(true, true);
+        lift.set_occupied_upwards(true, false);
+        assert_eq!(lift.occupants, 2);
+        assert_eq!(lift.occupants_pc, 1);
+
+        lift.set_occupied_upwards(false, false);
+        assert_eq!(lift.occupants, 1);
+        assert_eq!(lift.occupants_pc, 1);
+
+        lift.set_occupied_upwards(false, true);
+        assert_eq!(lift.occupants, 0);
+        assert_eq!(lift.occupants_pc, 0);
     }
 
     fn make_grid_with_line() -> FastFindGrid {

@@ -189,7 +189,21 @@ pub fn gather_static_repulsive_points(
         if !box_future.contains_point(p) {
             continue;
         }
-        out.push(RepulsivePoint::new(p, sp.radius, sp.action_radius));
+        out.push(RepulsivePoint {
+            position: p,
+            radius: sp.radius,
+            action_radius: sp.action_radius,
+            force_a: sp.force_a,
+            force_b: sp.force_b,
+            // RHFastFindGrid deserializes static points into a default
+            // POINT_TOTAL instance. The limit vectors and concavity are
+            // nevertheless retained on the authoritative AI owner so a
+            // subsequent legacy save remains lossless.
+            is_total: true,
+            is_concave: sp.concave,
+            limit_left: sp.limit_left,
+            limit_right: sp.limit_right,
+        });
     }
     out
 }
@@ -1452,7 +1466,12 @@ mod tests {
                 level: 0,
             },
             radius: RADIUS_GUY,
-            action_radius: ACTIONRADIUS_GUY,
+            action_radius: RADIUS_GUY + ACTIONRADIUS_GUY,
+            force_a: 1.0 / ACTIONRADIUS_GUY,
+            force_b: -RADIUS_GUY / ACTIONRADIUS_GUY,
+            concave: false,
+            limit_left: crate::coordinates::MapVec::ZERO,
+            limit_right: crate::coordinates::MapVec::ZERO,
             flags: 1,
         }];
         let (dx, dy) = apply_anti_collision_step(
@@ -1476,6 +1495,44 @@ mod tests {
     }
 
     #[test]
+    fn static_repulsive_point_retains_saved_force_and_field_geometry() {
+        let a = mk_snapshot(0, 0.0, 0.0);
+        let saved = StaticRepulsivePoint {
+            id: 7,
+            position: crate::ai::Position {
+                x: 8.0,
+                y: 0.0,
+                sector: None,
+                level: 0,
+            },
+            radius: 11.0,
+            action_radius: 37.0,
+            force_a: 0.125,
+            force_b: -1.375,
+            concave: true,
+            limit_left: crate::coordinates::MapVec::new(1.0, 2.0),
+            limit_right: crate::coordinates::MapVec::new(3.0, 4.0),
+            flags: 1,
+        };
+        let points = gather_static_repulsive_points(
+            &a,
+            &[saved],
+            &MapBBox::from_corners(MapPoint::new(-1.0, -1.0), MapPoint::new(9.0, 1.0)),
+        );
+
+        assert_eq!(points.len(), 1);
+        let point = points[0];
+        assert_eq!(point.radius, 11.0);
+        assert_eq!(point.action_radius, 37.0);
+        assert_eq!(point.force_a, 0.125);
+        assert_eq!(point.force_b, -1.375);
+        assert!(point.is_total);
+        assert!(point.is_concave);
+        assert_eq!(point.limit_left, crate::coordinates::MapVec::new(1.0, 2.0));
+        assert_eq!(point.limit_right, crate::coordinates::MapVec::new(3.0, 4.0));
+    }
+
+    #[test]
     fn static_repulsive_point_with_wrong_flag_skipped_for_pc() {
         let a = mk_snapshot(0, 0.0, 0.0);
         let snapshots = vec![Some(a.clone())];
@@ -1489,7 +1546,12 @@ mod tests {
                 level: 0,
             },
             radius: RADIUS_GUY,
-            action_radius: ACTIONRADIUS_GUY,
+            action_radius: RADIUS_GUY + ACTIONRADIUS_GUY,
+            force_a: 1.0 / ACTIONRADIUS_GUY,
+            force_b: -RADIUS_GUY / ACTIONRADIUS_GUY,
+            concave: false,
+            limit_left: crate::coordinates::MapVec::ZERO,
+            limit_right: crate::coordinates::MapVec::ZERO,
             flags: 2,
         }];
         let (dx, dy) = apply_anti_collision_step(
@@ -1523,7 +1585,12 @@ mod tests {
                 level: 99,
             },
             radius: RADIUS_GUY,
-            action_radius: ACTIONRADIUS_GUY,
+            action_radius: RADIUS_GUY + ACTIONRADIUS_GUY,
+            force_a: 1.0 / ACTIONRADIUS_GUY,
+            force_b: -RADIUS_GUY / ACTIONRADIUS_GUY,
+            concave: false,
+            limit_left: crate::coordinates::MapVec::ZERO,
+            limit_right: crate::coordinates::MapVec::ZERO,
             flags: 1,
         }];
         let (dx, dy) = apply_anti_collision_step(

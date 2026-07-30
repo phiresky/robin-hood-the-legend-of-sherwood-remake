@@ -731,17 +731,17 @@ impl EngineInner {
             self.ai
                 .global
                 .repulsive_points
-                .push(crate::ai::RepulsivePoint {
+                .push(crate::ai::RepulsivePoint::new(
                     id,
-                    position: crate::ai::Position {
+                    crate::ai::Position {
                         x: pos.x,
                         y: pos.y,
                         ..Default::default()
                     },
                     radius,
                     action_radius,
-                    flags: 0,
-                });
+                    0,
+                ));
             ids.push(id);
         }
         if let Some(Entity::Net(n)) = self.get_entity_mut(net_id) {

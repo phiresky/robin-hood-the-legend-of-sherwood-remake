@@ -4417,13 +4417,13 @@ mod script_context_tests {
             .ai
             .global
             .repulsive_points
-            .push(crate::ai::RepulsivePoint {
-                id: 8,
-                position: crate::ai::Position::default(),
-                radius: 10.0,
-                action_radius: 20.0,
-                flags: 0,
-            });
+            .push(crate::ai::RepulsivePoint::new(
+                8,
+                crate::ai::Position::default(),
+                10.0,
+                20.0,
+                0,
+            ));
         let assets = LevelAssets::new();
         engine.attach_script_bindings(&assets);
         let canonical_ai_global = std::ptr::addr_of_mut!(engine.ai.global);

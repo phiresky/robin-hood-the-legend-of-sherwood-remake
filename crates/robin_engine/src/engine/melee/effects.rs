@@ -336,6 +336,12 @@ impl EngineInner {
             .and_then(|e| e.actor_data())
             .and_then(|a| a.active_lift);
         if let Some(lift) = active_lift {
+            let victim_is_pc = self
+                .get_entity(victim_id)
+                .unwrap_or_else(|| {
+                    panic!("active-lift victim {victim_id:?} vanished before forced release")
+                })
+                .is_pc();
             if let Some(grid_idx) = self
                 .world
                 .fast_grid
@@ -346,6 +352,9 @@ impl EngineInner {
             {
                 let st = self.world.fast_grid.lift_state_mut(grid_idx as u32);
                 st.occupants = st.occupants.saturating_sub(1);
+                if victim_is_pc {
+                    st.occupants_pc = st.occupants_pc.saturating_sub(1);
+                }
                 if st.occupants == 0 {
                     st.occupied_upwards = false;
                     st.occupied_downwards = false;
