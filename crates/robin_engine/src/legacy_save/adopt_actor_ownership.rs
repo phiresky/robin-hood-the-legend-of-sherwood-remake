@@ -13,7 +13,7 @@ use thiserror::Error;
 use crate::{
     element::{Command, Entity, EntityId},
     engine::{EngineInner, LevelAssets},
-    natives::{ComputedScriptLocation, ScriptHandleCodec},
+    natives::ScriptHandleCodec,
     sequence::{Sequence, SequenceElementRef},
 };
 
@@ -24,12 +24,15 @@ use super::{
         LegacySequenceAdoptError, LegacySequenceAdoptionPlan, LegacySequenceTopology,
         convert_owner_local_sequence,
     },
+    adopt_vm_arena::{LegacyVmArenaError, LegacyVmArenaOwner, LegacyVmArenaPlan},
     payload_base::LegacyActorPayload,
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
 };
 
 #[derive(Debug, Error)]
 pub enum LegacyActorOwnershipAdoptError {
+    #[error(transparent)]
+    VmArena(#[from] LegacyVmArenaError),
     #[error(transparent)]
     Reference(#[from] LegacySaveAdoptError),
     #[error(transparent)]
@@ -103,8 +106,6 @@ pub enum LegacyActorOwnershipAdoptError {
 #[derive(Debug)]
 pub(crate) struct LegacyActorOwnershipAdoptionPlan {
     records: Vec<PlannedActorOwnership>,
-    location_prefix: usize,
-    computed_locations: Vec<Option<ComputedScriptLocation>>,
 }
 
 #[derive(Debug)]
@@ -128,10 +129,9 @@ impl LegacyActorOwnershipAdoptionPlan {
         entities: &LegacyEntityFixups,
         sequence_topology: &LegacySequenceTopology,
         sequences: &LegacySequenceAdoptionPlan,
-        location_prefix: usize,
+        vm_arena: &LegacyVmArenaPlan,
     ) -> Result<Self, LegacyActorOwnershipAdoptError> {
         let mut records = Vec::new();
-        let mut computed_locations = Vec::new();
         for record in &payloads.records {
             let Some(saved) = actor_payload(&record.payload) else {
                 continue;
@@ -245,6 +245,15 @@ impl LegacyActorOwnershipAdoptionPlan {
                         .map(Box::new)
                 })
                 .transpose()?;
+            let location_prefix = saved
+                .script_members
+                .as_ref()
+                .map(|members| {
+                    vm_arena.owner_prefix(LegacyVmArenaOwner::Element(creation_order), members)
+                })
+                .transpose()?
+                .unwrap_or(0);
+            let mut computed_locations = Vec::new();
             let vm_heap = preflight_vm(
                 engine,
                 assets,
@@ -264,15 +273,7 @@ impl LegacyActorOwnershipAdoptionPlan {
                 vm_heap,
             });
         }
-        Ok(Self {
-            records,
-            location_prefix,
-            computed_locations,
-        })
-    }
-
-    pub(crate) fn computed_location_count(&self) -> usize {
-        self.computed_locations.len()
+        Ok(Self { records })
     }
 
     /// Apply after the exact SequenceManager plan used during preflight.
@@ -312,25 +313,6 @@ impl LegacyActorOwnershipAdoptionPlan {
                     .expect("preflighted actor VM mission disappeared")
                     .replace_actor_vm_heap(ScriptHandleCodec::actor_handle(planned.entity), heap);
             }
-        }
-        if !self.computed_locations.is_empty() {
-            let mission = engine
-                .scripts
-                .mission
-                .as_mut()
-                .expect("preflighted actor VM mission disappeared");
-            assert!(
-                mission.state.computed_locations.len() >= self.location_prefix,
-                "earlier computed-location adoption did not preserve required prefix"
-            );
-            mission
-                .state
-                .computed_locations
-                .truncate(self.location_prefix);
-            mission
-                .state
-                .computed_locations
-                .extend(self.computed_locations);
         }
     }
 }

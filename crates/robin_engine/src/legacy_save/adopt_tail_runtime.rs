@@ -19,6 +19,7 @@ use crate::{
 use super::{
     adopt::{LegacyEntityFixups, LegacySaveAdoptError},
     adopt_sequences::{LegacySequenceAdoptError, LegacySequenceAdoptionPlan},
+    adopt_vm_arena::{LegacyVmArenaError, LegacyVmArenaOwner, LegacyVmArenaPlan},
     payload_vm::{
         LegacyVmMemberKind, LegacyVmMemberSchema, LegacyVmMemberSection, LegacyVmMemberValue,
     },
@@ -29,6 +30,8 @@ const HANDLE_INDEX_MAX: usize = 0x0fff_ffff;
 
 #[derive(Debug, Error)]
 pub enum LegacyTailRuntimeAdoptError {
+    #[error(transparent)]
+    VmArena(#[from] LegacyVmArenaError),
     #[error("saved global VM members exist, but the initialized mission has no global script VM")]
     MissingGlobalVm,
     #[error(
@@ -120,8 +123,6 @@ pub(crate) struct LegacyTailRuntimeAdoptionPlan {
 #[derive(Debug)]
 struct PlannedGlobalVm {
     heap: Vec<u8>,
-    preserved_location_prefix: usize,
-    computed_locations: Vec<Option<ComputedScriptLocation>>,
 }
 
 impl LegacyTailRuntimeAdoptionPlan {
@@ -133,35 +134,12 @@ impl LegacyTailRuntimeAdoptionPlan {
         timers: &LegacyTimerSequenceState,
         entities: &LegacyEntityFixups,
         sequences: &LegacySequenceAdoptionPlan,
-    ) -> Result<Self, LegacyTailRuntimeAdoptError> {
-        Self::preflight_with_location_prefix(
-            engine,
-            assets,
-            global_members,
-            script_globals,
-            timers,
-            entities,
-            sequences,
-            0,
-        )
-    }
-
-    /// Preflight after the HikingGuide plan. Waypoint-native Location objects
-    /// are allocated first and therefore form the handle-arena prefix used by
-    /// global VM member handles.
-    pub(crate) fn preflight_with_location_prefix(
-        engine: &EngineInner,
-        assets: &LevelAssets,
-        global_members: Option<&LegacyVmMemberSection>,
-        script_globals: &LegacyScriptGlobals,
-        timers: &LegacyTimerSequenceState,
-        entities: &LegacyEntityFixups,
-        sequences: &LegacySequenceAdoptionPlan,
-        preserved_location_prefix: usize,
+        vm_arena: &LegacyVmArenaPlan,
     ) -> Result<Self, LegacyTailRuntimeAdoptError> {
         let global_vm = global_members
             .map(|members| {
-                preflight_global_vm(engine, assets, members, entities, preserved_location_prefix)
+                let location_prefix = vm_arena.owner_prefix(LegacyVmArenaOwner::Global, members)?;
+                preflight_global_vm(engine, assets, members, entities, location_prefix)
             })
             .transpose()?;
 
@@ -223,24 +201,6 @@ impl LegacyTailRuntimeAdoptionPlan {
                 .as_mut()
                 .expect("preflighted global VM disappeared");
             mission.replace_global_vm_heap(global.heap);
-            // HikingGuide waypoint VMs are deserialized first and can own
-            // native Location pointers which remain valid even though
-            // Original clears its location-storage index immediately before
-            // loading the global VM. The Rust handle arena keeps those live
-            // objects as a prefix and appends global allocations in load
-            // order.
-            assert!(
-                mission.state.computed_locations.len() >= global.preserved_location_prefix,
-                "preflighted HikingGuide Location prefix disappeared"
-            );
-            mission
-                .state
-                .computed_locations
-                .truncate(global.preserved_location_prefix);
-            mission
-                .state
-                .computed_locations
-                .extend(global.computed_locations);
         }
         engine.scripts.globals = self.script_globals;
         engine.orders.timer_elements = self.timers;
@@ -397,11 +357,7 @@ fn preflight_global_vm(
         heap[address..end].copy_from_slice(&bits.to_le_bytes());
     }
 
-    Ok(PlannedGlobalVm {
-        heap,
-        preserved_location_prefix,
-        computed_locations,
-    })
+    Ok(PlannedGlobalVm { heap })
 }
 
 fn validate_member_schema(
@@ -553,13 +509,11 @@ mod tests {
     }
 
     #[test]
-    fn global_vm_preflight_preserves_raw_bits_and_null_location_allocation_hole() {
+    fn global_vm_preflight_preserves_raw_bits_and_writes_a_null_location_handle() {
         let (engine, assets, saved) = global_vm_fixture();
         let planned = preflight_global_vm(&engine, &assets, &saved, &empty_fixups(), 0).unwrap();
         assert_eq!(&planned.heap[0..4], &0x89ab_cdef_u32.to_le_bytes());
         assert_eq!(&planned.heap[4..8], &0_u32.to_le_bytes());
-        assert_eq!(planned.computed_locations.len(), 1);
-        assert!(planned.computed_locations[0].is_none());
     }
 
     #[test]

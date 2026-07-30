@@ -18,6 +18,7 @@ use crate::{
 use super::{
     LegacySaveAbiProfile,
     adopt::{LegacyEntityFixups, LegacySaveAdoptError},
+    adopt_vm_arena::{LegacyVmArenaError, LegacyVmArenaOwner, LegacyVmArenaPlan},
     gate_topology::{LegacyGateOrderError, derive_legacy_gate_order},
     post_grid::{
         LegacyFastFindGridState, LegacyGateState, LegacyPatchState, LegacySpecialSectorState,
@@ -27,6 +28,8 @@ use super::{
 
 #[derive(Debug, Error)]
 pub enum LegacyGridAdoptError {
+    #[error(transparent)]
+    VmArena(#[from] LegacyVmArenaError),
     #[error("FastFindGrid adoption supports Linux i386 v48, not {profile:?}")]
     UnsupportedAbi { profile: LegacySaveAbiProfile },
     #[error(transparent)]
@@ -71,9 +74,14 @@ pub enum LegacyGridAdoptError {
         saved_patch: Option<i16>,
     },
     #[error(
-        "saved script sector {script_object_index} has authoritative VM members; zone VM heap adoption is not implemented"
+        "saved script sector {script_object_index} VM presence is {saved}, but initialized zone {zone_index} VM presence is {runtime}"
     )]
-    UnsupportedZoneVm { script_object_index: usize },
+    ZoneVmPresenceMismatch {
+        script_object_index: usize,
+        zone_index: usize,
+        saved: bool,
+        runtime: bool,
+    },
     #[error(
         "saved lift sector {sector_index} has {occupants_pc} PC occupants; Rust LiftRuntimeState has no lossless PC-occupancy field"
     )]
@@ -154,6 +162,7 @@ struct PlannedDoor {
 struct PlannedOccupants {
     index: usize,
     occupants: Vec<EntityId>,
+    vm_heap: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug)]
@@ -171,6 +180,7 @@ impl LegacyFastFindGridAdoptionPlan {
         assets: &LevelAssets,
         state: &LegacyFastFindGridState,
         entities: &LegacyEntityFixups,
+        vm_arena: &LegacyVmArenaPlan,
     ) -> Result<Self, LegacyGridAdoptError> {
         if state.abi_profile != LegacySaveAbiProfile::PortLinuxI386V48 {
             return Err(LegacyGridAdoptError::UnsupportedAbi {
@@ -271,17 +281,35 @@ impl LegacyFastFindGridAdoptionPlan {
         )?;
         let mut script_zones = Vec::with_capacity(state.script_sectors.len());
         for (zone_index, saved) in state.script_sectors.iter().enumerate() {
-            if saved
-                .script_members
+            let runtime_vm = engine
+                .scripts
+                .mission
                 .as_ref()
-                .is_some_and(|members| !members.members.is_empty())
-            {
-                // TODO(save-import): adopt the zone-owned VM heap as part of
-                // the script-runtime plan, then pass its validated plan here.
-                return Err(LegacyGridAdoptError::UnsupportedZoneVm {
+                .and_then(|mission| mission.zone_vm_class_and_heap(zone_index));
+            if saved.script_members.is_some() != runtime_vm.is_some() {
+                return Err(LegacyGridAdoptError::ZoneVmPresenceMismatch {
                     script_object_index: saved.script_object_index,
+                    zone_index,
+                    saved: saved.script_members.is_some(),
+                    runtime: runtime_vm.is_some(),
                 });
             }
+            let vm_heap = saved
+                .script_members
+                .as_ref()
+                .zip(runtime_vm)
+                .map(|(members, (class, heap))| {
+                    vm_arena.preflight_heap(
+                        engine,
+                        assets,
+                        entities,
+                        LegacyVmArenaOwner::ScriptZone(zone_index),
+                        members,
+                        class,
+                        heap,
+                    )
+                })
+                .transpose()?;
             if engine
                 .script_domains
                 .zones
@@ -302,6 +330,7 @@ impl LegacyFastFindGridAdoptionPlan {
                     "script sector",
                     &saved.occupants,
                 )?,
+                vm_heap,
             });
         }
 
@@ -422,6 +451,7 @@ impl LegacyFastFindGridAdoptionPlan {
                     lifts.push((
                         runtime_index,
                         LiftRuntimeState {
+                            occupants_pc: *occupants_pc,
                             occupants: *occupants,
                             occupied_upwards: *occupied_upwards,
                             occupied_downwards: *occupied_downwards,
@@ -597,6 +627,14 @@ impl LegacyFastFindGridAdoptionPlan {
         }
         for planned in self.script_zones {
             engine.script_domains.zones.scripts[planned.index].occupant_indices = planned.occupants;
+            if let Some(heap) = planned.vm_heap {
+                engine
+                    .scripts
+                    .mission
+                    .as_mut()
+                    .expect("preflighted script-zone VM mission disappeared")
+                    .replace_zone_vm_heap(planned.index, heap);
+            }
         }
         for (sector_index, active) in self.door_sectors {
             engine.world.fast_grid.sector_active[sector_index] = active;
@@ -984,6 +1022,7 @@ mod tests {
             &LevelAssets::new(),
             &state,
             &empty_fixups(),
+            &LegacyVmArenaPlan::empty_for_tests(),
         )
         .unwrap_err();
         assert!(matches!(error, LegacyGridAdoptError::UnsupportedAbi { .. }));
@@ -1017,6 +1056,7 @@ mod tests {
             &LevelAssets::new(),
             &state,
             &empty_fixups(),
+            &LegacyVmArenaPlan::empty_for_tests(),
         )
         .unwrap_err();
         assert!(matches!(
@@ -1117,6 +1157,7 @@ mod tests {
             script_zones: vec![PlannedOccupants {
                 index: 0,
                 occupants: Vec::new(),
+                vm_heap: None,
             }],
             door_sectors: vec![(2, false)],
             buildings: vec![PlannedBuilding {
@@ -1127,6 +1168,7 @@ mod tests {
             lifts: vec![(
                 2,
                 LiftRuntimeState {
+                    occupants_pc: 0,
                     occupants: 2,
                     occupied_upwards: true,
                     occupied_downwards: false,

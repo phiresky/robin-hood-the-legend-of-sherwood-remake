@@ -1634,6 +1634,24 @@ impl MissionScript {
             .heap = heap;
     }
 
+    /// Identity and heap of one mission-authored script-zone VM.
+    pub(crate) fn zone_vm_class_and_heap(
+        &self,
+        zone: usize,
+    ) -> Option<(&crate::scb::ClassEntry, &[u8])> {
+        let instance = self.zone_instances.get(&zone)?;
+        let class = &self.manager.program.scb.classes[instance.class_idx()];
+        Some((class, &instance.vm.heap))
+    }
+
+    pub(crate) fn replace_zone_vm_heap(&mut self, zone: usize, heap: Vec<u8>) {
+        self.zone_instances
+            .get_mut(&zone)
+            .expect("preflighted script-zone VM disappeared")
+            .vm
+            .heap = heap;
+    }
+
     /// Identity and mutable heap of one mission-authored hiking waypoint VM.
     ///
     /// Original v48 saves serialize these instances in hiking-path order,

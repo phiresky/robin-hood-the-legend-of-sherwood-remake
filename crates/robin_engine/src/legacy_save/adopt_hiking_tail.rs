@@ -20,6 +20,7 @@ use crate::{
 
 use super::{
     adopt::{LegacyEntityFixups, LegacySaveAdoptError},
+    adopt_vm_arena::{LegacyVmArenaError, LegacyVmArenaOwner, LegacyVmArenaPlan},
     payload_base::LegacyElementRef,
     payload_vm::{LegacyVmMemberKind, LegacyVmMemberSchema, LegacyVmMemberValue},
     post_hiking::{LegacyHikingGuideState, LegacyProjectileTrajectorySection},
@@ -30,6 +31,8 @@ const HANDLE_INDEX_MAX: usize = 0x0fff_ffff;
 
 #[derive(Debug, Error)]
 pub enum LegacyHikingTailAdoptError {
+    #[error(transparent)]
+    VmArena(#[from] LegacyVmArenaError),
     #[error("saved HikingGuide state exists, but the initialized mission has no script runtime")]
     MissingMissionScript,
     #[error("saved HikingGuide has {saved} paths, initialized mission has {runtime}")]
@@ -140,7 +143,6 @@ pub struct LegacyTrajectoryHostOutput {
 #[derive(Debug)]
 pub(crate) struct LegacyHikingTailAdoptionPlan {
     waypoint_heaps: Vec<(PathId, u8, Vec<u8>)>,
-    waypoint_locations: Vec<Option<ComputedScriptLocation>>,
     dead_pc: Option<EntityId>,
     shield_is_protected: bool,
     shield_protected_pc: Option<EntityId>,
@@ -157,9 +159,9 @@ impl LegacyHikingTailAdoptionPlan {
         tail: &LegacyEnginePostTitbitsTail,
         shield_is_protected: bool,
         entities: &LegacyEntityFixups,
+        vm_arena: &LegacyVmArenaPlan,
     ) -> Result<Self, LegacyHikingTailAdoptError> {
-        let (waypoint_heaps, waypoint_locations) =
-            preflight_waypoints(engine, assets, hiking, entities)?;
+        let waypoint_heaps = preflight_waypoints(engine, assets, hiking, entities, vm_arena)?;
         let dead_pc = resolve_typed(
             engine,
             entities,
@@ -201,7 +203,6 @@ impl LegacyHikingTailAdoptionPlan {
 
         Ok(Self {
             waypoint_heaps,
-            waypoint_locations,
             dead_pc,
             shield_is_protected,
             shield_protected_pc,
@@ -232,7 +233,6 @@ impl LegacyHikingTailAdoptionPlan {
                     "preflighted waypoint VM disappeared"
                 );
             }
-            mission.state.computed_locations = self.waypoint_locations;
         }
         engine.mission_domain.dead_pc = self.dead_pc;
         engine.world.shield.is_protected = self.shield_is_protected;
@@ -242,10 +242,6 @@ impl LegacyHikingTailAdoptionPlan {
         // zero in the same post-load block which invalidates trajectory state.
         engine.world.shield.danger_point_layer = 0;
         self.host
-    }
-
-    pub(crate) fn native_location_count(&self) -> usize {
-        self.waypoint_locations.len()
     }
 }
 
@@ -280,13 +276,8 @@ fn preflight_waypoints(
     assets: &LevelAssets,
     hiking: &LegacyHikingGuideState,
     entities: &LegacyEntityFixups,
-) -> Result<
-    (
-        Vec<(PathId, u8, Vec<u8>)>,
-        Vec<Option<ComputedScriptLocation>>,
-    ),
-    LegacyHikingTailAdoptError,
-> {
+    vm_arena: &LegacyVmArenaPlan,
+) -> Result<Vec<(PathId, u8, Vec<u8>)>, LegacyHikingTailAdoptError> {
     if hiking.paths.len() != assets.hiking_paths.len() {
         return Err(LegacyHikingTailAdoptError::PathCountMismatch {
             saved: hiking.paths.len(),
@@ -295,7 +286,6 @@ fn preflight_waypoints(
     }
     let mission = engine.scripts.mission.as_ref();
     let mut heaps = Vec::new();
-    let mut locations = Vec::new();
     for (path_index, (saved_path, runtime_path)) in hiking
         .paths
         .iter()
@@ -342,6 +332,14 @@ fn preflight_waypoints(
                 }
             })?;
             let mission = mission.ok_or(LegacyHikingTailAdoptError::MissingMissionScript)?;
+            let location_prefix = vm_arena.owner_prefix(
+                LegacyVmArenaOwner::Waypoint {
+                    path: path_index,
+                    waypoint: waypoint_index,
+                },
+                saved_members,
+            )?;
+            let mut locations = Vec::new();
             let (class, current_heap) = mission.waypoint_vm_class_and_heap(path, waypoint).ok_or(
                 LegacyHikingTailAdoptError::MissingWaypointVm {
                     path: path_index,
@@ -402,6 +400,7 @@ fn preflight_waypoints(
                     &field,
                     &saved_member.schema.kind,
                     &saved_member.value,
+                    location_prefix,
                     &mut locations,
                 )?;
                 heap[address..end].copy_from_slice(&bits.to_le_bytes());
@@ -409,7 +408,7 @@ fn preflight_waypoints(
             heaps.push((path, waypoint, heap));
         }
     }
-    Ok((heaps, locations))
+    Ok(heaps)
 }
 
 fn validate_schema(
@@ -462,6 +461,7 @@ fn convert_member(
     field: &str,
     kind: &LegacyVmMemberKind,
     value: &LegacyVmMemberValue,
+    location_prefix: usize,
     locations: &mut Vec<Option<ComputedScriptLocation>>,
 ) -> Result<u32, LegacyHikingTailAdoptError> {
     match (kind, value) {
@@ -480,7 +480,12 @@ fn convert_member(
             })
         }
         (LegacyVmMemberKind::Location, LegacyVmMemberValue::Location(location)) => {
-            let slot = locations.len();
+            let slot = location_prefix.checked_add(locations.len()).ok_or(
+                LegacyHikingTailAdoptError::HandleIndexOverflow {
+                    field: field.to_owned(),
+                    index: usize::MAX,
+                },
+            )?;
             let bits = if let Some(location) = location {
                 let sector_count = assets
                     .legacy_grid_topology

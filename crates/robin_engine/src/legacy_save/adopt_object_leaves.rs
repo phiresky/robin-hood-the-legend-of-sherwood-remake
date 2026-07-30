@@ -20,6 +20,7 @@ use crate::{
 
 use super::{
     adopt::{LegacyEntityFixups, LegacySaveAdoptError},
+    adopt_vm_arena::{LegacyVmArenaError, LegacyVmArenaOwner, LegacyVmArenaPlan},
     payload_base::{LegacyElementRef, LegacyFxPayload},
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
     payload_nonactors::{LegacyObjectPayload, LegacyRepulsivePointPayload},
@@ -45,6 +46,8 @@ pub const OVERWRITTEN_OR_UNUSED_OBJECT_FIELDS: &[&str] = &[
 
 #[derive(Debug, Error)]
 pub enum LegacyObjectLeafAdoptError {
+    #[error(transparent)]
+    VmArena(#[from] LegacyVmArenaError),
     #[error(transparent)]
     Reference(#[from] LegacySaveAdoptError),
     #[error("saved leaf creation order {creation_order} resolves to missing entity {entity_id}")]
@@ -198,8 +201,6 @@ pub enum LegacyObjectLeafAdoptError {
 #[derive(Debug)]
 pub struct LegacyObjectLeafAdoptionPlan {
     records: Vec<PlannedLeaf>,
-    location_prefix: usize,
-    computed_locations: Vec<Option<ComputedScriptLocation>>,
 }
 
 #[derive(Debug)]
@@ -271,18 +272,14 @@ impl LegacyVmOwnerKind {
 impl LegacyObjectLeafAdoptionPlan {
     /// Validate and convert every concrete non-actor leaf without mutation.
     ///
-    /// `location_prefix` is the number of serialized computed-location slots
-    /// owned by earlier element VMs. Original allocates location handles while
-    /// deserializing members, so the caller must preserve that global order.
     pub fn preflight(
         engine: &EngineInner,
         assets: &LevelAssets,
         payloads: &LegacyElementPayloadStream,
         entities: &LegacyEntityFixups,
-        location_prefix: usize,
+        vm_arena: &LegacyVmArenaPlan,
     ) -> Result<Self, LegacyObjectLeafAdoptError> {
         let mut records = Vec::new();
-        let mut computed_locations = Vec::new();
         for record in &payloads.records {
             let creation_order = record.header.creation_order;
             let entity_id = entities
@@ -317,6 +314,16 @@ impl LegacyObjectLeafAdoptionPlan {
                     require_kind(runtime, entity_id, creation_order, "scroll", |entity| {
                         matches!(entity, Entity::Scroll(_))
                     })?;
+                    let location_prefix = saved
+                        .script_members
+                        .as_ref()
+                        .map(|members| {
+                            vm_arena
+                                .owner_prefix(LegacyVmArenaOwner::Element(creation_order), members)
+                        })
+                        .transpose()?
+                        .unwrap_or(0);
+                    let mut computed_locations = Vec::new();
                     let vm_heap = preflight_vm(
                         engine,
                         assets,
@@ -348,6 +355,16 @@ impl LegacyObjectLeafAdoptionPlan {
                     require_kind(runtime, entity_id, creation_order, "target", |entity| {
                         matches!(entity, Entity::Target(_))
                     })?;
+                    let location_prefix = saved
+                        .script_members
+                        .as_ref()
+                        .map(|members| {
+                            vm_arena
+                                .owner_prefix(LegacyVmArenaOwner::Element(creation_order), members)
+                        })
+                        .transpose()?
+                        .unwrap_or(0);
+                    let mut computed_locations = Vec::new();
                     let linked_fxs = saved
                         .linked_fxs
                         .iter()
@@ -430,15 +447,7 @@ impl LegacyObjectLeafAdoptionPlan {
             };
             records.push(planned);
         }
-        Ok(Self {
-            records,
-            location_prefix,
-            computed_locations,
-        })
-    }
-
-    pub fn computed_location_count(&self) -> usize {
-        self.computed_locations.len()
+        Ok(Self { records })
     }
 
     /// Apply a completely preflighted plan to the detached candidate.
@@ -531,25 +540,6 @@ impl LegacyObjectLeafAdoptionPlan {
                         .animation_speed = animation_speed;
                 }
             }
-        }
-        if !self.computed_locations.is_empty() {
-            let mission = engine
-                .scripts
-                .mission
-                .as_mut()
-                .expect("preflighted element VM mission disappeared");
-            assert!(
-                mission.state.computed_locations.len() >= self.location_prefix,
-                "earlier computed-location adoption did not preserve required prefix"
-            );
-            mission
-                .state
-                .computed_locations
-                .truncate(self.location_prefix);
-            mission
-                .state
-                .computed_locations
-                .extend(self.computed_locations);
         }
     }
 }
