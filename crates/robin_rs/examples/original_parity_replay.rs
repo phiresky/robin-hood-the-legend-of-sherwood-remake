@@ -1575,9 +1575,19 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         )
         .unwrap_or_else(|error| panic!("decode schema-11 initial_save body: {error}"));
         eprintln!(
-            "decoded schema-11 Original save through byte {} ({} elements)",
+            "decoded schema-11 Original save through byte {} ({} elements, {} dynamic)",
             save.end_offset,
-            save.element_envelope.records.len()
+            save.element_envelope.records.len(),
+            save.element_envelope
+                .records
+                .iter()
+                .filter(|record| matches!(
+                    record.resolution,
+                    robin_engine::legacy_save::elements::LegacyElementResolution::ConstructDynamic {
+                        ..
+                    }
+                ))
+                .count()
         );
         // TODO(legacy-save-adoption): resolve creation-order references and
         // apply the typed body before replaying the first loaded-save frame.
