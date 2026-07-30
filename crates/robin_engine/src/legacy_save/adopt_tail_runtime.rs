@@ -90,7 +90,7 @@ pub enum LegacyTailRuntimeAdoptError {
     #[error("saved timer list entry {index} contains a null sequence-element pointer")]
     NullTimerReference { index: usize },
     #[error(
-        "saved timer list entry {index} resolves to command {command:?} in state {state:?}; expected an in-progress Timer"
+        "saved timer list entry {index} resolves to command {command:?} in state {state:?}; expected an active Timer"
     )]
     InvalidTimerElement {
         index: usize,
@@ -148,7 +148,7 @@ impl LegacyTailRuntimeAdoptionPlan {
             let (element_ref, element) = sequences
                 .resolve_element("timer_elements", saved_ref)?
                 .ok_or(LegacyTailRuntimeAdoptError::NullTimerReference { index })?;
-            if element.command != Command::Timer || element.state != SequenceState::InProgress {
+            if !is_active_original_timer(element.command, element.state) {
                 return Err(LegacyTailRuntimeAdoptError::InvalidTimerElement {
                     index,
                     command: element.command,
@@ -206,6 +206,11 @@ impl LegacyTailRuntimeAdoptionPlan {
         engine.orders.timer_elements = self.timers;
         engine.feedback.cutscene_camera.sequence_element = self.camera_element;
     }
+}
+
+fn is_active_original_timer(command: Command, state: SequenceState) -> bool {
+    command == Command::Timer
+        && matches!(state, SequenceState::Todo | SequenceState::InProgress)
 }
 
 fn preflight_global_vm(
@@ -547,5 +552,29 @@ mod tests {
         assert_eq!(engine.scripts.globals, [-7, 11]);
         assert!(engine.orders.timer_elements.is_empty());
         assert!(engine.feedback.cutscene_camera.sequence_element.is_none());
+    }
+
+    #[test]
+    fn original_timer_list_accepts_todo_and_in_progress_sequence_storage() {
+        // RHSequenceElement::Go dispatches ownerless Timer to
+        // RHEngine::PerformExecuteCommand, whose Timer arm only adds it to
+        // mlistTimerElements. It does not transition RHSEQ_TODO to
+        // RHSEQ_INPROGRESS, so a live serialized timer is normally still Todo.
+        assert!(is_active_original_timer(
+            Command::Timer,
+            SequenceState::Todo
+        ));
+        assert!(is_active_original_timer(
+            Command::Timer,
+            SequenceState::InProgress
+        ));
+        assert!(!is_active_original_timer(
+            Command::Timer,
+            SequenceState::Terminated
+        ));
+        assert!(!is_active_original_timer(
+            Command::Wait,
+            SequenceState::Todo
+        ));
     }
 }
