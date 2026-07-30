@@ -1319,10 +1319,19 @@ fn make_posture_transition_actor(
             }
             Posture::Flying => false,
             other => {
-                panic!(
-                    "MakePostureTransition(MUST_BE_UPRIGHT): unhandled posture-after {other:?} \
-                     for seq={seq_id:?} elem={elem_idx} command={command:?}"
+                // The Original's default switch arm asserts in debug
+                // builds and then returns false.  Shipping saves can
+                // legitimately retain a command on a tied actor, so parity
+                // with the release game requires rejecting that command
+                // rather than aborting the whole simulation.
+                tracing::debug!(
+                    ?other,
+                    ?seq_id,
+                    elem_idx,
+                    ?command,
+                    "MakePostureTransition(MUST_BE_UPRIGHT): Original release rejects unhandled posture"
                 );
+                false
             }
         };
     }
@@ -1352,10 +1361,14 @@ fn make_posture_transition_actor(
             Posture::OnLadder => flags.contains(CP::CAN_BE_ON_LADDER),
             Posture::OnWall => flags.contains(CP::CAN_BE_ON_WALL),
             other => {
-                panic!(
-                    "MakePostureTransition(MUST_BE_CROUCHED): unhandled posture-after {other:?} \
-                     for seq={seq_id:?} elem={elem_idx} command={command:?}"
+                tracing::debug!(
+                    ?other,
+                    ?seq_id,
+                    elem_idx,
+                    ?command,
+                    "MakePostureTransition(MUST_BE_CROUCHED): Original release rejects unhandled posture"
                 );
+                false
             }
         };
     }
@@ -2257,6 +2270,25 @@ mod tests {
             .unwrap()
             .posture_after_transition;
         assert_eq!(posture_after, P::Upright);
+    }
+
+    #[test]
+    fn tied_soldier_rejects_upright_command_like_original_release() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_soldier(P::Tied, AS::Waiting, false));
+        let (seq, idx) = launch(&mut engine, owner, Command::RaiseBow);
+
+        assert!(!engine.generate_transition(owner, seq, idx));
+        assert!(orders_for(&engine, seq, idx).is_empty());
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq, idx)
+                .expect("sequence element")
+                .posture_after_transition,
+            P::Tied
+        );
     }
 
     #[test]

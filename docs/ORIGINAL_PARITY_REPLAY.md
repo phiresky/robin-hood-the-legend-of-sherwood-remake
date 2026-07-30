@@ -1723,6 +1723,20 @@ opaque-LOS 360-degree query as the other synchronous AI callers. Restart now
 passes the patrol transition and advances from frame 121 to the next unrelated
 movement divergence at frame 193.
 
+### Release posture transitions reject unsupported tied commands
+
+The Original `MakePostureTransition` switch has debug assertions in its
+unhandled-posture arms, but its release behavior returns `false`. A loaded
+sequence may legitimately retain an upright-only command such as `RaiseBow`
+for an actor whose saved posture is already `Tied`; that command is rejected
+without generating transition orders and the simulation continues.
+
+Rust previously converted those debug assertions into unconditional panics.
+Both the upright and crouched transition checks now preserve the Original
+release result for unsupported postures, with a debug diagnostic instead of
+inventing an order or aborting the replay. Linux3 Profile 001 save 018,
+including its loaded tied soldier, now matches every recorded frame.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
