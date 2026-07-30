@@ -882,6 +882,18 @@ pub(crate) struct LegacyV48OrderState {
 pub(crate) struct LegacyV48SequenceElementState {
     pub deleted: bool,
     pub script_driven: bool,
+    /// Exact constructor storage from an old v48 save when
+    /// `posture_after_transition` was not yet semantically live.
+    ///
+    /// Original's sequence-element constructor left both transition-result
+    /// enums uninitialized. Actor `Instruct` overwrites them before any live
+    /// transition use, but queued and completed elements can serialize the
+    /// dormant bytes. Valid enum values remain represented by the typed field
+    /// above; this sidecar is only `Some` for a proven-dormant invalid word.
+    pub raw_dormant_posture_after_transition: Option<i32>,
+    /// Dormant invalid counterpart of `action_state_after_transition`; see
+    /// [`Self::raw_dormant_posture_after_transition`].
+    pub raw_dormant_action_state_after_transition: Option<i32>,
     pub next: Option<SequenceElementRef>,
     pub postponed: Option<SequenceElementRef>,
     pub mummy: Option<SequenceId>,

@@ -429,37 +429,42 @@ fn convert_element(
     })?;
     let state = sequence_state(base.state)?;
     let priority = sequence_priority(base.priority)?;
-    let posture_after_transition =
-        Posture::try_from(u32::try_from(base.posture_after_transition).map_err(|_| {
-            invalid(
-                "posture_after_transition",
-                base.posture_after_transition,
-                "RHposture 0..24",
-            )
-        })?)
-        .map_err(|_| {
-            invalid(
-                "posture_after_transition",
-                base.posture_after_transition,
-                "RHposture 0..24",
-            )
-        })?;
-    let action_state_after_transition = ActionState::try_from(
-        u32::try_from(base.action_state_after_transition).map_err(|_| {
-            invalid(
-                "action_state_after_transition",
-                base.action_state_after_transition,
-                "RHactionState 0..17",
-            )
-        })?,
-    )
-    .map_err(|_| {
-        invalid(
+    // Original's RHSequenceElement constructors do not initialize either
+    // transition result. Actor::Instruct stamps both from the actor's current
+    // state before GenerateTransition or command translation can read them.
+    // Only an actor-owned INPROGRESS element can expose the stored results to
+    // execution. TODO and POSTPONED elements pass through Instruct (and are
+    // stamped) before executing; terminal states never execute again.
+    // Ownerless engine commands never consult actor-transition fields, and a
+    // NULL actor command terminates before the stamp or any transition use.
+    let transition_results_dormant =
+        owner.is_none() || command == Command::Null || state != SequenceState::InProgress;
+    let (posture_after_transition, raw_dormant_posture_after_transition) =
+        convert_transition_result(
+            "posture_after_transition",
+            base.posture_after_transition,
+            "RHposture 0..24",
+            transition_results_dormant,
+            Posture::Undefined,
+            |raw| {
+                u32::try_from(raw)
+                    .ok()
+                    .and_then(|raw| Posture::try_from(raw).ok())
+            },
+        )?;
+    let (action_state_after_transition, raw_dormant_action_state_after_transition) =
+        convert_transition_result(
             "action_state_after_transition",
             base.action_state_after_transition,
             "RHactionState 0..17",
-        )
-    })?;
+            transition_results_dormant,
+            ActionState::Waiting,
+            |raw| {
+                u32::try_from(raw)
+                    .ok()
+                    .and_then(|raw| ActionState::try_from(raw).ok())
+            },
+        )?;
 
     let (orders, order_state) = convert_orders(&base.orders, entities)?;
     let mut generic_raw_unions = Vec::new();
@@ -629,6 +634,8 @@ fn convert_element(
     element.legacy_v48 = Some(LegacyV48SequenceElementState {
         deleted: base.deleted,
         script_driven: base.script_driven,
+        raw_dormant_posture_after_transition,
+        raw_dormant_action_state_after_transition,
         next,
         postponed,
         mummy,
@@ -639,6 +646,21 @@ fn convert_element(
         generic_raw_unions,
     });
     Ok(element)
+}
+
+fn convert_transition_result<T>(
+    field: &'static str,
+    raw: i32,
+    expected: &'static str,
+    dormant: bool,
+    dormant_runtime_value: T,
+    convert: impl FnOnce(i32) -> Option<T>,
+) -> Result<(T, Option<i32>), LegacySequenceAdoptError> {
+    match convert(raw) {
+        Some(value) => Ok((value, None)),
+        None if dormant => Ok((dormant_runtime_value, Some(raw))),
+        None => Err(invalid(field, raw, expected)),
+    }
 }
 
 fn convert_orders(
@@ -1268,6 +1290,58 @@ mod tests {
                 .unwrap()
                 .id,
             201
+        );
+    }
+
+    #[test]
+    fn retains_invalid_transition_results_while_not_in_progress() {
+        let (entities, _, _) = entities();
+        let mut saved = fixture();
+        let movement = match &mut saved.sequences[0].body.elements[0] {
+            LegacyInlineSequenceElement::Movement(movement) => movement,
+            other => panic!("fixture element is not movement: {other:?}"),
+        };
+        assert_eq!(movement.base.state, SequenceState::Todo as i32);
+        movement.base.posture_after_transition = 252_736;
+        movement.base.action_state_after_transition = -559_038_737;
+
+        let plan = preflight_v48_sequence_manager(&saved, &entities, &topology())
+            .expect("TODO is dormant until Instruct stamps it");
+        let (_, element) = plan
+            .resolve_element("test", LegacySequenceElementRef(Some(100)))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(element.posture_after_transition, Posture::Undefined);
+        assert_eq!(element.action_state_after_transition, ActionState::Waiting);
+        let retained = element.legacy_v48.as_ref().unwrap();
+        assert_eq!(retained.raw_dormant_posture_after_transition, Some(252_736));
+        assert_eq!(
+            retained.raw_dormant_action_state_after_transition,
+            Some(-559_038_737)
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_transition_result_after_instruction_is_live() {
+        let (entities, _, _) = entities();
+        let mut saved = fixture();
+        let generic = match &mut saved.sequences[0].body.elements[1] {
+            LegacyInlineSequenceElement::Generic(generic) => generic,
+            other => panic!("fixture element is not generic: {other:?}"),
+        };
+        assert_eq!(generic.base.state, SequenceState::InProgress as i32);
+        generic.base.posture_after_transition = 252_736;
+
+        let error = preflight_v48_sequence_manager(&saved, &entities, &topology()).unwrap_err();
+
+        assert_eq!(
+            error,
+            LegacySequenceAdoptError::InvalidField {
+                field: "posture_after_transition",
+                value: "252736".to_owned(),
+                expected: "RHposture 0..24",
+            }
         );
     }
 
