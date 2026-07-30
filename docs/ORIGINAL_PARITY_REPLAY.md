@@ -918,6 +918,22 @@ path also rejects noncanonical enum words and always emits the canonical
 four-byte value, so future saves and parity recordings cannot propagate
 process-dependent bytes at this site.
 
+### Original command discriminant ABI
+
+Profile 011 first exposed the issue as actor 81's fallback
+`mpWaitSequenceElement` resolving to `WAIT_TIMER`. The pointer topology was
+correct: it referred to the selected in-progress element, had wait priority,
+and contained the expected bored-idle orders. The command discriminant was
+wrong because Rust's enum differed structurally from `RHcommand`.
+
+The complete 179-value Original enum is now preserved ordinal-for-ordinal.
+Rust restores the dead `RHCOMMAND_ROLL` slot at 76 and the misspelled dead
+`RHCOMMAND_ANNIMAL_AFFRAID` slot at 145. Rust-only `Jump`, `LeaveSpy`, and
+`LeaveTree` commands live after Original's final value rather than shifting
+serialized ranges. This corrects not only `WAIT`/`WAIT_TIMER`, but every v48
+command between the earlier inserted/omitted slots; pinned boundary tests guard
+the legacy domain and the separate Rust-only tail.
+
 ### Linux-v48 dormant carried-posture storage
 
 Profile 011 creation order 157 stores `mCarriedPosture = 161437968` while
@@ -938,6 +954,32 @@ word only when there is no carried actor; an invalid posture paired with a live
 carried pointer is rejected. The writer rejects noncanonical posture words, so
 future saves and parity recordings cannot reproduce uninitialized constructor
 storage at this site.
+
+### Linux-v48 dormant sequence transition posture
+
+Profile 011's `Restart` save contains SequenceManager element ID 85 with
+`mpostureAfterTransition = 252736` and
+`mactionStateAfterTransition = 48`; TODO element ID 86 also stores invalid
+action state `913`. Element 85 is a level-one `RHCOMMAND_MOVE` in `RHSEQ_TODO`
+with `RHPRIORITY_NOT_YET_SET`. Both
+`RHSequenceElement` constructors left the transition posture and action state
+uninitialized even though `Serialize` always wrote them.
+
+The posture is not live in this record: `RHSequenceElement::Go` sends a TODO or
+postponed actor command through `RHElementActor::Instruct`, which stamps the
+actor's current posture and action state before transition generation or
+translation can inspect them. An in-progress element is different—its stored
+transition result is authoritative and is read throughout movement and command
+execution.
+
+Original now initializes new sequence elements to
+`RHPOSTURE_UNDEFINED`/`RHACTIONSTATE_WAITING`. Its loader retains both four-byte
+v48 enum fields and canonicalizes invalid values only for non-progress
+elements; invalid in-progress transition state is rejected. The writer rejects
+noncanonical posture or action-state words, and sequence/manager/engine
+serialization now propagates that failure instead of continuing a malformed
+stream. All five authentic Linux fixtures load with this rule; only Profile
+011's `Restart` needs the dormant-field recovery.
 
 ## Coverage limits
 
