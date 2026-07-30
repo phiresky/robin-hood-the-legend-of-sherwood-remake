@@ -4662,9 +4662,9 @@ mod tests {
     }
 
     #[test]
-    fn pickup_dispatch_uses_pc_status_index_not_profile_index() {
+    fn pickup_dispatch_resolves_campaign_status_by_profile_identity() {
         // C++ PCs read ammo from their own mpStatus, not from a
-        // campaign array slot equal to the static profile index.
+        // campaign array slot equal to the static profile index or mubListIndex.
         let (mut engine, assets, pc_id) =
             setup_pc_engine_with_split_profile_and_status(&[(Action::Bow, 12)]);
         let id = spawn_bonus(&mut engine, ObjectType::BonusArrow, true, Action::Bow);

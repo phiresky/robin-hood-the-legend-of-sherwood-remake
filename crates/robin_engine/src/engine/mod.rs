@@ -361,25 +361,21 @@ impl EngineInner {
         &self,
         pc_data: &crate::element::PcData,
     ) -> Option<usize> {
-        let idx = usize::from(pc_data.list_index);
         let campaign = &self.mission_domain.campaign;
-        let Some(desc) = campaign.characters.get(idx) else {
+        let Some(idx) = campaign.get_character_by_profile(pc_data.profile_index) else {
             tracing::warn!(
-                "PC status index {} out of range for profile {}",
-                idx,
+                "campaign has no PC description for profile {}",
                 pc_data.profile_index
             );
             return None;
         };
-        if desc.character_profile_idx != Some(pc_data.profile_index) {
-            tracing::warn!(
-                "PC status index {} points at profile {:?}, expected {}",
-                idx,
-                desc.character_profile_idx,
-                pc_data.profile_index
-            );
-            return None;
-        }
+        // Original RHElementActorPC keeps mpDescription/mpStatus as aliases
+        // into RHCampaign and serializes that description pointer separately.
+        // mubListIndex is independent actor/UI storage and is never used to
+        // resolve the campaign status. The Rust actor retains the profile
+        // identity validated against that saved description during adoption,
+        // so resolve the same campaign object by profile rather than treating
+        // the unrelated list byte as a character-table index.
         Some(idx)
     }
 
