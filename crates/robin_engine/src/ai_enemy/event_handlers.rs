@@ -9,7 +9,7 @@
 use crate::ai::*;
 use crate::parameters_ai;
 
-use super::util::{enemy_is_below_me, vec_to_sector};
+use super::util::enemy_is_below_me;
 use super::{EnemyAi, ProfileRank, SeekFlags, UNDEFINED_DIRECTION, combat, task_priority};
 
 impl EnemyAi {
@@ -254,7 +254,7 @@ impl EnemyAi {
                 {
                     // Lost sight of enemy while attacking.
                     match self.base.current_substate {
-                        s if s.is_any_swordfight() && enemy == self.base.primary_target => {
+                        s if s.is_any_swordfight() => {
                             // _ANY_SWORDFIGHT_SUBSTATE_ 360° short-circuit
                             // — if the target is still within the NPC's
                             // real-radius "feel bubble" despite the cone
@@ -274,46 +274,13 @@ impl EnemyAi {
                             // so `nearby_fighters` was empty and the check
                             // always failed.  Using the `entity_views`
                             // distance gate directly avoids that aliasing.
-                            if self.is_detecting_360_degrees(enemy, ctx) {
+                            if enemy == self.base.primary_target
+                                && self.is_detecting_360_degrees(enemy, ctx)
+                            {
                                 // Still close — stay in swordfight.
                                 return false;
                             }
-                            {
-                                // Not detecting 360° — forecast and quit swordfight.
-                                if let Some(prepared) = &tick.primary_target_forecast {
-                                    let forecast = prepared.resolve(sim);
-                                    self.base.seek_position = forecast.position;
-                                    self.pc_gone_away_in_this_direction = forecast.direction;
-                                }
-                                self.missed_pc = enemy;
-                                self.pc_missed = true;
-                                self.end_swordfight(ctx, tick);
-                                self.base.outbox.actor.set_unfocus();
-
-                                if tick.primary_target_is_pc
-                                    && self.answer_question(Question::ShallIFollowLostEnemy, ctx)
-                                {
-                                    self.base.say(Remark::HuntsEnemy);
-                                    self.seek_area(
-                                        sim,
-                                        self.base.seek_position,
-                                        parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
-                                        SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE,
-                                        self.pc_gone_away_in_this_direction,
-                                        global,
-                                        ctx,
-                                        tick,
-                                    );
-                                } else {
-                                    // Snap to face the missed enemy.
-                                    let dx = self.base.seek_position.x - ctx.position.x;
-                                    let dy = self.base.seek_position.y - ctx.position.y;
-                                    let dir = vec_to_sector(dx, dy);
-                                    self.base.outbox.actor.set_direction_instantly =
-                                        Some(dir as i16);
-                                    self.get_battle_overview(0, ctx, tick);
-                                }
-                            }
+                            self.out_of_view_seek_handler(sim, enemy, global, ctx, tick, grid);
                             // else: detecting 360° — ignore, stay in swordfight.
                         }
 
@@ -345,17 +312,11 @@ impl EnemyAi {
                         // destination and either chase (via seek_area) or
                         // face + get_battle_overview.
                         //
-                        // The ATTACKING_RUNNING_TO_ENEMY,
-                        // ATTACKING_WALKING_TO_ENEMY, ATTACKING_CHARGING_ENEMY,
-                        // and ATTACKING_REACTIONTIME_TURNING substates are
-                        // explicitly excluded — they fall to the default
-                        // branch (just ReinitializeThemList) because the
-                        // NPC is already in the middle of an approach and
-                        // shouldn't abort to Seeking on a single frame of
-                        // lost LOS. This is what fixes the "runs up, walks
-                        // back, runs up, walks back" loop: a momentary
-                        // dot-product flicker during the run would
-                        // otherwise transition the NPC to Seeking.
+                        // `ATTACKING_REACTIONTIME_TURNING` is explicitly
+                        // excluded and falls to the default reinitialization
+                        // branch. The running/walking/charging substates are
+                        // members of Original's `_ANY_SWORDFIGHT_SUBSTATE_`
+                        // macro and were handled by the earlier arm.
                         Substate::AttackingReactiontime
                         | Substate::AttackingQuittingSwordfight
                         | Substate::AttackingReserve

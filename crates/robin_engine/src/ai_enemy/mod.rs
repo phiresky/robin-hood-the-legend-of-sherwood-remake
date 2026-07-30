@@ -24,7 +24,7 @@ use crate::ai::*;
 use crate::entity_id::PcId;
 use crate::parameters_ai;
 use crate::position_interface::ASPECT_RATIO;
-use util::{fighter_detects_position_180, soldier_detects_position_180, vec_to_sector};
+use util::{fighter_detects_position_180, soldier_detects_position_180};
 
 // ---------------------------------------------------------------------------
 // EnemyAi — extends AiController with soldier-specific state
@@ -2318,16 +2318,26 @@ impl EnemyAi {
             enemy,
             "handling OUTOFVIEW through lost-enemy path"
         );
-        // ForecastDestinationForIA
-        if let Some(prepared) = &tick.primary_target_forecast {
-            let forecast = prepared.resolve(sim);
-            self.base.seek_position = forecast.position;
-            self.pc_gone_away_in_this_direction = forecast.direction;
-        } else {
-            let dx = self.base.seek_position.x - ctx.position.x;
-            let dy = self.base.seek_position.y - ctx.position.y;
-            self.pc_gone_away_in_this_direction = vec_to_sector(dx, dy);
-        }
+        // Original forecasts the human carried by this OUTOFVIEW stimulus,
+        // not the soldier's independently selected primary target.
+        let prepared = tick
+            .enemy_detectable_forecasts
+            .iter()
+            .find_map(|(handle, forecast)| (*handle == enemy).then_some(forecast))
+            .or_else(|| {
+                (enemy == self.base.primary_target)
+                    .then_some(tick.primary_target_forecast.as_ref())
+                    .flatten()
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "NPC {} OUTOFVIEW target {} has no prepared destination forecast",
+                    self.base.me, enemy
+                )
+            });
+        let forecast = prepared.resolve(sim);
+        self.base.seek_position = forecast.position;
+        self.pc_gone_away_in_this_direction = forecast.direction;
 
         self.missed_pc = enemy;
         self.pc_missed = true;
@@ -2339,7 +2349,16 @@ impl EnemyAi {
             }
             self.base.outbox.actor.set_unfocus();
 
-            if self.answer_question(Question::ShallIFollowLostEnemy, ctx) {
+            let enemy_is_pc = ctx
+                .entity_view(enemy)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "NPC {} OUTOFVIEW target {} has no live entity view",
+                        self.base.me, enemy
+                    )
+                })
+                .is_pc;
+            if enemy_is_pc && self.answer_question(Question::ShallIFollowLostEnemy, ctx) {
                 self.base.say(Remark::HuntsEnemy);
                 self.seek_area(
                     sim,

@@ -398,6 +398,10 @@ pub struct AiPerTickData {
     /// Populated by the engine from the target entity's live state
     /// (door-pass, lift, building traversal). See [`forecast_destination_for_ia`].
     pub primary_target_forecast: Option<PreparedForecastDestination>,
+    /// Pre-computed forecasts for the NPC's complete Enemy-detectable
+    /// pointer order. `EVENT_OUTOFVIEW` is delivered for the detectable
+    /// whose visibility edge fell, which need not be `primary_target`.
+    pub enemy_detectable_forecasts: Vec<(HumanHandle, PreparedForecastDestination)>,
     /// True when the primary target is a player character.
     /// Used by lost-sight logic in `reconsider_swordfight` to decide
     /// whether to chase (PC) or pull a battle overview (NPC).
@@ -605,6 +609,7 @@ impl AiPerTickData {
             visible_seeking_friends: 0,
             friend_seek_clears_help_flag: false,
             primary_target_forecast: None,
+            enemy_detectable_forecasts: Vec::new(),
             primary_target_is_pc: false,
             missed_pc_forecast: None,
             missed_pc_is_pc: false,

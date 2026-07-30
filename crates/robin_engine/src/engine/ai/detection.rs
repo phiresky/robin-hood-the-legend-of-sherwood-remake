@@ -1362,6 +1362,32 @@ impl EngineInner {
             .and_then(Entity::enemy_ai)
             .map(|ai| (ai.base.primary_target, ai.missed_pc))
             .unwrap_or((0, 0));
+        tick_data.enemy_detectable_forecasts.clear();
+        let enemy_handles = self
+            .world
+            .entities
+            .get(npc_id)
+            .and_then(Entity::npc_data)
+            .map(|npc| {
+                npc.detectable_lists[crate::element::DetectableType::Enemy as usize]
+                    .iter()
+                    .filter_map(|detectable| detectable.element)
+                    .map(|entity_id| entity_id.index())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for handle in enemy_handles {
+            let target_id = self.entity_id_for_index(handle).unwrap_or_else(|| {
+                panic!(
+                    "NPC {} has Enemy detectable for missing actor {}",
+                    npc_id.index(),
+                    handle
+                )
+            });
+            tick_data
+                .enemy_detectable_forecasts
+                .push((handle, forecast(target_id)));
+        }
         if tick_data.primary_target_is_pc && primary != 0 {
             let target_id = self.entity_id_for_index(primary).unwrap_or_else(|| {
                 panic!(
