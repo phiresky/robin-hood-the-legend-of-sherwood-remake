@@ -868,18 +868,18 @@ corruption through low-16-bit truncation.
 
 ### Linux-v48 inactive patrol-macro cursors
 
-Profile 011 creation order 89 stores macro offset 12,304 for a 26-byte waypoint,
-while `remaining_macro_bytes == 0` and `macro_in_progress == false`. The
-Original initializes `mpubMacroCommand` to null, but whenever a patrol path
-exists its save path unconditionally serializes
-`mpubMacroCommand - currentWaypoint.pData`. Before a macro assignment this is
-an indeterminate pointer difference narrowed to `UWORD`; the execution path
-never dereferences it while the remaining-byte count is zero.
+Linux saves contain both never-started macro cursors and interrupted macros
+whose pointer difference lies outside the current waypoint. The latter can
+retain a nonzero `remaining_macro_bytes`: `BreakMacro` clears only
+`mbMacroInProgress`, leaving both the cursor and counter untouched, while
+`SerializeThisAI` writes them whenever a patrol path exists.
 
-Rust preserves the raw inactive offset for exact state inspection. Command-kind
-and `offset + remaining` bounds remain strict whenever a macro is marked active
-or has bytes remaining, so this does not turn malformed live cursors into
-defaults or silently accept unsafe bytecode reads.
+Rust therefore uses `macro_in_progress` as the authoritative liveness bit and
+preserves the raw inactive offset and byte count for exact state inspection.
+Command-kind and `offset + remaining` bounds remain strict whenever that bit is
+set, so malformed live bytecode still fails instead of being replaced with a
+plausible cursor. Interrupted dormant storage is never dereferenced, matching
+Original's resume gates.
 
 ### Linux-v48 enemy previous-state storage
 
@@ -968,6 +968,24 @@ sidecar as runtime geometry or semantic state-hash input. Live
 static-grid/actor repulsive geometry keeps strict finite-value validation; this
 exception is limited to the proven dormant object-owned leaf.
 
+### Linux-v48 dynamic bonus constructor draws
+
+Loaded-save traces initially stopped at the setup boundary with Rust at global
+RNG cursor 228 and Original between 229 and 266. Across Linux2 and Linux3, the
+cursor excess exactly equals the number of bonus objects reconstructed by the
+phase-one load factory: representative saves contain 3, 6, 13, 14, and 19
+dynamic bonuses and differ by precisely those counts. Dynamic PCs and other
+object classes account for none of the excess.
+
+`RHElementBonus::Initialize` calls `ForceRandomSpriteFrame` once from every
+constructor, including constructors used only to rebuild a saved element.
+Phase two overwrites that temporary frame from the serialized sprite payload,
+but the global `rand()` draw remains authoritative for every later consumer.
+Rust now consumes the same `LevelBonusInitialFrame` draw in saved element
+order immediately before installing each constructed bonus. It does not skip
+the replay cursor or infer a correction from the trace header; the ordinary
+class-specific load factory itself reproduces the source side effect.
+
 ### Linux-v48 dormant carried-posture storage
 
 Profile 011 creation order 157 stores `mCarriedPosture = 161437968` while
@@ -1014,6 +1032,66 @@ noncanonical posture or action-state words, and sequence/manager/engine
 serialization now propagates that failure instead of continuing a malformed
 stream. All five authentic Linux fixtures load with this rule; only Profile
 011's `Restart` needs the dormant-field recovery.
+
+### Large-window compressed trace input
+
+The expanded Linux2/Linux3 corpus includes single-frame zstd streams whose
+declared window follows the total uncompressed JSONL size and exceeds the
+decoder library's 128 MiB default. These are valid recorder outputs, not
+oversized in-memory replay records. The streaming trace reader now opts into
+zstd's bounded platform maximum window log (31 on 64-bit, 30 on 32-bit), while
+retaining line-by-line decoding and all JSON record limits. A synthetic
+256 MiB-window regression demonstrates both the default rejection and the
+parity reader's exact output.
+
+### Linux-v48 timer sequence states
+
+`RHSequenceElement::Go` dispatches an ownerless `RHCOMMAND_TIMER` directly to
+`RHEngine::PerformExecuteCommand`. That command appends the element to
+`mlistTimerElements` but does not transition it from `RHSEQ_TODO` to
+`RHSEQ_INPROGRESS`; a live timer is therefore commonly serialized as TODO.
+Rust accepts TODO and INPROGRESS only for Timer commands referenced by the
+active timer list. Null references, wrong commands, terminal states, and
+missing integer Timer properties remain hard failures.
+
+### Linux-v48 ambush array load side effects
+
+The enemy-AI reader contains an authoritative historical asymmetry. Before
+reading per-NPC ambush statuses it deletes the static shared
+`marrayAmbushPoints`, but it does not delete the constructor-initialized
+per-NPC `marrayAmbushPointStatus`; saved statuses are appended. Rust performs
+the same global deletion once enemy AI is restored and appends each saved enum
+to the initialized local vector. In particular, a zero-length saved list
+preserves initialized local statuses while leaving the shared topology empty.
+
+### Linux-v48 PC campaign-status identity
+
+Original serializes `RHElementActorPC::mpDescription` as its own campaign-table
+pointer and then restores `mpStatus` as an alias into that description.
+`mubListIndex` is separate actor/UI storage and is never used for that lookup.
+Rust already validates the saved description's character-profile identity
+during PC adoption; all later status/ammunition access now resolves the
+campaign description by that profile identity instead of interpreting
+`PcData::list_index` as a campaign index.
+
+### Linux-v48 historical patrol endpoint storage
+
+`RHPath::SerializeStatus` restores `mubLastWaypointIndex` as a plain byte and
+does not validate it against the currently authored path. Saves consequently
+retain historical last-waypoint indices after a path topology changes or a
+shorter path is selected. Rust preserves that byte exactly. The current
+waypoint remains strictly range-checked because Original immediately uses it
+to reconstruct the live patrol/macro cursor.
+
+### Linux-v48 nullable shield selection state
+
+The engine serializes `mbShieldProtected`, the danger point, and nullable
+`mpShieldProtected` independently. The constructor initializes the pointer and
+point but not the mode flag, and selecting Shield/BigShield explicitly enters
+the pre-click state with mode enabled and a null protected PC. Rust now
+preserves all flag/null combinations exactly without synthesizing a PC or
+normalizing the flag. Non-finite danger points and non-null references to the
+wrong entity class remain rejected.
 
 ## Current Linux-v48 loaded-save result
 
