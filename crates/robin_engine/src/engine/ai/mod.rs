@@ -8555,6 +8555,100 @@ impl EngineInner {
         }
     }
 
+    /// Execute the complete Original `ClearPatrol` call made by the
+    /// `RemoveAllSubordinates` script native.
+    ///
+    /// `RHArtificialIntelligence::ClearPatrol` clears each member's chief
+    /// pointer and calls `ForceReturnToDuty` directly before clearing the
+    /// chief's lists. The member Think calls are therefore nested inside the
+    /// script native, not deferred self-stimuli. Keep their movement
+    /// construction and recursive callbacks inside this engine-owned script
+    /// barrier while leaving ordinary owner instruction to the subsequent
+    /// `RHSequenceManager::Hourglass`.
+    pub(crate) fn script_remove_all_subordinates(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        chief: EntityId,
+    ) {
+        let members = self
+            .world
+            .entities
+            .get(chief)
+            .and_then(Entity::ai_controller)
+            .unwrap_or_else(|| {
+                panic!(
+                    "RemoveAllSubordinates chief {} is not an NPC",
+                    chief.index()
+                )
+            })
+            .theoretical_patrol
+            .clone();
+
+        let mut returning = Vec::new();
+        for member in members.iter().copied() {
+            let ai = self
+                .world
+                .entities
+                .get_mut(member)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "RemoveAllSubordinates chief {} references missing NPC member {}",
+                        chief.index(),
+                        member.index()
+                    )
+                });
+            ai.patrol_chief = None;
+            if ai.current_state == crate::ai::AiState::Default {
+                returning.push(member);
+            }
+        }
+
+        self.world
+            .entities
+            .get_mut(chief)
+            .and_then(Entity::ai_controller_mut)
+            .expect("validated RemoveAllSubordinates chief vanished")
+            .clear_patrol();
+
+        for member in returning {
+            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let ctx = {
+                let entity = self.world.entities.get(member).unwrap_or_else(|| {
+                    panic!(
+                        "RemoveAllSubordinates member {} vanished before ForceReturnToDuty",
+                        member.index()
+                    )
+                });
+                let building_sector = self.entity_building_sector(entity.element_data().sector());
+                build_ai_context_from_entity(
+                    entity,
+                    self.control.frame_counter,
+                    building_sector,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
+                    self.ai.standard_view_polygon_radius,
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
+                    &self.world.fast_grid,
+                    &assets.hiking_paths,
+                    &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
+                )
+            };
+            let tick_data = self.build_npc_tick_data(sim, member, &scratch, assets);
+            self.dispatch_think_with_drain_without_forecast(
+                sim,
+                member,
+                &crate::ai::Stimulus::new(crate::ai::StimulusType::EventReturnToDuty),
+                &ctx,
+                &tick_data,
+                assets,
+            );
+        }
+    }
+
     // ─── One-shot noise broadcast ──────────────────────────────────
 
     /// Broadcast a one-shot noise event to all nearby NPCs.

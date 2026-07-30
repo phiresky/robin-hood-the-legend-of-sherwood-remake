@@ -744,50 +744,8 @@ impl NativeContext<'_, '_> {
                 0
             }
             RemoveAllSubordinates => {
-                // ClearPatrol body:
-                //   for each member of theoretical_patrol:
-                //     member.set_patrol_chief(None);
-                //     if state == Default: force_return_to_duty();
-                //   theoretical_patrol.clear();
-                //   missed_patrol_members.clear();
-                //   patrol.clear();
                 let actor = stack.pop_i32();
-                // Phase 1: snapshot the minion handles so we can free
-                // the chief's mutable borrow before iterating them.
-                let minion_ids: Vec<EntityId> = if let Some(entity) = self.get_entity(actor) {
-                    entity
-                        .ai_controller()
-                        .map(|ai| ai.theoretical_patrol.clone())
-                        .unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
-                // Phase 2: clear each minion's `patrol_chief`,
-                // and for minions in the Default state, fire
-                // the EventReturnToDuty self-stimulus.  The
-                // `fire_self_stimulus` path queues a re-dispatch
-                // of the stimulus on the next think tick, which
-                // is the same end-state as the event-hook
-                // approach.
-                for minion_id in minion_ids {
-                    let minion_actor = Self::actor_handle(minion_id);
-                    if let Some(entity) = self.get_entity_mut(minion_actor)
-                        && let Some(ai) = entity.ai_controller_mut()
-                    {
-                        ai.patrol_chief = None;
-                        if ai.current_state == crate::ai::AiState::Default {
-                            ai.fire_self_stimulus(crate::ai::StimulusType::EventReturnToDuty);
-                        }
-                    }
-                }
-                // Phase 3: clear the chief's three patrol lists via
-                // `clear_patrol()` (now also clears
-                // `missed_patrol_members`).
-                if let Some(entity) = self.get_entity_mut(actor)
-                    && let Some(ai) = entity.ai_controller_mut()
-                {
-                    ai.clear_patrol();
-                }
+                self.emit_barrier(DeferredCommand::RemoveAllSubordinates { actor });
                 0
             }
             AddRepulsivePoint => {

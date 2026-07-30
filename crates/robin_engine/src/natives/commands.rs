@@ -178,6 +178,12 @@ pub enum SoundCommand {
     Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
 pub enum DeferredCommand {
+    /// Execute `RHArtificialIntelligence::ClearPatrol` at the engine-owned
+    /// script barrier. Clearing the chief and each member pointer is
+    /// synchronous, and every default-state member immediately runs
+    /// `ForceReturnToDuty`; that nested AI work needs SimulationContext and
+    /// LevelAssets and therefore cannot be completed inside NativeContext.
+    RemoveAllSubordinates { actor: i32 },
     /// Finish SelectActorPC(actor, select) after the native has already
     /// updated the canonical selection synchronously. `actor == 0` means
     /// "all PCs". The engine-side barrier performs action/sequence and

@@ -1238,6 +1238,15 @@ impl EngineInner {
             // have released all temporary borrows.
             for cmd in deferred {
                 match cmd {
+                    crate::natives::DeferredCommand::RemoveAllSubordinates { actor } => {
+                        if let Some(chief) = self.entity_id_for_actor_handle(actor) {
+                            self.script_remove_all_subordinates(sim, assets, chief);
+                        } else {
+                            tracing::warn!(
+                                "RemoveAllSubordinates ignored invalid chief handle {actor}"
+                            );
+                        }
+                    }
                     crate::natives::DeferredCommand::SelectPC { actor, select } => {
                         // Scripted scene: targets the LOCAL seat.
                         if actor == 0 {
