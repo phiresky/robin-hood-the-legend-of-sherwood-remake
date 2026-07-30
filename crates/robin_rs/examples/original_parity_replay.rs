@@ -1377,7 +1377,16 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         all_rng_draws.len() >= prefix_end,
         "RNG pre-scan is shorter than prefix"
     );
-    let (mut engine, assets, host, background) = initialize_engine(&header, all_rng_draws);
+    let rewind_loaded_save_rng =
+        header.start_state == TraceStartState::LoadedSave && prefix_end == 0;
+    let (mut engine, assets, host, background) = initialize_engine(&header, all_rng_draws.clone());
+    if rewind_loaded_save_rng {
+        let setup_draws = engine
+            .original_rng_replay_cursor()
+            .expect("loaded-save reconstruction lost Original RNG replay");
+        engine.replace_original_rng_replay(all_rng_draws);
+        eprintln!("rewound loaded-save RNG after {setup_draws} deterministic construction draws");
+    }
     let mut motion_line_parity = MotionLineParity::build(&engine, &header.motion_grid);
     engine.set_external_director_completion_replay(true);
     let mut visual =

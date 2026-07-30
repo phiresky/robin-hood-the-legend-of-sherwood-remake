@@ -107,6 +107,12 @@ impl SimulationRng {
             .append(draws);
     }
 
+    pub(crate) fn replace_original_replay(&mut self, draws: Vec<u32>) {
+        self.original_replay = Some(Arc::new(Mutex::new(
+            crate::sim_rng::OriginalRngReplay::new(draws),
+        )));
+    }
+
     pub(crate) fn original_replay_cursor(&self) -> Option<usize> {
         self.original_replay.as_ref().map(|replay| {
             replay

@@ -243,6 +243,16 @@ impl Engine {
         self.inner.control.rng.append_original_replay(draws);
     }
 
+    /// Replace and rewind the raw Original RNG stream used by parity tools.
+    ///
+    /// Loaded saves restore a serialized engine and RNG seed after mission
+    /// construction. A reconstruction tool may therefore need one copy of
+    /// the seeded stream for fresh Rust construction, then rewind to the
+    /// post-load stream boundary recorded by the Original.
+    pub fn replace_original_rng_replay(&mut self, draws: Vec<u32>) {
+        self.inner.control.rng.replace_original_replay(draws);
+    }
+
     /// Number of original raw RNG values consumed so far, when parity replay is active.
     pub fn original_rng_replay_cursor(&self) -> Option<usize> {
         self.inner.control.rng.original_replay_cursor()
