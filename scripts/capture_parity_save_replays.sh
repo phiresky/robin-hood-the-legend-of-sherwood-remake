@@ -10,7 +10,7 @@ set -euo pipefail
 # The default output is ./parity-save-replays in the invocation directory.
 #
 # Environment overrides:
-#   PARITY_FRAMES=250  PARITY_SEED=1  WATCHDOG_SECONDS=180
+#   PARITY_FRAMES=250  PARITY_SEED=1  WATCHDOG_SECONDS=60
 #   ROBIN_BINARY=original-code/build/native-full/robin
 #   SKIP_BUILD=1      FORCE=1
 
@@ -35,7 +35,7 @@ output_dir="${output_dir%/}"
 data_dir="${data_dir%/}"
 frames="${PARITY_FRAMES:-250}"
 seed="${PARITY_SEED:-1}"
-watchdog_seconds="${WATCHDOG_SECONDS:-180}"
+watchdog_seconds="${WATCHDOG_SECONDS:-60}"
 binary="${ROBIN_BINARY:-original-code/build/native-full/robin}"
 
 if [[ ! -d "$save_dir" ]]; then
@@ -90,12 +90,12 @@ while IFS= read -r -d '' save_file; do
     relative_path="${save_file#"$save_dir"/}"
     trace_base="$output_dir/traces/$relative_path.jsonl"
     trace_stem="${trace_base%.jsonl}"
+    complete_marker="$trace_stem.complete"
     log_path="$output_dir/logs/$relative_path.log"
     mkdir -p -- "$(dirname -- "$trace_base")" "$(dirname -- "$log_path")"
 
-    existing_traces=("$trace_stem"-session-*.jsonl)
-    if [[ "${FORCE:-0}" != 1 && -e "${existing_traces[0]}" ]]; then
-        printf 'skip     %s (trace already exists)\n' "$relative_path"
+    if [[ "${FORCE:-0}" != 1 && -e "$complete_marker" ]]; then
+        printf 'skip     %s (capture already completed)\n' "$relative_path"
         skipped=$((skipped + 1))
         continue
     fi
@@ -113,6 +113,7 @@ while IFS= read -r -d '' save_file; do
             -PARITYFRAMES "$frames" \
             >"$log_path" 2>&1
     then
+        : >"$complete_marker"
         captured=$((captured + 1))
     else
         status=$?
