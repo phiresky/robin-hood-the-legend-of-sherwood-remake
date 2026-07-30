@@ -14,8 +14,9 @@
 //! two consecutive, lengthless `RHCampaign::Serialize` streams which precede
 //! the engine state.
 
-pub mod campaign;
+pub mod adopt;
 pub mod body;
+pub mod campaign;
 pub mod elements;
 pub mod engine;
 pub mod initialized;
@@ -30,8 +31,8 @@ pub mod payload_sequences;
 pub mod payload_vm;
 pub mod post_grid;
 pub mod post_hiking;
-pub mod post_simple;
 pub mod post_sequence_manager;
+pub mod post_simple;
 pub mod post_tail;
 pub mod topology_adapter;
 
