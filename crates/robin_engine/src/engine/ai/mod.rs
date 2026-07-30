@@ -2100,7 +2100,14 @@ impl EngineInner {
                 position: Position {
                     x: pos.x,
                     y: pos.y,
-                    sector: None,
+                    // `Position(entity)` in Original copies the complete
+                    // RHposition, including its authoritative sector
+                    // pointer.  Combat helpers later copy this position
+                    // when deriving destinations (notably the archer
+                    // cover point behind a stationary shield bearer), so
+                    // discarding the sector here turns an otherwise valid
+                    // same-sector GoTo into EVENT_COULDNT_REACHPOINT.
+                    sector: s.element.sector(),
                     level: s.element.layer(),
                 },
                 direction: s.element.direction() as u16,
@@ -2206,7 +2213,7 @@ impl EngineInner {
             let pc_seek_position = Position {
                 x: pos.x,
                 y: pos.y,
-                sector: None,
+                sector: pc.element.sector(),
                 level: pc.element.layer(),
             };
             Some(FighterSnapshot {
@@ -2214,7 +2221,7 @@ impl EngineInner {
                 position: Position {
                     x: pos.x,
                     y: pos.y,
-                    sector: None,
+                    sector: pc.element.sector(),
                     level: pc.element.layer(),
                 },
                 direction: pc.element.direction() as u16,

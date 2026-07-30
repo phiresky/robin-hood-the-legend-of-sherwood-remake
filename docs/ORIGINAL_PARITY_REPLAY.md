@@ -1777,6 +1777,36 @@ in the later global melee tail. Both generic and active-melee START edges now
 settle the owning PC before the next Original creation slot, while the global
 tail remains responsible for DONE-edge arrow-extraction remarks.
 
+### Fighter snapshots preserve authoritative position sectors
+
+Original combat code passes complete `RHposition` values through fighter
+pointers. That includes the sector pointer, not only projected XY and layer.
+Rust's per-owner fighter snapshot deliberately replaced the sector of every
+live soldier and PC with `None`. A derived destination could therefore have
+the exact Original coordinates while failing `GoTo` immediately as a null
+sector.
+
+The snapshot builder now carries each entity's live sector. Linux2 Profile 002
+save 003 exposed this when an archer derived its cover point from a stationary
+shield bearer in sector 18: the Original launched the run-behind-shield
+movement, while Rust self-dispatched `EVENT_COULDNT_REACHPOINT`. The replay now
+passes that formation decision at frame 13786.
+
+### Raising a shield faces the danger point at animation initialization
+
+`RHElementActorHuman::Execute(RHANIMATION_RAISING_SHIELD)` installs
+`RHFIELD_SHIELD_DANGER_POINT` as the direction goal on the first execution of
+the raising order and then calls `Turn()`. This is intentionally later than
+command dispatch because posture/action exit transitions may precede the
+raising order.
+
+Rust now applies the stored shield face point at that same animation-owner
+boundary for every human, including NPC soldiers. Applying it when the command
+was dispatched changed direction too early; omitting it for NPCs left a shield
+bearer one sector away once raising began. Linux2 Profile 002 save 003 now
+passes the direction transition at frame 13795 and advances to a later
+independent command-timing difference at frame 13814.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

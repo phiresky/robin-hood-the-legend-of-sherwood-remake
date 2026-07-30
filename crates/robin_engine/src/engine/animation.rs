@@ -4453,6 +4453,32 @@ impl EngineInner {
                         let mut wasp_still_turning = false;
                         let mut pc_taking_still_turning = false;
                         let mut pc_target_still_turning = false;
+                        if order_is_initialising
+                            && anim_type == OrderType::RaisingShield
+                            && let Some(danger) = entity
+                                .actor_data()
+                                .and_then(|actor| actor.shield_face_point)
+                        {
+                            // RHElementActorHuman::Execute initializes
+                            // RAISING_SHIELD by applying the generic
+                            // SHIELD_DANGER_POINT as the direction goal,
+                            // immediately before its first Turn().  Do this
+                            // here rather than at command dispatch: an
+                            // exit-action transition can leave the order
+                            // queued for several frames.
+                            let position = entity.element_data().position_map();
+                            let dx = danger.x - position.x;
+                            let dy = danger.y - position.y;
+                            if dx != 0.0 || dy != 0.0 {
+                                let direction =
+                                    crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
+                                entity.position_iface_mut().set_direction(
+                                    crate::position_interface::Direction::from_raw(
+                                        direction as i32,
+                                    ),
+                                );
+                            }
+                        }
                         if needs_turn {
                             let still_turning = entity.position_iface_mut().turn();
                             if matches!(anim_type, OrderType::GettingFreeFromWasp) {
