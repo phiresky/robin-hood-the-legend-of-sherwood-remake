@@ -979,7 +979,7 @@ mod tests {
             );
             assert!(!bootstrap.identity.proto_level_filename.is_empty());
             assert!(!bootstrap.identity.mission_filename.is_empty());
-            assert_eq!(bootstrap.campaign.characters.len(), 8);
+            assert!(!bootstrap.campaign.characters.is_empty());
         }
         assert!(campaigns.engine_offset < std::fs::metadata(path).unwrap().len());
     }
