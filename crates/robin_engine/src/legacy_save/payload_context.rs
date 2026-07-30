@@ -32,9 +32,26 @@ pub struct LegacyElementPayloadMetadata {
 }
 
 /// Mission element metadata indexed by the Original creation-order identity.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LegacyMissionPayloadMetadata {
+    /// Original `RHEngine::mulNumberOfCreatedStaticElements`. Creation
+    /// orders below this boundary must resolve to initialized mission
+    /// metadata; orders at or above it were reconstructed by the phase-one
+    /// dynamic-element switch.
+    pub static_creation_order_boundary: u32,
     pub by_creation_order: BTreeMap<u32, LegacyElementPayloadMetadata>,
+}
+
+impl Default for LegacyMissionPayloadMetadata {
+    fn default() -> Self {
+        Self {
+            // A synthetic/default context has no proven dynamic boundary.
+            // Treat every order as static so missing metadata remains a hard
+            // error instead of silently enabling dynamic-class rules.
+            static_creation_order_boundary: u32::MAX,
+            by_creation_order: BTreeMap::new(),
+        }
+    }
 }
 
 /// Independent hard limits applied by the typed payload readers.
@@ -113,6 +130,29 @@ impl<'a> LegacyMissionPayloadDecodeContext<'a> {
         Ok(metadata)
     }
 
+    fn is_dynamic(&self, creation_order: u32) -> bool {
+        creation_order >= self.metadata.static_creation_order_boundary
+    }
+
+    fn validate_dynamic_pc(
+        &self,
+        reader: &mut LegacyReader<'_>,
+        creation_order: u32,
+        class: LegacyElementClass,
+        callback: &'static str,
+    ) -> LegacyResult<()> {
+        if !self.is_dynamic(creation_order) || class != LegacyElementClass::ActorPc {
+            let offset = reader.offset();
+            return Err(reader.invalid_value(
+                offset,
+                "creation_order",
+                format_args!("{creation_order} ({class:?}) at {callback} callback"),
+                "a dynamic ActorPc supported by Original's phase-one load switch",
+            ));
+        }
+        Ok(())
+    }
+
     fn validate_actor_owner(
         &self,
         reader: &mut LegacyReader<'_>,
@@ -179,6 +219,17 @@ impl LegacyPayloadDecodeContext for LegacyMissionPayloadDecodeContext<'_> {
         class: LegacyElementClass,
         script_class: &str,
     ) -> LegacyResult<LegacyVmMemberSection> {
+        if self.is_dynamic(creation_order) {
+            self.validate_dynamic_pc(reader, creation_order, class, "actor VM-member")?;
+            // Original phase one constructs dynamic PCs from their campaign
+            // description, then RHElementActor::Serialize reads the
+            // authoritative script-class string, binds it, and immediately
+            // serializes that class's members. No mission-static lookup is
+            // involved for this case.
+            return LegacyVmMemberDecoder::new(self.scb, self.limits.vm)
+                .read_class_members(reader, script_class);
+        }
+
         let metadata = self.validate_actor_owner(reader, creation_order, class)?;
         let expected = metadata.script_class.as_deref().ok_or_else(|| {
             let offset = reader.offset();
@@ -208,7 +259,11 @@ impl LegacyPayloadDecodeContext for LegacyMissionPayloadDecodeContext<'_> {
         creation_order: u32,
         class: LegacyElementClass,
     ) -> LegacyResult<LegacyInlineSequence> {
-        self.validate_actor_owner(reader, creation_order, class)?;
+        if self.is_dynamic(creation_order) {
+            self.validate_dynamic_pc(reader, creation_order, class, "inline-sequence")?;
+        } else {
+            self.validate_actor_owner(reader, creation_order, class)?;
+        }
         LegacyInlineSequence::read(reader, &self.limits.sequences)
     }
 
@@ -218,6 +273,15 @@ impl LegacyPayloadDecodeContext for LegacyMissionPayloadDecodeContext<'_> {
         creation_order: u32,
         class: LegacyElementClass,
     ) -> LegacyResult<Box<LegacyLocalAiPayload>> {
+        if self.is_dynamic(creation_order) {
+            let offset = reader.offset();
+            return Err(reader.invalid_value(
+                offset,
+                "creation_order",
+                format_args!("{creation_order} ({class:?})"),
+                "a static NPC; Original's dynamic load switch cannot construct NPCs",
+            ));
+        }
         let metadata = self.validate_identity(reader, creation_order, class)?;
         let required_kind = ai_kind_for_class(class).ok_or_else(|| {
             let offset = reader.offset();
@@ -263,6 +327,22 @@ impl LegacyNonActorPayloadDecodeContext for LegacyMissionPayloadDecodeContext<'_
         creation_order: u32,
         class: LegacyElementClass,
     ) -> LegacyResult<Option<LegacyVmMemberSection>> {
+        if self.is_dynamic(creation_order) {
+            if class == LegacyElementClass::Scroll {
+                // Original constructs a dynamic RHElementScroll with its
+                // default constructor. Phase one does not instantiate a
+                // script class, and Scroll::Serialize writes no class name,
+                // so IsClassInstanciate() is false and no member bytes exist.
+                return Ok(None);
+            }
+            let offset = reader.offset();
+            return Err(reader.invalid_value(
+                offset,
+                "creation_order",
+                format_args!("{creation_order} ({class:?})"),
+                "a static Target/Scroll or a dynamic Scroll",
+            ));
+        }
         let metadata = self.validate_identity(reader, creation_order, class)?;
         if !matches!(
             class,
@@ -352,6 +432,7 @@ mod tests {
         mobile_sprite_count: Option<usize>,
     ) -> LegacyMissionPayloadMetadata {
         LegacyMissionPayloadMetadata {
+            static_creation_order_boundary: creation_order.saturating_add(1),
             by_creation_order: [(
                 creation_order,
                 LegacyElementPayloadMetadata {
@@ -507,6 +588,69 @@ mod tests {
                 .read_local_ai(reader, 31, LegacyElementClass::ActorNpcCivilian)
                 .unwrap_err();
             assert!(error.to_string().contains("initialized mission class"));
+        });
+    }
+
+    #[test]
+    fn dynamic_pc_uses_serialized_script_class_without_static_metadata() {
+        let schema = scb();
+        let metadata = LegacyMissionPayloadMetadata {
+            static_creation_order_boundary: 40,
+            by_creation_order: BTreeMap::new(),
+        };
+        let context = LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &metadata);
+        with_reader(&0x1020_3040_u32.to_le_bytes(), |reader| {
+            let members = context
+                .read_actor_script_members(reader, 40, LegacyElementClass::ActorPc, "Fixture")
+                .unwrap();
+            assert_eq!(
+                members.members[0].value,
+                LegacyVmMemberValue::Raw32 { bits: 0x1020_3040 }
+            );
+        });
+    }
+
+    #[test]
+    fn dynamic_scroll_has_no_implicit_script_members_and_other_shapes_stay_strict() {
+        let schema = scb();
+        let metadata = LegacyMissionPayloadMetadata {
+            static_creation_order_boundary: 50,
+            by_creation_order: BTreeMap::new(),
+        };
+        let context = LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &metadata);
+        with_reader(&[], |reader| {
+            assert_eq!(
+                context
+                    .read_script_members(reader, 50, LegacyElementClass::Scroll)
+                    .unwrap(),
+                None
+            );
+            assert!(
+                context
+                    .read_script_members(reader, 51, LegacyElementClass::Target)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("dynamic Scroll")
+            );
+            assert!(
+                context
+                    .read_local_ai(reader, 52, LegacyElementClass::ActorNpcSoldier)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("cannot construct NPCs")
+            );
+            assert!(
+                context
+                    .read_actor_script_members(
+                        reader,
+                        53,
+                        LegacyElementClass::ActorNpcSoldier,
+                        "Fixture",
+                    )
+                    .unwrap_err()
+                    .to_string()
+                    .contains("dynamic ActorPc")
+            );
         });
     }
 }
