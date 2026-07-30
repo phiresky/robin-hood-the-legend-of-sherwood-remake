@@ -359,7 +359,11 @@ impl EnemyAi {
         self.base.list_us.clear();
         self.base.list_us.push(self.base.me);
         for friend in &tick.nearby_fighters {
-            if !friend.is_friendly || friend.handle == self.base.me || !friend.is_able_to_fight {
+            if !friend.is_friendly
+                || friend.handle == self.base.me
+                || !friend.is_able_to_fight
+                || !friend.is_detected_360_by_owner
+            {
                 continue;
             }
             if friend.is_pc
