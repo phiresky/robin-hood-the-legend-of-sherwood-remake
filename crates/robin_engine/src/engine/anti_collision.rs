@@ -650,6 +650,20 @@ pub fn apply_anti_collision_step(
         }
     }
 
+    let was_deviated = state.as_deref().is_some_and(|s| s.pi.deviated);
+    if was_deviated {
+        tracing::trace!(
+            mover = ?mover.id,
+            origin = ?mover.position_map,
+            future = ?future,
+            increment = ?increment,
+            speed,
+            points = ?points,
+            lines = ?lines,
+            "anti-collision deviation inputs"
+        );
+    }
+
     // The actor's effective radius may have shrunk if it's been
     // blocked (the blocked-count branch below shrinks it by 0.2 per
     // hit).  Honour that here so the sort + deviation math uses the
@@ -722,6 +736,15 @@ pub fn apply_anti_collision_step(
         points,
         lines,
     );
+    if deviated || was_deviated {
+        tracing::trace!(
+            mover = ?mover.id,
+            deviated,
+            deviated_future = ?deviated_future,
+            actor_radius,
+            "anti-collision deviation result"
+        );
+    }
 
     // Original keeps `ptFuture = position + increment * distance` and assigns
     // that point directly when none of the gathered repulsive objects
@@ -977,9 +1000,27 @@ pub fn gather_level_repulsive_lines(
         .into_iter()
         .map(|idx| {
             let g = &grid.level.lines[usize::from(idx)];
-            RepulsiveLine::new(g.a, g.b, RADIUS_OBSTACLE_LINE, ACTIONRADIUS_OBSTACLE)
+            repulsive_line_from_grid(g)
         })
         .collect()
+}
+
+fn repulsive_line_from_grid(g: &crate::fast_find_grid::GridLine) -> RepulsiveLine {
+    let mut line = RepulsiveLine::new(
+        g.a,
+        g.b,
+        RADIUS_OBSTACLE_LINE,
+        ACTIONRADIUS_OBSTACLE,
+    );
+    // `RHRepulsiveLine::InitializeNormal` points AREA-sector boundaries
+    // opposite to solid-obstacle boundaries. `GridLine` already retained
+    // that authoritative oriented normal when the motion sector was
+    // constructed; rebuilding it solely from the endpoints silently turns
+    // every AREA line into a non-AREA line.
+    line.normal = g.normal;
+    let direct = MapVec::new(-line.vector.y, line.vector.x);
+    line.is_area = g.normal.x * direct.x + g.normal.y * direct.y > 0.0;
+    line
 }
 
 /// Build `RepulsivePoint`s from the level's corner / outward-angle
@@ -1006,6 +1047,24 @@ pub fn gather_level_repulsive_points(
 mod tests {
     use super::*;
     use crate::coordinates::map_pt;
+
+    #[test]
+    fn level_repulsive_lines_preserve_area_oriented_normals() {
+        let a = map_pt(0.0, 0.0);
+        let b = map_pt(10.0, 0.0);
+
+        let mut area = crate::fast_find_grid::GridLine::new(a, b, true);
+        area.initialize_motion_normal(true);
+        let area_repulsive = repulsive_line_from_grid(&area);
+        assert_eq!(area_repulsive.normal, MapVec::new(0.0, 1.0));
+        assert!(area_repulsive.is_area);
+
+        let mut obstacle = crate::fast_find_grid::GridLine::new(a, b, true);
+        obstacle.initialize_motion_normal(false);
+        let obstacle_repulsive = repulsive_line_from_grid(&obstacle);
+        assert_eq!(obstacle_repulsive.normal, MapVec::new(0.0, -1.0));
+        assert!(!obstacle_repulsive.is_area);
+    }
 
     fn snapshot_mover_and_corpse(
         order_antagonist: Option<EntityId>,
