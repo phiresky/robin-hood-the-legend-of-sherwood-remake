@@ -135,6 +135,14 @@ impl LegacyElementPayloadStream {
                         context,
                     )
                 })?;
+            tracing::debug!(
+                slot = record.slot,
+                class = ?record.header.class,
+                creation_order = record.header.creation_order,
+                start_offset = record.start_offset,
+                end_offset = record.end_offset,
+                "decoded Original v48 element payload"
+            );
             records.push(record);
         }
 

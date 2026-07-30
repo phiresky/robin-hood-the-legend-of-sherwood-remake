@@ -1407,7 +1407,7 @@ pub struct LegacyNpcPayload {
     pub old_frame: u32,
     pub detectable_buckets: [LegacyDetectableBucket; 6],
     pub maximum_suspect: u16,
-    pub worst_detectable_type: u16,
+    pub worst_detectable_type: u32,
     pub custom_values: [i32; 10],
     pub gave_money: bool,
     pub human: LegacyHumanPayload,
@@ -1483,7 +1483,9 @@ impl LegacyNpcPayload {
                 )
             })?;
         let maximum_suspect = reader.read_u16("maximum_suspect")?;
-        let worst_detectable_type = reader.read_u16("worst_detectable_type")?;
+        // Despite its `muw` member prefix, Original declares this as the
+        // 32-bit `RHdetectableType` enum and serializes it with CHECKVAR.
+        let worst_detectable_type = reader.read_u32("worst_detectable_type")?;
         let mut custom_values = [0; 10];
         for (index, value) in custom_values.iter_mut().enumerate() {
             *value = reader.read_i32(format_args!("custom_values[{index}]"))?;
