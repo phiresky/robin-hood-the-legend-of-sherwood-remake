@@ -1214,6 +1214,19 @@ field into Rust's two representations, not a runtime transition: it therefore
 bypasses the normal posture transition guards while the detached save candidate
 is installed.
 
+### Linux-v48 script-global restoration
+
+Original owns one indexed engine-wide script-global array, used by
+`InitGlobal`, `SetGlobal`, and `GetGlobal`. Rust currently also has a
+mission-native map for those calls. Loaded-save adoption restored the indexed
+array but left the native map at mission-initialization values, so a completed
+one-shot condition could run again after loading.
+
+Adoption now rebuilds the native map from every serialized array slot. This
+also preserves Original's validity rule: zero-filled slack slots inside the
+serialized array remain valid global IDs rather than becoming absent map
+entries.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

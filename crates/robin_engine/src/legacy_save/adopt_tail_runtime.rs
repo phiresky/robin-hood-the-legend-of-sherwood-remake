@@ -203,14 +203,31 @@ impl LegacyTailRuntimeAdoptionPlan {
             mission.replace_global_vm_heap(global.heap);
         }
         engine.scripts.globals = self.script_globals;
+        let restored_globals = engine
+            .scripts
+            .globals
+            .iter()
+            .enumerate()
+            .map(|(id, &value)| {
+                (
+                    i32::try_from(id).expect("legacy script-global index exceeds i32"),
+                    value,
+                )
+            })
+            .collect();
+        let mission = engine
+            .scripts
+            .mission
+            .as_mut()
+            .expect("preflighted script globals mission disappeared");
+        mission.state.globals = restored_globals;
         engine.orders.timer_elements = self.timers;
         engine.feedback.cutscene_camera.sequence_element = self.camera_element;
     }
 }
 
 fn is_active_original_timer(command: Command, state: SequenceState) -> bool {
-    command == Command::Timer
-        && matches!(state, SequenceState::Todo | SequenceState::InProgress)
+    command == Command::Timer && matches!(state, SequenceState::Todo | SequenceState::InProgress)
 }
 
 fn preflight_global_vm(
@@ -540,7 +557,7 @@ mod tests {
 
     #[test]
     fn apply_replaces_script_globals_and_tail_owned_runtime_lists_together() {
-        let mut engine = EngineInner::new();
+        let (mut engine, _, _) = global_vm_fixture();
         engine.scripts.globals = vec![1, 2, 3];
         let plan = LegacyTailRuntimeAdoptionPlan {
             global_vm: None,
@@ -550,6 +567,10 @@ mod tests {
         };
         plan.apply(&mut engine);
         assert_eq!(engine.scripts.globals, [-7, 11]);
+        assert_eq!(
+            engine.scripts.mission.as_ref().unwrap().state.globals,
+            BTreeMap::from([(0, -7), (1, 11)])
+        );
         assert!(engine.orders.timer_elements.is_empty());
         assert!(engine.feedback.cutscene_camera.sequence_element.is_none());
     }
