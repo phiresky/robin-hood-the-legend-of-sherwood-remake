@@ -20,12 +20,14 @@ use thiserror::Error;
 
 use crate::{
     character_kind::CharacterKind,
+    coordinates::{MapVec, MoveBox},
     element::{
         ActorData, ActorPc, ElementBonus, ElementData, ElementKind, ElementNet, ElementProjectile,
         ElementScroll, Entity, EntityId, HULK_LENGTH, HumanData, NetData, ObjectData, ObjectType,
         ObjectTypeExt, PcData, ProjectileData,
     },
     engine::{EngineInner, LevelAssets},
+    fast_find_grid::FastFindGrid,
     profiles::CharacterProfileIdx,
 };
 
@@ -121,6 +123,15 @@ pub enum LegacyDynamicElementAdoptionError {
     MissingPcSpriteMaster {
         description_index: u32,
         profile_index: u32,
+    },
+    #[error(
+        "dynamic PC description {description_index} profile {profile_index} requires pathfinder move-box index {pathfinder_index}, but the loaded grid has only {move_box_count} entries"
+    )]
+    MissingPcMoveBox {
+        description_index: u32,
+        profile_index: u32,
+        pathfinder_index: u8,
+        move_box_count: usize,
     },
     #[error("dynamic PC description index {description_index} does not fit PcData::list_index")]
     PcDescriptionIndexOverflow { description_index: u32 },
@@ -218,6 +229,7 @@ impl LegacyDynamicElementAdoptionPlan {
                             record,
                             factory,
                             assets,
+                            &engine.world.fast_grid,
                             campaign_characters,
                         )?)
                     } else {
@@ -244,6 +256,7 @@ impl LegacyDynamicElementAdoptionPlan {
                         record,
                         factory,
                         assets,
+                        &engine.world.fast_grid,
                         campaign_characters,
                     )?)
                 }
@@ -357,10 +370,11 @@ fn construct_entity(
     record: &LegacyElementRecord,
     factory: LegacyDynamicElementFactory,
     assets: &LevelAssets,
+    fast_grid: &FastFindGrid,
     campaign_characters: &[LegacyPcDescription],
 ) -> Result<Entity, LegacyDynamicElementAdoptionError> {
     if factory == LegacyDynamicElementFactory::ActorPc {
-        return construct_pc(record, assets, campaign_characters);
+        return construct_pc(record, assets, fast_grid, campaign_characters);
     }
 
     let (object_type, kind) = factory_object(factory);
@@ -412,6 +426,7 @@ fn construct_entity(
 fn construct_pc(
     record: &LegacyElementRecord,
     assets: &LevelAssets,
+    fast_grid: &FastFindGrid,
     campaign_characters: &[LegacyPcDescription],
 ) -> Result<Entity, LegacyDynamicElementAdoptionError> {
     let description_index = record.pc_description_index.ok_or(
@@ -434,7 +449,7 @@ fn construct_pc(
             profile_index: raw_profile_index,
         },
     )?;
-    let sprite = assets
+    let mut sprite = assets
         .character_sprite_prototypes
         .get(&profile_index)
         .cloned()
@@ -442,6 +457,26 @@ fn construct_pc(
             description_index,
             profile_index: raw_profile_index,
         })?;
+    let pathfinder_index = profile.pathfinder_index;
+    let half_diagonal = fast_grid
+        .try_move_box_half_diagonal(pathfinder_index as usize)
+        .ok_or(LegacyDynamicElementAdoptionError::MissingPcMoveBox {
+            description_index,
+            profile_index: raw_profile_index,
+            pathfinder_index,
+            move_box_count: fast_grid.level.move_box_half_diagonals.len(),
+        })?;
+    // RHElementActorPC's constructor rebuilds these fields from the
+    // character profile and the loaded fast-find grid. RHPositionInterface's
+    // v48 serializer omits both fields, so phase-two save adoption must
+    // preserve this constructor state.
+    sprite
+        .position_iface
+        .set_pathfinder_index(pathfinder_index as u16);
+    sprite.position_iface.set_move_box(MoveBox::from_corners(
+        MapVec::new(-half_diagonal.x, -half_diagonal.y),
+        MapVec::new(half_diagonal.x, half_diagonal.y),
+    ));
     let list_index = u8::try_from(description_index).map_err(|_| {
         LegacyDynamicElementAdoptionError::PcDescriptionIndexOverflow { description_index }
     })?;
@@ -515,10 +550,13 @@ fn factory_object(factory: LegacyDynamicElementFactory) -> (ObjectType, ElementK
 mod tests {
     use super::*;
     use crate::{
+        coordinates::MoveBoxHalfDiagonal,
         legacy_save::{
+            campaign::{LegacyPcStatus, LegacySkill},
             elements::{LegacyElementFixupTable, LegacyElementRecord},
             payload_context::LegacyMissionPayloadMetadata,
         },
+        profiles::CharacterProfile,
         sprite::Sprite,
     };
 
@@ -560,6 +598,38 @@ mod tests {
             },
             creation_order_by_entity: BTreeMap::new(),
             static_creation_order_boundary: boundary,
+        }
+    }
+
+    fn pc_description(profile_index: u32) -> LegacyPcDescription {
+        LegacyPcDescription {
+            status: LegacyPcStatus {
+                skills: [
+                    LegacySkill {
+                        capacity: 0,
+                        experience: 0,
+                    },
+                    LegacySkill {
+                        capacity: 0,
+                        experience: 0,
+                    },
+                ],
+                life_points: 100,
+                in_coma: false,
+                ales: 0,
+                apples: 0,
+                arrows: 0,
+                nets: 0,
+                plants: 0,
+                purses: 0,
+                rations: 0,
+                stones: 0,
+                wasp_nests: 0,
+                beam_me_index_in_sherwood: -1,
+                name: String::new(),
+            },
+            character_profile_index: Some(profile_index),
+            instanced: true,
         }
     }
 
@@ -699,5 +769,105 @@ mod tests {
                 expected: Some(LegacyDynamicElementFactory::Arrow),
             }
         );
+    }
+
+    #[test]
+    fn dynamic_pc_rebuilds_constructor_owned_pathfinder_geometry() {
+        let mut engine = EngineInner::new();
+        engine
+            .world
+            .fast_grid
+            .add_move_box_half_diagonal(MoveBoxHalfDiagonal::new(2.0, 3.0));
+        engine
+            .world
+            .fast_grid
+            .add_move_box_half_diagonal(MoveBoxHalfDiagonal::new(7.0, 11.0));
+        let mut assets = LevelAssets::new();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .characters
+            .push(CharacterProfile {
+                pathfinder_index: 1,
+                ..Default::default()
+            });
+        assets
+            .character_sprite_prototypes
+            .insert(CharacterProfileIdx(0), Sprite::default());
+        let mut record = dynamic_record(
+            0,
+            45,
+            LegacyElementClass::ActorPc,
+            LegacyDynamicElementFactory::ActorPc,
+        );
+        record.pc_description_index = Some(0);
+        let envelope = envelope(vec![record]);
+
+        let plan = LegacyDynamicElementAdoptionPlan::preflight(
+            &engine,
+            &assets,
+            &envelope,
+            &empty_topology(40),
+            &[pc_description(0)],
+            100,
+        )
+        .unwrap();
+        let fixups = plan.apply(&mut engine);
+        let Entity::Pc(pc) = engine
+            .get_entity(fixups.by_saved_slot[0])
+            .expect("constructed PC")
+        else {
+            panic!("dynamic PC factory constructed a non-PC entity");
+        };
+        let position = &pc.element.sprite.position_iface;
+
+        assert_eq!(position.get_pathfinder_index(), 1);
+        assert_eq!(
+            position.get_half_diagonal(),
+            MoveBoxHalfDiagonal::new(7.0, 11.0)
+        );
+    }
+
+    #[test]
+    fn dynamic_pc_rejects_missing_constructor_move_box() {
+        let engine = EngineInner::new();
+        let mut assets = LevelAssets::new();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .characters
+            .push(CharacterProfile {
+                pathfinder_index: 3,
+                ..Default::default()
+            });
+        assets
+            .character_sprite_prototypes
+            .insert(CharacterProfileIdx(0), Sprite::default());
+        let mut record = dynamic_record(
+            0,
+            45,
+            LegacyElementClass::ActorPc,
+            LegacyDynamicElementFactory::ActorPc,
+        );
+        record.pc_description_index = Some(0);
+        let envelope = envelope(vec![record]);
+
+        let error = LegacyDynamicElementAdoptionPlan::preflight(
+            &engine,
+            &assets,
+            &envelope,
+            &empty_topology(40),
+            &[pc_description(0)],
+            100,
+        )
+        .err()
+        .expect("missing constructor move box must fail preflight");
+
+        assert_eq!(
+            error,
+            LegacyDynamicElementAdoptionError::MissingPcMoveBox {
+                description_index: 0,
+                profile_index: 0,
+                pathfinder_index: 3,
+                move_box_count: 0,
+            }
+        );
+        assert_eq!(engine.world.entities.occupied().count(), 0);
     }
 }

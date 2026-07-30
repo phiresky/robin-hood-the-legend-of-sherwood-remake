@@ -1005,6 +1005,23 @@ serialized posture itself. Living optical targets consequently carry a valid
 ground-height detection point instead of being rejected before Original's
 ordinary active/building/detection gates can decide whether it is consumed.
 
+### Linux-v48 dynamic-PC constructor geometry
+
+Several Linux2/Linux3 saves next reached a moving dynamic PC whose serialized
+map-space move box was valid, but whose local centered move box remained unset
+and whose pathfinder index remained `u16::MAX`. Anti-collision therefore
+failed when it requested the local half diagonal. This was not malformed save
+geometry: `RHPositionInterface::Serialize` deliberately omits both
+constructor-owned fields.
+
+`RHElementActorPC` reconstructs them after loading the character sprite,
+looking up `ubPathFinderIndex` in the active fast-find grid and installing the
+resulting centered box plus the index. Rust's dynamic load factory now performs
+that same initialization before phase two restores the serialized position
+interface. Preflight fails explicitly if the saved PC's profile references a
+move-box table entry absent from the loaded mission, rather than fabricating a
+unit box. Static PCs continue to retain their mission-start constructor state.
+
 ### Linux-v48 dormant carried-posture storage
 
 Profile 011 creation order 157 stores `mCarriedPosture = 161437968` while
