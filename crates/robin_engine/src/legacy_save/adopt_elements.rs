@@ -272,6 +272,7 @@ pub enum LegacyElementAdoptError {
 #[derive(Clone, Debug)]
 pub struct LegacyStaticElementAdoption {
     records: Vec<ConvertedElement>,
+    clear_ambush_points: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -761,7 +762,16 @@ impl LegacyStaticElementAdoption {
                 npc_leaf: convert_npc_leaf(&record.payload, entity_id, creation_order)?,
             });
         }
-        Ok(Self { records })
+        let clear_ambush_points = records.iter().any(|record| {
+            record
+                .npc
+                .as_ref()
+                .is_some_and(|npc| matches!(&npc.local_ai, ConvertedLocalAi::Enemy { .. }))
+        });
+        Ok(Self {
+            records,
+            clear_ambush_points,
+        })
     }
 
     /// Install a preflighted plan into a candidate engine.
@@ -771,6 +781,9 @@ impl LegacyStaticElementAdoption {
     /// preflight all save sections against it, apply all plans, then swap the
     /// complete candidate into service.
     pub fn apply(self, engine: &mut EngineInner) {
+        if self.clear_ambush_points {
+            clear_ambush_points_on_enemy_load(&mut engine.ai.global);
+        }
         for converted in self.records {
             let entity = engine
                 .world
@@ -1398,7 +1411,7 @@ fn convert_local_ai(
                 can_go_away: tail.can_go_away,
             })
         }
-        (LegacyLocalAiTail::Enemy(tail), AiBrain::Enemy(_)) => {
+        (LegacyLocalAiTail::Enemy(tail), AiBrain::Enemy(runtime_ai)) => {
             let actual_seek_point = convert_actual_seek_point(
                 tail.actual_seek_point_id,
                 tail.personal_seek_point_1.is_some(),
@@ -1406,20 +1419,11 @@ fn convert_local_ai(
                 ai_global.seek_points.len(),
                 creation_order,
             )?;
-            let ambush_point_status = tail
-                .ambush_point_statuses
-                .iter()
-                .copied()
-                .map(|value| ambush_status(value, creation_order))
-                .collect::<Result<Vec<_>, _>>()?;
-            if ambush_point_status.len() != ai_global.ambush_points.len() {
-                return Err(LegacyElementAdoptError::AiTopologyCount {
-                    creation_order,
-                    field: "local_ai.enemy.ambush_point_statuses",
-                    saved: ambush_point_status.len(),
-                    initialized: ai_global.ambush_points.len(),
-                });
-            }
+            let ambush_point_status = convert_ambush_point_statuses(
+                &runtime_ai.ambush_point_status,
+                &tail.ambush_point_statuses,
+                creation_order,
+            )?;
             let (my_shooting_point, my_archery_sector) =
                 convert_archery_refs(tail, ai_global, creation_order)?;
             Ok(ConvertedLocalAi::Enemy {
@@ -2573,6 +2577,32 @@ fn ambush_status(
     }
 }
 
+fn convert_ambush_point_statuses(
+    initialized: &[crate::ai_enemy::AmbushPointStatus],
+    saved: &[i32],
+    creation_order: u32,
+) -> Result<Vec<crate::ai_enemy::AmbushPointStatus>, LegacyElementAdoptError> {
+    // RHArtificialMalignity::Serialize does not clear the per-NPC
+    // marrayAmbushPointStatus initialized by InitAI. It appends every saved
+    // status after deleting the separate shared marrayAmbushPoints topology.
+    let mut statuses = initialized.to_vec();
+    statuses.extend(
+        saved
+            .iter()
+            .copied()
+            .map(|value| ambush_status(value, creation_order))
+            .collect::<Result<Vec<_>, _>>()?,
+    );
+    Ok(statuses)
+}
+
+fn clear_ambush_points_on_enemy_load(ai_global: &mut AiGlobalState) {
+    // Original load behavior, including its likely typo, is authoritative:
+    // RHArtificialMalignity::Serialize calls marrayAmbushPoints.Delete()
+    // (not marrayAmbushPointStatus.Delete()) for every enemy AI it reads.
+    ai_global.ambush_points.clear();
+}
+
 fn decision(
     value: i32,
     creation_order: u32,
@@ -3700,6 +3730,44 @@ mod tests {
             convert_actual_seek_point(6666, false, false, 0, 31).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn linux_v48_enemy_load_appends_saved_ambush_statuses_to_initialized_list() {
+        use crate::ai_enemy::AmbushPointStatus::{Checked, Far, Near};
+
+        assert_eq!(
+            convert_ambush_point_statuses(&[Far, Far], &[], 88).unwrap(),
+            vec![Far, Far],
+            "a zero-length saved list leaves constructor-initialized statuses intact"
+        );
+        assert_eq!(
+            convert_ambush_point_statuses(&[Far, Far], &[0, 1, 2], 88).unwrap(),
+            vec![Far, Far, Far, Near, Checked],
+        );
+        assert!(matches!(
+            convert_ambush_point_statuses(&[Far], &[3], 88),
+            Err(LegacyElementAdoptError::UnknownEnum {
+                field: "local_ai.enemy.ambush_point_status",
+                value: 3,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn linux_v48_enemy_load_deletes_initialized_global_ambush_points() {
+        let mut global = AiGlobalState::default();
+        global.ambush_points.push(crate::ai::AmbushPoint {
+            position: Position::default(),
+            direction: 7,
+            position_3d: crate::coordinates::WorldPoint3D::new(1.0, 2.0, 3.0),
+            id: 4,
+        });
+
+        clear_ambush_points_on_enemy_load(&mut global);
+
+        assert!(global.ambush_points.is_empty());
     }
 
     #[test]
