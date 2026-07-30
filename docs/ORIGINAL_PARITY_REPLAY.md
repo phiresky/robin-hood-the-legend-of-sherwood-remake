@@ -1871,6 +1871,58 @@ sword message. The Original restored life from 100 to 100, while Rust raised it
 to 120. All shared damage paths now retain the Original literal, including
 actors whose authored maximum differs.
 
+### Return-to-post completion writes posture instead of relaunching the action
+
+`GoTo(..., GOTO_SPECIAL_ACTION)` already appends the return-to-post Turn and
+SitDown/EnterLeisure commands. When their final `EVENT_DONE` reaches
+`SUBSTATE_DEFAULT_GOTOPOST_TURN`, the Original directly calls `SetPosture` with
+Sitting or Leisure and enters `DEFAULT_ONPOST`.
+
+Rust instead launched another SitDown/EnterLeisure command from that completion
+callback. Linux3 Profile 001 Savegame 009 exposed the duplicate at frame 12986:
+the Original civilian selected its ordinary Wait after sitting, while Rust
+began a redundant upright-to-sitting sequence. The callback now performs the
+literal posture write. That replay passes the return-to-post boundary and
+advances another 117 frames to an independent RNG-consumption difference.
+
+### Loaded actors preserve the overloaded seek/wait countdown
+
+The Original stores ordinary command waits and seek-refresh aging in the same
+unsigned `RHElementActor::mulWaitTime` field. Rust deliberately separates those
+responsibilities, but Linux-v48 adoption previously restored the serialized
+scalar only into `wait_time`. A seek already active in a save therefore aged a
+fresh `seek_refresh_wait`, while the stale serialized value reappeared after
+the post-seek interaction took over.
+
+Adoption now seeds both split candidates from the authoritative saved scalar,
+and every seek-refresh decrement mirrors its wrapped value into the legacy
+wait copy. The live command still selects which Rust counter drives behavior;
+the mirror only preserves the Original scalar across every possible seek exit.
+A successful `StartPostSeekSequence` also folds the seek copy back before
+discarding its ownership markers. Linux2 QuickSave consequently advances from
+the first exposed mismatch at frame 1927 to an independent path/command
+boundary at frame 1968, while Save 024 advances from frame 32482 to an
+independent interaction boundary at frame 32717.
+
+### Patrol dissolution returns members to duty synchronously
+
+The Original script native calls `RHArtificialIntelligence::ClearPatrol`
+directly (`RHScript.cpp:8557`, `RHartificialintelligence.cpp:7502`).
+`ClearPatrol` clears each theoretical member's chief pointer and immediately
+calls `ForceReturnToDuty` for members in the default AI state. Those nested
+Think calls can register replacement movement before the next sequence-manager
+pass.
+
+Rust previously approximated each nested call with a deferred self-stimulus.
+Because those stimuli drained after the sequence manager, every replacement
+route was instructed one simulation frame late. Linux3 Profile 003 Restart
+exposed the ordering difference at frame 240 when a six-member patrol was
+dissolved. `RemoveAllSubordinates` now crosses an engine-owned script barrier:
+it clears the patrol in Original order and synchronously dispatches each
+required return-to-duty stimulus with live engine context. Ordinary sequence
+instruction remains with the following manager phase. The complete Restart
+recording now matches every recorded frame.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
