@@ -2079,6 +2079,11 @@ fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
             },
         ) => {
             apply_local_ai_common(&mut ai.base, common);
+            // Original has one `mlistAlertedUs` member on the common AI
+            // base. Runtime EnemyAi keeps the actively coordinated officer
+            // group in its typed mirror, so restore that mirror from the
+            // authoritative serialized list as part of adoption.
+            ai.alerted_us = ai.base.list_alerted_us.clone();
             ai.last_stimulus_dispatched_to_patrol = Some(last_stimulus_dispatched_to_patrol);
             ai.frame_when_missed_charly = frame_when_missed_charly;
             ai.heard_nets = heard_nets;
