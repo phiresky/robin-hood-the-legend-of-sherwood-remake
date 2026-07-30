@@ -1198,19 +1198,39 @@ pub enum GameMaterial {
 }
 
 impl GameMaterial {
-    pub fn from_u32(value: u32) -> Self {
+    pub fn try_from_u32(value: u32) -> Option<Self> {
         match value {
-            0 => Self::Ground,
-            1 => Self::Wood,
-            2 => Self::Stone,
-            3 => Self::Grass,
-            4 => Self::Leaves,
-            5 => Self::Water,
-            6 => Self::Bush,
-            7 => Self::Ice,
-            8 => Self::Hole,
-            10 => Self::LightShadow,
-            _ => panic!("invalid RHmaterial value: {value}"),
+            0 => Some(Self::Ground),
+            1 => Some(Self::Wood),
+            2 => Some(Self::Stone),
+            3 => Some(Self::Grass),
+            4 => Some(Self::Leaves),
+            5 => Some(Self::Water),
+            6 => Some(Self::Bush),
+            7 => Some(Self::Ice),
+            8 => Some(Self::Hole),
+            10 => Some(Self::LightShadow),
+            _ => None,
+        }
+    }
+
+    pub fn from_u32(value: u32) -> Self {
+        Self::try_from_u32(value)
+            .unwrap_or_else(|| panic!("invalid live RHmaterial value: {value}"))
+    }
+
+    pub const fn as_u32(self) -> u32 {
+        match self {
+            Self::Ground => 0,
+            Self::Wood => 1,
+            Self::Stone => 2,
+            Self::Grass => 3,
+            Self::Leaves => 4,
+            Self::Water => 5,
+            Self::Bush => 6,
+            Self::Ice => 7,
+            Self::Hole => 8,
+            Self::LightShadow => 10,
         }
     }
 
@@ -1643,7 +1663,30 @@ bitflags! {
 
 #[cfg(test)]
 mod tests {
-    use super::{ActionState, Command};
+    use super::{ActionState, Command, GameMaterial};
+
+    #[test]
+    fn game_material_raw_conversion_is_exact_and_non_clamping() {
+        for material in [
+            GameMaterial::Ground,
+            GameMaterial::Wood,
+            GameMaterial::Stone,
+            GameMaterial::Grass,
+            GameMaterial::Leaves,
+            GameMaterial::Water,
+            GameMaterial::Bush,
+            GameMaterial::Ice,
+            GameMaterial::Hole,
+            GameMaterial::LightShadow,
+        ] {
+            assert_eq!(
+                GameMaterial::try_from_u32(material.as_u32()),
+                Some(material)
+            );
+        }
+        assert_eq!(GameMaterial::try_from_u32(9), None);
+        assert_eq!(GameMaterial::try_from_u32(217_559_952), None);
+    }
 
     #[test]
     fn command_discriminants_retain_original_dead_animal_slot() {

@@ -518,25 +518,12 @@ pub(crate) fn preflight_v48_position(
                 "RHincrementComputed bit mask 0..7",
             )
         })?;
-    let material = match payload.material {
-        0 => crate::element::GameMaterial::Ground,
-        1 => crate::element::GameMaterial::Wood,
-        2 => crate::element::GameMaterial::Stone,
-        3 => crate::element::GameMaterial::Grass,
-        4 => crate::element::GameMaterial::Leaves,
-        5 => crate::element::GameMaterial::Water,
-        6 => crate::element::GameMaterial::Bush,
-        7 => crate::element::GameMaterial::Ice,
-        8 => crate::element::GameMaterial::Hole,
-        10 => crate::element::GameMaterial::LightShadow,
-        value => {
-            return Err(invalid_position(
-                "material",
-                value,
-                "serialized RHmaterial value 0..8 or 10",
-            ));
-        }
-    };
+    // `CHECKENUM` copies the complete four-byte C++ enum storage without
+    // validating it. Projectile Hourglass can copy a trajectory sentinel or
+    // indeterminate trajectory material into RHPositionInterface before a
+    // save, so preserve the raw bits. PositionInterface validates only if
+    // gameplay later consumes the value as a material.
+    let material = payload.material;
     let posture = crate::element::Posture::try_from(payload.posture).map_err(|_| {
         invalid_position(
             "posture",
@@ -1009,6 +996,44 @@ mod tests {
             position.get_pathfinder_index(),
             77,
             "Original does not serialize mission-derived pathfinder indices"
+        );
+    }
+
+    #[test]
+    fn position_preserves_unchecked_material_bits_until_live_use() {
+        let (envelope, topology, _) = fixture();
+        let entities = LegacyEntityFixups::build(&envelope, &topology).unwrap();
+        let mut payload = position_payload();
+        payload.material = 217_559_952;
+        payload.obstacle = LegacySignedIndexRef(None);
+
+        let saved = preflight_v48_position(
+            &payload,
+            &entities,
+            &LegacyPositionTopology {
+                sector_count: 3,
+                doors: vec![DoorHandle(9)],
+                projection_areas: Vec::new(),
+                sight_obstacles: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(saved.material, payload.material);
+
+        let mut position = PositionInterface::new();
+        position.restore_v48_serialized_state(saved);
+        assert_eq!(position.v48_serialized_state().material, payload.material);
+
+        assert!(
+            crate::element::GameMaterial::try_from_u32(payload.material).is_none(),
+            "raw material must remain invalid rather than be clamped"
+        );
+
+        position.set_material(crate::element::GameMaterial::Water);
+        assert_eq!(position.get_material(), crate::element::GameMaterial::Water);
+        assert_eq!(
+            position.v48_serialized_state().material,
+            crate::element::GameMaterial::Water.as_u32()
         );
     }
 

@@ -668,7 +668,11 @@ pub struct PositionInterface {
     door_direction: bool,
 
     // -- Material --
-    material: crate::element::GameMaterial,
+    // Original serializes the enum as an unchecked ULONG. Projectile
+    // trajectory points can copy the sentinel 9 or uninitialized raw storage
+    // here, so save adoption must retain all bits until gameplay actually
+    // consumes the material.
+    material: u32,
 
     // -- Anti-collision --
     goal_next_valid: bool,
@@ -699,7 +703,9 @@ pub struct PositionInterface {
 pub(crate) struct PositionInterfaceV48State {
     pub computed_position: PositionComputed,
     pub computed_increment: IncrementComputed,
-    pub material: crate::element::GameMaterial,
+    /// Raw unchecked `RHmaterial` storage. Validated only by live material
+    /// access, matching Original's plain `CHECKENUM` byte copy.
+    pub material: u32,
     pub posture: crate::element::Posture,
     pub old_posture: crate::element::Posture,
     pub direction: Direction,
@@ -800,7 +806,7 @@ impl PositionInterface {
             door: DoorHandle::NULL,
             door_direction: false,
 
-            material: crate::element::GameMaterial::default(),
+            material: crate::element::GameMaterial::default().as_u32(),
 
             goal_next_valid: false,
             anti_collision_on: true,
@@ -1226,11 +1232,11 @@ impl PositionInterface {
     #[inline]
     #[must_use]
     pub fn get_material(&self) -> crate::element::GameMaterial {
-        self.material
+        crate::element::GameMaterial::from_u32(self.material)
     }
     #[inline]
     pub fn set_material(&mut self, m: crate::element::GameMaterial) {
-        self.material = m;
+        self.material = m.as_u32();
     }
 
     #[inline]
