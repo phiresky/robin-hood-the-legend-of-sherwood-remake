@@ -447,9 +447,11 @@ pub fn eye_z_for_posture(posture: Posture, is_rider: bool) -> f32 {
         | Posture::DeadBack
         | Posture::StuckUnderNet
         | Posture::Tied => 5.0,
-        Posture::Carried | Posture::Undefined | Posture::Unused => {
-            panic!("eye_z_for_posture called for posture without an eye point: {posture:?}")
-        }
+        // Original initializes the result to GetPosition(), reports its
+        // nonfatal/default-arm diagnostic, and returns without a Z offset.
+        // Loaded saves can expose Undefined before a later actor owner slot
+        // installs its first concrete posture.
+        Posture::Carried | Posture::Undefined | Posture::Unused => 0.0,
     }
 }
 
@@ -496,9 +498,10 @@ pub fn detection_z_for_posture(posture: Posture, is_rider: bool) -> f32 {
         | Posture::DeadBack
         | Posture::StuckUnderNet
         | Posture::Tied => 2.0,
-        Posture::Undefined | Posture::Unused => {
-            panic!("detection_z_for_posture called for undefined posture: {posture:?}")
-        }
+        // ComputeDetectionPoint initializes the output to GetPosition().
+        // Its default arm asserts in debug builds but returns that unchanged
+        // point in the shipped/replay build.
+        Posture::Undefined | Posture::Unused => 0.0,
     }
 }
 
@@ -756,6 +759,10 @@ mod tests {
         // Lying uses +5 (eye) vs +2 (detection).
         assert_eq!(eye_z_for_posture(Posture::Lying, false), 5.0);
         assert_eq!(detection_z_for_posture(Posture::Lying, false), 2.0);
+        // Original's default arms leave the output at GetPosition().
+        assert_eq!(eye_z_for_posture(Posture::Undefined, false), 0.0);
+        assert_eq!(eye_z_for_posture(Posture::Carried, false), 0.0);
+        assert_eq!(detection_z_for_posture(Posture::Undefined, false), 0.0);
     }
 
     #[test]

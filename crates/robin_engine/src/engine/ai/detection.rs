@@ -3050,10 +3050,14 @@ impl EngineInner {
                         posture,
                         action_state: pc.actor.action_state,
                         building_sector: self.entity_building_sector(pc.element.sector()),
-                        eye_z: (!dead && !matches!(posture, Posture::Undefined | Posture::Unused))
-                            .then(|| {
-                                ground_z + crate::stealth::detection_z_for_posture(posture, false)
-                            }),
+                        // Original ComputeDetectionPoint's default posture
+                        // arm leaves its already-initialized GetPosition()
+                        // result unchanged. A living loaded PC with
+                        // RHPOSTURE_UNDEFINED therefore has a valid
+                        // zero-offset detection point.
+                        eye_z: (!dead).then(|| {
+                            ground_z + crate::stealth::detection_z_for_posture(posture, false)
+                        }),
                         ground_z,
                         direction: pc.element.direction(),
                         active: pc.element.active,
@@ -3102,11 +3106,10 @@ impl EngineInner {
                         posture,
                         action_state: soldier.actor.action_state,
                         building_sector: self.entity_building_sector(soldier.element.sector()),
-                        eye_z: (!dead && !matches!(posture, Posture::Undefined | Posture::Unused))
-                            .then(|| {
-                                soldier.element.position().z
-                                    + crate::stealth::detection_z_for_posture(posture, is_rider)
-                            }),
+                        eye_z: (!dead).then(|| {
+                            soldier.element.position().z
+                                + crate::stealth::detection_z_for_posture(posture, is_rider)
+                        }),
                         ground_z: soldier.element.position().z,
                         direction: soldier.element.direction(),
                         active: soldier.element.active,

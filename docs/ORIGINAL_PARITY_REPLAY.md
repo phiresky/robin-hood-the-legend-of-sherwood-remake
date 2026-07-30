@@ -986,6 +986,25 @@ order immediately before installing each constructed bonus. It does not skip
 the replay cursor or infer a correction from the trace header; the ordinary
 class-specific load factory itself reproduces the source side effect.
 
+### Linux-v48 undefined live-PC eye points
+
+After the dynamic constructor RNG cursor matched, multiple Linux2/Linux3 saves
+reached active, playable dynamic PC 101 with serialized posture
+`RHPOSTURE_UNDEFINED` before that actor's later owner slot established a
+concrete posture. Rust's eager AI snapshot computed eye/detection height for
+the PC and panicked.
+
+Original does not substitute an upright posture here. `ComputeEyesPoint`
+initializes its result to `GetPosition()`, reports the unknown posture through
+its nonfatal default arm, and returns the unchanged point.
+`ComputeDetectionPoint` also initializes from `GetPosition()` and, in the
+shipping/replay build, returns unchanged after its default-arm assertion.
+Rust now represents those exact zero-offset points for `Undefined`/unused
+postures (and for the eye-only `Carried` default arm), while retaining the
+serialized posture itself. Living optical targets consequently carry a valid
+ground-height detection point instead of being rejected before Original's
+ordinary active/building/detection gates can decide whether it is consumed.
+
 ### Linux-v48 dormant carried-posture storage
 
 Profile 011 creation order 157 stores `mCarriedPosture = 161437968` while
