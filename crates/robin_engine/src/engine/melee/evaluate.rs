@@ -1175,8 +1175,11 @@ impl EngineInner {
             })
             .fold(0u16, |acc, fa| acc.saturating_add(fa));
 
-        let (dx_dir, dy_dir) =
-            crate::element_kinds::direction_vector_16(entity.element_data().direction());
+        // RHElement::GetDirectionVector calls SetSector0to15 with
+        // ASPECT_RATIO. Keep this in projected map space for both the
+        // forward-facing test and the eventual step-back destination.
+        let [dx_dir, dy_dir] =
+            crate::position_interface::sector_to_vector_iso(entity.element_data().direction());
         let my_pos = entity.element_data().position();
 
         let my_max_range = required_hth_weapon_profile(

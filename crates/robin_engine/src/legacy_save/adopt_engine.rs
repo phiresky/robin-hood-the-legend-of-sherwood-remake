@@ -173,6 +173,7 @@ impl LegacyKnownAdoptionPlan {
                 &sequence_topology,
                 &sequences,
                 &body.campaigns.live.campaign,
+                assets,
             ),
         )?;
         let actor_ownership = stage(

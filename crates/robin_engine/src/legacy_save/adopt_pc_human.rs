@@ -9,6 +9,7 @@
 use thiserror::Error;
 
 use crate::{
+    character_kind::CharacterKind,
     coordinates::{MapPoint, WorldPoint3D},
     element::{
         Entity, EntityId, EntityIdKind, HumanBoundingBox2State, HumanData, HumanPlaneState,
@@ -16,10 +17,10 @@ use crate::{
         PcAmmoData, PcData, PcPortraitQuickIconState, PcPortraitState, Posture, QuickAction,
         SmalltalkHint, WorkIcon,
     },
-    engine::EngineInner,
+    engine::{EngineInner, LevelAssets},
     pc_status::{HumanStatus, PcStatus, Skill},
     position_interface::SectorHandle,
-    profiles::Action,
+    profiles::{Action, CharacterProfileIdx, ProfileManager},
     sequence::{Sequence, SequenceElementData, SequenceElementRef},
 };
 
@@ -91,12 +92,19 @@ pub enum LegacyPcHumanAdoptError {
         character_count: usize,
     },
     #[error(
-        "saved PC creation order {creation_order} profile identity disagrees: entity={entity_profile}, campaign character={campaign_profile:?}"
+        "saved PC creation order {creation_order} campaign character {character_index} has no character profile"
     )]
-    ProfileIdentity {
+    MissingCampaignProfile {
         creation_order: u32,
-        entity_profile: u32,
-        campaign_profile: Option<u32>,
+        character_index: usize,
+    },
+    #[error(
+        "saved PC creation order {creation_order} campaign character {character_index} references missing character profile {profile_index}"
+    )]
+    UnknownCampaignProfile {
+        creation_order: u32,
+        character_index: usize,
+        profile_index: u32,
     },
     #[error(
         "saved PC creation order {creation_order} contains two different playability values: member={member}, interface={interface}"
@@ -164,6 +172,11 @@ struct ConvertedHuman {
 #[derive(Debug)]
 struct ConvertedPc {
     character_index: usize,
+    profile_index: CharacterProfileIdx,
+    kind: Option<CharacterKind>,
+    has_lockpick: bool,
+    has_climb: bool,
+    has_jump: bool,
     status: PcStatus,
     work_icon: WorkIcon,
     playable: bool,
@@ -213,6 +226,7 @@ impl LegacyPcHumanAdoptionPlan {
         sequence_topology: &LegacySequenceTopology,
         sequences: &LegacySequenceAdoptionPlan,
         live_campaign: &LegacyCampaign,
+        assets: &LevelAssets,
     ) -> Result<Self, LegacyPcHumanAdoptError> {
         let line_topology = LegacyLineTopology::derive(engine)?;
         let mut records = Vec::new();
@@ -251,7 +265,7 @@ impl LegacyPcHumanAdoptionPlan {
             )?;
             let pc = saved_pc
                 .map(|saved| {
-                    let Entity::Pc(runtime_pc) = runtime else {
+                    let Entity::Pc(_) = runtime else {
                         return Err(LegacyPcHumanAdoptError::ExpectedPc {
                             creation_order,
                             entity_id,
@@ -259,11 +273,11 @@ impl LegacyPcHumanAdoptionPlan {
                     };
                     convert_pc(
                         saved,
-                        runtime_pc.pc.profile_index.0,
                         creation_order,
                         entities,
                         sequence_topology,
                         live_campaign,
+                        &assets.profile_manager,
                     )
                 })
                 .transpose()?;
@@ -443,11 +457,11 @@ fn convert_human(
 #[allow(clippy::too_many_arguments)]
 fn convert_pc(
     saved: &LegacyPcPayload<LegacyHumanPayload, LegacyInlineSequence>,
-    runtime_profile: u32,
     creation_order: u32,
     entities: &LegacyEntityFixups,
     sequence_topology: &LegacySequenceTopology,
     live_campaign: &LegacyCampaign,
+    profiles: &ProfileManager,
 ) -> Result<ConvertedPc, LegacyPcHumanAdoptError> {
     let character_index = saved.pre_human.description.0 as usize;
     let description = live_campaign.characters.get(character_index).ok_or(
@@ -457,13 +471,21 @@ fn convert_pc(
             character_count: live_campaign.characters.len(),
         },
     )?;
-    if description.character_profile_index != Some(runtime_profile) {
-        return Err(LegacyPcHumanAdoptError::ProfileIdentity {
+    let profile_index = description.character_profile_index.ok_or(
+        LegacyPcHumanAdoptError::MissingCampaignProfile {
             creation_order,
-            entity_profile: runtime_profile,
-            campaign_profile: description.character_profile_index,
-        });
-    }
+            character_index,
+        },
+    )?;
+    let profile = profiles.get_character(profile_index).ok_or(
+        LegacyPcHumanAdoptError::UnknownCampaignProfile {
+            creation_order,
+            character_index,
+            profile_index,
+        },
+    )?;
+    let kind = CharacterKind::from_profile(&profile.filename, &profile.profile_name);
+    let (has_lockpick, has_climb, has_jump) = PcData::movement_auth_from_profile(profile);
     if saved.pre_human.playable_member != saved.pre_human.playable_interface {
         return Err(LegacyPcHumanAdoptError::PlayabilityMismatch {
             creation_order,
@@ -521,6 +543,11 @@ fn convert_pc(
             })?;
     Ok(ConvertedPc {
         character_index,
+        profile_index: CharacterProfileIdx(profile_index),
+        kind,
+        has_lockpick,
+        has_climb,
+        has_jump,
         status,
         work_icon: work_icon(saved.pre_human.work_icon, creation_order)?,
         playable: saved.pre_human.playable_member,
@@ -661,6 +688,16 @@ fn apply_pc(pc: &mut PcData, saved: &ConvertedPc) {
         u32::try_from(saved.character_index)
             .expect("saved campaign description index originated as an Original u32"),
     );
+    // RHElementActorPC::Serialize restores mpDescription and then replaces
+    // mpProfile from that description. Profile-backed behavior follows the
+    // serialized description even when the mission constructor used another
+    // profile (notably PCs waiting to be rescued). Constructor-only `robin`
+    // and sprite geometry are deliberately retained.
+    pc.profile_index = saved.profile_index;
+    pc.kind = saved.kind;
+    pc.has_lockpick = saved.has_lockpick;
+    pc.has_climb = saved.has_climb;
+    pc.has_jump = saved.has_jump;
     pc.ammo = PcAmmoData {
         ales: saved.status.num_ales,
         arrows: saved.status.num_arrows,

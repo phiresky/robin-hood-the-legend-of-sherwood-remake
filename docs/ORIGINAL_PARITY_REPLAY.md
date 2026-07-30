@@ -1041,6 +1041,15 @@ profile identity and never falls back to a profile search. A focused duplicate-
 profile test keeps the first matching description full while the selected
 description is empty, proving pickup capacity follows the exact pointer.
 
+The serialized description may intentionally name a different profile than
+the mission-start PC constructor. Original calls this out for PCs waiting to
+be rescued: after reading `mpDescription`, `RHElementActorPC::Serialize`
+replaces `mpProfile` from that description. Linux-v48 adoption now does the
+same and refreshes Rust's profile-derived character kind and contextual
+movement permissions. It retains constructor-only state that Original does
+not replace at this point, including the `mbRobin` flag and constructed sprite
+geometry.
+
 ### Linux-v48 dormant carried-posture storage
 
 Profile 011 creation order 157 stores `mCarriedPosture = 161437968` while
@@ -1115,6 +1124,22 @@ ordinary START, as demonstrated by Linux3 Profile 002 `ExQuickSave` at frame
 this class split remains a documented runtime TODO. Linux2 Profile 002 saves
 013 and 021 subsequently match every recorded frame; Linux3 Profile 003 save
 064 advances from frame 5,929 to 5,983.
+
+### Isometric smalltalk step-back direction
+
+Two loaded-save traces reached the same `IsStepBackNeeded` displacement with
+the correct animation distance and X coordinate but an overlarge Y component:
+Linux3 Profile 003 save 040 at frame 260 and save 064 at frame 5,983. Rust used
+the unprojected 16-sector unit vector for both the opponent-facing test and the
+step-back destination. Original `RHElement::GetDirectionVector` calls
+`SBGeoVector2D::SetSector0to15(direction, ASPECT_RATIO)`, which compresses the Y
+component into isometric map space.
+
+The smalltalk step-back path now uses the shared aspect-corrected sector vector
+for both operations. This is the general `GetDirectionVector` translation and
+does not depend on recorded positions or entity identities. Save 040 advances
+from frame 260 to 267 and save 064 from frame 5,983 to 5,992; both then expose
+the same independent `Provoke` versus `Wait` command mismatch.
 
 ### Large-window compressed trace input
 
