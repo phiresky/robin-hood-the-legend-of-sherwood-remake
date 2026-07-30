@@ -1127,25 +1127,31 @@ so the `RHMOTION_START` arm does not change the actor from `WAITING` to
 continuation and exact displacement, but treated it as a fresh walking start
 and exposed `MOVING` one frame early.
 
-Generated PC transition-distance continuations now carry a one-shot runtime
-tag. Their first START-owned posture/action-state effect is suppressed, then
-the tag is consumed. When that copied order hands off to the authored walking
-order, a second one-shot tag establishes the deferred movement state if the
-authored order remains short of its goal after executing. This matters when
-the sprite continues the same animation or the proximity wrapper reports
-`TERMINATED`: neither diagnostic result alone reproduces the Original actor
-state. An authored successor which actually reaches its goal and hands off to
-the stop transition in the same call retains `WAITING`.
+Every generated transition-distance continuation now carries a one-shot
+runtime tag. Its first START-owned posture/action-state effect is deferred
+until the movement result establishes whether that copied order survived the
+same `Execute` call. A non-PC continuation which remains current enters
+`MOVING`; a short continuation which satisfies its arrival predicate and hands
+off in that call retains the transition's `WAITING` state for that frame.
+
+PC continuations retain their distinct two-stage handoff: the copied
+continuation suppresses its START, and a second one-shot tag establishes the
+deferred movement state when the authored walking successor remains short of
+its goal after executing. This matters when the sprite continues the same
+animation or the proximity wrapper reports `TERMINATED`: neither diagnostic
+result alone reproduces the Original actor state. An authored successor which
+actually reaches its goal and hands off to the stop transition in the same call
+retains `WAITING`.
 
 This two-stage handoff fixes the repeated Linux3 Profile 001 `MoveOk` cluster;
 save 021 now matches through its complete recording instead of diverging on
 PC 114 at frame 202. It also preserves the complete matches for Linux2 Profile
 002 saves 013 and 021 and Linux3 Profile 003 save 064, including the latter
-save's earlier continuation at frame 5,929. The equivalent soldier
-continuation remains an ordinary START, as demonstrated by Linux3 Profile 002
-`ExQuickSave` at frame 17,422. The precise hidden Original order/sprite
-identity interaction behind this class split remains a documented runtime
-TODO.
+save's earlier continuation at frame 5,929. Linux3 Profile 002 `ExQuickSave`
+still exposes the surviving Soldier 62 continuation as an ordinary START at
+frame 17,422, while Linux3 Profile 003 save 011 keeps Soldier 97 `WAITING` for
+its same-call-consumed continuation at frame 22,732. Save 011 now matches every
+recorded frame.
 
 ### Isometric smalltalk step-back direction
 
