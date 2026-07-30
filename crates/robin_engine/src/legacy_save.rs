@@ -16,6 +16,7 @@
 
 pub mod adopt;
 pub mod adopt_elements;
+pub mod adopt_grid;
 pub mod adopt_preamble;
 pub mod body;
 pub mod campaign;
