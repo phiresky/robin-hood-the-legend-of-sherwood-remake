@@ -2400,10 +2400,15 @@ fn write_automatic_rolling_dump(
         "automatic parity dump requires at least one captured frame"
     );
     let prefix = format!("robin-parity-divergence-frame-{divergent_frame}-");
+    let dump_dir = std::env::current_dir()
+        .expect("resolve workspace for automatic parity dump")
+        .join(".codex-tmp")
+        .join("parity-dumps");
+    std::fs::create_dir_all(&dump_dir).expect("create workspace automatic parity dump directory");
     let temporary = tempfile::Builder::new()
         .prefix(&prefix)
         .suffix(".jsonl")
-        .tempfile()
+        .tempfile_in(&dump_dir)
         .expect("create unique automatic parity dump");
     let (file, path) = temporary
         .keep()
