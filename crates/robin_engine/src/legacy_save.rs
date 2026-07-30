@@ -15,6 +15,7 @@
 //! the engine state.
 
 pub mod adopt;
+pub mod adopt_preamble;
 pub mod body;
 pub mod campaign;
 pub mod elements;
