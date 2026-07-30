@@ -45,16 +45,10 @@ pub struct LegacyMissionPayloadDecodeLimits {
     pub vm: LegacyVmDecodeLimits,
 }
 
-/// Borrowed decoder context for one phase-two owner.
-///
-/// Actor script serialization does not repeat the owner's creation order at
-/// the VM callback boundary. The dispatcher must therefore select an owner
-/// before invoking a leaf reader. Other callbacks repeat the identity and
-/// validate it against `owner_creation_order`.
+/// Borrowed decoder context for the complete phase-two element stream.
 pub struct LegacyMissionPayloadDecodeContext<'a> {
     scb: &'a ScbFile,
     metadata: &'a LegacyMissionPayloadMetadata,
-    owner_creation_order: u32,
     limits: LegacyMissionPayloadDecodeLimits,
 }
 
@@ -62,13 +56,11 @@ impl<'a> LegacyMissionPayloadDecodeContext<'a> {
     pub fn new(
         scb: &'a ScbFile,
         metadata: &'a LegacyMissionPayloadMetadata,
-        owner_creation_order: u32,
         limits: LegacyMissionPayloadDecodeLimits,
     ) -> Self {
         Self {
             scb,
             metadata,
-            owner_creation_order,
             limits,
         }
     }
@@ -76,29 +68,24 @@ impl<'a> LegacyMissionPayloadDecodeContext<'a> {
     pub fn with_default_limits(
         scb: &'a ScbFile,
         metadata: &'a LegacyMissionPayloadMetadata,
-        owner_creation_order: u32,
     ) -> Self {
-        Self::new(
-            scb,
-            metadata,
-            owner_creation_order,
-            LegacyMissionPayloadDecodeLimits::default(),
-        )
+        Self::new(scb, metadata, LegacyMissionPayloadDecodeLimits::default())
     }
 
-    fn owner_metadata<'r>(
+    fn metadata_for<'r>(
         &self,
         reader: &mut LegacyReader<'r>,
+        creation_order: u32,
     ) -> LegacyResult<&LegacyElementPayloadMetadata> {
         self.metadata
             .by_creation_order
-            .get(&self.owner_creation_order)
+            .get(&creation_order)
             .ok_or_else(|| {
                 let offset = reader.offset();
                 reader.invalid_value(
                     offset,
-                    "owner_creation_order",
-                    self.owner_creation_order,
+                    "creation_order",
+                    creation_order,
                     "an element present in initialized mission payload metadata",
                 )
             })
@@ -110,19 +97,7 @@ impl<'a> LegacyMissionPayloadDecodeContext<'a> {
         creation_order: u32,
         class: LegacyElementClass,
     ) -> LegacyResult<&LegacyElementPayloadMetadata> {
-        if creation_order != self.owner_creation_order {
-            let offset = reader.offset();
-            return Err(reader.invalid_value(
-                offset,
-                "creation_order",
-                format_args!(
-                    "{creation_order} (selected owner is {})",
-                    self.owner_creation_order
-                ),
-                "the selected phase-two owner creation order",
-            ));
-        }
-        let metadata = self.owner_metadata(reader)?;
+        let metadata = self.metadata_for(reader, creation_order)?;
         if metadata.class != class {
             let offset = reader.offset();
             return Err(reader.invalid_value(
@@ -141,9 +116,11 @@ impl<'a> LegacyMissionPayloadDecodeContext<'a> {
     fn validate_actor_owner(
         &self,
         reader: &mut LegacyReader<'_>,
+        creation_order: u32,
+        class: LegacyElementClass,
     ) -> LegacyResult<&LegacyElementPayloadMetadata> {
-        let metadata = self.owner_metadata(reader)?;
-        if !is_actor_class(metadata.class) {
+        let metadata = self.validate_identity(reader, creation_order, class)?;
+        if !is_actor_class(class) {
             let offset = reader.offset();
             return Err(reader.invalid_value(
                 offset,
@@ -157,30 +134,39 @@ impl<'a> LegacyMissionPayloadDecodeContext<'a> {
 }
 
 impl LegacyPayloadDecodeContext for LegacyMissionPayloadDecodeContext<'_> {
-    fn mobile_sprite_count(&self, creation_order: u32, maximum: usize) -> LegacyResult<usize> {
-        // No bytes precede this callback, but the reader-less trait method
-        // cannot manufacture a structured LegacyIoError. Validate the
-        // metadata at construction/use sites through the same strict helper
-        // exposed below.
-        let metadata = self
-            .metadata
-            .by_creation_order
-            .get(&creation_order)
-            .filter(|_| creation_order == self.owner_creation_order)
-            .ok_or_else(|| missing_context_error("mobile owner metadata", creation_order))?;
+    fn mobile_sprite_count(
+        &self,
+        reader: &mut LegacyReader<'_>,
+        creation_order: u32,
+        maximum: usize,
+    ) -> LegacyResult<usize> {
+        let metadata =
+            self.validate_identity(reader, creation_order, LegacyElementClass::Mobile)?;
         if metadata.class != LegacyElementClass::Mobile {
-            return Err(missing_context_error(
-                "mobile owner class compatibility",
-                creation_order,
+            let offset = reader.offset();
+            return Err(reader.invalid_value(
+                offset,
+                "element_class",
+                format_args!("{:?}", metadata.class),
+                "Mobile at the mobile-sprite callback",
             ));
         }
-        let count = metadata
-            .mobile_sprite_count
-            .ok_or_else(|| missing_context_error("required mobile sprite count", creation_order))?;
+        let count = metadata.mobile_sprite_count.ok_or_else(|| {
+            let offset = reader.offset();
+            reader.invalid_value(
+                offset,
+                "mobile_sprite_count",
+                "missing",
+                "the sprite count from the initialized mission mobile",
+            )
+        })?;
         if count > maximum {
-            return Err(missing_context_error(
-                "mobile sprite count within decode limit",
-                creation_order,
+            let offset = reader.offset();
+            return Err(reader.invalid_value(
+                offset,
+                "mobile_sprite_count",
+                count,
+                "a count within the caller-supplied decode limit",
             ));
         }
         Ok(count)
@@ -189,9 +175,11 @@ impl LegacyPayloadDecodeContext for LegacyMissionPayloadDecodeContext<'_> {
     fn read_actor_script_members(
         &self,
         reader: &mut LegacyReader<'_>,
+        creation_order: u32,
+        class: LegacyElementClass,
         script_class: &str,
     ) -> LegacyResult<LegacyVmMemberSection> {
-        let metadata = self.validate_actor_owner(reader)?;
+        let metadata = self.validate_actor_owner(reader, creation_order, class)?;
         let expected = metadata.script_class.as_deref().ok_or_else(|| {
             let offset = reader.offset();
             reader.invalid_value(
@@ -217,7 +205,10 @@ impl LegacyPayloadDecodeContext for LegacyMissionPayloadDecodeContext<'_> {
     fn read_inline_sequence(
         &self,
         reader: &mut LegacyReader<'_>,
+        creation_order: u32,
+        class: LegacyElementClass,
     ) -> LegacyResult<LegacyInlineSequence> {
+        self.validate_actor_owner(reader, creation_order, class)?;
         LegacyInlineSequence::read(reader, &self.limits.sequences)
     }
 
@@ -321,23 +312,6 @@ fn ai_kind_for_class(class: LegacyElementClass) -> Option<LegacyLocalAiKind> {
     }
 }
 
-/// `mobile_sprite_count` predates reader-aware context errors. Keep failures
-/// explicit until that trait is extended to pass the current reader.
-fn missing_context_error(
-    expectation: &str,
-    creation_order: u32,
-) -> crate::legacy_io::LegacyIoError {
-    crate::legacy_io::LegacyIoError {
-        path: "<initialized mission metadata>".to_owned(),
-        offset: 0,
-        field: "creation_order".to_owned(),
-        kind: crate::legacy_io::LegacyIoErrorKind::InvalidValue {
-            value: format!("{creation_order} ({expectation} unavailable)"),
-            expected: "complete initialized mission payload metadata",
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::io::Write;
@@ -412,9 +386,16 @@ mod tests {
             None,
         );
         let actor =
-            LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &actor_metadata, 7);
+            LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &actor_metadata);
         with_reader(&0x1234_5678_u32.to_le_bytes(), |reader| {
-            let section = actor.read_actor_script_members(reader, "Fixture").unwrap();
+            let section = actor
+                .read_actor_script_members(
+                    reader,
+                    7,
+                    LegacyElementClass::ActorNpcSoldier,
+                    "Fixture",
+                )
+                .unwrap();
             assert_eq!(
                 section.members[0].value,
                 LegacyVmMemberValue::Raw32 { bits: 0x1234_5678 }
@@ -423,7 +404,7 @@ mod tests {
 
         let scroll_metadata = metadata(9, LegacyElementClass::Scroll, Some("Fixture"), None, None);
         let scroll =
-            LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &scroll_metadata, 9);
+            LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &scroll_metadata);
         with_reader(&42_u32.to_le_bytes(), |reader| {
             let section = scroll
                 .read_script_members(reader, 9, LegacyElementClass::Scroll)
@@ -440,8 +421,7 @@ mod tests {
     fn returns_none_only_for_metadata_declared_unscripted_nonactors() {
         let schema = scb();
         let metadata = metadata(11, LegacyElementClass::Target, None, None, None);
-        let context =
-            LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &metadata, 11);
+        let context = LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &metadata);
         with_reader(&[], |reader| {
             assert_eq!(
                 context
@@ -456,10 +436,11 @@ mod tests {
     fn reads_mobile_count_only_from_matching_owner_metadata() {
         let schema = scb();
         let metadata = metadata(13, LegacyElementClass::Mobile, None, None, Some(3));
-        let context =
-            LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &metadata, 13);
-        assert_eq!(context.mobile_sprite_count(13, 4).unwrap(), 3);
-        assert!(context.mobile_sprite_count(13, 2).is_err());
+        let context = LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &metadata);
+        with_reader(&[], |reader| {
+            assert_eq!(context.mobile_sprite_count(reader, 13, 4).unwrap(), 3);
+            assert!(context.mobile_sprite_count(reader, 13, 2).is_err());
+        });
     }
 
     #[test]
@@ -467,7 +448,7 @@ mod tests {
         let schema = scb();
         let absent = LegacyMissionPayloadMetadata::default();
         let absent_context =
-            LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &absent, 21);
+            LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &absent);
         with_reader(&[], |reader| {
             let error = absent_context
                 .read_script_members(reader, 21, LegacyElementClass::Scroll)
@@ -481,12 +462,13 @@ mod tests {
 
         let mobile_metadata = metadata(22, LegacyElementClass::Mobile, None, None, None);
         let mobile =
-            LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &mobile_metadata, 22);
-        assert!(mobile.mobile_sprite_count(22, 8).is_err());
+            LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &mobile_metadata);
+        with_reader(&[], |reader| {
+            assert!(mobile.mobile_sprite_count(reader, 22, 8).is_err());
+        });
 
         let npc_metadata = metadata(23, LegacyElementClass::ActorNpcSoldier, None, None, None);
-        let npc =
-            LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &npc_metadata, 23);
+        let npc = LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &npc_metadata);
         with_reader(&[], |reader| {
             let error = npc
                 .read_local_ai(reader, 23, LegacyElementClass::ActorNpcSoldier)
@@ -505,11 +487,15 @@ mod tests {
             Some(LegacyLocalAiKind::Enemy),
             None,
         );
-        let context =
-            LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &metadata, 31);
+        let context = LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &metadata);
         with_reader(&[], |reader| {
             let error = context
-                .read_actor_script_members(reader, "Serialized")
+                .read_actor_script_members(
+                    reader,
+                    31,
+                    LegacyElementClass::ActorNpcSoldier,
+                    "Serialized",
+                )
                 .unwrap_err();
             assert!(
                 error

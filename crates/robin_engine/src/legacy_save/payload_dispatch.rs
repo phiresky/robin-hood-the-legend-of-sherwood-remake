@@ -32,10 +32,7 @@ use super::payload_objects::{
 };
 use super::payload_sequences::LegacyInlineSequence;
 #[cfg(test)]
-use super::{
-    payload_ai::LegacyLocalAiPayload,
-    payload_vm::LegacyVmMemberSection,
-};
+use super::{payload_ai::LegacyLocalAiPayload, payload_vm::LegacyVmMemberSection};
 
 /// All mission-initialized information needed while decoding element payloads.
 ///
@@ -199,7 +196,7 @@ fn read_concrete_payload<C: LegacyElementPayloadDecodeContext>(
                 |reader, _abi_profile| {
                     LegacyHumanPayload::read(reader, &limits.base, context, creation_order, class)
                 },
-                |reader, _abi_profile| context.read_inline_sequence(reader),
+                |reader, _abi_profile| context.read_inline_sequence(reader, creation_order, class),
             )?;
             LegacyElementPayload::ActorPc(payload)
         }
@@ -333,6 +330,7 @@ mod tests {
     impl LegacyPayloadDecodeContext for EmptyContext {
         fn mobile_sprite_count(
             &self,
+            _reader: &mut LegacyReader<'_>,
             _creation_order: u32,
             _maximum: usize,
         ) -> LegacyResult<usize> {
@@ -342,6 +340,8 @@ mod tests {
         fn read_actor_script_members(
             &self,
             _reader: &mut LegacyReader<'_>,
+            _creation_order: u32,
+            _class: LegacyElementClass,
             _script_class: &str,
         ) -> LegacyResult<LegacyVmMemberSection> {
             unreachable!("synthetic dispatcher tests contain no actor payload")
@@ -350,6 +350,8 @@ mod tests {
         fn read_inline_sequence(
             &self,
             _reader: &mut LegacyReader<'_>,
+            _creation_order: u32,
+            _class: LegacyElementClass,
         ) -> LegacyResult<LegacyInlineSequence> {
             unreachable!("synthetic dispatcher tests contain no inline sequence")
         }

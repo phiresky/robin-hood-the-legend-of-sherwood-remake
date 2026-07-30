@@ -82,12 +82,19 @@ impl Default for LegacyPayloadLimits {
 pub trait LegacyPayloadDecodeContext {
     /// Number of embedded `RHElementFXMasked` parts already constructed for a
     /// mobile element. The count is not serialized.
-    fn mobile_sprite_count(&self, creation_order: u32, maximum: usize) -> LegacyResult<usize>;
+    fn mobile_sprite_count(
+        &self,
+        reader: &mut LegacyReader<'_>,
+        creation_order: u32,
+        maximum: usize,
+    ) -> LegacyResult<usize>;
 
     /// Decode VM members using the compiled class's ordered member schema.
     fn read_actor_script_members(
         &self,
         reader: &mut LegacyReader<'_>,
+        creation_order: u32,
+        class: LegacyElementClass,
         script_class: &str,
     ) -> LegacyResult<LegacyVmMemberSection>;
 
@@ -95,6 +102,8 @@ pub trait LegacyPayloadDecodeContext {
     fn read_inline_sequence(
         &self,
         reader: &mut LegacyReader<'_>,
+        creation_order: u32,
+        class: LegacyElementClass,
     ) -> LegacyResult<LegacyInlineSequence>;
 
     /// Decode `RHArtificialIntelligence::SerializeThisAI`.
@@ -652,7 +661,7 @@ impl LegacyMobilePayload {
     ) -> LegacyResult<Self> {
         read_fingerprint(reader, "fingerprint", FINGERPRINT_MOBILE, "RHElementMobile")?;
         let sprite_count =
-            context.mobile_sprite_count(expected_creation_order, limits.mobile_sprites)?;
+            context.mobile_sprite_count(reader, expected_creation_order, limits.mobile_sprites)?;
         if sprite_count > limits.mobile_sprites {
             let offset = reader.offset();
             return Err(reader.invalid_value(
@@ -848,7 +857,7 @@ impl LegacyActorPayload {
         let has_post_seek = reader.read_bool("has_post_seek_sequence")?;
         let post_seek_sequence = if has_post_seek {
             Some(reader.scope("post_seek_sequence", |reader| {
-                context.read_inline_sequence(reader)
+                context.read_inline_sequence(reader, expected_creation_order, expected_class)
             })?)
         } else {
             None
@@ -865,7 +874,12 @@ impl LegacyActorPayload {
             None
         } else {
             Some(reader.scope("script_members", |reader| {
-                context.read_actor_script_members(reader, &script_class)
+                context.read_actor_script_members(
+                    reader,
+                    expected_creation_order,
+                    expected_class,
+                    &script_class,
+                )
             })?)
         };
         // The Original intentionally brackets script state with the same

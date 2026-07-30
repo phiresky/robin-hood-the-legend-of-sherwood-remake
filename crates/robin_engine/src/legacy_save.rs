@@ -20,10 +20,14 @@ pub mod engine;
 pub mod payload_actors;
 pub mod payload_ai;
 pub mod payload_base;
+pub mod payload_context;
+pub mod payload_dispatch;
 pub mod payload_nonactors;
 pub mod payload_objects;
 pub mod payload_sequences;
 pub mod payload_vm;
+pub mod post_grid;
+pub mod post_hiking;
 
 use serde::{Deserialize, Serialize};
 

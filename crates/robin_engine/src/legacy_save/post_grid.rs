@@ -10,12 +10,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
 
+use super::LegacySaveAbiProfile;
 use super::elements::LegacyElementClass;
 use super::payload_base::{
-    read_element_ref, LegacyElementRef, LegacyFxPayload, LegacyPayloadLimits, LegacyPoint2,
+    LegacyElementRef, LegacyFxPayload, LegacyPayloadLimits, LegacyPoint2, read_element_ref,
 };
 use super::payload_vm::LegacyVmMemberSection;
-use super::LegacySaveAbiProfile;
 
 const fn hex16(hex: &str) -> [u8; 16] {
     let bytes = hex.as_bytes();
@@ -526,7 +526,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     use super::*;
-    use crate::sbfile::{SbFile, SB_FILE_READ};
+    use crate::sbfile::{SB_FILE_READ, SbFile};
 
     struct NoScripts;
 
