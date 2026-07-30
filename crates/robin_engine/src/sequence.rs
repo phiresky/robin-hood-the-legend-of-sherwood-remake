@@ -1949,7 +1949,19 @@ impl Sequence {
                         }
                     }
                     _ => {
-                        debug_assert!(false, "Terminated from illegal state {:?}", old_state);
+                        // Original assigns the new state before this switch.
+                        // Its assertion is compiled out in the shipping build,
+                        // leaving an already-interrupted/impossible element
+                        // Terminated without repeating owner/sequence effects.
+                        // Loaded games can legitimately resume at this
+                        // release-build edge, so retain the state transition
+                        // and make the diagnostic non-fatal.
+                        tracing::warn!(
+                            sequence_id = self.id.0,
+                            element_index = elem_idx,
+                            ?old_state,
+                            "sequence element terminated from a shipping-only state"
+                        );
                     }
                 }
             }

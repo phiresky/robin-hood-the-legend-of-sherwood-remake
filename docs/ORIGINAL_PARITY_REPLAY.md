@@ -1418,6 +1418,22 @@ The runner now imports beam-me metadata from `Data/Levels` before restoring the
 campaign, exactly like the ordinary game startup path. Linux3 Profile 003 save
 056 consequently matches every recorded frame.
 
+### Shipping sequence transitions remain replayable in debug builds
+
+`RHSequenceElement::SetState` writes the new state before validating the old
+state in its switch. For a `TERMINATED` transition from an already terminal
+state, the Original debug build asserts, while the shipped build used to
+record the Linux traces simply keeps the state assignment and performs no
+duplicate owner, sequence-ready, postponed, or cascade effects.
+
+Rust previously used a live `debug_assert!` for that validation. Loaded
+shipping saves can resume at exactly this edge, so debug parity replay aborted
+even though the authoritative executable continued. Rust now retains the
+Original release behavior and emits a structural warning containing sequence,
+element, and old-state identity. Linux2 Profile 002 `Restart-session-0002`
+advances past its two former immediate panics and reaches ordinary logical
+comparison.
+
 ### Script zones follow crossed lines, not a frame-wide polygon scan
 
 Ordinary script-zone changes in Original are owned by
