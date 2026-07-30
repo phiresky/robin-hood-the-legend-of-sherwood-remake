@@ -4413,8 +4413,6 @@ impl EnemyAi {
                     self.set_state(AiState::Attacking, Substate::AttackingOverviewLookRight);
                     // Look RIGHT.
                     self.base.outbox.actor.look_sidewards = Some(LookDirection::Right);
-                    self.base
-                        .launch_timer(parameters_ai::AI_END_OVERVIEW_TIME as u32, ctx.frame);
                 }
             }
 

@@ -1209,6 +1209,22 @@ between ordinary and alerted animation rows. Linux3 Profile 003 saves 022,
 boundary and reach independent later divergences. Save 064 advances from
 frame 5,992 to 6,048.
 
+### Overview timer starts after the right look
+
+Saves 022, 030, 056, and 061 next converged on soldier 21 changing from
+`AttackingOverviewLookRight` (Original substate 159) to
+`AttackingApproachToObserve` (Rust substate 166) while the alerted right-look
+animation was still running. Rust armed `AI_END_OVERVIEW_TIME` when the
+left-look `EVENT_DONE` selected and launched the right look. Original
+`RHArtificialMalignity` only changes substate and calls
+`LookSidewards(LOOK_RIGHT)` there; it starts a 10-frame timer when the
+right-look itself reports `EVENT_DONE`.
+
+The premature left-look timer has been removed. Save 030, save 061, and the
+previously longer save 064 now match every recorded frame. Saves 022 and 056
+pass the AI transition and reach unrelated RNG-boundary divergences at frames
+2,268 and 555 respectively.
+
 ### Large-window compressed trace input
 
 The expanded Linux2/Linux3 corpus includes single-frame zstd streams whose
