@@ -1654,8 +1654,12 @@ impl EngineInner {
                             continue;
                         };
                         let dx = friend.position.x - target_pos.x;
-                        let dy = (friend.position.y - target_pos.y)
-                            * crate::position_interface::INVERSE_ASPECT_RATIO;
+                        // Original deliberately compares two differently
+                        // shaped distances here: `SquareDistance(primary)`
+                        // stretches the owner's Y delta, while the friend's
+                        // raw `RHposition` delta uses an unstretched
+                        // `SquareNorm()`.
+                        let dy = friend.position.y - target_pos.y;
                         if dx * dx + dy * dy < self_sq {
                             tick.friends_nearer_to_enemy =
                                 tick.friends_nearer_to_enemy.saturating_add(1);
