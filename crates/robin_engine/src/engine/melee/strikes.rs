@@ -2224,7 +2224,21 @@ impl EngineInner {
                     spi
                 )
             });
-            let fa = sp.fighting;
+            // RHElementActorSoldier::GetFightingAbility applies the active
+            // difficulty modifier for Lacklandists. Strike availability,
+            // damage estimation, and the special-strike skill gate all call
+            // that virtual getter in Original rather than reading the raw
+            // soldier-profile capacity.
+            let fa = fighting_ability_from_profile(
+                self.get_entity(npc_id).unwrap_or_else(|| {
+                    panic!(
+                        "authorized sword-strike owner {:?} disappeared before ability lookup",
+                        EntityId::from(npc_id)
+                    )
+                }),
+                &assets.profile_manager,
+                sim.config().difficulty,
+            );
             let is_rank = sp.rank == crate::profiles::ProfileRank::Soldier;
             let ba = ai.base.blood_alcohol;
 
