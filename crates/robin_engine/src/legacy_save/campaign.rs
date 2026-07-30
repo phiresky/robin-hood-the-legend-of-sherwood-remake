@@ -943,7 +943,7 @@ mod tests {
     }
 
     #[test]
-    fn golden_nottingham_continue_campaign_boundaries() {
+    fn parses_current_linux_continue_campaign_boundaries() {
         let Some(path) =
             repository_fixture("datadirs/fullgame_linux/Data/Savegame/Profile_001/Continue")
         else {
@@ -952,25 +952,27 @@ mod tests {
         let (header, campaigns) = read_fixture(&path);
         assert_eq!(header.magic, PORT_LINUX_I386_MAGIC);
         assert_eq!(header.abi_profile, LegacySaveAbiProfile::PortLinuxI386V48);
-        assert_eq!(header.mission_id, 16723);
+        // `Continue` is live profile state and changes whenever that data
+        // directory is played. Keep exact golden offsets on the immutable
+        // Restart/archive fixtures; here verify structural boundaries.
         assert_eq!(campaigns.backup.start_offset, 16);
-        assert_eq!(campaigns.backup.end_offset, 3597);
-        assert_eq!(campaigns.live.start_offset, 3597);
-        assert_eq!(campaigns.live.end_offset, 7178);
-        assert_eq!(campaigns.engine_offset, 7178);
+        assert_eq!(campaigns.live.start_offset, campaigns.backup.end_offset);
+        assert_eq!(campaigns.engine_offset, campaigns.live.end_offset);
         assert_eq!(campaigns.backup.campaign.missions.len(), 63);
         assert_eq!(campaigns.live.campaign.missions.len(), 63);
         assert_eq!(campaigns.backup.campaign.characters.len(), 8);
         assert_eq!(campaigns.live.campaign.characters.len(), 8);
-        assert_eq!(campaigns.live.campaign.current_mission, Some(30));
         if let Some(profiles) = read_fixture_profiles() {
             let bootstrap = campaigns
                 .live
                 .campaign
                 .bootstrap(&profiles, header.mission_id)
                 .unwrap();
-            assert_eq!(bootstrap.identity.mission_id, 16723);
-            assert_eq!(bootstrap.identity.campaign_mission_index, 30);
+            assert_eq!(bootstrap.identity.mission_id, header.mission_id);
+            assert_eq!(
+                Some(bootstrap.identity.campaign_mission_index),
+                campaigns.live.campaign.current_mission
+            );
             assert!(!bootstrap.identity.proto_level_filename.is_empty());
             assert!(!bootstrap.identity.mission_filename.is_empty());
             assert_eq!(bootstrap.campaign.characters.len(), 8);
