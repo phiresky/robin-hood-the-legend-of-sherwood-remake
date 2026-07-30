@@ -134,6 +134,12 @@ impl EngineInner {
         if !script.script_vm_has_function(key, fn_name) {
             return Ok(if fn_name == "FilterAIEvent" { 1 } else { 0 });
         }
+        if (1948..=1952).contains(&self.control.frame_counter) {
+            eprintln!(
+                "SCRIPT_TRACE frame={} begin {key:?}.{fn_name} params={params:?}",
+                self.control.frame_counter
+            );
+        }
 
         let real_depth = active
             .iter()
@@ -2222,151 +2228,170 @@ impl EngineInner {
         );
     }
 
-    /// Per-frame zone occupant update: detect actors entering/leaving zones.
+    /// Dispatch script-sector transitions for the `LINE_SCRIPT` boundaries
+    /// crossed by one actor move.
     ///
-    /// For each actor that might have moved, checks against all script zone
-    /// polygons. Fires `EnterZone(actor)` / `ExitZone(actor)` on the zone
-    /// script when occupancy changes.
-    ///
-    /// Called once per frame from `perform_hourglass`, after movement tick.
-    pub(crate) fn tick_zone_occupants(
+    /// This is the ordinary-movement counterpart of the Original's
+    /// `RHElementActor::CheckForLineCrossing`. Polygon-wide reconciliation is
+    /// reserved for exceptional relocation paths such as the post-flight
+    /// update.
+    pub(super) fn check_for_script_line_crossing(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        entity_id: crate::entity_id::EntityId,
+        old_pos: crate::coordinates::MapPoint,
+        new_pos: crate::coordinates::MapPoint,
+        layer: u16,
     ) {
-        if assets.scripts.zone_grid_indices.is_empty() || self.scripts.mission.is_none() {
+        if old_pos == new_pos {
+            return;
+        }
+        let indices = self
+            .world
+            .fast_grid
+            .get_crossing_script_line_indices(layer, old_pos, new_pos);
+        if indices.is_empty() {
             return;
         }
 
-        // Phase 1: Collect enter/exit events by comparing current positions
-        // with zone occupant lists.
-        let mut enter_events: Vec<(usize, crate::entity_id::EntityId, i32)> = Vec::new();
-        let mut exit_events: Vec<(usize, crate::entity_id::EntityId, i32)> = Vec::new();
-
-        for (actor_id, entity) in self.world.entities.actors() {
-            let eidx = actor_id.into();
-            let ed = entity.element_data();
-            let active = ed.active && !ed.in_honolulu;
-            let pos = ed.position_map();
-            let layer = ed.layer();
-            let handle = crate::natives::ScriptHandleCodec::actor_handle(actor_id);
-
-            for (zone_idx, &grid_idx) in assets.scripts.zone_grid_indices.iter().enumerate() {
-                // Skip apex-converted zones — see scan_zone_occupant_entries note.
-                if self.script_domains.zones.scripts[zone_idx].transformed_to_apex {
-                    continue;
+        // Original removes a boundary when the actor's old position lies
+        // exactly on it, then orders all remaining non-elevation crossings
+        // by their intersection distance from the old position. Process every
+        // crossed edge: unlike a net polygon-membership reconciliation,
+        // RHElementActor::CheckForLineCrossing invokes Enter/Leave once per
+        // LINE_SCRIPT object.
+        let movement = crate::geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
+        let mut crossed: Vec<(f32, crate::fast_find_grid::LineIndex)> = indices
+            .into_iter()
+            .filter_map(|line_index| {
+                let line = &self.world.fast_grid.level.lines[usize::from(line_index)];
+                let old_dx = old_pos.x - line.a.x;
+                let old_dy = old_pos.y - line.a.y;
+                let line_dx = line.b.x - line.a.x;
+                let line_dy = line.b.y - line.a.y;
+                if line_dx * old_dy - line_dy * old_dx == 0.0 {
+                    return None;
                 }
-                let gs = &self.world.fast_grid.level.sectors[grid_idx as usize];
-                let was_inside = self.script_domains.zones.scripts[zone_idx].is_inside(eidx);
-                let is_inside = active && gs.layer == layer && gs.contains_point(pos);
+                let point = crate::geo2d::segment_intersection(movement, line.segment()).point()?;
+                let dx = point.x - old_pos.x;
+                let dy = point.y - old_pos.y;
+                Some((dx * dx + dy * dy, line_index))
+            })
+            .collect();
+        crossed.sort_by(|(left, _), (right, _)| left.total_cmp(right));
 
-                if is_inside && !was_inside {
-                    enter_events.push((zone_idx, eidx, handle));
-                } else if !is_inside && was_inside {
-                    exit_events.push((zone_idx, eidx, handle));
-                }
-            }
-        }
-
-        // Carried-recursion: a PC that enters or leaves a zone takes
-        // its carried actor with it, regardless of whether the carried
-        // element's own scan would catch the transition (it won't if
-        // the carried is `in_honolulu` while held).  Synthesize the
-        // missing event without double-firing for carried entries that
-        // the scan already produced.
-        let primary_enter_len = enter_events.len();
-        for i in 0..primary_enter_len {
-            let (zone_idx, eidx, _) = enter_events[i];
-            let Some(entity) = self.world.entities.get(eidx) else {
+        for (_, line_index) in crossed {
+            let Some(zone_idx) = self.world.fast_grid.level.lines[usize::from(line_index)]
+                .script_zone_index
+                .map(usize::from)
+            else {
+                // RHLineScript::Cross is intentionally empty in the Original.
                 continue;
             };
-            let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried) else {
-                continue;
-            };
-            if self.script_domains.zones.scripts[zone_idx].is_inside(carried_id) {
+            if self.script_domains.zones.scripts[zone_idx].transformed_to_apex {
                 continue;
             }
-            if enter_events
-                .iter()
-                .any(|&(z, e, _)| z == zone_idx && e == carried_id)
-            {
-                continue;
-            }
-            let carried_h = crate::natives::ScriptHandleCodec::actor_handle(carried_id);
-            enter_events.push((zone_idx, carried_id, carried_h));
+            let grid_idx = *assets
+                .scripts
+                .zone_grid_indices
+                .get(zone_idx)
+                .unwrap_or_else(|| panic!("script line references missing zone {zone_idx}"));
+            let inside =
+                self.world.fast_grid.level.sectors[grid_idx as usize].contains_point(new_pos);
+            self.dispatch_script_zone_crossing(sim, assets, zone_idx, entity_id, inside);
         }
-        let primary_exit_len = exit_events.len();
-        for i in 0..primary_exit_len {
-            let (zone_idx, eidx, _) = exit_events[i];
-            let Some(entity) = self.world.entities.get(eidx) else {
-                continue;
-            };
-            let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried) else {
-                continue;
-            };
-            if !self.script_domains.zones.scripts[zone_idx].is_inside(carried_id) {
-                continue;
-            }
-            if exit_events
-                .iter()
-                .any(|&(z, e, _)| z == zone_idx && e == carried_id)
-            {
-                continue;
-            }
-            let carried_h = crate::natives::ScriptHandleCodec::actor_handle(carried_id);
-            exit_events.push((zone_idx, carried_id, carried_h));
-        }
+    }
 
-        if enter_events.is_empty() && exit_events.is_empty() {
-            return;
-        }
+    fn dispatch_script_zone_crossing(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        zone_idx: usize,
+        entity_id: crate::entity_id::EntityId,
+        entering: bool,
+    ) {
+        let (script_associated, production_type) = {
+            let zone = &mut self.script_domains.zones.scripts[zone_idx];
+            if entering {
+                zone.enter(entity_id);
+            } else {
+                zone.leave(entity_id);
+            }
+            (zone.script_associated, zone.production_sector_type)
+        };
 
-        // Phase 2: Update occupant lists and apply production work icons.
-        for &(zone_idx, entity_idx, _) in &enter_events {
-            self.script_domains.zones.scripts[zone_idx].enter(entity_idx);
-            let pt = self.script_domains.zones.scripts[zone_idx].production_sector_type;
-            if pt != crate::sector_production::Type::Unknown {
-                self.apply_production_work_icon(entity_idx, pt, true);
-            }
-        }
-        for &(zone_idx, entity_idx, _) in &exit_events {
-            self.script_domains.zones.scripts[zone_idx].leave(entity_idx);
-            let pt = self.script_domains.zones.scripts[zone_idx].production_sector_type;
-            if pt != crate::sector_production::Type::Unknown {
-                self.apply_production_work_icon(entity_idx, pt, false);
-            }
-        }
-
-        // Phase 3: Dispatch enters before exits, preserving the original
-        // batch order used by this port.
-        for &(zone_idx, _, handle) in &enter_events {
-            if !self.script_domains.zones.scripts[zone_idx].script_associated {
-                continue;
-            }
+        if script_associated {
+            let method = if entering { "EnterZone" } else { "ExitZone" };
+            let handle = crate::natives::ScriptHandleCodec::actor_handle(entity_id);
             if let Err(error) = self.call_script_vm(
                 sim,
                 assets,
                 ScriptVmKey::Zone(zone_idx),
-                "EnterZone",
+                method,
                 &[handle],
                 crate::natives::ScriptCallFrame::default(),
             ) {
-                tracing::warn!("Zone {zone_idx} EnterZone (actor {handle}): {error}");
+                tracing::warn!("Zone {zone_idx} {method} (actor {handle}): {error}");
             }
         }
-        for &(zone_idx, _, handle) in &exit_events {
-            if !self.script_domains.zones.scripts[zone_idx].script_associated {
+
+        // Original recursively crosses the carried actor only after the
+        // carrier's callback, and applies the carrier's work icon last.
+        let carried = self
+            .world
+            .entities
+            .get(entity_id)
+            .and_then(|entity| entity.pc_data())
+            .and_then(|pc| pc.carried);
+        if let Some(carried) = carried {
+            self.dispatch_script_zone_crossing(sim, assets, zone_idx, carried, entering);
+        }
+
+        if production_type != crate::sector_production::Type::Unknown {
+            self.apply_production_work_icon(entity_id, production_type, entering);
+        }
+    }
+
+    /// Reconcile one actor against script-sector polygons after a flight.
+    ///
+    /// Flights do not traverse ordinary movement lines. The Original handles
+    /// this exceptional relocation in `RHElementActor::
+    /// UpdateScriptSectorsAfterFlight`, checking layer, owning motion-sector
+    /// number, and polygon containment for the landed actor only.
+    pub(super) fn update_script_sectors_after_flight(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+    ) {
+        let (position, layer, sector) = {
+            let entity = self
+                .world
+                .entities
+                .get(entity_id)
+                .unwrap_or_else(|| panic!("landed actor {entity_id} is missing"));
+            let data = entity.element_data();
+            (data.position_map(), data.layer(), data.sector())
+        };
+
+        for (zone_idx, &grid_idx) in assets.scripts.zone_grid_indices.iter().enumerate() {
+            if self.script_domains.zones.scripts[zone_idx].transformed_to_apex {
                 continue;
             }
-            if let Err(error) = self.call_script_vm(
-                sim,
-                assets,
-                ScriptVmKey::Zone(zone_idx),
-                "ExitZone",
-                &[handle],
-                crate::natives::ScriptCallFrame::default(),
-            ) {
-                tracing::warn!("Zone {zone_idx} ExitZone (actor {handle}): {error}");
+            let grid_sector = self
+                .world
+                .fast_grid
+                .level
+                .sectors
+                .get(grid_idx as usize)
+                .unwrap_or_else(|| panic!("script zone {zone_idx} references missing grid sector"));
+            let was_inside = self.script_domains.zones.scripts[zone_idx].is_inside(entity_id);
+            let is_inside = grid_sector.layer == layer
+                && sector.map(i16::from) == Some(grid_sector.sector_number.get())
+                && grid_sector.contains_point(position);
+            if was_inside != is_inside {
+                self.dispatch_script_zone_crossing(sim, assets, zone_idx, entity_id, is_inside);
             }
         }
     }

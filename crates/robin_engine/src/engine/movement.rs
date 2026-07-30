@@ -1378,12 +1378,8 @@ impl EngineInner {
         if is_pc {
             self.check_for_patch_line_crossing(sim, assets, entity_id, old_pos, new_pos, layer);
         }
+        self.check_for_script_line_crossing(sim, assets, entity_id, old_pos, new_pos, layer);
         self.check_for_sound_line_crossing(assets, entity_id, old_pos, new_pos, layer);
-
-        // TODO(original-parity): LINE_SCRIPT crossings are also part of
-        // RHElementActor::CheckForLineCrossing. The general script-sector
-        // crossing owner is not ported yet; delayed and ordinary movement
-        // must share it when it lands.
     }
 
     /// Match `RHSectorBuilding::IsAuthorized()` for gate pathfinding.
@@ -5077,6 +5073,9 @@ impl EngineInner {
         // for every actor (PC, NPC, soldier) — the SOUND arm is not
         // gated on PC.
         let mut sound_cross_checks: Vec<(EntityId, MapPoint, MapPoint, u16)> = Vec::new();
+        // Script-sector callbacks are line-crossing effects in the Original,
+        // not a global per-frame polygon reconciliation.
+        let mut script_cross_checks: Vec<(EntityId, MapPoint, MapPoint, u16)> = Vec::new();
         // Seek elements whose end-of-walk arrival put a
         // transition-to-waiting animation in line as the next order
         // while the live target had drifted beyond
@@ -6469,6 +6468,7 @@ impl EngineInner {
                         if is_pc {
                             patch_cross_checks.push((entity_id, old_pos, new_pos, layer));
                         }
+                        script_cross_checks.push((entity_id, old_pos, new_pos, layer));
                         sound_cross_checks.push((entity_id, old_pos, new_pos, layer));
                     }
                 }
@@ -7357,6 +7357,7 @@ impl EngineInner {
                     if entity.is_pc() {
                         patch_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
                     }
+                    script_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
                     // LINE_SOUND crossing is not gated on PC — every
                     // moving actor refreshes its `material` on
                     // crossing a sound-material boundary so footstep
@@ -7428,6 +7429,9 @@ impl EngineInner {
         // through the patch's Enter/Leave + auto-Apply flow.
         for (entity_id, old_pos, new_pos, layer) in patch_cross_checks {
             self.check_for_patch_line_crossing(sim, assets, entity_id, old_pos, new_pos, layer);
+        }
+        for (entity_id, old_pos, new_pos, layer) in script_cross_checks {
+            self.check_for_script_line_crossing(sim, assets, entity_id, old_pos, new_pos, layer);
         }
 
         // Dispatch transition-animation seek refreshes detected

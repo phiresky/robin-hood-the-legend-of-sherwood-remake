@@ -2486,6 +2486,56 @@ impl FastFindGrid {
         result
     }
 
+    /// Return every active `LINE_SCRIPT` boundary crossed by an actor move.
+    ///
+    /// The Original dispatches script-sector Enter/Leave callbacks from
+    /// `RHElementActor::CheckForLineCrossing`; it does not rescan every
+    /// actor against every script polygon once per frame.
+    pub fn get_crossing_script_line_indices(
+        &self,
+        layer: u16,
+        old_pos: MapPoint,
+        new_pos: MapPoint,
+    ) -> Vec<LineIndex> {
+        let bbox = map_bbox_from_points(old_pos, new_pos);
+        let rect = match bbox.0 {
+            Some(r) => r,
+            None => return Vec::new(),
+        };
+
+        let x_min = ((rect.min().x / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
+        let y_min = ((rect.min().y / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
+        let x_max = ((rect.max().x / GRID_CELL_SIZE_F).floor() as u16)
+            .min(self.level.grid_width.saturating_sub(1));
+        let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
+            .min(self.level.grid_height.saturating_sub(1));
+        let movement = geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
+
+        let mut visited = QueryVisited::new(self.level.lines.len());
+        let mut result = Vec::new();
+        for cy in y_min..=y_max {
+            for cx in x_min..=x_max {
+                let block_idx = self.block_index_from_cell(cx, cy, layer);
+                if block_idx >= self.level.blocks.len() {
+                    continue;
+                }
+                for &line_idx in &self.level.blocks[block_idx].line_indices {
+                    if !visited.try_mark(usize::from(line_idx)) {
+                        continue;
+                    }
+                    let line = &self.level.lines[usize::from(line_idx)];
+                    if !line.is_script || !self.is_line_active(line_idx) {
+                        continue;
+                    }
+                    if geo2d::is_crossed(line.segment(), movement) {
+                        result.push(line_idx);
+                    }
+                }
+            }
+        }
+        result
+    }
+
     /// Construct `LINE_SCRIPT | LINE_CROSS` boundary segments for a
     /// `SECTOR_SCRIPT` polygon and register them in the grid via
     /// `add_line`.

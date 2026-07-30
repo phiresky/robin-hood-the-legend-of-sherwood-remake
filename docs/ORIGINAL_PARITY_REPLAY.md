@@ -1418,6 +1418,36 @@ The runner now imports beam-me metadata from `Data/Levels` before restoring the
 campaign, exactly like the ordinary game startup path. Linux3 Profile 003 save
 056 consequently matches every recorded frame.
 
+### Script zones follow crossed lines, not a frame-wide polygon scan
+
+Ordinary script-zone changes in Original are owned by
+`RHElementActor::CheckForLineCrossing` (`original-code/RHelementactor.cpp`).
+After removing boundaries on which the actor's old position lies, it orders
+the remaining non-elevation lines by intersection distance. Each crossed
+`LINE_SCRIPT` then tests its associated sector polygon at the new position and
+calls `Enter` or `Leave`. Those calls update the occupant list, invoke the zone
+script, recursively process a PC's carried actor, and finally update the PC's
+production work icon.
+
+Rust previously reconciled every actor against every zone polygon once per
+frame. Besides changing callback ownership and ordering, that could manufacture
+an enter event when an actor merely moved within a concave polygon's bounding
+region without crossing one of its boundary lines. The resulting script call
+also consumed global RNG that Original did not draw.
+
+Runtime movement now registers active script-sector edges in the fast grid and
+dispatches the exact crossed edges from both ordinary and delayed-position
+movement. It preserves Original's old-position rejection, distance order,
+per-line callbacks, carried recursion order, and production-icon timing. The
+global reconciliation pass has been removed.
+
+Polygon-wide membership checks remain only where Original explicitly uses
+`IsReallyInside`: initial/silent occupant reconstruction and
+`UpdateScriptSectorsAfterFlight`. The flight path reconciles only the landed
+actor and includes Original's layer and owning motion-sector checks. Linux2
+Profile 002 saves 017, 022, and 032 match every recorded frame after this
+change; Linux3 Profile 003 save 056 is an additional full-trace control.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

@@ -2636,9 +2636,6 @@ impl EngineInner {
             assets,
             &positions_before_movement,
         );
-        // Separate Rust reconciliation boundary after owner movement.
-        self.tick_zone_occupants(sim, assets);
-
         // ── Corpse-intersection repulsion hook ────────────────────
         // Scan for lying↔non-lying posture transitions and fire
         // `update_intersecting_corpses` so stacked corpses get the

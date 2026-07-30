@@ -1801,15 +1801,18 @@ impl EngineInner {
         // landing — the per-frame integrator drives z explicitly via
         // `increment_z`, so this is equivalent to applying it
         // up-front for sloped goals.
-        for (flyer_id, obstacle) in landings {
+        for &(flyer_id, obstacle) in &landings {
             self.set_obstacle_and_material(assets, flyer_id, obstacle);
         }
 
-        // The original calls UpdateScriptSectorsAfterFlight on the terminal
-        // motion event, before ApplyDominoEffect. The general zone pass ran
-        // earlier in the frame, so explicitly reconcile combat landings now.
+        // The Original calls UpdateScriptSectorsAfterFlight on the terminal
+        // motion event, before ApplyDominoEffect. This is an explicit
+        // polygon reconciliation for the landed actor because flight motion
+        // does not traverse ordinary LINE_SCRIPT boundaries.
         if refresh_script_sectors {
-            self.tick_zone_occupants(sim, assets);
+            for (flyer_id, _) in &landings {
+                self.update_script_sectors_after_flight(sim, assets, *flyer_id);
+            }
         }
 
         for (flyer_id, hitter_id, inc_x, inc_y) in domino_sweeps {
