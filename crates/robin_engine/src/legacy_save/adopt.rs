@@ -28,7 +28,8 @@ use super::{
         LegacyPositionPayload,
     },
     topology_adapter::{
-        LegacyStaticElementTopology, LegacyTopologyAdapterError, derive_static_element_topology,
+        LegacyMissingTopologyFact, LegacyStaticElementTopology, LegacyTopologyAdapterError,
+        derive_static_element_topology,
     },
 };
 
@@ -84,6 +85,8 @@ pub enum LegacySaveAdoptError {
         index: usize,
         count: usize,
     },
+    #[error("cannot derive Original position topology: {detail}")]
+    InvalidPositionTopology { detail: String },
 }
 
 /// Rust obstacle identity and the top plane paired with it.
@@ -94,7 +97,9 @@ pub enum LegacySaveAdoptError {
 /// state install infallible.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LegacyPositionObstacleBinding {
-    pub obstacle: ObstacleHandle,
+    /// Rust authored-obstacle identity. The synthetic Original ground
+    /// projection area has no Rust obstacle and therefore stores `None`.
+    pub obstacle: Option<ObstacleHandle>,
     pub plane: PlaneZCoeffs,
 }
 
@@ -103,12 +108,12 @@ pub struct LegacyPositionObstacleBinding {
 /// Projection-area and sight-obstacle indices are separate Original spaces.
 /// `muwLayer == 0xffff` selects sight obstacles; every other layer selects
 /// projection areas (`original-code/RHpositioninterface.cpp:760-773`).
-#[derive(Clone, Copy, Debug)]
-pub struct LegacyPositionTopology<'a> {
+#[derive(Clone, Debug, PartialEq)]
+pub struct LegacyPositionTopology {
     pub sector_count: usize,
-    pub doors: &'a [DoorHandle],
-    pub projection_areas: &'a [LegacyPositionObstacleBinding],
-    pub sight_obstacles: &'a [LegacyPositionObstacleBinding],
+    pub doors: Vec<DoorHandle>,
+    pub projection_areas: Vec<LegacyPositionObstacleBinding>,
+    pub sight_obstacles: Vec<LegacyPositionObstacleBinding>,
 }
 
 /// Complete translation between the two Original reference spaces and stable
@@ -245,6 +250,153 @@ pub fn preflight_initialized_v48_adoption(
     LegacyEntityFixups::build(&body.element_envelope, &topology)
 }
 
+/// Reconstruct the mission-created arrays used by position pointer fixups.
+///
+/// Original provenance:
+///
+/// - `RHFastFindGrid::InitializeSightObstaclesFromProtoStream` inserts a
+///   synthetic flat ground into `marrayProjectionAreas` before every authored
+///   projection obstacle.
+/// - `SerializeSightObstaclePointer` stores `RHSightObstacle::mulID - 1`.
+///   Authored obstacles are constructed immediately after that synthetic
+///   ground, so Rust's retained zero-based authored obstacle ID is the saved
+///   sight-obstacle index.
+/// - `SerializeGatePointer` indexes the complete `marrayGates`; Rust retains
+///   that same array in `interactables.doors`.
+/// - sector pointers store their sparse `marraySectors` slot directly.
+pub fn derive_position_topology(
+    engine: &EngineInner,
+    assets: &LevelAssets,
+) -> Result<LegacyPositionTopology, LegacySaveAdoptError> {
+    let retained = assets.legacy_grid_topology.as_ref().ok_or_else(|| {
+        LegacySaveAdoptError::Topology(LegacyTopologyAdapterError::MissingRetainedFact {
+            fact: LegacyMissingTopologyFact::GridSparseSectorOrder,
+            original_owner: "RHFastFindGrid construction-time arrays",
+            detail: "position adoption requires the retained sparse sector and gate arrays",
+        })
+    })?;
+    build_position_topology(
+        retained.sectors.len(),
+        retained.gates.len(),
+        engine.script_domains.interactables.doors.len(),
+        assets.static_sight_obstacles.as_slice(),
+    )
+}
+
+fn build_position_topology(
+    sector_count: usize,
+    retained_gate_count: usize,
+    runtime_gate_count: usize,
+    obstacles: &[crate::sight_obstacle::SightObstacle],
+) -> Result<LegacyPositionTopology, LegacySaveAdoptError> {
+    if runtime_gate_count != retained_gate_count {
+        return Err(position_topology_mismatch(
+            "position gate count",
+            runtime_gate_count,
+            retained_gate_count,
+        ));
+    }
+
+    let doors = (0..runtime_gate_count)
+        .map(|index| {
+            u32::try_from(index)
+                .map(DoorHandle)
+                .map_err(|_| position_topology_detail("runtime gate index exceeds u32"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Rust stores only authored obstacles. Place each binding by the retained
+    // zero-based source ID rather than assuming storage order happens to
+    // remain identical.
+    let mut authored_obstacles = vec![None; obstacles.len()];
+    for (runtime_index, obstacle) in obstacles.iter().enumerate() {
+        let saved_index = usize::try_from(obstacle.id)
+            .map_err(|_| position_topology_detail("authored obstacle ID exceeds usize"))?;
+        if saved_index >= authored_obstacles.len() {
+            return Err(position_topology_detail(format!(
+                "authored obstacle ID {} is outside the retained 0..{} sight-obstacle space",
+                obstacle.id,
+                authored_obstacles.len()
+            )));
+        }
+        let runtime_index = u16::try_from(runtime_index)
+            .map_err(|_| position_topology_detail("runtime authored obstacle index exceeds u16"))?;
+        let obstacle_handle = ObstacleHandle::new(runtime_index).ok_or_else(|| {
+            position_topology_detail("runtime authored obstacle index equals null sentinel 0xffff")
+        })?;
+        let binding = LegacyPositionObstacleBinding {
+            obstacle: Some(obstacle_handle),
+            plane: PlaneZCoeffs::from_plane_points(&obstacle.top_plane_points),
+        };
+        if authored_obstacles[saved_index]
+            .replace((binding, obstacle.is_projection_area()))
+            .is_some()
+        {
+            return Err(position_topology_detail(format!(
+                "duplicate authored obstacle ID {}",
+                obstacle.id
+            )));
+        }
+    }
+    let authored_obstacles = authored_obstacles
+        .into_iter()
+        .enumerate()
+        .map(|(index, obstacle)| {
+            obstacle.ok_or_else(|| {
+                position_topology_detail(format!(
+                    "authored obstacle ID space has no entry at saved index {index}"
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let ground = LegacyPositionObstacleBinding {
+        obstacle: None,
+        plane: PlaneZCoeffs {
+            az: 0.0,
+            bz: 0.0,
+            dz: 0.0,
+        },
+    };
+    let projection_areas = std::iter::once(ground)
+        .chain(
+            authored_obstacles
+                .iter()
+                .copied()
+                .filter_map(|(binding, projection)| projection.then_some(binding)),
+        )
+        .collect();
+    let sight_obstacles = authored_obstacles
+        .into_iter()
+        .map(|(binding, _)| binding)
+        .collect();
+
+    Ok(LegacyPositionTopology {
+        sector_count,
+        doors,
+        projection_areas,
+        sight_obstacles,
+    })
+}
+
+fn position_topology_mismatch(
+    fact: &'static str,
+    engine_value: usize,
+    asset_value: usize,
+) -> LegacySaveAdoptError {
+    LegacySaveAdoptError::Topology(LegacyTopologyAdapterError::MissionAttachmentMismatch {
+        fact,
+        engine_value: engine_value.to_string(),
+        asset_value: asset_value.to_string(),
+    })
+}
+
+fn position_topology_detail(detail: impl Into<String>) -> LegacySaveAdoptError {
+    LegacySaveAdoptError::InvalidPositionTopology {
+        detail: detail.into(),
+    }
+}
+
 /// Validate and normalize one serialized position without mutating its owner.
 ///
 /// The returned value is accepted infallibly by
@@ -253,7 +405,7 @@ pub fn preflight_initialized_v48_adoption(
 pub(crate) fn preflight_v48_position(
     payload: &LegacyPositionPayload,
     entities: &LegacyEntityFixups,
-    topology: LegacyPositionTopology<'_>,
+    topology: &LegacyPositionTopology,
 ) -> Result<PositionInterfaceV48State, LegacySaveAdoptError> {
     let computed_position =
         PositionComputed::from_bits(u8::try_from(payload.computed_position).map_err(|_| {
@@ -322,13 +474,13 @@ pub(crate) fn preflight_v48_position(
     let direction_goal = checked_direction("direction_goal", payload.direction_goal)?;
     let sector = checked_sector("sector", payload.sector.0, topology.sector_count)?;
     let sector_goal = checked_sector("sector_goal", payload.sector_goal.0, topology.sector_count)?;
-    let door = checked_index("door", payload.door.0, topology.doors)?
+    let door = checked_index("door", payload.door.0, &topology.doors)?
         .copied()
         .unwrap_or(DoorHandle::NULL);
     let obstacle_space = if payload.layer == u16::MAX {
-        topology.sight_obstacles
+        &topology.sight_obstacles
     } else {
-        topology.projection_areas
+        &topology.projection_areas
     };
     let obstacle_binding = checked_index("obstacle", payload.obstacle.0, obstacle_space)?.copied();
 
@@ -358,7 +510,7 @@ pub(crate) fn preflight_v48_position(
         sector,
         sector_goal,
         door,
-        obstacle: obstacle_binding.map(|binding| binding.obstacle),
+        obstacle: obstacle_binding.and_then(|binding| binding.obstacle),
         plane: obstacle_binding.map(|binding| binding.plane),
         target_element: entities.resolve_element(payload.target_element)?,
         position: point3(payload.position),
@@ -622,12 +774,117 @@ mod tests {
         }
     }
 
+    fn obstacle(id: u32, projection_area: bool, z: f32) -> crate::sight_obstacle::SightObstacle {
+        let mut obstacle = crate::sight_obstacle::SightObstacle::new(
+            id,
+            if projection_area {
+                crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA
+            } else {
+                0
+            },
+        );
+        obstacle.top_plane_points = [[0.0, 0.0, z], [10.0, 0.0, z], [0.0, 10.0, z]];
+        obstacle
+    }
+
+    #[test]
+    fn position_topology_keeps_original_ground_and_obstacle_index_spaces() {
+        // Deliberately scramble Rust storage order. Saved sight pointers use
+        // the retained authored ID (`mulID - 1`), while Rust handles still
+        // address the current storage index.
+        let obstacles = vec![obstacle(1, false, 9.0), obstacle(0, true, 4.0)];
+        let topology = build_position_topology(17, 3, 3, &obstacles).unwrap();
+
+        assert_eq!(topology.sector_count, 17);
+        assert_eq!(
+            topology.doors,
+            vec![DoorHandle(0), DoorHandle(1), DoorHandle(2)]
+        );
+        assert_eq!(
+            topology.sight_obstacles,
+            vec![
+                LegacyPositionObstacleBinding {
+                    obstacle: Some(ObstacleHandle::new(1).unwrap()),
+                    plane: PlaneZCoeffs {
+                        az: 0.0,
+                        bz: 0.0,
+                        dz: 4.0,
+                    },
+                },
+                LegacyPositionObstacleBinding {
+                    obstacle: Some(ObstacleHandle::new(0).unwrap()),
+                    plane: PlaneZCoeffs {
+                        az: 0.0,
+                        bz: 0.0,
+                        dz: 9.0,
+                    },
+                },
+            ]
+        );
+        assert_eq!(
+            topology.projection_areas,
+            vec![
+                LegacyPositionObstacleBinding {
+                    obstacle: None,
+                    plane: PlaneZCoeffs {
+                        az: 0.0,
+                        bz: 0.0,
+                        dz: 0.0,
+                    },
+                },
+                topology.sight_obstacles[0],
+            ],
+            "Original projection index zero is synthetic ground, followed by authored projection areas in mulID order"
+        );
+    }
+
+    #[test]
+    fn synthetic_ground_restores_a_plane_without_inventing_an_obstacle_handle() {
+        let (envelope, element_topology, _) = fixture();
+        let entities = LegacyEntityFixups::build(&envelope, &element_topology).unwrap();
+        let topology = build_position_topology(3, 1, 1, &[]).unwrap();
+        let mut payload = position_payload();
+        payload.layer = 0;
+        payload.obstacle = LegacySignedIndexRef(Some(0));
+
+        let saved = preflight_v48_position(&payload, &entities, &topology).unwrap();
+
+        assert_eq!(saved.obstacle, None);
+        assert_eq!(
+            saved.plane,
+            Some(PlaneZCoeffs {
+                az: 0.0,
+                bz: 0.0,
+                dz: 0.0,
+            })
+        );
+    }
+
+    #[test]
+    fn position_topology_rejects_non_isomorphic_gate_and_obstacle_arrays() {
+        let gate_error = build_position_topology(0, 2, 1, &[]).unwrap_err();
+        assert!(matches!(
+            gate_error,
+            LegacySaveAdoptError::Topology(LegacyTopologyAdapterError::MissionAttachmentMismatch {
+                fact: "position gate count",
+                ..
+            })
+        ));
+
+        let duplicate_ids = vec![obstacle(0, false, 1.0), obstacle(0, true, 2.0)];
+        let obstacle_error = build_position_topology(0, 0, 0, &duplicate_ids).unwrap_err();
+        assert!(matches!(
+            obstacle_error,
+            LegacySaveAdoptError::InvalidPositionTopology { .. }
+        ));
+    }
+
     #[test]
     fn preflights_and_atomically_restores_every_v48_position_field() {
         let (envelope, topology, target) = fixture();
         let entities = LegacyEntityFixups::build(&envelope, &topology).unwrap();
         let projection = LegacyPositionObstacleBinding {
-            obstacle: ObstacleHandle::new(3).unwrap(),
+            obstacle: Some(ObstacleHandle::new(3).unwrap()),
             plane: PlaneZCoeffs {
                 az: 1.0,
                 bz: 2.0,
@@ -635,7 +892,7 @@ mod tests {
             },
         };
         let sight = LegacyPositionObstacleBinding {
-            obstacle: ObstacleHandle::new(4).unwrap(),
+            obstacle: Some(ObstacleHandle::new(4).unwrap()),
             plane: PlaneZCoeffs {
                 az: 4.0,
                 bz: 5.0,
@@ -645,17 +902,17 @@ mod tests {
         let saved = preflight_v48_position(
             &position_payload(),
             &entities,
-            LegacyPositionTopology {
+            &LegacyPositionTopology {
                 sector_count: 3,
-                doors: &[DoorHandle(9)],
-                projection_areas: &[projection],
-                sight_obstacles: &[sight],
+                doors: vec![DoorHandle(9)],
+                projection_areas: vec![projection],
+                sight_obstacles: vec![sight],
             },
         )
         .unwrap();
 
         assert_eq!(saved.layer.get(), u16::MAX);
-        assert_eq!(saved.obstacle, Some(sight.obstacle));
+        assert_eq!(saved.obstacle, sight.obstacle);
         assert_eq!(saved.plane, Some(sight.plane));
         assert_eq!(saved.target_element, Some(target));
         assert_eq!(saved.posture, crate::element::Posture::StuckUnderNet);
@@ -687,11 +944,11 @@ mod tests {
         let error = preflight_v48_position(
             &payload,
             &entities,
-            LegacyPositionTopology {
+            &LegacyPositionTopology {
                 sector_count: 3,
-                doors: &[DoorHandle(9)],
-                projection_areas: &[],
-                sight_obstacles: &[],
+                doors: vec![DoorHandle(9)],
+                projection_areas: vec![],
+                sight_obstacles: vec![],
             },
         )
         .unwrap_err();
@@ -715,7 +972,7 @@ mod tests {
         let (envelope, topology, _) = fixture();
         let entities = LegacyEntityFixups::build(&envelope, &topology).unwrap();
         let projection = LegacyPositionObstacleBinding {
-            obstacle: ObstacleHandle::new(3).unwrap(),
+            obstacle: Some(ObstacleHandle::new(3).unwrap()),
             plane: PlaneZCoeffs {
                 az: 1.0,
                 bz: 2.0,
@@ -723,7 +980,7 @@ mod tests {
             },
         };
         let sight = LegacyPositionObstacleBinding {
-            obstacle: ObstacleHandle::new(4).unwrap(),
+            obstacle: Some(ObstacleHandle::new(4).unwrap()),
             plane: PlaneZCoeffs {
                 az: 4.0,
                 bz: 5.0,
@@ -732,17 +989,17 @@ mod tests {
         };
         let arrays = LegacyPositionTopology {
             sector_count: 3,
-            doors: &[DoorHandle(9)],
-            projection_areas: &[projection],
-            sight_obstacles: &[sight],
+            doors: vec![DoorHandle(9)],
+            projection_areas: vec![projection],
+            sight_obstacles: vec![sight],
         };
 
-        let projectile = preflight_v48_position(&position_payload(), &entities, arrays).unwrap();
+        let projectile = preflight_v48_position(&position_payload(), &entities, &arrays).unwrap();
         let mut actor_payload = position_payload();
         actor_payload.layer = 1;
-        let actor = preflight_v48_position(&actor_payload, &entities, arrays).unwrap();
+        let actor = preflight_v48_position(&actor_payload, &entities, &arrays).unwrap();
 
-        assert_eq!(projectile.obstacle, Some(sight.obstacle));
-        assert_eq!(actor.obstacle, Some(projection.obstacle));
+        assert_eq!(projectile.obstacle, sight.obstacle);
+        assert_eq!(actor.obstacle, projection.obstacle);
     }
 }
