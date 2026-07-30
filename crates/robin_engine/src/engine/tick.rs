@@ -2944,11 +2944,11 @@ impl EngineInner {
                     }
                     self.refresh_bonus_discovered_for(assets, owner);
                 }
-                OriginalBonusConcreteClass::Ale => {
-                    if !bonus.element.active {
-                        self.remove_entity(owner);
-                    }
-                }
+                // RHElementAle::Hourglass returns false once inactive, but
+                // RHEngine calls RemoveElement with its default
+                // bOnlyDeactivate=true. The pointer stays in marrayElements
+                // because other elements may still reference it.
+                OriginalBonusConcreteClass::Ale => {}
                 OriginalBonusConcreteClass::Cape => {
                     if !frozen {
                         self.world
