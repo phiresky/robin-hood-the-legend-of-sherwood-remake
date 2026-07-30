@@ -6617,16 +6617,14 @@ impl EngineInner {
                             if let Some((insertion, animation)) = next_animation {
                                 let mut continuation = element.orders.front().unwrap().clone();
                                 continuation.order_type = animation;
-                                // Loaded-save parity shows a PC-specific
-                                // booking edge here: the copied continuation
-                                // hides its START, while the authored
-                                // successor establishes the movement state.
-                                // Soldiers have at least two distinct
-                                // continuation timings which cannot be
-                                // classified from target identity alone.
-                                // TODO(parity): model the Original's hidden
-                                // per-booking continuation lifetime directly.
-                                continuation.transition_distance_continuation = is_pc;
+                                // PerformMotion(TILL_LAST_FRAME) can exhaust
+                                // the transition animation before reaching its
+                                // distance target. Original inserts this
+                                // changed-animation copy from inside that same
+                                // PerformMotion call. Defer the copy's START
+                                // state effect until we know whether the copy
+                                // actually survives its first Execute.
+                                continuation.transition_distance_continuation = true;
                                 continuation.reseed_id(crate::order::alloc_order_id(next_order_id));
                                 continuation_door_action = Some((animation, continuation.reverse));
                                 element.insert_order(insertion, continuation);
@@ -7419,6 +7417,32 @@ impl EngineInner {
             // successor can complete and hand off to its stop transition in
             // the same call; Original retains Waiting in that case.
             if deferred_movement_state_start_due
+                && !entity
+                    .position_iface()
+                    .is_goal_reached(&self.world.fast_grid, None)
+                && self
+                    .orders
+                    .sequence_manager
+                    .get_element(move_seq_id, move_elem_idx)
+                    .and_then(|element| element.orders.front())
+                    .is_some_and(|order| Some(order.order_id) == order_id)
+                && let Some((posture, next_action_state)) =
+                    movement_execute_state_effect(order_action, MotionState::Start)
+            {
+                if is_sword_motion {
+                    sword_movement_starts.push(entity_id);
+                }
+                movement_state_effects.push((entity_id, posture, next_action_state));
+            }
+            // A generated non-PC transition-distance copy reports START when
+            // first booked, but its movement state is authoritative only if
+            // that copied order remains current after the Execute. A short
+            // copy may satisfy its arrival predicate and hand off in the same
+            // call; Original retains the transition's Waiting state for that
+            // one frame. PC copies use the separate deferred-successor
+            // contract above.
+            if suppress_transition_continuation_start
+                && !is_pc
                 && !entity
                     .position_iface()
                     .is_goal_reached(&self.world.fast_grid, None)
