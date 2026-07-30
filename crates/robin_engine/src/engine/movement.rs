@@ -4500,6 +4500,55 @@ impl EngineInner {
             return false;
         }
 
+        // A sword movement may have been postponed by an explicit
+        // QuitSwordfight and selected again only after the lowering animation
+        // changed the actor back to an ordinary action state. Original
+        // retranslates that surviving movement as upright work. Rust retains
+        // the already-built order across postponement, so perform the
+        // equivalent rewrite here before the orphan guard decides whether the
+        // actor still needs to quit.
+        let fight_already_lowered = self
+            .world
+            .entities
+            .get(owner)
+            .and_then(|entity| entity.actor_data())
+            .is_some_and(|actor| !actor.action_state.is_sword());
+        if fight_already_lowered {
+            let element = self
+                .orders
+                .sequence_manager
+                .get_element_mut(selected.seq_id, selected.elem_idx)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "lowered sword movement owner {owner:?} lost selected element \
+                         ({:?}, {})",
+                        selected.seq_id, selected.elem_idx
+                    )
+                });
+            let order = element.orders.front_mut().unwrap_or_else(|| {
+                panic!(
+                    "lowered sword movement owner {owner:?} has no selected order in \
+                     ({:?}, {})",
+                    selected.seq_id, selected.elem_idx
+                )
+            });
+            let upright_action = match order.order_type {
+                OrderType::WalkingWithSword => OrderType::WalkingUpright,
+                OrderType::RunningWithSword => OrderType::RunningUpright,
+                other => {
+                    panic!("lowered sword movement owner {owner:?} has unexpected order {other:?}")
+                }
+            };
+            order.order_type = upright_action;
+            let crate::sequence::SequenceElementData::Movement { action, .. } = &mut element.data
+            else {
+                unreachable!("selected sword movement changed data kind during upright rewrite")
+            };
+            *action = upright_action;
+            element.action_state_after_transition = crate::element::ActionState::Waiting;
+            return false;
+        }
+
         // Retire and clean the old movement first. This ensures the
         // replacement QuitSwordfight cannot be postponed behind the very
         // element whose Execute arm just rejected itself.
@@ -5625,10 +5674,8 @@ impl EngineInner {
             let door_pass_sword_nonanimation =
                 door_pass_anim.is_some_and(is_sword_movement_nonanimation);
             let order_sword_nonanimation = is_sword_movement_nonanimation(order_action);
-            let forced_sword_motion = active_move_flags.intersects(
-                crate::sequence::MoveFlags::FORCE_SWORD_MOVEMENT
-                    | crate::sequence::MoveFlags::STEP_BACK_IN_COMBAT,
-            );
+            let forced_sword_motion =
+                active_move_flags.contains(crate::sequence::MoveFlags::FORCE_SWORD_MOVEMENT);
             let is_sword_motion = matches!(
                 action_state,
                 crate::element::ActionState::MovingSword
@@ -9133,10 +9180,11 @@ impl EngineInner {
             })
             .unwrap_or(crate::sequence::MoveFlags::empty());
         let is_fast = elem_flags.contains(crate::sequence::MoveFlags::FAST);
-        let force_sword_movement = elem_flags.intersects(
-            crate::sequence::MoveFlags::FORCE_SWORD_MOVEMENT
-                | crate::sequence::MoveFlags::STEP_BACK_IN_COMBAT,
-        );
+        // STEP_BACK_IN_COMBAT describes how an authored sword move was
+        // selected; unlike FORCE_SWORD_MOVEMENT it does not keep the move in
+        // sword form after the actor has lowered the weapon.
+        let force_sword_movement =
+            elem_flags.contains(crate::sequence::MoveFlags::FORCE_SWORD_MOVEMENT);
         if force_sword_movement && posture_after == crate::element::Posture::Upright {
             action_after = if is_fast || matches!(move_action, OrderType::RunningUpright) {
                 crate::element::ActionState::MovingFastSword

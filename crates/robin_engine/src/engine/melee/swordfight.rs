@@ -5,6 +5,8 @@
 use super::*;
 use crate::combat::{self};
 use crate::element::{ActionState, Command, Entity, EntityId, Posture};
+use crate::order::OrderType;
+use crate::sequence::SequenceElementData;
 
 impl EngineInner {
     // ─── Tie-up (public, called from natives/UI) ────────────────────
@@ -288,6 +290,24 @@ impl EngineInner {
             .unwrap_or(0);
 
         if count == 0 {
+            // Original `RHElementActorHuman::EvaluateOpponents` changes an
+            // already-selected sword movement back to its ordinary upright
+            // action before launching `QUIT_SWORDFIGHT`. The movement is then
+            // postponed and translated again after the lowering transition,
+            // retaining its destination and flags.
+            if let Some((sequence_id, element_index)) = self
+                .orders
+                .sequence_manager
+                .current_element_for_actor(entity_id)
+            {
+                self.rewrite_sword_movement_for_fight_exit(
+                    sequence_id,
+                    element_index,
+                    entity_id,
+                    true,
+                );
+            }
+
             // C++ `EvaluateOpponents` launches the explicit command;
             // relationship teardown alone does not own the visible
             // lowering-sword transition.
@@ -299,6 +319,41 @@ impl EngineInner {
         } else if count >= 2 {
             self.choose_principal_opponent(sim, entity_id);
         }
+    }
+
+    /// Change a movement which will survive a swordfight exit back to its
+    /// ordinary upright form. `EvaluateOpponents` requires its selected
+    /// movement to be a sword movement; an explicit quit can postpone any
+    /// movement, so its cross-sequence successor uses the non-strict form.
+    pub(super) fn rewrite_sword_movement_for_fight_exit(
+        &mut self,
+        sequence_id: crate::sequence::SequenceId,
+        element_index: usize,
+        owner: EntityId,
+        strict: bool,
+    ) {
+        let element = self
+            .orders
+            .sequence_manager
+            .get_element_mut(sequence_id, element_index)
+            .unwrap_or_else(|| {
+                panic!(
+                    "fight exit: movement ({sequence_id:?}, {element_index}) \
+                     for {owner:?} is stale"
+                )
+            });
+        let SequenceElementData::Movement { action, .. } = &mut element.data else {
+            return;
+        };
+        *action = match *action {
+            OrderType::WalkingWithSword => OrderType::WalkingUpright,
+            OrderType::RunningWithSword => OrderType::RunningUpright,
+            other if !strict => other,
+            other => panic!(
+                "evaluate_opponents: current movement for {owner:?} has \
+                 unexpected action {other:?}"
+            ),
+        };
     }
 
     /// Pick a new principal opponent from the entity's opponent list.

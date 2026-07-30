@@ -362,8 +362,9 @@ fn convert_request(
         ));
     }
 
-    let force_sword =
-        flags.intersects(MoveFlags::FORCE_SWORD_MOVEMENT | MoveFlags::STEP_BACK_IN_COMBAT);
+    // STEP_BACK_IN_COMBAT does not force sword state: Original may rewrite
+    // that surviving movement to upright while lowering the weapon.
+    let force_sword = flags.contains(MoveFlags::FORCE_SWORD_MOVEMENT);
     let sword_movement_context =
         (posture == Posture::Upright && action_state.is_sword()) || force_sword;
 
