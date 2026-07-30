@@ -443,6 +443,20 @@ impl TitbitManager {
         self.row_frame_counts = counts;
     }
 
+    /// Replace the serialized Original-game portion of this manager.
+    ///
+    /// The Original resets its non-serialized render counters while loading
+    /// (`RHTitbits::Serialize`), but keeps the already-loaded sprite metadata.
+    /// Keeping this operation here avoids exposing those runtime-only fields
+    /// to the legacy save converter.
+    pub(crate) fn adopt_v48_serialized_state(&mut self, current_id: u32, titbits: Vec<TitbitInfo>) {
+        self.current_id = current_id;
+        self.titbits = titbits;
+        self.blink_counter = TIME_BLINK_ON;
+        self.dotted_start = DISTANCE_DOT;
+        self.current_index = 0;
+    }
+
     /// Frame count for a sprite row.  Returns 1 if the row hasn't been
     /// loaded (prevents divide-by-zero / zero-limit issues).
     pub fn num_frames_for_row(&self, row: u16) -> u16 {
