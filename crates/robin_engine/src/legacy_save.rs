@@ -18,6 +18,7 @@ pub mod campaign;
 pub mod elements;
 pub mod engine;
 pub mod payload_actors;
+pub mod payload_ai;
 pub mod payload_base;
 pub mod payload_nonactors;
 pub mod payload_objects;
