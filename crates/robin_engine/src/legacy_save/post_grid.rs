@@ -157,6 +157,7 @@ pub struct LegacyPatchState {
     pub applied_now: bool,
     pub in_transition_now: bool,
     pub fx: Option<LegacyFxPayload>,
+    pub display_doors: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -439,6 +440,7 @@ fn read_patch(
             })
         })
         .transpose()?;
+    let display_doors = reader.read_bool("display_doors")?;
     Ok(LegacyPatchState {
         topology: topology.clone(),
         active,
@@ -449,6 +451,7 @@ fn read_patch(
         applied_now,
         in_transition_now,
         fx,
+        display_doors,
     })
 }
 
@@ -620,6 +623,7 @@ mod tests {
         bytes.extend_from_slice(&[1, 0xde, 0xad, 0xbe, 0xef, 1]);
         bytes.extend_from_slice(&0_u16.to_le_bytes());
         bytes.extend_from_slice(&[1, 0, 1]);
+        bytes.push(0);
         bytes.extend_from_slice(&0_u32.to_le_bytes());
         let mut topology = empty_topology();
         topology.patches.push(LegacyPatchTopology {
