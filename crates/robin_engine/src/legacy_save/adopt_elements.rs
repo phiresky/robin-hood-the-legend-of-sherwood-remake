@@ -875,9 +875,24 @@ fn apply_element_base(element: &mut crate::element::ElementData, converted: Conv
     sprite.last_processed_order_id = converted.sprite.last_processed_order_id;
     (sprite.anims_to_be_replaced, sprite.replacing_anims) =
         converted.sprite.animation_replacements.into_iter().unzip();
-    sprite
+    restore_position_and_gameplay_posture(element, converted.sprite.position);
+}
+
+fn restore_position_and_gameplay_posture(
+    element: &mut crate::element::ElementData,
+    position: PositionInterfaceV48State,
+) {
+    // Original has only one posture source: RHElement::GetPosture forwards
+    // directly to the RHPositionInterface embedded in its sprite, and that
+    // position interface is what v48 saves serialize. Rust keeps a separate
+    // gameplay-facing posture, so adoption must install both from the same
+    // serialized value. Assign directly instead of calling set_posture:
+    // restoration must not apply the runtime corpse-transition guard.
+    element.posture = position.posture;
+    element
+        .sprite
         .position_iface
-        .restore_v48_serialized_state(converted.sprite.position);
+        .restore_v48_serialized_state(position);
 }
 
 fn convert_element(
@@ -3599,6 +3614,24 @@ mod tests {
         assert_eq!(eye_status(6, 31).unwrap(), EyeStatus::Follow);
         assert_eq!(eye_status(8, 31).unwrap(), EyeStatus::ViewconeGrow);
         assert!(eye_status(9, 31).is_err());
+    }
+
+    #[test]
+    fn position_adoption_restores_the_original_single_posture_source() {
+        let mut element = crate::element::ElementData {
+            posture: crate::element::Posture::Spy,
+            ..Default::default()
+        };
+        let mut position = element.sprite.position_iface.v48_serialized_state();
+        position.posture = crate::element::Posture::LeaningOut;
+        position.old_posture = crate::element::Posture::Upright;
+
+        restore_position_and_gameplay_posture(&mut element, position);
+
+        assert_eq!(element.posture, crate::element::Posture::LeaningOut);
+        let restored = element.sprite.position_iface.v48_serialized_state();
+        assert_eq!(restored.posture, crate::element::Posture::LeaningOut);
+        assert_eq!(restored.old_posture, crate::element::Posture::Upright);
     }
 
     #[test]
