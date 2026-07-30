@@ -1567,8 +1567,6 @@ impl EnemyAi {
                             LookDirection::RightLeft
                         },
                     );
-                    self.base
-                        .launch_timer(parameters_ai::AI_SEEKPOINT_LOOK_TIME as u32, ctx.frame);
                 }
             }
 
