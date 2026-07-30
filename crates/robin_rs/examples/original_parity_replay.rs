@@ -61,6 +61,7 @@ struct TraceHeader {
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceInitialSave {
     format: String,
+    source_profile: TraceSaveSourceProfile,
     encoding: String,
     byte_length: u64,
     sha256: String,
@@ -69,6 +70,24 @@ struct TraceInitialSave {
     mission_id: u32,
     stream_version: u32,
     data: String,
+}
+
+#[derive(
+    Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, bincode::Encode, bincode::Decode,
+)]
+#[serde(rename_all = "snake_case")]
+enum TraceSaveSourceProfile {
+    LinuxI386RhsgV48,
+    WindowsI386GshrV48,
+}
+
+impl TraceSaveSourceProfile {
+    fn expected_magic(self) -> &'static [u8; 4] {
+        match self {
+            Self::LinuxI386RhsgV48 => b"RHSG",
+            Self::WindowsI386GshrV48 => b"GSHR",
+        }
+    }
 }
 
 impl TraceInitialSave {
@@ -138,8 +157,14 @@ impl TraceInitialSave {
                 bytes.len()
             ));
         }
-        if &bytes[0..4] != b"RHSG" {
-            return Err("initial_save payload does not begin with RHSG".to_owned());
+        let expected_magic = self.source_profile.expected_magic();
+        if &bytes[0..4] != expected_magic {
+            return Err(format!(
+                "initial_save source profile {:?} requires magic {:?}, found {:?}",
+                self.source_profile,
+                std::str::from_utf8(expected_magic).unwrap(),
+                std::str::from_utf8(&bytes[0..4]).unwrap_or("<non-ASCII>")
+            ));
         }
 
         let payload_header_version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
@@ -1069,8 +1094,8 @@ struct TraceFrame {
     path_events: Vec<TracePathEvent>,
 }
 
-const TRACE_CACHE_VERSION: u32 = 3;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v3.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 4;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v4.native-bincode.zst";
 const TRACE_CACHE_ZSTD_LEVEL: i32 = 0;
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -3826,14 +3851,15 @@ fn compare_point_with_absolute_tolerance(
 mod tests {
     use super::*;
 
-    fn valid_initial_save() -> TraceInitialSave {
-        let mut bytes = Vec::from(*b"RHSG");
+    fn valid_initial_save_with_profile(source_profile: TraceSaveSourceProfile) -> TraceInitialSave {
+        let mut bytes = Vec::from(*source_profile.expected_magic());
         bytes.extend_from_slice(&48_u32.to_le_bytes());
         bytes.extend_from_slice(&16_723_u32.to_le_bytes());
         bytes.extend_from_slice(&48_u32.to_le_bytes());
         bytes.extend_from_slice(b"serialized save body");
         TraceInitialSave {
             format: "rhsg".to_owned(),
+            source_profile,
             encoding: "base64".to_owned(),
             byte_length: bytes.len() as u64,
             sha256: sha256_hex(&bytes),
@@ -3843,6 +3869,10 @@ mod tests {
             stream_version: 48,
             data: base64::engine::general_purpose::STANDARD.encode(bytes),
         }
+    }
+
+    fn valid_initial_save() -> TraceInitialSave {
+        valid_initial_save_with_profile(TraceSaveSourceProfile::LinuxI386RhsgV48)
     }
 
     #[test]
@@ -3864,6 +3894,26 @@ mod tests {
             16_723
         );
         assert_eq!(u32::from_le_bytes(decoded[12..16].try_into().unwrap()), 48);
+    }
+
+    #[test]
+    fn windows_i386_save_preserves_and_accepts_gshr_magic() {
+        let save = valid_initial_save_with_profile(TraceSaveSourceProfile::WindowsI386GshrV48);
+        let decoded = save
+            .decode_and_validate(16_723)
+            .expect("valid Windows i386 schema-11 initial_save");
+        assert_eq!(&decoded[..4], b"GSHR");
+    }
+
+    #[test]
+    fn source_profile_must_match_preserved_container_magic() {
+        let mut save = valid_initial_save();
+        save.source_profile = TraceSaveSourceProfile::WindowsI386GshrV48;
+        assert!(
+            save.decode_and_validate(16_723)
+                .unwrap_err()
+                .contains("requires magic")
+        );
     }
 
     #[test]
