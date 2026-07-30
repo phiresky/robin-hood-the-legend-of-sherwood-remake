@@ -414,6 +414,7 @@ initial entity mapping and are not parity oracles.
 | Superseded | Schema-4 x87 ground-plane arithmetic | Soldier 86 followed the correct bit-exact map positions on Lincoln's shallow slope, but its reconstructed elevation drifted because the old Original build retained plane intermediates in x87 registers. | The temporary Rust `f64` emulation was removed with schema 5. Plane construction now preserves the Original source operation order using ordinary `f32`, and the native Original uses the same scalar-SSE storage semantics. Exact coefficient/projection coverage uses Lincoln obstacle 52's point bits under the new contract. |
 | Done | Original recorder | A useful comparison needs deterministic state and resolved commands on every tick. | The C++ game writes schema-2 JSONL with frame state, resolved commands, creation order, and RNG batches. Per-NPC records also expose all detection accumulators, maximum visibility, view/alert status, and every detectable's target, visibility, and edge latches, avoiding one-off instrumentation when a hidden perception total diverges. Deterministic/synchronous pathfinding is enabled for captures. Original commits: `502a7b3`, `a97c9dd`, and `8310b3e`. |
 | Done | Multi-session Original capture | Returning to the menu, changing mission, loading a save, or restarting can construct or restore more than one engine state in one process. The old recorder retained its first campaign snapshot forever and crashed on the next engine. The Original's process-global NPC register counter also survived mission teardown, changing every later session's staggered periodic-AI/RNG phases while Rust reconstructed each mission from zero. | `-PARITYTRACE` is now a base path. Every engine session is closed independently and written to the next unused `-session-NNNN.jsonl` file with its own campaign snapshot and zero-based slice of the process-global RNG draw stream. NPC register numbering resets immediately before each mission stream constructs actors. Headers identify `mission_start` versus `loaded_save` and the actual initial frame. Rust now attempts both through the strict setup-RNG and frame-state oracle: the automatic Lincoln mission-start save in `original-fullgame-schema10-round2-session-0001.jsonl` matches all 5,553 frames and 7,394 simulation draws, while a non-reconstructible mid-mission save remains a loud first-boundary failure. |
+| Done | Exact loaded-save fixture capture | Schema 10 retained campaign state but not the engine body restored from a mid-mission save. Reconstructing the mission and rewinding RNG could therefore agree briefly while serialized AI timers, sequences, paths, and entities were already different. Loading fixtures through menus also depended on the active profile and could overwrite its special Restart/Continue slots. | Schema 11 embeds the exact source v48 save bytes in `initial_save` with base64, length, SHA-256, slot, mission/version fields, and an explicit `linux_i386_rhsg_v48` or `windows_i386_gshr_v48` source profile. `-PARITYSAVE <path>` resolves the fixture before the data-directory `chdir`, validates its header and campaign mission, and routes a manager-owned save through the ordinary campaign/game load path without menus. Direct mode rejects active-profile special-slot aliases and suppresses automatic Restart/Continue writes. The Linux Original loader accepts RHSG fixtures only; preserved GSHR fixtures fail early with an explicit Rust-import requirement because representative Windows bodies fail this Linux engine ABI's stream signatures. Original commits: `03014252`, `b19cccbf`. Rust envelope commits: `2f00f14e6`, `fdf1c99d7`. |
 | Done | Hidden validity and LOS diagnostics | Session 2 could not directly explain why Original rejected PC 198's frame-452 bow command: the target's hidden state, authoritative ammunition, identity gates, and the visibility query that maintained the hidden state were absent from the snapshot. | Schema 3 now records `blipped`, human camp/unconscious/VIP/civilian state, all nine PC inventory counters, and every opaque 3D reachability query with bit-exact endpoints, result, cache metadata, exact blocking reason, and blocker geometry where applicable. Original commits: `a9404d5` and `c6f83ca`. |
 | Done | Exact Original visibility | Original's performance cache reduced a 3D ray to a lossy integer key in one of 2,000 buckets and reused the cached Boolean without incorporating obstacle state. Distinct rays could therefore share stale visibility, making target discovery depend on unrelated prior queries. Rust already tested the exact active obstacle set on every query. | The Original now always executes its existing exact obstacle test. Legacy key/offset values remain diagnostic fields in the trace, but new captures report no cache hits. This is a general engine-correctness change rather than a replay-specific exception; a fresh recording is required because session 2 contains the old cached result. |
 | Done | Structured Rust frame dump | Broad parity snapshots did not expose transient AI, sequence, movement, and vision state, forcing repeated one-off logging changes. | `original_parity_replay --dump-jsonl` writes stable JSONL records containing the complete serializable engine snapshot, resolved commands, RNG cursor/batch, entity mapping, and parity differences. `--dump-from`, `--dump-through`, and repeatable `--dump-entity kind:index` filters keep targeted captures manageable; omitting the entity filter retains the whole engine. An ordinary first-divergence run now retains a rolling full-engine window and automatically writes the divergent frame plus its 32 predecessors to a unique temporary JSONL file. Explicit dump and `--scan-all` behavior remains unchanged. |
@@ -667,23 +668,42 @@ initial entity mapping and are not parity oracles.
 ## Workflow
 
 Capture paths are bases rather than individual output files. For example,
-`-PARITYTRACE /tmp/lincoln-schema10.jsonl` writes
-`/tmp/lincoln-schema10-session-0001.jsonl`, then `...-0002.jsonl`, and skips
+`-PARITYTRACE /tmp/lincoln-schema11.jsonl` writes
+`/tmp/lincoln-schema11-session-0001.jsonl`, then `...-0002.jsonl`, and skips
 existing session numbers on later process runs:
 
 ```sh
 ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
   original-code/build/native-full/robin \
-  -PARITYTRACE original-code/parity-traces/original-fullgame-schema10.jsonl \
+  -PARITYTRACE original-code/parity-traces/original-fullgame-schema11.jsonl \
   -PARITYSEED 1
 ```
 
-Each file is a complete recorder session. A `loaded_save` header is accepted:
-automatic mission-start saves can replay from their recorded
-campaign/config/RNG state, while genuinely mid-mission saves require a future
-full engine checkpoint and will fail the strict initial comparison. Prefer the
-direct launch option below when a guaranteed `mission_start` baseline is
-needed.
+Each file is a complete recorder session. Schema-11 `loaded_save` headers embed
+the exact v48 checkpoint that produced the initial engine state. Schema 10
+remains temporarily accepted by the Rust tool as an old oracle during importer
+development, but it cannot represent arbitrary mid-mission state and should
+not be used for new captures.
+
+To start directly from a Linux i386 RHSG fixture without menu or profile-save
+selection, use `-PARITYSAVE`. Relative fixture and trace paths are resolved
+against the launch directory before `ROBINHOOD_DATA_DIR` changes the working
+directory:
+
+```sh
+ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
+  original-code/build/native-full/robin \
+  -PARITYSAVE /tmp/lincoln-restart.rhsg \
+  -PARITYTRACE original-code/parity-traces/lincoln-loaded-schema11.jsonl \
+  -PARITYSEED 1
+```
+
+Use an external fixture or a copy under `/tmp`. The launcher rejects canonical
+aliases of the active profile's Continue, Restart, QuickSave, ExQuickSave, and
+Sherwood slots. It also suppresses the normal automatic Restart and Continue
+writes for direct fixture sessions. Windows i386 `GSHR` v48 files are preserved
+and identified by the schema, but the Linux C++ launcher rejects them before
+mission construction; feed those checkpoints to the Rust importer instead.
 
 Final full-game builds compile the ordinary developer `-MISSION`/`-PROTO`
 switches out. Use the recorder-only direct launch option to bypass Continue
@@ -693,7 +713,7 @@ without modifying the active profile or its save:
 ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
   original-code/build/native-full/robin \
   -PARITYMISSION H01_Lin_VL Lincoln \
-  -PARITYTRACE original-code/parity-traces/original-fullgame-schema10.jsonl \
+  -PARITYTRACE original-code/parity-traces/original-fullgame-schema11.jsonl \
   -PARITYSEED 1
 ```
 
@@ -701,14 +721,14 @@ Build once, then use the first-divergence run for iteration:
 
 ```sh
 cargo build --example original_parity_replay
-TRACE_JSONL=/path/to/schema10-trace.jsonl
+TRACE_JSONL=/path/to/schema11-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay \
   "$TRACE_JSONL"
 ```
 
 The first run converts the JSONL source into an adjacent
-`*.parity-cache-v2.native-bincode.zst` file. The cache contains the typed trace
+`*.parity-cache-v4.native-bincode.zst` file. The cache contains the typed trace
 header, RNG prefix/suffix, and every frame as length-delimited native bincode
 records inside a streaming zstd level-0 payload. Subsequent runs read only that
 cache. Its source-length and modification-time fingerprint automatically
