@@ -4,7 +4,7 @@
 //! serializing any campaign or engine state:
 //!
 //! ```text
-//! 0x00  char[4]  "RHSG"
+//! 0x00  char[4]  "RHSG" (Linux i386 port) or "GSHR" (retail Win32)
 //! 0x04  u32      save header version
 //! 0x08  u32      mission profile id
 //! 0x0c  u32      SBFile stream version
@@ -21,13 +21,63 @@ use serde::{Deserialize, Serialize};
 use crate::legacy_io::{LegacyReader, LegacyResult};
 use crate::sbfile::SbFile;
 
-pub const RHSG_MAGIC: [u8; 4] = *b"RHSG";
+pub const PORT_LINUX_I386_MAGIC: [u8; 4] = *b"RHSG";
+pub const RETAIL_WINDOWS_X86_MAGIC: [u8; 4] = *b"GSHR";
+/// Compatibility name for the Linux i386 port's header magic.
+pub const RHSG_MAGIC: [u8; 4] = PORT_LINUX_I386_MAGIC;
 pub const RHSG_VERSION: u32 = 48;
 pub const RHSG_HEADER_LEN: u64 = 16;
+
+/// Concrete Original-save ABI identified by the serialized header.
+///
+/// Both supported v48 producers write little-endian streams with one-byte
+/// booleans, two-byte words, and four-byte longs, enums, floats, and pointer
+/// placeholders. Keeping the producer explicit prevents opaque raw pointers
+/// and skipped compiler padding in the engine body from being interpreted
+/// using the host Rust ABI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LegacySaveAbiProfile {
+    RetailWindowsX86V48,
+    PortLinuxI386V48,
+}
+
+impl LegacySaveAbiProfile {
+    /// Serialized scalar widths for both audited v48 producer ABIs.
+    ///
+    /// These are save-format widths, never widths of the current Rust host.
+    pub const BOOL_WIDTH: u8 = 1;
+    pub const WORD_WIDTH: u8 = 2;
+    pub const LONG_WIDTH: u8 = 4;
+    pub const ENUM_WIDTH: u8 = 4;
+    pub const FLOAT_WIDTH: u8 = 4;
+    pub const POINTER_PLACEHOLDER_WIDTH: u8 = 4;
+
+    pub const fn is_little_endian(self) -> bool {
+        true
+    }
+
+    pub const fn magic(self) -> [u8; 4] {
+        match self {
+            Self::RetailWindowsX86V48 => RETAIL_WINDOWS_X86_MAGIC,
+            Self::PortLinuxI386V48 => PORT_LINUX_I386_MAGIC,
+        }
+    }
+
+    fn detect(magic: [u8; 4]) -> Option<Self> {
+        match magic {
+            RETAIL_WINDOWS_X86_MAGIC => Some(Self::RetailWindowsX86V48),
+            PORT_LINUX_I386_MAGIC => Some(Self::PortLinuxI386V48),
+            _ => None,
+        }
+    }
+}
 
 /// Validated metadata at the front of an Original v48 save stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LegacySaveHeader {
+    /// Exact four bytes written by the producing executable.
+    pub magic: [u8; 4],
+    pub abi_profile: LegacySaveAbiProfile,
     pub header_version: u32,
     pub mission_id: u32,
     pub stream_version: u32,
@@ -36,21 +86,21 @@ pub struct LegacySaveHeader {
 }
 
 impl LegacySaveHeader {
-    /// Read and validate an RHSG header, leaving `reader` at the first body
-    /// byte. The reader remains owned by the caller for future body parsing.
+    /// Read and validate an Original v48 header, leaving `reader` at the first
+    /// body byte. The reader remains owned by the caller for body parsing.
     pub fn read(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
         reader.scope("rhsg.header", |reader| {
             let magic_offset = reader.offset();
             let mut magic = [0; 4];
             reader.read_bytes("magic", &mut magic)?;
-            if magic != RHSG_MAGIC {
+            let Some(abi_profile) = LegacySaveAbiProfile::detect(magic) else {
                 return Err(reader.invalid_value(
                     magic_offset,
                     "magic",
                     format_args!("{magic:02x?}"),
-                    "ASCII magic RHSG",
+                    "ASCII magic RHSG (Linux i386) or GSHR (retail Win32)",
                 ));
-            }
+            };
 
             let header_version_offset = reader.offset();
             let header_version = reader.read_u32("header_version")?;
@@ -79,6 +129,8 @@ impl LegacySaveHeader {
             let body_offset = reader.offset();
             debug_assert_eq!(body_offset, RHSG_HEADER_LEN);
             Ok(Self {
+                magic,
+                abi_profile,
                 header_version,
                 mission_id,
                 stream_version,
@@ -144,6 +196,8 @@ mod tests {
             assert_eq!(
                 header,
                 LegacySaveHeader {
+                    magic: PORT_LINUX_I386_MAGIC,
+                    abi_profile: LegacySaveAbiProfile::PortLinuxI386V48,
                     header_version: 48,
                     mission_id: NOTTINGHAM_MISSION_ID,
                     stream_version: 48,
@@ -156,6 +210,43 @@ mod tests {
     }
 
     #[test]
+    fn detects_retail_windows_profile_without_normalizing_magic() {
+        let bytes = save_bytes(
+            RETAIL_WINDOWS_X86_MAGIC,
+            RHSG_VERSION,
+            NOTTINGHAM_MISSION_ID,
+            RHSG_VERSION,
+        );
+
+        with_reader(&bytes, |reader| {
+            let header = LegacySaveHeader::read(reader).unwrap();
+            assert_eq!(header.magic, *b"GSHR");
+            assert_eq!(
+                header.abi_profile,
+                LegacySaveAbiProfile::RetailWindowsX86V48
+            );
+            assert_eq!(header.abi_profile.magic(), header.magic);
+            assert_eq!(reader.offset(), RHSG_HEADER_LEN);
+        });
+    }
+
+    #[test]
+    fn audited_v48_profiles_have_fixed_32_bit_abi_layout() {
+        for profile in [
+            LegacySaveAbiProfile::RetailWindowsX86V48,
+            LegacySaveAbiProfile::PortLinuxI386V48,
+        ] {
+            assert!(profile.is_little_endian());
+            assert_eq!(LegacySaveAbiProfile::BOOL_WIDTH, 1);
+            assert_eq!(LegacySaveAbiProfile::WORD_WIDTH, 2);
+            assert_eq!(LegacySaveAbiProfile::LONG_WIDTH, 4);
+            assert_eq!(LegacySaveAbiProfile::ENUM_WIDTH, 4);
+            assert_eq!(LegacySaveAbiProfile::FLOAT_WIDTH, 4);
+            assert_eq!(LegacySaveAbiProfile::POINTER_PLACEHOLDER_WIDTH, 4);
+        }
+    }
+
+    #[test]
     fn rejects_invalid_magic_with_field_and_offset() {
         let bytes = save_bytes(*b"NOPE", 48, NOTTINGHAM_MISSION_ID, 48);
         let error = with_reader(&bytes, |reader| LegacySaveHeader::read(reader).unwrap_err());
@@ -165,7 +256,7 @@ mod tests {
         assert!(matches!(
             error.kind,
             LegacyIoErrorKind::InvalidValue {
-                expected: "ASCII magic RHSG",
+                expected: "ASCII magic RHSG (Linux i386) or GSHR (retail Win32)",
                 ..
             }
         ));

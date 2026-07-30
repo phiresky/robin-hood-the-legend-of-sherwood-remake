@@ -838,7 +838,9 @@ mod tests {
 
     use super::*;
     use crate::legacy_io::LegacyIoErrorKind;
-    use crate::legacy_save::LegacySaveHeader;
+    use crate::legacy_save::{
+        LegacySaveAbiProfile, LegacySaveHeader, PORT_LINUX_I386_MAGIC, RETAIL_WINDOWS_X86_MAGIC,
+    };
     use crate::sbfile::{SB_FILE_READ, SbFile};
 
     fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
@@ -948,6 +950,8 @@ mod tests {
             return;
         };
         let (header, campaigns) = read_fixture(&path);
+        assert_eq!(header.magic, PORT_LINUX_I386_MAGIC);
+        assert_eq!(header.abi_profile, LegacySaveAbiProfile::PortLinuxI386V48);
         assert_eq!(header.mission_id, 16723);
         assert_eq!(campaigns.backup.start_offset, 16);
         assert_eq!(campaigns.backup.end_offset, 3597);
@@ -982,6 +986,8 @@ mod tests {
             return;
         };
         let (header, campaigns) = read_fixture(&path);
+        assert_eq!(header.magic, PORT_LINUX_I386_MAGIC);
+        assert_eq!(header.abi_profile, LegacySaveAbiProfile::PortLinuxI386V48);
         assert_eq!(header.mission_id, 16712);
         assert_eq!(campaigns.backup.start_offset, 16);
         assert_eq!(campaigns.backup.end_offset, 2729);
@@ -1005,6 +1011,35 @@ mod tests {
             assert!(!bootstrap.identity.mission_filename.is_empty());
             assert_eq!(bootstrap.campaign.characters.len(), 1);
         }
+        assert!(campaigns.engine_offset < std::fs::metadata(path).unwrap().len());
+    }
+
+    #[test]
+    fn golden_retail_windows_campaign_boundaries() {
+        let Some(path) =
+            repository_fixture("reference-saves/Savegame_SuN1Sh1nE/Profile_004/Savegame_005")
+        else {
+            return;
+        };
+        let (header, campaigns) = read_fixture(&path);
+        assert_eq!(header.magic, RETAIL_WINDOWS_X86_MAGIC);
+        assert_eq!(
+            header.abi_profile,
+            LegacySaveAbiProfile::RetailWindowsX86V48
+        );
+        assert_eq!(header.header_version, 48);
+        assert_eq!(header.mission_id, 20808);
+        assert_eq!(header.stream_version, 48);
+        assert_eq!(campaigns.backup.start_offset, 16);
+        assert_eq!(campaigns.backup.end_offset, 3347);
+        assert_eq!(campaigns.live.start_offset, 3347);
+        assert_eq!(campaigns.live.end_offset, 6678);
+        assert_eq!(campaigns.engine_offset, 6678);
+        assert_eq!(campaigns.backup.campaign.missions.len(), 63);
+        assert_eq!(campaigns.live.campaign.missions.len(), 63);
+        assert_eq!(campaigns.backup.campaign.characters.len(), 6);
+        assert_eq!(campaigns.live.campaign.characters.len(), 6);
+        assert_eq!(campaigns.live.campaign.current_mission, Some(0));
         assert!(campaigns.engine_offset < std::fs::metadata(path).unwrap().len());
     }
 }
