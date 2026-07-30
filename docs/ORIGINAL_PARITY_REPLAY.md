@@ -897,6 +897,48 @@ the one semantically live restore-state branch. An invalid live value remains
 a hard failure instead of being replaced with a plausible state; arbitrary
 constructor bytes in an inert save no longer prevent adoption.
 
+### Linux-v48 default stimulus storage
+
+Profile 011 creation order 103 contains an active delayed-stimulus entry whose
+type word is `0xef280000`, but whose other fields exactly match a
+default-constructed `RHStimulus`: `INFO_NONE`, null owner, and no whole-patrol
+flag. This is not decoded as low-byte `EVENT_VIEW`; a real view stimulus carries
+human information, and the Linux build does not use short enums.
+`RHStimulus::RHStimulus` initialized every one of those surrounding members but
+left `mType` indeterminate.
+
+For old saves, Rust accepts an invalid type only with that exact constructor
+shape, retains its raw word in `StimulusInfo::LegacyInvalidType`, and routes it
+through `NO_EVENT`, which has the same default script/event dispatch behavior
+as Original's unknown switch value. Invalid types with any live payload, owner,
+or patrol flag remain hard errors. Original now initializes `mType` to
+`NO_EVENT`. Its loader canonicalizes only this exact dormant legacy shape to
+`NO_EVENT`; any invalid type with live surrounding state is rejected. Its write
+path also rejects noncanonical enum words and always emits the canonical
+four-byte value, so future saves and parity recordings cannot propagate
+process-dependent bytes at this site.
+
+### Linux-v48 dormant carried-posture storage
+
+Profile 011 creation order 157 stores `mCarriedPosture = 161437968` while
+`mpCarried` is null. `RHElementActorPC` initialized the pointer but not its
+associated posture, then serialized both fields unconditionally. The posture
+becomes live only when a PC takes a body, at which point Original overwrites it
+from that body's current posture before later restoring it while dropping the
+body.
+
+Rust retains the exact raw word while `carried` is null, overwrites it on every
+carry/climb transition, and converts it to a validated `Posture` only at live
+drop/synchronization sites. Import rejects an invalid posture whenever the save
+also contains a carried actor.
+
+Original now initializes the dormant posture to `RHPOSTURE_UNDEFINED`. Its
+loader retains the four-byte v48 layout and canonicalizes an invalid legacy
+word only when there is no carried actor; an invalid posture paired with a live
+carried pointer is rejected. The writer rejects noncanonical posture words, so
+future saves and parity recordings cannot reproduce uninitialized constructor
+storage at this site.
+
 ## Coverage limits
 
 A clean baseline proves exact parity only for the state fields serialized by the
