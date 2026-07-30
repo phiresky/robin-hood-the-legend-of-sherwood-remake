@@ -2693,6 +2693,7 @@ impl AiController {
         if flags.contains(GotoFlags::DONT_STOP) {
             order.move_flags |= MoveFlags::NO_TRANSITIONS.bits() as u16;
         }
+        order.append_special_action_tail = flags.contains(GotoFlags::SPECIAL_ACTION);
 
         // Forward `GOTO_FINDACCESSIBLE` and `GOTO_ASKOBSTACLE` to the
         // engine drain. The drain has the FastFindGrid in hand and

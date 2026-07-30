@@ -4220,6 +4220,7 @@ impl EngineInner {
             } else {
                 Vec::new()
             };
+            let tail = self.ai_special_action_tail(entity_id, intent);
             let goal = door_goal.map_or(
                 GoalShape::Point {
                     point: dest,
@@ -4246,7 +4247,7 @@ impl EngineInner {
                 intent.speed_factor,
                 move_flags,
                 prefix,
-                Vec::new(),
+                tail,
                 false,
                 false,
             );
@@ -4298,6 +4299,12 @@ impl EngineInner {
             ));
         }
         sequence.append_element(elem);
+        for mut tail in self.ai_special_action_tail(entity_id, intent) {
+            tail.command_level = sequence
+                .last()
+                .map_or(1, |element| element.command_level.saturating_add(1));
+            sequence.append_element(tail);
+        }
         let sequence_id = self.launch_sequence(sequence);
 
         tracing::trace!(
@@ -4309,6 +4316,51 @@ impl EngineInner {
             "AI movement launched via sequence element"
         );
         Some(sequence_id)
+    }
+
+    /// Build the exact tail authored by
+    /// `RHArtificialIntelligence::GoTo(..., GOTO_SPECIAL_ACTION)`.
+    ///
+    /// These are part of the movement sequence, not follow-up AI work. That
+    /// distinction keeps the Move from being the last real action: its
+    /// condolence must not emit EventReachPoint until the final SitDown /
+    /// EnterLeisure element terminates.
+    fn ai_special_action_tail(
+        &self,
+        entity_id: EntityId,
+        intent: &crate::order::AiOrderIntent,
+    ) -> Vec<crate::sequence::SequenceElement> {
+        if !intent.append_special_action_tail {
+            return Vec::new();
+        }
+        let ai = self
+            .world
+            .entities
+            .get(entity_id)
+            .and_then(|entity| entity.ai_controller())
+            .unwrap_or_else(|| {
+                panic!("GOTO_SPECIAL_ACTION movement owner {entity_id:?} lost its AI controller")
+            });
+        let direction = ai.initial_view_direction;
+
+        let mut turn = crate::sequence::SequenceElement::new_generic(
+            0,
+            crate::element::Command::Turn,
+            Some(entity_id),
+        );
+        turn.set_property(
+            crate::sequence::Field::Direction,
+            crate::sequence::FieldValue::Integer(u32::from(direction)),
+        );
+        let posture_command = if ai.special_action {
+            crate::element::Command::EnterLeisure
+        } else {
+            crate::element::Command::SitDown
+        };
+        vec![
+            turn,
+            crate::sequence::SequenceElement::new(0, posture_command, Some(entity_id)),
+        ]
     }
 
     /// Execute the selected movement arm for one live actor owner.

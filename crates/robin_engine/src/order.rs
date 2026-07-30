@@ -717,6 +717,13 @@ pub struct AiOrderIntent {
     /// drain.
     #[serde(default)]
     pub quit_swordfight_before_move: bool,
+    /// `GOTO_SPECIAL_ACTION` appends a Turn to the NPC's authored initial
+    /// direction and then SitDown / EnterLeisure to the same movement
+    /// sequence. Preserve the authored flag across the AI/engine drain
+    /// boundary; the engine samples the NPC's initial direction and
+    /// special-action posture while constructing the sequence.
+    #[serde(default)]
+    pub append_special_action_tail: bool,
     /// Cached selected-movement goal that survives an implicit GoTo
     /// replacement until the new movement installs a concrete order.
     pub retained_movement_goal: Option<crate::coordinates::MapPoint>,
@@ -758,6 +765,7 @@ impl AiOrderIntent {
             speed_factor: 1.0,
             no_halt: false,
             quit_swordfight_before_move: false,
+            append_special_action_tail: false,
             retained_movement_goal: None,
             antagonist: None,
             find_accessible: false,
