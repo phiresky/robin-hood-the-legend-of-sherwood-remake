@@ -40,6 +40,10 @@ pub enum LegacyIoErrorKind {
     LengthOverflow { length: usize, width: u8 },
     #[error("unable to allocate space for {count} legacy items")]
     Allocation { count: usize },
+    #[error("item count {count} exceeds the caller-supplied limit {maximum}")]
+    CountLimit { count: u32, maximum: usize },
+    #[error("invalid UTF-16 string")]
+    InvalidUtf16(#[source] std::string::FromUtf16Error),
 }
 
 /// Typed, contextual reads over the read-only SBFile compatibility layer.
@@ -165,6 +169,29 @@ impl<'a> LegacyReader<'a> {
         }
     }
 
+    /// Read and validate a fixed byte signature such as the 16-byte MD5
+    /// fingerprints emitted by `Toolbox::ValidateStream`.
+    pub fn read_signature<const N: usize>(
+        &mut self,
+        field: impl fmt::Display + Copy,
+        expected: [u8; N],
+        expected_description: &'static str,
+    ) -> LegacyResult<()> {
+        let offset = self.offset();
+        let mut actual = [0; N];
+        self.read_bytes(field, &mut actual)?;
+        if actual == expected {
+            Ok(())
+        } else {
+            Err(self.invalid_value(
+                offset,
+                field,
+                format_args!("{actual:02x?}"),
+                expected_description,
+            ))
+        }
+    }
+
     /// Read an `SBString`: a little-endian u16 byte length followed by bytes.
     /// Shipped strings are ASCII. Lossy UTF-8 conversion preserves the prior
     /// Rust loader's behavior for non-UTF-8 authored data.
@@ -178,6 +205,62 @@ impl<'a> LegacyReader<'a> {
         bytes.resize(len, 0);
         self.read_bytes(format_args!("{field}.bytes"), &mut bytes)?;
         Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// Read a legacy `ULONG` container count, rejecting it before any
+    /// allocation when it exceeds the format-specific limit chosen by the
+    /// caller.
+    pub fn read_count_u32(
+        &mut self,
+        field: impl fmt::Display + Copy,
+        maximum: usize,
+    ) -> LegacyResult<usize> {
+        let offset = self.offset();
+        let count = self.read_u32(field)?;
+        let count_usize = count as usize;
+        if count_usize > maximum {
+            return Err(self.error_at(
+                offset,
+                field,
+                LegacyIoErrorKind::CountLimit { count, maximum },
+            ));
+        }
+        Ok(count_usize)
+    }
+
+    /// Read an Original `SBWideString`: a u16 code-unit count followed by
+    /// little-endian UTF-16. Unlike the C++ loader, malformed surrogate
+    /// sequences are rejected rather than silently depending on host
+    /// `wchar_t` behavior.
+    pub fn read_wide_string(
+        &mut self,
+        field: impl fmt::Display + Copy,
+        maximum_code_units: usize,
+    ) -> LegacyResult<String> {
+        let length_offset = self.offset();
+        let length = self.read_u16(format_args!("{field}.length"))? as usize;
+        if length > maximum_code_units {
+            return Err(self.error_at(
+                length_offset,
+                format_args!("{field}.length"),
+                LegacyIoErrorKind::CountLimit {
+                    count: length as u32,
+                    maximum: maximum_code_units,
+                },
+            ));
+        }
+
+        let data_offset = self.offset();
+        let mut code_units = Vec::new();
+        code_units
+            .try_reserve_exact(length)
+            .map_err(|_| self.allocation_error(data_offset, field, length))?;
+        for index in 0..length {
+            code_units.push(self.read_u16(format_args!("{field}.code_units[{index}]"))?);
+        }
+        String::from_utf16(&code_units).map_err(|error| {
+            self.error_at(data_offset, field, LegacyIoErrorKind::InvalidUtf16(error))
+        })
     }
 
     fn read_array<const N: usize>(&mut self, field: impl fmt::Display) -> LegacyResult<[u8; N]> {
@@ -369,8 +452,19 @@ impl<W: Write> LegacyWriter<W> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
     use super::*;
     use crate::sbfile::SB_FILE_READ;
+
+    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
+        let mut fixture = tempfile::NamedTempFile::new().unwrap();
+        fixture.write_all(bytes).unwrap();
+        fixture.flush().unwrap();
+        let path = fixture.path().to_string_lossy().into_owned();
+        let mut file = SbFile::open(&path, SB_FILE_READ).unwrap();
+        read(&mut LegacyReader::new(&mut file))
+    }
 
     #[test]
     fn writer_preserves_legacy_little_endian_layout() {
@@ -432,5 +526,48 @@ mod tests {
                 code: crate::sbfile::SBFILE_ERROR_READ
             }
         ));
+    }
+
+    #[test]
+    fn bounded_count_rejects_malicious_u32_before_allocation() {
+        let error = with_reader(&u32::MAX.to_le_bytes(), |reader| {
+            reader
+                .scope("campaign", |reader| {
+                    reader.read_count_u32("mission_count", 1024)
+                })
+                .unwrap_err()
+        });
+
+        assert_eq!(error.offset, 0);
+        assert_eq!(error.field, "campaign.mission_count");
+        assert!(matches!(
+            error.kind,
+            LegacyIoErrorKind::CountLimit {
+                count: u32::MAX,
+                maximum: 1024
+            }
+        ));
+    }
+
+    #[test]
+    fn wide_string_reports_truncated_code_unit() {
+        let error = with_reader(&[2, 0, b'R', 0], |reader| {
+            reader.read_wide_string("name", 32).unwrap_err()
+        });
+
+        assert_eq!(error.offset, 4);
+        assert_eq!(error.field, "name.code_units[1]");
+        assert!(matches!(error.kind, LegacyIoErrorKind::SbFile { .. }));
+    }
+
+    #[test]
+    fn wide_string_rejects_unpaired_utf16_surrogate() {
+        let error = with_reader(&[1, 0, 0x00, 0xd8], |reader| {
+            reader.read_wide_string("name", 32).unwrap_err()
+        });
+
+        assert_eq!(error.offset, 2);
+        assert_eq!(error.field, "name");
+        assert!(matches!(error.kind, LegacyIoErrorKind::InvalidUtf16(_)));
     }
 }

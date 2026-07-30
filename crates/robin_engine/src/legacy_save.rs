@@ -10,9 +10,11 @@
 //! 0x0c  u32      SBFile stream version
 //! ```
 //!
-//! This module intentionally stops at byte 16. Body parsing is a separate
-//! milestone; callers can continue through the same [`LegacyReader`] after a
-//! successful header read.
+//! The header reader leaves callers at byte 16. [`campaign`] then decodes the
+//! two consecutive, lengthless `RHCampaign::Serialize` streams which precede
+//! the engine state.
+
+pub mod campaign;
 
 use serde::{Deserialize, Serialize};
 
