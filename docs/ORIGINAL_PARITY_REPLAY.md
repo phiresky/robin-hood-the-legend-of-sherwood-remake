@@ -865,6 +865,21 @@ never fabricates a valid enum for untouched brains. All behaviorally consumed
 neighboring enums validate their complete serialized word instead of masking
 corruption through low-16-bit truncation.
 
+### Linux-v48 inactive patrol-macro cursors
+
+Profile 011 creation order 89 stores macro offset 12,304 for a 26-byte waypoint,
+while `remaining_macro_bytes == 0` and `macro_in_progress == false`. The
+Original initializes `mpubMacroCommand` to null, but whenever a patrol path
+exists its save path unconditionally serializes
+`mpubMacroCommand - currentWaypoint.pData`. Before a macro assignment this is
+an indeterminate pointer difference narrowed to `UWORD`; the execution path
+never dereferences it while the remaining-byte count is zero.
+
+Rust preserves the raw inactive offset for exact state inspection. Command-kind
+and `offset + remaining` bounds remain strict whenever a macro is marked active
+or has bytes remaining, so this does not turn malformed live cursors into
+defaults or silently accept unsafe bytecode reads.
+
 ## Coverage limits
 
 A clean baseline proves exact parity only for the state fields serialized by the
