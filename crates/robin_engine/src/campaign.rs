@@ -636,7 +636,8 @@ impl Campaign {
     /// Add a character to the gang.
     pub fn add_to_gang(&mut self, char_idx: usize, profiles: &ProfileManager) {
         // VIP characters must not already be in the gang.
-        if let Some(desc) = self.characters.get(char_idx)
+        if !self.gang_indices.contains(&char_idx)
+            && let Some(desc) = self.characters.get(char_idx)
             && let Some(profile_idx) = desc.character_profile_idx
             && let Some(cp) = profiles.get_character(profile_idx)
         {
@@ -2477,6 +2478,25 @@ mod tests {
         assert!(!c.is_in_gang(CharacterProfileIdx(0)));
         c.move_to_gang(0, &profiles);
         assert_eq!(c.get_size_of_gang(), 2);
+    }
+
+    #[test]
+    fn adding_the_same_vip_description_to_the_gang_is_idempotent() {
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles.characters.push(crate::profiles::CharacterProfile {
+            vip: true,
+            ..Default::default()
+        });
+        let mut campaign = Campaign::new();
+        campaign.characters.push(PcDescription {
+            character_profile_idx: Some(CharacterProfileIdx(0)),
+            ..Default::default()
+        });
+
+        campaign.add_to_gang(0, &profiles);
+        campaign.add_to_gang(0, &profiles);
+
+        assert_eq!(campaign.gang_indices, [0]);
     }
 
     #[test]
