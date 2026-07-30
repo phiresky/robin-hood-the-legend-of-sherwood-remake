@@ -1059,6 +1059,7 @@ impl EngineInner {
         }
 
         self.world.entities.push(Some(entity));
+        self.world.assign_next_original_creation_order(id);
         id
     }
 

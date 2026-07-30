@@ -355,22 +355,10 @@ fn update_predetection_shadow_latch(
 }
 
 impl EngineInner {
-    /// Reconstruct `RHElement::mulCreationOrder` for the static mission
-    /// entities stored in `marrayElements`.
-    ///
-    /// The Original constructs its projectile-trajectory helper and thirty
-    /// object masters before loading the first level entity. Those helpers
-    /// consume `gulCreationCounter` values but are never inserted into
-    /// `marrayElements`. Consequently a static mission NPC's creation order is
-    /// its table slot plus 31. Detection cadence is one of the places where
-    /// that hidden prefix, rather than the table index, is gameplay-visible.
+    /// Return the exact `RHElement::mulCreationOrder` assigned by the
+    /// Original-compatible construction stream.
     fn original_static_creation_order(&self, entity_id: EntityId) -> u32 {
-        const PRE_LEVEL_ELEMENT_COUNT: u32 = 31;
-
-        entity_id
-            .index()
-            .checked_add(PRE_LEVEL_ELEMENT_COUNT)
-            .expect("original static creation order overflow")
+        self.world.original_creation_order(entity_id)
     }
 
     /// Original: `RHArtificialMalignity::AttackingReactiontimeEnemyNearTest`.

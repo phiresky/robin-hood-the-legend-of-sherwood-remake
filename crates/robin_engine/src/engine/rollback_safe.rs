@@ -346,6 +346,26 @@ impl Engine {
             return Err((error, campaign));
         }
         inner.populate_sector_gates_from_doors();
+        let original_topology =
+            match crate::legacy_save::topology_adapter::derive_static_element_topology(
+                &inner, assets,
+            ) {
+                Ok(topology) => topology,
+                Err(error) => {
+                    let campaign = inner.into_campaign();
+                    return Err((
+                        EngineError::MissionLevelStage {
+                            stage: "Original element identity",
+                            reason: error.to_string(),
+                        },
+                        campaign,
+                    ));
+                }
+            };
+        inner.world.install_original_creation_orders(
+            original_topology.creation_order_by_entity,
+            original_topology.static_creation_order_boundary,
+        );
         // Mission-script init and then AI init run HERE — after pathfinder +
         // grid are fully populated. This preserves RHEngine::Initialize's
         // script-before-AI order while still letting TestIfPathIsFine /

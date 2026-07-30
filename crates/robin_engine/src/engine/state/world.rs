@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -25,9 +27,23 @@ pub(crate) struct WorldState {
     pub(crate) dynamic_sight_obstacles: Vec<SightObstacle>,
     pub(crate) static_sight_obstacle_active: Vec<bool>,
     pub(crate) mobile_elements: Vec<crate::mobile::MobileElement>,
+    /// Exact `RHElement::mulCreationOrder` identity for every entity created
+    /// by the Original-compatible simulation.
+    ///
+    /// This cannot be reconstructed from the Rust entity-table index:
+    /// Original mobile masters consume creation orders without occupying a
+    /// Rust `Entities` slot, and Rust batches authored entity categories
+    /// differently while loading a mission.
+    pub(crate) original_creation_order_by_entity: BTreeMap<EntityId, u32>,
+    /// Original process-global `gulCreationCounter`.
+    pub(crate) next_original_creation_order: u32,
 }
 
 impl WorldState {
+    /// The projectile helper plus thirty Original object masters are
+    /// constructed before the first mission element.
+    pub(crate) const FIRST_MISSION_CREATION_ORDER: u32 = 31;
+
     pub(crate) fn new() -> Self {
         Self {
             entities: Entities::new(),
@@ -39,7 +55,44 @@ impl WorldState {
             dynamic_sight_obstacles: Vec::new(),
             static_sight_obstacle_active: Vec::new(),
             mobile_elements: Vec::new(),
+            original_creation_order_by_entity: BTreeMap::new(),
+            next_original_creation_order: Self::FIRST_MISSION_CREATION_ORDER,
         }
+    }
+
+    pub(crate) fn assign_next_original_creation_order(&mut self, entity_id: EntityId) {
+        let creation_order = self.next_original_creation_order;
+        self.next_original_creation_order = creation_order
+            .checked_add(1)
+            .expect("Original element creation counter overflow");
+        if let Some(previous) = self
+            .original_creation_order_by_entity
+            .insert(entity_id, creation_order)
+        {
+            panic!(
+                "entity {entity_id} already had Original creation order {previous} while assigning {creation_order}"
+            );
+        }
+    }
+
+    /// Replace provisional load-time identities with the exact authored
+    /// sequence after all static mission elements and mobile masters exist.
+    pub(crate) fn install_original_creation_orders(
+        &mut self,
+        creation_order_by_entity: BTreeMap<EntityId, u32>,
+        next_original_creation_order: u32,
+    ) {
+        self.original_creation_order_by_entity = creation_order_by_entity;
+        self.next_original_creation_order = next_original_creation_order;
+    }
+
+    pub(crate) fn original_creation_order(&self, entity_id: EntityId) -> u32 {
+        self.original_creation_order_by_entity
+            .get(&entity_id)
+            .copied()
+            .unwrap_or_else(|| {
+                panic!("entity {entity_id} has no authoritative Original creation order")
+            })
     }
 
     /// Reattach immutable level topology and sprite runtimes after decoding.
