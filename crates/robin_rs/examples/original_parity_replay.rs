@@ -1717,7 +1717,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         // Establish identity from the untouched mission-start state.  Besides
         // being the strongest isomorphism anchor, this lets startup debugging
         // distinguish load-time differences from first-hourglass mutations.
-        let map = entity_map.get_or_insert_with(|| EntityMap::build(&engine, &frame));
+        let map = entity_map.get_or_insert_with(|| EntityMap::build(&engine, &assets, &frame));
         map.refresh_trace_indices(&frame);
         if frame.frame_before == 0 && std::env::var_os("PARITY_DEBUG_NPC_ORDER").is_some() {
             let reverse: BTreeMap<_, _> = map
@@ -1852,7 +1852,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             print_startup_actors("after Rust frame 1", &engine, &frame, map);
         }
 
-        map.refresh_building_sector_mapping(&engine, &frame);
+        map.validate_building_sector_mapping(&engine, &frame);
         let mut differences =
             motion_line_parity.apply_changes_and_compare(&engine, &frame.motion_line_changes);
         differences.extend(compare_frame(&engine, &frame, map));
@@ -3262,11 +3262,10 @@ struct EntityMap {
     /// Original's immutable per-engine construction serial is the durable
     /// identity anchor for refreshing the per-frame raw-index view.
     entities_by_creation_order: BTreeMap<u32, EntityId>,
-    /// Original and Rust allocate synthetic building-sector numbers from
-    /// different registries. Pair them by their shared first-gate position
-    /// and inactive occupant sets rather than treating the raw numbers as
-    /// gameplay identity.
-    building_sectors: BTreeMap<u16, u16>,
+    /// Original sparse `RHFastFindGrid::marraySectors` slot to Rust's compact
+    /// canonical position-sector number. The raw numbers are allocation
+    /// details rather than gameplay identity.
+    sectors: BTreeMap<u16, u16>,
 }
 
 impl EntityMap {
@@ -3274,7 +3273,7 @@ impl EntityMap {
     /// table indices. Entity kind and initial map position are the primary
     /// labels. Creation order and Rust table order only break ties between
     /// otherwise indistinguishable colocated entities.
-    fn build(engine: &Engine, frame: &TraceFrame) -> Self {
+    fn build(engine: &Engine, assets: &LevelAssets, frame: &TraceFrame) -> Self {
         let mut originals: Vec<_> = frame.elements.iter().collect();
         originals.sort_by_key(|element| (element.creation_order, element.entity_id));
         let rust_entities: Vec<_> = engine
@@ -3327,42 +3326,29 @@ impl EntityMap {
             used.insert(*rust_id);
             result.insert(original.entity_id, *rust_id);
         }
-        let mut building_sectors = BTreeMap::new();
-        let mut reverse_building_sectors = BTreeMap::new();
-        for original in frame
-            .elements
-            .iter()
-            .filter(|element| element.actor.is_some() && !element.active)
-        {
-            let rust_id = result[&original.entity_id];
-            let actual = engine
-                .get_entity(rust_id)
-                .unwrap_or_else(|| panic!("mapped entity {rust_id:?} vanished"));
-            let actual_element = actual.element_data();
-            let actual_sector = actual_element.sector().map(|sector| sector.get());
-            let expected_position: MapPoint = original.position_map.into();
-            let actual_position = actual_element.position_map();
-            let same_position = expected_position.x.to_bits() == actual_position.x.to_bits()
-                && expected_position.y.to_bits() == actual_position.y.to_bits();
-            let Some(actual_sector) = actual_sector else {
+        let retained = assets
+            .legacy_grid_topology
+            .as_ref()
+            .expect("parity replay requires retained Original fast-grid topology");
+        let mut sectors = BTreeMap::new();
+        let mut reverse_sectors = BTreeMap::new();
+        for (original, runtime) in retained.position_sector_numbers.iter().enumerate() {
+            let Some(runtime) = runtime else {
                 continue;
             };
-            if same_position && !actual_element.active && original.sector != actual_sector {
-                if let Some(previous) = building_sectors.insert(original.sector, actual_sector) {
-                    assert_eq!(
-                        previous, actual_sector,
-                        "original building sector {} maps to multiple Rust sectors",
-                        original.sector
-                    );
-                }
-                if let Some(previous) =
-                    reverse_building_sectors.insert(actual_sector, original.sector)
-                {
-                    assert_eq!(
-                        previous, original.sector,
-                        "Rust building sector {actual_sector} maps to multiple original sectors"
-                    );
-                }
+            let original = u16::try_from(original)
+                .expect("Original sparse sector slot exceeds its u16 identity domain");
+            let runtime =
+                u16::try_from(*runtime).expect("Rust canonical sector number is negative");
+            assert!(
+                sectors.insert(original, runtime).is_none(),
+                "Original sparse sector slot {original} was mapped twice"
+            );
+            if let Some(previous) = reverse_sectors.insert(runtime, original) {
+                panic!(
+                    "Rust canonical sector {runtime} maps to both Original sparse slots \
+                     {previous} and {original}"
+                );
             }
         }
         let entities_by_creation_order = frame
@@ -3380,7 +3366,7 @@ impl EntityMap {
         Self {
             entities: result,
             entities_by_creation_order,
-            building_sectors,
+            sectors,
         }
     }
 
@@ -3390,11 +3376,11 @@ impl EntityMap {
         }
     }
 
-    /// Learn synthetic Original↔Rust building-sector identities when an actor
-    /// first becomes a hidden building occupant. Neither engine's raw sector
-    /// allocation is stable across implementations, and some buildings have
-    /// no occupant at mission start from which `build` could infer the pair.
-    fn refresh_building_sector_mapping(&mut self, engine: &Engine, frame: &TraceFrame) {
+    /// Verify hidden-building occupants against the construction-topology
+    /// isomorphism. The mapping itself must not be learned from mutable frame
+    /// state: an initially active tenant can cross the first-frame comparison
+    /// boundary before any inactive occupant exposes that building.
+    fn validate_building_sector_mapping(&self, engine: &Engine, frame: &TraceFrame) {
         for original in frame
             .elements
             .iter()
@@ -3421,26 +3407,11 @@ impl EntityMap {
             {
                 continue;
             }
-            if let Some(previous) = self.building_sectors.get(&original.sector) {
-                assert_eq!(
-                    *previous, actual_sector,
-                    "original building sector {} maps to multiple Rust sectors",
-                    original.sector
-                );
-                continue;
-            }
-            if let Some((&other_original, _)) = self
-                .building_sectors
-                .iter()
-                .find(|(_, rust_sector)| **rust_sector == actual_sector)
-            {
-                panic!(
-                    "Rust building sector {actual_sector} maps to both Original sectors \
-                     {other_original} and {}",
-                    original.sector
-                );
-            }
-            self.building_sectors.insert(original.sector, actual_sector);
+            assert_eq!(
+                self.sectors.get(&original.sector),
+                Some(&actual_sector),
+                "hidden building occupant exposed a sector identity absent from retained topology"
+            );
         }
     }
 
@@ -3539,7 +3510,7 @@ impl EntityMap {
     }
 
     fn sectors_equivalent(&self, original: u16, rust: u16) -> bool {
-        original == rust || self.building_sectors.get(&original) == Some(&rust)
+        original == rust || self.sectors.get(&original) == Some(&rust)
     }
 }
 

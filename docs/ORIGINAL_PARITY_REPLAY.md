@@ -1603,6 +1603,27 @@ state represents a seek sector as either a position sector or a door. Linux3
 Profile 003 save 055 now adopts successfully and reaches ordinary frame
 comparison instead of failing on sparse sector 416.
 
+### Frame comparison maps every sparse position-sector identity
+
+`RHElement::GetSectorNumber()` exposes the sector object's slot in Original's
+heterogeneous `RHFastFindGrid::marraySectors`. Rust stores the corresponding
+motion/building sector in a compact canonical registry. Those numbers can
+coincide, but equality is not their identity contract.
+
+The parity runner previously inferred only differing building-sector pairs
+from inactive hidden occupants. That made the mapping depend on mutable frame
+state: Linux3 Profile 003 QuickSave begins with Civilian 74 active inside door
+5, where Original sparse slot 303 is Rust canonical building sector 146. The
+first recorded movement frame therefore reported a false sector divergence
+before an inactive occupant could teach the runner the pair.
+
+Frame comparison now builds the complete sparse-to-canonical sector
+isomorphism from the retained Original construction topology. It validates
+that the mapping is one-to-one and treats hidden occupants as consistency
+checks instead of identity evidence. QuickSave passes frame 74697 and reaches
+the next unrelated command divergence at frame 74701; Linux2 Profile 002 saves
+011 and 013 and Linux3 Profile 003 save 064 remain fully matched.
+
 ### Loaded target hotspots retain the serialized sprite position
 
 `RHSprite::GetCurrentPointMap` adds the current row's hotspot to the cached
