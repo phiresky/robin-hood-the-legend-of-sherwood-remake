@@ -1695,7 +1695,7 @@ impl EngineInner {
     /// damage.  Callers use this to short-circuit damage entry points.
     pub(crate) fn is_scroll_protected_civilian(&self, victim_id: EntityId) -> bool {
         match self.get_entity(victim_id) {
-            Some(Entity::Civilian(c)) => c.npc.scroll_attached,
+            Some(Entity::Civilian(c)) => c.npc.attached_scroll.is_some(),
             _ => false,
         }
     }

@@ -57,9 +57,6 @@ pub const REMAINING_COMMON_ELEMENT_FIELDS: &[&str] = &[
     "RHElement::mbPositionDelayed / mptPositionDelayed",
     "RHElementActor sequence/order pointers and inline post-seek sequence",
     "RHElementActor script member variables",
-    "RHElementActorNPC::mpAttachedScroll identity (Rust currently retains only attached/not attached)",
-    "RHElementActorNPC::muwBodyVisitors",
-    "RHElementActorNPC view iterator/crazy-cone/future-aperture/radius-reduction/sniper fields absent from Rust",
 ];
 
 /// Serialized bytes which are intentionally not simulation state in Rust.
@@ -370,6 +367,8 @@ struct ConvertedNpc {
     old_direction: i16,
     register: u16,
     attached_scroll: Option<EntityId>,
+    body_visitors: u16,
+    fried_pikachu: bool,
     inform: bool,
     money: u32,
     wasp: bool,
@@ -396,19 +395,33 @@ struct ConvertedNpcView {
     transition: bool,
     alpha: u16,
     half_angle: f32,
+    angle_iterator: f32,
+    angle_iterator_step: f32,
     angle_step: f32,
     angle: f32,
     half_aperture: f32,
     real_half_aperture: f32,
+    half_aperture_cosine: f32,
+    future_half_aperture: f32,
+    half_aperture_step: f32,
+    half_aperture_changes: bool,
+    crazy_angle_iterator: f32,
+    crazy_angle_iterator_step: f32,
+    crazy_color_iterator: u8,
+    crazy_half_angle_range: f32,
     direction: [f32; 2],
+    left_side: [f32; 2],
+    right_side: [f32; 2],
     stare: GroundPoint,
     follow_target: Option<EntityId>,
     radius_goal: u16,
     radius: u16,
+    radius_reduction_permil: u16,
     radius_step: u16,
     long_range: f32,
     real_radius: u16,
     drunkenness: [f32; 4],
+    sniper: bool,
     leaning: bool,
 }
 
@@ -511,6 +524,7 @@ enum ReferenceKind {
     Human,
     Npc,
     Object,
+    Scroll,
     Net,
 }
 
@@ -530,6 +544,7 @@ impl ReferenceKind {
                     | EntityIdKind::Projectile
                     | EntityIdKind::Net
             ),
+            Self::Scroll => matches!(kind, EntityIdKind::Scroll),
             Self::Net => matches!(kind, EntityIdKind::Net),
         }
     }
@@ -539,6 +554,7 @@ impl ReferenceKind {
             Self::Human => "PC, Soldier, or Civilian",
             Self::Npc => "Soldier or Civilian",
             Self::Object => "Bonus, Scroll, Projectile, or Net",
+            Self::Scroll => "Scroll",
             Self::Net => "Net",
         }
     }
@@ -1005,6 +1021,18 @@ fn convert_npc(
     ai_global: &AiGlobalState,
     line_topology: &LegacyLineTopology,
 ) -> Result<ConvertedNpc, LegacyElementAdoptError> {
+    finite(
+        saved.initial_position.x,
+        creation_order,
+        "initial_position.x",
+    )?;
+    finite(
+        saved.initial_position.y,
+        creation_order,
+        "initial_position.y",
+    )?;
+    finite_point(saved.initial_view, creation_order, "initial_view")?;
+
     let mut detectable_lists = Vec::with_capacity(DetectableType::COUNT);
     let mut detection_suspects = [0; DetectableType::COUNT];
     for (index, bucket) in saved.detectable_buckets.iter().enumerate() {
@@ -1039,7 +1067,14 @@ fn convert_npc(
         arrows: saved.arrows,
         old_direction: saved.old_direction,
         register: saved.register,
-        attached_scroll: entities.resolve_element(saved.attached_scroll)?,
+        attached_scroll: checked_reference(
+            entities.resolve_element(saved.attached_scroll)?,
+            ReferenceKind::Scroll,
+            creation_order,
+            "attached_scroll",
+        )?,
+        body_visitors: saved.body_visitors,
+        fried_pikachu: saved.fried,
         inform: saved.inform,
         money: saved.money,
         wasp: saved.wasp,
@@ -1100,7 +1135,9 @@ fn apply_npc(npc: &mut NpcData, saved: ConvertedNpc) {
     npc.number_of_arrows = saved.arrows;
     npc.direction_old = saved.old_direction;
     npc.register_number = saved.register;
-    npc.scroll_attached = saved.attached_scroll.is_some();
+    npc.attached_scroll = saved.attached_scroll;
+    npc.body_visitors = saved.body_visitors;
+    npc.fried_pikachu = saved.fried_pikachu;
     npc.inform_my_friends = saved.inform;
     npc.money = saved.money;
     npc.wasp_victim = saved.wasp;
@@ -1121,19 +1158,33 @@ fn apply_npc(npc: &mut NpcData, saved: ConvertedNpc) {
     npc.view_transition = saved.view.transition;
     npc.view_alpha_start = saved.view.alpha;
     npc.view_half_angle_range = saved.view.half_angle;
+    npc.view_angle_iterator = saved.view.angle_iterator;
+    npc.view_angle_iterator_step = saved.view.angle_iterator_step;
     npc.view_angle_step = saved.view.angle_step;
     npc.view_angle = saved.view.angle;
     npc.half_aperture = saved.view.half_aperture;
     npc.real_half_aperture = saved.view.real_half_aperture;
+    npc.view_half_aperture_cosine = saved.view.half_aperture_cosine;
+    npc.view_future_half_aperture = saved.view.future_half_aperture;
+    npc.view_half_aperture_step = saved.view.half_aperture_step;
+    npc.view_half_aperture_changes = saved.view.half_aperture_changes;
+    npc.view_crazy_angle_iterator = saved.view.crazy_angle_iterator;
+    npc.view_crazy_angle_iterator_step = saved.view.crazy_angle_iterator_step;
+    npc.view_crazy_color_iterator = saved.view.crazy_color_iterator;
+    npc.view_crazy_half_angle_range = saved.view.crazy_half_angle_range;
     npc.view_direction = saved.view.direction;
+    npc.view_left_side = saved.view.left_side;
+    npc.view_right_side = saved.view.right_side;
     npc.stare_point = saved.view.stare;
     npc.follow_target = saved.view.follow_target;
     npc.view_radius_goal = saved.view.radius_goal;
     npc.view_radius_base = saved.view.radius;
+    npc.view_radius_reduction_permil = saved.view.radius_reduction_permil;
     npc.view_radius_step = saved.view.radius_step;
     npc.view_longrange_radius_factor = saved.view.long_range;
     npc.view_radius = saved.view.real_radius;
     npc.drunken_cone_iterators = saved.view.drunkenness;
+    npc.view_sniper = saved.view.sniper;
     npc.view_lean_out = saved.view.leaning;
     apply_local_ai(&mut npc.ai_brain, saved.local_ai);
     let ai = ai_base_mut(&mut npc.ai_brain)
@@ -1147,26 +1198,90 @@ fn convert_npc_view(
     follow_target: Option<EntityId>,
     creation_order: u32,
 ) -> Result<ConvertedNpcView, LegacyElementAdoptError> {
+    finite(saved.half_angle, creation_order, "view.half_angle")?;
+    finite(saved.angle_iterator, creation_order, "view.angle_iterator")?;
+    finite(
+        saved.angle_iterator_step,
+        creation_order,
+        "view.angle_iterator_step",
+    )?;
+    finite(saved.angle_step, creation_order, "view.angle_step")?;
+    finite(saved.angle, creation_order, "view.angle")?;
+    finite(saved.half_aperture, creation_order, "view.half_aperture")?;
+    finite(
+        saved.real_half_aperture,
+        creation_order,
+        "view.real_half_aperture",
+    )?;
+    finite(
+        saved.half_aperture_cosine,
+        creation_order,
+        "view.half_aperture_cosine",
+    )?;
+    finite(
+        saved.future_half_aperture,
+        creation_order,
+        "view.future_half_aperture",
+    )?;
+    finite(
+        saved.half_aperture_step,
+        creation_order,
+        "view.half_aperture_step",
+    )?;
+    finite(saved.crazy_iterator, creation_order, "view.crazy_iterator")?;
+    finite(
+        saved.crazy_iterator_step,
+        creation_order,
+        "view.crazy_iterator_step",
+    )?;
+    finite(
+        saved.crazy_half_aperture,
+        creation_order,
+        "view.crazy_half_aperture",
+    )?;
+    finite_point(saved.direction, creation_order, "view.direction")?;
+    finite_point(saved.left, creation_order, "view.left")?;
+    finite_point(saved.right, creation_order, "view.right")?;
+    finite_point(saved.stare, creation_order, "view.stare")?;
+    finite(saved.long_range, creation_order, "view.long_range")?;
+    for value in saved.drunkenness {
+        finite(value, creation_order, "view.drunkenness")?;
+    }
+
     Ok(ConvertedNpcView {
         eye_status: eye_status(saved.status, creation_order)?,
         transition: saved.transitioning,
         alpha: saved.alpha,
         half_angle: saved.half_angle,
+        angle_iterator: saved.angle_iterator,
+        angle_iterator_step: saved.angle_iterator_step,
         angle_step: saved.angle_step,
         angle: saved.angle,
         half_aperture: saved.half_aperture,
         real_half_aperture: saved.real_half_aperture,
+        half_aperture_cosine: saved.half_aperture_cosine,
+        future_half_aperture: saved.future_half_aperture,
+        half_aperture_step: saved.half_aperture_step,
+        half_aperture_changes: saved.half_aperture_changes,
+        crazy_angle_iterator: saved.crazy_iterator,
+        crazy_angle_iterator_step: saved.crazy_iterator_step,
+        crazy_color_iterator: saved.color,
+        crazy_half_angle_range: saved.crazy_half_aperture,
         direction: [saved.direction.x, saved.direction.y],
+        left_side: [saved.left.x, saved.left.y],
+        right_side: [saved.right.x, saved.right.y],
         stare: GroundPoint::new(saved.stare.x, saved.stare.y),
         // The raw pointer echo inside LegacyNpcView is ABI residue;
         // LegacyNpcPayload::mobile_target is the authoritative pointer fixup.
         follow_target,
         radius_goal: saved.radius_goal,
         radius: saved.radius,
+        radius_reduction_permil: saved.radius_reduction,
         radius_step: saved.radius_step,
         long_range: saved.long_range,
         real_radius: saved.real_radius,
         drunkenness: saved.drunkenness,
+        sniper: saved.sniper,
         leaning: saved.leaning,
     })
 }
@@ -3235,6 +3350,95 @@ fn ai_base_mut(brain: &mut AiBrain) -> Option<&mut AiController> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_npc_view() -> LegacyNpcView {
+        LegacyNpcView {
+            leaning: true,
+            leaning_padding: [0; 3],
+            alert_status: 2,
+            status: 6,
+            transitioning: true,
+            alpha: 123,
+            half_angle: 0.11,
+            angle_iterator: 0.12,
+            angle_iterator_step: 0.13,
+            angle_step: 0.14,
+            angle: 0.15,
+            half_aperture: 0.21,
+            real_half_aperture: 0.22,
+            half_aperture_cosine: 0.23,
+            future_half_aperture: 0.24,
+            half_aperture_step: 0.25,
+            half_aperture_changes: true,
+            half_aperture_padding: [0; 3],
+            crazy_iterator: 0.31,
+            crazy_iterator_step: 0.32,
+            color: 17,
+            color_padding: [0; 3],
+            crazy_half_aperture: 0.33,
+            direction: LegacyPoint2 { x: 0.41, y: 0.42 },
+            left: LegacyPoint2 { x: 0.43, y: 0.44 },
+            right: LegacyPoint2 { x: 0.45, y: 0.46 },
+            stare: LegacyPoint2 { x: 0.47, y: 0.48 },
+            raw_mobile_target_pointer: super::super::payload_base::LegacyOpaquePointer32(0),
+            radius_goal: 501,
+            radius: 502,
+            radius_reduction: 503,
+            radius_step: 504,
+            long_range: 1.5,
+            real_radius: 505,
+            real_radius_padding: [0; 2],
+            drunkenness: [0.51, 0.52, 0.53, 0.54],
+            sniper: true,
+            sniper_padding: [0; 3],
+        }
+    }
+
+    #[test]
+    fn npc_view_adoption_preserves_complete_serialized_continuation() {
+        let converted = convert_npc_view(&sample_npc_view(), None, 31).unwrap();
+        assert_eq!(converted.angle_iterator, 0.12);
+        assert_eq!(converted.angle_iterator_step, 0.13);
+        assert_eq!(converted.half_aperture_cosine, 0.23);
+        assert_eq!(converted.future_half_aperture, 0.24);
+        assert_eq!(converted.half_aperture_step, 0.25);
+        assert!(converted.half_aperture_changes);
+        assert_eq!(converted.crazy_angle_iterator, 0.31);
+        assert_eq!(converted.crazy_angle_iterator_step, 0.32);
+        assert_eq!(converted.crazy_color_iterator, 17);
+        assert_eq!(converted.crazy_half_angle_range, 0.33);
+        assert_eq!(converted.left_side, [0.43, 0.44]);
+        assert_eq!(converted.right_side, [0.45, 0.46]);
+        assert_eq!(converted.radius_reduction_permil, 503);
+        assert!(converted.sniper);
+    }
+
+    #[test]
+    fn npc_view_adoption_rejects_non_finite_continuation() {
+        let mut view = sample_npc_view();
+        view.crazy_iterator_step = f32::NAN;
+        assert!(matches!(
+            convert_npc_view(&view, None, 31),
+            Err(LegacyElementAdoptError::NonFinite {
+                field: "view.crazy_iterator_step",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn attached_scroll_requires_exact_scroll_kind() {
+        let target = EntityId::new(7, crate::entity_id::EntityIdKind::Target);
+        assert!(matches!(
+            checked_reference(Some(target), ReferenceKind::Scroll, 31, "attached_scroll"),
+            Err(LegacyElementAdoptError::WrongReferenceKind { .. })
+        ));
+        let scroll = EntityId::new(8, crate::entity_id::EntityIdKind::Scroll);
+        assert_eq!(
+            checked_reference(Some(scroll), ReferenceKind::Scroll, 31, "attached_scroll").unwrap(),
+            Some(scroll)
+        );
+    }
 
     #[test]
     fn original_detectable_none_skips_count_sentinel() {

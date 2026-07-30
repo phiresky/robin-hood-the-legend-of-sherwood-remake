@@ -634,12 +634,17 @@ impl NativeContext<'_, '_> {
                 // resolution, contextual actions, damage, and scroll-read
                 // dispatch all query this flag just as Original queries
                 // `mpAttachedScroll`.
+                let attached_scroll = Self::actor_handle_index(scroll_h).and_then(|slot| {
+                    self.entities
+                        .get_legacy_slot(slot as u32)
+                        .map(|(entity_id, _)| entity_id)
+                });
                 match self.get_entity_mut(npc_h) {
                     Some(Entity::Soldier(soldier)) => {
-                        soldier.npc.scroll_attached = scroll_h != 0;
+                        soldier.npc.attached_scroll = attached_scroll;
                     }
                     Some(Entity::Civilian(civilian)) => {
-                        civilian.npc.scroll_attached = scroll_h != 0;
+                        civilian.npc.attached_scroll = attached_scroll;
                     }
                     Some(_) | None => {
                         unreachable!("AttachScrollToNPC validated an NPC before mutation")

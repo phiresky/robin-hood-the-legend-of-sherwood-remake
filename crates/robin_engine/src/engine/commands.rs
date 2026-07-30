@@ -2331,50 +2331,23 @@ impl EngineInner {
             Some(e) => (e.element_data().position_map(), e.element_data().posture),
             None => return,
         };
-        let (npc_pos, npc_has_scroll, npc_ai_script_locked) = match self.get_entity(target) {
+        let (npc_pos, attached_scroll, npc_ai_script_locked) = match self.get_entity(target) {
             Some(e) => {
-                let has_scroll = match e {
-                    crate::element::Entity::Soldier(s) => s.npc.scroll_attached,
-                    crate::element::Entity::Civilian(c) => c.npc.scroll_attached,
-                    _ => false,
+                let attached_scroll = match e {
+                    crate::element::Entity::Soldier(s) => s.npc.attached_scroll,
+                    crate::element::Entity::Civilian(c) => c.npc.attached_scroll,
+                    _ => None,
                 };
                 let locked = e.ai_controller().is_some_and(|ai| ai.ai_is_script_locked());
-                (e.element_data().position_map(), has_scroll, locked)
+                (e.element_data().position_map(), attached_scroll, locked)
             }
             None => return,
         };
-        if !npc_has_scroll {
+        let Some(scroll_id) = attached_scroll else {
             tracing::warn!(
                 ?actor,
                 ?target,
                 "apply_scroll_read_with_seek: target NPC is not scroll-attached"
-            );
-            return;
-        }
-
-        // Resolve the attached scroll entity id. The script-side
-        // `scroll_attachments` map is keyed by actor script handle.
-        let npc_handle = crate::natives::ScriptHandleCodec::actor_handle(target);
-        let scroll_handle = self
-            .script_domains
-            .scrolls
-            .attachments
-            .get(&npc_handle)
-            .copied();
-        let Some(scroll_handle) = scroll_handle else {
-            tracing::warn!(
-                ?actor,
-                ?target,
-                "apply_scroll_read_with_seek: scroll_attachments map has no entry for NPC"
-            );
-            return;
-        };
-        let Some(scroll_id) = self.entity_id_for_actor_handle(scroll_handle) else {
-            tracing::warn!(
-                ?actor,
-                ?target,
-                scroll_handle,
-                "apply_scroll_read_with_seek: invalid scroll handle"
             );
             return;
         };
@@ -2603,7 +2576,10 @@ impl EngineInner {
             let is_dead = target.is_dead();
             let is_unconscious = target.human_data().is_some_and(|h| h.unconscious);
             let (is_lacklandist, scroll_attached) = match target {
-                Entity::Soldier(s) => (s.camp() == Camp::Lacklandists, s.npc.scroll_attached),
+                Entity::Soldier(s) => (
+                    s.camp() == Camp::Lacklandists,
+                    s.npc.attached_scroll.is_some(),
+                ),
                 _ => (false, false),
             };
             !is_blipped && !is_dead && !is_unconscious && is_lacklandist && !scroll_attached
@@ -3661,7 +3637,7 @@ fn determine_use_command(
         && posture != crate::element::Posture::Carried
         && matches!(entity, crate::element::Entity::Civilian(c)
             if c.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar
-                && !c.npc.scroll_attached)
+                && c.npc.attached_scroll.is_none())
     {
         let ransom = Some(&engine.mission_domain.campaign)
             .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
@@ -4329,7 +4305,7 @@ mod tests {
             actor: ActorData::default(),
             human: HumanData::default(),
             npc: NpcData {
-                scroll_attached: true,
+                attached_scroll: None,
                 ..NpcData::default()
             },
             civilian: Default::default(),
@@ -4339,6 +4315,12 @@ mod tests {
         let npc_id = engine.add_entity(Entity::Civilian(npc));
 
         let scroll_id = spawn_scroll(&mut engine, true);
+        match engine.get_entity_mut(npc_id) {
+            Some(Entity::Civilian(civilian)) => {
+                civilian.npc.attached_scroll = Some(scroll_id);
+            }
+            _ => unreachable!("newly spawned scroll-reader NPC changed kind"),
+        }
         engine.script_domains.scrolls.attachments.insert(
             crate::natives::ScriptHandleCodec::actor_handle(npc_id),
             crate::natives::ScriptHandleCodec::actor_handle(scroll_id),

@@ -1139,6 +1139,7 @@ pub fn refresh_view(npc: &mut NpcData, ctx: &RefreshViewContext) {
             EyeStatus::LookDownwards => {
                 // Lean-out: wide aperture, no angle.
                 npc.view_angle = 0.0;
+                npc.view_angle_iterator = 0.0;
                 npc.view_transition = false;
                 npc.half_aperture = std::f32::consts::FRAC_PI_2 - 0.05;
                 npc.view_direction = [vdx, vdy];
@@ -1219,9 +1220,20 @@ pub fn refresh_view(npc: &mut NpcData, ctx: &RefreshViewContext) {
             }
         }
 
-        // Left/right cone-side precomputation is unnecessary here:
-        // `is_detecting` computes those on the fly from
-        // `view_direction` and `real_half_aperture`.
+        let (left_x, mut left_y) = rotate_unit(
+            npc.view_direction[0],
+            npc.view_direction[1],
+            -npc.real_half_aperture,
+        );
+        left_y *= crate::position_interface::ASPECT_RATIO;
+        npc.view_left_side = [left_x, left_y];
+        let (right_x, mut right_y) = rotate_unit(
+            npc.view_direction[0],
+            npc.view_direction[1],
+            npc.real_half_aperture,
+        );
+        right_y *= crate::position_interface::ASPECT_RATIO;
+        npc.view_right_side = [right_x, right_y];
     }
 }
 
@@ -1288,12 +1300,14 @@ fn refresh_view_look(npc: &mut NpcData, ctx: &RefreshViewContext, vdx: f32, vdy:
         if npc.view_angle > angle_goal {
             if npc.view_angle <= angle_goal + npc.view_angle_step {
                 npc.view_angle = angle_goal;
+                npc.view_angle_iterator = 0.0;
                 npc.view_transition = false;
             } else {
                 npc.view_angle -= npc.view_angle_step;
             }
         } else if npc.view_angle >= angle_goal - npc.view_angle_step {
             npc.view_angle = angle_goal;
+            npc.view_angle_iterator = 0.0;
             npc.view_transition = false;
         } else {
             npc.view_angle += npc.view_angle_step;
@@ -1378,6 +1392,7 @@ fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &Grou
         } else if npc.view_angle > 0.0 {
             if npc.view_angle <= npc.view_angle_step {
                 npc.view_angle = 0.0;
+                npc.view_angle_iterator = 0.0;
                 npc.view_direction = [vdx, vdy];
                 npc.view_transition = false;
             } else {
@@ -1392,6 +1407,7 @@ fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &Grou
             // overshoots past 0 by one step, then gets caught by the
             // `view_angle > 0` branch on the next frame.
             npc.view_angle = 0.0;
+            npc.view_angle_iterator = 0.0;
             npc.view_direction = [vdx, vdy];
             npc.view_transition = false;
         } else {

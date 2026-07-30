@@ -700,8 +700,8 @@ impl EngineInner {
         let is_vip = self.is_entity_vip(assets, entity);
         let is_rider = matches!(entity, Entity::Soldier(s) if s.soldier.rider);
         let npc_scroll_attached = match entity {
-            Entity::Soldier(s) => s.npc.scroll_attached,
-            Entity::Civilian(c) => c.npc.scroll_attached,
+            Entity::Soldier(s) => s.npc.attached_scroll.is_some(),
+            Entity::Civilian(c) => c.npc.attached_scroll.is_some(),
             _ => false,
         };
         let is_stuck_under_net = entity
@@ -1263,7 +1263,7 @@ impl EngineInner {
             && posture != Posture::Carried
             && let Entity::Civilian(c) = entity
             && c.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar
-            && !c.npc.scroll_attached
+            && c.npc.attached_scroll.is_none()
         {
             let selector_is_vip = selected_pc_id
                 .and_then(|id| self.get_entity(id))
@@ -1282,8 +1282,8 @@ impl EngineInner {
 
         // 1. Scroll-attached NPC → talk cursor
         let scroll_attached = match entity {
-            Entity::Soldier(s) => s.npc.scroll_attached,
-            Entity::Civilian(c) => c.npc.scroll_attached,
+            Entity::Soldier(s) => s.npc.attached_scroll.is_some(),
+            Entity::Civilian(c) => c.npc.attached_scroll.is_some(),
             _ => false,
         };
         if !dead && !unconscious && scroll_attached {

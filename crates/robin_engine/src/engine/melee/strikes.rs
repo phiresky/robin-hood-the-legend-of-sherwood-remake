@@ -2592,7 +2592,7 @@ impl EngineInner {
             // calls `add_concussion(-1)` — so the heal is suppressed
             // for them.  Skip the whole tick.
             if let Entity::Civilian(c) = entity
-                && c.npc.scroll_attached
+                && c.npc.attached_scroll.is_some()
             {
                 continue;
             }
@@ -2724,7 +2724,8 @@ impl EngineInner {
                 "concussion owner {} is not human",
                 owner.index()
             );
-            if matches!(entity, Entity::Civilian(civilian) if civilian.npc.scroll_attached) {
+            if matches!(entity, Entity::Civilian(civilian) if civilian.npc.attached_scroll.is_some())
+            {
                 false
             } else if entity
                 .human_data()

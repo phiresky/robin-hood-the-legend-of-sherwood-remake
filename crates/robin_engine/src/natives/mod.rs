@@ -2940,10 +2940,9 @@ impl NativeContext<'_, '_> {
         });
     }
 
-    /// Common body for the `Freeze` script native.  Only PCs have a
-    /// readable freeze flag (`fried_psykokwack`); the NPC counterpart
-    /// is intentionally a no-op (the original game's NPC freeze flag
-    /// was never consulted by the AI tick).
+    /// Common body for the `Freeze` script native. Original stores the
+    /// command's value on both PC and NPC owners. The NPC latch is not
+    /// consulted by Original's AI tick, but it remains serialized state.
     fn script_freeze_actor(&mut self, actor: i32, freeze: bool) {
         let Some(entity) = self.get_entity_mut(actor) else {
             tracing::warn!("Freeze: invalid actor handle {actor}");
@@ -2955,15 +2954,12 @@ impl NativeContext<'_, '_> {
             return;
         }
 
-        if entity.is_pc()
-            && let Some(pc) = entity.pc_data_mut()
-        {
-            pc.fried_psykokwack = freeze;
+        match entity {
+            Entity::Pc(pc) => pc.pc.fried_psykokwack = freeze,
+            Entity::Soldier(soldier) => soldier.npc.fried_pikachu = freeze,
+            Entity::Civilian(civilian) => civilian.npc.fried_pikachu = freeze,
+            _ => unreachable!("Freeze target was validated as human"),
         }
-        // NPC branch intentionally empty: the C++ NPC freeze flag
-        // (`mbFriedPikachu`) is stored on assignment and never consulted —
-        // freezing an NPC via this native is a no-op in the original
-        // engine.
     }
 }
 

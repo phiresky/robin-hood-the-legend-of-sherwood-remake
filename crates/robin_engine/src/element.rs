@@ -1517,9 +1517,20 @@ pub struct NpcData {
     /// ladders can self-recover.
     pub stuck_on_ladder_emergency_counter: u16,
 
-    /// Whether this NPC has an attached dialog scroll.  Set by
-    /// `AttachScroll()` in the level loader / script system.
-    pub scroll_attached: bool,
+    /// Exact dialog-scroll entity attached by Original's
+    /// `RHElementActorNPC::mpAttachedScroll`.
+    ///
+    /// Keeping the identity (rather than only a boolean) matters when a
+    /// loaded NPC is clicked: the interaction must open the same scroll
+    /// object which was serialized in the save.
+    pub attached_scroll: Option<EntityId>,
+
+    /// Original's serialized `muwBodyVisitors` continuation counter.
+    pub body_visitors: u16,
+
+    /// Original's serialized `mbFriedPikachu` script latch. Original stores
+    /// this for NPCs even though its AI tick never reads it.
+    pub fried_pikachu: bool,
 
     /// One detection list per [`DetectableType`] (indexed 0..COUNT).
     pub detectable_lists: Vec<Vec<Detectable>>,
@@ -1592,6 +1603,10 @@ pub struct NpcData {
     /// Maximum angular deviation from body direction during head turns.
     pub view_half_angle_range: f32,
 
+    /// Serialized view-cone angle oscillator continuation state.
+    pub view_angle_iterator: f32,
+    pub view_angle_iterator_step: f32,
+
     /// Base view radius before modifiers (longrange, drunk, rider).
     /// The final computed radius is stored in `view_radius`.
     pub view_radius_base: u16,
@@ -1608,15 +1623,38 @@ pub struct NpcData {
     /// Long-range radius multiplier (default 1.0).
     pub view_longrange_radius_factor: f32,
 
+    /// Serialized aperture-transition continuation state. The transition
+    /// block is disabled in the shipped Original source, but these members
+    /// remain part of the authoritative save image.
+    pub view_half_aperture_cosine: f32,
+    pub view_future_half_aperture: f32,
+    pub view_half_aperture_step: f32,
+    pub view_half_aperture_changes: bool,
+
+    /// Serialized "crazy" cone oscillator continuation state.
+    pub view_crazy_angle_iterator: f32,
+    pub view_crazy_angle_iterator_step: f32,
+    pub view_crazy_color_iterator: u8,
+    pub view_crazy_half_angle_range: f32,
+
     /// Computed view direction (body direction rotated by `view_angle`).
     /// Updated by `refresh_view` each frame.
     pub view_direction: [f32; 2],
+
+    /// Serialized cone boundary vectors. Original consumes these in
+    /// visibility tests until `RefreshView` computes the next pair.
+    pub view_left_side: [f32; 2],
+    pub view_right_side: [f32; 2],
 
     /// Whether the NPC is currently leaning out.
     pub view_lean_out: bool,
 
     /// Four phase iterators for drunken vision cone wobble.
     pub drunken_cone_iterators: [f32; 4],
+
+    /// Serialized radius-reduction and sniper view flags.
+    pub view_radius_reduction_permil: u16,
+    pub view_sniper: bool,
 
     /// Point the NPC is staring at (for `EyeStatus::Stare`).
     /// Original `mViewParameters.starePoint`: world-ground `(x, y)`, not
@@ -1690,7 +1728,9 @@ impl Default for NpcData {
             old_cover_noise_deafness: 0,
             old_cover_noise_deafness_frame_counter: 0,
             stuck_on_ladder_emergency_counter: 0,
-            scroll_attached: false,
+            attached_scroll: None,
+            body_visitors: 0,
+            fried_pikachu: false,
             detectable_lists: vec![Vec::new(); DetectableType::COUNT],
             detection_suspects: [0; DetectableType::COUNT],
             maximal_detection_suspect: 0,
@@ -1713,14 +1753,28 @@ impl Default for NpcData {
             view_angle_step: crate::ai_vision::NORMAL_ANGLE_STEP,
             view_transition: false,
             view_half_angle_range: crate::ai_vision::NORMAL_HALF_ANGLE_RANGE,
+            view_angle_iterator: 0.0,
+            view_angle_iterator_step: crate::ai_vision::NORMAL_ANGLE_ITERATOR_STEP,
             view_radius_base: 400,
             view_radius_goal: 400,
             view_radius_step: 0,
             view_alpha_start: crate::ai_vision::ALPHA_START,
             view_longrange_radius_factor: 1.0,
+            view_half_aperture_cosine: crate::ai_vision::NORMAL_HALF_APERTURE.cos(),
+            view_future_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
+            view_half_aperture_step: crate::parameters_ai::HALF_APERTURE_STEP,
+            view_half_aperture_changes: false,
+            view_crazy_angle_iterator: 0.0,
+            view_crazy_angle_iterator_step: crate::parameters_ai::CRAZY_TREMBLE_ITERATOR_STEP,
+            view_crazy_color_iterator: 0,
+            view_crazy_half_angle_range: crate::parameters_ai::CRAZY_TREMBLE_RANGE,
             view_direction: [1.0, 0.0],
+            view_left_side: [1.0, 0.0],
+            view_right_side: [1.0, 0.0],
             view_lean_out: false,
             drunken_cone_iterators: [0.0; 4],
+            view_radius_reduction_permil: 1000,
+            view_sniper: false,
             stare_point: GroundPoint::new(0.0, 0.0),
             follow_target: None,
         }

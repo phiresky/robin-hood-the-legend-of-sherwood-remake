@@ -1726,7 +1726,7 @@ pub fn begin_pay(
         Some(e @ Entity::Civilian(c)) => {
             !e.is_dead()
                 && !c.human.unconscious
-                && !c.npc.scroll_attached
+                && c.npc.attached_scroll.is_none()
                 && c.civilian.beggar_scroll_sets.is_some()
         }
         _ => false,
