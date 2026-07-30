@@ -4628,8 +4628,13 @@ impl EnemyAi {
             // Quitting swordfight timer.
             Substate::AttackingQuittingSwordfight => {
                 if stimulus_type == StimulusType::EventTimer {
-                    if ctx.is_swordfighting {
-                        // Still in sword action state — retry quit and wait.
+                    // Original tests `_ANY_SWORD_ACTIONSTATE_`, not whether
+                    // the opponent list is still populated. EndSwordfight
+                    // removes opponents before the current sword animation
+                    // necessarily finishes, so the action state remains the
+                    // authoritative completion gate.
+                    if ctx.self_action_state.is_sword() {
+                        // Still in a sword action state — retry quit and wait.
                         self.end_swordfight(ctx, tick);
                         self.base.launch_timer(3, ctx.frame);
                     } else {
