@@ -1264,8 +1264,10 @@ pub enum TargetType {
     Serialize,
     Deserialize,
     Default,
+    num_enum::TryFromPrimitive,
     robin_state_hash_derive::StateHash,
 )]
+#[repr(i32)]
 #[allow(missing_docs)]
 pub enum Command {
     #[default]

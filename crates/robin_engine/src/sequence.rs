@@ -501,21 +501,26 @@ impl RecordingSession {
 )]
 pub enum Field {
     Direction,
+    Event,
     RetainedMovementGoal,
     Timer,
     Message,
     MessageArgument,
     MessageExtendedArgument,
+    BowTargetGuy,
+    BowTargetPoint,
     CameraPoint,
     CameraZoomLevel,
     CameraSpeed,
     ActionId,
     ActionAvailable,
     CharacterAvailable,
+    ConcussionLevel,
     SpeakId,
     SpeakFlags,
     SpeakVariant,
     DialogId,
+    DialogSource,
     PopupTextId,
     AnimationId,
     MapDisplay,
@@ -526,10 +531,12 @@ pub enum Field {
     ShieldDangerPoint,
     ShieldDangerPointLayer,
     ShieldProtected,
+    RollPoint,
     PurseTarget,
     NetTarget,
     WaspNestTarget,
     Opponent,
+    Gate,
     Door,
     OldAnimation,
     NewAnimation,
@@ -555,14 +562,20 @@ pub enum FieldValue {
         z: f32,
     },
     Element(EntityId),
+    /// A legacy property whose key is present even though its pointer is null.
+    OptionalElement(Option<EntityId>),
     Animation(OrderType),
     /// Jump-line id: indexes `FastFindGrid::level::jump_lines`.
     /// All call sites (commands::apply_table_swordfight, engine::jump::is_jumpable,
     /// movement::emit_line_goal) pass a jump-line index through this field,
     /// not a motion-grid line index.
     LineId(crate::jump_line::JumpLineIndex),
+    /// A legacy line property whose key is present with a nullable pointer.
+    OptionalLineId(Option<crate::jump_line::JumpLineIndex>),
     /// Opaque door ID.
     DoorId(crate::gate::DoorIndex),
+    /// A legacy gate property whose key is present with a nullable pointer.
+    OptionalDoorId(Option<crate::gate::DoorIndex>),
 }
 
 /// A violated sequence construction invariant.
@@ -844,6 +857,41 @@ pub struct SequenceElement {
     /// via a *different* sequence (e.g. a user-click sword strike issued
     /// while another sword strike sequence is mid-walk).
     pub cross_postponed: Option<(SequenceId, usize)>,
+
+    /// Original-only authoritative members retained during v48 adoption.
+    ///
+    /// TODO(legacy-sequence-runtime): route `next`, `mummy`, linked-seek,
+    /// deleted/script-driven, arrow, and the order geometry flags through the
+    /// corresponding runtime paths. Keeping the exact values here prevents a
+    /// successful load from silently discarding state while those behaviors
+    /// are being ported.
+    pub(crate) legacy_v48: Option<LegacyV48SequenceElementState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub(crate) struct LegacyV48OrderState {
+    pub legacy_id: u32,
+    pub apply_transition_at_this_point: bool,
+    pub can_fly: bool,
+    pub transition: bool,
+    pub destination_3d: [f32; 3],
+    pub flight_vector: [f32; 2],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub(crate) struct LegacyV48SequenceElementState {
+    pub deleted: bool,
+    pub script_driven: bool,
+    pub next: Option<SequenceElementRef>,
+    pub postponed: Option<SequenceElementRef>,
+    pub mummy: Option<SequenceId>,
+    /// `None` means this is not a movement element; `Some(None)` is a
+    /// movement element with a serialized null linked-seek pointer.
+    pub linked_seek: Option<Option<SequenceElementRef>>,
+    pub damage_arrow: Option<EntityId>,
+    pub raw_sword_strike: Option<i32>,
+    pub order_state: Vec<LegacyV48OrderState>,
+    pub generic_raw_unions: Vec<(Field, [u8; 12])>,
 }
 
 impl SequenceElement {
@@ -871,6 +919,7 @@ impl SequenceElement {
             data: SequenceElementData::Simple,
             postponed_element_index: None,
             cross_postponed: None,
+            legacy_v48: None,
         }
     }
 
@@ -1460,6 +1509,28 @@ impl Sequence {
             running_elements: 0,
             elements_in_progress: 0,
             started: false,
+        }
+    }
+
+    /// Construct one fully preflighted Original v48 sequence without running
+    /// launch-time state transitions or allocating new identities.
+    pub(crate) fn restore_v48_state(
+        id: SequenceId,
+        elements: Vec<SequenceElement>,
+        cursor: usize,
+        current_command_level: u16,
+        running_elements: u16,
+        elements_in_progress: u16,
+        started: bool,
+    ) -> Self {
+        Self {
+            id,
+            elements,
+            cursor,
+            current_command_level,
+            running_elements,
+            elements_in_progress,
+            started,
         }
     }
 
@@ -2150,6 +2221,15 @@ pub struct SequenceManager {
     halt_pending: bool,
 }
 
+/// Fully converted state accepted by the atomic v48 manager restore.
+#[derive(Debug)]
+pub(crate) struct SequenceManagerV48State {
+    pub sequences: Vec<Sequence>,
+    pub elements_to_go: VecDeque<(SequenceId, usize)>,
+    pub next_sequence_id: u32,
+    pub next_element_id: u32,
+}
+
 /// Pending entity cleanup emitted by the sequence manager when an
 /// element finishes.  Drained by the engine after each `hourglass`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
@@ -2239,6 +2319,29 @@ impl SequenceManager {
             next_element_id: 1,
             halt_pending: false,
         }
+    }
+
+    /// Atomically replace manager-owned state after every v48 identity and
+    /// reference has been validated.
+    pub(crate) fn restore_v48_state(&mut self, state: SequenceManagerV48State) {
+        let mut restored = Self {
+            sequences: state
+                .sequences
+                .into_iter()
+                .map(|sequence| (sequence.id, sequence))
+                .collect(),
+            actor_live: BTreeMap::new(),
+            actor_in_progress: BTreeMap::new(),
+            actor_instructing: BTreeMap::new(),
+            elements_to_go: state.elements_to_go,
+            pending_synchronous_actions: VecDeque::new(),
+            pending_condolations: Vec::new(),
+            next_sequence_id: state.next_sequence_id,
+            next_element_id: state.next_element_id,
+            halt_pending: false,
+        };
+        restored.rebuild_indices();
+        *self = restored;
     }
 
     /// Rebuild the actor element indexes from `sequences`.  This is
@@ -2384,6 +2487,11 @@ impl SequenceManager {
     #[cfg(test)]
     pub(crate) fn is_registered_to_go(&self, seq_id: SequenceId, elem_idx: usize) -> bool {
         self.elements_to_go.contains(&(seq_id, elem_idx))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn v48_elements_to_go(&self) -> Vec<(SequenceId, usize)> {
+        self.elements_to_go.iter().copied().collect()
     }
 
     /// Get a reference to a specific element within a sequence.
