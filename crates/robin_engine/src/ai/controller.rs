@@ -1134,12 +1134,25 @@ impl AiController {
 
     /// Issue a raise-shield order toward a danger point.
     pub fn raise_shield(&mut self, danger_point: Position) {
-        use crate::order::OrderType;
-        self.outbox.actor.orders.push(AiOrderIntent::new(
-            OrderType::RaisingShield,
-            danger_point.x,
-            danger_point.y,
-        ));
+        use crate::element::Command;
+        use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
+
+        let owner = self
+            .owner_entity_id
+            .expect("RaiseShield requires an AI controller bound to an owner");
+        let mut element = SequenceElement::new_generic(1, Command::RaiseShield, Some(owner));
+        element.set_property(
+            Field::ShieldDangerPoint,
+            FieldValue::Point3D {
+                x: danger_point.x,
+                y: danger_point.y,
+                z: 0.0,
+            },
+        );
+        let mut sequence = Sequence::new();
+        sequence.append_element(element);
+        self.outbox.actor.preserve_goal_for_raise_shield = true;
+        self.outbox.actor.launch_sequences.push(sequence);
     }
 
     /// Issue a lower-shield order.

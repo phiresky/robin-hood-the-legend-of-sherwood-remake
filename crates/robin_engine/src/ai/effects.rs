@@ -236,6 +236,9 @@ pub struct AiActorOutbox {
     pub lower_shield: bool,
     pub deactivate: bool,
     pub halt: bool,
+    /// Preserve the interrupted movement goal across the next Halt because
+    /// an AI-issued RaiseShield command immediately takes ownership.
+    pub preserve_goal_for_raise_shield: bool,
     pub broadcast_panic: bool,
     pub blink_all_enemies: bool,
     pub enemy_in_house_alert: bool,
@@ -384,6 +387,10 @@ impl AiActorOutbox {
     /// handling, so the later movement-prefix barrier must not be taken yet.
     pub(crate) fn take_halt(&mut self) -> bool {
         std::mem::take(&mut self.halt)
+    }
+
+    pub(crate) fn take_preserve_goal_for_raise_shield(&mut self) -> bool {
+        std::mem::take(&mut self.preserve_goal_for_raise_shield)
     }
 
     /// Drain a direct `SetDirection` write before the following `StopAll`

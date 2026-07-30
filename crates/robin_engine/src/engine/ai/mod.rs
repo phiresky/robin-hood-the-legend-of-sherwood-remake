@@ -2219,9 +2219,6 @@ impl EngineInner {
             if other_id.index() == me_handle {
                 continue;
             }
-            if s.soldier.cached_camp == my_camp && s.human.opponents.is_empty() {
-                continue;
-            }
             let p = s.element.position_map();
             let dx = p.x - me_pos_pt.x;
             let dy = (p.y - me_pos_pt.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
@@ -5514,16 +5511,31 @@ impl EngineInner {
         // `try_dispatch_move_path`s onto the actor a few ticks later,
         // restoring `active_movement` and re-driving the run animation
         // — the visual "stuck in running pose" symptom.
-        let take_halt = {
+        let (take_halt, preserve_goal_for_raise_shield) = {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
             let Some(ai) = entity.ai_controller_mut() else {
                 return;
             };
-            ai.outbox.actor.take_halt()
+            let preserve_goal = ai.outbox.actor.take_preserve_goal_for_raise_shield();
+            (ai.outbox.actor.take_halt(), preserve_goal)
         };
         if take_halt {
+            // StopAll normally clears an interrupted movement's cached goal.
+            // The Original shield path is different: StopAll is immediately
+            // followed by the non-directional RaiseShield element, leaving
+            // the preceding movement goal intact while the shield animation
+            // takes ownership. Preserve that otherwise-stale field across
+            // the deferred halt barrier as well.
+            let preserved_goal = preserve_goal_for_raise_shield.then(|| {
+                self.world
+                    .entities
+                    .get(npc_id)
+                    .expect("AI halt owner disappeared before RaiseShield")
+                    .position_iface()
+                    .map_goal()
+            });
             self.halt_actor(npc_id);
             // `StopAll` calls `Stop(PREFERENCE)` synchronously before the
             // handler continues into SetState/SetAttentiveMode and other
@@ -5534,6 +5546,14 @@ impl EngineInner {
             // EventDone/Impossible callbacks while retaining that base
             // selected-element cleanup.
             self.dispatch_condolations_for_npc(sim, npc_id, assets);
+            if let Some(goal) = preserved_goal {
+                self.world
+                    .entities
+                    .get_mut(npc_id)
+                    .expect("AI halt owner disappeared during RaiseShield")
+                    .position_iface_mut()
+                    .set_map_goal(goal);
+            }
         }
 
         // The halt application above is a real same-frame barrier: only now

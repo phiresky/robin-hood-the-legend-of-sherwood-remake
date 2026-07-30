@@ -783,11 +783,13 @@ impl<'a> ShieldCommandContext<'a> {
 
         let mut started = false;
         if let Some(entity) = self.entities.get_mut(owner) {
-            // Face toward danger point if available.  Sets the
-            // direction *goal*; the per-tick `turn()` (in the
-            // order-driven animation handler) interpolates toward it
-            // one step per frame.
-            if let Some(pt) = danger_pt {
+            // The PC override faces the picked danger point. Enemy NPCs use
+            // the human-base RaiseShield implementation instead: their AI
+            // has already called Focus, and the non-directional shield order
+            // must preserve that direction goal.
+            if entity.is_pc()
+                && let Some(pt) = danger_pt
+            {
                 let owner_pos = entity.element_data().position_map();
                 let dx = pt.x - owner_pos.x;
                 let dy = pt.y - owner_pos.y;

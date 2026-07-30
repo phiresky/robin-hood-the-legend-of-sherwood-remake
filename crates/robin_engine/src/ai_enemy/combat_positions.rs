@@ -1915,12 +1915,13 @@ impl EnemyAi {
             self.base.primary_target = dangerous_enemy;
         }
 
-        // Focus primary target
+        // Focus primary target. Original Focus updates the NPC's view target;
+        // it does not turn the actor's body or overwrite direction_goal.
         let target_pos = self
             .find_fighter(self.base.primary_target, tick)
             .map(|f| f.position)
             .unwrap_or(ctx.position);
-        self.base.face_position(target_pos);
+        self.base.outbox.actor.set_focus(self.base.primary_target);
 
         // Try to join a phalanx
         if let Some((run_pos, direction, left_neighbour, right_neighbour)) =
