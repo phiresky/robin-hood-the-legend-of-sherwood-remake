@@ -63,6 +63,9 @@ pub struct LegacyPostTailLimits {
     pub archery_points_per_sector: usize,
     pub path_graph_layers: usize,
     pub path_graph_areas_per_layer: usize,
+    /// Maximum number of `0xff` bytes introduced by the Linux port's
+    /// historical `RHSaveGame::CopyFiles` EOF-copy bug.
+    pub linux_copy_eof_bytes: usize,
 }
 
 impl Default for LegacyPostTailLimits {
@@ -78,6 +81,7 @@ impl Default for LegacyPostTailLimits {
             archery_points_per_sector: 65_535,
             path_graph_layers: 65_535,
             path_graph_areas_per_layer: 65_535,
+            linux_copy_eof_bytes: 65_535,
         }
     }
 }
@@ -131,6 +135,10 @@ pub struct LegacyEnginePostTitbitsTail {
     pub dead_pc: LegacyElementRef,
     pub mission_statistics: LegacyMissionStatistics,
     pub shield: LegacyPendingShieldState,
+    /// End of the actual `RHEngine::Serialize` payload, before any bytes
+    /// appended by the old Linux `CopyFile` loop.
+    pub serialized_end_offset: u64,
+    pub trailing_linux_copy_eof_bytes: usize,
     pub end_offset: u64,
 }
 
@@ -164,15 +172,56 @@ impl LegacyEnginePostTitbitsTail {
             let mission_statistics = LegacyMissionStatistics::read(reader, limits)?;
             let shield = LegacyPendingShieldState::read(reader)?;
 
-            let end_offset = reader.offset();
-            if end_offset != topology.eof_offset {
+            let serialized_end_offset = reader.offset();
+            if serialized_end_offset > topology.eof_offset {
                 return Err(reader.invalid_value(
-                    end_offset,
+                    serialized_end_offset,
                     "eof",
-                    end_offset,
+                    serialized_end_offset,
                     "exact caller-supplied save-stream EOF offset",
                 ));
             }
+            let trailing_linux_copy_eof_bytes_u64 = topology.eof_offset - serialized_end_offset;
+            let trailing_linux_copy_eof_bytes = usize::try_from(trailing_linux_copy_eof_bytes_u64)
+                .map_err(|_| {
+                    reader.invalid_value(
+                        serialized_end_offset,
+                        "linux_copy_eof_bytes",
+                        trailing_linux_copy_eof_bytes_u64,
+                        "trailing byte count representable on this host",
+                    )
+                })?;
+            if trailing_linux_copy_eof_bytes > 0 {
+                if abi_profile != LegacySaveAbiProfile::PortLinuxI386V48 {
+                    return Err(reader.invalid_value(
+                        serialized_end_offset,
+                        "eof",
+                        serialized_end_offset,
+                        "exact caller-supplied Windows save-stream EOF offset",
+                    ));
+                }
+                if trailing_linux_copy_eof_bytes > limits.linux_copy_eof_bytes {
+                    return Err(reader.invalid_value(
+                        serialized_end_offset,
+                        "linux_copy_eof_bytes",
+                        trailing_linux_copy_eof_bytes,
+                        "known Linux CopyFile artifact count within the configured limit",
+                    ));
+                }
+                for index in 0..trailing_linux_copy_eof_bytes {
+                    let byte = reader.read_u8(format_args!("linux_copy_eof_bytes[{index}]"))?;
+                    if byte != 0xff {
+                        let byte_offset = reader.offset() - 1;
+                        return Err(reader.invalid_value(
+                            byte_offset,
+                            format_args!("linux_copy_eof_bytes[{index}]"),
+                            format_args!("0x{byte:02x}"),
+                            "0xff written by fputc(fgetc(...)) at EOF",
+                        ));
+                    }
+                }
+            }
+            let end_offset = reader.offset();
 
             Ok(Self {
                 abi_profile,
@@ -185,6 +234,8 @@ impl LegacyEnginePostTitbitsTail {
                 dead_pc,
                 mission_statistics,
                 shield,
+                serialized_end_offset,
+                trailing_linux_copy_eof_bytes,
                 end_offset,
             })
         })
@@ -966,12 +1017,46 @@ mod tests {
             }
         ));
 
-        let bytes = minimal_tail();
+        let mut bytes = minimal_tail();
+        bytes.push(0);
         let error = with_reader(&bytes, |reader| {
             LegacyEnginePostTitbitsTail::read(
                 reader,
                 LegacySaveAbiProfile::PortLinuxI386V48,
-                &empty_topology(bytes.len() as u64 + 1),
+                &empty_topology(bytes.len() as u64),
+                &LegacyPostTailLimits::default(),
+                &NoVm,
+            )
+            .unwrap_err()
+        });
+        assert_eq!(error.field, "post_titbits_tail.linux_copy_eof_bytes[0]");
+    }
+
+    #[test]
+    fn accepts_only_known_linux_copyfile_eof_artifacts() {
+        let mut bytes = minimal_tail();
+        let serialized_len = bytes.len() as u64;
+        bytes.extend_from_slice(&[0xff; 3]);
+
+        let tail = with_reader(&bytes, |reader| {
+            LegacyEnginePostTitbitsTail::read(
+                reader,
+                LegacySaveAbiProfile::PortLinuxI386V48,
+                &empty_topology(bytes.len() as u64),
+                &LegacyPostTailLimits::default(),
+                &NoVm,
+            )
+            .unwrap()
+        });
+        assert_eq!(tail.serialized_end_offset, serialized_len);
+        assert_eq!(tail.trailing_linux_copy_eof_bytes, 3);
+        assert_eq!(tail.end_offset, bytes.len() as u64);
+
+        let error = with_reader(&bytes, |reader| {
+            LegacyEnginePostTitbitsTail::read(
+                reader,
+                LegacySaveAbiProfile::RetailWindowsX86V48,
+                &empty_topology(bytes.len() as u64),
                 &LegacyPostTailLimits::default(),
                 &NoVm,
             )
