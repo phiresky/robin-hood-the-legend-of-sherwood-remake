@@ -8,12 +8,14 @@
 //!     cargo run --example original_parity_replay -- \
 //!       original-code/parity-traces/original-demo-baseline.jsonl
 
+use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::{collections::BTreeMap, collections::BTreeSet, collections::VecDeque};
 
+use base64::Engine as _;
 use robin_engine::coordinates::MapPoint;
 use robin_engine::coordinates::WorldPoint3D;
 use robin_engine::element::{Command, Entity, EntityId, EntityIdKind};
@@ -28,6 +30,16 @@ use robin_rs::gfx_types::BlendMode;
 use robin_rs::level_loading_host::EngineLevelLoadExt;
 use robin_rs::renderer::{GpuImage, Renderer, rgb565_to_rgb8};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        write!(&mut hex, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    hex
+}
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceHeader {
@@ -42,6 +54,110 @@ struct TraceHeader {
     sim_config: TraceSimConfig,
     campaign: TraceCampaign,
     motion_grid: TraceMotionGrid,
+    #[serde(default)]
+    initial_save: Option<TraceInitialSave>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TraceInitialSave {
+    format: String,
+    encoding: String,
+    byte_length: u64,
+    sha256: String,
+    slot: String,
+    header_version: u32,
+    mission_id: u32,
+    stream_version: u32,
+    data: String,
+}
+
+impl TraceInitialSave {
+    fn decode_and_validate(&self, expected_mission_id: u32) -> Result<Vec<u8>, String> {
+        if self.format != "rhsg" {
+            return Err(format!(
+                "unsupported initial_save format {:?}; expected \"rhsg\"",
+                self.format
+            ));
+        }
+        if self.encoding != "base64" {
+            return Err(format!(
+                "unsupported initial_save encoding {:?}; expected \"base64\"",
+                self.encoding
+            ));
+        }
+        if self.slot.is_empty() || self.slot.contains(['/', '\\']) {
+            return Err(format!(
+                "initial_save slot {:?} must be a non-empty basename",
+                self.slot
+            ));
+        }
+        if self.header_version != 48 || self.stream_version != 48 {
+            return Err(format!(
+                "unsupported initial_save RHSG versions header={} stream={}; expected v48/v48",
+                self.header_version, self.stream_version
+            ));
+        }
+        if self.mission_id != expected_mission_id {
+            return Err(format!(
+                "initial_save mission {} does not match campaign mission {}",
+                self.mission_id, expected_mission_id
+            ));
+        }
+        if self.sha256.len() != 64
+            || !self
+                .sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err("initial_save sha256 must be 64 lowercase hexadecimal digits".to_owned());
+        }
+
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&self.data)
+            .map_err(|error| format!("decode initial_save base64: {error}"))?;
+        let declared_length = usize::try_from(self.byte_length)
+            .map_err(|_| format!("initial_save byte_length {} is too large", self.byte_length))?;
+        if bytes.len() != declared_length {
+            return Err(format!(
+                "initial_save byte_length says {} but decoded {} bytes",
+                self.byte_length,
+                bytes.len()
+            ));
+        }
+
+        let actual_sha256 = sha256_hex(&bytes);
+        if actual_sha256 != self.sha256 {
+            return Err(format!(
+                "initial_save sha256 mismatch: header={} decoded={actual_sha256}",
+                self.sha256
+            ));
+        }
+        if bytes.len() < 16 {
+            return Err(format!(
+                "initial_save is only {} bytes; RHSG header needs 16",
+                bytes.len()
+            ));
+        }
+        if &bytes[0..4] != b"RHSG" {
+            return Err("initial_save payload does not begin with RHSG".to_owned());
+        }
+
+        let payload_header_version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+        let payload_mission_id = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+        let payload_stream_version = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
+        if payload_header_version != self.header_version
+            || payload_mission_id != self.mission_id
+            || payload_stream_version != self.stream_version
+        {
+            return Err(format!(
+                "initial_save RHSG header ({payload_header_version}, {payload_mission_id}, \
+                 {payload_stream_version}) disagrees with metadata ({}, {}, {})",
+                self.header_version, self.mission_id, self.stream_version
+            ));
+        }
+
+        Ok(bytes)
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -100,10 +216,50 @@ enum TraceStartState {
 }
 
 fn validate_trace_schema(schema: u32) {
-    assert_eq!(
-        schema, 10,
-        "unsupported parity trace schema {schema}; complete resolved-input schema 10 is required"
+    assert!(
+        matches!(schema, 10 | 11),
+        "unsupported parity trace schema {schema}; complete resolved-input schema 10 or 11 is required"
     );
+}
+
+fn decode_and_validate_initial_save(header: &TraceHeader) -> Option<Vec<u8>> {
+    match (
+        header.schema,
+        header.start_state,
+        header.initial_save.as_ref(),
+    ) {
+        // Schema 10 remains temporarily supported as an oracle while the v48
+        // RHSG body importer is developed. It reconstructs loaded saves from
+        // campaign state and therefore cannot guarantee exact mid-mission state.
+        (10, _, None) => None,
+        (10, _, Some(_)) => {
+            panic!("schema 10 must not contain the schema-11 initial_save envelope")
+        }
+        (11, TraceStartState::MissionStart, None) => None,
+        (11, TraceStartState::MissionStart, Some(_)) => {
+            panic!("schema-11 mission_start traces must not contain initial_save")
+        }
+        (11, TraceStartState::LoadedSave, None) => {
+            panic!("schema-11 loaded_save traces require initial_save")
+        }
+        (11, TraceStartState::LoadedSave, Some(initial_save)) => {
+            let mission_index = header
+                .campaign
+                .current_mission_index
+                .expect("schema-11 loaded_save campaign has no current mission");
+            let mission = header.campaign.missions.get(mission_index).unwrap_or_else(|| {
+                panic!(
+                    "schema-11 loaded_save current mission index {mission_index} is out of range"
+                )
+            });
+            Some(
+                initial_save
+                    .decode_and_validate(mission.profile_id)
+                    .unwrap_or_else(|error| panic!("invalid schema-11 initial_save: {error}")),
+            )
+        }
+        (schema, _, _) => unreachable!("schema {schema} was validated before initial_save"),
+    }
 }
 
 fn validate_trace_start(start_state: TraceStartState, session_index: u32, initial_frame: u64) {
@@ -913,8 +1069,8 @@ struct TraceFrame {
     path_events: Vec<TracePathEvent>,
 }
 
-const TRACE_CACHE_VERSION: u32 = 2;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v2.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 3;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v3.native-bincode.zst";
 const TRACE_CACHE_ZSTD_LEVEL: i32 = 0;
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1327,6 +1483,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         header.session_index,
         header.initial_frame,
     );
+    let _initial_save = decode_and_validate_initial_save(&header);
     let all_rng_draws = read_all_rng_draws(&cache_path);
 
     if let Ok(dir) = std::env::var("ROBINHOOD_DATA_DIR") {
@@ -3669,9 +3826,86 @@ fn compare_point_with_absolute_tolerance(
 mod tests {
     use super::*;
 
+    fn valid_initial_save() -> TraceInitialSave {
+        let mut bytes = Vec::from(*b"RHSG");
+        bytes.extend_from_slice(&48_u32.to_le_bytes());
+        bytes.extend_from_slice(&16_723_u32.to_le_bytes());
+        bytes.extend_from_slice(&48_u32.to_le_bytes());
+        bytes.extend_from_slice(b"serialized save body");
+        TraceInitialSave {
+            format: "rhsg".to_owned(),
+            encoding: "base64".to_owned(),
+            byte_length: bytes.len() as u64,
+            sha256: sha256_hex(&bytes),
+            slot: "Restart".to_owned(),
+            header_version: 48,
+            mission_id: 16_723,
+            stream_version: 48,
+            data: base64::engine::general_purpose::STANDARD.encode(bytes),
+        }
+    }
+
     #[test]
-    fn schema_ten_is_required() {
+    fn transitional_schema_ten_and_current_schema_eleven_are_accepted() {
         validate_trace_schema(10);
+        validate_trace_schema(11);
+    }
+
+    #[test]
+    fn initial_save_decodes_and_matches_its_rhsg_envelope() {
+        let save = valid_initial_save();
+        let decoded = save
+            .decode_and_validate(16_723)
+            .expect("valid schema-11 initial_save");
+        assert_eq!(&decoded[..4], b"RHSG");
+        assert_eq!(u32::from_le_bytes(decoded[4..8].try_into().unwrap()), 48);
+        assert_eq!(
+            u32::from_le_bytes(decoded[8..12].try_into().unwrap()),
+            16_723
+        );
+        assert_eq!(u32::from_le_bytes(decoded[12..16].try_into().unwrap()), 48);
+    }
+
+    #[test]
+    fn initial_save_rejects_decoded_length_mismatch() {
+        let mut save = valid_initial_save();
+        save.byte_length += 1;
+        assert!(
+            save.decode_and_validate(16_723)
+                .unwrap_err()
+                .contains("byte_length")
+        );
+    }
+
+    #[test]
+    fn initial_save_rejects_sha256_mismatch() {
+        let mut save = valid_initial_save();
+        save.sha256.replace_range(0..1, "0");
+        if save.sha256
+            == sha256_hex(
+                &base64::engine::general_purpose::STANDARD
+                    .decode(&save.data)
+                    .unwrap(),
+            )
+        {
+            save.sha256.replace_range(0..1, "1");
+        }
+        assert!(
+            save.decode_and_validate(16_723)
+                .unwrap_err()
+                .contains("sha256 mismatch")
+        );
+    }
+
+    #[test]
+    fn initial_save_rejects_metadata_that_disagrees_with_rhsg_header() {
+        let mut save = valid_initial_save();
+        save.mission_id += 1;
+        assert!(
+            save.decode_and_validate(save.mission_id)
+                .unwrap_err()
+                .contains("disagrees with metadata")
+        );
     }
 
     #[test]
@@ -3703,7 +3937,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "schema 9; complete resolved-input schema 10 is required")]
+    #[should_panic(expected = "schema 9; complete resolved-input schema 10 or 11 is required")]
     fn schema_nine_is_rejected() {
         validate_trace_schema(9);
     }

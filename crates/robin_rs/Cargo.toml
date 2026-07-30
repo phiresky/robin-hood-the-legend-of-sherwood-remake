@@ -56,6 +56,7 @@ bitcode = { version = "0.6", features = ["serde"] }
 bincode = { version = "2", features = ["serde"] }
 zstd = "0.13"
 base64 = "0.22"
+sha2 = "0.11"
 # Windowing + input
 winit = { version = "0.30", features = ["android-native-activity", "serde"] }
 raw-window-handle = "0.6"
