@@ -134,13 +134,6 @@ impl EngineInner {
         if !script.script_vm_has_function(key, fn_name) {
             return Ok(if fn_name == "FilterAIEvent" { 1 } else { 0 });
         }
-        if (1948..=1952).contains(&self.control.frame_counter) {
-            eprintln!(
-                "SCRIPT_TRACE frame={} begin {key:?}.{fn_name} params={params:?}",
-                self.control.frame_counter
-            );
-        }
-
         let real_depth = active
             .iter()
             .filter(|call| call.counts_toward_depth)

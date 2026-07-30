@@ -1464,6 +1464,26 @@ actor and includes Original's layer and owning motion-sector checks. Linux2
 Profile 002 saves 017, 022, and 032 match every recorded frame after this
 change; Linux3 Profile 003 save 056 is an additional full-trace control.
 
+### Script action queries preserve the deferred wait-order handoff
+
+Original `GetCurrentAction` returns `RHElementActor::GetAnimation`, which reads
+the actor's installed `mpOrder`. The sequence manager can select a succeeding
+`WAIT`, `WAIT_TIMER`, or `WAIT_FREE_LIFT` element at the end of a frame, but
+that wait order does not replace `mpOrder` until the actor's next
+`Hourglass`. Other newly selected actions are already visible through
+`mpOrder`; this asymmetry matters to scripts that test an exact animation.
+
+Rust previously returned the selected sequence element's front order
+unconditionally. During the one-frame wait handoff it therefore exposed
+`WAITING_SWORD` too early. Sherwood's sword-training script interpreted the
+trainer as ready, selected a random zone occupant, and consumed a global RNG
+draw absent from the Original.
+
+`GetCurrentAction` now keeps returning the sprite's actually processed
+animation while one of those three wait commands is selected but not yet
+executed. Linux3 Profile 001 save 004 consequently matches every recorded
+frame, including its combat-animation RNG at frame 1950.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

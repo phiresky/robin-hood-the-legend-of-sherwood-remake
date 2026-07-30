@@ -665,11 +665,35 @@ impl NativeContext<'_, '_> {
             return None;
         }
         let entity_id = self.actor_id(actor)?;
-        self.sequence_manager
+        let (sequence_id, element_index, order) = self
+            .sequence_manager
             .as_ref()
             .expect("script native requires a live SequenceManager query view")
-            .current_order_for_actor(entity_id)
-            .map(|(_, _, order)| order.order_type)
+            .current_order_for_actor(entity_id)?;
+        let command = self
+            .sequence_manager
+            .as_ref()
+            .expect("script native requires a live SequenceManager query view")
+            .get_element(sequence_id, element_index)
+            .expect("current actor order lost its owning sequence element")
+            .command;
+        let deferred_wait_install = matches!(
+            command,
+            crate::element::Command::Wait
+                | crate::element::Command::WaitTimer
+                | crate::element::Command::WaitFreeLift
+        ) && entity.sprite().last_processed_order_id
+            != order.order_id.get();
+        if deferred_wait_install {
+            // SequenceManager can select a new wait element at the tail of an
+            // engine frame. The Original does not install that wait RHOrder
+            // as the actor's `mpOrder` until the actor's next Hourglass, so
+            // GetAnimation/GetCurrentAction still exposes the preceding
+            // animation during this one-frame handoff.
+            Some(entity.sprite().last_action)
+        } else {
+            Some(order.order_type)
+        }
     }
 
     /// True iff `handle` resolves to a PC whose profile carries a corpse
