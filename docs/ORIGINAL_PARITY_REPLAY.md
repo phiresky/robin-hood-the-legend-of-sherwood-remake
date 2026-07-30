@@ -881,6 +881,22 @@ and `offset + remaining` bounds remain strict whenever a macro is marked active
 or has bytes remaining, so this does not turn malformed live cursors into
 defaults or silently accept unsafe bytecode reads.
 
+### Linux-v48 enemy previous-state storage
+
+Profile 011 creation order 89 stores `local_ai.enemy.previous_state = 72`,
+outside the seven-value `RHaIState` domain. `RHArtificialMalignity` initializes
+neither `mPreviousState` nor `mPreviousSubstate`; it nevertheless serializes
+both complete four-byte enum words. The pair is assigned together only when a
+non-default soldier sees Charly and enters
+`SUBSTATE_SEEKING_DETECTED_CHARLY`, and is consumed only by that substate's
+officer/timer branch.
+
+Rust therefore retains both serialized words exactly and overwrites the pair
+at the matching Charly transition. It converts them to validated enums only at
+the one semantically live restore-state branch. An invalid live value remains
+a hard failure instead of being replaced with a plausible state; arbitrary
+constructor bytes in an inert save no longer prevent adoption.
+
 ## Coverage limits
 
 A clean baseline proves exact parity only for the state fields serialized by the
