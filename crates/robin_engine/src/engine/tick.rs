@@ -3058,6 +3058,10 @@ impl EngineInner {
                         .sequence_manager
                         .take_pending_synchronous_actions();
 
+                    // RHElementActor::Hourglass consumes one queued base
+                    // position update before it inspects the current
+                    // sequence/order.
+                    self.apply_delayed_actor_position(sim, assets, entity_id);
                     before_actor(self, entity_id);
                     #[cfg(test)]
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::BaseActor(entity_id));

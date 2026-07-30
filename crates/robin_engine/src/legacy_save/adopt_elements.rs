@@ -53,8 +53,6 @@ use super::{
 /// from looking complete.  In particular, `RHSprite::muwFrameCountDown` drives
 /// projectile flight and must land before this plan is wired into replay.
 pub const REMAINING_COMMON_ELEMENT_FIELDS: &[&str] = &[
-    "RHElement::mbPositionMapDelayed / mptPositionMapDelayed",
-    "RHElement::mbPositionDelayed / mptPositionDelayed",
     "RHElementActor sequence/order pointers and inline post-seek sequence",
     "RHElementActor script member variables",
 ];
@@ -78,13 +76,6 @@ pub const NON_AUTHORITATIVE_COMMON_ELEMENT_FIELDS: &[&str] = &[
 pub enum LegacyElementAdoptError {
     #[error(transparent)]
     Common(#[from] LegacySaveAdoptError),
-    #[error(
-        "saved element creation order {creation_order} has delayed position state ({field}); Rust has no equivalent queue yet"
-    )]
-    UnsupportedDelayedPosition {
-        creation_order: u32,
-        field: &'static str,
-    },
     #[error(
         "saved element creation order {creation_order} field {field} has unknown enum value {value}"
     )]
@@ -314,11 +305,75 @@ struct ConvertedElementBase {
     outline_width: u16,
     custom_minimap_dot: u16,
     active: bool,
+    position_map_delayed: bool,
+    delayed_map_position: MapPoint,
+    position_delayed: bool,
+    delayed_position: crate::coordinates::WorldPoint3D,
     in_honolulu: bool,
     index_in_elements_list: u16,
     blipped: bool,
     unreachable: bool,
     sprite: ConvertedSprite,
+}
+
+/// Preflighted common `RHElement`/`RHSprite` state for an element embedded
+/// outside the main element stream (currently `RHPatchFX`).
+///
+/// Original serializes the patch-owned FX base a second time while walking
+/// the grid, so that later copy is authoritative and must compose with the
+/// ordinary element adoption rather than being discarded.
+#[derive(Clone, Debug)]
+pub(crate) struct LegacyElementBaseAdoption {
+    entity_id: EntityId,
+    creation_order: u32,
+    element: ConvertedElementBase,
+}
+
+impl LegacyElementBaseAdoption {
+    pub(crate) fn preflight(
+        engine: &EngineInner,
+        saved: &LegacyElementPayloadBase,
+        entities: &LegacyEntityFixups,
+        position_topology: &LegacyPositionTopology,
+    ) -> Result<Self, LegacyElementAdoptError> {
+        let creation_order = saved.creation_order;
+        let entity_id = entities
+            .by_creation_order
+            .get(&creation_order)
+            .copied()
+            .ok_or(LegacySaveAdoptError::MissingCreationOrderReference { creation_order })?;
+        if engine.world.entities.get(entity_id).is_none() {
+            return Err(LegacyElementAdoptError::MissingEntity {
+                creation_order,
+                entity_id,
+            });
+        }
+        Ok(Self {
+            entity_id,
+            creation_order,
+            element: convert_element(saved, creation_order, entities, position_topology)?,
+        })
+    }
+
+    pub(crate) fn entity_id(&self) -> EntityId {
+        self.entity_id
+    }
+
+    pub(crate) fn apply(self, engine: &mut EngineInner) {
+        let entity = engine
+            .world
+            .entities
+            .get_mut(self.entity_id)
+            .expect("preflighted embedded v48 element disappeared from candidate engine");
+        apply_element_base(entity.element_data_mut(), self.element);
+        debug_assert_eq!(
+            engine
+                .world
+                .original_creation_order_by_entity
+                .get(&self.entity_id),
+            Some(&self.creation_order)
+        );
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -730,42 +785,7 @@ impl LegacyStaticElementAdoption {
                 .entities
                 .get_mut(converted.entity_id)
                 .expect("preflighted v48 entity disappeared from candidate engine");
-            let element = entity.element_data_mut();
-            element.outline_colors = converted.element.outline_colors;
-            element.current_outline = converted.element.current_outline;
-            element.outline_width = converted.element.outline_width;
-            element.custom_minimap_dot = converted.element.custom_minimap_dot;
-            element.active = converted.element.active;
-            element.in_honolulu = converted.element.in_honolulu;
-            element.index_in_elements_list = converted.element.index_in_elements_list;
-            element.blipped = converted.element.blipped;
-            element.unreachable = converted.element.unreachable;
-            let sprite = &mut element.sprite;
-            sprite.current_row = converted.element.sprite.current_row;
-            sprite.current_frame = converted.element.sprite.current_frame;
-            sprite.frame_count = converted.element.sprite.frame_count;
-            sprite.flight_frame_countdown = converted.element.sprite.flight_frame_countdown;
-            sprite.current_height = converted.element.sprite.current_height;
-            sprite.current_width = converted.element.sprite.current_width;
-            sprite.last_action = converted.element.sprite.last_action;
-            sprite.use_alternate_profile = converted.element.sprite.alternate_profile;
-            sprite.masked = converted.element.sprite.masked;
-            sprite.behind_display_order_ref =
-                converted.element.sprite.behind_display_order_reference;
-            sprite.display_order_ref = converted.element.sprite.display_order_reference;
-            sprite.action_done_frame = converted.element.sprite.action_done_frame;
-            sprite.action_done_counter = converted.element.sprite.action_done_counter;
-            sprite.last_sound_id = converted.element.sprite.last_sound_id;
-            sprite.last_processed_order_id = converted.element.sprite.last_processed_order_id;
-            (sprite.anims_to_be_replaced, sprite.replacing_anims) = converted
-                .element
-                .sprite
-                .animation_replacements
-                .into_iter()
-                .unzip();
-            sprite
-                .position_iface
-                .restore_v48_serialized_state(converted.element.sprite.position);
+            apply_element_base(entity.element_data_mut(), converted.element);
 
             if let Some(saved) = converted.actor {
                 let actor = entity
@@ -818,30 +838,86 @@ impl LegacyStaticElementAdoption {
     }
 }
 
+fn apply_element_base(element: &mut crate::element::ElementData, converted: ConvertedElementBase) {
+    element.outline_colors = converted.outline_colors;
+    element.current_outline = converted.current_outline;
+    element.outline_width = converted.outline_width;
+    element.custom_minimap_dot = converted.custom_minimap_dot;
+    element.active = converted.active;
+    element.position_map_delayed = converted.position_map_delayed;
+    element.delayed_map_position = converted.delayed_map_position;
+    element.position_delayed = converted.position_delayed;
+    element.delayed_position = converted.delayed_position;
+    element.in_honolulu = converted.in_honolulu;
+    element.index_in_elements_list = converted.index_in_elements_list;
+    element.blipped = converted.blipped;
+    element.unreachable = converted.unreachable;
+    let sprite = &mut element.sprite;
+    sprite.current_row = converted.sprite.current_row;
+    sprite.current_frame = converted.sprite.current_frame;
+    sprite.frame_count = converted.sprite.frame_count;
+    sprite.flight_frame_countdown = converted.sprite.flight_frame_countdown;
+    sprite.current_height = converted.sprite.current_height;
+    sprite.current_width = converted.sprite.current_width;
+    sprite.last_action = converted.sprite.last_action;
+    sprite.use_alternate_profile = converted.sprite.alternate_profile;
+    sprite.masked = converted.sprite.masked;
+    sprite.behind_display_order_ref = converted.sprite.behind_display_order_reference;
+    sprite.display_order_ref = converted.sprite.display_order_reference;
+    sprite.action_done_frame = converted.sprite.action_done_frame;
+    sprite.action_done_counter = converted.sprite.action_done_counter;
+    sprite.last_sound_id = converted.sprite.last_sound_id;
+    sprite.last_processed_order_id = converted.sprite.last_processed_order_id;
+    (sprite.anims_to_be_replaced, sprite.replacing_anims) =
+        converted.sprite.animation_replacements.into_iter().unzip();
+    sprite
+        .position_iface
+        .restore_v48_serialized_state(converted.sprite.position);
+}
+
 fn convert_element(
     saved: &LegacyElementPayloadBase,
     creation_order: u32,
     entities: &LegacyEntityFixups,
     topology: &LegacyPositionTopology,
 ) -> Result<ConvertedElementBase, LegacyElementAdoptError> {
-    if saved.position_map_delayed {
-        return Err(LegacyElementAdoptError::UnsupportedDelayedPosition {
-            creation_order,
-            field: "mbPositionMapDelayed",
-        });
-    }
-    if saved.position_delayed {
-        return Err(LegacyElementAdoptError::UnsupportedDelayedPosition {
-            creation_order,
-            field: "mbPositionDelayed",
-        });
-    }
+    finite_point(
+        saved.delayed_map_position,
+        creation_order,
+        "delayed_map_position",
+    )?;
+    finite(
+        saved.delayed_position.x,
+        creation_order,
+        "delayed_position.x",
+    )?;
+    finite(
+        saved.delayed_position.y,
+        creation_order,
+        "delayed_position.y",
+    )?;
+    finite(
+        saved.delayed_position.z,
+        creation_order,
+        "delayed_position.z",
+    )?;
     Ok(ConvertedElementBase {
         outline_colors: saved.outline_colors,
         current_outline: outline(saved.current_outline, creation_order)?,
         outline_width: saved.outline_width,
         custom_minimap_dot: saved.custom_minimap_dot,
         active: saved.active,
+        position_map_delayed: saved.position_map_delayed,
+        delayed_map_position: MapPoint::new(
+            saved.delayed_map_position.x,
+            saved.delayed_map_position.y,
+        ),
+        position_delayed: saved.position_delayed,
+        delayed_position: crate::coordinates::WorldPoint3D::new(
+            saved.delayed_position.x,
+            saved.delayed_position.y,
+            saved.delayed_position.z,
+        ),
         in_honolulu: saved.in_honolulu,
         index_in_elements_list: saved.index_in_elements_list,
         blipped: saved.blipped,

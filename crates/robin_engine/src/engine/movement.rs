@@ -1310,6 +1310,75 @@ pub(crate) fn build_line_jump_click_sequence(
 }
 
 impl EngineInner {
+    /// Consume one queued `RHElement` position update at the beginning of
+    /// this actor's Hourglass, before order selection.
+    ///
+    /// Original gives the map-space queue priority when both flags are set;
+    /// the world-space queue remains armed for the next actor frame. The
+    /// resulting teleport still traverses Actor::CheckForLineCrossing.
+    pub(super) fn apply_delayed_actor_position(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+    ) {
+        let (old_pos, new_pos, layer, posture, is_carried, is_pc, is_human) = {
+            let Some(entity) = self.world.entities.get_mut(entity_id) else {
+                panic!("delayed-position owner {entity_id:?} disappeared before Actor::Hourglass");
+            };
+            let posture = entity.element_data().posture;
+            let is_carried = entity
+                .human_data()
+                .is_some_and(|human| human.carrier.is_some());
+            let is_pc = entity.is_pc();
+            let is_human = entity.is_human();
+            let Some((old_pos, new_pos, layer)) =
+                entity.element_data_mut().apply_next_delayed_position()
+            else {
+                return;
+            };
+            (
+                old_pos, new_pos, layer, posture, is_carried, is_pc, is_human,
+            )
+        };
+
+        if !actor_line_crossing_eligible(
+            posture,
+            is_carried,
+            self.world.fast_grid.level.map_bbox.contains_point(new_pos),
+        ) {
+            return;
+        }
+
+        let crossed = self.check_for_line_crossing(assets, entity_id, old_pos, new_pos, layer);
+        if crossed {
+            if is_human {
+                self.update_roll_after_crossing(assets, entity_id);
+            }
+            let compute_direction = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(entity_id)
+                .map(|(_, _, order)| order.compute_direction);
+            if let Some(compute_direction) = compute_direction
+                && let Some(entity) = self.world.entities.get_mut(entity_id)
+            {
+                entity
+                    .position_iface_mut()
+                    .compute_increment_all(compute_direction);
+            }
+        }
+        if is_pc {
+            self.check_for_patch_line_crossing(sim, assets, entity_id, old_pos, new_pos, layer);
+        }
+        self.check_for_sound_line_crossing(assets, entity_id, old_pos, new_pos, layer);
+
+        // TODO(original-parity): LINE_SCRIPT crossings are also part of
+        // RHElementActor::CheckForLineCrossing. The general script-sector
+        // crossing owner is not ported yet; delayed and ordinary movement
+        // must share it when it lands.
+    }
+
     /// Match `RHSectorBuilding::IsAuthorized()` for gate pathfinding.
     ///
     /// The original initializes every building's maximum occupancy to

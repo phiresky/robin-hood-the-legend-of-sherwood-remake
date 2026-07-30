@@ -81,9 +81,17 @@ pub struct ElementData {
     pub sprite_id: u32,
     pub select_id: u32,
 
-    // Note: the carry-pickup bookkeeping is handled synchronously here
-    // via `HumanData::carrier`, so there are no "apply position next
-    // tick" delayed-position fields on the base entity.
+    /// Original `RHElement`'s queued map-space teleport. Actor Hourglass
+    /// consumes this before selecting/executing the current order.
+    pub position_map_delayed: bool,
+    pub delayed_map_position: MapPoint,
+
+    /// Original `RHElement`'s queued world-space teleport. When both queues
+    /// are armed, Actor Hourglass consumes the map-space queue first and
+    /// leaves this one for the following frame.
+    pub position_delayed: bool,
+    pub delayed_position: WorldPoint3D,
+
     /// "Teleported away" by script.
     pub in_honolulu: bool,
 
@@ -124,6 +132,10 @@ impl Default for ElementData {
             hidden_in_building: false,
             sprite_id: 0,
             select_id: 0,
+            position_map_delayed: false,
+            delayed_map_position: MapPoint::ZERO,
+            position_delayed: false,
+            delayed_position: WorldPoint3D::ZERO,
             in_honolulu: false,
             index_in_elements_list: 0,
             // Default to `CUSTOM_DOT_NOT_CUSTOMIZED` (=1). Zero would
@@ -203,6 +215,42 @@ impl ElementData {
     #[inline]
     pub fn set_position_map_preserving_3d(&mut self, p: MapPoint) {
         self.sprite.position_iface.set_map_position_preserving_3d(p);
+    }
+
+    /// Queue a map-space position change for the next Actor Hourglass.
+    pub fn set_position_map_delayed(&mut self, point: MapPoint) {
+        self.delayed_map_position = point;
+        self.position_map_delayed = true;
+    }
+
+    /// Queue a world-space position change for the next Actor Hourglass.
+    pub fn set_position_delayed(&mut self, point: WorldPoint3D) {
+        self.delayed_position = point;
+        self.position_delayed = true;
+    }
+
+    /// Apply the next queued Original position update, preserving the
+    /// map-before-world priority and the inactive queue's stored point.
+    ///
+    /// Returns the pre/post map segment and layer for the Actor
+    /// `CheckForLineCrossing` continuation.
+    pub(crate) fn apply_next_delayed_position(&mut self) -> Option<(MapPoint, MapPoint, u16)> {
+        if !self.position_map_delayed && !self.position_delayed {
+            return None;
+        }
+
+        let old_position = self.position_map();
+        let layer = self.layer();
+        self.sprite.position_iface.new_move();
+        if self.position_map_delayed {
+            self.set_position_map(self.delayed_map_position);
+            self.position_map_delayed = false;
+        } else {
+            self.set_position(self.delayed_position);
+            self.position_delayed = false;
+        }
+        self.update_grid_cell();
+        Some((old_position, self.position_map(), layer))
     }
 
     #[inline]
@@ -4274,6 +4322,35 @@ impl ElementNet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delayed_positions_preserve_original_map_then_world_priority() {
+        let mut element = ElementData::default();
+        element.set_position(WorldPoint3D::new(10.0, 20.0, 3.0));
+        element.set_position_map_delayed(MapPoint::new(40.0, 50.0));
+        element.set_position_delayed(WorldPoint3D::new(70.0, 80.0, 9.0));
+
+        let (old_map, new_map, _) = element
+            .apply_next_delayed_position()
+            .expect("map queue should apply first");
+        assert_eq!(old_map, MapPoint::from_world_xyz(10.0, 20.0, 3.0));
+        assert_eq!(new_map, MapPoint::new(40.0, 50.0));
+        assert!(!element.position_map_delayed);
+        assert!(element.position_delayed);
+        assert_eq!(element.delayed_map_position, MapPoint::new(40.0, 50.0));
+
+        let (_, second_map, _) = element
+            .apply_next_delayed_position()
+            .expect("world queue should remain for the next frame");
+        assert_eq!(element.position(), WorldPoint3D::new(70.0, 80.0, 9.0));
+        assert_eq!(second_map, MapPoint::from_world_xyz(70.0, 80.0, 9.0));
+        assert!(!element.position_delayed);
+        assert_eq!(
+            element.delayed_position,
+            WorldPoint3D::new(70.0, 80.0, 9.0),
+            "Original clears only the flag and retains the serialized point"
+        );
+    }
 
     fn object_data(object_type: ObjectType) -> ObjectData {
         ObjectData {
