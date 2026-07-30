@@ -2894,20 +2894,19 @@ fn convert_patrol_path(
             count: authored.waypoints.len(),
         }
     })?;
-    for (field, waypoint) in [
-        ("current_waypoint_index", saved.current_waypoint_index),
-        ("last_waypoint_index", saved.last_waypoint_index),
-    ] {
-        if usize::from(waypoint) >= authored.waypoints.len() {
-            return Err(LegacyElementAdoptError::MissingWaypoint {
-                creation_order,
-                path: raw_path_id,
-                field,
-                waypoint,
-                count: authored.waypoints.len(),
-            });
-        }
+    if usize::from(saved.current_waypoint_index) >= authored.waypoints.len() {
+        return Err(LegacyElementAdoptError::MissingWaypoint {
+            creation_order,
+            path: raw_path_id,
+            field: "current_waypoint_index",
+            waypoint: saved.current_waypoint_index,
+            count: authored.waypoints.len(),
+        });
     }
+    // RHPath::SerializeStatus restores mubLastWaypointIndex verbatim and
+    // never indexes mpHikingPath with it. The value is historical state used
+    // by patrol synchronization comparisons, so it may legitimately be
+    // outside the size of the currently authored path.
     let history = saved
         .history
         .iter()
@@ -3693,6 +3692,40 @@ mod tests {
         assert!(!restored.forward);
         assert_eq!(restored.history[0].position.sector.unwrap().get(), 1);
         assert_eq!(restored.history[0].distance, 4);
+    }
+
+    #[test]
+    fn local_ai_path_preserves_out_of_range_historical_last_waypoint() {
+        let saved = LegacyAiPathStatus {
+            current_waypoint_index: 0,
+            last_waypoint_index: 5,
+            forward_movement: true,
+            hiking_path_index: Some(0),
+            history: Vec::new(),
+        };
+        let paths = vec![crate::level_data::RawHikingPath {
+            waypoints: vec![crate::level_data::RawWaypoint {
+                x: 0,
+                y: 0,
+                sector: 0,
+                level: 0,
+                command: WaypointCommand::None,
+            }],
+        }];
+        let topology = LegacyPositionTopology {
+            sector_count: 1,
+            doors: Vec::new(),
+            projection_areas: Vec::new(),
+            sight_obstacles: Vec::new(),
+        };
+
+        let restored = convert_patrol_path(&saved, 145, &topology, &paths)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(restored.current_waypoint_index, 0);
+        assert_eq!(restored.last_waypoint_index, 5);
+        assert_eq!(restored.size, 1);
     }
 
     #[test]
