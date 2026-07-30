@@ -1123,14 +1123,14 @@ clobber a shared path.
 
 ## Current Linux-v48 loaded-save result
 
-As of Rust commit `4bf11cd69`, the schema-11 runner decodes and atomically
-installs the embedded Linux-v48 save before replay. Dynamic elements are
-constructed on the detached candidate before payload preflight, the shared VM
-arena and post-load consequences are applied in Original order, the recorded
-global RNG stream remains authoritative, and serialized camera/minimap/view
-state is carried into headless and visual replay hosts.
+The schema-11 runner decodes and atomically installs the embedded Linux-v48
+save before replay. Dynamic elements are constructed on the detached candidate
+before payload preflight, the shared VM arena and post-load consequences are
+applied in Original order, the recorded global RNG stream remains
+authoritative, and serialized camera/minimap/view state is carried into
+headless and visual replay hosts.
 
-Every frame in all five current compressed Linux traces matches:
+Every frame in the original five-trace corpus matches:
 
 - Profile 005 `Continue-session-0002`
 - Profile 005 `Restart-session-0002`
@@ -1138,13 +1138,16 @@ Every frame in all five current compressed Linux traces matches:
 - Profile 011 `Restart-session-0002`
 - Profile 011 `Savegame_000-session-0001`
 
-This result supersedes the older “in progress” wording in the historical
-loaded-save audit rows above. It proves the complete current Linux corpus, not
-every possible v48 save shape: the fixtures each contain 127 static elements
-and no saved dynamic elements. Dynamic factories are implemented and wired,
-but still need corpus coverage. Windows `GSHR` compatibility and exposing this
-adoption path through the ordinary interactive save loader remain separate
-follow-up work.
+The expanded authoritative Linux audit adds 48 `Savegame_linux2` traces and
+140 `Savegame_linux3` traces. Unlike the first group, these exercise up to
+dozens of dynamic bonuses/projectiles and a much wider set of interrupted
+runtime states. Linux3 Profile 002 `Continue-session-0002` and
+`Restart-session-0002` also match every recorded frame. The other 186 expanded
+traces remain the active completion set; failures are being grouped by their
+first general cause and the whole affected shard is rerun after each fix.
+
+Windows `GSHR` compatibility and exposing this adoption path through the
+ordinary interactive save loader remain separate follow-up work.
 
 ## Coverage limits
 
