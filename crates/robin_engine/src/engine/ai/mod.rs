@@ -7982,7 +7982,7 @@ impl EngineInner {
             ai_state: AiState,
             is_alive: bool,
             is_active: bool,
-            view_radius: u16,
+            real_view_radius: u16,
             move_box: crate::coordinates::MoveBox,
             // Patrol admit gate (`initialize_patrol`):
             // `is_civilian() || is_able_to_fight()`.
@@ -8008,7 +8008,9 @@ impl EngineInner {
                 )
             });
             let ai_state = npc.ai_state();
-            let view_radius = npc.view_radius;
+            // IsDetecting360Degrees uses mViewParameters.uwRealRadius,
+            // not the currently displayed/growing cone radius.
+            let real_view_radius = npc.view_radius_base;
             let move_box = *entity.position_iface().get_move_box();
             let is_civilian = entity.is_civilian();
             let is_able_to_fight = match entity {
@@ -8044,7 +8046,7 @@ impl EngineInner {
                     ai_state,
                     is_alive: !entity.is_dead(),
                     is_active: entity.is_active(),
-                    view_radius,
+                    real_view_radius,
                     move_box,
                     is_civilian,
                     is_able_to_fight,
@@ -8136,7 +8138,7 @@ impl EngineInner {
                                 chief_snap.position,
                                 chief_snap.ground_z,
                                 chief_snap.is_rider,
-                                chief_snap.view_radius,
+                                chief_snap.real_view_radius,
                                 chief_snap.in_building,
                                 snap.position,
                                 snap.ground_z,
@@ -8306,7 +8308,7 @@ impl EngineInner {
                         chief_s.position,
                         chief_s.ground_z,
                         chief_s.is_rider,
-                        chief_s.view_radius,
+                        chief_s.real_view_radius,
                         chief_s.in_building,
                         member_s.position,
                         member_s.ground_z,

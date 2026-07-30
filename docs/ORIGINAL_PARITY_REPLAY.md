@@ -1498,6 +1498,23 @@ movement Z component appear to be the first bytes of the
 matching both the declared Original member type and its serializer. This is a
 save-format correction for every active wasp, independent of replay content.
 
+### Patrol reacquisition uses the configured real view radius
+
+`RHElementActorNPC::IsDetecting360Degrees` compares against
+`mViewParameters.uwRealRadius`. This is the configured/base range, not the
+current cone radius, which can temporarily grow while the NPC is alert.
+
+Rust's patrol initialization and missed-member reacquisition passed the
+animated cone radius into the otherwise actor-accurate 3-D visibility query.
+In Linux3 Profile 003 save 011, an officer whose current cone had grown from
+300 to 420 therefore readmitted a separated member before the Original did.
+The member received a formation command one refresh cycle early, changing its
+movement lifecycle at frame 22,640.
+
+Both patrol admission paths now use the NPC's base/real radius while retaining
+the shared posture, rider-height, building, and opaque-ray checks. This is the
+same field selected by the Original overload and applies to every patrol.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
