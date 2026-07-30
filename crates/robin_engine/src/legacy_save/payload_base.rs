@@ -1575,14 +1575,22 @@ pub fn read_sequence_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacySequenceRef> {
-    read_nonzero_u32_ref(reader, field).map(LegacySequenceRef)
+    read_nullable_u32_ref(reader, field).map(LegacySequenceRef)
 }
 
 pub fn read_order_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacyOrderRef> {
-    read_nonzero_u32_ref(reader, field).map(LegacyOrderRef)
+    read_nullable_u32_ref(reader, field).map(LegacyOrderRef)
+}
+
+fn read_nullable_u32_ref(
+    reader: &mut LegacyReader<'_>,
+    field: impl std::fmt::Display,
+) -> LegacyResult<Option<u32>> {
+    let raw = reader.read_u32(field)?;
+    Ok((raw != NULL_U32).then_some(raw))
 }
 
 fn read_nonzero_u32_ref(
@@ -1799,6 +1807,16 @@ mod tests {
             assert_eq!(error.offset, 0);
             assert_eq!(error.field, "sequence");
             assert!(error.to_string().contains("non-zero unique ID"));
+        });
+    }
+
+    #[test]
+    fn order_reference_preserves_zero_as_a_non_null_id() {
+        with_reader(&0_u32.to_le_bytes(), |reader| {
+            assert_eq!(
+                read_order_ref(reader, "order").unwrap(),
+                LegacyOrderRef(Some(0))
+            );
         });
     }
 
