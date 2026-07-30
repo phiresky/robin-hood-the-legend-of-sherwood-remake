@@ -186,6 +186,21 @@ pub struct EngineArgs<'a> {
 }
 
 impl Engine {
+    /// Crate-internal access for the validated Original-save adoption
+    /// coordinator. Downstream callers cannot bypass `Engine` construction or
+    /// replace a partially converted mission.
+    pub(crate) fn legacy_adoption_inner(&self) -> &EngineInner {
+        &self.inner
+    }
+
+    /// Install a fully preflighted detached Original-save candidate.
+    ///
+    /// This remains crate-internal until every authoritative v48 section is
+    /// represented by the coordinator.
+    pub(crate) fn install_legacy_adoption_inner(&mut self, inner: EngineInner) {
+        self.inner = inner;
+    }
+
     /// Run pre-level campaign mission selection on the same authoritative
     /// stream that the selected mission will receive at construction.
     ///

@@ -1589,6 +1589,12 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 ))
                 .count()
         );
+        match robin_engine::legacy_save::adopt_engine::preflight_known_linux_v48_adoption(
+            &engine, &assets, &save,
+        ) {
+            Ok(()) => eprintln!("all currently assembled Linux-v48 adoption slices preflighted"),
+            Err(error) => eprintln!("Linux-v48 adoption preflight stopped: {error}"),
+        }
         // TODO(legacy-save-adoption): resolve creation-order references and
         // apply the typed body before replaying the first loaded-save frame.
     }

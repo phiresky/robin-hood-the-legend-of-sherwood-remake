@@ -1182,7 +1182,12 @@ mod tests {
         let error = preflight_v48_sequence_manager(
             &fixture(),
             &entities,
-            &LegacySequenceTopology::default(),
+            &LegacySequenceTopology {
+                // Keep the earlier sector lookup valid so this fixture
+                // specifically exercises the missing gate identity.
+                sector_count: 6,
+                ..LegacySequenceTopology::default()
+            },
         )
         .unwrap_err();
         assert!(matches!(
