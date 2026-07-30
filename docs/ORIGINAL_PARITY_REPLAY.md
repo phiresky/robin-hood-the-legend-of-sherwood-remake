@@ -1681,6 +1681,28 @@ only while the position interface has a live door, including the duplicated
 camp-soldier snapshot path. A focused regression preserves both the null-door
 fallback and the live-door forecast case.
 
+### Battle friend lists require owner-relative 360-degree detection
+
+`RHArtificialMalignity::BattleDecisions` scans the fighter registry, but it
+adds a friendly human to `mlistUs` only when the evaluating soldier's
+`IsDetecting360Degrees` query succeeds. This is the same posture-aware,
+three-dimensional view-radius and opaque-line-of-sight test used elsewhere;
+the broad 500-unit combat-neighborhood query is not a substitute.
+
+Rust previously rebuilt this list from every able friendly fighter in that
+broad neighborhood. Linux3 Profile 001 save 014 consequently counted two
+hidden soldiers, including an officer. Their points and officer bonus changed
+the battle predecision, skipped the Original courage RNG draw, and selected
+`TowerGuardAlert` instead of `LookForHelp`.
+
+Per-owner fighter snapshots now carry the exact 360-degree detection result.
+Both snapshot construction paths use it when building friend lists and battle
+aggregates, and `BattleDecisions` enforces it when rebuilding the persistent
+list. Save 014 advances from frame 17481 to frame 17636, where it reaches a
+later independent wait/timer divergence. The other five traces in the same
+initial RNG-failure cluster also advance to distinct later behavior or RNG
+sites, confirming that the shared battle-list cause is removed.
+
 ### Patrol regrouping uses the virtual combat predicate and full 360-degree sight
 
 `ReturnToDutyCommonStuff` only sends a patrol member to its chief when the
