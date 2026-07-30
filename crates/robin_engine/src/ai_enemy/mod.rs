@@ -68,6 +68,14 @@ pub struct EnemyAi {
     pub missed_pc: ElementHandle,
     pub pc_missed: bool,
     pub pc_gone_away_in_this_direction: u16,
+    /// Frame when Charly was last observed missing.
+    pub frame_when_missed_charly: u32,
+    /// Net objects whose sound/event this soldier has already processed.
+    pub heard_nets: Vec<ObjectHandle>,
+    /// Last position at which an unexplained stimulus was detected.
+    pub detected_something_there: Position,
+    /// Cursor into the directions of the currently examined seek point.
+    pub last_seek_direction_index: u8,
     pub beggar_to_examine: HumanHandle,
     /// Whether the current `beggar_to_examine` is a real NPC beggar or a
     /// PC in disguise. Set by the engine when populating `beggars_to_control`.
@@ -77,6 +85,12 @@ pub struct EnemyAi {
     pub current_task_priority: u16,
     pub minimal_task_priority: u16,
     pub new_task_priority: u16,
+    /// Distinct CheckFor checkpoints still involved in the current sweep.
+    pub number_of_different_checkpoints: u8,
+    /// Whether this soldier is willing to interrupt duty to take ale.
+    pub thirsty: bool,
+    /// Original test/script latch preventing combat-position changes.
+    pub position_change_locked_for_test: bool,
 
     pub other_bodies_to_examine: Vec<HumanHandle>,
     pub beggars_to_control: Vec<HumanHandle>,
@@ -279,11 +293,18 @@ impl Default for EnemyAi {
             missed_pc: 0,
             pc_missed: false,
             pc_gone_away_in_this_direction: 0,
+            frame_when_missed_charly: 0,
+            heard_nets: Vec::new(),
+            detected_something_there: Position::default(),
+            last_seek_direction_index: 0,
             beggar_to_examine: 0,
             beggar_is_npc: false,
             current_task_priority: task_priority::NONE,
             minimal_task_priority: task_priority::NONE,
             new_task_priority: task_priority::NONE,
+            number_of_different_checkpoints: 0,
+            thirsty: true,
+            position_change_locked_for_test: false,
             other_bodies_to_examine: Vec::new(),
             beggars_to_control: Vec::new(),
             positions_of_beggars_to_control: Vec::new(),
