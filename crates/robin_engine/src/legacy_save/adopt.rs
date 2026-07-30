@@ -14,6 +14,7 @@ use crate::{
     coordinates::{MapBBox, MapPoint, MapVec, WorldPoint3D, WorldVec3D},
     element::EntityId,
     engine::{EngineInner, LevelAssets},
+    jump_line::JumpLineIndex,
     position_interface::{
         Direction, DoorHandle, IncrementComputed, Layer, ObstacleHandle, PlaneZCoeffs,
         PositionComputed, PositionInterfaceV48State, SectorHandle,
@@ -23,9 +24,10 @@ use crate::{
 use super::{
     body::LegacySaveBody,
     elements::{LegacyElementClass, LegacyElementEnvelope, LegacyElementResolution},
+    gate_topology::derive_legacy_gate_order,
     payload_base::{
-        LegacyAiElementRef, LegacyBoundingBox2, LegacyElementRef, LegacyPoint2, LegacyPoint3,
-        LegacyPositionPayload,
+        LegacyAiElementRef, LegacyBoundingBox2, LegacyElementRef, LegacyLineRef, LegacyPoint2,
+        LegacyPoint3, LegacyPositionPayload,
     },
     topology_adapter::{
         LegacyMissingTopologyFact, LegacyStaticElementTopology, LegacyTopologyAdapterError,
@@ -114,6 +116,107 @@ pub struct LegacyPositionTopology {
     pub doors: Vec<DoorHandle>,
     pub projection_areas: Vec<LegacyPositionObstacleBinding>,
     pub sight_obstacles: Vec<LegacyPositionObstacleBinding>,
+}
+
+/// Exact Original jump-line pointer space.
+///
+/// Original serializes a line pointer as its layer plus its ordinal inside
+/// that layer. Rust stores all jump lines in one flat runtime array, so the
+/// raw per-layer ordinal must never be treated as the runtime index.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LegacyLineTopology {
+    by_original_identity: BTreeMap<(u16, i16), JumpLineIndex>,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum LegacyLineTopologyError {
+    #[error("initialized jump-line runtime index {index} exceeds u32")]
+    RuntimeIndexOverflow { index: usize },
+    #[error("initialized jump-line runtime index equals the null sentinel")]
+    RuntimeIndexNullSentinel,
+    #[error("initialized jump-line layer {layer} contains more than i16::MAX entries")]
+    LayerIndexOverflow { layer: u16 },
+    #[error(
+        "saved jump-line field {field} has inconsistent null identity layer={layer:?}, index={index:?}"
+    )]
+    InconsistentNull {
+        field: &'static str,
+        layer: Option<u16>,
+        index: Option<i16>,
+    },
+    #[error(
+        "saved jump-line field {field} references missing Original line layer {layer}, index {index}"
+    )]
+    Missing {
+        field: &'static str,
+        layer: u16,
+        index: i16,
+    },
+}
+
+impl LegacyLineTopology {
+    /// Reconstruct `(layer, ordinal-in-layer)` identity from the initialized
+    /// mission's stable jump-line load order.
+    pub fn derive(engine: &EngineInner) -> Result<Self, LegacyLineTopologyError> {
+        Self::derive_from_layers(
+            engine
+                .world
+                .fast_grid
+                .level
+                .jump_lines
+                .iter()
+                .map(|line| line.layer),
+        )
+    }
+
+    fn derive_from_layers(
+        layers: impl IntoIterator<Item = u16>,
+    ) -> Result<Self, LegacyLineTopologyError> {
+        let mut next_in_layer = BTreeMap::<u16, i16>::new();
+        let mut by_original_identity = BTreeMap::new();
+        for (runtime_index, layer) in layers.into_iter().enumerate() {
+            let index_in_layer = next_in_layer.entry(layer).or_default();
+            let raw_runtime_index = u32::try_from(runtime_index).map_err(|_| {
+                LegacyLineTopologyError::RuntimeIndexOverflow {
+                    index: runtime_index,
+                }
+            })?;
+            let handle = JumpLineIndex::new(raw_runtime_index)
+                .ok_or(LegacyLineTopologyError::RuntimeIndexNullSentinel)?;
+            by_original_identity.insert((layer, *index_in_layer), handle);
+            *index_in_layer = index_in_layer
+                .checked_add(1)
+                .ok_or(LegacyLineTopologyError::LayerIndexOverflow { layer })?;
+        }
+        Ok(Self {
+            by_original_identity,
+        })
+    }
+
+    pub fn resolve(
+        &self,
+        field: &'static str,
+        reference: LegacyLineRef,
+    ) -> Result<Option<JumpLineIndex>, LegacyLineTopologyError> {
+        match (reference.layer, reference.index) {
+            (None, None) => Ok(None),
+            (Some(layer), Some(index)) if index >= 0 => self
+                .by_original_identity
+                .get(&(layer, index))
+                .copied()
+                .map(Some)
+                .ok_or(LegacyLineTopologyError::Missing {
+                    field,
+                    layer,
+                    index,
+                }),
+            (layer, index) => Err(LegacyLineTopologyError::InconsistentNull {
+                field,
+                layer,
+                index,
+            }),
+        }
+    }
 }
 
 /// Complete translation between the two Original reference spaces and stable
@@ -275,35 +378,25 @@ pub fn derive_position_topology(
             detail: "position adoption requires the retained sparse sector and gate arrays",
         })
     })?;
+    let gate_order =
+        derive_legacy_gate_order(&retained.gates, &engine.script_domains.interactables.doors)
+            .map_err(|error| position_topology_detail(error.to_string()))?;
     build_position_topology(
         retained.sectors.len(),
-        retained.gates.len(),
-        engine.script_domains.interactables.doors.len(),
+        &gate_order,
         assets.static_sight_obstacles.as_slice(),
     )
 }
 
 fn build_position_topology(
     sector_count: usize,
-    retained_gate_count: usize,
-    runtime_gate_count: usize,
+    gate_order: &[crate::gate::DoorIndex],
     obstacles: &[crate::sight_obstacle::SightObstacle],
 ) -> Result<LegacyPositionTopology, LegacySaveAdoptError> {
-    if runtime_gate_count != retained_gate_count {
-        return Err(position_topology_mismatch(
-            "position gate count",
-            runtime_gate_count,
-            retained_gate_count,
-        ));
-    }
-
-    let doors = (0..runtime_gate_count)
-        .map(|index| {
-            u32::try_from(index)
-                .map(DoorHandle)
-                .map_err(|_| position_topology_detail("runtime gate index exceeds u32"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let doors = gate_order
+        .iter()
+        .map(|index| DoorHandle(index.0))
+        .collect::<Vec<_>>();
 
     // Rust stores only authored obstacles. Place each binding by the retained
     // zero-based source ID rather than assuming storage order happens to
@@ -376,18 +469,6 @@ fn build_position_topology(
         doors,
         projection_areas,
         sight_obstacles,
-    })
-}
-
-fn position_topology_mismatch(
-    fact: &'static str,
-    engine_value: usize,
-    asset_value: usize,
-) -> LegacySaveAdoptError {
-    LegacySaveAdoptError::Topology(LegacyTopologyAdapterError::MissionAttachmentMismatch {
-        fact,
-        engine_value: engine_value.to_string(),
-        asset_value: asset_value.to_string(),
     })
 }
 
@@ -793,12 +874,21 @@ mod tests {
         // the retained authored ID (`mulID - 1`), while Rust handles still
         // address the current storage index.
         let obstacles = vec![obstacle(1, false, 9.0), obstacle(0, true, 4.0)];
-        let topology = build_position_topology(17, 3, 3, &obstacles).unwrap();
+        let topology = build_position_topology(
+            17,
+            &[
+                crate::gate::DoorIndex(2),
+                crate::gate::DoorIndex(0),
+                crate::gate::DoorIndex(1),
+            ],
+            &obstacles,
+        )
+        .unwrap();
 
         assert_eq!(topology.sector_count, 17);
         assert_eq!(
             topology.doors,
-            vec![DoorHandle(0), DoorHandle(1), DoorHandle(2)]
+            vec![DoorHandle(2), DoorHandle(0), DoorHandle(1)]
         );
         assert_eq!(
             topology.sight_obstacles,
@@ -842,7 +932,7 @@ mod tests {
     fn synthetic_ground_restores_a_plane_without_inventing_an_obstacle_handle() {
         let (envelope, element_topology, _) = fixture();
         let entities = LegacyEntityFixups::build(&envelope, &element_topology).unwrap();
-        let topology = build_position_topology(3, 1, 1, &[]).unwrap();
+        let topology = build_position_topology(3, &[crate::gate::DoorIndex(0)], &[]).unwrap();
         let mut payload = position_payload();
         payload.layer = 0;
         payload.obstacle = LegacySignedIndexRef(Some(0));
@@ -861,18 +951,9 @@ mod tests {
     }
 
     #[test]
-    fn position_topology_rejects_non_isomorphic_gate_and_obstacle_arrays() {
-        let gate_error = build_position_topology(0, 2, 1, &[]).unwrap_err();
-        assert!(matches!(
-            gate_error,
-            LegacySaveAdoptError::Topology(LegacyTopologyAdapterError::MissionAttachmentMismatch {
-                fact: "position gate count",
-                ..
-            })
-        ));
-
+    fn position_topology_rejects_non_isomorphic_obstacle_arrays() {
         let duplicate_ids = vec![obstacle(0, false, 1.0), obstacle(0, true, 2.0)];
-        let obstacle_error = build_position_topology(0, 0, 0, &duplicate_ids).unwrap_err();
+        let obstacle_error = build_position_topology(0, &[], &duplicate_ids).unwrap_err();
         assert!(matches!(
             obstacle_error,
             LegacySaveAdoptError::InvalidPositionTopology { .. }
@@ -1001,5 +1082,62 @@ mod tests {
 
         assert_eq!(projectile.obstacle, sight.obstacle);
         assert_eq!(actor.obstacle, projection.obstacle);
+    }
+
+    #[test]
+    fn line_topology_preserves_per_layer_original_ordinals() {
+        let topology = LegacyLineTopology::derive_from_layers([2, 5, 2, 2, 5]).unwrap();
+        let line = topology
+            .resolve(
+                "jump_line",
+                LegacyLineRef {
+                    layer: Some(2),
+                    index: Some(2),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            line.get(),
+            3,
+            "third line in layer 2 is runtime line 3, not flat index 2"
+        );
+        assert_eq!(
+            topology
+                .resolve(
+                    "jump_line",
+                    LegacyLineRef {
+                        layer: None,
+                        index: None,
+                    },
+                )
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn line_topology_rejects_half_null_and_missing_identities() {
+        let topology = LegacyLineTopology::derive_from_layers([2]).unwrap();
+        assert!(matches!(
+            topology.resolve(
+                "jump_line",
+                LegacyLineRef {
+                    layer: Some(2),
+                    index: None,
+                },
+            ),
+            Err(LegacyLineTopologyError::InconsistentNull { .. })
+        ));
+        assert!(matches!(
+            topology.resolve(
+                "jump_line",
+                LegacyLineRef {
+                    layer: Some(2),
+                    index: Some(1),
+                },
+            ),
+            Err(LegacyLineTopologyError::Missing { .. })
+        ));
     }
 }

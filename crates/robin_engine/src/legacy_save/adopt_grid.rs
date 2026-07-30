@@ -18,6 +18,7 @@ use crate::{
 use super::{
     LegacySaveAbiProfile,
     adopt::{LegacyEntityFixups, LegacySaveAdoptError},
+    gate_topology::{LegacyGateOrderError, derive_legacy_gate_order},
     post_grid::{
         LegacyFastFindGridState, LegacyGateState, LegacyPatchState, LegacySpecialSectorState,
     },
@@ -32,6 +33,8 @@ pub enum LegacyGridAdoptError {
     Topology(#[from] LegacyTopologyAdapterError),
     #[error(transparent)]
     Reference(#[from] LegacySaveAdoptError),
+    #[error("cannot map Original FastFindGrid gate identity: {0}")]
+    GateOrder(#[from] LegacyGateOrderError),
     #[error(
         "saved FastFindGrid {field} count is {saved}, but initialized mission topology has {runtime}"
     )]
@@ -216,16 +219,16 @@ impl LegacyFastFindGridAdoptionPlan {
             });
         }
 
+        let gate_order =
+            derive_legacy_gate_order(&retained.gates, &engine.script_domains.interactables.doors)?;
         let mut doors = Vec::new();
-        let mut door_ordinal = 0;
         for (gate_index, (saved, retained_gate)) in
             state.gates.iter().zip(&retained.gates).enumerate()
         {
             match (saved, retained_gate) {
                 (LegacyGateState::Stateless, LegacyGridGateAsset::Stateless) => {}
                 (LegacyGateState::Door(saved), LegacyGridGateAsset::Door) => {
-                    let door_index = door_ordinal;
-                    door_ordinal += 1;
+                    let door_index = usize::from(gate_order[gate_index]);
                     let runtime = engine
                         .script_domains
                         .interactables
@@ -260,11 +263,6 @@ impl LegacyFastFindGridAdoptionPlan {
                 }
             }
         }
-        check_count(
-            "doors",
-            door_ordinal,
-            engine.script_domains.interactables.doors.len(),
-        )?;
 
         check_count(
             "script zones",

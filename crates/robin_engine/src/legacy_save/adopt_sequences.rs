@@ -15,7 +15,7 @@ use thiserror::Error;
 
 use crate::{
     element::{ActionState, Command, EntityId, Posture},
-    engine::{EngineInner, LegacyGridGateAsset, LevelAssets},
+    engine::{EngineInner, LevelAssets},
     gate::DoorIndex,
     jump_line::JumpLineIndex,
     order::{Order, OrderType},
@@ -29,6 +29,7 @@ use crate::{
 
 use super::{
     adopt::LegacyEntityFixups,
+    gate_topology::derive_legacy_gate_order,
     payload_base::{LegacyLineRef, LegacySectorRef},
     payload_sequences::{
         LegacyGateRef, LegacyGenericField, LegacyGenericFieldKind, LegacyGenericFieldValue,
@@ -41,7 +42,7 @@ use super::{
 #[derive(Clone, Debug, Default)]
 pub struct LegacySequenceTopology {
     /// Complete Original `marrayGates` order mapped to Rust door/gate IDs.
-    pub gates: Vec<Option<DoorIndex>>,
+    pub gates: Vec<DoorIndex>,
     /// Exact Original `(layer, index-in-layer)` line identity.
     pub lines: BTreeMap<(u16, i16), JumpLineIndex>,
     /// Sparse Original `marraySectors` bound.
@@ -51,9 +52,11 @@ pub struct LegacySequenceTopology {
 impl LegacySequenceTopology {
     /// Reconstruct the mission-created pointer spaces used by sequences.
     ///
-    /// Original gate order includes stateless jump gates. Rust's door table
-    /// omits them, so the retained gate array must keep explicit empty slots
-    /// or every later saved door pointer shifts identity.
+    /// Original gate order includes both stateful `RHDoor` objects and
+    /// stateless `RHGateJump` objects. Rust represents both in its door table,
+    /// but initializes reinforcement doors before attaching jump gates. Map
+    /// the stable per-kind construction order instead of assuming the two
+    /// mixed arrays have identical indices.
     pub fn derive(
         engine: &EngineInner,
         assets: &LevelAssets,
@@ -64,29 +67,12 @@ impl LegacySequenceTopology {
                 identity: "retained Original grid topology".to_owned(),
             }
         })?;
-        let mut door_ordinal = 0u32;
-        let gates = retained
-            .gates
-            .iter()
-            .map(|gate| match gate {
-                LegacyGridGateAsset::Door => {
-                    let door = DoorIndex(door_ordinal);
-                    door_ordinal += 1;
-                    Some(door)
-                }
-                LegacyGridGateAsset::Stateless => None,
-            })
-            .collect::<Vec<_>>();
-        if door_ordinal as usize != engine.script_domains.interactables.doors.len() {
-            return Err(LegacySequenceAdoptError::MissingTopology {
+        let gates =
+            derive_legacy_gate_order(&retained.gates, &engine.script_domains.interactables.doors)
+                .map_err(|error| LegacySequenceAdoptError::MissingTopology {
                 field: "sequence.topology.gates",
-                identity: format!(
-                    "{} retained doors versus {} initialized doors",
-                    door_ordinal,
-                    engine.script_domains.interactables.doors.len()
-                ),
-            });
-        }
+                identity: error.to_string(),
+            })?;
 
         let mut next_in_layer = BTreeMap::<u16, i16>::new();
         let mut lines = BTreeMap::new();
@@ -787,16 +773,12 @@ fn resolve_gate(
     };
     let index =
         usize::try_from(raw).map_err(|_| invalid(field, raw, "a non-negative gate-array index"))?;
-    topology
-        .gates
-        .get(index)
-        .copied()
-        .flatten()
-        .map(Some)
-        .ok_or_else(|| LegacySequenceAdoptError::MissingTopology {
+    topology.gates.get(index).copied().map(Some).ok_or_else(|| {
+        LegacySequenceAdoptError::MissingTopology {
             field,
-            identity: format!("door gate at Original gate index {index}"),
-        })
+            identity: format!("gate at Original gate index {index}"),
+        }
+    })
 }
 
 fn resolve_line(
@@ -889,6 +871,8 @@ mod tests {
     use super::*;
     use crate::{
         element::EntityIdKind,
+        engine::LegacyGridGateAsset,
+        gate::GateType,
         legacy_save::{
             payload_base::{
                 LegacyElementRef, LegacyPoint2, LegacyPoint3, LegacySequenceElementRef,
@@ -1063,22 +1047,54 @@ mod tests {
 
     fn topology() -> LegacySequenceTopology {
         LegacySequenceTopology {
-            gates: vec![Some(DoorIndex(7))],
+            gates: vec![DoorIndex(7)],
             lines: [((2, 3), JumpLineIndex::new(5).unwrap())].into(),
             sector_count: 6,
         }
     }
 
     #[test]
-    fn stateless_gate_slot_does_not_shift_following_door_identity() {
+    fn gate_mapping_preserves_per_kind_identity_across_mixed_order() {
+        let runtime = [
+            crate::gate::Door {
+                gate_type: GateType::Door,
+                ..Default::default()
+            },
+            crate::gate::Door {
+                gate_type: GateType::Door,
+                ..Default::default()
+            },
+            crate::gate::Door {
+                gate_type: GateType::Door,
+                ..Default::default()
+            },
+            crate::gate::Door {
+                gate_type: GateType::Jump,
+                ..Default::default()
+            },
+            crate::gate::Door {
+                gate_type: GateType::Jump,
+                ..Default::default()
+            },
+        ];
+        let retained = [
+            LegacyGridGateAsset::Door,
+            LegacyGridGateAsset::Stateless,
+            LegacyGridGateAsset::Door,
+            LegacyGridGateAsset::Stateless,
+            LegacyGridGateAsset::Door,
+        ];
         let topology = LegacySequenceTopology {
-            gates: vec![None, Some(DoorIndex(0)), Some(DoorIndex(1))],
+            gates: derive_legacy_gate_order(&retained, &runtime).unwrap(),
             ..Default::default()
         };
-        assert!(resolve_gate("movement.gate", LegacyGateRef(Some(0)), &topology).is_err());
         assert_eq!(
-            resolve_gate("movement.gate", LegacyGateRef(Some(2)), &topology).unwrap(),
-            Some(DoorIndex(1))
+            resolve_gate("movement.gate", LegacyGateRef(Some(1)), &topology).unwrap(),
+            Some(DoorIndex(3))
+        );
+        assert_eq!(
+            resolve_gate("movement.gate", LegacyGateRef(Some(4)), &topology).unwrap(),
+            Some(DoorIndex(2))
         );
     }
 

@@ -31,6 +31,7 @@ pub mod body;
 pub mod campaign;
 pub mod elements;
 pub mod engine;
+pub mod gate_topology;
 pub mod initialized;
 pub mod payload_actors;
 pub mod payload_ai;
