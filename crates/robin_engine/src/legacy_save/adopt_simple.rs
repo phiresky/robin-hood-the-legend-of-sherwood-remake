@@ -8,10 +8,11 @@
 use thiserror::Error;
 
 use crate::{
-    coordinates::WorldPoint3D,
+    coordinates::{ScreenBBox, WorldPoint3D},
     element::{Entity, EntityId},
-    engine::EngineInner,
+    engine::{EngineInner, HostDisplayState},
     markers::GroundMarkEntry,
+    minimap::{HighlightedElement, MinimapV48State},
     titbit::{ElementHandle, TitbitInfo, TitbitKind},
 };
 
@@ -35,6 +36,10 @@ pub enum LegacySimpleAdoptError {
     },
     #[error("saved titbit {index} has unknown RHtitbitKind value {value}")]
     UnknownTitbitKind { index: usize, value: i32 },
+    #[error("saved minimap highlight {index} has a null element reference")]
+    NullMinimapHighlight { index: usize },
+    #[error("saved minimap field {field} contains non-finite value {value}")]
+    NonFiniteMinimap { field: &'static str, value: f32 },
 }
 
 /// Engine-owned state plus host-owned values which must be installed together
@@ -49,7 +54,7 @@ pub struct LegacySimpleAdoptionPlan {
     ground_marks: Vec<GroundMarkEntry>,
     titbit_current_id: u32,
     titbits: Vec<TitbitInfo>,
-    minimap: LegacyMinimapState,
+    minimap: MinimapV48State,
 }
 
 impl LegacySimpleAdoptionPlan {
@@ -74,6 +79,7 @@ impl LegacySimpleAdoptionPlan {
         )?;
         let follow = entities.resolve_element(follow_view.follow)?;
         let view = entities.resolve_element(follow_view.view)?;
+        let minimap = convert_minimap(minimap, entities)?;
 
         // `RHGroundMark` serializes the stored sprite position directly. On
         // load there is no render pass yet, so both Rust frame views begin at
@@ -126,7 +132,7 @@ impl LegacySimpleAdoptionPlan {
             ground_marks,
             titbit_current_id: titbits.current_id,
             titbits: converted_titbits,
-            minimap: minimap.clone(),
+            minimap,
         })
     }
 
@@ -156,7 +162,71 @@ impl LegacySimpleAdoptionPlan {
 #[derive(Clone, Debug)]
 pub struct LegacySimpleHostState {
     pub selected_view_element: Option<EntityId>,
-    pub minimap: LegacyMinimapState,
+    pub minimap: MinimapV48State,
+}
+
+impl LegacySimpleHostState {
+    pub fn apply_minimap_to(self, display: &mut HostDisplayState) -> Option<EntityId> {
+        display.minimap.restore_v48_serialized_state(self.minimap);
+        self.selected_view_element
+    }
+}
+
+fn convert_minimap(
+    saved: &LegacyMinimapState,
+    entities: &LegacyEntityFixups,
+) -> Result<MinimapV48State, LegacySimpleAdoptError> {
+    finite_minimap("transition_counter", saved.transition_counter)?;
+    for (field, value) in [
+        ("memory_box.top_left.x", saved.memory_box.top_left.x),
+        ("memory_box.top_left.y", saved.memory_box.top_left.y),
+        ("memory_box.bottom_right.x", saved.memory_box.bottom_right.x),
+        ("memory_box.bottom_right.y", saved.memory_box.bottom_right.y),
+    ] {
+        finite_minimap(field, value)?;
+    }
+    let memory_box = if saved.memory_box.bounds_are_set {
+        ScreenBBox::from_coords(
+            saved.memory_box.top_left.x,
+            saved.memory_box.top_left.y,
+            saved.memory_box.bottom_right.x,
+            saved.memory_box.bottom_right.y,
+        )
+    } else {
+        ScreenBBox::new()
+    };
+    let highlighted_elements = saved
+        .highlighted_elements
+        .iter()
+        .enumerate()
+        .map(|(index, highlight)| {
+            let entity = entities
+                .resolve_element(highlight.element)?
+                .ok_or(LegacySimpleAdoptError::NullMinimapHighlight { index })?;
+            Ok(HighlightedElement {
+                element_index: entity.index(),
+                refresh: highlight.refresh,
+            })
+        })
+        .collect::<Result<Vec<_>, LegacySimpleAdoptError>>()?;
+    Ok(MinimapV48State {
+        go_in: saved.go_in,
+        map_displayed: saved.map_displayed,
+        transition_counter: saved.transition_counter,
+        highlight_refresh: saved.highlight_refresh,
+        close_after_highlight: saved.close_after_highlight,
+        restore: saved.restore,
+        memory_box,
+        highlighted_elements,
+    })
+}
+
+fn finite_minimap(field: &'static str, value: f32) -> Result<(), LegacySimpleAdoptError> {
+    if value.is_finite() {
+        Ok(())
+    } else {
+        Err(LegacySimpleAdoptError::NonFiniteMinimap { field, value })
+    }
 }
 
 fn resolve_pc_selection(

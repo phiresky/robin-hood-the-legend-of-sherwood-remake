@@ -12,11 +12,15 @@ use crate::engine::{Engine, EngineInner, LevelAssets};
 use super::{
     LegacySaveAbiProfile,
     adopt::{LegacyEntityFixups, derive_position_topology, preflight_initialized_v48_adoption},
+    adopt_actor_ownership::LegacyActorOwnershipAdoptionPlan,
+    adopt_camera::{LegacyCameraAdoptionPlan, LegacyCameraHostState},
     adopt_campaign::LegacyCampaignAdoptionPlan,
     adopt_elements::LegacyStaticElementAdoption,
     adopt_grid::LegacyFastFindGridAdoptionPlan,
     adopt_hiking_tail::{LegacyHikingTailAdoptionPlan, LegacyTrajectoryHostOutput},
+    adopt_object_leaves::LegacyObjectLeafAdoptionPlan,
     adopt_paths::{LegacyPathAdoptionPlan, preflight_v48_paths},
+    adopt_pc_human::LegacyPcHumanAdoptionPlan,
     adopt_preamble::LegacyLinuxPreambleState,
     adopt_preamble_services::{
         LegacyPreambleHostState, LegacyPreambleServicesPlan, preflight_v48_preamble_services,
@@ -27,6 +31,7 @@ use super::{
     adopt_simple::{LegacySimpleAdoptionPlan, LegacySimpleHostState},
     adopt_tail_basic::LegacyTailBasicAdoptionPlan,
     adopt_tail_runtime::LegacyTailRuntimeAdoptionPlan,
+    adopt_vm_arena::LegacyVmArenaPlan,
     body::LegacySaveBody,
 };
 
@@ -46,9 +51,14 @@ pub(crate) struct LegacyKnownAdoptionPlan {
     campaign: LegacyCampaignAdoptionPlan,
     preamble: LegacyLinuxPreambleState,
     preamble_services: LegacyPreambleServicesPlan,
+    camera: LegacyCameraAdoptionPlan,
+    vm_arena: LegacyVmArenaPlan,
     elements: LegacyStaticElementAdoption,
+    object_leaves: LegacyObjectLeafAdoptionPlan,
     grid: LegacyFastFindGridAdoptionPlan,
     sequences: LegacySequenceAdoptionPlan,
+    actor_ownership: LegacyActorOwnershipAdoptionPlan,
+    pc_human: LegacyPcHumanAdoptionPlan,
     hiking_tail: LegacyHikingTailAdoptionPlan,
     tail_runtime: LegacyTailRuntimeAdoptionPlan,
     paths: LegacyPathAdoptionPlan,
@@ -97,6 +107,21 @@ impl LegacyKnownAdoptionPlan {
             "sound/messenger/game preamble",
             preflight_v48_preamble_services(body.header.abi_profile, &body.engine),
         )?;
+        let camera = stage(
+            "camera/locker preamble",
+            LegacyCameraAdoptionPlan::preflight(engine, body.header.abi_profile, &body.engine),
+        )?;
+        let vm_arena = stage(
+            "computed Location arena",
+            LegacyVmArenaPlan::preflight(
+                engine,
+                assets,
+                &body.element_payloads,
+                &body.grid,
+                &body.hiking_guide,
+                body.tail.global_script_members.as_ref(),
+            ),
+        )?;
         let elements = stage(
             "elements",
             LegacyStaticElementAdoption::preflight(
@@ -107,13 +132,49 @@ impl LegacyKnownAdoptionPlan {
                 &position_topology,
             ),
         )?;
+        let object_leaves = stage(
+            "object/bonus/scroll/target/FX leaf state",
+            LegacyObjectLeafAdoptionPlan::preflight(
+                engine,
+                assets,
+                &body.element_payloads,
+                &entities,
+                &vm_arena,
+            ),
+        )?;
         let grid = stage(
             "FastFindGrid",
-            LegacyFastFindGridAdoptionPlan::preflight(engine, assets, &body.grid, &entities),
+            LegacyFastFindGridAdoptionPlan::preflight(
+                engine, assets, &body.grid, &entities, &vm_arena,
+            ),
         )?;
         let sequences = stage(
             "SequenceManager",
             preflight_v48_sequence_manager(&body.sequence_manager, &entities, &sequence_topology),
+        )?;
+        let pc_human = stage(
+            "Human/PC leaf state",
+            LegacyPcHumanAdoptionPlan::preflight(
+                engine,
+                &body.element_payloads,
+                &entities,
+                &position_topology,
+                &sequence_topology,
+                &sequences,
+                &body.campaigns.live.campaign,
+            ),
+        )?;
+        let actor_ownership = stage(
+            "actor ownership/script state",
+            LegacyActorOwnershipAdoptionPlan::preflight(
+                engine,
+                assets,
+                &body.element_payloads,
+                &entities,
+                &sequence_topology,
+                &sequences,
+                &vm_arena,
+            ),
         )?;
         let hiking_tail = stage(
             "HikingGuide/dead PC/shield/trajectory",
@@ -125,11 +186,12 @@ impl LegacyKnownAdoptionPlan {
                 &body.tail,
                 body.engine.shield_protected,
                 &entities,
+                &vm_arena,
             ),
         )?;
         let tail_runtime = stage(
             "global VM/timers/camera",
-            LegacyTailRuntimeAdoptionPlan::preflight_with_location_prefix(
+            LegacyTailRuntimeAdoptionPlan::preflight(
                 engine,
                 assets,
                 body.tail.global_script_members.as_ref(),
@@ -137,7 +199,7 @@ impl LegacyKnownAdoptionPlan {
                 &body.tail.timers,
                 &entities,
                 &sequences,
-                hiking_tail.native_location_count(),
+                &vm_arena,
             ),
         )?;
         let paths = stage(
@@ -179,9 +241,14 @@ impl LegacyKnownAdoptionPlan {
             campaign,
             preamble,
             preamble_services,
+            camera,
+            vm_arena,
             elements,
+            object_leaves,
             grid,
             sequences,
+            actor_ownership,
+            pc_human,
             hiking_tail,
             tail_runtime,
             paths,
@@ -195,16 +262,22 @@ impl LegacyKnownAdoptionPlan {
         self.campaign.apply(engine);
         engine.apply_legacy_linux_preamble_state(self.preamble);
         let preamble = self.preamble_services.apply(engine);
+        let camera = self.camera.apply(engine);
         self.elements.apply(engine);
+        self.object_leaves.apply(engine);
         self.grid.apply(engine);
         self.sequences.apply(engine);
+        self.actor_ownership.apply(engine);
+        self.pc_human.apply(engine);
         let trajectory = self.hiking_tail.apply_engine(engine);
         self.tail_runtime.apply(engine);
+        self.vm_arena.apply(engine);
         self.paths.apply(engine);
         let host = self.simple.apply(engine);
         self.tail_basic.apply(engine);
         LegacyKnownHostState {
             preamble,
+            camera,
             simple: host,
             trajectory,
         }
@@ -213,6 +286,7 @@ impl LegacyKnownAdoptionPlan {
 
 pub(crate) struct LegacyKnownHostState {
     pub preamble: LegacyPreambleHostState,
+    pub camera: LegacyCameraHostState,
     pub simple: LegacySimpleHostState,
     pub trajectory: LegacyTrajectoryHostOutput,
 }

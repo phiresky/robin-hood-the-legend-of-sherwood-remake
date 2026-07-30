@@ -211,6 +211,21 @@ pub struct HighlightedElement {
     pub refresh: bool,
 }
 
+/// Fully identity-resolved serialized minimap state from an Original v48
+/// save. Host-only geometry and hit masks remain owned by the current
+/// frontend and are deliberately absent.
+#[derive(Debug, Clone)]
+pub struct MinimapV48State {
+    pub go_in: bool,
+    pub map_displayed: bool,
+    pub transition_counter: f32,
+    pub highlight_refresh: u32,
+    pub close_after_highlight: bool,
+    pub restore: bool,
+    pub memory_box: ScreenBBox,
+    pub highlighted_elements: Vec<HighlightedElement>,
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // HitMask — pixel-level transparency bitmask
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -362,6 +377,28 @@ impl Default for MinimapState {
 }
 
 impl MinimapState {
+    /// Restore only the fields serialized by `RHMinimap::Serialize`.
+    ///
+    /// Bitmap dimensions, hit masks, button geometry, and other frontend
+    /// resources belong to the initialized host and survive this operation.
+    pub fn restore_v48_serialized_state(&mut self, state: MinimapV48State) {
+        self.go_in = state.go_in;
+        self.map_displayed = state.map_displayed;
+        self.transition_counter = state.transition_counter;
+        self.highlight_refresh = state.highlight_refresh;
+        self.close_after_highlight = state.close_after_highlight;
+        self.restore = state.restore;
+        self.memory_box = state.memory_box;
+        self.highlighted_elements = state.highlighted_elements;
+
+        // Original load does not serialize an in-progress mouse gesture.
+        self.drag_start = false;
+        self.dragged = false;
+        self.entered_nicely = false;
+        self.capture = false;
+        self.position_dirty = false;
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -1433,5 +1470,37 @@ mod tests {
 
         // Runtime fields reset to defaults.
         assert!(!de.drag_start);
+    }
+
+    #[test]
+    fn v48_restore_replaces_serialized_state_and_clears_input_gesture() {
+        let mut mm = MinimapState::new();
+        mm.drag_start = true;
+        mm.dragged = true;
+        mm.capture = true;
+        mm.map_size = MinimapSize::new(320.0, 200.0);
+        mm.restore_v48_serialized_state(MinimapV48State {
+            go_in: true,
+            map_displayed: true,
+            transition_counter: 2.5,
+            highlight_refresh: 17,
+            close_after_highlight: true,
+            restore: true,
+            memory_box: ScreenBBox::from_coords(1.0, 2.0, 30.0, 40.0),
+            highlighted_elements: vec![HighlightedElement {
+                element_index: 23,
+                refresh: false,
+            }],
+        });
+
+        assert!(mm.go_in);
+        assert!(mm.map_displayed);
+        assert_eq!(mm.transition_counter, 2.5);
+        assert_eq!(mm.highlight_refresh, 17);
+        assert_eq!(mm.highlighted_elements[0].element_index, 23);
+        assert!(!mm.drag_start);
+        assert!(!mm.dragged);
+        assert!(!mm.capture);
+        assert_eq!(mm.map_size, MinimapSize::new(320.0, 200.0));
     }
 }

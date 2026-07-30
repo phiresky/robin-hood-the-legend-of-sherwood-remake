@@ -1510,12 +1510,12 @@ pub fn resolve_swordfight(
 
 /// Whether `target_id` is an NPC (Soldier / Civilian) with a currently
 /// attached dialog scroll.  `Focus::Use` already gates the
-/// `!is_out_of_order` precondition, so a direct `scroll_attached` read
+/// `!is_out_of_order` precondition, so a direct `attached_scroll` read
 /// on the entity is sufficient here.
 fn is_target_scroll_attached_npc(engine: &Engine, target_id: EntityId) -> bool {
     match engine.get_entity(target_id) {
-        Some(Entity::Soldier(s)) => s.npc.scroll_attached,
-        Some(Entity::Civilian(c)) => c.npc.scroll_attached,
+        Some(Entity::Soldier(s)) => s.npc.attached_scroll.is_some(),
+        Some(Entity::Civilian(c)) => c.npc.attached_scroll.is_some(),
         _ => false,
     }
 }
@@ -1583,7 +1583,7 @@ fn determine_use_command(
         && posture != Posture::Carried
         && matches!(entity, Entity::Civilian(c)
             if c.civilian.cached_civilian_type == robin_engine::profiles::CivilianType::Beggar
-                && !c.npc.scroll_attached)
+                && c.npc.attached_scroll.is_none())
     {
         let ransom = engine
             .campaign()

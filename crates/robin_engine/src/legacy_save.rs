@@ -15,18 +15,23 @@
 //! the engine state.
 
 pub mod adopt;
+pub mod adopt_actor_ownership;
+pub mod adopt_camera;
 pub mod adopt_campaign;
 pub mod adopt_elements;
 pub mod adopt_engine;
 pub mod adopt_grid;
 pub mod adopt_hiking_tail;
+pub mod adopt_object_leaves;
 pub mod adopt_paths;
+pub mod adopt_pc_human;
 pub mod adopt_preamble;
 pub mod adopt_preamble_services;
 pub mod adopt_sequences;
 pub mod adopt_simple;
 pub mod adopt_tail_basic;
 pub mod adopt_tail_runtime;
+pub mod adopt_vm_arena;
 pub mod body;
 pub mod campaign;
 pub mod elements;
