@@ -466,7 +466,8 @@ fn convert_element(
             },
         )?;
 
-    let (orders, order_state) = convert_orders(&base.orders, entities)?;
+    let (mut orders, order_state) = convert_orders(&base.orders, entities)?;
+    preserve_translated_turn_direction(command, &mut orders);
     let mut generic_raw_unions = Vec::new();
     let (data, linked_seek, damage_arrow, raw_sword_strike) = match saved {
         LegacyInlineSequenceElement::Simple(_) => (SequenceElementData::Simple, None, None, None),
@@ -646,6 +647,31 @@ fn convert_element(
         generic_raw_unions,
     });
     Ok(element)
+}
+
+/// Original `TURN`, `TURN_FAST`, and `TURN_ELEMENT` translation writes the
+/// actor's direction goal once, then appends a `TURNING` order. The serialized
+/// `RHOrder::bComputeDirection` remains at its default `true`, but Original
+/// never interprets that flag as a request to recompute the turn goal from the
+/// order's dormant `(0, 0)` destination on every engine frame.
+///
+/// Rust's AI turn sweep does use `Order::compute_direction` for positional
+/// turns, so carrying the raw flag across would overwrite the authoritative
+/// serialized goal as soon as a mid-turn save resumes. Runtime translation
+/// already emits these command-owned orders with the flag cleared; normalize
+/// restored orders to the same semantic representation.
+fn preserve_translated_turn_direction(command: Command, orders: &mut [Order]) {
+    if !matches!(
+        command,
+        Command::Turn | Command::TurnFast | Command::TurnElement
+    ) {
+        return;
+    }
+    for order in orders {
+        if order.order_type == OrderType::Turning {
+            order.compute_direction = false;
+        }
+    }
 }
 
 fn convert_transition_result<T>(
@@ -1210,6 +1236,31 @@ mod tests {
         assert_eq!(
             resolve_gate("movement.gate", LegacyGateRef(Some(4)), &topology).unwrap(),
             Some(DoorIndex(2))
+        );
+    }
+
+    #[test]
+    fn restored_turn_keeps_direction_translated_before_the_save() {
+        let mut orders = [
+            Order::new(OrderType::Turning, 0.0, 0.0, NonZeroU32::new(1).unwrap()),
+            Order::new(
+                OrderType::WaitingUpright,
+                0.0,
+                0.0,
+                NonZeroU32::new(2).unwrap(),
+            ),
+        ];
+        assert!(orders.iter().all(|order| order.compute_direction));
+
+        preserve_translated_turn_direction(Command::Turn, &mut orders);
+
+        assert!(
+            !orders[0].compute_direction,
+            "the saved direction goal is authoritative for command-owned Turning orders"
+        );
+        assert!(
+            orders[1].compute_direction,
+            "unrelated restored orders preserve their serialized flag"
         );
     }
 

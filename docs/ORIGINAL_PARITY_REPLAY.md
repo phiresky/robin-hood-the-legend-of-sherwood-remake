@@ -934,6 +934,21 @@ serialized ranges. This corrects not only `WAIT`/`WAIT_TIMER`, but every v48
 command between the earlier inserted/omitted slots; pinned boundary tests guard
 the legacy domain and the separate Rust-only tail.
 
+### Linux-v48 restored turn goals
+
+Profile 011 resumes two guards with authoritative serialized direction goals
+14 and 12 and in-progress `TURN` elements whose orders have dormant `(0, 0)`
+destinations. Original `Translate(TURN)` writes the goal once from
+`RHFIELD_DIRECTION`; its subsequently serialized `RHOrder::bComputeDirection`
+remains at the constructor default but never asks actor Hourglass to derive a
+new turn goal from the order destination.
+
+Rust's positional AI-turn sweep gives its `compute_direction` flag that
+additional meaning. Import therefore clears the runtime flag on restored
+`TURN`, `TURN_FAST`, and `TURN_ELEMENT` `TURNING` orders, matching live Rust
+translation and preserving the saved goal. Without that semantic conversion,
+the first post-load frame incorrectly faced each actor toward map origin.
+
 ### Linux-v48 dormant carried-posture storage
 
 Profile 011 creation order 157 stores `mCarriedPosture = 161437968` while
