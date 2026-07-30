@@ -1085,7 +1085,7 @@ mod tests {
 
     fn empty_position_topology() -> LegacyPositionTopology {
         LegacyPositionTopology {
-            sector_count: 0,
+            sectors: Vec::new(),
             doors: Vec::new(),
             projection_areas: Vec::new(),
             sight_obstacles: Vec::new(),

@@ -423,7 +423,7 @@ fn convert_human(
             creation_order,
             "building",
             saved.building.0,
-            position_topology.sector_count,
+            &position_topology.sectors,
         )?,
         // Original's CHECKENUM bug writes exactly this word. Human noise
         // production refreshes every other member; retaining only the word is
@@ -825,22 +825,27 @@ fn checked_sector(
     creation_order: u32,
     field: &'static str,
     raw: Option<u16>,
-    count: usize,
+    sectors: &[Option<SectorHandle>],
 ) -> Result<Option<SectorHandle>, LegacyPcHumanAdoptError> {
     let Some(index) = raw else {
         return Ok(None);
     };
-    if usize::from(index) >= count {
+    let Some(sector) = sectors.get(usize::from(index)) else {
         return Err(invalid(
             creation_order,
             field,
             index,
             "an initialized Original sector index",
         ));
-    }
-    Ok(Some(
-        SectorHandle::new(index).expect("legacy sector null sentinel was decoded as None"),
-    ))
+    };
+    (*sector).map(Some).ok_or_else(|| {
+        invalid(
+            creation_order,
+            field,
+            index,
+            "an Original sector slot with a Rust position-sector counterpart",
+        )
+    })
 }
 
 fn checked_ref(

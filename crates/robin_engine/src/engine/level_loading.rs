@@ -102,6 +102,16 @@ fn retain_legacy_grid_topology(
     let mut topology = LegacyGridTopologyAssets::default();
     let mut sectors = LegacySectorTopologyBuilder::default();
     let mut material_sector_numbers = Vec::new();
+    let runtime_motion_sector_count = loaded.proto.motion_data.as_ref().map_or(0usize, |motion| {
+        motion
+            .layers
+            .iter()
+            .flatten()
+            .map(|area| 1 + area.obstacles.len())
+            .sum()
+    });
+    let mut next_runtime_motion_sector = 0usize;
+    let mut next_runtime_building_sector = runtime_motion_sector_count;
     let mut seen_proto = std::collections::BTreeSet::new();
     for &chunk in &loaded.proto.grid_chunk_order {
         if !seen_proto.insert(chunk as u8) {
@@ -121,17 +131,24 @@ fn retain_legacy_grid_topology(
                 for layer in &motion.layers {
                     for area in layer {
                         let area_number = sectors.construct();
-                        sectors.add(
+                        sectors.add_position_sector(
                             area_number,
                             if area.is_lift {
                                 LegacyGridSectorAsset::Lift
                             } else {
                                 LegacyGridSectorAsset::NullOrOrdinary
                             },
+                            next_runtime_motion_sector,
                         );
+                        next_runtime_motion_sector += 1;
                         for _ in &area.obstacles {
                             let obstacle_number = sectors.construct();
-                            sectors.add(obstacle_number, LegacyGridSectorAsset::NullOrOrdinary);
+                            sectors.add_position_sector(
+                                obstacle_number,
+                                LegacyGridSectorAsset::NullOrOrdinary,
+                                next_runtime_motion_sector,
+                            );
+                            next_runtime_motion_sector += 1;
                         }
                     }
                 }
@@ -193,7 +210,12 @@ fn retain_legacy_grid_topology(
                         append_door_constructor(&mut topology, &mut sectors, door);
                     }
                     if let Some(building_number) = building_number {
-                        sectors.add(building_number, LegacyGridSectorAsset::Building);
+                        sectors.add_position_sector(
+                            building_number,
+                            LegacyGridSectorAsset::Building,
+                            next_runtime_building_sector,
+                        );
+                        next_runtime_building_sector += 1;
                     }
                 }
             }
@@ -305,6 +327,7 @@ fn retain_legacy_grid_topology(
         .patches
         .sort_by_key(|patch| (patch.layer, patch.index_in_layer));
     topology.sectors = sectors.slots;
+    topology.position_sector_numbers = sectors.position_sector_numbers;
     assets.legacy_grid_topology = Some(topology);
     Ok(())
 }
@@ -313,6 +336,7 @@ fn retain_legacy_grid_topology(
 struct LegacySectorTopologyBuilder {
     next_constructor_number: usize,
     slots: Vec<LegacyGridSectorAsset>,
+    position_sector_numbers: Vec<Option<i16>>,
 }
 
 impl LegacySectorTopologyBuilder {
@@ -328,12 +352,28 @@ impl LegacySectorTopologyBuilder {
                 constructor_number + 1,
                 LegacyGridSectorAsset::NullOrOrdinary,
             );
+            self.position_sector_numbers
+                .resize(constructor_number + 1, None);
         }
         self.slots[constructor_number] = kind;
     }
 
+    fn add_position_sector(
+        &mut self,
+        constructor_number: usize,
+        kind: LegacyGridSectorAsset,
+        runtime_sector_number: usize,
+    ) {
+        self.add(constructor_number, kind);
+        self.position_sector_numbers[constructor_number] = Some(
+            i16::try_from(runtime_sector_number)
+                .expect("runtime position-sector number exceeds Original signed-word domain"),
+        );
+    }
+
     fn insert_last(&mut self, kind: LegacyGridSectorAsset) {
         self.slots.push(kind);
+        self.position_sector_numbers.push(None);
     }
 }
 
@@ -432,6 +472,7 @@ mod legacy_grid_topology_tests {
                 LegacyGridSectorAsset::Door,
             ]
         );
+        assert_eq!(builder.position_sector_numbers, vec![None, None]);
     }
 
     #[test]
@@ -498,6 +539,11 @@ mod legacy_grid_topology_tests {
                 LegacyGridSectorAsset::NullOrOrdinary,
                 LegacyGridSectorAsset::NullOrOrdinary,
             ]
+        );
+        assert_eq!(
+            topology.position_sector_numbers,
+            vec![None, None, None, Some(0), None, None, None],
+            "the sparse Original building slot maps to Rust's compact first building sector"
         );
     }
 }

@@ -87,6 +87,10 @@ pub enum LegacySaveAdoptError {
         index: usize,
         count: usize,
     },
+    #[error(
+        "saved position field {field} references Original sector slot {index}, which has no Rust position-sector counterpart"
+    )]
+    UnmappedPositionSector { field: &'static str, index: usize },
     #[error("cannot derive Original position topology: {detail}")]
     InvalidPositionTopology { detail: String },
 }
@@ -112,7 +116,9 @@ pub struct LegacyPositionObstacleBinding {
 /// projection areas (`original-code/RHpositioninterface.cpp:760-773`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct LegacyPositionTopology {
-    pub sector_count: usize,
+    /// Original sparse `marraySectors` slot to Rust's compact runtime sector.
+    /// Constructor holes and non-position sector objects remain `None`.
+    pub sectors: Vec<Option<SectorHandle>>,
     pub doors: Vec<DoorHandle>,
     pub projection_areas: Vec<LegacyPositionObstacleBinding>,
     pub sight_obstacles: Vec<LegacyPositionObstacleBinding>,
@@ -381,15 +387,43 @@ pub fn derive_position_topology(
     let gate_order =
         derive_legacy_gate_order(&retained.gates, &engine.script_domains.interactables.doors)
             .map_err(|error| position_topology_detail(error.to_string()))?;
+    if retained.position_sector_numbers.len() != retained.sectors.len() {
+        return Err(position_topology_detail(format!(
+            "retained position-sector map has {} entries for {} sparse Original sector slots",
+            retained.position_sector_numbers.len(),
+            retained.sectors.len()
+        )));
+    }
+    let sectors = retained
+        .position_sector_numbers
+        .iter()
+        .copied()
+        .map(|number| {
+            number
+                .map(|number| {
+                    let raw = u16::try_from(number).map_err(|_| {
+                        position_topology_detail(format!(
+                            "runtime position-sector number {number} is negative"
+                        ))
+                    })?;
+                    SectorHandle::new(raw).ok_or_else(|| {
+                        position_topology_detail(
+                            "runtime position-sector number equals null sentinel 0xffff",
+                        )
+                    })
+                })
+                .transpose()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     build_position_topology(
-        retained.sectors.len(),
+        sectors,
         &gate_order,
         assets.static_sight_obstacles.as_slice(),
     )
 }
 
 fn build_position_topology(
-    sector_count: usize,
+    sectors: Vec<Option<SectorHandle>>,
     gate_order: &[crate::gate::DoorIndex],
     obstacles: &[crate::sight_obstacle::SightObstacle],
 ) -> Result<LegacyPositionTopology, LegacySaveAdoptError> {
@@ -465,7 +499,7 @@ fn build_position_topology(
         .collect();
 
     Ok(LegacyPositionTopology {
-        sector_count,
+        sectors,
         doors,
         projection_areas,
         sight_obstacles,
@@ -540,8 +574,8 @@ pub(crate) fn preflight_v48_position(
     })?;
     let direction = checked_direction("direction", payload.direction)?;
     let direction_goal = checked_direction("direction_goal", payload.direction_goal)?;
-    let sector = checked_sector("sector", payload.sector.0, topology.sector_count)?;
-    let sector_goal = checked_sector("sector_goal", payload.sector_goal.0, topology.sector_count)?;
+    let sector = checked_sector("sector", payload.sector.0, &topology.sectors)?;
+    let sector_goal = checked_sector("sector_goal", payload.sector_goal.0, &topology.sectors)?;
     let door = checked_index("door", payload.door.0, &topology.doors)?
         .copied()
         .unwrap_or(DoorHandle::NULL);
@@ -621,21 +655,24 @@ fn checked_direction(field: &'static str, raw: i16) -> Result<Direction, LegacyS
 fn checked_sector(
     field: &'static str,
     raw: Option<u16>,
-    count: usize,
+    sectors: &[Option<SectorHandle>],
 ) -> Result<Option<SectorHandle>, LegacySaveAdoptError> {
     let Some(index) = raw else {
         return Ok(None);
     };
-    if usize::from(index) >= count {
+    let Some(sector) = sectors.get(usize::from(index)) else {
         return Err(LegacySaveAdoptError::MissingPositionTopologyEntry {
             field,
             index: usize::from(index),
-            count,
+            count: sectors.len(),
         });
-    }
-    Ok(Some(SectorHandle::new(index).expect(
-        "legacy sector null sentinel was decoded as None before preflight",
-    )))
+    };
+    (*sector)
+        .map(Some)
+        .ok_or(LegacySaveAdoptError::UnmappedPositionSector {
+            field,
+            index: usize::from(index),
+        })
 }
 
 fn checked_index<'a, T>(
@@ -697,6 +734,17 @@ mod tests {
         payload_context::{LegacyElementPayloadMetadata, LegacyMissionPayloadMetadata},
     };
     use crate::position_interface::PositionInterface;
+
+    fn identity_sectors(count: usize) -> Vec<Option<SectorHandle>> {
+        (0..count)
+            .map(|index| {
+                Some(
+                    SectorHandle::new(u16::try_from(index).expect("test sector index exceeds u16"))
+                        .expect("test sector index equals null sentinel"),
+                )
+            })
+            .collect()
+    }
 
     fn fixture() -> (LegacyElementEnvelope, LegacyStaticElementTopology, EntityId) {
         let entity_id = EntityId::new(9, EntityIdKind::Fx);
@@ -862,7 +910,7 @@ mod tests {
         // address the current storage index.
         let obstacles = vec![obstacle(1, false, 9.0), obstacle(0, true, 4.0)];
         let topology = build_position_topology(
-            17,
+            identity_sectors(17),
             &[
                 crate::gate::DoorIndex(2),
                 crate::gate::DoorIndex(0),
@@ -872,7 +920,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(topology.sector_count, 17);
+        assert_eq!(topology.sectors, identity_sectors(17));
         assert_eq!(
             topology.doors,
             vec![DoorHandle(2), DoorHandle(0), DoorHandle(1)]
@@ -919,7 +967,9 @@ mod tests {
     fn synthetic_ground_restores_a_plane_without_inventing_an_obstacle_handle() {
         let (envelope, element_topology, _) = fixture();
         let entities = LegacyEntityFixups::build(&envelope, &element_topology).unwrap();
-        let topology = build_position_topology(3, &[crate::gate::DoorIndex(0)], &[]).unwrap();
+        let topology =
+            build_position_topology(identity_sectors(3), &[crate::gate::DoorIndex(0)], &[])
+                .unwrap();
         let mut payload = position_payload();
         payload.layer = 0;
         payload.obstacle = LegacySignedIndexRef(Some(0));
@@ -940,7 +990,7 @@ mod tests {
     #[test]
     fn position_topology_rejects_non_isomorphic_obstacle_arrays() {
         let duplicate_ids = vec![obstacle(0, false, 1.0), obstacle(0, true, 2.0)];
-        let obstacle_error = build_position_topology(0, &[], &duplicate_ids).unwrap_err();
+        let obstacle_error = build_position_topology(Vec::new(), &[], &duplicate_ids).unwrap_err();
         assert!(matches!(
             obstacle_error,
             LegacySaveAdoptError::InvalidPositionTopology { .. }
@@ -971,7 +1021,11 @@ mod tests {
             &position_payload(),
             &entities,
             &LegacyPositionTopology {
-                sector_count: 3,
+                sectors: vec![
+                    SectorHandle::new(0),
+                    SectorHandle::new(42),
+                    SectorHandle::new(7),
+                ],
                 doors: vec![DoorHandle(9)],
                 projection_areas: vec![projection],
                 sight_obstacles: vec![sight],
@@ -980,6 +1034,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(saved.layer.get(), u16::MAX);
+        assert_eq!(saved.sector.map(u16::from), Some(42));
+        assert_eq!(saved.sector_goal.map(u16::from), Some(7));
         assert_eq!(saved.obstacle, sight.obstacle);
         assert_eq!(saved.plane, Some(sight.plane));
         assert_eq!(saved.target_element, Some(target));
@@ -1011,7 +1067,7 @@ mod tests {
             &payload,
             &entities,
             &LegacyPositionTopology {
-                sector_count: 3,
+                sectors: identity_sectors(3),
                 doors: vec![DoorHandle(9)],
                 projection_areas: Vec::new(),
                 sight_obstacles: Vec::new(),
@@ -1051,7 +1107,7 @@ mod tests {
             &payload,
             &entities,
             &LegacyPositionTopology {
-                sector_count: 3,
+                sectors: identity_sectors(3),
                 doors: vec![DoorHandle(9)],
                 projection_areas: vec![],
                 sight_obstacles: vec![],
@@ -1094,7 +1150,7 @@ mod tests {
             },
         };
         let arrays = LegacyPositionTopology {
-            sector_count: 3,
+            sectors: identity_sectors(3),
             doors: vec![DoorHandle(9)],
             projection_areas: vec![projection],
             sight_obstacles: vec![sight],

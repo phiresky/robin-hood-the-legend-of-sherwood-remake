@@ -2531,19 +2531,19 @@ fn sector(
 ) -> Result<Option<SectorHandle>, LegacyElementAdoptError> {
     value
         .map(|index| {
-            if usize::from(index) >= topology.sector_count {
+            let Some(sector) = topology.sectors.get(usize::from(index)) else {
                 return Err(LegacyElementAdoptError::MissingSector {
                     creation_order,
                     field,
                     index,
-                    count: topology.sector_count,
+                    count: topology.sectors.len(),
                 });
-            }
-            SectorHandle::new(index).ok_or(LegacyElementAdoptError::MissingSector {
+            };
+            sector.ok_or(LegacyElementAdoptError::MissingSector {
                 creation_order,
                 field,
                 index,
-                count: topology.sector_count,
+                count: topology.sectors.len(),
             })
         })
         .transpose()
@@ -3711,7 +3711,7 @@ mod tests {
             ],
         }];
         let topology = LegacyPositionTopology {
-            sector_count: 2,
+            sectors: vec![SectorHandle::new(0), SectorHandle::new(1)],
             doors: Vec::new(),
             projection_areas: Vec::new(),
             sight_obstacles: Vec::new(),
@@ -3746,7 +3746,7 @@ mod tests {
             }],
         }];
         let topology = LegacyPositionTopology {
-            sector_count: 1,
+            sectors: vec![SectorHandle::new(0)],
             doors: Vec::new(),
             projection_areas: Vec::new(),
             sight_obstacles: Vec::new(),

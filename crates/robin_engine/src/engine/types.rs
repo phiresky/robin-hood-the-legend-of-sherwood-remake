@@ -1008,6 +1008,10 @@ pub struct LegacyGridTopologyAssets {
     pub gates: Vec<LegacyGridGateAsset>,
     pub script_objects: Vec<LegacyGridScriptObjectAsset>,
     pub sectors: Vec<LegacyGridSectorAsset>,
+    /// Maps Original's sparse `marraySectors` pointer-serialization slots to
+    /// Rust's compact runtime motion/building sector-number domain. Slots for
+    /// non-position sectors and constructor holes remain `None`.
+    pub position_sector_numbers: Vec<Option<i16>>,
 }
 
 /// Sample duration in sim frames (40 ms each), keyed by
