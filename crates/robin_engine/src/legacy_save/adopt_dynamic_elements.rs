@@ -305,7 +305,7 @@ impl LegacyDynamicElementAdoptionPlan {
             let entity_id = match planned {
                 PlannedElement::Existing(entity_id) => entity_id,
                 PlannedElement::Construct(entity) => {
-                    if matches!(entity, Entity::Bonus(_)) {
+                    if entity.kind().is_bonus() {
                         // RHElementBonus::Initialize always invokes
                         // ForceRandomSpriteFrame during the phase-one load
                         // factory. Phase two immediately restores the saved
