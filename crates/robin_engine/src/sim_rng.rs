@@ -572,7 +572,7 @@ mod tests {
         ("EnemySeekLook", 2),
         ("EnemyWonderingLook", 5),
         ("HeroSpeech", 1),
-        ("LevelBonusInitialFrame", 1),
+        ("LevelBonusInitialFrame", 2),
         ("MobileWaypointProbability", 1),
         ("LuaMathRandom", 3),
         ("MacroRand", 2),

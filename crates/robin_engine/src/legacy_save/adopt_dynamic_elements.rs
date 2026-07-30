@@ -5,7 +5,9 @@
 //! identity is reused when present; otherwise the class-specific load switch
 //! constructs a new element, consuming one draw from
 //! `RHElement::gulCreationCounter`, before replacing that provisional identity
-//! with the identity stored in the save.
+//! with the identity stored in the save. Constructing an `RHElementBonus`
+//! additionally calls `ForceRandomSpriteFrame`, consuming one global RNG draw
+//! before phase two overwrites the sprite state from the save.
 //!
 //! This module separates validation/construction from mutation. Preflight
 //! resolves every immutable sprite/profile dependency and builds owned
@@ -289,7 +291,23 @@ impl LegacyDynamicElementAdoptionPlan {
         for (slot, creation_order, planned) in self.elements {
             let entity_id = match planned {
                 PlannedElement::Existing(entity_id) => entity_id,
-                PlannedElement::Construct(entity) => engine.add_entity(entity),
+                PlannedElement::Construct(entity) => {
+                    if matches!(entity, Entity::Bonus(_)) {
+                        // RHElementBonus::Initialize always invokes
+                        // ForceRandomSpriteFrame during the phase-one load
+                        // factory. Phase two immediately restores the saved
+                        // sprite frame, so only the global draw ordering is
+                        // authoritative here.
+                        engine.with_simulation_context(|_, sim| {
+                            let _ = crate::sim_rng::u32(
+                                sim,
+                                crate::sim_rng::RngSite::LevelBonusInitialFrame,
+                                ..,
+                            );
+                        });
+                    }
+                    engine.add_entity(entity)
+                }
             };
             by_creation_order.insert(creation_order, entity_id);
             by_saved_slot[slot] = Some(entity_id);
@@ -548,6 +566,7 @@ mod tests {
     #[test]
     fn constructs_in_saved_order_and_installs_exact_identities() {
         let mut engine = EngineInner::new();
+        engine.control.rng = crate::engine::SimulationRng::with_original_replay(vec![17, 23]);
         let mut assets = LevelAssets::new();
         assets
             .accessory_sprite_prototypes
@@ -606,6 +625,15 @@ mod tests {
             91
         );
         assert_eq!(engine.world.next_original_creation_order, 122);
+        assert_eq!(engine.control.rng.original_replay_cursor(), Some(1));
+        assert_eq!(
+            engine
+                .control
+                .rng
+                .original_replay_sites(0..1)
+                .expect("Original RNG replay"),
+            vec![crate::sim_rng::RngSite::LevelBonusInitialFrame]
+        );
     }
 
     #[test]
