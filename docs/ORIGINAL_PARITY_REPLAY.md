@@ -1050,6 +1050,18 @@ movement permissions. It retains constructor-only state that Original does
 not replace at this point, including the `mbRobin` flag and constructed sprite
 geometry.
 
+Loaded campaigns can also cause `PopulateBeamMes` to construct the selected
+team in a different order and with different transient beam-me indices than
+the running mission that wrote the save. Creation order is therefore not a
+logical PC identity. Before adopting element references, Rust now pairs static
+serialized team PCs with initialized team entities by character profile,
+preferring an exact `mpDescription` campaign index when it is still present,
+and rebuilds both Original reference maps from that isomorphism. Duplicate
+campaign descriptions sharing a profile are interchangeable until their exact
+saved descriptions are applied. Dynamically reconstructed and rescue PCs
+retain their already-exact mappings. This prevents one hero's saved sprite row
+and frame from being applied to another hero's sprite profile.
+
 ### Linux-v48 dormant carried-posture storage
 
 Profile 011 creation order 157 stores `mCarriedPosture = 161437968` while

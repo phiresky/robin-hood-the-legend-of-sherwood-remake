@@ -5,6 +5,8 @@
 //! then infallible. The public replay entry point remains disconnected until
 //! the remaining decoded sections have plans and are included here.
 
+use std::collections::BTreeSet;
+
 use thiserror::Error;
 
 use crate::engine::{Engine, EngineInner, LevelAssets};
@@ -434,8 +436,145 @@ fn prepare_dynamic_candidate(
         ),
     )?;
     let post_dynamic_creation_counter = dynamic.post_load_creation_counter();
-    let entities = dynamic.apply(&mut candidate);
+    let mut entities = dynamic.apply(&mut candidate);
+    stage(
+        "beam-me PC identity",
+        remap_saved_beam_pc_identities(
+            &mut candidate,
+            body,
+            &mut entities,
+            post_dynamic_creation_counter,
+        ),
+    )?;
     Ok((candidate, entities, post_dynamic_creation_counter))
+}
+
+/// Pair serialized team PCs by exact campaign description, not incidental
+/// constructor order.
+///
+/// `RHEngine::PopulateBeamMes` can assign the selected team to beam-me points
+/// in a different construction order after a campaign reload. Both
+/// construction order and `muwBeamMeIndex` can consequently differ, while
+/// the character profile remains the exact sprite/behavior identity. Exact
+/// `mpDescription` identity is preferred where the initialized campaign
+/// retained it; duplicate campaign descriptions with the same profile are
+/// otherwise isomorphic at this pre-adoption boundary. Mapping by raw
+/// creation order can apply one character's sprite state to another profile.
+fn remap_saved_beam_pc_identities(
+    engine: &mut EngineInner,
+    body: &LegacySaveBody,
+    entities: &mut LegacyEntityFixups,
+    next_original_creation_order: u32,
+) -> Result<(), String> {
+    let mut runtime_team = Vec::new();
+    for (pc_id, pc) in engine.world.entities.pcs() {
+        if pc.pc.beam_me_index < 0 {
+            continue;
+        }
+        let entity_id = crate::element::EntityId::from(pc_id);
+        let description = pc.pc.campaign_description_index.ok_or_else(|| {
+            format!("initialized beam-me PC {entity_id} has no campaign description identity")
+        })?;
+        runtime_team.push((entity_id, description, pc.pc.profile_index.0));
+    }
+
+    let mut saved_team = Vec::new();
+    let campaign_characters = &body.campaigns.live.campaign.characters;
+    for record in &body.element_payloads.records {
+        let super::payload_dispatch::LegacyElementPayload::ActorPc(saved) = &record.payload else {
+            continue;
+        };
+        if matches!(
+            body.element_envelope.records[record.slot].resolution,
+            super::elements::LegacyElementResolution::ConstructDynamic { .. }
+        ) {
+            // Dynamic PCs were just constructed from their serialized
+            // description and already have exact sprite/profile identity.
+            continue;
+        }
+        let raw_beam = saved.pre_human.beam_me_index;
+        if raw_beam == u16::MAX {
+            continue;
+        }
+        i16::try_from(raw_beam).map_err(|_| {
+            format!(
+                "saved PC creation order {} has invalid beam-me index {raw_beam}",
+                record.header.creation_order
+            )
+        })?;
+        let description = saved.pre_human.description.0;
+        let profile = campaign_characters
+            .get(description as usize)
+            .ok_or_else(|| {
+                format!(
+                    "saved beam-me PC creation order {} references absent campaign description {description}",
+                    record.header.creation_order
+                )
+            })?
+            .character_profile_index
+            .ok_or_else(|| {
+                format!(
+                    "saved beam-me PC creation order {} campaign description {description} has no character profile",
+                    record.header.creation_order
+                )
+            })?;
+        saved_team.push((
+            record.slot,
+            record.header.creation_order,
+            description,
+            profile,
+        ));
+    }
+
+    let mut assignments = Vec::with_capacity(saved_team.len());
+    let mut assigned_entities = BTreeSet::new();
+    for &(slot, creation_order, description, profile) in &saved_team {
+        let exact =
+            runtime_team
+                .iter()
+                .find(|&&(entity_id, runtime_description, runtime_profile)| {
+                    !assigned_entities.contains(&entity_id)
+                        && runtime_description == description
+                        && runtime_profile == profile
+                });
+        let profile_match = runtime_team
+            .iter()
+            .find(|&&(entity_id, _, runtime_profile)| {
+                !assigned_entities.contains(&entity_id) && runtime_profile == profile
+            });
+        let &(entity_id, _, _) = exact.or(profile_match).ok_or_else(|| {
+            format!(
+                "saved beam-me PC creation order {creation_order} campaign description {description} profile {profile} has no isomorphic initialized team PC"
+            )
+        })?;
+        assigned_entities.insert(entity_id);
+        assignments.push((slot, creation_order, entity_id));
+    }
+
+    for (slot, creation_order, entity_id) in assignments {
+        let saved_slot = entities.by_saved_slot.get_mut(slot).ok_or_else(|| {
+            format!("saved PC creation order {creation_order} has absent element slot {slot}")
+        })?;
+        entities.by_creation_order.insert(creation_order, entity_id);
+        *saved_slot = entity_id;
+    }
+
+    entities.creation_order_by_entity.clear();
+    for (&creation_order, &entity_id) in &entities.by_creation_order {
+        if let Some(first_creation_order) = entities
+            .creation_order_by_entity
+            .insert(entity_id, creation_order)
+        {
+            return Err(format!(
+                "beam-me remap assigned {entity_id} to saved creation orders {first_creation_order} and {creation_order}"
+            ));
+        }
+    }
+    engine.world.install_original_creation_orders(
+        entities.creation_order_by_entity.clone(),
+        next_original_creation_order,
+    );
+    Ok(())
 }
 
 fn stage<T, E: std::fmt::Display>(
