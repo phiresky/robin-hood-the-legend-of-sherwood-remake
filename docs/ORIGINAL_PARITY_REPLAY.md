@@ -827,6 +827,26 @@ For every newly fixed divergence:
 5. Re-run from mission start because an earlier fix can change all later state.
 6. Update the clean prefix, ledger status, and remaining first divergence here.
 
+### Native-save post-load side effects
+
+Linux-v48 adoption now has a dedicated post-load plan for state which Original
+does not merely deserialize. In Original stream order it completes any NPC
+remark that was active when saved, restores the signed 32-bit `time_t` seed
+through `srand(unsigned int)` for a normal load, clears only the global
+forbidden-remark list, and rebuilds PC produced noise after sequence-pointer
+fixup. Parity replay selects a separate explicit policy which preserves and
+continues the recorded global draw stream.
+
+The same plan returns an exact host-reset contract for the old-click and drag
+targets, click-suppression flags, focus and multi-selection latches, selected
+layer/sector/patch, door display, trajectory preview, background validity,
+transient thunder effects, and last-viewed sight caches. These are reset-only
+load consequences, not fields to reconstruct from the file. Rust has no
+persistent equivalent of Original's sight/projection last-viewed optimization;
+current sight is recomputed, while host-owned derived displays are invalidated.
+The plan remains outside the public install boundary until the complete
+Linux-v48 coordinator can apply it atomically with every serialized slice.
+
 ### Linux-v48 AI `mOldState` storage
 
 Profile 011 creation order 85 stores `local_ai.old_state = 119`, outside the
