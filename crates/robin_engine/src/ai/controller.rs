@@ -23,9 +23,12 @@ pub struct AiController {
     // -- State --
     pub current_state: AiState,
     pub current_substate: Substate,
-    /// State sampled by `StartThink` before the script filter runs.
-    /// The original serializes this independently from `current_state`.
-    pub old_state: AiState,
+    /// Exact Original storage word sampled by `StartThink` before the script
+    /// filter runs. `RHArtificialIntelligence` does not initialize this
+    /// member, so a save made before the first `StartThink` can contain any
+    /// 32-bit value. The Original never reads it; retain the bits rather than
+    /// inventing a valid `AiState`.
+    pub old_state: i32,
     /// Music-side alert level — feeds the per-frame villain-alert
     /// counters and the music-mode pump.
     pub current_music_alert_status: AlertLevel,
@@ -269,7 +272,7 @@ impl Default for AiController {
             alert_path_id: None,
             current_state: AiState::Default,
             current_substate: Substate::DefaultOnPost,
-            old_state: AiState::Default,
+            old_state: AiState::Default as i32,
             current_music_alert_status: AlertLevel::Green,
             view_alert_status: AlertLevel::Green,
             substate_at_last_timer_launch: Substate::DefaultOnPost,

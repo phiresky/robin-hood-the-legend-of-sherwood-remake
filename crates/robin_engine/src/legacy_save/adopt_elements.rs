@@ -623,7 +623,7 @@ struct ConvertedLocalAiCommon {
     forbidden_remark_ids: Vec<u32>,
     current_remark_flags: u16,
     current_state: AiState,
-    old_state: AiState,
+    old_state: i32,
     current_substate: Substate,
     current_music_alert_status: AlertLevel,
     view_alert_status: AlertLevel,
@@ -1725,42 +1725,34 @@ fn convert_local_ai_common(
             .collect::<Result<Vec<_>, _>>()?,
         current_remark_flags: saved.current_remark_flags,
         current_state: ai_state(
-            linux_v48_enum(saved.current_state),
+            saved.current_state,
             creation_order,
             "local_ai.current_state",
         )?,
-        old_state: ai_state(
-            linux_v48_enum(saved.old_state),
-            creation_order,
-            "local_ai.old_state",
-        )?,
+        old_state: preserve_old_ai_state(saved.old_state),
         current_substate: substate(
-            linux_v48_enum(saved.current_substate),
+            saved.current_substate,
             creation_order,
             "local_ai.current_substate",
         )?,
         current_music_alert_status: alert_level(
-            linux_v48_enum(saved.current_music_alert_status) as u32,
+            saved.current_music_alert_status as u32,
             creation_order,
             "local_ai.current_music_alert_status",
         )?,
         view_alert_status,
         substate_at_last_timer_launch: substate(
-            linux_v48_enum(saved.substate_at_last_timer_launch),
+            saved.substate_at_last_timer_launch,
             creation_order,
             "local_ai.substate_at_last_timer_launch",
         )?,
-        attitude: attitude(
-            linux_v48_enum(saved.attitude),
-            creation_order,
-            "local_ai.attitude",
-        )?,
+        attitude: attitude(saved.attitude, creation_order, "local_ai.attitude")?,
         blood_alcohol: saved.blood_alcohol,
-        initial_action: u32::try_from(linux_v48_enum(saved.initial_action)).map_err(|_| {
+        initial_action: u32::try_from(saved.initial_action).map_err(|_| {
             LegacyElementAdoptError::UnknownEnum {
                 creation_order,
                 field: "local_ai.initial_action",
-                value: linux_v48_enum(saved.initial_action) as u32,
+                value: saved.initial_action as u32,
             }
         })?,
         number_of_looks: saved.number_of_looks,
@@ -1820,13 +1812,7 @@ fn convert_local_ai_common(
         sorrow_level: saved.sorrow_level,
         last_stimulus: saved
             .last_stimuli
-            .map(|value| {
-                stimulus_type(
-                    linux_v48_enum(value),
-                    creation_order,
-                    "local_ai.last_stimulus",
-                )
-            })
+            .map(|value| stimulus_type(value, creation_order, "local_ai.last_stimulus"))
             .into_iter()
             .collect::<Result<Vec<_>, _>>()?
             .try_into()
@@ -1917,7 +1903,7 @@ fn convert_local_ai_common(
         )?,
         current_remark: {
             let current = remark(
-                linux_v48_enum(saved.current_remark),
+                saved.current_remark,
                 creation_order,
                 "local_ai.current_remark",
             )?;
@@ -2466,16 +2452,13 @@ fn ai_state(
     })
 }
 
-/// Recover the logical enum value from Original Linux-v48's four-byte
-/// `ENUMSERIALIZE` record.
+/// Preserve `mOldState` exactly, including indeterminate constructor bytes.
 ///
-/// The Linux save ABI uses two-byte enums, but the source macro casts their
-/// address to `ULONG *` and always writes four bytes. Consequently the upper
-/// half of each serialized word is the following struct member, not part of
-/// this enum. Original load writes the same overlapping words back in order;
-/// the enum itself observes only its low signed 16 bits.
-fn linux_v48_enum(raw: i32) -> i32 {
-    i32::from(raw as i16)
+/// Unlike the neighboring enums, Original never initializes or reads this
+/// member before `StartThink`; serialization nevertheless writes its complete
+/// four-byte storage word.
+fn preserve_old_ai_state(raw: i32) -> i32 {
+    raw
 }
 
 fn substate(
@@ -3666,11 +3649,9 @@ mod tests {
     }
 
     #[test]
-    fn linux_v48_overlapping_enum_record_uses_signed_low_word() {
-        // Old state 3 is followed in memory by substate 150.
-        assert_eq!(linux_v48_enum(0x0096_0003), 3);
-        // Negative enum sentinels remain negative after extraction.
-        assert_eq!(linux_v48_enum(0x0002_ffff), -1);
+    fn linux_v48_old_ai_state_preserves_indeterminate_storage_bits() {
+        assert_eq!(preserve_old_ai_state(0x0096_0003), 0x0096_0003);
+        assert_eq!(preserve_old_ai_state(0x5a3b_010e), 0x5a3b_010e);
     }
 
     #[test]

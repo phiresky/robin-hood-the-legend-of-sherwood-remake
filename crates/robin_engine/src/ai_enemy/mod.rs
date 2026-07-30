@@ -3125,7 +3125,7 @@ impl EnemyAi {
         self.base.couldnt_reachpoint = false;
         self.base.already_on_point = false;
         self.base.already_turned = false;
-        self.base.old_state = self.base.current_state;
+        self.base.old_state = self.base.current_state as i32;
         self.base.think_recursion_depth += 1;
 
         // Track stimulus actor

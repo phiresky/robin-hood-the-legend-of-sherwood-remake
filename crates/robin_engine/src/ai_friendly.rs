@@ -472,7 +472,7 @@ impl FriendlyAi {
         self.base.couldnt_reachpoint = false;
         self.base.already_on_point = false;
         self.base.already_turned = false;
-        self.base.old_state = self.base.current_state;
+        self.base.old_state = self.base.current_state as i32;
         self.base.think_recursion_depth = self.base.think_recursion_depth.saturating_add(1);
 
         if let StimulusInfo::Human(h) = stimulus.info {
