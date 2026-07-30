@@ -2921,6 +2921,146 @@ impl EngineInner {
             }
         }
 
+        // Original `RHArtificialMalignity::InitOneAI` transforms a patrol
+        // chief's authored soldier IDs and immediately calls
+        // `InitializePatrol` before evaluating the chief's initial state.
+        // That synchronous pass also writes `patrol_chief` onto admitted
+        // minions.  Some of those minions occur later in the NPC creation
+        // order, so their own InitOneAI must already see the chief and return
+        // to formation instead of independently starting their authored
+        // hiking path.
+        //
+        // Runtime patrol refresh remains owner-ticked, but mission bootstrap
+        // cannot defer this first pass: doing so changes ReturnToDuty,
+        // consumes extra macro RNG draws, and starts the minion on the wrong
+        // route for its first simulation frame.
+        let theoretical_patrol = self
+            .world
+            .entities
+            .get(npc_id)
+            .and_then(|entity| entity.ai_controller())
+            .map(|ai| ai.theoretical_patrol.clone())
+            .unwrap_or_default();
+        if !theoretical_patrol.is_empty() {
+            let chief_view = entity_views.get(&npc_id.index()).unwrap_or_else(|| {
+                panic!(
+                    "patrol chief {} is absent from the AI initialization view map",
+                    npc_id.index()
+                )
+            });
+            let chief_position = chief_view.position;
+            let chief_ground_z = chief_view.elevation;
+            let obstacles = sight_obstacles.list();
+            let mut patrol = Vec::new();
+            let mut missed = Vec::new();
+
+            for &member in &theoretical_patrol {
+                let member_view = entity_views.get(&member.index()).unwrap_or_else(|| {
+                    panic!(
+                        "patrol chief {} references missing authored member {}",
+                        npc_id.index(),
+                        member.index()
+                    )
+                });
+                let admitted = member_view.active
+                    && !member_view.is_dead
+                    && member_view.ai_state == crate::ai::AiState::Default
+                    && (member_view.is_civilian() || member_view.is_able_to_fight)
+                    && crate::ai_enemy::soldier_detects_target_360(
+                        chief_position,
+                        chief_ground_z,
+                        chief_view.is_rider,
+                        standard_view_radius,
+                        chief_view.in_building,
+                        member_view.position,
+                        member_view.elevation,
+                        member_view.posture,
+                        member_view.is_rider,
+                        member_view.direction as i16,
+                        member_view.in_building,
+                        obstacles,
+                    );
+                if admitted {
+                    patrol.push(member);
+                } else if !member_view.is_dead {
+                    missed.push(member);
+                }
+            }
+
+            // `InitializePatrol` inserts by increasing 3-D square distance;
+            // ties insert before the existing member.
+            let patrol_distance = |member: EntityId| {
+                let view = entity_views.get(&member.index()).unwrap_or_else(|| {
+                    panic!(
+                        "patrol member {} disappeared from the AI initialization view map",
+                        member.index()
+                    )
+                });
+                let dx = view.position.x - chief_position.x;
+                let dy_world =
+                    (view.position.y + view.elevation) - (chief_position.y + chief_ground_z);
+                let dy = dy_world * crate::position_interface::INVERSE_ASPECT_RATIO;
+                let dz = view.elevation - chief_ground_z;
+                dx * dx + dy * dy + dz * dz
+            };
+            let mut sorted_patrol = Vec::with_capacity(patrol.len());
+            for member in patrol {
+                let distance = patrol_distance(member);
+                let insert_at = sorted_patrol
+                    .iter()
+                    .position(|&existing| distance <= patrol_distance(existing))
+                    .unwrap_or(sorted_patrol.len());
+                sorted_patrol.insert(insert_at, member);
+            }
+
+            // Arrange each pair left/right relative to the chief.
+            for i in (1..sorted_patrol.len()).step_by(2) {
+                let even = &entity_views[&sorted_patrol[i - 1].index()].position;
+                let odd = &entity_views[&sorted_patrol[i].index()].position;
+                let ex = even.x - chief_position.x;
+                let ey = even.y - chief_position.y;
+                let ox = odd.x - chief_position.x;
+                let oy = odd.y - chief_position.y;
+                if ex * oy - ey * ox < 0.0 {
+                    sorted_patrol.swap(i - 1, i);
+                }
+            }
+
+            {
+                let chief = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+                    panic!(
+                        "patrol chief {} disappeared during AI initialization",
+                        npc_id.index()
+                    )
+                });
+                let ai = chief.ai_controller_mut().unwrap_or_else(|| {
+                    panic!(
+                        "patrol chief {} has no AI controller during initialization",
+                        npc_id.index()
+                    )
+                });
+                ai.patrol = sorted_patrol.clone();
+                ai.missed_patrol_members = missed;
+                ai.needs_patrol_reinit = false;
+            }
+            for member in sorted_patrol {
+                let entity = self.world.entities.get_mut(member).unwrap_or_else(|| {
+                    panic!(
+                        "patrol chief {} admitted missing member {}",
+                        npc_id.index(),
+                        member.index()
+                    )
+                });
+                let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+                    panic!(
+                        "patrol member {} has no AI controller during initialization",
+                        member.index()
+                    )
+                });
+                ai.patrol_chief = Some(npc_id);
+            }
+        }
+
         // -- Phase 7: Dispatch to the subclass for state transitions. --
         // The InitState / ReturnToDuty / beggar-lock tail.  The subclass
         // commits the AI-side state transition via
@@ -2946,6 +3086,17 @@ impl EngineInner {
                 _ => return,
             }
         };
+        if let Some(enemy) = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .and_then(|entity| entity.enemy_ai_mut())
+        {
+            // Both InitializePatrol calls made by Original InitOneAI have
+            // completed synchronously above.  Do not repeat the bootstrap
+            // pass on the first owner tick.
+            enemy.base.needs_patrol_reinit = false;
+        }
 
         // -- Phase 8: Apply entity-side side effects from `init_state`. --
         // Posture, action state, eye status, life points, and

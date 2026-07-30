@@ -1340,6 +1340,26 @@ also preserves Original's validity rule: zero-filled slack slots inside the
 serialized array remain valid global IDs rather than becoming absent map
 entries.
 
+### Synchronous mission-start patrol topology
+
+`RHArtificialMalignity::InitOneAI` transforms an authored patrol chief's
+soldier indices into live members and runs `InitializePatrol` before
+evaluating the chief's initial state. That initialization immediately writes
+the chief pointer into every admitted minion. The write is observable while
+the remaining NPCs are still being initialized: a later minion with its own
+hiking path returns to its chief instead of starting that independent route.
+
+Rust previously retained the authored patrol list but deferred its first
+admission/sorting pass and the minion-chief links until the first simulation
+tick. Besides starting the wrong movement, that made affected minions execute
+path macro selection during setup and consume extra global RNG draws.
+Mission bootstrap now performs the Original admission gates, 3-D distance
+ordering, left/right pair arrangement, and chief-link writes synchronously.
+Ordinary runtime patrol refresh remains owner-ticked. Linux3 Profile 003
+saves 028, 029, 054, and 063 all consume the exact recorded mission-start RNG
+prefix; saves 028, 029, and 063 then match every recorded frame, while save
+054 reaches its independent frame-312 movement-goal divergence.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
