@@ -772,9 +772,7 @@ impl FriendlyAi {
                     // facing differs from the assigned one, otherwise
                     // we're already lined up and a no-op turn would
                     // re-trigger animation events.
-                    if self.base.patrol_direction != 0
-                        && self.base.patrol_direction != ctx.direction
-                    {
+                    if self.base.patrol_direction != ctx.direction {
                         self.base.face_direction(self.base.patrol_direction, ctx);
                     }
                     self.set_state(AiState::Default, Substate::DefaultPatrolEnrouteWaiting);

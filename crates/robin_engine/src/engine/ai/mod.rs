@@ -8086,6 +8086,10 @@ impl EngineInner {
             is_active: bool,
             real_view_radius: u16,
             move_box: crate::coordinates::MoveBox,
+            // Missed-member reacquisition calls virtual `IsAbleToHelp`.
+            // Civilians inherit the Human default (`false`); soldiers use
+            // their state/substate-aware override.
+            is_able_to_help: bool,
             // Patrol admit gate (`initialize_patrol`):
             // `is_civilian() || is_able_to_fight()`.
             is_civilian: bool,
@@ -8115,6 +8119,16 @@ impl EngineInner {
             let real_view_radius = npc.view_radius_base;
             let move_box = *entity.position_iface().get_move_box();
             let is_civilian = entity.is_civilian();
+            let is_able_to_help = match entity {
+                crate::element::Entity::Soldier(soldier) => {
+                    crate::ai_enemy::soldier_is_able_to_help_state(
+                        !entity.is_dead() && !soldier.human.unconscious,
+                        ai_state,
+                        npc.ai_substate(),
+                    )
+                }
+                _ => false,
+            };
             let is_able_to_fight = match entity {
                 crate::element::Entity::Soldier(s) => {
                     use crate::element::Human as _;
@@ -8150,6 +8164,7 @@ impl EngineInner {
                     is_active: entity.is_active(),
                     real_view_radius,
                     move_box,
+                    is_able_to_help,
                     is_civilian,
                     is_able_to_fight,
                 },
@@ -8403,7 +8418,7 @@ impl EngineInner {
             for (i, &member) in missed.iter().enumerate() {
                 if let (Some(chief_s), Some(member_s)) = (chief_snap, snaps.get(&member))
                     && member_s.is_active
-                    && member_s.is_alive
+                    && member_s.is_able_to_help
                     && member_s.ai_state == AiState::Default
                 {
                     if !crate::ai_enemy::soldier_detects_target_360(
