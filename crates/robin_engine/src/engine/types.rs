@@ -864,6 +864,11 @@ pub struct LevelAssets {
     /// paths clone from here to hydrate `ElementData::sprite`.
     pub accessory_sprite_prototypes:
         std::collections::HashMap<crate::element::ObjectType, crate::sprite::Sprite>,
+    /// Preloaded character-master sprites keyed by campaign profile. Original
+    /// `RHElementActorPC(description)` resolves the same profile before a
+    /// dynamic PC's serialized state is read.
+    pub character_sprite_prototypes:
+        std::collections::HashMap<crate::profiles::CharacterProfileIdx, crate::sprite::Sprite>,
     /// Exclamation sample-length lookup table populated by the host
     /// at level load. Engine code consults it when an NPC starts
     /// speaking to schedule the deterministic MYTALK finish frame.
@@ -1039,6 +1044,7 @@ impl LevelAssets {
             peasant_surnames: Vec::new(),
             fixed_vip_names: std::collections::BTreeMap::new(),
             accessory_sprite_prototypes: std::collections::HashMap::new(),
+            character_sprite_prototypes: std::collections::HashMap::new(),
             exclamation_durations: std::sync::Arc::new(std::collections::BTreeMap::new()),
             source_durations: std::sync::Arc::new(std::collections::BTreeMap::new()),
             sound_source_required_ids: std::collections::BTreeSet::new(),

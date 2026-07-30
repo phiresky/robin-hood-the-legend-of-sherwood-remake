@@ -1809,9 +1809,8 @@ impl EngineInner {
         assets.accessory_sprite_prototypes.clear();
         let char_base_dir = "Data/Characters";
         let bank_signature = assets.bank_signature;
-        // Every accessory registered as a master, plus the two `Bonus*`
-        // types the throw-pickup projectile paths reuse.
-        let entries: &[(ObjectType, &str, &str)] = &[
+        // Every variant accessory registered as a master.
+        let mut entries: Vec<(ObjectType, &str, &str)> = vec![
             (ObjectType::Arrow, "ACCESSORIES_Arrow", "ACCESSOIRES Fleche"),
             (
                 ObjectType::Stone,
@@ -1838,9 +1837,17 @@ impl EngineInner {
                 "ACCESSOIRES Piece d'or",
             ),
             (ObjectType::Wasp, "ACCESSORIES_WaspSting", "Guepe"),
-            (ObjectType::BonusNet, "BONUS_Nets", "BONUS Filets"),
-            (ObjectType::BonusWaspNest, "BONUS_WaspsNest", "BONUS Guepes"),
         ];
+        // Original creates masters for every bonus and for scrolls even when
+        // the current mission contains no authored instance. Save loading can
+        // therefore reconstruct any on-the-fly object without depending on
+        // which pickups happen to be present in this level.
+        for raw_bonus_type in 0..=18 {
+            if let Some((file, profile, object_type)) = bonus_type_to_sprite_asset(raw_bonus_type) {
+                entries.push((object_type, file, profile));
+            }
+        }
+        entries.push((ObjectType::Scroll, "BONUS_Parchment", "BONUS Parchemin"));
         for (object_type, file, profile) in entries {
             let mut sprite = crate::sprite::Sprite::default();
             if let Err(e) = sprite.load_frame_info(
@@ -1859,7 +1866,7 @@ impl EngineInner {
             }
             assets
                 .accessory_sprite_prototypes
-                .insert(*object_type, sprite);
+                .insert(object_type, sprite);
         }
     }
 
@@ -1890,8 +1897,7 @@ impl EngineInner {
         drop(sprite);
     }
 
-    /// Preload character sprites for every non-VIP gang peasant who
-    /// could be drafted as a reinforcement.
+    /// Preload character sprites for every campaign description.
     ///
     /// The reinforcement spawn ([`Self::drain_pending_reinforcements`])
     /// picks a random non-instanced, non-VIP peasant from the current
@@ -1913,20 +1919,17 @@ impl EngineInner {
         let bank_signature = assets.bank_signature;
         // Snapshot the profiles we need so we can drop the campaign
         // borrow before mutating assets.
-        let profiles: Vec<(String, String)> = campaign
-            .gang_indices
+        let profiles: Vec<(crate::profiles::CharacterProfileIdx, String, String)> = campaign
+            .characters
             .iter()
-            .filter_map(|&gi| {
-                let desc = campaign.characters.get(gi)?;
+            .filter_map(|desc| {
                 let cpi = desc.character_profile_idx?;
                 let profile = assets.profile_manager.get_character(cpi)?;
-                if profile.vip {
-                    return None;
-                }
-                Some((profile.filename.clone(), profile.profile_name.clone()))
+                Some((cpi, profile.filename.clone(), profile.profile_name.clone()))
             })
             .collect();
-        for (filename, profile_name) in profiles {
+        assets.character_sprite_prototypes.clear();
+        for (profile_index, filename, profile_name) in profiles {
             let mut sprite = crate::sprite::Sprite::default();
             if let Err(e) = sprite.load_frame_info(
                 assets.sprite_scriptor_mut(),
@@ -1938,9 +1941,13 @@ impl EngineInner {
                 Some(self.world.weather.ambiance.to_sprite_ambiance()),
             ) {
                 tracing::warn!(
-                    "Failed to preload reinforcement sprite '{filename}' / '{profile_name}': {e}",
+                    "Failed to preload campaign character sprite '{filename}' / '{profile_name}': {e}",
                 );
+                continue;
             }
+            assets
+                .character_sprite_prototypes
+                .insert(profile_index, sprite);
         }
     }
 
