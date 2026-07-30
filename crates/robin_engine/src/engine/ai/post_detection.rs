@@ -740,6 +740,25 @@ impl EngineInner {
                     self.control.sim_config.difficulty,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
+                if let crate::ai::StimulusInfo::Human(handle) = stimulus.info {
+                    let view = ctx.entity_view(handle).unwrap_or_else(|| {
+                        panic!(
+                            "retained {:?} for NPC {} references missing entity {}",
+                            stimulus.stimulus_type,
+                            npc_id.index(),
+                            handle
+                        )
+                    });
+                    ctx.antagonist = Some(crate::ai::AntagonistInfo {
+                        position: view.position,
+                        camp: view.camp,
+                        is_swordfighting: view.is_swordfighting,
+                        is_pc: view.is_pc,
+                        is_robin: view.is_robin,
+                        is_vip: view.is_vip,
+                        in_building: view.in_building,
+                    });
+                }
                 ctx
             };
             let target_override = match stimulus.info {

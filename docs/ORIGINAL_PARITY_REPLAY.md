@@ -1923,6 +1923,22 @@ required return-to-duty stimulus with live engine context. Ordinary sequence
 instruction remains with the following manager phase. The complete Restart
 recording now matches every recorded frame.
 
+### Retained human stimuli rebuild their live antagonist context
+
+The Original retains an entire `RHStimulus`, including its human pointer, while
+an NPC is busy or script-locked. When the lock clears, handlers such as the
+civilian `EventViewStandardProcedure` therefore inspect that human's current
+camp, position, PC identity, and combat state.
+
+Rust preserved the typed human handle and rebuilt target-specific tick data,
+but its retained-stimulus path left `AiContext::antagonist` empty. The accepted
+handler then returned without reacting. Linux3 Profile 003 Continue exposed
+this at frame 13539: a civilian's queued view of a friendly hero should have
+interrupted its route with the admiring-hero turn. Retained human stimuli now
+resolve the handle against the live entity view and populate the same
+antagonist context used by immediate detection dispatch. The complete Continue
+recording now matches every frame.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
