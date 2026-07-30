@@ -363,6 +363,9 @@ enum ConvertedLocalAi {
         common: ConvertedLocalAiCommon,
         fleeing_seen_enemy_counter: u16,
         beggar_dont_talk_counter: u16,
+        wants_to_talk: bool,
+        last_talk_partner: u32,
+        can_go_away: bool,
     },
     Enemy {
         common: ConvertedLocalAiCommon,
@@ -960,6 +963,14 @@ fn convert_local_ai(
                 common,
                 fleeing_seen_enemy_counter: tail.fleeing_seen_enemy_counter,
                 beggar_dont_talk_counter: tail.beggar_dont_talk_counter,
+                wants_to_talk: tail.wants_to_talk,
+                last_talk_partner: ai_handle(
+                    entities.resolve_ai_element(tail.last_talk_partner)?,
+                    ReferenceKind::Npc,
+                    creation_order,
+                    "local_ai.friendly.last_talk_partner",
+                )?,
+                can_go_away: tail.can_go_away,
             })
         }
         (LegacyLocalAiTail::Enemy(tail), AiBrain::Enemy(_)) => Ok(ConvertedLocalAi::Enemy {
@@ -1268,11 +1279,17 @@ fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
                 common,
                 fleeing_seen_enemy_counter,
                 beggar_dont_talk_counter,
+                wants_to_talk,
+                last_talk_partner,
+                can_go_away,
             },
         ) => {
             apply_local_ai_common(&mut ai.base, common);
             ai.fleeing_seen_enemy_counter = fleeing_seen_enemy_counter;
             ai.beggar_dont_talk_counter = beggar_dont_talk_counter;
+            ai.wants_to_talk = wants_to_talk;
+            ai.last_talk_partner = last_talk_partner;
+            ai.can_go_away = can_go_away;
         }
         (
             AiBrain::Enemy(ai),

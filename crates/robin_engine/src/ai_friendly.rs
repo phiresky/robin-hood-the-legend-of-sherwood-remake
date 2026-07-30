@@ -65,6 +65,12 @@ pub struct FriendlyAi {
     // -- Civilian-specific private fields --
     pub beggar_dont_talk_counter: u16,
     pub fleeing_seen_enemy_counter: u16,
+    /// Whether this civilian still accepts the talk interaction.
+    pub wants_to_talk: bool,
+    /// Last NPC this civilian talked to; zero is Original's null pointer.
+    pub last_talk_partner: crate::ai::NpcHandle,
+    /// Script-controlled permission to leave after the current interaction.
+    pub can_go_away: bool,
 }
 
 impl Default for FriendlyAi {
@@ -77,6 +83,9 @@ impl Default for FriendlyAi {
             },
             beggar_dont_talk_counter: 0,
             fleeing_seen_enemy_counter: 0,
+            wants_to_talk: true,
+            last_talk_partner: 0,
+            can_go_away: true,
         }
     }
 }
