@@ -2243,6 +2243,10 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.patrol = saved.patrol;
     ai.missed_patrol_members = saved.missed_patrol_members;
     ai.theoretical_patrol = saved.theoretical_patrol;
+    // Mission bootstrap requests a one-shot InitializePatrol, but an Original
+    // save already contains its authoritative active/missed patrol ordering.
+    // Loading does not call InitializePatrol again in the Original.
+    ai.needs_patrol_reinit = false;
     ai.patrol_stopped = saved.patrol_stopped;
     ai.patrol_direction = saved.patrol_direction;
     ai.stimulus_queue = saved.stimulus_queue;
