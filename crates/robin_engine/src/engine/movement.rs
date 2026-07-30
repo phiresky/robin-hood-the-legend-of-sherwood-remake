@@ -1935,6 +1935,17 @@ impl EngineInner {
             let hi = weapon.distance[crate::weapons::WeaponDistance::Uber as usize] as f32;
             lo < distance && distance <= hi
         };
+        tracing::trace!(
+            ?entity_id,
+            ?principal_id,
+            distance,
+            my_maximal = me_weapon.distance[crate::weapons::WeaponDistance::Maximal as usize],
+            my_uber = me_weapon.distance[crate::weapons::WeaponDistance::Uber as usize],
+            opponent_maximal =
+                opponent_weapon.distance[crate::weapons::WeaponDistance::Maximal as usize],
+            opponent_uber = opponent_weapon.distance[crate::weapons::WeaponDistance::Uber as usize],
+            "checking sword-movement termination Provoke"
+        );
         if between(me_weapon) && between(opponent_weapon) {
             self.launch_element(crate::sequence::SequenceElement::new(
                 1,
@@ -6069,9 +6080,6 @@ impl EngineInner {
             {
                 door_pass_transition_done_effects.push(entity_id);
             }
-            if matches!(motion_state, MotionState::Terminated) && is_sword_motion {
-                sword_movement_terminations.push(entity_id);
-            }
             if active_move_flags.contains(crate::sequence::MoveFlags::RIDER_CHARGE)
                 && anim == OrderType::RunningUpright
             {
@@ -6765,6 +6773,16 @@ impl EngineInner {
             let mut post_step_arrival = dist <= f32::EPSILON || tolerance_arrival;
             'arrival: loop {
                 if post_step_arrival {
+                    // Original PerformMotion/PerformSeek returns TERMINATED
+                    // after committing the step which reaches the goal. Rust
+                    // stages geometry after the sprite call, so its raw
+                    // motion state can still be DONE here. Queue the Human
+                    // Execute termination callback at the authoritative
+                    // arrival boundary; it owns the range-based Provoke
+                    // launched after sword movement.
+                    if is_sword_motion {
+                        sword_movement_terminations.push(entity_id);
+                    }
                     // Reached waypoint — snap to it and advance
                     if !tolerance_arrival
                         && order_tolerance == 0.0
@@ -7326,10 +7344,6 @@ impl EngineInner {
         for entity_id in door_pass_transition_completion_effects {
             self.apply_door_pass_transition_completion_side_effects(assets, entity_id);
         }
-        for entity_id in sword_movement_terminations {
-            self.maybe_provoke_after_sword_movement_terminated(assets, entity_id);
-        }
-
         // Dispatch elevation-line crossings detected during the loop.
         // Runs as a post-pass after the per-actor movement update.
         // When a human actor crosses an elevation line, we also fire
@@ -7523,6 +7537,14 @@ impl EngineInner {
         // on completion then terminates the element.
         for (seq_id, elem_idx) in order_pops {
             self.do_next_order(seq_id, elem_idx);
+        }
+        // Original LaunchSequenceElement registers the Provoke from inside
+        // Execute, but its Instruct arbitration runs only after the terminal
+        // movement order has advanced. Launching before `do_next_order`
+        // incorrectly compares the Wait-priority Provoke against the still
+        // InProgress movement and abandons it.
+        for entity_id in sword_movement_terminations {
+            self.maybe_provoke_after_sword_movement_terminated(assets, entity_id);
         }
 
         // Drain water-splash titbit emissions queued from the walk

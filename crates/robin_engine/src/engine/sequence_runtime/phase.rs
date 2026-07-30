@@ -1088,27 +1088,7 @@ impl EngineInner {
                         // `melee::process_pc_combat_anim_speech`
                         // fires `HERO_PROVOKE_OPPONENT` for PCs.
                         Command::Provoke => {
-                            if let Some(entity) = self.world.entities.get_mut(owner)
-                                && let Some(ai) = entity.ai_controller_mut()
-                            {
-                                ai.say(crate::ai::Remark::ProvokesCombat);
-                            }
-                            self.drain_ai_owner_work_for(sim, assets, owner);
-                            // Append the order to the sequence
-                            // element's queue.
-                            let mut order = crate::order::Order::new(
-                                crate::order::OrderType::Provoking,
-                                0.0,
-                                0.0,
-                                self.orders.allocate_order_id(),
-                            );
-                            order.compute_direction = false;
-                            self.orders
-                                .sequence_manager
-                                .push_order_on(seq_id, elem_idx, order);
-                            self.orders
-                                .sequence_manager
-                                .element_in_progress(seq_id, elem_idx);
+                            self.dispatch_provoke(sim, assets, owner, seq_id, elem_idx);
                         }
                         Command::Fainted
                         | Command::Recover

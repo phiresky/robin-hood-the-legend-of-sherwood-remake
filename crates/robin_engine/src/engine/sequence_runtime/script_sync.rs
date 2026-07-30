@@ -237,6 +237,13 @@ impl EngineInner {
                         next_order_id: &mut self.orders.next_order_id,
                     }
                     .dispatch(owner, command, sequence_id, element_index);
+                } else if command == Command::Provoke {
+                    // A sword-movement TERMINATED callback registers this
+                    // Wait-priority successor before DoNextOrder. Original
+                    // Ready/Go/Instruct resumes it synchronously when the
+                    // movement closes, so use the ordinary Provoke
+                    // translator at this owner boundary.
+                    self.dispatch_provoke(sim, assets, owner, sequence_id, element_index);
                 } else if command == Command::AssertPosition {
                     self.orders.sequence_manager.begin_instruct_callback(
                         owner,

@@ -481,6 +481,35 @@ impl EngineInner {
         self.launch_element(elem);
     }
 
+    pub(crate) fn dispatch_provoke(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        sequence_id: crate::sequence::SequenceId,
+        element_index: usize,
+    ) {
+        if let Some(entity) = self.world.entities.get_mut(owner)
+            && let Some(ai) = entity.ai_controller_mut()
+        {
+            ai.say(crate::ai::Remark::ProvokesCombat);
+        }
+        self.drain_ai_owner_work_for(sim, assets, owner);
+        let mut order = crate::order::Order::new(
+            crate::order::OrderType::Provoking,
+            0.0,
+            0.0,
+            self.orders.allocate_order_id(),
+        );
+        order.compute_direction = false;
+        self.orders
+            .sequence_manager
+            .push_order_on(sequence_id, element_index, order);
+        self.orders
+            .sequence_manager
+            .element_in_progress(sequence_id, element_index);
+    }
+
     // ─── AI stimulus dispatch ─────────────────────────────────────────
 
     /// Queue a stimulus on an NPC's common AI controller.

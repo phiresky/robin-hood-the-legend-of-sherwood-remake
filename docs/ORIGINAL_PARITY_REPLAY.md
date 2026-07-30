@@ -1141,6 +1141,24 @@ does not depend on recorded positions or entity identities. Save 040 advances
 from frame 260 to 267 and save 064 from frame 5,983 to 5,992; both then expose
 the same independent `Provoke` versus `Wait` command mismatch.
 
+### Sword-movement termination and synchronous Provoke
+
+Original walking `Execute` launches a range-based `Provoke` when a sword
+movement returns `RHMOTION_TERMINATED`. Rust staged position commitment after
+the sprite call, so a final step could retain the sprite's pre-geometry
+`RHMOTION_DONE` result and skip the callback. Once collected, Rust also
+instructed the Wait-priority taunt before advancing the still-InProgress
+movement element, causing priority arbitration to abandon it. Original
+registers the element inside `Execute`, but its `Ready -> Go -> Instruct`
+dispatch occurs after `DoNextOrder` closes the movement.
+
+Sword-movement termination is now collected at the committed waypoint-arrival
+boundary. Its taunt is instructed after movement order advancement, and the
+owner-boundary synchronous dispatcher shares the ordinary Provoke translator.
+Save 040 advances from frame 267 to 381, where it joins the independent
+smalltalk strike/AI mismatch; save 064 advances past frame 5,992 and exposes an
+independent missing synchronous `LookLeft` route.
+
 ### Large-window compressed trace input
 
 The expanded Linux2/Linux3 corpus includes single-frame zstd streams whose
