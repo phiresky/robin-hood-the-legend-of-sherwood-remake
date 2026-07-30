@@ -21,6 +21,9 @@ use super::{
     adopt_object_leaves::LegacyObjectLeafAdoptionPlan,
     adopt_paths::{LegacyPathAdoptionPlan, preflight_v48_paths},
     adopt_pc_human::LegacyPcHumanAdoptionPlan,
+    adopt_post_load::{
+        LegacyPostLoadAdoptionPlan, LegacyPostLoadHostOutput, LegacyRngRestorePolicy,
+    },
     adopt_preamble::LegacyLinuxPreambleState,
     adopt_preamble_services::{
         LegacyPreambleHostState, LegacyPreambleServicesPlan, preflight_v48_preamble_services,
@@ -64,6 +67,7 @@ pub(crate) struct LegacyKnownAdoptionPlan {
     paths: LegacyPathAdoptionPlan,
     simple: LegacySimpleAdoptionPlan,
     tail_basic: LegacyTailBasicAdoptionPlan,
+    post_load: LegacyPostLoadAdoptionPlan,
 }
 
 impl LegacyKnownAdoptionPlan {
@@ -71,6 +75,7 @@ impl LegacyKnownAdoptionPlan {
         engine: &EngineInner,
         assets: &LevelAssets,
         body: &LegacySaveBody,
+        rng_policy: LegacyRngRestorePolicy,
     ) -> Result<Self, LegacyKnownAdoptionError> {
         if body.header.abi_profile != LegacySaveAbiProfile::PortLinuxI386V48 {
             return Err(LegacyKnownAdoptionError {
@@ -241,6 +246,16 @@ impl LegacyKnownAdoptionPlan {
                 &body.tail.mission_statistics,
             ),
         )?;
+        let post_load = stage(
+            "post-load consequences",
+            LegacyPostLoadAdoptionPlan::preflight(
+                engine,
+                &body.element_payloads,
+                &body.tail.global_ai,
+                &entities,
+                rng_policy,
+            ),
+        )?;
 
         Ok(Self {
             campaign,
@@ -259,11 +274,16 @@ impl LegacyKnownAdoptionPlan {
             paths,
             simple,
             tail_basic,
+            post_load,
         })
     }
 
     /// Apply to a detached initialized mission after all preflight succeeds.
-    pub(crate) fn apply(self, engine: &mut EngineInner) -> LegacyKnownHostState {
+    pub(crate) fn apply(
+        self,
+        engine: &mut EngineInner,
+        assets: &LevelAssets,
+    ) -> LegacyKnownHostState {
         self.campaign.apply(engine);
         engine.apply_legacy_linux_preamble_state(self.preamble);
         let preamble = self.preamble_services.apply(engine);
@@ -280,12 +300,14 @@ impl LegacyKnownAdoptionPlan {
         self.paths.apply(engine);
         let host = self.simple.apply(engine);
         self.tail_basic.apply(engine);
+        let post_load = self.post_load.apply(engine, assets);
         LegacyKnownHostState {
             preamble,
             camera,
             grid,
             simple: host,
             trajectory,
+            post_load,
         }
     }
 }
@@ -296,6 +318,7 @@ pub(crate) struct LegacyKnownHostState {
     pub grid: LegacyGridHostState,
     pub simple: LegacySimpleHostState,
     pub trajectory: LegacyTrajectoryHostOutput,
+    pub post_load: LegacyPostLoadHostOutput,
 }
 
 /// Validate every adoption slice currently assembled into the coordinator
@@ -308,17 +331,24 @@ pub fn preflight_known_linux_v48_adoption(
     assets: &LevelAssets,
     body: &LegacySaveBody,
 ) -> Result<(), LegacyKnownAdoptionError> {
-    LegacyKnownAdoptionPlan::preflight(engine.legacy_adoption_inner(), assets, body).map(drop)
+    LegacyKnownAdoptionPlan::preflight(
+        engine.legacy_adoption_inner(),
+        assets,
+        body,
+        LegacyRngRestorePolicy::PreserveRecordedGlobalDrawStream,
+    )
+    .map(drop)
 }
 
 pub(crate) fn adopt_known_linux_v48_candidate(
     engine: &mut Engine,
     assets: &LevelAssets,
     body: &LegacySaveBody,
+    rng_policy: LegacyRngRestorePolicy,
 ) -> Result<LegacyKnownHostState, LegacyKnownAdoptionError> {
     let mut candidate = engine.legacy_adoption_inner().clone();
-    let plan = LegacyKnownAdoptionPlan::preflight(&candidate, assets, body)?;
-    let host = plan.apply(&mut candidate);
+    let plan = LegacyKnownAdoptionPlan::preflight(&candidate, assets, body, rng_policy)?;
+    let host = plan.apply(&mut candidate, assets);
     engine.install_legacy_adoption_inner(candidate);
     Ok(host)
 }
