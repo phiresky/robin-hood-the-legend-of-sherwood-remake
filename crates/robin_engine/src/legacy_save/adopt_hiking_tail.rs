@@ -125,8 +125,6 @@ pub enum LegacyHikingTailAdoptError {
     },
     #[error("saved pending shield danger point contains a non-finite coordinate")]
     InvalidShieldDangerPoint,
-    #[error("saved shield state is waiting for a danger-point click but has no protected PC")]
-    MissingPendingShieldProtectedPc,
     #[error("decoded value variant for saved VM member {field} does not match its schema")]
     MemberValueMismatch { field: String },
 }
@@ -170,8 +168,7 @@ impl LegacyHikingTailAdoptionPlan {
             "PC",
             Entity::is_pc,
         )?;
-        let shield_protected_pc =
-            preflight_shield(engine, entities, &tail.shield, shield_is_protected)?;
+        let shield_protected_pc = preflight_shield(engine, entities, &tail.shield)?;
 
         // These references belong to an engine-owned preview helper, not the
         // entity array. Validate their serialized identities even though
@@ -249,7 +246,6 @@ fn preflight_shield(
     engine: &EngineInner,
     entities: &LegacyEntityFixups,
     shield: &LegacyPendingShieldState,
-    is_protected: bool,
 ) -> Result<Option<EntityId>, LegacyHikingTailAdoptError> {
     if !shield.danger_point.x.is_finite()
         || !shield.danger_point.y.is_finite()
@@ -257,18 +253,20 @@ fn preflight_shield(
     {
         return Err(LegacyHikingTailAdoptError::InvalidShieldDangerPoint);
     }
-    let protected = resolve_typed(
+    // Original serializes `mbShieldProtected` and `mpShieldProtected`
+    // independently and restores both without enforcing a cross-field
+    // invariant. In particular, its constructor initializes the pointer but
+    // not the mode flag, so untouched games can legitimately save false plus
+    // null. Entering either shield action resets the complete protocol state
+    // before input can consume it.
+    resolve_typed(
         engine,
         entities,
         "shield.protected_pc",
         shield.protected_pc,
         "PC",
         Entity::is_pc,
-    )?;
-    if !is_protected && protected.is_none() {
-        return Err(LegacyHikingTailAdoptError::MissingPendingShieldProtectedPc);
-    }
-    Ok(protected)
+    )
 }
 
 fn preflight_waypoints(
@@ -594,8 +592,21 @@ fn resolve_typed(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
-    use crate::scb::{MemberVariable, ScType};
+    use crate::{
+        legacy_save::payload_base::LegacyPoint3,
+        scb::{MemberVariable, ScType},
+    };
+
+    fn empty_fixups() -> LegacyEntityFixups {
+        LegacyEntityFixups {
+            by_creation_order: BTreeMap::new(),
+            by_saved_slot: Vec::new(),
+            creation_order_by_entity: BTreeMap::new(),
+        }
+    }
 
     fn runtime_member(name: &str, address: i32, tag: TypeTag, native: &str) -> MemberVariable {
         MemberVariable {
@@ -638,5 +649,40 @@ mod tests {
             }
             .clear_preview
         );
+    }
+
+    #[test]
+    fn null_shield_protectee_is_valid_independently_of_saved_mode() {
+        let engine = EngineInner::new();
+        let saved = LegacyPendingShieldState {
+            start_offset: 0,
+            danger_point: LegacyPoint3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            protected_pc: LegacyElementRef(None),
+            end_offset: 16,
+        };
+
+        assert_eq!(
+            preflight_shield(&engine, &empty_fixups(), &saved).unwrap(),
+            None
+        );
+
+        let plan = LegacyHikingTailAdoptionPlan {
+            waypoint_heaps: Vec::new(),
+            dead_pc: None,
+            shield_is_protected: false,
+            shield_protected_pc: None,
+            shield_danger_point: crate::coordinates::WorldPoint3D::default(),
+            host: LegacyTrajectoryHostOutput {
+                clear_preview: true,
+            },
+        };
+        let mut restored = EngineInner::new();
+        plan.apply_engine(&mut restored);
+        assert!(!restored.world.shield.is_protected);
+        assert_eq!(restored.world.shield.protected_pc, None);
     }
 }
