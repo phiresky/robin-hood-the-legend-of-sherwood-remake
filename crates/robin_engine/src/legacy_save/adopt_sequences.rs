@@ -45,8 +45,9 @@ pub struct LegacySequenceTopology {
     pub gates: Vec<DoorIndex>,
     /// Exact Original `(layer, index-in-layer)` line identity.
     pub lines: BTreeMap<(u16, i16), JumpLineIndex>,
-    /// Sparse Original `marraySectors` bound.
-    pub sector_count: usize,
+    /// Original sparse `marraySectors` slot to Rust's compact runtime sector.
+    /// Constructor holes and non-position sector objects remain `None`.
+    pub sectors: Vec<Option<SectorHandle>>,
 }
 
 impl LegacySequenceTopology {
@@ -99,10 +100,48 @@ impl LegacySequenceTopology {
             })?;
         }
 
+        if retained.position_sector_numbers.len() != retained.sectors.len() {
+            return Err(LegacySequenceAdoptError::MissingTopology {
+                field: "sequence.topology.sectors",
+                identity: format!(
+                    "retained position-sector map has {} entries for {} sparse Original slots",
+                    retained.position_sector_numbers.len(),
+                    retained.sectors.len()
+                ),
+            });
+        }
+        let sectors = retained
+            .position_sector_numbers
+            .iter()
+            .copied()
+            .map(|number| {
+                number
+                    .map(|number| {
+                        let raw = u16::try_from(number).map_err(|_| {
+                            LegacySequenceAdoptError::MissingTopology {
+                                field: "sequence.topology.sectors",
+                                identity: format!(
+                                    "runtime position-sector number {number} is negative"
+                                ),
+                            }
+                        })?;
+                        SectorHandle::new(raw).ok_or_else(|| {
+                            LegacySequenceAdoptError::MissingTopology {
+                                field: "sequence.topology.sectors",
+                                identity:
+                                    "runtime position-sector number equals null sentinel 0xffff"
+                                        .to_owned(),
+                            }
+                        })
+                    })
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         Ok(Self {
             gates,
             lines,
-            sector_count: retained.sectors.len(),
+            sectors,
         })
     }
 }
@@ -679,9 +718,19 @@ fn convert_transition_result<T>(
     dormant_runtime_value: T,
     convert: impl FnOnce(i32) -> Option<T>,
 ) -> Result<(T, Option<i32>), LegacySequenceAdoptError> {
+    // These words are scratch output from the last time Instruct touched the
+    // element, not authored state for a future instruction.  In particular,
+    // a perfectly valid saved value can still be stale: Original
+    // RHElementActor::Instruct overwrites both fields from the actor's live
+    // posture/action state before it generates transitions.  Keep the raw
+    // word for save fidelity, but leave the runtime sentinel in place so the
+    // Rust Instruct boundary performs that same refresh.
+    if dormant {
+        return Ok((dormant_runtime_value, Some(raw)));
+    }
+
     match convert(raw) {
         Some(value) => Ok((value, None)),
-        None if dormant => Ok((dormant_runtime_value, Some(raw))),
         None => Err(invalid(field, raw, expected)),
     }
 }
@@ -1001,15 +1050,20 @@ fn resolve_sector(
     let Some(index) = reference.0 else {
         return Ok(None);
     };
-    if usize::from(index) >= topology.sector_count {
+    let Some(sector) = topology.sectors.get(usize::from(index)) else {
         return Err(LegacySequenceAdoptError::MissingTopology {
             field: "movement.sector",
             identity: format!("sector index {index}"),
         });
-    }
-    Ok(Some(
-        SectorHandle::new(index).expect("legacy null sector sentinel is decoded as None"),
-    ))
+    };
+    (*sector)
+        .map(Some)
+        .ok_or_else(|| LegacySequenceAdoptError::MissingTopology {
+            field: "movement.sector",
+            identity: format!(
+                "Original sector slot {index}, which has no Rust position-sector counterpart"
+            ),
+        })
 }
 
 fn sequence_state(raw: i32) -> Result<SequenceState, LegacySequenceAdoptError> {
@@ -1238,7 +1292,7 @@ mod tests {
         LegacySequenceTopology {
             gates: vec![DoorIndex(7)],
             lines: [((2, 3), JumpLineIndex::new(5).unwrap())].into(),
-            sector_count: 6,
+            sectors: (0..6).map(SectorHandle::new).collect(),
         }
     }
 
@@ -1350,6 +1404,15 @@ mod tests {
         assert_eq!(movement.owner, Some(owner));
         assert_eq!(movement.orders[0].order_id.get(), 1);
         assert_eq!(movement.orders[0].antagonist, Some(target));
+        let movement_sector = match &movement.data {
+            SequenceElementData::Movement { sector, .. } => *sector,
+            other => panic!("fixture element is not movement data: {other:?}"),
+        };
+        assert_eq!(
+            movement_sector,
+            SectorHandle::new(4),
+            "saved movement sectors use the sparse Original slot mapping"
+        );
         let retained = movement.legacy_v48.as_ref().unwrap();
         assert_eq!(
             retained.next,
@@ -1393,6 +1456,26 @@ mod tests {
     }
 
     #[test]
+    fn movement_sector_maps_sparse_original_slot_to_compact_runtime_handle() {
+        let topology = LegacySequenceTopology {
+            sectors: vec![SectorHandle::new(42), None, SectorHandle::new(7)],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            resolve_sector(LegacySectorRef(Some(2)), &topology).unwrap(),
+            SectorHandle::new(7)
+        );
+        assert!(matches!(
+            resolve_sector(LegacySectorRef(Some(1)), &topology),
+            Err(LegacySequenceAdoptError::MissingTopology {
+                field: "movement.sector",
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn retains_invalid_transition_results_while_not_in_progress() {
         let (entities, _, _) = entities();
         let mut saved = fixture();
@@ -1418,6 +1501,32 @@ mod tests {
         assert_eq!(
             retained.raw_dormant_action_state_after_transition,
             Some(-559_038_737)
+        );
+    }
+
+    #[test]
+    fn resets_valid_transition_results_while_waiting_for_instruct() {
+        let (entities, _, _) = entities();
+        let saved = fixture();
+
+        let plan = preflight_v48_sequence_manager(&saved, &entities, &topology())
+            .expect("TODO transition results are dormant until Instruct");
+        let (_, element) = plan
+            .resolve_element("test", LegacySequenceElementRef(Some(100)))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(element.state, SequenceState::Todo);
+        assert_eq!(element.posture_after_transition, Posture::Undefined);
+        assert_eq!(element.action_state_after_transition, ActionState::Waiting);
+        let retained = element.legacy_v48.as_ref().unwrap();
+        assert_eq!(
+            retained.raw_dormant_posture_after_transition,
+            Some(Posture::Upright as i32)
+        );
+        assert_eq!(
+            retained.raw_dormant_action_state_after_transition,
+            Some(ActionState::Waiting as i32)
         );
     }
 
@@ -1539,7 +1648,7 @@ mod tests {
             &LegacySequenceTopology {
                 // Keep the earlier sector lookup valid so this fixture
                 // specifically exercises the missing gate identity.
-                sector_count: 6,
+                sectors: (0..6).map(SectorHandle::new).collect(),
                 ..LegacySequenceTopology::default()
             },
         )
