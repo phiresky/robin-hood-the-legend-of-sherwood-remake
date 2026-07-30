@@ -118,10 +118,6 @@ pub enum LegacyElementAdoptError {
         entity_id: EntityId,
     },
     #[error(
-        "saved actor creation order {creation_order} has last order ID zero, which Rust cannot represent distinctly from no order"
-    )]
-    ZeroLastOrderId { creation_order: u32 },
-    #[error(
         "saved element creation order {creation_order} field {field} references sector {index}, but initialized topology has {count} sector slots"
     )]
     MissingSector {
@@ -869,10 +865,20 @@ fn convert_sprite(
         action_done_frame: saved.action_done_frame,
         action_done_counter: saved.action_done_counter,
         last_sound_id: saved.last_sound_id,
-        last_processed_order_id: saved.last_processed_order_id,
+        last_processed_order_id: map_legacy_order_id_or_sentinel(saved.last_processed_order_id),
         animation_replacements,
         position: preflight_v48_position(&saved.position, entities, topology)?,
     })
+}
+
+/// Map Original's zero-based order identity into Rust's non-zero domain while
+/// preserving the all-ones "no processed order" sentinel.
+fn map_legacy_order_id_or_sentinel(value: u32) -> u32 {
+    if value == u32::MAX {
+        u32::MAX
+    } else {
+        value + 1
+    }
 }
 
 fn convert_actor(
@@ -884,8 +890,11 @@ fn convert_actor(
 ) -> Result<ConvertedActor, LegacyElementAdoptError> {
     let last_order_id = match saved.last_order_id {
         u32::MAX => None,
-        0 => return Err(LegacyElementAdoptError::ZeroLastOrderId { creation_order }),
-        value => NonZeroU32::new(value),
+        value => NonZeroU32::new(
+            value
+                .checked_add(1)
+                .expect("u32::MAX was handled as the Original null sentinel"),
+        ),
     };
     finite(
         saved.distance_to_boundary_first,
@@ -1525,34 +1534,42 @@ fn convert_local_ai_common(
             .collect::<Result<Vec<_>, _>>()?,
         current_remark_flags: saved.current_remark_flags,
         current_state: ai_state(
-            saved.current_state,
+            linux_v48_enum(saved.current_state),
             creation_order,
             "local_ai.current_state",
         )?,
-        old_state: ai_state(saved.old_state, creation_order, "local_ai.old_state")?,
+        old_state: ai_state(
+            linux_v48_enum(saved.old_state),
+            creation_order,
+            "local_ai.old_state",
+        )?,
         current_substate: substate(
-            saved.current_substate,
+            linux_v48_enum(saved.current_substate),
             creation_order,
             "local_ai.current_substate",
         )?,
         current_music_alert_status: alert_level(
-            saved.current_music_alert_status as u32,
+            linux_v48_enum(saved.current_music_alert_status) as u32,
             creation_order,
             "local_ai.current_music_alert_status",
         )?,
         view_alert_status,
         substate_at_last_timer_launch: substate(
-            saved.substate_at_last_timer_launch,
+            linux_v48_enum(saved.substate_at_last_timer_launch),
             creation_order,
             "local_ai.substate_at_last_timer_launch",
         )?,
-        attitude: attitude(saved.attitude, creation_order, "local_ai.attitude")?,
+        attitude: attitude(
+            linux_v48_enum(saved.attitude),
+            creation_order,
+            "local_ai.attitude",
+        )?,
         blood_alcohol: saved.blood_alcohol,
-        initial_action: u32::try_from(saved.initial_action).map_err(|_| {
+        initial_action: u32::try_from(linux_v48_enum(saved.initial_action)).map_err(|_| {
             LegacyElementAdoptError::UnknownEnum {
                 creation_order,
                 field: "local_ai.initial_action",
-                value: saved.initial_action as u32,
+                value: linux_v48_enum(saved.initial_action) as u32,
             }
         })?,
         number_of_looks: saved.number_of_looks,
@@ -1612,7 +1629,13 @@ fn convert_local_ai_common(
         sorrow_level: saved.sorrow_level,
         last_stimulus: saved
             .last_stimuli
-            .map(|value| stimulus_type(value, creation_order, "local_ai.last_stimulus"))
+            .map(|value| {
+                stimulus_type(
+                    linux_v48_enum(value),
+                    creation_order,
+                    "local_ai.last_stimulus",
+                )
+            })
             .into_iter()
             .collect::<Result<Vec<_>, _>>()?
             .try_into()
@@ -1703,7 +1726,7 @@ fn convert_local_ai_common(
         )?,
         current_remark: {
             let current = remark(
-                saved.current_remark,
+                linux_v48_enum(saved.current_remark),
                 creation_order,
                 "local_ai.current_remark",
             )?;
@@ -2250,6 +2273,18 @@ fn ai_state(
         field,
         value: raw,
     })
+}
+
+/// Recover the logical enum value from Original Linux-v48's four-byte
+/// `ENUMSERIALIZE` record.
+///
+/// The Linux save ABI uses two-byte enums, but the source macro casts their
+/// address to `ULONG *` and always writes four bytes. Consequently the upper
+/// half of each serialized word is the following struct member, not part of
+/// this enum. Original load writes the same overlapping words back in order;
+/// the enum itself observes only its low signed 16 bits.
+fn linux_v48_enum(raw: i32) -> i32 {
+    i32::from(raw as i16)
 }
 
 fn substate(
@@ -3348,5 +3383,20 @@ mod tests {
             Some(SwordStrike::I)
         );
         assert!(known_enemy_strike(Command::Move as i32, 31).is_err());
+    }
+
+    #[test]
+    fn linux_v48_overlapping_enum_record_uses_signed_low_word() {
+        // Old state 3 is followed in memory by substate 150.
+        assert_eq!(linux_v48_enum(0x0096_0003), 3);
+        // Negative enum sentinels remain negative after extraction.
+        assert_eq!(linux_v48_enum(0x0002_ffff), -1);
+    }
+
+    #[test]
+    fn original_order_ids_share_the_sequence_managers_shifted_domain() {
+        assert_eq!(map_legacy_order_id_or_sentinel(0), 1);
+        assert_eq!(map_legacy_order_id_or_sentinel(41), 42);
+        assert_eq!(map_legacy_order_id_or_sentinel(u32::MAX), u32::MAX);
     }
 }
