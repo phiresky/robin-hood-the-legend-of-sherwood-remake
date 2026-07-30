@@ -28,6 +28,9 @@ pub mod payload_sequences;
 pub mod payload_vm;
 pub mod post_grid;
 pub mod post_hiking;
+pub mod post_simple;
+pub mod post_sequence_manager;
+pub mod post_tail;
 
 use serde::{Deserialize, Serialize};
 

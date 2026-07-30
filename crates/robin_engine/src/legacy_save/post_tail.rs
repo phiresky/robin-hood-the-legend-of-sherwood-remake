@@ -522,10 +522,9 @@ impl LegacyMissionStatistics {
             let mut pc_names = Vec::new();
             reserve(reader, &mut pc_names, count, "pc_names")?;
             for index in 0..count {
-                pc_names.push(reader.read_wide_string(
-                    format!("pc_names[{index}]"),
-                    limits.wide_string_code_units,
-                )?);
+                pc_names.push(reader.scope(format!("pc_names[{index}]"), |reader| {
+                    reader.read_wide_string("value", limits.wide_string_code_units)
+                })?);
             }
             Ok(Self {
                 start_offset,
