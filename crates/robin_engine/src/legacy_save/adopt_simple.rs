@@ -17,6 +17,7 @@ use crate::{
 
 use super::{
     adopt::{LegacyEntityFixups, LegacySaveAdoptError},
+    body::LegacyUserLockState,
     post_simple::{
         LegacyElementSelection, LegacyFollowViewRefs, LegacyGroundMarkState, LegacyMinimapState,
         LegacyTitbitsState,
@@ -42,6 +43,7 @@ pub enum LegacySimpleAdoptError {
 pub struct LegacySimpleAdoptionPlan {
     selected: Vec<EntityId>,
     selected_before_lock: Vec<EntityId>,
+    user_locked: bool,
     follow: Option<EntityId>,
     view: Option<EntityId>,
     ground_marks: Vec<GroundMarkEntry>,
@@ -55,6 +57,7 @@ impl LegacySimpleAdoptionPlan {
     pub fn preflight(
         engine: &EngineInner,
         entities: &LegacyEntityFixups,
+        user_lock: &LegacyUserLockState,
         selected: &LegacyElementSelection,
         selected_before_lock: &LegacyElementSelection,
         follow_view: &LegacyFollowViewRefs,
@@ -117,6 +120,7 @@ impl LegacySimpleAdoptionPlan {
         Ok(Self {
             selected,
             selected_before_lock,
+            user_locked: user_lock.locked,
             follow,
             view,
             ground_marks,
@@ -135,6 +139,7 @@ impl LegacySimpleAdoptionPlan {
             .expect("initialized v48 mission has no host player seat");
         seat.selection = self.selected;
         seat.follow_element = self.follow;
+        engine.players.user_locked = self.user_locked;
         engine.players.selection_before_user_lock = self.selected_before_lock;
         engine.feedback.ground_mark.marks = self.ground_marks;
         engine
