@@ -12,9 +12,9 @@ use thiserror::Error;
 use crate::{
     actor_state::ActorContinuationState,
     ai::{
-        AiController, AiGlobalState, AiState, AlertLevel, Attitude, CombatInfo, DoorCombatInfo,
-        GotoFlags, Hint, Noise, NoiseType, PathHistoryEntry, PathId, PatrolPath, Position,
-        ReconnaissanceReport, Remark, ReportType, Stimulus, StimulusInfo, StimulusType,
+        AiController, AiGlobalState, AiLockFlags, AiState, AlertLevel, Attitude, CombatInfo,
+        DoorCombatInfo, GotoFlags, Hint, Noise, NoiseType, PathHistoryEntry, PathId, PatrolPath,
+        Position, ReconnaissanceReport, Remark, ReportType, Stimulus, StimulusInfo, StimulusType,
         StolenObject, Substate,
     },
     coordinates::{GroundPoint, MapPoint, MapVec},
@@ -663,6 +663,7 @@ struct ConvertedLocalAiCommon {
     special_action: bool,
     friends_are_alerted: bool,
     is_stay_at_home: bool,
+    locks_flag_field: AiLockFlags,
     was_busy: bool,
     script_locked: bool,
     remember_events: bool,
@@ -1879,6 +1880,13 @@ fn convert_local_ai_common(
         special_action: saved.special_action,
         friends_are_alerted: saved.friends_are_alerted,
         is_stay_at_home: saved.stay_at_home,
+        locks_flag_field: AiLockFlags::from_bits(saved.locks_flag_field).ok_or(
+            LegacyElementAdoptError::InvalidFlags {
+                creation_order,
+                field: "local_ai.locks_flag_field",
+                value: u16::from(saved.locks_flag_field),
+            },
+        )?,
         was_busy: saved.was_busy,
         script_locked: saved.script_locked,
         remember_events: saved.remember_events,
@@ -2212,6 +2220,7 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.special_action = saved.special_action;
     ai.friends_are_alerted = saved.friends_are_alerted;
     ai.is_stay_at_home = saved.is_stay_at_home;
+    ai.locks_flag_field = saved.locks_flag_field;
     ai.was_busy = saved.was_busy;
     ai.script_locked = saved.script_locked;
     ai.remember_events = saved.remember_events;
