@@ -37,6 +37,12 @@ pub(crate) struct WorldState {
     pub(crate) original_creation_order_by_entity: BTreeMap<EntityId, u32>,
     /// Original process-global `gulCreationCounter`.
     pub(crate) next_original_creation_order: u32,
+    /// Original process-global `gulRepulsivePointCounter`.
+    ///
+    /// This is distinct from `AiGlobalState::next_repulsive_point_id`: the
+    /// latter is a Rust script/native registry counter, while the Original
+    /// constructor assigns this identity to every `RHRepulsivePoint`.
+    pub(crate) original_repulsive_point_counter: u32,
 }
 
 impl WorldState {
@@ -57,6 +63,7 @@ impl WorldState {
             mobile_elements: Vec::new(),
             original_creation_order_by_entity: BTreeMap::new(),
             next_original_creation_order: Self::FIRST_MISSION_CREATION_ORDER,
+            original_repulsive_point_counter: 0,
         }
     }
 

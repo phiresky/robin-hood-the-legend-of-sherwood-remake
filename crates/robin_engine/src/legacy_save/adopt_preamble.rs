@@ -35,6 +35,8 @@ pub(crate) struct LegacyLinuxPreambleState {
     lock_engine: bool,
     mission_won: bool,
     mission_won_first_time: bool,
+    creation_counter: u32,
+    repulsive_point_counter: u32,
     short_briefings: ShortBriefings,
 }
 
@@ -68,6 +70,8 @@ impl LegacyLinuxPreambleState {
                 lock_engine: preamble.lock_engine,
                 mission_won: preamble.mission_won,
                 mission_won_first_time: preamble.mission_won_first_time,
+                creation_counter: preamble.creation_counter,
+                repulsive_point_counter: preamble.repulsive_point_counter,
                 short_briefings: &preamble.short_briefings,
             },
         )
@@ -101,6 +105,8 @@ impl LegacyLinuxPreambleState {
             lock_engine: fields.lock_engine,
             mission_won: fields.mission_won,
             mission_won_first_time: fields.mission_won_first_time,
+            creation_counter: fields.creation_counter,
+            repulsive_point_counter: fields.repulsive_point_counter,
             short_briefings,
         })
     }
@@ -115,6 +121,8 @@ struct LegacyPreambleFields<'a> {
     lock_engine: bool,
     mission_won: bool,
     mission_won_first_time: bool,
+    creation_counter: u32,
+    repulsive_point_counter: u32,
     short_briefings: &'a LegacyShortBriefings,
 }
 
@@ -163,6 +171,8 @@ impl EngineInner {
             lock_engine,
             mission_won,
             mission_won_first_time,
+            creation_counter,
+            repulsive_point_counter,
             short_briefings,
         } = state;
 
@@ -179,6 +189,8 @@ impl EngineInner {
         self.control.speed_int = speed_index;
         self.control.set_actors_frozen(freeze_all);
         self.control.set_engine_locked(lock_engine);
+        self.world.next_original_creation_order = creation_counter;
+        self.world.original_repulsive_point_counter = repulsive_point_counter;
     }
 }
 
@@ -209,6 +221,8 @@ mod tests {
             lock_engine: true,
             mission_won: true,
             mission_won_first_time: true,
+            creation_counter: 456,
+            repulsive_point_counter: 789,
             short_briefings: briefings,
         }
     }
@@ -236,6 +250,8 @@ mod tests {
         assert!(engine.control.engine_locked());
         assert!(engine.mission_domain.state.mission_won);
         assert!(engine.mission_domain.state.mission_won_first_time);
+        assert_eq!(engine.world.next_original_creation_order, 456);
+        assert_eq!(engine.world.original_repulsive_point_counter, 789);
         assert!(!engine.mission_domain.state.quit_won);
         assert!(!engine.mission_domain.state.quit_lost);
         assert!(!engine.mission_domain.state.quit_interrupted);
