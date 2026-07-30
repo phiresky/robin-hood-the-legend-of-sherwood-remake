@@ -1939,6 +1939,22 @@ resolve the handle against the live entity view and populate the same
 antagonist context used by immediate detection dispatch. The complete Continue
 recording now matches every frame.
 
+### Heal facing begins at the first Execute boundary
+
+Selecting an `RHCOMMAND_HEAL` element and executing its Healing order are
+separate Original phases. Selection installs the order without changing the
+healer's facing. On the actor's next live slot,
+`RHElementActorPC::Execute(RHANIMATION_HEALING)` validates the interaction,
+sets the direction goal from the target's live map position, calls `Turn`, and
+then advances the animation.
+
+Rust previously faced the target immediately in `begin_heal`, one frame before
+the selected order could execute. Linux3 Profile 003 ExQuickSave exposed the
+early write at frame 74491. Heal selection now preserves the existing facing;
+first-Execute initialization installs the goal and ordinary Heal ticks call
+`Turn` without freezing animation progress, matching the Original. The
+complete ExQuickSave recording now matches every frame.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

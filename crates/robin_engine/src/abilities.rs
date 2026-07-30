@@ -987,16 +987,6 @@ pub fn begin_heal(
     order.lock_ai = true;
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
-    // Face target (unless healing self).
-    if healer_id != target_id {
-        let healer_pos = healer.element_data().position_map();
-        let dx = target_pos.x - healer_pos.x;
-        let dy = target_pos.y - healer_pos.y;
-        healer.element_data_mut().set_direction_instantly(
-            crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
-        );
-    }
-
     BeginResult::Started
 }
 
@@ -2312,7 +2302,9 @@ pub fn tick_ability(
     // Execute-time initialization installed the goal. Keep the first sprite
     // frame frozen until alignment, just like RHANIMATION_HITTING's
     // `Turn() ? RHPROGRESSION_FROZEN_FIRST_FRAME : default` branch.
-    let frame_progression = if kind == AbilityKind::Hit && entity.position_iface_mut().turn() {
+    let turning =
+        matches!(kind, AbilityKind::Hit | AbilityKind::Heal) && entity.position_iface_mut().turn();
+    let frame_progression = if kind == AbilityKind::Hit && turning {
         crate::sprite::FrameProgression::FrozenFirstFrame
     } else {
         crate::sprite::FrameProgression::Default
@@ -3074,6 +3066,66 @@ mod tests {
             .current_order()
             .unwrap();
         assert_eq!(order.order_type, OrderType::Hitting);
+        assert!(!order.compute_direction);
+    }
+
+    #[test]
+    fn heal_selection_defers_facing_until_first_execute() {
+        let mut entities = Entities::new();
+        for _ in 0..2 {
+            entities.push(Some(Entity::Pc(ActorPc {
+                element: ElementData {
+                    kind: ElementKind::ActorPc,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: HumanData::default(),
+                pc: PcData::default(),
+            })));
+        }
+        let healer = entities.id_at_legacy_slot(0).unwrap();
+        let target = entities.id_at_legacy_slot(1).unwrap();
+        entities
+            .get_mut(healer)
+            .unwrap()
+            .element_data_mut()
+            .set_direction_instantly(11);
+        {
+            let target = entities.get_mut(target).unwrap();
+            target.pc_data_mut().unwrap().life_points = 50;
+            target
+                .element_data_mut()
+                .set_position_map(MapPoint::new(-20.0, 10.0));
+        }
+
+        let mut manager = SequenceManager::new();
+        let seq_id = launch_ability_element(&mut manager, Command::HealCmd, healer);
+        let mut next_id = 1;
+        assert_eq!(
+            begin_heal(
+                &mut entities,
+                &mut manager,
+                healer,
+                target,
+                seq_id,
+                0,
+                &mut next_id,
+            ),
+            BeginResult::Started
+        );
+
+        assert_eq!(
+            entities.get(healer).unwrap().element_data().direction(),
+            11,
+            "selecting Heal must not run RHANIMATION_HEALING initialization"
+        );
+        let order = manager
+            .get_element(seq_id, 0)
+            .unwrap()
+            .current_order()
+            .unwrap();
+        assert_eq!(order.order_type, OrderType::Healing);
+        assert_eq!(order.target_actor, Some(target.index()));
         assert!(!order.compute_direction);
     }
 

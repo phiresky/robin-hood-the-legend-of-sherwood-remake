@@ -3160,6 +3160,43 @@ impl EngineInner {
             }
         }
 
+        let pending_heal_facing = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::Heal)
+                    && actor.execute_order_initialising)
+                    .then_some(ability.target)
+                    .flatten()
+                    .filter(|target| *target != actor_id)
+            });
+        if let Some(target_id) = pending_heal_facing {
+            let healer_pos = self
+                .get_entity(actor_id)
+                .expect("Heal owner vanished during initialization")
+                .element_data()
+                .position_map();
+            let target_pos = self
+                .get_entity(target_id)
+                .unwrap_or_else(|| {
+                    panic!("Heal target {target_id:?} vanished during initialization")
+                })
+                .element_data()
+                .position_map();
+            let facing = crate::position_interface::vector_to_sector_0_to_15_iso(
+                target_pos.x - healer_pos.x,
+                target_pos.y - healer_pos.y,
+            );
+            // RHANIMATION_HEALING computes the goal in its first Execute,
+            // then calls Turn before advancing the animation. Selection of
+            // the interaction alone must not rotate the actor a frame early.
+            self.get_entity_mut(actor_id)
+                .expect("Heal owner vanished before direction initialization")
+                .element_data_mut()
+                .set_direction_goal(facing);
+        }
+
         let pending_strangle_init = self
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
