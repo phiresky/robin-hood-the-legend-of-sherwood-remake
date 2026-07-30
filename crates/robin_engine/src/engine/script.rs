@@ -2926,6 +2926,7 @@ impl EngineInner {
             let (
                 owner_kind,
                 is_scripted,
+                caller_tail_state,
                 later_work,
                 later_actor_effects,
                 later_self_stimuli,
@@ -2965,6 +2966,12 @@ impl EngineInner {
                 let ai = entity
                     .ai_controller_mut()
                     .unwrap_or_else(|| panic!("AI SetState owner {} lost its AI", owner.index()));
+                // The pure-Rust caller continues after SetState returns before
+                // this deferred callback can run. Preserve any later direct
+                // state assignment made by that caller (for example,
+                // ExecuteNextMacroCommand immediately completing an empty
+                // restored macro after first entering DefaultInMacro).
+                let caller_tail_state = (ai.current_state, ai.current_substate);
                 let later_work = std::mem::take(&mut ai.outbox.reentrant.owner_work);
                 let (later_actor_effects, later_self_stimuli, later_cross_npc_actions) =
                     if let Some(prefix) = notification.actor_effects_before_callback.clone() {
@@ -2982,6 +2989,7 @@ impl EngineInner {
                 (
                     owner_kind,
                     is_scripted,
+                    caller_tail_state,
                     later_work,
                     later_actor_effects,
                     later_self_stimuli,
@@ -3177,6 +3185,15 @@ impl EngineInner {
             };
             ai.set_ai_state(notification.incoming_state);
             ai.current_substate = notification.incoming_substate;
+            if caller_tail_state != (notification.incoming_state, notification.incoming_substate) {
+                // Original has already returned from this SetState and run
+                // these caller-tail assignments by now. Reapply the captured
+                // canonical pair after the callback's outgoing→incoming
+                // transaction instead of letting the deferred transaction
+                // rewind newer state.
+                ai.set_ai_state(caller_tail_state.0);
+                ai.current_substate = caller_tail_state.1;
+            }
 
             let ai = self
                 .world

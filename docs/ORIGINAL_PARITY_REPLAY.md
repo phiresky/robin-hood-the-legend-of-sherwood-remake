@@ -1955,6 +1955,41 @@ first-Execute initialization installs the goal and ordinary Heal ticks call
 `Turn` without freezing animation progress, matching the Original. The
 complete ExQuickSave recording now matches every frame.
 
+### Sight planes preserve the Original binary32 equation
+
+`SBGeoPlane3D` normalizes the cross-product of its three plane points, derives
+cached `AZ/BZ/DZ` coefficients, and evaluates `x*AZ + y*BZ + DZ`
+(`sb3dstuff.cpp:194-247`). Rust's sight path previously used an algebraically
+equivalent unnormalized relative-point equation. The two expressions are not
+binary32-equivalent at plane boundaries.
+
+Linux3 Profile 001 Savegame 034 exposed this at frame 28862. A bonus-to-PC ray
+started exactly on the large sloped top plane of obstacle 90; the simplified
+equation rounded the plane one ULP above the origin, falsely blocked the ray,
+and delayed bonus discovery. World-space sight queries now reuse the cached
+coefficient construction that preserves the Original SSE2 `FLOAT` operation
+sequence and evaluate it in the Original multiplication/addition order.
+
+### Deferred SetState callbacks preserve synchronous caller-tail state
+
+Original Enemy/Friendly `SetState` calls `FilterAIEvent` synchronously, commits
+the incoming state, and then returns to its caller. Rust defers that script
+callback through an owner-local barrier while the pure-Rust caller continues.
+The barrier already isolated ordered effects, but it could later recommit the
+earlier incoming state over a newer direct state assignment made after
+`SetState` returned.
+
+Linux3 Profile 001 Savegame 034 exposed this when a restored patrol macro had
+its serialized in-progress bit set and zero bytes remaining. The timer handler
+entered `DefaultInMacro`, then `ExecuteNextMacroCommand` synchronously completed
+the empty macro and entered `DefaultEnroute`. The deferred inherited
+`FilterAIEvent` transaction subsequently rewound the NPC to `DefaultInMacro`,
+eventually consuming an extra bored-animation RNG draw. The barrier now
+captures the caller-tail canonical state before rewinding for the callback,
+performs the outgoing-to-incoming transaction, then reapplies any newer
+caller-tail pair. Savegame 034 now matches every recorded frame; the already
+green Profile 003 Restart replay remains exact.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
