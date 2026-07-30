@@ -12,15 +12,16 @@ use thiserror::Error;
 use crate::{
     ai::{
         AiController, AiState, AlertLevel, Attitude, CombatInfo, DoorCombatInfo, GotoFlags, Hint,
-        Noise, NoiseType, Position, ReconnaissanceReport, Remark, ReportType, Stimulus,
-        StimulusInfo, StimulusType, StolenObject, Substate,
+        Noise, NoiseType, PathHistoryEntry, PathId, PatrolPath, Position, ReconnaissanceReport,
+        Remark, ReportType, Stimulus, StimulusInfo, StimulusType, StolenObject, Substate,
     },
     coordinates::{GroundPoint, MapPoint, MapVec},
     element::{
         ActionState, AiBrain, Detectable, DetectableType, EntityId, EyeStatus, NpcData,
         OutlineColorName,
     },
-    engine::EngineInner,
+    engine::{EngineInner, LevelAssets},
+    level_data::WaypointCommand,
     order::OrderType,
     position_interface::{PositionInterfaceV48State, SectorHandle},
 };
@@ -30,8 +31,8 @@ use super::{
         LegacyEntityFixups, LegacyPositionTopology, LegacySaveAdoptError, preflight_v48_position,
     },
     payload_ai::{
-        LegacyAiPosition, LegacyLocalAiCommon, LegacyLocalAiTail, LegacyStimulus,
-        LegacyStimulusInfo, LegacyStimulusPosition,
+        LegacyAiPathStatus, LegacyAiPosition, LegacyLocalAiCommon, LegacyLocalAiTail,
+        LegacyStimulus, LegacyStimulusInfo, LegacyStimulusPosition,
     },
     payload_base::{
         LegacyActorPayload, LegacyAiElementRef, LegacyElementPayloadBase, LegacyNpcPayload,
@@ -61,7 +62,7 @@ pub const REMAINING_COMMON_ELEMENT_FIELDS: &[&str] = &[
     "RHElementActorNPC::mpAttachedScroll identity (Rust currently retains only attached/not attached)",
     "RHElementActorNPC::muwBodyVisitors",
     "RHElementActorNPC view iterator/crazy-cone/future-aperture/radius-reduction/sniper fields absent from Rust",
-    "RHElementActorNPC local-AI path/macro bytecode and most subclass state",
+    "RHElementActorNPC local-AI most subclass state",
     "RHElementActorNPC leaf Soldier/Civilian state",
 ];
 
@@ -190,6 +191,56 @@ pub enum LegacyElementAdoptError {
         declared: i32,
         actual: &'static str,
     },
+    #[error(
+        "saved NPC creation order {creation_order} path references hiking path {index}, but initialized assets have {count} paths"
+    )]
+    MissingHikingPath {
+        creation_order: u32,
+        index: u16,
+        count: usize,
+    },
+    #[error(
+        "saved NPC creation order {creation_order} hiking path {path} has {count} waypoints, which does not fit Original's u8 path state"
+    )]
+    TooManyWaypoints {
+        creation_order: u32,
+        path: u16,
+        count: usize,
+    },
+    #[error(
+        "saved NPC creation order {creation_order} path {path} field {field} references waypoint {waypoint}, but the path has {count} waypoints"
+    )]
+    MissingWaypoint {
+        creation_order: u32,
+        path: u16,
+        field: &'static str,
+        waypoint: u8,
+        count: usize,
+    },
+    #[error(
+        "saved NPC creation order {creation_order} has a patrol path but no initialized hiking path"
+    )]
+    PatrolPathWithoutHikingPath { creation_order: u32 },
+    #[error(
+        "saved NPC creation order {creation_order} macro cursor {offset} with {remaining} remaining bytes exceeds current waypoint macro length {length}"
+    )]
+    InvalidMacroCursor {
+        creation_order: u32,
+        offset: usize,
+        remaining: u16,
+        length: usize,
+    },
+    #[error(
+        "saved NPC creation order {creation_order} has active macro state on a current waypoint whose command is {command}"
+    )]
+    MacroCommandKind {
+        creation_order: u32,
+        command: &'static str,
+    },
+    #[error(
+        "saved NPC creation order {creation_order} has macro progress without a patrol-path-relative cursor"
+    )]
+    MacroWithoutPatrolPath { creation_order: u32 },
 }
 
 #[derive(Clone, Debug)]
@@ -387,6 +438,10 @@ struct ConvertedLocalAiCommon {
     initial_action: u32,
     number_of_looks: u8,
     can_move: bool,
+    has_patrol_path: bool,
+    patrol_path: Option<PatrolPath>,
+    macro_command: Vec<u8>,
+    macro_command_offset: usize,
     primary_target: u32,
     friend_in_trouble: u32,
     detected_body: u32,
@@ -451,6 +506,7 @@ impl LegacyStaticElementAdoption {
     /// Validate and convert every element record without mutating `engine`.
     pub fn preflight(
         engine: &EngineInner,
+        assets: &LevelAssets,
         payloads: &LegacyElementPayloadStream,
         entities: &LegacyEntityFixups,
         position_topology: &LegacyPositionTopology,
@@ -500,6 +556,7 @@ impl LegacyStaticElementAdoption {
                             creation_order,
                             entities,
                             position_topology,
+                            assets,
                         )
                     })
                     .transpose()?,
@@ -705,6 +762,7 @@ fn convert_npc(
     creation_order: u32,
     entities: &LegacyEntityFixups,
     topology: &LegacyPositionTopology,
+    assets: &LevelAssets,
 ) -> Result<ConvertedNpc, LegacyElementAdoptError> {
     let mut detectable_lists = Vec::with_capacity(DetectableType::COUNT);
     let mut detection_suspects = [0; DetectableType::COUNT];
@@ -778,6 +836,7 @@ fn convert_npc(
             creation_order,
             entities,
             topology,
+            assets,
             alert_level(saved.view.alert_status, creation_order, "view.alert_status")?,
         )?,
     })
@@ -876,6 +935,7 @@ fn convert_local_ai(
     creation_order: u32,
     entities: &LegacyEntityFixups,
     topology: &LegacyPositionTopology,
+    assets: &LevelAssets,
     view_alert_status: AlertLevel,
 ) -> Result<ConvertedLocalAi, LegacyElementAdoptError> {
     let owner = entities.resolve_ai_element(saved.common.owner)?;
@@ -892,6 +952,7 @@ fn convert_local_ai(
         entities,
         topology,
         view_alert_status,
+        assets,
     )?;
     match (&saved.tail, &runtime.ai_brain) {
         (LegacyLocalAiTail::Friendly(tail), AiBrain::Friendly(_)) => {
@@ -939,7 +1000,10 @@ fn convert_local_ai_common(
     entities: &LegacyEntityFixups,
     topology: &LegacyPositionTopology,
     view_alert_status: AlertLevel,
+    assets: &LevelAssets,
 ) -> Result<ConvertedLocalAiCommon, LegacyElementAdoptError> {
+    let (macro_command, macro_command_offset) =
+        convert_macro_command(saved, creation_order, &assets.hiking_paths)?;
     Ok(ConvertedLocalAiCommon {
         last_goto_destination: ai_position(
             saved.last_goto_destination,
@@ -995,6 +1059,15 @@ fn convert_local_ai_common(
         })?,
         number_of_looks: saved.number_of_looks,
         can_move: saved.can_move,
+        has_patrol_path: saved.has_patrol_path,
+        patrol_path: convert_patrol_path(
+            &saved.path,
+            creation_order,
+            topology,
+            &assets.hiking_paths,
+        )?,
+        macro_command,
+        macro_command_offset,
         primary_target: ai_handle(
             entities.resolve_ai_element(saved.primary_target)?,
             ReferenceKind::Human,
@@ -1262,6 +1335,10 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.initial_action = saved.initial_action;
     ai.number_of_looks = saved.number_of_looks;
     ai.can_move = saved.can_move;
+    ai.has_patrol_path = saved.has_patrol_path;
+    ai.patrol_path = saved.patrol_path;
+    ai.macro_command = saved.macro_command;
+    ai.macro_command_offset = saved.macro_command_offset;
     ai.primary_target = saved.primary_target;
     ai.friend_in_trouble = saved.friend_in_trouble;
     ai.detected_body = saved.detected_body;
@@ -1550,6 +1627,151 @@ fn ai_position(
         sector: sector(saved.sector.0, topology, creation_order, field)?,
         level: saved.level,
     })
+}
+
+fn convert_patrol_path(
+    saved: &LegacyAiPathStatus,
+    creation_order: u32,
+    topology: &LegacyPositionTopology,
+    hiking_paths: &[crate::level_data::RawHikingPath],
+) -> Result<Option<PatrolPath>, LegacyElementAdoptError> {
+    let Some(raw_path_id) = saved.hiking_path_index else {
+        return Ok(None);
+    };
+    let path_id = PathId::new(raw_path_id)
+        .expect("Legacy decoder already maps the 0xffff no-path sentinel to None");
+    let authored = hiking_paths.get(usize::from(path_id)).ok_or(
+        LegacyElementAdoptError::MissingHikingPath {
+            creation_order,
+            index: raw_path_id,
+            count: hiking_paths.len(),
+        },
+    )?;
+    let size = u8::try_from(authored.waypoints.len()).map_err(|_| {
+        LegacyElementAdoptError::TooManyWaypoints {
+            creation_order,
+            path: raw_path_id,
+            count: authored.waypoints.len(),
+        }
+    })?;
+    for (field, waypoint) in [
+        ("current_waypoint_index", saved.current_waypoint_index),
+        ("last_waypoint_index", saved.last_waypoint_index),
+    ] {
+        if usize::from(waypoint) >= authored.waypoints.len() {
+            return Err(LegacyElementAdoptError::MissingWaypoint {
+                creation_order,
+                path: raw_path_id,
+                field,
+                waypoint,
+                count: authored.waypoints.len(),
+            });
+        }
+    }
+    let history = saved
+        .history
+        .iter()
+        .map(|entry| {
+            Ok(PathHistoryEntry {
+                position: Position {
+                    x: entry.position_x,
+                    y: entry.position_y,
+                    sector: sector(
+                        entry.sector.0,
+                        topology,
+                        creation_order,
+                        "local_ai.path.history.sector",
+                    )?,
+                    level: entry.level,
+                },
+                direction: entry.direction,
+                distance: entry.distance,
+            })
+        })
+        .collect::<Result<_, LegacyElementAdoptError>>()?;
+    Ok(Some(PatrolPath {
+        hiking_path_index: path_id,
+        current_waypoint_index: saved.current_waypoint_index,
+        last_waypoint_index: saved.last_waypoint_index,
+        forward: saved.forward_movement,
+        size,
+        history,
+    }))
+}
+
+fn convert_macro_command(
+    saved: &LegacyLocalAiCommon,
+    creation_order: u32,
+    hiking_paths: &[crate::level_data::RawHikingPath],
+) -> Result<(Vec<u8>, usize), LegacyElementAdoptError> {
+    if !saved.has_patrol_path {
+        if saved.macro_in_progress || saved.remaining_macro_bytes != 0 {
+            return Err(LegacyElementAdoptError::MacroWithoutPatrolPath { creation_order });
+        }
+        return Ok((Vec::new(), 0));
+    }
+    let raw_path_id = saved
+        .path
+        .hiking_path_index
+        .ok_or(LegacyElementAdoptError::PatrolPathWithoutHikingPath { creation_order })?;
+    let authored = hiking_paths.get(usize::from(raw_path_id)).ok_or(
+        LegacyElementAdoptError::MissingHikingPath {
+            creation_order,
+            index: raw_path_id,
+            count: hiking_paths.len(),
+        },
+    )?;
+    let waypoint = authored
+        .waypoints
+        .get(usize::from(saved.path.current_waypoint_index))
+        .ok_or(LegacyElementAdoptError::MissingWaypoint {
+            creation_order,
+            path: raw_path_id,
+            field: "current_waypoint_index",
+            waypoint: saved.path.current_waypoint_index,
+            count: authored.waypoints.len(),
+        })?;
+    let offset = usize::from(
+        saved
+            .macro_command_offset
+            .expect("decoder supplies the conditional cursor when has_patrol_path is true"),
+    );
+    let macro_data = match &waypoint.command {
+        WaypointCommand::Macro(data) => data,
+        WaypointCommand::None
+            if offset == 0 && saved.remaining_macro_bytes == 0 && !saved.macro_in_progress =>
+        {
+            return Ok((Vec::new(), 0));
+        }
+        WaypointCommand::Script(_)
+            if offset == 0 && saved.remaining_macro_bytes == 0 && !saved.macro_in_progress =>
+        {
+            return Ok((Vec::new(), 0));
+        }
+        WaypointCommand::None => {
+            return Err(LegacyElementAdoptError::MacroCommandKind {
+                creation_order,
+                command: "none",
+            });
+        }
+        WaypointCommand::Script(_) => {
+            return Err(LegacyElementAdoptError::MacroCommandKind {
+                creation_order,
+                command: "script",
+            });
+        }
+    };
+    let end = offset
+        .checked_add(usize::from(saved.remaining_macro_bytes))
+        .filter(|&end| offset <= macro_data.len() && end <= macro_data.len())
+        .ok_or(LegacyElementAdoptError::InvalidMacroCursor {
+            creation_order,
+            offset,
+            remaining: saved.remaining_macro_bytes,
+            length: macro_data.len(),
+        })?;
+    let _ = end;
+    Ok((macro_data.clone(), offset))
 }
 
 fn stimulus_position(
@@ -2046,5 +2268,56 @@ mod tests {
             remark(Remark::TheSoundOfSilence as i32, 31, "current_remark").unwrap(),
             Remark::TheSoundOfSilence
         );
+    }
+
+    #[test]
+    fn local_ai_path_restores_saved_cursor_and_history() {
+        let saved = LegacyAiPathStatus {
+            current_waypoint_index: 1,
+            last_waypoint_index: 0,
+            forward_movement: false,
+            hiking_path_index: Some(0),
+            history: vec![super::super::payload_ai::LegacyAiPathHistoryEntry {
+                position_x: 12.0,
+                position_y: 34.0,
+                sector: super::super::payload_base::LegacySectorRef(Some(1)),
+                level: 2,
+                direction: 3,
+                distance: 4,
+            }],
+        };
+        let paths = vec![crate::level_data::RawHikingPath {
+            waypoints: vec![
+                crate::level_data::RawWaypoint {
+                    x: 0,
+                    y: 0,
+                    sector: 0,
+                    level: 0,
+                    command: WaypointCommand::None,
+                },
+                crate::level_data::RawWaypoint {
+                    x: 1,
+                    y: 1,
+                    sector: 1,
+                    level: 2,
+                    command: WaypointCommand::Macro(vec![0, 1, 2]),
+                },
+            ],
+        }];
+        let topology = LegacyPositionTopology {
+            sector_count: 2,
+            doors: Vec::new(),
+            projection_areas: Vec::new(),
+            sight_obstacles: Vec::new(),
+        };
+
+        let restored = convert_patrol_path(&saved, 31, &topology, &paths)
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored.hiking_path_index.get(), 0);
+        assert_eq!(restored.current_waypoint_index, 1);
+        assert!(!restored.forward);
+        assert_eq!(restored.history[0].position.sector.unwrap().get(), 1);
+        assert_eq!(restored.history[0].distance, 4);
     }
 }
