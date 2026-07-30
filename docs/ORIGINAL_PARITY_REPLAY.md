@@ -1844,6 +1844,19 @@ stopped its run and entered swordfight while the Original continued `MoveOk`
 in `AttackingRunningToEnemy`. The near fast path now uses the exact circular
 predicate without changing ordinary `GoTo`.
 
+### Invulnerability restores literal 100 life points
+
+`RHElementActorHuman::SetLifePoints` stores the literal value 100 whenever the
+human is invulnerable. It does not use the actor profile's maximum life or its
+difficulty-scaled cached equivalent. Rust's shared combat setter instead
+restored that maximum, which only happened to agree for ordinary 100-HP actors.
+
+Linux3 Profile 001 Savegame 011 exposed the distinction at frame 289: an
+invulnerable civilian whose profile maximum is 120 received a zero-damage
+sword message. The Original restored life from 100 to 100, while Rust raised it
+to 120. All shared damage paths now retain the Original literal, including
+actors whose authored maximum differs.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

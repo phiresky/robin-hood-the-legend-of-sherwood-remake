@@ -212,7 +212,7 @@ pub fn set_life_points(
     life_points: &mut i16,
     value: i16,
     invulnerable: bool,
-    max_life_points: i16,
+    _max_life_points: i16,
     is_sherwood_pc: bool,
 ) -> bool {
     // Already dead — can only die once.
@@ -226,7 +226,9 @@ pub fn set_life_points(
     }
 
     let new_value = if invulnerable {
-        max_life_points
+        // RHElementActorHuman::SetLifePoints uses the literal 100 here,
+        // irrespective of the actor profile or difficulty-scaled maximum.
+        100
     } else {
         value.max(0)
     };
@@ -1584,8 +1586,8 @@ mod tests {
 
     #[test]
     fn set_life_points_invulnerable() {
-        let mut lp: i16 = 100;
-        assert!(!set_life_points(&mut lp, 20, true, 100, false));
+        let mut lp: i16 = 120;
+        assert!(!set_life_points(&mut lp, 20, true, 120, false));
         assert_eq!(lp, 100);
     }
 
