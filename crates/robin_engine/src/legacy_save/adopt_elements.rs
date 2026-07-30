@@ -2940,18 +2940,27 @@ fn convert_macro_command(
             .macro_command_offset
             .expect("decoder supplies the conditional cursor when has_patrol_path is true"),
     );
-    let macro_data = match &waypoint.command {
+    convert_waypoint_macro_cursor(
+        &waypoint.command,
+        offset,
+        saved.remaining_macro_bytes,
+        saved.macro_in_progress,
+        creation_order,
+    )
+}
+
+fn convert_waypoint_macro_cursor(
+    command: &WaypointCommand,
+    offset: usize,
+    remaining: u16,
+    macro_in_progress: bool,
+    creation_order: u32,
+) -> Result<(Vec<u8>, usize), LegacyElementAdoptError> {
+    let inactive = remaining == 0 && !macro_in_progress;
+    let macro_data = match command {
         WaypointCommand::Macro(data) => data,
-        WaypointCommand::None
-            if offset == 0 && saved.remaining_macro_bytes == 0 && !saved.macro_in_progress =>
-        {
-            return Ok((Vec::new(), 0));
-        }
-        WaypointCommand::Script(_)
-            if offset == 0 && saved.remaining_macro_bytes == 0 && !saved.macro_in_progress =>
-        {
-            return Ok((Vec::new(), 0));
-        }
+        WaypointCommand::None if inactive => return Ok((Vec::new(), offset)),
+        WaypointCommand::Script(_) if inactive => return Ok((Vec::new(), offset)),
         WaypointCommand::None => {
             return Err(LegacyElementAdoptError::MacroCommandKind {
                 creation_order,
@@ -2965,13 +2974,24 @@ fn convert_macro_command(
             });
         }
     };
+
+    // RHArtificialIntelligence initializes mpubMacroCommand to null, then
+    // serializes pointer subtraction whenever a patrol path exists—even if no
+    // macro was ever assigned. The resulting UWORD is indeterminate and may
+    // lie far beyond the waypoint bytes. Original never dereferences it while
+    // both remaining==0 and macro_in_progress==false; preserve that diagnostic
+    // storage exactly, but keep strict bounds for every live cursor.
+    if inactive {
+        return Ok((macro_data.clone(), offset));
+    }
+
     let end = offset
-        .checked_add(usize::from(saved.remaining_macro_bytes))
+        .checked_add(usize::from(remaining))
         .filter(|&end| offset <= macro_data.len() && end <= macro_data.len())
         .ok_or(LegacyElementAdoptError::InvalidMacroCursor {
             creation_order,
             offset,
-            remaining: saved.remaining_macro_bytes,
+            remaining,
             length: macro_data.len(),
         })?;
     let _ = end;
@@ -3612,6 +3632,34 @@ mod tests {
         assert!(!restored.forward);
         assert_eq!(restored.history[0].position.sector.unwrap().get(), 1);
         assert_eq!(restored.history[0].distance, 4);
+    }
+
+    #[test]
+    fn inactive_macro_cursor_preserves_indeterminate_pointer_difference() {
+        let command = WaypointCommand::Macro(vec![0; 26]);
+        let (bytes, offset) =
+            convert_waypoint_macro_cursor(&command, 12_304, 0, false, 89).unwrap();
+        assert_eq!(bytes.len(), 26);
+        assert_eq!(offset, 12_304);
+
+        assert!(matches!(
+            convert_waypoint_macro_cursor(&command, 12_304, 1, false, 89),
+            Err(LegacyElementAdoptError::InvalidMacroCursor {
+                offset: 12_304,
+                remaining: 1,
+                length: 26,
+                ..
+            })
+        ));
+        assert!(matches!(
+            convert_waypoint_macro_cursor(&command, 12_304, 0, true, 89),
+            Err(LegacyElementAdoptError::InvalidMacroCursor {
+                offset: 12_304,
+                remaining: 0,
+                length: 26,
+                ..
+            })
+        ));
     }
 
     #[test]
