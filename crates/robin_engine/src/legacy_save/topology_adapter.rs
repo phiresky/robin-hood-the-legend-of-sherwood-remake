@@ -24,7 +24,10 @@ use super::{
     elements::LegacyElementClass,
     payload_ai::LegacyLocalAiKind,
     payload_context::{LegacyElementPayloadMetadata, LegacyMissionPayloadMetadata},
-    post_grid::LegacyGridTopology,
+    post_grid::{
+        LegacyGateTopology, LegacyGridTopology, LegacyPatchFxTopology, LegacyPatchTopology,
+        LegacyScriptObjectTopology, LegacySectorTopology,
+    },
     post_hiking::{LegacyHikingGuideTopology, LegacyHikingPathTopology, LegacyWaypointTopology},
     post_tail::LegacyPostTailTopology,
 };
@@ -199,6 +202,7 @@ pub fn derive_static_element_topology(
     let static_creation_order_boundary = PRE_LEVEL_ELEMENT_COUNT
         .checked_add(sequence_len)
         .ok_or_else(|| element_mismatch("static creation-order boundary overflow"))?;
+    payload_metadata.static_creation_order_boundary = static_creation_order_boundary;
 
     Ok(LegacyStaticElementTopology {
         payload_metadata,
@@ -244,10 +248,14 @@ fn build_original_static_element_sequence(
                     "patch {patch_index} has no retained FX entity handle"
                 ))
             })?;
-            let slot = u32::try_from(handle).map_err(|_| {
-                element_mismatch(format!(
-                    "patch {patch_index} has negative FX entity handle {handle}"
-                ))
+            let slot =
+                crate::natives::ScriptHandleCodec::actor_handle_index(handle).ok_or_else(|| {
+                    element_mismatch(format!(
+                        "patch {patch_index} FX handle {handle} is not an actor handle"
+                    ))
+                })?;
+            let slot = u32::try_from(slot).map_err(|_| {
+                element_mismatch(format!("patch {patch_index} FX entity slot exceeds u32"))
             })?;
             engine
                 .world
@@ -615,14 +623,213 @@ fn missing_element_order(detail: &'static str) -> LegacyTopologyAdapterError {
 /// with jump gates omitted would hide a mission-identity mismatch, so the
 /// adapter remains strict.
 pub fn derive_grid_topology(
-    _engine: &EngineInner,
-    _assets: &LevelAssets,
+    engine: &EngineInner,
+    assets: &LevelAssets,
 ) -> Result<LegacyGridTopology, LegacyTopologyAdapterError> {
-    Err(LegacyTopologyAdapterError::MissingRetainedFact {
-        fact: LegacyMissingTopologyFact::GridGateOrder,
-        original_owner: "RHFastFindGrid::marrayGates",
-        detail: "Rust separates doors from jump gates and does not retain their shared insertion order",
+    use crate::engine::{LegacyGridGateAsset, LegacyGridScriptObjectAsset, LegacyGridSectorAsset};
+
+    let retained = assets.legacy_grid_topology.as_ref().ok_or(
+        LegacyTopologyAdapterError::MissingRetainedFact {
+            fact: LegacyMissingTopologyFact::GridSparseSectorOrder,
+            original_owner: "RHFastFindGrid construction-time arrays",
+            detail: "the attached level assets do not contain source-derived legacy grid topology",
+        },
+    )?;
+    let static_elements = derive_static_element_topology(engine, assets)?;
+
+    if retained.patches.len() != engine.script_domains.interactables.patches.len() {
+        return Err(attachment_mismatch(
+            "patch count",
+            engine.script_domains.interactables.patches.len(),
+            retained.patches.len(),
+        ));
+    }
+
+    let runtime_door_count = engine
+        .script_domains
+        .interactables
+        .doors
+        .iter()
+        .filter(|door| door.gate_type == crate::gate::GateType::Door)
+        .count();
+    let runtime_jump_count = engine
+        .script_domains
+        .interactables
+        .doors
+        .iter()
+        .filter(|door| door.gate_type == crate::gate::GateType::Jump)
+        .count();
+    let retained_door_count = retained
+        .gates
+        .iter()
+        .filter(|gate| matches!(gate, LegacyGridGateAsset::Door))
+        .count();
+    let retained_jump_count = retained.gates.len() - retained_door_count;
+    if (runtime_door_count, runtime_jump_count) != (retained_door_count, retained_jump_count) {
+        return Err(LegacyTopologyAdapterError::MissionAttachmentMismatch {
+            fact: "door/jump gate counts",
+            engine_value: format!("doors={runtime_door_count}, jumps={runtime_jump_count}"),
+            asset_value: format!("doors={retained_door_count}, jumps={retained_jump_count}"),
+        });
+    }
+    if retained.script_objects.len() != assets.scripts.location_count {
+        return Err(attachment_mismatch(
+            "script object count",
+            assets.scripts.location_count,
+            retained.script_objects.len(),
+        ));
+    }
+    validate_special_sector_counts(engine, retained)?;
+
+    let patches = retained
+        .patches
+        .iter()
+        .map(|patch| {
+            let handle = patch.fx_entity_handle.ok_or_else(|| {
+                element_mismatch(format!(
+                    "retained patch {} has no RHElementFX handle",
+                    patch.patch_index
+                ))
+            })?;
+            let slot =
+                crate::natives::ScriptHandleCodec::actor_handle_index(handle).ok_or_else(|| {
+                    element_mismatch(format!(
+                        "retained patch {} FX handle {handle} is not an actor handle",
+                        patch.patch_index
+                    ))
+                })?;
+            let slot = u32::try_from(slot)
+                .map_err(|_| element_mismatch("patch FX entity slot exceeds u32"))?;
+            let entity_id = engine
+                .world
+                .entities
+                .id_at_legacy_slot(slot)
+                .ok_or_else(|| {
+                    element_mismatch(format!(
+                        "retained patch {} FX slot {slot} is absent",
+                        patch.patch_index
+                    ))
+                })?;
+            let creation_order = static_elements
+                .creation_order_by_entity
+                .get(&entity_id)
+                .copied()
+                .ok_or_else(|| {
+                    element_mismatch(format!(
+                        "retained patch {} FX entity {entity_id} has no Original creation order",
+                        patch.patch_index
+                    ))
+                })?;
+            Ok(LegacyPatchTopology {
+                layer: patch.layer,
+                index_in_layer: patch.index_in_layer,
+                fx: Some(LegacyPatchFxTopology {
+                    creation_order,
+                    class: LegacyElementClass::Fx,
+                }),
+            })
+        })
+        .collect::<Result<Vec<_>, LegacyTopologyAdapterError>>()?;
+
+    Ok(LegacyGridTopology {
+        patches,
+        gates: retained
+            .gates
+            .iter()
+            .map(|gate| match gate {
+                LegacyGridGateAsset::Door => LegacyGateTopology::Door,
+                LegacyGridGateAsset::Stateless => LegacyGateTopology::Stateless,
+            })
+            .collect(),
+        script_objects: retained
+            .script_objects
+            .iter()
+            .map(|object| match object {
+                LegacyGridScriptObjectAsset::NonSector => LegacyScriptObjectTopology::NonSector,
+                LegacyGridScriptObjectAsset::Sector { associated_class } => {
+                    LegacyScriptObjectTopology::Sector {
+                        associated_class: associated_class.clone(),
+                    }
+                }
+            })
+            .collect(),
+        sectors: retained
+            .sectors
+            .iter()
+            .map(|sector| match sector {
+                LegacyGridSectorAsset::NullOrOrdinary => LegacySectorTopology::NullOrOrdinary,
+                LegacyGridSectorAsset::Door => LegacySectorTopology::Door,
+                LegacyGridSectorAsset::Building => LegacySectorTopology::Building,
+                LegacyGridSectorAsset::Lift => LegacySectorTopology::Lift,
+            })
+            .collect(),
     })
+}
+
+fn attachment_mismatch(
+    fact: &'static str,
+    engine_value: usize,
+    asset_value: usize,
+) -> LegacyTopologyAdapterError {
+    LegacyTopologyAdapterError::MissionAttachmentMismatch {
+        fact,
+        engine_value: engine_value.to_string(),
+        asset_value: asset_value.to_string(),
+    }
+}
+
+fn validate_special_sector_counts(
+    engine: &EngineInner,
+    retained: &crate::engine::LegacyGridTopologyAssets,
+) -> Result<(), LegacyTopologyAdapterError> {
+    use crate::engine::LegacyGridSectorAsset;
+
+    let count_runtime = |predicate: fn(crate::sector::SectorType) -> bool| {
+        engine
+            .world
+            .fast_grid
+            .level
+            .sectors
+            .iter()
+            .filter(|sector| predicate(sector.sector_type))
+            .count()
+    };
+    let runtime = (
+        count_runtime(crate::sector::SectorType::is_door),
+        count_runtime(crate::sector::SectorType::is_building),
+        count_runtime(crate::sector::SectorType::is_lift),
+    );
+    let assets = (
+        retained
+            .sectors
+            .iter()
+            .filter(|sector| matches!(sector, LegacyGridSectorAsset::Door))
+            .count(),
+        retained
+            .sectors
+            .iter()
+            .filter(|sector| matches!(sector, LegacyGridSectorAsset::Building))
+            .count(),
+        retained
+            .sectors
+            .iter()
+            .filter(|sector| matches!(sector, LegacyGridSectorAsset::Lift))
+            .count(),
+    );
+    if runtime != assets {
+        return Err(LegacyTopologyAdapterError::MissionAttachmentMismatch {
+            fact: "door/building/lift sector counts",
+            engine_value: format!(
+                "doors={}, buildings={}, lifts={}",
+                runtime.0, runtime.1, runtime.2
+            ),
+            asset_value: format!(
+                "doors={}, buildings={}, lifts={}",
+                assets.0, assets.1, assets.2
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Derive `RHHikingGuide::marrayHikingPathes` in its exact stored order.
@@ -959,16 +1166,27 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_grid_topology_names_the_discarded_fact() {
+    fn grid_topology_requires_retained_sparse_construction_order() {
         let engine = EngineInner::new();
-        let assets = LevelAssets::new();
+        let mut assets = LevelAssets::new();
         assert!(matches!(
             derive_grid_topology(&engine, &assets),
             Err(LegacyTopologyAdapterError::MissingRetainedFact {
-                fact: LegacyMissingTopologyFact::GridGateOrder,
+                fact: LegacyMissingTopologyFact::GridSparseSectorOrder,
                 ..
             })
         ));
+
+        assets.legacy_grid_topology = Some(crate::engine::LegacyGridTopologyAssets::default());
+        assert_eq!(
+            derive_grid_topology(&engine, &assets).unwrap(),
+            LegacyGridTopology {
+                patches: Vec::new(),
+                gates: Vec::new(),
+                script_objects: Vec::new(),
+                sectors: Vec::new(),
+            }
+        );
     }
 
     fn fx(mobile_index: Option<u16>) -> Entity {
