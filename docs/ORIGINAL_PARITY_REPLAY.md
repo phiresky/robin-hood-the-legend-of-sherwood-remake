@@ -1990,6 +1990,22 @@ performs the outgoing-to-incoming transaction, then reapplies any newer
 caller-tail pair. Savegame 034 now matches every recorded frame; the already
 green Profile 003 Restart replay remains exact.
 
+### Full swordfight exit preserves survivor principal ordering
+
+`RHElementActorHuman::QuitSwordFight` removes the quitter from each opponent by
+calling `DeleteOpponent`, then clears the quitter's own list. `DeleteOpponent`
+recomputes relative fighting ability and smalltalk initiative, but a full exit
+does not call `EvaluateOpponents` for survivors and therefore does not randomly
+choose a new principal opponent.
+
+Rust had added a principal-opponent reshuffle whenever a survivor retained two
+or more opponents. Besides changing list order, even a single face-cone
+candidate consumed an authoritative RNG draw. Linux3 Profile 003 Savegame 006
+exposed that extra draw at frame 6264 when one PC exited a three-on-one fight.
+Full swordfight exit now retains each survivor list's first remaining entry and
+performs only the `DeleteOpponent` strength/initiative consequences. The replay
+advances to an independent command-order divergence at frame 6275.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

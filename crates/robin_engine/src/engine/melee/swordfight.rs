@@ -1061,20 +1061,14 @@ impl EngineInner {
                         crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
                     );
                 }
-            } else if opp_count >= 2 {
-                // Re-pick the principal opponent now that the list
-                // has changed, so the stale principal pointer doesn't
-                // linger on the removed fighter.
-                self.choose_principal_opponent(sim, *opp_id);
             }
 
-            // Whenever the survivor is still swordfighting, take
-            // smalltalk initiative — fired regardless of whether the
-            // principal index moved.  `choose_principal_opponent`
-            // above only fires it on a swap, so re-fire here for the
-            // ≥1-survivor case.  Re-firing after a swap is a no-op
-            // (`take_smalltalk_initiative` simply re-sets the
-            // already-true flag).
+            // `DeleteOpponent` does not call `EvaluateOpponents` while
+            // `QuitSwordFight` walks the quitter's former opponents. It
+            // retains the survivor list's existing first entry and only
+            // recomputes strength / smalltalk initiative. In particular,
+            // two or more survivors do not consume ChoosePrincipalOpponent's
+            // random draw here.
             if opp_count >= 1 {
                 let opp_swordfighting = self
                     .get_entity(*opp_id)
