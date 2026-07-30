@@ -2089,6 +2089,31 @@ impl Default for TargetData {
     }
 }
 
+/// Bit-exact dormant storage for an Original v48 object's embedded point.
+///
+/// Original's default `RHRepulsivePoint` constructor leaves its four force
+/// scalars uninitialized. `RHElementObject` nevertheless serializes the whole
+/// point, including those dormant bytes. Keep their exact IEEE-754 storage
+/// without exposing non-finite values to runtime geometry or JSON snapshots.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct LegacyV48ObjectRepulsivePointState {
+    pub position_bits: [u32; 2],
+    pub concave: bool,
+    pub limit_left_bits: [u32; 2],
+    pub limit_right_bits: [u32; 2],
+    pub action_radius_bits: u32,
+    pub force_a_bits: u32,
+    pub force_b_bits: u32,
+    pub radius_bits: u32,
+    pub id: u32,
+    pub affects_pcs: bool,
+    pub affects_soldiers: bool,
+    pub affects_civilians: bool,
+    pub affects_animals: bool,
+}
+
 /// Object-level data.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct ObjectData {
@@ -2100,6 +2125,15 @@ pub struct ObjectData {
     pub reference: Option<EntityId>,
     pub belongs_to_beggar: bool,
     pub taken: bool,
+    /// Exact serialized storage for the embedded Original v48 repulsive point.
+    ///
+    /// This is compatibility state, not collision input. Original overwrites
+    /// position and force before exposing the point, or omits it for objects
+    /// with no radius. Rust collision code must likewise use live object
+    /// geometry rather than these constructor residues.
+    #[serde(default)]
+    #[state_hash(skip)]
+    pub legacy_v48_repulsive_point: Option<LegacyV48ObjectRepulsivePointState>,
 }
 
 impl Default for ObjectData {
@@ -2115,6 +2149,7 @@ impl Default for ObjectData {
             reference: None,
             belongs_to_beggar: false,
             taken: false,
+            legacy_v48_repulsive_point: None,
         }
     }
 }

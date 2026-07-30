@@ -949,6 +949,25 @@ additional meaning. Import therefore clears the runtime flag on restored
 translation and preserving the saved goal. Without that semantic conversion,
 the first post-load frame incorrectly faced each actor toward map origin.
 
+### Linux-v48 dormant object repulsive-point storage
+
+Linux2/Linux3 saves contain non-finite values in different scalar members of
+`RHElementObject::mrepulsivePoint`: action radius, both force coefficients, and
+radius. This is expected legacy constructor storage, not live collision
+geometry. `RHRepulsivePoint::RHRepulsivePoint()` initializes flags, concavity,
+and identity but leaves those four scalars indeterminate, while
+`RHElementObject::Serialize` writes the complete point unconditionally.
+
+Original's default `GetRepulsiveObjects` either omits the point for an object
+with zero radius or overwrites its position and all four force scalars before
+inserting it. `RHElementNet` does the same before inserting either embedded
+point, and `RHElementCoin` never inserts one. Rust therefore retains every
+serialized float as its exact `u32` bit pattern in a JSON-safe compatibility
+sidecar, along with the point's flags and identity, but never treats that
+sidecar as runtime geometry or semantic state-hash input. Live
+static-grid/actor repulsive geometry keeps strict finite-value validation; this
+exception is limited to the proven dormant object-owned leaf.
+
 ### Linux-v48 dormant carried-posture storage
 
 Profile 011 creation order 157 stores `mCarriedPosture = 161437968` while
