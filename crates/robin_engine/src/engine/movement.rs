@@ -5537,6 +5537,12 @@ impl EngineInner {
                 for _ in 0..perform_seek_calls {
                     actor.seek_refresh_wait = age_seek_refresh_wait(actor.seek_refresh_wait);
                 }
+                // Original performs this aging directly on the overloaded
+                // `mulWaitTime` member. Keep the Rust ordinary-wait copy in
+                // sync while seek owns that legacy scalar so every possible
+                // exit (post-seek interaction, a following Move, interruption
+                // or cancellation) retains the last wrapped value.
+                actor.wait_time = actor.seek_refresh_wait;
                 tracing::trace!(
                     entity = ?entity_id,
                     wait_before,
