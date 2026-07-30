@@ -1538,6 +1538,36 @@ referenced values remain strictly validated against the live class. Target and
 scroll VMs retain exact class-name validation because they do not pass through
 the actor serializer's `mbScriptInitialized` guard.
 
+### Seek-point sideward looks complete from their sequence event
+
+Original's sideward-look sequence owns its own completion. The sprite reaches
+the action point, emits `EVENT_DONE`, and the selected sequence advances from
+that event. There is no second actor timer which independently terminates the
+look.
+
+Rust also armed a fixed-duration `stare_remaining` timer for these seek-point
+looks. It could expire before the sequence's animation event, interrupt the
+live look, and let AI start unrelated work such as leaving a building. That
+changed both sequence ownership and later RNG consumption. Seek-point
+sideward looks now rely exclusively on their sequence event, matching the
+Original completion path. Linux2 Profile 002 save 000 consequently matches
+every recorded frame.
+
+### Actor seek sectors retain door identities
+
+`RHElementActor::mpSeekSector` is an `RHSector*`, not specifically a motion
+sector. A point seek whose goal is a door stores the corresponding
+`RHSectorDoor`; the pointer remains serialized even when another seek mode
+currently makes it dormant.
+
+Rust's Linux-v48 adoption previously resolved this field only through the
+compact motion/building-sector table and rejected a valid sparse door-sector
+slot. The retained Original topology now maps every sparse door-sector
+constructor identity through the isomorphic gate order, and actor continuation
+state represents a seek sector as either a position sector or a door. Linux3
+Profile 003 save 055 now adopts successfully and reaches ordinary frame
+comparison instead of failing on sparse sector 416.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
@@ -1557,11 +1587,11 @@ Every frame in the original five-trace corpus matches:
 
 The expanded authoritative Linux audit adds 48 `Savegame_linux2` traces and
 140 `Savegame_linux3` traces. Unlike the first group, these exercise up to
-dozens of dynamic bonuses/projectiles and a much wider set of interrupted
-runtime states. Linux3 Profile 002 `Continue-session-0002` and
-`Restart-session-0002` also match every recorded frame. The other 186 expanded
-traces remain the active completion set; failures are being grouped by their
-first general cause and the whole affected shard is rerun after each fix.
+hundreds of dynamic bonuses/projectiles and a much wider set of interrupted
+runtime states. All five Linux3 Profile 002 traces currently match every
+recorded frame. The remaining corpus is the active completion set; failures
+are grouped by their first general cause and the whole affected shard is rerun
+after each fix.
 
 Windows `GSHR` compatibility and exposing this adoption path through the
 ordinary interactive save loader remain separate follow-up work.

@@ -758,7 +758,7 @@ pub fn derive_grid_topology(
             .iter()
             .map(|sector| match sector {
                 LegacyGridSectorAsset::NullOrOrdinary => LegacySectorTopology::NullOrOrdinary,
-                LegacyGridSectorAsset::Door => LegacySectorTopology::Door,
+                LegacyGridSectorAsset::Door { .. } => LegacySectorTopology::Door,
                 LegacyGridSectorAsset::Building => LegacySectorTopology::Building,
                 LegacyGridSectorAsset::Lift => LegacySectorTopology::Lift,
             })
@@ -803,7 +803,7 @@ fn validate_special_sector_counts(
         retained
             .sectors
             .iter()
-            .filter(|sector| matches!(sector, LegacyGridSectorAsset::Door))
+            .filter(|sector| matches!(sector, LegacyGridSectorAsset::Door { .. }))
             .count(),
         retained
             .sectors

@@ -119,6 +119,8 @@ pub struct LegacyPositionTopology {
     /// Original sparse `marraySectors` slot to Rust's compact runtime sector.
     /// Constructor holes and non-position sector objects remain `None`.
     pub sectors: Vec<Option<SectorHandle>>,
+    /// Original sparse sector slots whose object is an `RHSectorDoor`.
+    pub sector_doors: Vec<Option<DoorHandle>>,
     pub doors: Vec<DoorHandle>,
     pub projection_areas: Vec<LegacyPositionObstacleBinding>,
     pub sight_obstacles: Vec<LegacyPositionObstacleBinding>,
@@ -415,8 +417,32 @@ pub fn derive_position_topology(
                 .transpose()
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let sector_doors = retained
+        .sectors
+        .iter()
+        .map(|kind| {
+            let crate::engine::LegacyGridSectorAsset::Door { gate_index } = kind else {
+                return Ok(None);
+            };
+            let runtime = gate_order.get(*gate_index as usize).ok_or_else(|| {
+                position_topology_detail(format!(
+                    "sparse door sector references missing Original gate index {gate_index}"
+                ))
+            })?;
+            if !matches!(
+                retained.gates.get(*gate_index as usize),
+                Some(crate::engine::LegacyGridGateAsset::Door)
+            ) {
+                return Err(position_topology_detail(format!(
+                    "sparse door sector references non-door Original gate index {gate_index}"
+                )));
+            }
+            Ok(Some(DoorHandle(runtime.0)))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     build_position_topology(
         sectors,
+        sector_doors,
         &gate_order,
         assets.static_sight_obstacles.as_slice(),
     )
@@ -424,6 +450,7 @@ pub fn derive_position_topology(
 
 fn build_position_topology(
     sectors: Vec<Option<SectorHandle>>,
+    sector_doors: Vec<Option<DoorHandle>>,
     gate_order: &[crate::gate::DoorIndex],
     obstacles: &[crate::sight_obstacle::SightObstacle],
 ) -> Result<LegacyPositionTopology, LegacySaveAdoptError> {
@@ -500,6 +527,7 @@ fn build_position_topology(
 
     Ok(LegacyPositionTopology {
         sectors,
+        sector_doors,
         doors,
         projection_areas,
         sight_obstacles,
@@ -911,6 +939,7 @@ mod tests {
         let obstacles = vec![obstacle(1, false, 9.0), obstacle(0, true, 4.0)];
         let topology = build_position_topology(
             identity_sectors(17),
+            vec![None; 17],
             &[
                 crate::gate::DoorIndex(2),
                 crate::gate::DoorIndex(0),
@@ -967,9 +996,13 @@ mod tests {
     fn synthetic_ground_restores_a_plane_without_inventing_an_obstacle_handle() {
         let (envelope, element_topology, _) = fixture();
         let entities = LegacyEntityFixups::build(&envelope, &element_topology).unwrap();
-        let topology =
-            build_position_topology(identity_sectors(3), &[crate::gate::DoorIndex(0)], &[])
-                .unwrap();
+        let topology = build_position_topology(
+            identity_sectors(3),
+            vec![None; 3],
+            &[crate::gate::DoorIndex(0)],
+            &[],
+        )
+        .unwrap();
         let mut payload = position_payload();
         payload.layer = 0;
         payload.obstacle = LegacySignedIndexRef(Some(0));
@@ -990,7 +1023,8 @@ mod tests {
     #[test]
     fn position_topology_rejects_non_isomorphic_obstacle_arrays() {
         let duplicate_ids = vec![obstacle(0, false, 1.0), obstacle(0, true, 2.0)];
-        let obstacle_error = build_position_topology(Vec::new(), &[], &duplicate_ids).unwrap_err();
+        let obstacle_error =
+            build_position_topology(Vec::new(), Vec::new(), &[], &duplicate_ids).unwrap_err();
         assert!(matches!(
             obstacle_error,
             LegacySaveAdoptError::InvalidPositionTopology { .. }
@@ -1026,6 +1060,7 @@ mod tests {
                     SectorHandle::new(42),
                     SectorHandle::new(7),
                 ],
+                sector_doors: vec![None; 3],
                 doors: vec![DoorHandle(9)],
                 projection_areas: vec![projection],
                 sight_obstacles: vec![sight],
@@ -1068,6 +1103,7 @@ mod tests {
             &entities,
             &LegacyPositionTopology {
                 sectors: identity_sectors(3),
+                sector_doors: vec![None; 3],
                 doors: vec![DoorHandle(9)],
                 projection_areas: Vec::new(),
                 sight_obstacles: Vec::new(),
@@ -1108,6 +1144,7 @@ mod tests {
             &entities,
             &LegacyPositionTopology {
                 sectors: identity_sectors(3),
+                sector_doors: vec![None; 3],
                 doors: vec![DoorHandle(9)],
                 projection_areas: vec![],
                 sight_obstacles: vec![],
@@ -1151,6 +1188,7 @@ mod tests {
         };
         let arrays = LegacyPositionTopology {
             sectors: identity_sectors(3),
+            sector_doors: vec![None; 3],
             doors: vec![DoorHandle(9)],
             projection_areas: vec![projection],
             sight_obstacles: vec![sight],

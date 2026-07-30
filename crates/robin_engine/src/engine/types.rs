@@ -996,7 +996,7 @@ pub enum LegacyGridScriptObjectAsset {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LegacyGridSectorAsset {
     NullOrOrdinary,
-    Door,
+    Door { gate_index: u32 },
     Building,
     Lift,
 }

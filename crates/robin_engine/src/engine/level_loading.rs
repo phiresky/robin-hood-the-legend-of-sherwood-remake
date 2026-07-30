@@ -407,10 +407,12 @@ fn append_door_constructor(
     sectors: &mut LegacySectorTopologyBuilder,
     door: &crate::level_data::RawDoor,
 ) {
+    let gate_index =
+        u32::try_from(topology.gates.len()).expect("Original gate array index exceeds u32");
     topology.gates.push(LegacyGridGateAsset::Door);
     let sector_number = sectors.construct();
     if !door.door_sector.points.is_empty() {
-        sectors.add(sector_number, LegacyGridSectorAsset::Door);
+        sectors.add(sector_number, LegacyGridSectorAsset::Door { gate_index });
     }
 }
 
@@ -462,14 +464,14 @@ mod legacy_grid_topology_tests {
         let mut builder = LegacySectorTopologyBuilder::default();
         builder.construct();
         let door = builder.construct();
-        builder.add(door, LegacyGridSectorAsset::Door);
+        builder.add(door, LegacyGridSectorAsset::Door { gate_index: 0 });
         builder.construct();
 
         assert_eq!(
             builder.slots,
             vec![
                 LegacyGridSectorAsset::NullOrOrdinary,
-                LegacyGridSectorAsset::Door,
+                LegacyGridSectorAsset::Door { gate_index: 0 },
             ]
         );
         assert_eq!(builder.position_sector_numbers, vec![None, None]);
@@ -531,10 +533,10 @@ mod legacy_grid_topology_tests {
                 // Lift associated-sector and empty lift-door holes.
                 LegacyGridSectorAsset::NullOrOrdinary,
                 LegacyGridSectorAsset::NullOrOrdinary,
-                LegacyGridSectorAsset::Door,
+                LegacyGridSectorAsset::Door { gate_index: 1 },
                 // Building is constructed before its door, then added after it.
                 LegacyGridSectorAsset::Building,
-                LegacyGridSectorAsset::Door,
+                LegacyGridSectorAsset::Door { gate_index: 2 },
                 // Empty standalone door exposed by the later jump-zone AddSector.
                 LegacyGridSectorAsset::NullOrOrdinary,
                 LegacyGridSectorAsset::NullOrOrdinary,

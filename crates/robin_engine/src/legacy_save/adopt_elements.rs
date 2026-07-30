@@ -10,7 +10,7 @@ use std::num::NonZeroU32;
 use thiserror::Error;
 
 use crate::{
-    actor_state::ActorContinuationState,
+    actor_state::{ActorContinuationState, ActorSeekSector},
     ai::{
         AiController, AiGlobalState, AiLockFlags, AiState, AlertLevel, Attitude, CombatInfo,
         DoorCombatInfo, GotoFlags, Hint, Noise, NoiseType, PathHistoryEntry, PathId, PatrolPath,
@@ -1062,7 +1062,7 @@ fn convert_actor(
         motion_state,
         seek_layer: saved.seek_layer,
         seek_to_point: saved.seek_to_point,
-        seek_sector: sector(saved.seek_sector.0, topology, creation_order, "seek_sector")?,
+        seek_sector: seek_sector(saved.seek_sector.0, topology, creation_order, "seek_sector")?,
         check_for_jump: saved.check_for_jump,
         bypassing: saved.bypassing,
         on_railroad: saved.on_railroad,
@@ -2562,6 +2562,31 @@ fn sector(
         .transpose()
 }
 
+fn seek_sector(
+    value: Option<u16>,
+    topology: &LegacyPositionTopology,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<Option<ActorSeekSector>, LegacyElementAdoptError> {
+    value
+        .map(|index| {
+            let slot = usize::from(index);
+            if let Some(Some(sector)) = topology.sectors.get(slot) {
+                return Ok(ActorSeekSector::Position(*sector));
+            }
+            if let Some(Some(door)) = topology.sector_doors.get(slot) {
+                return Ok(ActorSeekSector::Door(*door));
+            }
+            Err(LegacyElementAdoptError::MissingSector {
+                creation_order,
+                field,
+                index,
+                count: topology.sectors.len(),
+            })
+        })
+        .transpose()
+}
+
 fn ai_position(
     saved: LegacyAiPosition,
     topology: &LegacyPositionTopology,
@@ -3512,6 +3537,27 @@ fn ai_base_mut(brain: &mut AiBrain) -> Option<&mut AiController> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn actor_seek_sector_preserves_a_saved_door_sector_identity() {
+        let door = crate::position_interface::DoorHandle(9);
+        let topology = LegacyPositionTopology {
+            sectors: vec![SectorHandle::new(3), None],
+            sector_doors: vec![None, Some(door)],
+            doors: vec![door],
+            projection_areas: Vec::new(),
+            sight_obstacles: Vec::new(),
+        };
+
+        assert_eq!(
+            seek_sector(Some(1), &topology, 326, "seek_sector").unwrap(),
+            Some(ActorSeekSector::Door(door))
+        );
+        assert_eq!(
+            seek_sector(Some(0), &topology, 326, "seek_sector").unwrap(),
+            Some(ActorSeekSector::Position(SectorHandle::new(3).unwrap()))
+        );
+    }
+
     fn sample_npc_view() -> LegacyNpcView {
         LegacyNpcView {
             leaning: true,
@@ -3728,6 +3774,7 @@ mod tests {
         }];
         let topology = LegacyPositionTopology {
             sectors: vec![SectorHandle::new(0), SectorHandle::new(1)],
+            sector_doors: vec![None; 2],
             doors: Vec::new(),
             projection_areas: Vec::new(),
             sight_obstacles: Vec::new(),
@@ -3763,6 +3810,7 @@ mod tests {
         }];
         let topology = LegacyPositionTopology {
             sectors: vec![SectorHandle::new(0)],
+            sector_doors: vec![None],
             doors: Vec::new(),
             projection_areas: Vec::new(),
             sight_obstacles: Vec::new(),
