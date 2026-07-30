@@ -1094,6 +1094,24 @@ noncanonical posture or action-state words, and sequence/manager/engine
 serialization propagates that failure instead of continuing a malformed
 stream.
 
+### Transition-distance continuation start state
+
+Three expanded Linux saves reached an ordinary walking path whose
+`TRANSITION_WAITING_UPRIGHT_WALKING_UPRIGHT` animation exhausted before
+covering its four-unit target. Original retains the unreached target by copying
+the transition order at the following animation change. The resulting walking
+continuation moves on its first actor slot but exposes `RHMOTION_IN_PROGRESS`,
+so the `RHMOTION_START` arm does not change the actor from `WAITING` to
+`MOVING` until a later ordinary walking booking. Rust generated the same
+continuation and exact displacement, but treated it as a fresh walking start
+and exposed `MOVING` one frame early.
+
+Generated transition-distance continuations now carry an explicit runtime tag.
+Their one START-owned posture/action-state effect is suppressed while all
+ordinary walking starts and all later continuation ticks keep their existing
+behavior. Linux2 Profile 002 saves 013 and 021 subsequently match every
+recorded frame; Linux3 Profile 003 save 064 advances from frame 5,929 to 5,983.
+
 ### Large-window compressed trace input
 
 The expanded Linux2/Linux3 corpus includes single-frame zstd streams whose

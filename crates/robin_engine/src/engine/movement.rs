@@ -5197,6 +5197,7 @@ impl EngineInner {
                 order_tolerance,
                 order_compute_direction,
                 order_reverse,
+                transition_distance_continuation,
                 next_destination_same_action,
             ) = {
                 let actor = match entity.actor_data_mut() {
@@ -5290,6 +5291,7 @@ impl EngineInner {
                 let order_tolerance = order.tolerance;
                 let order_compute_direction = order.compute_direction;
                 let order_reverse = order.reverse;
+                let transition_distance_continuation = order.transition_distance_continuation;
                 let next_destination_same_action = self
                     .orders
                     .sequence_manager
@@ -5367,6 +5369,7 @@ impl EngineInner {
                     order_tolerance,
                     order_compute_direction,
                     order_reverse,
+                    transition_distance_continuation,
                     next_destination_same_action,
                 )
             };
@@ -6173,6 +6176,8 @@ impl EngineInner {
             // PerformMotion returns that final result, before Proceed rewrites
             // the diagnostic motion for a successor order.
             if !is_transition_anim
+                && !(transition_distance_continuation
+                    && matches!(state_effect_motion, MotionState::Start))
                 && let Some((posture, action_state)) =
                     movement_execute_state_effect(order_action, state_effect_motion)
             {
@@ -6492,6 +6497,7 @@ impl EngineInner {
                             if let Some((insertion, animation)) = next_animation {
                                 let mut continuation = element.orders.front().unwrap().clone();
                                 continuation.order_type = animation;
+                                continuation.transition_distance_continuation = true;
                                 continuation.reseed_id(crate::order::alloc_order_id(next_order_id));
                                 continuation_door_action = Some((animation, continuation.reverse));
                                 element.insert_order(insertion, continuation);

@@ -526,6 +526,12 @@ pub struct Order {
     /// the original queues them during that first frame, so their first
     /// visible Execute must not advance the body yet.
     pub defer_initial_turn_step: bool,
+    /// This distance order is the copy which finishes the unreached target of
+    /// an exhausted `TillLastFrame` transition. Original exposes its first
+    /// walking tick as `RHMOTION_IN_PROGRESS`, so the walking START action
+    /// state side effect must remain suppressed for that one booking.
+    #[serde(default)]
+    pub transition_distance_continuation: bool,
     /// Tolerance for reaching the destination.
     pub tolerance: f32,
     /// Lock the AI while this order is being executed.
@@ -572,6 +578,7 @@ impl Order {
             target_actor: None,
             compute_direction: true,
             defer_initial_turn_step: false,
+            transition_distance_continuation: false,
             tolerance: 0.0,
             lock_ai: false,
             reverse: false,
@@ -773,6 +780,7 @@ impl AiOrderIntent {
             target_actor: self.target_actor,
             compute_direction: self.compute_direction,
             defer_initial_turn_step: self.defer_initial_turn_step,
+            transition_distance_continuation: false,
             tolerance: self.tolerance,
             lock_ai: self.lock_ai,
             reverse: self.reverse,
