@@ -1,4 +1,5 @@
-//! Replay a JSONL parity trace produced by the original C++ game.
+//! Replay a plain or zstd-compressed JSONL parity trace produced by the
+//! original C++ game.
 //!
 //! This intentionally accepts the neutral, resolved-command schema emitted by
 //! `original-code/RHParity.cpp`, rather than the Rust-native replay schema.
@@ -10,7 +11,7 @@
 
 use std::fmt::Write as _;
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Seek, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::{collections::BTreeMap, collections::BTreeSet, collections::VecDeque};
@@ -1984,7 +1985,7 @@ fn parse_options() -> Options {
     const USAGE: &str = "usage: original_parity_replay [--scan-all] [--no-auto-dump] [--visual] \
         [--http-server PORT [--start-paused]] \
         [--dump-jsonl PATH [--dump-from FRAME] [--dump-through FRAME] \
-        [--dump-entity KIND:INDEX]...] TRACE.jsonl";
+        [--dump-entity KIND:INDEX]...] TRACE.jsonl[.zst]";
 
     let mut args = std::env::args_os().skip(1);
     let mut scan_all = false;
@@ -2482,6 +2483,35 @@ fn binary_trace_cache_path(trace_path: &std::path::Path) -> PathBuf {
     PathBuf::from(cache_name)
 }
 
+fn open_jsonl_trace(trace_path: &std::path::Path) -> Box<dyn BufRead> {
+    const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
+
+    let mut file = File::open(trace_path)
+        .unwrap_or_else(|error| panic!("open parity trace {}: {error}", trace_path.display()));
+    let mut magic = [0_u8; ZSTD_MAGIC.len()];
+    let magic_len = file.read(&mut magic).unwrap_or_else(|error| {
+        panic!("read parity trace magic {}: {error}", trace_path.display())
+    });
+    file.rewind().unwrap_or_else(|error| {
+        panic!(
+            "rewind parity trace after reading magic {}: {error}",
+            trace_path.display()
+        )
+    });
+
+    if magic_len == ZSTD_MAGIC.len() && magic == ZSTD_MAGIC {
+        let decoder = zstd::stream::read::Decoder::new(file).unwrap_or_else(|error| {
+            panic!(
+                "start parity trace decompression {}: {error}",
+                trace_path.display()
+            )
+        });
+        Box::new(BufReader::new(decoder))
+    } else {
+        Box::new(BufReader::new(file))
+    }
+}
+
 fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
     let cache_path = binary_trace_cache_path(trace_path);
     let fingerprint = trace_source_fingerprint(trace_path);
@@ -2509,9 +2539,7 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
         ),
     }
 
-    let file = File::open(trace_path)
-        .unwrap_or_else(|error| panic!("open parity trace {}: {error}", trace_path.display()));
-    let mut lines = BufReader::new(file).lines();
+    let mut lines = open_jsonl_trace(trace_path).lines();
     let trace: TraceHeader = serde_json::from_str(
         &lines
             .next()
@@ -3873,6 +3901,28 @@ mod tests {
 
     fn valid_initial_save() -> TraceInitialSave {
         valid_initial_save_with_profile(TraceSaveSourceProfile::LinuxI386RhsgV48)
+    }
+
+    #[test]
+    fn jsonl_trace_reader_accepts_plain_and_zstd_content() {
+        let jsonl = b"{\"type\":\"header\"}\n{\"type\":\"rng_prefix\"}\n";
+        let directory = tempfile::tempdir().unwrap();
+        let plain_path = directory.path().join("trace.jsonl");
+        let compressed_path = directory.path().join("trace.jsonl.zst");
+        std::fs::write(&plain_path, jsonl).unwrap();
+        std::fs::write(
+            &compressed_path,
+            zstd::stream::encode_all(std::io::Cursor::new(jsonl), 1).unwrap(),
+        )
+        .unwrap();
+
+        for path in [plain_path, compressed_path] {
+            let mut decoded = String::new();
+            open_jsonl_trace(&path)
+                .read_to_string(&mut decoded)
+                .unwrap();
+            assert_eq!(decoded.as_bytes(), jsonl);
+        }
     }
 
     #[test]
