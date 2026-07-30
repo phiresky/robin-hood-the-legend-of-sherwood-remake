@@ -15,7 +15,7 @@ use super::elements::LegacyElementClass;
 use super::payload_base::{
     LegacyElementRef, LegacyFxPayload, LegacyPayloadLimits, LegacyPoint2, read_element_ref,
 };
-use super::payload_vm::LegacyVmMemberSection;
+use super::payload_vm::{LegacyVmMemberDecoder, LegacyVmMemberSection};
 
 const fn hex16(hex: &str) -> [u8; 16] {
     let bytes = hex.as_bytes();
@@ -120,6 +120,16 @@ pub trait LegacyGridDecodeContext {
         reader: &mut LegacyReader<'_>,
         class_name: &str,
     ) -> LegacyResult<LegacyVmMemberSection>;
+}
+
+impl LegacyGridDecodeContext for LegacyVmMemberDecoder<'_> {
+    fn read_sector_script_members(
+        &self,
+        reader: &mut LegacyReader<'_>,
+        class_name: &str,
+    ) -> LegacyResult<LegacyVmMemberSection> {
+        self.read_class_members(reader, class_name)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
