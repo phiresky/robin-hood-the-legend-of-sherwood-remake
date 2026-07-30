@@ -124,6 +124,20 @@ impl PlaneZCoeffs {
 // ---------------------------------------------------------------------------
 
 bitflags! {
+    /// Which serialized coordinate representations are currently valid.
+    ///
+    /// Rust normally keeps map and 3D coordinates eagerly synchronized, but
+    /// Original v48 saves retain this lazy-computation mask independently.
+    /// Keeping it here is required for an exact mid-motion restore.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    pub(crate) struct PositionComputed: u8 {
+        const NONE   = 0;
+        const THREE_D = 1;
+        const MAP    = 2;
+        const SPRITE = 4;
+        const ALL    = 7;
+    }
+
     /// Which increment vectors / direction have been computed.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
     pub struct IncrementComputed: u8 {
@@ -132,6 +146,12 @@ bitflags! {
         const INCREMENT = 2;
         const DIRECTION = 4;
         const ALL       = 7;
+    }
+}
+
+impl robin_util::state_hash::StateHash for PositionComputed {
+    fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        robin_util::state_hash::StateHash::state_hash(&self.bits(), state);
     }
 }
 
@@ -199,10 +219,11 @@ impl Posture {
 // Opaque handles
 // ---------------------------------------------------------------------------
 
-/// Elevation-layer index.  Nominal newtype around `NonMaxU16` so
-/// `Option<Layer>` gets niche-optimized to 2 bytes.  Layer indices are
-/// small (typically 0..8); the on-disk sentinel is `0xFFFF` so a real
-/// layer literally cannot hold it.
+/// Elevation-layer index.
+///
+/// Normal runtime construction rejects `0xffff`, but exact v48 save
+/// restoration preserves that value because the Original uses it as the
+/// projectile/sight-obstacle layer sentinel.
 #[derive(
     Debug,
     Clone,
@@ -216,20 +237,22 @@ impl Posture {
     Deserialize,
     robin_state_hash_derive::StateHash,
 )]
-pub struct Layer(pub nonmax::NonMaxU16);
+pub struct Layer(u16);
 
 impl Layer {
-    pub const ZERO: Layer = Layer(match nonmax::NonMaxU16::new(0) {
-        Some(v) => v,
-        None => unreachable!(),
-    });
+    pub const ZERO: Layer = Layer(0);
     #[inline]
     pub fn new(v: u16) -> Option<Self> {
-        nonmax::NonMaxU16::new(v).map(Self)
+        (v != u16::MAX).then_some(Self(v))
+    }
+    /// Restore the Original's `0xffff` projectile-layer sentinel.
+    #[inline]
+    pub(crate) const fn from_saved_raw(v: u16) -> Self {
+        Self(v)
     }
     #[inline]
     pub fn get(self) -> u16 {
-        self.0.get()
+        self.0
     }
 }
 
@@ -577,15 +600,20 @@ pub struct TargetInfo {
 /// Position, movement, direction, and collision component for a game entity.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct PositionInterface {
+    // -- Serialized lazy-computation state --
+    computed_position: PositionComputed,
+
     // -- Computational state --
     computed_increment: IncrementComputed,
 
     // -- Positions --
     position: WorldPoint3D,
     position_map: MapPoint,
+    position_sprite: MapPoint,
 
     old_position: WorldPoint3D,
     old_position_map: MapPoint,
+    old_position_sprite: MapPoint,
 
     goal_map: MapPoint,
     goal_next_map: MapPoint,
@@ -619,6 +647,12 @@ pub struct PositionInterface {
     slow_turn_count: u8,
     direction_count: i8,
 
+    // Original keeps posture in RHPositionInterface. ElementData remains
+    // Rust's gameplay-facing owner, but retaining both serialized values here
+    // prevents old-posture state from being lost during save adoption.
+    saved_posture: crate::element::Posture,
+    saved_old_posture: crate::element::Posture,
+
     // -- Layer & sector --
     layer: Layer,
     sector: Option<SectorHandle>,
@@ -644,6 +678,7 @@ pub struct PositionInterface {
     pub box_blocked: MapBBox,
     pub radius: f32,
     pub radius_initial: f32,
+    saved_target_element: Option<crate::entity_id::EntityId>,
 
     // -- Average speed --
     accumulate_movement_map: bool,
@@ -651,6 +686,60 @@ pub struct PositionInterface {
 
     // -- Forecasted movement --
     forecasted_movement: WorldVec3D,
+}
+
+/// Fully validated state written by Original v48
+/// `RHPositionInterface::Serialize`.
+///
+/// Fields omitted here are explicitly not serialized by the Original:
+/// pathfinder indices, centered move boxes, sprite center, and initial
+/// radius. [`PositionInterface::restore_v48_serialized_state`] preserves
+/// those mission-initialized values.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PositionInterfaceV48State {
+    pub computed_position: PositionComputed,
+    pub computed_increment: IncrementComputed,
+    pub material: crate::element::GameMaterial,
+    pub posture: crate::element::Posture,
+    pub old_posture: crate::element::Posture,
+    pub direction: Direction,
+    pub direction_goal: Direction,
+    pub slow_turn_count: u8,
+    pub layer: Layer,
+    pub layer_goal: Layer,
+    pub tolerance: f32,
+    pub directional_tolerance: bool,
+    pub accumulate_movement_map: bool,
+    pub anti_collision_on: bool,
+    pub goal_next_valid: bool,
+    pub deviated: bool,
+    pub direction_count: i8,
+    pub door_direction: bool,
+    pub reversed_movement: bool,
+    pub blocked_count: u16,
+    pub radius: f32,
+    pub use_emergency_lying_box: bool,
+    pub sector: Option<SectorHandle>,
+    pub sector_goal: Option<SectorHandle>,
+    pub door: DoorHandle,
+    pub obstacle: Option<ObstacleHandle>,
+    pub plane: Option<PlaneZCoeffs>,
+    pub target_element: Option<crate::entity_id::EntityId>,
+    pub position: WorldPoint3D,
+    pub map: MapPoint,
+    pub sprite: MapPoint,
+    pub old_position: WorldPoint3D,
+    pub old_map: MapPoint,
+    pub old_sprite: MapPoint,
+    pub goal_map: MapPoint,
+    pub goal_next_map: MapPoint,
+    pub goal: WorldPoint3D,
+    pub increment: WorldVec3D,
+    pub increment_map: MapVec,
+    pub accumulated_movement_map: MapVec,
+    pub forecasted_movement: WorldVec3D,
+    pub move_box_map: MapBBox,
+    pub blocked_box: MapBBox,
 }
 
 impl Default for PositionInterface {
@@ -663,13 +752,16 @@ impl PositionInterface {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
+            computed_position: PositionComputed::ALL,
             computed_increment: IncrementComputed::NONE,
 
             position: WorldPoint3D::ZERO,
             position_map: MapPoint::ZERO,
+            position_sprite: MapPoint::ZERO,
 
             old_position: WorldPoint3D::ZERO,
             old_position_map: MapPoint::ZERO,
+            old_position_sprite: MapPoint::ZERO,
 
             goal_map: MapPoint::ZERO,
             goal_next_map: MapPoint::ZERO,
@@ -694,6 +786,8 @@ impl PositionInterface {
             direction_goal: Direction::NORTH,
             slow_turn_count: 2,
             direction_count: 0,
+            saved_posture: crate::element::Posture::Undefined,
+            saved_old_posture: crate::element::Posture::Undefined,
 
             layer: Layer::ZERO,
             sector: None,
@@ -715,11 +809,111 @@ impl PositionInterface {
             box_blocked: MapBBox::new(),
             radius: RADIUS_GUY,
             radius_initial: RADIUS_GUY,
+            saved_target_element: None,
 
             accumulate_movement_map: false,
             accumulated_movement_map: MapVec::ZERO,
 
             forecasted_movement: WorldVec3D::ZERO,
+        }
+    }
+
+    /// Atomically install one preflighted Original v48 serialized state.
+    ///
+    /// No setters are used: their eager recomputation would overwrite the
+    /// independently serialized map/3D/sprite caches and computation masks.
+    pub(crate) fn restore_v48_serialized_state(&mut self, state: PositionInterfaceV48State) {
+        self.computed_position = state.computed_position;
+        self.computed_increment = state.computed_increment;
+        self.material = state.material;
+        self.saved_posture = state.posture;
+        self.saved_old_posture = state.old_posture;
+        self.direction = state.direction;
+        self.direction_goal = state.direction_goal;
+        self.slow_turn_count = state.slow_turn_count;
+        self.layer = state.layer;
+        self.layer_goal = state.layer_goal;
+        self.tolerance = state.tolerance;
+        self.directional_tolerance = state.directional_tolerance;
+        self.accumulate_movement_map = state.accumulate_movement_map;
+        self.anti_collision_on = state.anti_collision_on;
+        self.goal_next_valid = state.goal_next_valid;
+        self.deviated = state.deviated;
+        self.direction_count = state.direction_count;
+        self.door_direction = state.door_direction;
+        self.reversed_movement = state.reversed_movement;
+        self.blocked_count = state.blocked_count;
+        self.radius = state.radius;
+        self.use_emergency_lying_box = state.use_emergency_lying_box;
+        self.sector = state.sector;
+        self.sector_goal = state.sector_goal;
+        self.door = state.door;
+        self.obstacle = state.obstacle;
+        self.plane = state.plane;
+        self.saved_target_element = state.target_element;
+        self.position = state.position;
+        self.position_map = state.map;
+        self.position_sprite = state.sprite;
+        self.old_position = state.old_position;
+        self.old_position_map = state.old_map;
+        self.old_position_sprite = state.old_sprite;
+        self.goal_map = state.goal_map;
+        self.goal_next_map = state.goal_next_map;
+        self.goal = state.goal;
+        self.increment = state.increment;
+        self.increment_map = state.increment_map;
+        self.accumulated_movement_map = state.accumulated_movement_map;
+        self.forecasted_movement = state.forecasted_movement;
+        self.move_box_map = state.move_box_map;
+        self.box_blocked = state.blocked_box;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn v48_serialized_state(&self) -> PositionInterfaceV48State {
+        PositionInterfaceV48State {
+            computed_position: self.computed_position,
+            computed_increment: self.computed_increment,
+            material: self.material,
+            posture: self.saved_posture,
+            old_posture: self.saved_old_posture,
+            direction: self.direction,
+            direction_goal: self.direction_goal,
+            slow_turn_count: self.slow_turn_count,
+            layer: self.layer,
+            layer_goal: self.layer_goal,
+            tolerance: self.tolerance,
+            directional_tolerance: self.directional_tolerance,
+            accumulate_movement_map: self.accumulate_movement_map,
+            anti_collision_on: self.anti_collision_on,
+            goal_next_valid: self.goal_next_valid,
+            deviated: self.deviated,
+            direction_count: self.direction_count,
+            door_direction: self.door_direction,
+            reversed_movement: self.reversed_movement,
+            blocked_count: self.blocked_count,
+            radius: self.radius,
+            use_emergency_lying_box: self.use_emergency_lying_box,
+            sector: self.sector,
+            sector_goal: self.sector_goal,
+            door: self.door,
+            obstacle: self.obstacle,
+            plane: self.plane,
+            target_element: self.saved_target_element,
+            position: self.position,
+            map: self.position_map,
+            sprite: self.position_sprite,
+            old_position: self.old_position,
+            old_map: self.old_position_map,
+            old_sprite: self.old_position_sprite,
+            goal_map: self.goal_map,
+            goal_next_map: self.goal_next_map,
+            goal: self.goal,
+            increment: self.increment,
+            increment_map: self.increment_map,
+            accumulated_movement_map: self.accumulated_movement_map,
+            forecasted_movement: self.forecasted_movement,
+            move_box_map: self.move_box_map,
+            blocked_box: self.box_blocked,
         }
     }
 

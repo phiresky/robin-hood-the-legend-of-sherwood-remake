@@ -11,14 +11,22 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 use crate::{
+    coordinates::{MapBBox, MapPoint, MapVec, WorldPoint3D, WorldVec3D},
     element::EntityId,
     engine::{EngineInner, LevelAssets},
+    position_interface::{
+        Direction, DoorHandle, IncrementComputed, Layer, ObstacleHandle, PlaneZCoeffs,
+        PositionComputed, PositionInterfaceV48State, SectorHandle,
+    },
 };
 
 use super::{
     body::LegacySaveBody,
     elements::{LegacyElementClass, LegacyElementEnvelope, LegacyElementResolution},
-    payload_base::{LegacyAiElementRef, LegacyElementRef},
+    payload_base::{
+        LegacyAiElementRef, LegacyBoundingBox2, LegacyElementRef, LegacyPoint2, LegacyPoint3,
+        LegacyPositionPayload,
+    },
     topology_adapter::{
         LegacyStaticElementTopology, LegacyTopologyAdapterError, derive_static_element_topology,
     },
@@ -62,6 +70,45 @@ pub enum LegacySaveAdoptError {
         "save references AI element slot {slot}, but the serialized element array contains only {element_count} records"
     )]
     MissingAiElementSlot { slot: u16, element_count: usize },
+    #[error("saved position field {field} has value {value}; expected {expected}")]
+    InvalidPositionField {
+        field: &'static str,
+        value: String,
+        expected: &'static str,
+    },
+    #[error(
+        "saved position field {field} references index {index}, but initialized topology contains only {count} entries"
+    )]
+    MissingPositionTopologyEntry {
+        field: &'static str,
+        index: usize,
+        count: usize,
+    },
+}
+
+/// Rust obstacle identity and the top plane paired with it.
+///
+/// Original load fixup in `RHPositionInterface::Serialize` restores
+/// `mpPlane = mpObstacle->GetTopPlane()` immediately after resolving the
+/// saved obstacle pointer. Keeping the pair pre-resolved makes the eventual
+/// state install infallible.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LegacyPositionObstacleBinding {
+    pub obstacle: ObstacleHandle,
+    pub plane: PlaneZCoeffs,
+}
+
+/// Mission-created arrays used by Original position-pointer fixups.
+///
+/// Projection-area and sight-obstacle indices are separate Original spaces.
+/// `muwLayer == 0xffff` selects sight obstacles; every other layer selects
+/// projection areas (`original-code/RHpositioninterface.cpp:760-773`).
+#[derive(Clone, Copy, Debug)]
+pub struct LegacyPositionTopology<'a> {
+    pub sector_count: usize,
+    pub doors: &'a [DoorHandle],
+    pub projection_areas: &'a [LegacyPositionObstacleBinding],
+    pub sight_obstacles: &'a [LegacyPositionObstacleBinding],
 }
 
 /// Complete translation between the two Original reference spaces and stable
@@ -198,14 +245,238 @@ pub fn preflight_initialized_v48_adoption(
     LegacyEntityFixups::build(&body.element_envelope, &topology)
 }
 
+/// Validate and normalize one serialized position without mutating its owner.
+///
+/// The returned value is accepted infallibly by
+/// `PositionInterface::restore_v48_serialized_state`. This split ensures a
+/// bad enum or pointer cannot leave an entity half-restored.
+pub(crate) fn preflight_v48_position(
+    payload: &LegacyPositionPayload,
+    entities: &LegacyEntityFixups,
+    topology: LegacyPositionTopology<'_>,
+) -> Result<PositionInterfaceV48State, LegacySaveAdoptError> {
+    let computed_position =
+        PositionComputed::from_bits(u8::try_from(payload.computed_position).map_err(|_| {
+            invalid_position(
+                "computed_position",
+                payload.computed_position,
+                "RHpositionComputed bit mask 0..7",
+            )
+        })?)
+        .ok_or_else(|| {
+            invalid_position(
+                "computed_position",
+                payload.computed_position,
+                "RHpositionComputed bit mask 0..7",
+            )
+        })?;
+    let computed_increment =
+        IncrementComputed::from_bits(u8::try_from(payload.computed_increment).map_err(|_| {
+            invalid_position(
+                "computed_increment",
+                payload.computed_increment,
+                "RHincrementComputed bit mask 0..7",
+            )
+        })?)
+        .ok_or_else(|| {
+            invalid_position(
+                "computed_increment",
+                payload.computed_increment,
+                "RHincrementComputed bit mask 0..7",
+            )
+        })?;
+    let material = match payload.material {
+        0 => crate::element::GameMaterial::Ground,
+        1 => crate::element::GameMaterial::Wood,
+        2 => crate::element::GameMaterial::Stone,
+        3 => crate::element::GameMaterial::Grass,
+        4 => crate::element::GameMaterial::Leaves,
+        5 => crate::element::GameMaterial::Water,
+        6 => crate::element::GameMaterial::Bush,
+        7 => crate::element::GameMaterial::Ice,
+        8 => crate::element::GameMaterial::Hole,
+        10 => crate::element::GameMaterial::LightShadow,
+        value => {
+            return Err(invalid_position(
+                "material",
+                value,
+                "serialized RHmaterial value 0..8 or 10",
+            ));
+        }
+    };
+    let posture = crate::element::Posture::try_from(payload.posture).map_err(|_| {
+        invalid_position(
+            "posture",
+            payload.posture,
+            "serialized RHposture ordinal 0..24",
+        )
+    })?;
+    let old_posture = crate::element::Posture::try_from(payload.old_posture).map_err(|_| {
+        invalid_position(
+            "old_posture",
+            payload.old_posture,
+            "serialized RHposture ordinal 0..24",
+        )
+    })?;
+    let direction = checked_direction("direction", payload.direction)?;
+    let direction_goal = checked_direction("direction_goal", payload.direction_goal)?;
+    let sector = checked_sector("sector", payload.sector.0, topology.sector_count)?;
+    let sector_goal = checked_sector("sector_goal", payload.sector_goal.0, topology.sector_count)?;
+    let door = checked_index("door", payload.door.0, topology.doors)?
+        .copied()
+        .unwrap_or(DoorHandle::NULL);
+    let obstacle_space = if payload.layer == u16::MAX {
+        topology.sight_obstacles
+    } else {
+        topology.projection_areas
+    };
+    let obstacle_binding = checked_index("obstacle", payload.obstacle.0, obstacle_space)?.copied();
+
+    Ok(PositionInterfaceV48State {
+        computed_position,
+        computed_increment,
+        material,
+        posture,
+        old_posture,
+        direction,
+        direction_goal,
+        slow_turn_count: payload.slow_turn_count,
+        layer: Layer::from_saved_raw(payload.layer),
+        layer_goal: Layer::from_saved_raw(payload.layer_goal),
+        tolerance: payload.tolerance,
+        directional_tolerance: payload.directional_tolerance,
+        accumulate_movement_map: payload.accumulate_movement_map,
+        anti_collision_on: payload.anti_collision_on,
+        goal_next_valid: payload.goal_next_valid,
+        deviated: payload.deviated,
+        direction_count: payload.direction_count,
+        door_direction: payload.door_direction,
+        reversed_movement: payload.reversed_movement,
+        blocked_count: payload.blocked_count,
+        radius: payload.radius,
+        use_emergency_lying_box: payload.use_emergency_lying_box,
+        sector,
+        sector_goal,
+        door,
+        obstacle: obstacle_binding.map(|binding| binding.obstacle),
+        plane: obstacle_binding.map(|binding| binding.plane),
+        target_element: entities.resolve_element(payload.target_element)?,
+        position: point3(payload.position),
+        map: point2(payload.map),
+        sprite: point2(payload.sprite),
+        old_position: point3(payload.old_position),
+        old_map: point2(payload.old_map),
+        old_sprite: point2(payload.old_sprite),
+        goal_map: point2(payload.goal_map),
+        goal_next_map: point2(payload.goal_next_map),
+        goal: point3(payload.goal),
+        increment: vector3(payload.increment),
+        increment_map: vector2(payload.increment_map),
+        accumulated_movement_map: vector2(payload.accumulated_movement_map),
+        forecasted_movement: vector3(payload.forecasted_movement),
+        move_box_map: bounding_box(payload.move_box_map),
+        blocked_box: bounding_box(payload.blocked_box),
+    })
+}
+
+fn invalid_position(
+    field: &'static str,
+    value: impl std::fmt::Display,
+    expected: &'static str,
+) -> LegacySaveAdoptError {
+    LegacySaveAdoptError::InvalidPositionField {
+        field,
+        value: value.to_string(),
+        expected,
+    }
+}
+
+fn checked_direction(field: &'static str, raw: i16) -> Result<Direction, LegacySaveAdoptError> {
+    if !(0..16).contains(&raw) {
+        return Err(invalid_position(field, raw, "direction sector 0..15"));
+    }
+    Ok(Direction::from_raw(i32::from(raw)))
+}
+
+fn checked_sector(
+    field: &'static str,
+    raw: Option<u16>,
+    count: usize,
+) -> Result<Option<SectorHandle>, LegacySaveAdoptError> {
+    let Some(index) = raw else {
+        return Ok(None);
+    };
+    if usize::from(index) >= count {
+        return Err(LegacySaveAdoptError::MissingPositionTopologyEntry {
+            field,
+            index: usize::from(index),
+            count,
+        });
+    }
+    Ok(Some(SectorHandle::new(index).expect(
+        "legacy sector null sentinel was decoded as None before preflight",
+    )))
+}
+
+fn checked_index<'a, T>(
+    field: &'static str,
+    raw: Option<i16>,
+    values: &'a [T],
+) -> Result<Option<&'a T>, LegacySaveAdoptError> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let index = usize::try_from(raw)
+        .map_err(|_| invalid_position(field, raw, "non-negative initialized-array index"))?;
+    values
+        .get(index)
+        .map(Some)
+        .ok_or(LegacySaveAdoptError::MissingPositionTopologyEntry {
+            field,
+            index,
+            count: values.len(),
+        })
+}
+
+fn point2(value: LegacyPoint2) -> MapPoint {
+    MapPoint::new(value.x, value.y)
+}
+
+fn vector2(value: LegacyPoint2) -> MapVec {
+    MapVec::new(value.x, value.y)
+}
+
+fn point3(value: LegacyPoint3) -> WorldPoint3D {
+    WorldPoint3D::new(value.x, value.y, value.z)
+}
+
+fn vector3(value: LegacyPoint3) -> WorldVec3D {
+    WorldVec3D::new(value.x, value.y, value.z)
+}
+
+fn bounding_box(value: LegacyBoundingBox2) -> MapBBox {
+    if value.bounds_are_set {
+        MapBBox::from_coords(
+            value.top_left.x,
+            value.top_left.y,
+            value.bottom_right.x,
+            value.bottom_right.y,
+        )
+    } else {
+        MapBBox::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::element::EntityIdKind;
     use crate::legacy_save::{
         elements::{LegacyElementFixupTable, LegacyElementRecord, LegacyElementResolution},
+        payload_base::{LegacySectorRef, LegacySignedIndexRef},
         payload_context::{LegacyElementPayloadMetadata, LegacyMissionPayloadMetadata},
     };
+    use crate::position_interface::PositionInterface;
 
     fn fixture() -> (LegacyElementEnvelope, LegacyStaticElementTopology, EntityId) {
         let entity_id = EntityId::new(9, EntityIdKind::Fx);
@@ -286,5 +557,192 @@ mod tests {
                 element_count: 1
             })
         ));
+    }
+
+    fn point2(x: f32, y: f32) -> LegacyPoint2 {
+        LegacyPoint2 { x, y }
+    }
+
+    fn point3(x: f32, y: f32, z: f32) -> LegacyPoint3 {
+        LegacyPoint3 { x, y, z }
+    }
+
+    fn bbox(seed: f32, bounds_are_set: bool) -> LegacyBoundingBox2 {
+        LegacyBoundingBox2 {
+            top_left: point2(seed, seed + 1.0),
+            bottom_right: point2(seed + 2.0, seed + 3.0),
+            bounds_are_set,
+        }
+    }
+
+    fn position_payload() -> LegacyPositionPayload {
+        LegacyPositionPayload {
+            computed_position: 5,
+            computed_increment: 6,
+            material: 10,
+            posture: 17,
+            old_posture: 3,
+            direction: 15,
+            direction_goal: 2,
+            slow_turn_count: 9,
+            layer: u16::MAX,
+            layer_goal: 4,
+            tolerance: 12.5,
+            directional_tolerance: true,
+            accumulate_movement_map: true,
+            anti_collision_on: false,
+            goal_next_valid: true,
+            deviated: true,
+            direction_count: -2,
+            door_direction: true,
+            reversed_movement: true,
+            blocked_count: 7,
+            radius: 4.25,
+            use_emergency_lying_box: true,
+            sector: LegacySectorRef(Some(1)),
+            sector_goal: LegacySectorRef(Some(2)),
+            door: LegacySignedIndexRef(Some(0)),
+            obstacle: LegacySignedIndexRef(Some(0)),
+            target_element: LegacyElementRef(Some(31)),
+            position: point3(1.0, 2.0, 3.0),
+            map: point2(4.0, 5.0),
+            sprite: point2(6.0, 7.0),
+            old_position: point3(8.0, 9.0, 10.0),
+            old_map: point2(11.0, 12.0),
+            old_sprite: point2(13.0, 14.0),
+            goal_map: point2(15.0, 16.0),
+            goal_next_map: point2(17.0, 18.0),
+            goal: point3(19.0, 20.0, 21.0),
+            increment: point3(22.0, 23.0, 24.0),
+            increment_map: point2(25.0, 26.0),
+            accumulated_movement_map: point2(27.0, 28.0),
+            forecasted_movement: point3(29.0, 30.0, 31.0),
+            move_box_map: bbox(32.0, true),
+            blocked_box: bbox(36.0, false),
+        }
+    }
+
+    #[test]
+    fn preflights_and_atomically_restores_every_v48_position_field() {
+        let (envelope, topology, target) = fixture();
+        let entities = LegacyEntityFixups::build(&envelope, &topology).unwrap();
+        let projection = LegacyPositionObstacleBinding {
+            obstacle: ObstacleHandle::new(3).unwrap(),
+            plane: PlaneZCoeffs {
+                az: 1.0,
+                bz: 2.0,
+                dz: 3.0,
+            },
+        };
+        let sight = LegacyPositionObstacleBinding {
+            obstacle: ObstacleHandle::new(4).unwrap(),
+            plane: PlaneZCoeffs {
+                az: 4.0,
+                bz: 5.0,
+                dz: 6.0,
+            },
+        };
+        let saved = preflight_v48_position(
+            &position_payload(),
+            &entities,
+            LegacyPositionTopology {
+                sector_count: 3,
+                doors: &[DoorHandle(9)],
+                projection_areas: &[projection],
+                sight_obstacles: &[sight],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(saved.layer.get(), u16::MAX);
+        assert_eq!(saved.obstacle, Some(sight.obstacle));
+        assert_eq!(saved.plane, Some(sight.plane));
+        assert_eq!(saved.target_element, Some(target));
+        assert_eq!(saved.posture, crate::element::Posture::StuckUnderNet);
+        assert_eq!(saved.old_posture, crate::element::Posture::Lying);
+        assert!(saved.blocked_box.0.is_none());
+
+        let mut position = PositionInterface::new();
+        position.set_pathfinder_index(77);
+        position.restore_v48_serialized_state(saved.clone());
+
+        assert_eq!(position.v48_serialized_state(), saved);
+        assert_eq!(
+            position.get_pathfinder_index(),
+            77,
+            "Original does not serialize mission-derived pathfinder indices"
+        );
+    }
+
+    #[test]
+    fn preflight_rejects_bad_values_without_mutating_the_position() {
+        let (envelope, topology, _) = fixture();
+        let entities = LegacyEntityFixups::build(&envelope, &topology).unwrap();
+        let mut payload = position_payload();
+        payload.direction = 16;
+        let mut position = PositionInterface::new();
+        position.set_pathfinder_index(23);
+        let before = position.clone();
+
+        let error = preflight_v48_position(
+            &payload,
+            &entities,
+            LegacyPositionTopology {
+                sector_count: 3,
+                doors: &[DoorHandle(9)],
+                projection_areas: &[],
+                sight_obstacles: &[],
+            },
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            LegacySaveAdoptError::InvalidPositionField {
+                field: "direction",
+                ..
+            }
+        ));
+        assert_eq!(
+            position.get_pathfinder_index(),
+            before.get_pathfinder_index()
+        );
+        assert_eq!(position.map_position(), before.map_position());
+    }
+
+    #[test]
+    fn obstacle_pointer_space_follows_the_saved_layer_sentinel() {
+        let (envelope, topology, _) = fixture();
+        let entities = LegacyEntityFixups::build(&envelope, &topology).unwrap();
+        let projection = LegacyPositionObstacleBinding {
+            obstacle: ObstacleHandle::new(3).unwrap(),
+            plane: PlaneZCoeffs {
+                az: 1.0,
+                bz: 2.0,
+                dz: 3.0,
+            },
+        };
+        let sight = LegacyPositionObstacleBinding {
+            obstacle: ObstacleHandle::new(4).unwrap(),
+            plane: PlaneZCoeffs {
+                az: 4.0,
+                bz: 5.0,
+                dz: 6.0,
+            },
+        };
+        let arrays = LegacyPositionTopology {
+            sector_count: 3,
+            doors: &[DoorHandle(9)],
+            projection_areas: &[projection],
+            sight_obstacles: &[sight],
+        };
+
+        let projectile = preflight_v48_position(&position_payload(), &entities, arrays).unwrap();
+        let mut actor_payload = position_payload();
+        actor_payload.layer = 1;
+        let actor = preflight_v48_position(&actor_payload, &entities, arrays).unwrap();
+
+        assert_eq!(projectile.obstacle, Some(sight.obstacle));
+        assert_eq!(actor.obstacle, Some(projection.obstacle));
     }
 }
