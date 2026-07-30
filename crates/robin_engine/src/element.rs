@@ -3121,6 +3121,11 @@ impl Entity {
     /// action point and marks both values computed. `sprite_visual_map_position`
     /// preserves that distinction.
     pub fn cxx_position_sprite(&self) -> SpriteTopLeft {
+        if self.is_fx_target()
+            && let Some(position) = self.position_iface().cached_sprite_position()
+        {
+            return SpriteTopLeft::new(position.x, position.y);
+        }
         let map = if self.is_fx_target() {
             self.sprite_visual_map_position()
         } else {
@@ -4679,6 +4684,31 @@ mod tests {
         assert_eq!(
             target.sprite_visual_map_position(),
             MapPoint::new(120.0, 50.0)
+        );
+    }
+
+    #[test]
+    fn target_hotspots_use_the_exact_cached_sprite_top_left() {
+        let mut element = ElementData {
+            kind: ElementKind::Target,
+            ..ElementData::default()
+        };
+        element.sprite.center = crate::coordinates::SpriteAnchor::new(30.0, 140.0);
+        element.set_position(WorldPoint3D::new(2821.0, 727.355, 416.355));
+        element
+            .sprite
+            .position_iface
+            .set_cached_sprite_position(MapPoint::new(2791.0, 171.0));
+        element.set_position_map_preserving_3d(MapPoint::new(2823.0, 312.0));
+        let target = Entity::Target(ElementTarget {
+            element,
+            fx: FxData::default(),
+            target: TargetData::default(),
+        });
+
+        assert_eq!(
+            target.cxx_position_sprite(),
+            crate::coordinates::SpriteTopLeft::new(2791.0, 171.0)
         );
     }
 

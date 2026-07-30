@@ -1597,6 +1597,25 @@ state represents a seek sector as either a position sector or a door. Linux3
 Profile 003 save 055 now adopts successfully and reaches ordinary frame
 comparison instead of failing on sparse sector 416.
 
+### Loaded target hotspots retain the serialized sprite position
+
+`RHSprite::GetCurrentPointMap` adds the current row's hotspot to the cached
+integer `mposPositionSprite`. That cache is serialized independently from the
+target's 3-D position and action `PositionMap`. Reconstructing it later as
+`floor(position.to_map() - center)` is not equivalent: binary32 projection can
+land infinitesimally below an integer even when the serialized cache contains
+that integer.
+
+Linux3 Profile 003 save 055 exposed this at its final target interaction. The
+saved target sprite top-left was `(2791,171)`, while reconstruction produced
+`(2791,170)` from the same 3-D values. `HANDLING_TARGET` therefore faced a
+hotspot one pixel too high and selected direction 14 instead of 13. Rust now
+marks an exact sprite-position cache when restoring a v48 payload, seeds the
+same cache during ordinary mission target placement, and uses it for FX-target
+hotspot queries. Position changes invalidate the cache; the target-specific
+action-point overwrite deliberately preserves it, matching the Original's
+split placement. Save 055 now matches every recorded frame.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

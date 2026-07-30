@@ -887,6 +887,13 @@ impl EngineInner {
             // baseline rather than the pre-placement zero.
             let current_position = sprite.position_iface.get_position();
             sprite.position_iface.set_old_position(current_position);
+            let visual_map = current_position.to_map();
+            sprite
+                .position_iface
+                .set_cached_sprite_position(MapPoint::new(
+                    (visual_map.x - sprite.center.x).floor(),
+                    (visual_map.y - sprite.center.y).floor(),
+                ));
 
             // Overwrite the map position with the action point *without*
             // touching the 3D elevation we just set.  The target renders

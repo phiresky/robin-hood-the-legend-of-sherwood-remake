@@ -610,6 +610,8 @@ pub struct PositionInterface {
     position: WorldPoint3D,
     position_map: MapPoint,
     position_sprite: MapPoint,
+    #[serde(default)]
+    position_sprite_valid: bool,
 
     old_position: WorldPoint3D,
     old_position_map: MapPoint,
@@ -764,6 +766,7 @@ impl PositionInterface {
             position: WorldPoint3D::ZERO,
             position_map: MapPoint::ZERO,
             position_sprite: MapPoint::ZERO,
+            position_sprite_valid: false,
 
             old_position: WorldPoint3D::ZERO,
             old_position_map: MapPoint::ZERO,
@@ -860,6 +863,7 @@ impl PositionInterface {
         self.position = state.position;
         self.position_map = state.map;
         self.position_sprite = state.sprite;
+        self.position_sprite_valid = state.computed_position.contains(PositionComputed::SPRITE);
         self.old_position = state.old_position;
         self.old_position_map = state.old_map;
         self.old_position_sprite = state.old_sprite;
@@ -978,6 +982,21 @@ impl PositionInterface {
         self.position_map
     }
 
+    /// Return the exact cached C++ `mposPositionSprite` when one has been
+    /// established by mission placement or restored from a legacy save.
+    #[inline]
+    pub(crate) fn cached_sprite_position(&self) -> Option<MapPoint> {
+        self.position_sprite_valid.then_some(self.position_sprite)
+    }
+
+    /// Install the exact integer sprite-space top-left used by C++ gameplay
+    /// hotspot queries.
+    #[inline]
+    pub(crate) fn set_cached_sprite_position(&mut self, position: MapPoint) {
+        self.position_sprite = position;
+        self.position_sprite_valid = true;
+    }
+
     #[inline]
     #[must_use]
     pub fn get_elevation(&self) -> f32 {
@@ -987,12 +1006,14 @@ impl PositionInterface {
     #[inline]
     pub fn set_position(&mut self, pt: WorldPoint3D) {
         self.position = pt;
+        self.position_sprite_valid = false;
         self.recompute_from_3d();
     }
 
     #[inline]
     pub fn set_map_position(&mut self, pt: MapPoint) {
         self.position_map = pt;
+        self.position_sprite_valid = false;
         self.recompute_from_map();
     }
 
