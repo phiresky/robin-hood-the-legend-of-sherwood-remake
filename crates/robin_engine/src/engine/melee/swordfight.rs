@@ -802,27 +802,16 @@ impl EngineInner {
                 crate::sequence::FieldValue::Integer(0),
             );
             seq.append_element(elem);
-            let reciprocal_sequence = self.launch_sequence(seq);
-            let reciprocal_action = self
-                .orders
-                .sequence_manager
-                .take_deferred_owner_action(opponent, reciprocal_sequence, 0)
-                .unwrap_or_else(|detail| {
-                    panic!(
-                        "reciprocal EnterSwordfight instruction for {} failed: {detail}",
-                        opponent.index()
-                    )
-                });
-            if let Some(action) = reciprocal_action {
-                // `PrepareToEnterSwordFight` launches this element from
-                // inside the initiator's Instruct call. Original's active
-                // SequenceManager::Go pass instructs it before returning.
-                // Put the exact promoted action on the synchronous stream so
-                // the outer sequence phase splices it ahead of older work.
-                self.orders
-                    .sequence_manager
-                    .restore_pending_synchronous_actions(vec![action]);
-            }
+            // `PrepareToEnterSwordFight` registers this reciprocal element on
+            // the ordinary SequenceManager queue.  When the caller is already
+            // inside SequenceManager::Hourglass, the live FIFO drain consumes
+            // it before returning.  When EnterSwordfight was reached
+            // re-entrantly from an actor's completion/Ready callback, it must
+            // remain queued until the post-entity manager hourglass.  Do not
+            // promote it onto the synchronous callback stack: that would let
+            // a later-created actor Execute the reciprocal order in this same
+            // entity walk, one frame before the Original.
+            self.launch_sequence(seq);
         } else if !already_opponent {
             // Part 1: walk the opponent's existing opponent list.
             // If any of their opponents have >1 opponents themselves,
