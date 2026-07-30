@@ -15,6 +15,7 @@
 //! the engine state.
 
 pub mod campaign;
+pub mod body;
 pub mod elements;
 pub mod engine;
 pub mod payload_actors;
