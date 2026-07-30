@@ -908,20 +908,7 @@ impl SightObstacle {
 ///
 /// Derives the plane equation `z = f(x, y)` from 3 non-degenerate points.
 fn compute_plane_z(points: &[[f32; 3]; 3], x: f32, y: f32) -> f32 {
-    let [p0, p1, p2] = *points;
-    let v1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
-    let v2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
-    // Normal = v1 × v2
-    let nx = v1[1] * v2[2] - v1[2] * v2[1];
-    let ny = v1[2] * v2[0] - v1[0] * v2[2];
-    let nz = v1[0] * v2[1] - v1[1] * v2[0];
-    if nz.abs() < 1e-9 {
-        // Degenerate / vertical plane — return average Z as fallback.
-        return (p0[2] + p1[2] + p2[2]) / 3.0;
-    }
-    // Plane: nx*(x-p0x) + ny*(y-p0y) + nz*(z-p0z) = 0
-    // => z = p0z - (nx*(x-p0x) + ny*(y-p0y)) / nz
-    p0[2] - (nx * (x - p0[0]) + ny * (y - p0[1])) / nz
+    crate::position_interface::PlaneZCoeffs::from_plane_points(points).compute_world_z(x, y)
 }
 
 /// Unit normal of a plane defined by 3 points.
@@ -1499,6 +1486,52 @@ mod tests {
         let obs = make_flat_obstacle();
         // Ray at z=10 going over the z=5 obstacle — should be clear.
         assert!(!obs.is_blocking_ray_3d([-5.0, 5.0, 10.0], [15.0, 5.0, 10.0]));
+    }
+
+    #[test]
+    fn ray_starting_on_sloped_plane_uses_original_float_rounding() {
+        // Linux Savegame_034: the bonus-to-PC ray starts on the large
+        // ground plane. The algebraically equivalent unnormalized plane
+        // equation rounded its Z one ULP above the origin and falsely
+        // classified this otherwise-clear ray as passing through obstacle 90.
+        let mut obs = SightObstacle::new_default(90);
+        obs.obstacle_points = vec![
+            ObstaclePoint {
+                x: 1300.0,
+                y: 1900.0,
+                z_top: 100.0,
+                z_bottom: 0.0,
+            },
+            ObstaclePoint {
+                x: 2050.0,
+                y: 1900.0,
+                z_top: 100.0,
+                z_bottom: 0.0,
+            },
+            ObstaclePoint {
+                x: 2050.0,
+                y: 2420.0,
+                z_top: 100.0,
+                z_bottom: 0.0,
+            },
+            ObstaclePoint {
+                x: 1300.0,
+                y: 2420.0,
+                z_top: 100.0,
+                z_bottom: 0.0,
+            },
+        ];
+        obs.top_plane_points = [
+            [1796.8242, 2317.0935, 0.19600001],
+            [1301.3945, 2408.703, 90.00101],
+            [1995.4719, 1911.5131, 0.001],
+        ];
+        obs.rebuild_geometry();
+
+        let origin = [1921.0, 1941.8881, 11.888083];
+        let destination = [2009.9403, 1955.6993, 45.0];
+        assert!(origin[2] > obs.compute_top_z(origin[0], origin[1]));
+        assert!(!obs.is_blocking_ray_3d(origin, destination));
     }
 
     #[test]

@@ -47,6 +47,16 @@ pub struct PlaneZCoeffs {
 }
 
 impl PlaneZCoeffs {
+    /// Compute Z from world/ground-space `(x, y)`.
+    ///
+    /// Keep the multiplication and addition order identical to
+    /// `SBGeoPlane3D::ComputeZ`; points lying exactly on a sloped plane can
+    /// otherwise move by one ULP and wind up on the wrong side of it.
+    #[inline]
+    pub fn compute_world_z(&self, x: f32, y: f32) -> f32 {
+        x * self.az + y * self.bz + self.dz
+    }
+
     /// Compute Z given map-space `(x, y)`.
     ///
     /// `z = (bz * y + az * x + dz) / (1 - bz)`
