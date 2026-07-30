@@ -10,7 +10,11 @@ use std::num::NonZeroU32;
 use thiserror::Error;
 
 use crate::{
-    ai::{AiController, AiState, AlertLevel, Attitude, GotoFlags, Position, Substate},
+    ai::{
+        AiController, AiState, AlertLevel, Attitude, CombatInfo, DoorCombatInfo, GotoFlags, Hint,
+        Noise, NoiseType, Position, ReconnaissanceReport, Remark, ReportType, Stimulus,
+        StimulusInfo, StimulusType, StolenObject, Substate,
+    },
     coordinates::{GroundPoint, MapPoint, MapVec},
     element::{
         ActionState, AiBrain, Detectable, DetectableType, EntityId, EyeStatus, NpcData,
@@ -23,12 +27,15 @@ use crate::{
 
 use super::{
     adopt::{
-        preflight_v48_position, LegacyEntityFixups, LegacyPositionTopology, LegacySaveAdoptError,
+        LegacyEntityFixups, LegacyPositionTopology, LegacySaveAdoptError, preflight_v48_position,
     },
-    payload_ai::{LegacyAiPosition, LegacyLocalAiCommon, LegacyLocalAiTail},
+    payload_ai::{
+        LegacyAiPosition, LegacyLocalAiCommon, LegacyLocalAiTail, LegacyStimulus,
+        LegacyStimulusInfo, LegacyStimulusPosition,
+    },
     payload_base::{
-        LegacyActorPayload, LegacyElementPayloadBase, LegacyNpcPayload, LegacyNpcView,
-        LegacySpritePayload,
+        LegacyActorPayload, LegacyAiElementRef, LegacyElementPayloadBase, LegacyNpcPayload,
+        LegacyNpcView, LegacySpritePayload,
     },
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
     payload_objects::LegacyObjectItemPayload,
@@ -54,7 +61,7 @@ pub const REMAINING_COMMON_ELEMENT_FIELDS: &[&str] = &[
     "RHElementActorNPC::mpAttachedScroll identity (Rust currently retains only attached/not attached)",
     "RHElementActorNPC::muwBodyVisitors",
     "RHElementActorNPC view iterator/crazy-cone/future-aperture/radius-reduction/sniper fields absent from Rust",
-    "RHElementActorNPC local-AI path/macro bytecode, stimuli, relationship lists, reconnaissance, remarks/log, patrol, and most subclass state",
+    "RHElementActorNPC local-AI path/macro bytecode and most subclass state",
     "RHElementActorNPC leaf Soldier/Civilian state",
 ];
 
@@ -69,6 +76,7 @@ pub const NON_AUTHORITATIVE_COMMON_ELEMENT_FIELDS: &[&str] = &[
     "RHSprite::mfDisplayOrder",
     "RHSprite display-order dummy",
     "RHSprite::mboundingBox",
+    "RHArtificialIntelligence::mlistAILog info/frame (Linux v48 serializes only the debug line type)",
 ];
 
 #[derive(Debug, Error)]
@@ -147,6 +155,40 @@ pub enum LegacyElementAdoptError {
         creation_order: u32,
         field: &'static str,
         value: u16,
+    },
+    #[error(
+        "saved NPC creation order {creation_order} field {field} resolves to {entity_id} ({actual:?}); expected {expected}"
+    )]
+    WrongReferenceKind {
+        creation_order: u32,
+        field: &'static str,
+        entity_id: EntityId,
+        actual: crate::entity_id::EntityIdKind,
+        expected: &'static str,
+    },
+    #[error(
+        "saved NPC creation order {creation_order} field {field} has negative enum value {value}"
+    )]
+    NegativeEnum {
+        creation_order: u32,
+        field: &'static str,
+        value: i32,
+    },
+    #[error(
+        "saved NPC creation order {creation_order} has in-progress remark {remark}; Original completes it and dispatches AI event flags 0x{flags:x} while loading, which is not yet part of atomic adoption"
+    )]
+    UnsupportedRemarkCompletion {
+        creation_order: u32,
+        remark: u32,
+        flags: u16,
+    },
+    #[error(
+        "saved NPC creation order {creation_order} stimulus declares info type {declared}, but decoded payload is {actual}"
+    )]
+    StimulusInfoMismatch {
+        creation_order: u32,
+        declared: i32,
+        actual: &'static str,
     },
 }
 
@@ -292,11 +334,48 @@ enum ConvertedLocalAi {
     },
 }
 
+#[derive(Clone, Copy)]
+enum ReferenceKind {
+    Human,
+    Npc,
+    Object,
+}
+
+impl ReferenceKind {
+    fn accepts(self, kind: crate::entity_id::EntityIdKind) -> bool {
+        use crate::entity_id::EntityIdKind;
+        match self {
+            Self::Human => matches!(
+                kind,
+                EntityIdKind::Pc | EntityIdKind::Soldier | EntityIdKind::Civilian
+            ),
+            Self::Npc => matches!(kind, EntityIdKind::Soldier | EntityIdKind::Civilian),
+            Self::Object => matches!(
+                kind,
+                EntityIdKind::Bonus
+                    | EntityIdKind::Scroll
+                    | EntityIdKind::Projectile
+                    | EntityIdKind::Net
+            ),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Human => "PC, Soldier, or Civilian",
+            Self::Npc => "Soldier or Civilian",
+            Self::Object => "Bonus, Scroll, Projectile, or Net",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct ConvertedLocalAiCommon {
     last_goto_destination: Position,
     last_goto_flags: GotoFlags,
     stuck_counter: u16,
+    forbidden_remark_ids: Vec<u32>,
+    current_remark_flags: u16,
     current_state: AiState,
     old_state: AiState,
     current_substate: Substate,
@@ -308,6 +387,12 @@ struct ConvertedLocalAiCommon {
     initial_action: u32,
     number_of_looks: u8,
     can_move: bool,
+    primary_target: u32,
+    friend_in_trouble: u32,
+    detected_body: u32,
+    interesting_object: u32,
+    antagonist: u32,
+    last_stimulus_actor: Option<u32>,
     macro_in_progress: bool,
     number_of_remaining_macro_bytes: u16,
     timer_is_running: bool,
@@ -316,12 +401,18 @@ struct ConvertedLocalAiCommon {
     when_does_macro_timer_ring: u32,
     standing_around_timer: u16,
     sorrow_level: u16,
+    last_stimulus: [StimulusType; 5],
+    last_stimulus_multiplicity: [u16; 5],
     is_master: bool,
+    master: u32,
     first_try: bool,
     panic_center_x: f32,
     panic_center_y: f32,
     lasting_panic_runs: u8,
     directed_panic: bool,
+    list_us: Vec<u32>,
+    list_alerted_us: Vec<u32>,
+    list_staying_us: Vec<u32>,
     couldnt_reachpoint: bool,
     already_on_point: bool,
     already_turned: bool,
@@ -333,15 +424,27 @@ struct ConvertedLocalAiCommon {
     script_locked: bool,
     remember_events: bool,
     leave_house_number: u16,
+    forgotten_objects: Vec<u32>,
+    object_of_desire: u32,
+    checkpoint_charly: u32,
+    synchronize_charly: u32,
     inside_halt_method: bool,
     macro_started_in_this_frame: bool,
+    synchronizing_actors: Vec<u32>,
     default_path_walking_flags: GotoFlags,
+    current_remark: Remark,
     next_macro_rand: u8,
     next_macro_rand_forecasted: bool,
     knocked_out_in_money_fight: bool,
     got_beggar_trick: bool,
+    reconnaissance: ReconnaissanceReport,
+    patrol_chief: Option<EntityId>,
+    patrol: Vec<EntityId>,
+    missed_patrol_members: Vec<EntityId>,
+    theoretical_patrol: Vec<EntityId>,
     patrol_stopped: bool,
     patrol_direction: u16,
+    stimulus_queue: Vec<Stimulus>,
 }
 
 impl LegacyStaticElementAdoption {
@@ -783,8 +886,13 @@ fn convert_local_ai(
             actual: owner,
         });
     }
-    let common =
-        convert_local_ai_common(&saved.common, creation_order, topology, view_alert_status)?;
+    let common = convert_local_ai_common(
+        &saved.common,
+        creation_order,
+        entities,
+        topology,
+        view_alert_status,
+    )?;
     match (&saved.tail, &runtime.ai_brain) {
         (LegacyLocalAiTail::Friendly(tail), AiBrain::Friendly(_)) => {
             Ok(ConvertedLocalAi::Friendly {
@@ -828,6 +936,7 @@ fn convert_local_ai(
 fn convert_local_ai_common(
     saved: &LegacyLocalAiCommon,
     creation_order: u32,
+    entities: &LegacyEntityFixups,
     topology: &LegacyPositionTopology,
     view_alert_status: AlertLevel,
 ) -> Result<ConvertedLocalAiCommon, LegacyElementAdoptError> {
@@ -844,6 +953,15 @@ fn convert_local_ai_common(
             "local_ai.last_goto_flags",
         )?,
         stuck_counter: saved.stuck_counter,
+        forbidden_remark_ids: saved
+            .forbidden_remarks
+            .iter()
+            .map(|&value| {
+                remark(value, creation_order, "local_ai.forbidden_remarks")
+                    .map(|value| value as u32)
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        current_remark_flags: saved.current_remark_flags,
         current_state: ai_state(
             saved.current_state,
             creation_order,
@@ -877,6 +995,42 @@ fn convert_local_ai_common(
         })?,
         number_of_looks: saved.number_of_looks,
         can_move: saved.can_move,
+        primary_target: ai_handle(
+            entities.resolve_ai_element(saved.primary_target)?,
+            ReferenceKind::Human,
+            creation_order,
+            "local_ai.primary_target",
+        )?,
+        friend_in_trouble: ai_handle(
+            entities.resolve_ai_element(saved.friend_in_trouble)?,
+            ReferenceKind::Npc,
+            creation_order,
+            "local_ai.friend_in_trouble",
+        )?,
+        detected_body: ai_handle(
+            entities.resolve_ai_element(saved.detected_body)?,
+            ReferenceKind::Human,
+            creation_order,
+            "local_ai.detected_body",
+        )?,
+        interesting_object: ai_handle(
+            entities.resolve_ai_element(saved.interesting_object)?,
+            ReferenceKind::Object,
+            creation_order,
+            "local_ai.interesting_object",
+        )?,
+        antagonist: ai_handle(
+            entities.resolve_ai_element(saved.antagonist)?,
+            ReferenceKind::Npc,
+            creation_order,
+            "local_ai.antagonist",
+        )?,
+        last_stimulus_actor: ai_optional_handle(
+            entities.resolve_ai_element(saved.last_stimulus_actor)?,
+            ReferenceKind::Human,
+            creation_order,
+            "local_ai.last_stimulus_actor",
+        )?,
         macro_in_progress: saved.macro_in_progress,
         number_of_remaining_macro_bytes: saved.remaining_macro_bytes,
         timer_is_running: saved.timer_is_running,
@@ -885,12 +1039,47 @@ fn convert_local_ai_common(
         when_does_macro_timer_ring: saved.macro_timer_ring_frame,
         standing_around_timer: saved.standing_around_timer,
         sorrow_level: saved.sorrow_level,
+        last_stimulus: saved
+            .last_stimuli
+            .map(|value| stimulus_type(value, creation_order, "local_ai.last_stimulus"))
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?
+            .try_into()
+            .expect("fixed-size stimulus conversion preserves length"),
+        last_stimulus_multiplicity: saved.last_stimulus_multiplicities,
         is_master: saved.is_master,
+        master: ai_handle(
+            entities.resolve_ai_element(saved.master)?,
+            ReferenceKind::Npc,
+            creation_order,
+            "local_ai.master",
+        )?,
         first_try: saved.first_try,
         panic_center_x: saved.panic_center_x,
         panic_center_y: saved.panic_center_y,
         lasting_panic_runs: saved.lasting_panic_runs,
         directed_panic: saved.directed_panic,
+        list_us: ai_handle_list(
+            &saved.us,
+            ReferenceKind::Human,
+            creation_order,
+            "local_ai.us",
+            entities,
+        )?,
+        list_alerted_us: ai_handle_list(
+            &saved.alerted_us,
+            ReferenceKind::Npc,
+            creation_order,
+            "local_ai.alerted_us",
+            entities,
+        )?,
+        list_staying_us: ai_handle_list(
+            &saved.staying_us,
+            ReferenceKind::Npc,
+            creation_order,
+            "local_ai.staying_us",
+            entities,
+        )?,
         couldnt_reachpoint: saved.could_not_reach_point,
         already_on_point: saved.already_on_point,
         already_turned: saved.already_turned,
@@ -902,19 +1091,99 @@ fn convert_local_ai_common(
         script_locked: saved.script_locked,
         remember_events: saved.remember_events,
         leave_house_number: saved.leave_house_number,
+        forgotten_objects: ai_handle_list(
+            &saved.forgotten_objects,
+            ReferenceKind::Object,
+            creation_order,
+            "local_ai.forgotten_objects",
+            entities,
+        )?,
+        object_of_desire: element_handle(
+            entities.resolve_element(saved.object_of_desire)?,
+            ReferenceKind::Object,
+            creation_order,
+            "local_ai.object_of_desire",
+        )?,
+        checkpoint_charly: element_handle(
+            entities.resolve_element(saved.checkpoint_charly)?,
+            ReferenceKind::Npc,
+            creation_order,
+            "local_ai.checkpoint_charly",
+        )?,
+        synchronize_charly: element_handle(
+            entities.resolve_element(saved.synchronize_charly)?,
+            ReferenceKind::Npc,
+            creation_order,
+            "local_ai.synchronize_charly",
+        )?,
         inside_halt_method: saved.inside_halt_method,
         macro_started_in_this_frame: saved.macro_started_this_frame,
+        synchronizing_actors: ai_handle_list(
+            &saved.synchronizing_actors,
+            ReferenceKind::Npc,
+            creation_order,
+            "local_ai.synchronizing_actors",
+            entities,
+        )?,
         default_path_walking_flags: goto_flags(
             saved.default_path_walking_flags,
             creation_order,
             "local_ai.default_path_walking_flags",
         )?,
+        current_remark: {
+            let current = remark(
+                saved.current_remark,
+                creation_order,
+                "local_ai.current_remark",
+            )?;
+            if current != Remark::TheSoundOfSilence {
+                return Err(LegacyElementAdoptError::UnsupportedRemarkCompletion {
+                    creation_order,
+                    remark: current as u32,
+                    flags: saved.current_remark_flags,
+                });
+            }
+            current
+        },
         next_macro_rand: saved.next_macro_rand,
         next_macro_rand_forecasted: saved.next_macro_rand_forecasted,
         knocked_out_in_money_fight: saved.knocked_out_in_money_fight,
         got_beggar_trick: saved.got_beggar_trick,
+        reconnaissance: reconnaissance(&saved.reconnaissance, creation_order, entities, topology)?,
+        patrol_chief: optional_element_entity(
+            entities.resolve_element(saved.patrol_chief)?,
+            ReferenceKind::Npc,
+            creation_order,
+            "local_ai.patrol_chief",
+        )?,
+        patrol: ai_entity_list(
+            &saved.patrol,
+            ReferenceKind::Npc,
+            creation_order,
+            "local_ai.patrol",
+            entities,
+        )?,
+        missed_patrol_members: ai_entity_list(
+            &saved.missed_patrol_members,
+            ReferenceKind::Npc,
+            creation_order,
+            "local_ai.missed_patrol_members",
+            entities,
+        )?,
+        theoretical_patrol: ai_entity_list(
+            &saved.theoretical_patrol,
+            ReferenceKind::Npc,
+            creation_order,
+            "local_ai.theoretical_patrol",
+            entities,
+        )?,
         patrol_stopped: saved.patrol_stopped,
         patrol_direction: saved.patrol_direction,
+        stimulus_queue: saved
+            .stimulus_queue
+            .iter()
+            .map(|stimulus| convert_stimulus(stimulus, creation_order, entities, topology))
+            .collect::<Result<Vec<_>, _>>()?,
     })
 }
 
@@ -980,6 +1249,8 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.last_goto_destination = saved.last_goto_destination;
     ai.last_goto_flags = saved.last_goto_flags;
     ai.stuck_counter = saved.stuck_counter;
+    ai.forbidden_remark_ids = saved.forbidden_remark_ids;
+    ai.current_remark_flags = saved.current_remark_flags;
     ai.current_state = saved.current_state;
     ai.old_state = saved.old_state;
     ai.current_substate = saved.current_substate;
@@ -991,6 +1262,12 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.initial_action = saved.initial_action;
     ai.number_of_looks = saved.number_of_looks;
     ai.can_move = saved.can_move;
+    ai.primary_target = saved.primary_target;
+    ai.friend_in_trouble = saved.friend_in_trouble;
+    ai.detected_body = saved.detected_body;
+    ai.interesting_object = saved.interesting_object;
+    ai.antagonist = saved.antagonist;
+    ai.last_stimulus_actor = saved.last_stimulus_actor;
     ai.macro_in_progress = saved.macro_in_progress;
     ai.number_of_remaining_macro_bytes = saved.number_of_remaining_macro_bytes;
     ai.timer_is_running = saved.timer_is_running;
@@ -999,12 +1276,18 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.when_does_macro_timer_ring = saved.when_does_macro_timer_ring;
     ai.standing_around_timer = saved.standing_around_timer;
     ai.sorrow_level = saved.sorrow_level;
+    ai.last_stimulus = saved.last_stimulus;
+    ai.last_stimulus_multiplicity = saved.last_stimulus_multiplicity;
     ai.is_master = saved.is_master;
+    ai.master = saved.master;
     ai.first_try = saved.first_try;
     ai.panic_center_x = saved.panic_center_x;
     ai.panic_center_y = saved.panic_center_y;
     ai.lasting_panic_runs = saved.lasting_panic_runs;
     ai.directed_panic = saved.directed_panic;
+    ai.list_us = saved.list_us;
+    ai.list_alerted_us = saved.list_alerted_us;
+    ai.list_staying_us = saved.list_staying_us;
     ai.couldnt_reachpoint = saved.couldnt_reachpoint;
     ai.already_on_point = saved.already_on_point;
     ai.already_turned = saved.already_turned;
@@ -1016,15 +1299,27 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.script_locked = saved.script_locked;
     ai.remember_events = saved.remember_events;
     ai.leave_house_number = saved.leave_house_number;
+    ai.forgotten_objects = saved.forgotten_objects;
+    ai.object_of_desire = saved.object_of_desire;
+    ai.checkpoint_charly = saved.checkpoint_charly;
+    ai.synchronize_charly = saved.synchronize_charly;
     ai.inside_halt_method = saved.inside_halt_method;
     ai.macro_started_in_this_frame = saved.macro_started_in_this_frame;
+    ai.synchronizing_actors = saved.synchronizing_actors;
     ai.default_path_walking_flags = saved.default_path_walking_flags;
+    ai.current_remark = saved.current_remark;
     ai.next_macro_rand = saved.next_macro_rand;
     ai.next_macro_rand_forecasted = saved.next_macro_rand_forecasted;
     ai.knocked_out_in_money_fight = saved.knocked_out_in_money_fight;
     ai.got_the_beggar_trick = saved.got_beggar_trick;
+    ai.my_reconnaissance_report = saved.reconnaissance;
+    ai.patrol_chief = saved.patrol_chief;
+    ai.patrol = saved.patrol;
+    ai.missed_patrol_members = saved.missed_patrol_members;
+    ai.theoretical_patrol = saved.theoretical_patrol;
     ai.patrol_stopped = saved.patrol_stopped;
     ai.patrol_direction = saved.patrol_direction;
+    ai.stimulus_queue = saved.stimulus_queue;
 }
 
 fn payload_parts(
@@ -1257,6 +1552,409 @@ fn ai_position(
     })
 }
 
+fn stimulus_position(
+    saved: LegacyStimulusPosition,
+    topology: &LegacyPositionTopology,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<Position, LegacyElementAdoptError> {
+    Ok(Position {
+        x: saved.x,
+        y: saved.y,
+        sector: sector(saved.sector.0, topology, creation_order, field)?,
+        level: saved.level,
+    })
+}
+
+fn raw_i32(
+    value: i32,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<u32, LegacyElementAdoptError> {
+    u32::try_from(value).map_err(|_| LegacyElementAdoptError::NegativeEnum {
+        creation_order,
+        field,
+        value,
+    })
+}
+
+fn stimulus_type(
+    value: i32,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<StimulusType, LegacyElementAdoptError> {
+    let value = raw_i32(value, creation_order, field)?;
+    StimulusType::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
+        creation_order,
+        field,
+        value,
+    })
+}
+
+fn remark(
+    value: i32,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<Remark, LegacyElementAdoptError> {
+    let value = raw_i32(value, creation_order, field)?;
+    Remark::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
+        creation_order,
+        field,
+        value,
+    })
+}
+
+fn noise_type(
+    value: i32,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<NoiseType, LegacyElementAdoptError> {
+    let value = raw_i32(value, creation_order, field)?;
+    NoiseType::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
+        creation_order,
+        field,
+        value,
+    })
+}
+
+fn checked_reference(
+    entity_id: Option<EntityId>,
+    expected: ReferenceKind,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<Option<EntityId>, LegacyElementAdoptError> {
+    if let Some(entity_id) = entity_id
+        && !expected.accepts(entity_id.kind())
+    {
+        return Err(LegacyElementAdoptError::WrongReferenceKind {
+            creation_order,
+            field,
+            entity_id,
+            actual: entity_id.kind(),
+            expected: expected.name(),
+        });
+    }
+    Ok(entity_id)
+}
+
+fn ai_handle(
+    entity_id: Option<EntityId>,
+    expected: ReferenceKind,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<u32, LegacyElementAdoptError> {
+    Ok(checked_reference(entity_id, expected, creation_order, field)?.map_or(0, EntityId::index))
+}
+
+fn ai_optional_handle(
+    entity_id: Option<EntityId>,
+    expected: ReferenceKind,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<Option<u32>, LegacyElementAdoptError> {
+    Ok(checked_reference(entity_id, expected, creation_order, field)?.map(EntityId::index))
+}
+
+fn element_handle(
+    entity_id: Option<EntityId>,
+    expected: ReferenceKind,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<u32, LegacyElementAdoptError> {
+    ai_handle(entity_id, expected, creation_order, field)
+}
+
+fn optional_element_entity(
+    entity_id: Option<EntityId>,
+    expected: ReferenceKind,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<Option<EntityId>, LegacyElementAdoptError> {
+    checked_reference(entity_id, expected, creation_order, field)
+}
+
+fn ai_handle_list(
+    references: &[LegacyAiElementRef],
+    expected: ReferenceKind,
+    creation_order: u32,
+    field: &'static str,
+    entities: &LegacyEntityFixups,
+) -> Result<Vec<u32>, LegacyElementAdoptError> {
+    references
+        .iter()
+        .copied()
+        .map(|reference| {
+            ai_handle(
+                entities.resolve_ai_element(reference)?,
+                expected,
+                creation_order,
+                field,
+            )
+        })
+        .collect()
+}
+
+fn ai_entity_list(
+    references: &[LegacyAiElementRef],
+    expected: ReferenceKind,
+    creation_order: u32,
+    field: &'static str,
+    entities: &LegacyEntityFixups,
+) -> Result<Vec<EntityId>, LegacyElementAdoptError> {
+    references
+        .iter()
+        .copied()
+        .map(|reference| {
+            checked_reference(
+                entities.resolve_ai_element(reference)?,
+                expected,
+                creation_order,
+                field,
+            )?
+            .ok_or(LegacySaveAdoptError::MissingCreationOrderReference { creation_order }.into())
+        })
+        .collect()
+}
+
+fn reconnaissance(
+    saved: &super::payload_ai::LegacyReconnaissanceReport,
+    creation_order: u32,
+    entities: &LegacyEntityFixups,
+    topology: &LegacyPositionTopology,
+) -> Result<ReconnaissanceReport, LegacyElementAdoptError> {
+    let report_type = match raw_i32(
+        saved.report_type,
+        creation_order,
+        "local_ai.reconnaissance.report_type",
+    )? {
+        0 => ReportType::Nothing,
+        1 => ReportType::Noise,
+        2 => ReportType::Body,
+        3 => ReportType::MissedCharly,
+        4 => ReportType::DeadBody,
+        5 => ReportType::Enemy,
+        value => {
+            return Err(LegacyElementAdoptError::UnknownEnum {
+                creation_order,
+                field: "local_ai.reconnaissance.report_type",
+                value,
+            });
+        }
+    };
+    Ok(ReconnaissanceReport {
+        seek_position: Position {
+            x: saved.seek_position_x,
+            y: saved.seek_position_y,
+            sector: sector(
+                saved.seek_position_sector.0,
+                topology,
+                creation_order,
+                "local_ai.reconnaissance.seek_position.sector",
+            )?,
+            level: saved.seek_position_level,
+        },
+        report_type,
+        seen_bodies: saved
+            .seen_bodies
+            .iter()
+            .copied()
+            .map(|reference| {
+                element_handle(
+                    entities.resolve_element(reference)?,
+                    ReferenceKind::Human,
+                    creation_order,
+                    "local_ai.reconnaissance.seen_bodies",
+                )
+            })
+            .collect::<Result<_, _>>()?,
+        charly: element_handle(
+            entities.resolve_element(saved.charly)?,
+            ReferenceKind::Npc,
+            creation_order,
+            "local_ai.reconnaissance.charly",
+        )?,
+        charly_seen: saved.charly_seen,
+    })
+}
+
+fn convert_stimulus(
+    saved: &LegacyStimulus,
+    creation_order: u32,
+    entities: &LegacyEntityFixups,
+    topology: &LegacyPositionTopology,
+) -> Result<Stimulus, LegacyElementAdoptError> {
+    let (actual_info_type, actual_name, info) = match &saved.info {
+        LegacyStimulusInfo::None => (0, "None", StimulusInfo::None),
+        LegacyStimulusInfo::Noise {
+            origin,
+            noise_type: saved_noise_type,
+            volume,
+            elevation,
+            ..
+        } => (
+            1,
+            "Noise",
+            StimulusInfo::Noise(Noise {
+                origin: stimulus_position(
+                    *origin,
+                    topology,
+                    creation_order,
+                    "local_ai.stimulus_queue.noise.origin.sector",
+                )?,
+                noise_type: noise_type(
+                    *saved_noise_type,
+                    creation_order,
+                    "local_ai.stimulus_queue.noise.type",
+                )?,
+                volume: *volume,
+                elevation: *elevation,
+                // Original does not serialize this member in INFO_NOISE.
+                element_id: 0,
+            }),
+        ),
+        LegacyStimulusInfo::Position(position) => (
+            2,
+            "Position",
+            StimulusInfo::Position(stimulus_position(
+                *position,
+                topology,
+                creation_order,
+                "local_ai.stimulus_queue.position.sector",
+            )?),
+        ),
+        LegacyStimulusInfo::Human(reference) => (
+            3,
+            "Human",
+            StimulusInfo::Human(ai_handle(
+                entities.resolve_ai_element(*reference)?,
+                ReferenceKind::Human,
+                creation_order,
+                "local_ai.stimulus_queue.human",
+            )?),
+        ),
+        LegacyStimulusInfo::Hint {
+            position,
+            teller,
+            seek_flags,
+        } => (
+            4,
+            "Hint",
+            StimulusInfo::Hint(Hint {
+                seek_point: stimulus_position(
+                    *position,
+                    topology,
+                    creation_order,
+                    "local_ai.stimulus_queue.hint.position.sector",
+                )?,
+                seek_flags: *seek_flags,
+                who_tells_me: ai_handle(
+                    entities.resolve_ai_element(*teller)?,
+                    ReferenceKind::Npc,
+                    creation_order,
+                    "local_ai.stimulus_queue.hint.teller",
+                )?,
+            }),
+        ),
+        LegacyStimulusInfo::Object(reference) => (
+            5,
+            "Object",
+            StimulusInfo::Object(ai_handle(
+                entities.resolve_ai_element(*reference)?,
+                ReferenceKind::Object,
+                creation_order,
+                "local_ai.stimulus_queue.object",
+            )?),
+        ),
+        LegacyStimulusInfo::Stolen { object, thief } => (
+            6,
+            "Stolen",
+            StimulusInfo::Stolen(StolenObject {
+                object: ai_handle(
+                    entities.resolve_ai_element(*object)?,
+                    ReferenceKind::Object,
+                    creation_order,
+                    "local_ai.stimulus_queue.stolen.object",
+                )?,
+                thief: ai_handle(
+                    entities.resolve_ai_element(*thief)?,
+                    ReferenceKind::Npc,
+                    creation_order,
+                    "local_ai.stimulus_queue.stolen.thief",
+                )?,
+            }),
+        ),
+        LegacyStimulusInfo::Combat {
+            enemy_position,
+            actor,
+        } => (
+            7,
+            "Combat",
+            StimulusInfo::Combat(CombatInfo {
+                actor_npc: ai_handle(
+                    entities.resolve_ai_element(*actor)?,
+                    ReferenceKind::Npc,
+                    creation_order,
+                    "local_ai.stimulus_queue.combat.actor",
+                )?,
+                enemy_position: stimulus_position(
+                    *enemy_position,
+                    topology,
+                    creation_order,
+                    "local_ai.stimulus_queue.combat.enemy_position.sector",
+                )?,
+            }),
+        ),
+        LegacyStimulusInfo::DoorCombat {
+            delay,
+            direction,
+            goal,
+            adversary,
+        } => (
+            8,
+            "DoorCombat",
+            StimulusInfo::DoorCombat(DoorCombatInfo {
+                delay: *delay,
+                goal: stimulus_position(
+                    *goal,
+                    topology,
+                    creation_order,
+                    "local_ai.stimulus_queue.door_combat.goal.sector",
+                )?,
+                direction: *direction,
+                adversary: ai_handle(
+                    entities.resolve_ai_element(*adversary)?,
+                    ReferenceKind::Human,
+                    creation_order,
+                    "local_ai.stimulus_queue.door_combat.adversary",
+                )?,
+            }),
+        ),
+        LegacyStimulusInfo::Index(value) => (9, "Index", StimulusInfo::Index(*value)),
+    };
+    if saved.info_type != actual_info_type {
+        return Err(LegacyElementAdoptError::StimulusInfoMismatch {
+            creation_order,
+            declared: saved.info_type,
+            actual: actual_name,
+        });
+    }
+    Ok(Stimulus {
+        stimulus_type: stimulus_type(
+            saved.stimulus_type,
+            creation_order,
+            "local_ai.stimulus_queue.stimulus_type",
+        )?,
+        info,
+        owner: element_handle(
+            entities.resolve_element(saved.owner)?,
+            ReferenceKind::Npc,
+            creation_order,
+            "local_ai.stimulus_queue.owner",
+        )?,
+        to_whole_patrol: saved.to_whole_patrol,
+    })
+}
+
 fn ai_brain_kind(brain: &AiBrain) -> &'static str {
     match brain {
         AiBrain::None => "None",
@@ -1318,6 +2016,35 @@ mod tests {
             goto_flags(u16::MAX, 31, "flags").unwrap().bits(),
             u16::MAX,
             "Original defines all sixteen walking-flag bits"
+        );
+    }
+
+    #[test]
+    fn local_ai_reference_kind_is_validated_before_apply() {
+        let target = EntityId::new(7, crate::entity_id::EntityIdKind::Target);
+        assert!(matches!(
+            checked_reference(Some(target), ReferenceKind::Human, 31, "target"),
+            Err(LegacyElementAdoptError::WrongReferenceKind {
+                entity_id,
+                actual: crate::entity_id::EntityIdKind::Target,
+                ..
+            }) if entity_id == target
+        ));
+    }
+
+    #[test]
+    fn local_ai_signed_enums_reject_negative_and_unknown_values() {
+        assert!(matches!(
+            stimulus_type(-1, 31, "stimulus"),
+            Err(LegacyElementAdoptError::NegativeEnum { value: -1, .. })
+        ));
+        assert!(matches!(
+            noise_type(15, 31, "noise"),
+            Err(LegacyElementAdoptError::UnknownEnum { value: 15, .. })
+        ));
+        assert_eq!(
+            remark(Remark::TheSoundOfSilence as i32, 31, "current_remark").unwrap(),
+            Remark::TheSoundOfSilence
         );
     }
 }
