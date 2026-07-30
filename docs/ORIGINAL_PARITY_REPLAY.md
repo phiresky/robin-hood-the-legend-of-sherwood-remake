@@ -1081,12 +1081,18 @@ execution.
 
 Original now initializes new sequence elements to
 `RHPOSTURE_UNDEFINED`/`RHACTIONSTATE_WAITING`. Its loader retains both four-byte
-v48 enum fields and canonicalizes invalid values only for non-progress
-elements; invalid in-progress transition state is rejected. The writer rejects
+v48 enum fields. Rust treats both words as dormant scratch storage for every
+non-progress element, retaining the exact raw words for save fidelity while
+resetting the runtime fields to the constructor sentinels. This applies even
+when a dormant word is a valid enum: a later expanded-corpus save contained a
+TODO move with the valid but obsolete `RHACTIONSTATE_WAITING_SWORD`; preserving
+it made Rust translate ordinary walking into sword movement after the actor had
+already left combat. Original overwrites both words from the actor's live state
+at every `RHElementActor::Instruct` boundary. In-progress transition state
+remains authoritative and invalid values there are rejected. The writer rejects
 noncanonical posture or action-state words, and sequence/manager/engine
-serialization now propagates that failure instead of continuing a malformed
-stream. All five authentic Linux fixtures load with this rule; only Profile
-011's `Restart` needs the dormant-field recovery.
+serialization propagates that failure instead of continuing a malformed
+stream.
 
 ### Large-window compressed trace input
 
