@@ -53,23 +53,27 @@ impl EngineInner {
         }
 
         // Delayed AI strikes are authored as WAIT_TIMER -> SWORDSTRIKE.
-        // Original leaves the special-strike substate when that preparation
-        // element hands off to the actual strike. A direct counter-strike has
-        // no preceding wait and remains special until its EventDone.
+        // Thrust A is exceptional: its translation normalises the principal
+        // opponents on both humans, and the resulting Original owner
+        // callback closes the preparation substate before the strike runs.
+        // The other prepared strikes have no such callback and retain the
+        // special-strike substate until their own EventDone. The sequence
+        // shape alone is therefore not enough to end preparation.
         let follows_preparation_wait = elem_idx > 0
             && self
                 .orders
                 .sequence_manager
                 .get_element(seq_id, elem_idx - 1)
                 .is_some_and(|element| element.command == Command::WaitTimer);
-        if follows_preparation_wait
+        let closes_preparation = follows_preparation_wait && strike == SwordStrike::A;
+        if closes_preparation
             && let Some(crate::element::Entity::Soldier(soldier)) =
                 self.world.entities.get_mut(owner)
             && let crate::element::AiBrain::Enemy(ai) = &mut soldier.npc.ai_brain
         {
             ai.finish_special_strike_preparation(self.control.frame_counter);
         }
-        if follows_preparation_wait {
+        if closes_preparation {
             // Rust performs the Original EVENT_DONE transition at this
             // successor-instruction boundary. `SetState` calls the scripted
             // FilterAIEvent inline in the Original, so do not leave that

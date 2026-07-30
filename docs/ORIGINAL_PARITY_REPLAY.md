@@ -1815,6 +1815,21 @@ an archer and an established phalanx. Save 003 consequently keeps the
 `WaitingShield` command at frame 13814 and advances to an independent door
 movement difference at frame 13821.
 
+### A prepared sequence shape does not universally close the special-strike state
+
+`WaitTimer -> swordstrike` identifies an AI-prepared strike, but it does not by
+itself imply a state change when the successor is instructed. The previously
+observed Thrust A handoff also runs that command's unique reciprocal
+principal-opponent normalization. Other strike commands do not inherit that
+side effect.
+
+Rust previously applied the Thrust A state handoff to every prepared strike.
+Linux3 Profile 001 Continue consequently changed Soldier 110 from
+`AttackingSwordfightSpecialStrike` to ordinary `AttackingSwordfight` when its
+prepared Thrust D began at frame 518. The handoff is now restricted to the
+source-backed Thrust A path; Thrust D remains special through its own
+completion, and the replay advances to a later independent combat boundary.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
