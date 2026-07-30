@@ -1515,6 +1515,25 @@ Both patrol admission paths now use the NPC's base/real radius while retaining
 the shared posture, rider-height, building, and opaque-ray checks. This is the
 same field selected by the Original overload and applies to every patrol.
 
+### Deferred turns do not overwrite a newer live movement goal
+
+`FaceTo` halts a selected movement before launching its turn sequence.
+Original `RHSequenceElementMovement::StopMovement` converts the current order
+to a stop transition while leaving the actor's live sprite goal available to
+the remaining owner execution. That owner slot can advance the goal after the
+turn has been registered but before the sequence manager instructs it.
+
+Rust retains the outgoing goal because its eager halt cleanup can clear the
+sprite before a deferred turn is instructed. The deferred instruction
+previously restored that retained value unconditionally. In Linux3 Profile 003
+save 011 this replaced Soldier 97's newly advanced formation goal at frame
+22,720 with the preceding waypoint.
+
+Deferred turn instruction now restores the retained goal only when cleanup
+actually left the live goal at zero. A goal advanced by the outgoing actor slot
+remains authoritative, matching the Original `StopMovement` ordering for every
+deferred `FaceTo`.
+
 ### Pre-bound actor VMs keep their initialized beam-slot class
 
 Beam-me assignment can place the same saved character in a different authored
