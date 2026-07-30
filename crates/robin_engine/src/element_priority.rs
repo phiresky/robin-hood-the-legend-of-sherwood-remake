@@ -268,6 +268,14 @@ fn actor_branch(elem: &SequenceElement) -> SequencePriority {
             }
         }
 
+        // MOVE_OK is the internal, already-translated form of MOVE and should
+        // normally retain the priority assigned before translation. A loaded
+        // v48 sequence can nevertheless contain MOVE_OK with
+        // RHPRIORITY_NOT_YET_SET. Original's base DeterminePriority falls
+        // through to RHPRIORITY_NONE for this command in release builds, and
+        // RHSequenceElement::Stop immediately promotes that result to Normal.
+        Command::MoveOk => SequencePriority::None,
+
         Command::BodyCheck => SequencePriority::Injury,
 
         // Anything reaching the base default is unexpected: panic in
@@ -436,6 +444,20 @@ mod tests {
         assert_eq!(
             determine_priority(civilian_ctx(), &elem),
             SequencePriority::Normal,
+        );
+    }
+
+    #[test]
+    fn restored_move_ok_without_priority_uses_original_none_fallback() {
+        let elem = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(EntityId::Pc(crate::entity_id::PcId(1))),
+            OrderType::WaitingUpright,
+        );
+        assert_eq!(
+            determine_priority(civilian_ctx(), &elem),
+            SequencePriority::None,
         );
     }
 
