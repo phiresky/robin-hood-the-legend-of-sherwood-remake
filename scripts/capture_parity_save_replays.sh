@@ -13,6 +13,7 @@ set -euo pipefail
 #   PARITY_FRAMES=250  PARITY_SEED=1  WATCHDOG_SECONDS=60
 #   ROBIN_BINARY=original-code/build/native-full/robin
 #   SKIP_BUILD=1      FORCE=1
+#   SHARD_COUNT=1     SHARD_INDEX=0
 
 invocation_dir="$PWD"
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -37,6 +38,8 @@ frames="${PARITY_FRAMES:-250}"
 seed="${PARITY_SEED:-1}"
 watchdog_seconds="${WATCHDOG_SECONDS:-60}"
 binary="${ROBIN_BINARY:-original-code/build/native-full/robin}"
+shard_count="${SHARD_COUNT:-1}"
+shard_index="${SHARD_INDEX:-0}"
 
 if [[ ! -d "$save_dir" ]]; then
     printf 'error: save directory does not exist: %s\n' "$save_dir" >&2
@@ -48,6 +51,13 @@ if [[ ! -d "$data_dir" ]]; then
 fi
 if [[ ! "$frames" =~ ^[1-9][0-9]*$ ]]; then
     printf 'error: PARITY_FRAMES must be a positive integer\n' >&2
+    exit 2
+fi
+if [[ ! "$shard_count" =~ ^[1-9][0-9]*$
+    || ! "$shard_index" =~ ^[0-9]+$
+    || "$shard_index" -ge "$shard_count" ]]
+then
+    printf 'error: require SHARD_COUNT > 0 and 0 <= SHARD_INDEX < SHARD_COUNT\n' >&2
     exit 2
 fi
 
@@ -68,10 +78,11 @@ mkdir -p -- "$output_dir/traces" "$output_dir/logs"
 captured=0
 failed=0
 skipped=0
+save_index=0
 
 while IFS= read -r -d '' save_file; do
-    magic="$(LC_ALL=C dd if="$save_file" bs=1 count=4 status=none 2>/dev/null || true)"
-    if [[ "$magic" != RHSG && "$magic" != GSHR ]]; then
+    magic_hex="$(od -An -tx1 -N4 -- "$save_file" 2>/dev/null | tr -d ' \n' || true)"
+    if [[ "$magic_hex" != 52485347 && "$magic_hex" != 47534852 ]]; then
         continue
     fi
 
@@ -84,6 +95,12 @@ while IFS= read -r -d '' save_file; do
     if [[ "${header_version:-}" != 48 || "${stream_version:-}" != 48 ]]; then
         printf 'warning: skipping non-v48 save: %s\n' "$save_file" >&2
         skipped=$((skipped + 1))
+        continue
+    fi
+
+    current_index="$save_index"
+    save_index=$((save_index + 1))
+    if (( current_index % shard_count != shard_index )); then
         continue
     fi
 
@@ -123,7 +140,8 @@ while IFS= read -r -d '' save_file; do
     fi
 done < <(find "$save_dir" -type f -print0 | sort -z)
 
-printf 'done: %d captured, %d failed, %d skipped\n' "$captured" "$failed" "$skipped"
+printf 'shard %d/%d done: %d captured, %d failed, %d skipped\n' \
+    "$shard_index" "$shard_count" "$captured" "$failed" "$skipped"
 if (( failed != 0 )); then
     exit 1
 fi
