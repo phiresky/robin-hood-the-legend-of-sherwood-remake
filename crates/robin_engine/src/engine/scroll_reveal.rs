@@ -160,6 +160,15 @@ impl EngineInner {
         }
     }
 
+    /// Restore the serialized status without running `SetStatus` side effects.
+    ///
+    /// Original v48 `Serialize` writes `mStatus` directly, while the common
+    /// element payload separately restores the authoritative minimap dot.
+    pub(crate) fn restore_legacy_scroll_status_raw(&mut self, scroll: EntityId, status: i32) {
+        let handle = crate::natives::ScriptHandleCodec::actor_handle(scroll);
+        self.script_domains.scrolls.status.insert(handle, status);
+    }
+
     /// PC finished the Taking animation on a scroll:
     ///
     /// 1. Flip the taken flag and set status to `Opened`.
