@@ -469,6 +469,7 @@ fn convert_element(
     let (mut orders, order_state) = convert_orders(&base.orders, entities)?;
     preserve_translated_turn_direction(command, &mut orders);
     let mut generic_raw_unions = Vec::new();
+    let mut raw_dormant_movement_action = None;
     let (data, linked_seek, damage_arrow, raw_sword_strike) = match saved {
         LegacyInlineSequenceElement::Simple(_) => (SequenceElementData::Simple, None, None, None),
         LegacyInlineSequenceElement::Interaction(interaction) => (
@@ -542,14 +543,9 @@ fn convert_element(
                     "known RHmovementFlags bits",
                 )
             })?;
-            let action = OrderType::try_from(u32::try_from(movement.action).map_err(|_| {
-                invalid(
-                    "movement.action",
-                    movement.action,
-                    "a non-negative RHanimation",
-                )
-            })?)
-            .map_err(|_| invalid("movement.action", movement.action, "a known RHanimation"))?;
+            let (action, raw_dormant_action) =
+                convert_movement_action(command, state, movement.action)?;
+            raw_dormant_movement_action = raw_dormant_action;
             let post_seek_sequence = movement
                 .post_seek_sequence
                 .as_deref()
@@ -643,6 +639,7 @@ fn convert_element(
         linked_seek,
         damage_arrow,
         raw_sword_strike,
+        raw_dormant_movement_action,
         order_state,
         generic_raw_unions,
     });
@@ -687,6 +684,57 @@ fn convert_transition_result<T>(
         None if dormant => Ok((dormant_runtime_value, Some(raw))),
         None => Err(invalid(field, raw, expected)),
     }
+}
+
+fn convert_movement_action(
+    command: Command,
+    state: SequenceState,
+    raw: i32,
+) -> Result<(OrderType, Option<i32>), LegacySequenceAdoptError> {
+    let converted = u32::try_from(raw)
+        .ok()
+        .and_then(|raw| OrderType::try_from(raw).ok());
+    if let Some(action) = converted {
+        return Ok((action, None));
+    }
+
+    // Four RHSequenceElementMovement paths cannot consume maction:
+    //
+    // * ASSERT_POSITION, WAIT_FREE_LIFT, and CHANGE_POSITION use constructors
+    //   which never initialize it. Their translation branches inspect only
+    //   position/sector/lift data.
+    // * TELEPORT does initialize it, but ExecuteImmediately never reads it.
+    //
+    // Terminal elements are likewise never dispatched again: RHSequence::Go
+    // only dispatches TODO/POSTPONED, while INPROGRESS is already executing.
+    // Preserve the raw word for those proven-dormant cases and use Rust's
+    // explicit unset action in the typed runtime slot. Commands whose movement
+    // action drives transitions, path requests, seek refresh, or door orders
+    // remain strict in every potentially executable state.
+    let command_does_not_read_action = matches!(
+        command,
+        Command::AssertPosition
+            | Command::WaitFreeLift
+            | Command::Teleport
+            | Command::ChangePosition
+    );
+    let terminal = matches!(
+        state,
+        SequenceState::Terminated
+            | SequenceState::Done
+            | SequenceState::Impossible
+            | SequenceState::Interrupted
+    );
+    if command_does_not_read_action || terminal {
+        return Ok((OrderType::Invalid, Some(raw)));
+    }
+
+    let expected = if raw < 0 {
+        "a non-negative RHanimation"
+    } else {
+        "a known RHanimation"
+    };
+    Err(invalid("movement.action", raw, expected))
 }
 
 fn convert_orders(
@@ -1370,6 +1418,63 @@ mod tests {
         assert_eq!(
             retained.raw_dormant_action_state_after_transition,
             Some(-559_038_737)
+        );
+    }
+
+    #[test]
+    fn retains_uninitialized_action_for_position_only_movement() {
+        let (entities, _, _) = entities();
+        let mut saved = fixture();
+        let movement = match &mut saved.sequences[0].body.elements[0] {
+            LegacyInlineSequenceElement::Movement(movement) => movement,
+            other => panic!("fixture element is not movement: {other:?}"),
+        };
+        movement.base.command = Command::AssertPosition as i32;
+        movement.action = -556_225_327;
+
+        let plan = preflight_v48_sequence_manager(&saved, &entities, &topology())
+            .expect("ASSERT_POSITION never reads its uninitialized maction storage");
+        let (_, element) = plan
+            .resolve_element("test", LegacySequenceElementRef(Some(100)))
+            .unwrap()
+            .unwrap();
+
+        let SequenceElementData::Movement { action, .. } = &element.data else {
+            panic!("fixture element is not restored as movement");
+        };
+        assert_eq!(*action, OrderType::Invalid);
+        assert_eq!(
+            element
+                .legacy_v48
+                .as_ref()
+                .unwrap()
+                .raw_dormant_movement_action,
+            Some(-556_225_327)
+        );
+    }
+
+    #[test]
+    fn movement_action_validation_remains_strict_until_terminal() {
+        let raw = 2_013_265_920;
+
+        assert_eq!(
+            convert_movement_action(Command::Move, SequenceState::Terminated, raw).unwrap(),
+            (OrderType::Invalid, Some(raw)),
+            "a terminal element is never dispatched again"
+        );
+        assert_eq!(
+            convert_movement_action(Command::Teleport, SequenceState::Todo, raw).unwrap(),
+            (OrderType::Invalid, Some(raw)),
+            "TELEPORT execution never reads movement.action"
+        );
+        assert_eq!(
+            convert_movement_action(Command::Move, SequenceState::Todo, raw).unwrap_err(),
+            LegacySequenceAdoptError::InvalidField {
+                field: "movement.action",
+                value: raw.to_string(),
+                expected: "a known RHanimation",
+            },
+            "a queued MOVE consumes movement.action when it is instructed"
         );
     }
 

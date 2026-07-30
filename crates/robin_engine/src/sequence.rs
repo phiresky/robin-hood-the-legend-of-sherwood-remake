@@ -902,6 +902,11 @@ pub(crate) struct LegacyV48SequenceElementState {
     pub linked_seek: Option<Option<SequenceElementRef>>,
     pub damage_arrow: Option<EntityId>,
     pub raw_sword_strike: Option<i32>,
+    /// Exact `RHSequenceElementMovement::maction` storage when the raw word is
+    /// not an `RHanimation` and Original cannot consume it in this command/
+    /// state. Old constructors left this field uninitialized for position-only
+    /// movement elements.
+    pub raw_dormant_movement_action: Option<i32>,
     pub order_state: Vec<LegacyV48OrderState>,
     pub generic_raw_unions: Vec<(Field, [u8; 12])>,
 }
