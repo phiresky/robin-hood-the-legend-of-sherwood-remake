@@ -31,7 +31,8 @@ use crate::{
 
 use super::{
     adopt::{
-        LegacyEntityFixups, LegacyPositionTopology, LegacySaveAdoptError, preflight_v48_position,
+        LegacyEntityFixups, LegacyLineTopology, LegacyLineTopologyError, LegacyPositionTopology,
+        LegacySaveAdoptError, preflight_v48_position,
     },
     payload_ai::{
         LegacyAiPathStatus, LegacyAiPosition, LegacyLocalAiCommon, LegacyLocalAiTail,
@@ -59,8 +60,6 @@ pub const REMAINING_COMMON_ELEMENT_FIELDS: &[&str] = &[
     "RHElementActorNPC::mpAttachedScroll identity (Rust currently retains only attached/not attached)",
     "RHElementActorNPC::muwBodyVisitors",
     "RHElementActorNPC view iterator/crazy-cone/future-aperture/radius-reduction/sniper fields absent from Rust",
-    "RHElementActorNPC local-AI most subclass state",
-    "RHElementActorNPC leaf Soldier/Civilian state",
 ];
 
 /// Serialized bytes which are intentionally not simulation state in Rust.
@@ -75,6 +74,7 @@ pub const NON_AUTHORITATIVE_COMMON_ELEMENT_FIELDS: &[&str] = &[
     "RHSprite display-order dummy",
     "RHSprite::mboundingBox",
     "RHArtificialIntelligence::mlistAILog info/frame (Linux v48 serializes only the debug line type)",
+    "RHArtificialMalignity duplicate pre-personal seek directions and first seek-flags/status copies (later serialized copies overwrite them during Original load)",
 ];
 
 #[derive(Debug, Error)]
@@ -281,6 +281,16 @@ pub enum LegacyElementAdoptError {
         index: u32,
         count: usize,
     },
+    #[error(transparent)]
+    LineTopology(#[from] LegacyLineTopologyError),
+    #[error(
+        "saved NPC creation order {creation_order} has {saved_kind} leaf state but initialized entity is {runtime_kind:?}"
+    )]
+    NpcLeafKindMismatch {
+        creation_order: u32,
+        saved_kind: &'static str,
+        runtime_kind: crate::entity_id::EntityIdKind,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -295,6 +305,13 @@ struct ConvertedElement {
     element: ConvertedElementBase,
     actor: Option<ConvertedActor>,
     npc: Option<ConvertedNpc>,
+    npc_leaf: Option<ConvertedNpcLeaf>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ConvertedNpcLeaf {
+    Soldier { apple_smell: u32 },
+    Civilian { current_scroll_set: u32 },
 }
 
 #[derive(Clone, Debug)]
@@ -412,25 +429,32 @@ enum ConvertedLocalAi {
     Enemy {
         common: ConvertedLocalAiCommon,
         last_stimulus_dispatched_to_patrol: Stimulus,
+        frame_when_missed_charly: u32,
+        heard_nets: Vec<u32>,
         frame_when_enemy_detected: u32,
         fleeing_seen_enemy_counter: u16,
         other_seen_ale: Vec<u32>,
         pc_gone_away_direction: u16,
+        detected_something_there: Position,
         missed_pc: u32,
+        last_seek_direction_index: u8,
         beggar_to_examine: u32,
         pc_missed: bool,
         search_charly_way: Vec<Position>,
         current_task_priority: u16,
         minimal_task_priority: u16,
         new_task_priority: u16,
+        number_of_different_checkpoints: u8,
         delta_sorrow_level: u16,
         missed_in_action: Vec<u32>,
         other_bodies_to_examine: Vec<u32>,
         beggars_to_control: Vec<u32>,
+        thirsty: bool,
         old_life_points: u8,
         initial_life_points: u8,
         list_them: Vec<u32>,
         old_odds: i16,
+        position_change_locked_for_test: bool,
         ambush_point_array_reset: bool,
         ambush_point_status: Vec<crate::ai_enemy::AmbushPointStatus>,
         my_seek_points: Vec<u16>,
@@ -471,6 +495,7 @@ enum ConvertedLocalAi {
         archer_behind_me: u32,
         shield_bearer_before_me: u32,
         already_seen_bodies: Vec<u32>,
+        my_line_jump: Option<u32>,
         shield_bearer_direction: u16,
         phalanx_aborted: bool,
         changed_to_alert_path: bool,
@@ -490,6 +515,7 @@ enum ReferenceKind {
     Human,
     Npc,
     Object,
+    Net,
 }
 
 impl ReferenceKind {
@@ -508,6 +534,7 @@ impl ReferenceKind {
                     | EntityIdKind::Projectile
                     | EntityIdKind::Net
             ),
+            Self::Net => matches!(kind, EntityIdKind::Net),
         }
     }
 
@@ -516,6 +543,7 @@ impl ReferenceKind {
             Self::Human => "PC, Soldier, or Civilian",
             Self::Npc => "Soldier or Civilian",
             Self::Object => "Bonus, Scroll, Projectile, or Net",
+            Self::Net => "Net",
         }
     }
 }
@@ -611,6 +639,7 @@ impl LegacyStaticElementAdoption {
         entities: &LegacyEntityFixups,
         position_topology: &LegacyPositionTopology,
     ) -> Result<Self, LegacyElementAdoptError> {
+        let line_topology = LegacyLineTopology::derive(engine)?;
         let mut records = Vec::with_capacity(payloads.records.len());
         for record in &payloads.records {
             let creation_order = record.header.creation_order;
@@ -666,9 +695,11 @@ impl LegacyStaticElementAdoption {
                             position_topology,
                             assets,
                             &engine.ai.global,
+                            &line_topology,
                         )
                     })
                     .transpose()?,
+                npc_leaf: convert_npc_leaf(&record.payload, entity_id, creation_order)?,
             });
         }
         Ok(Self { records })
@@ -750,6 +781,19 @@ impl LegacyStaticElementAdoption {
                         .expect("preflighted v48 NPC changed kind in candidate engine"),
                     saved,
                 );
+            }
+            if let Some(saved) = converted.npc_leaf {
+                match (entity, saved) {
+                    (
+                        crate::element::Entity::Soldier(soldier),
+                        ConvertedNpcLeaf::Soldier { apple_smell },
+                    ) => soldier.soldier.apple_smell = apple_smell,
+                    (
+                        crate::element::Entity::Civilian(civilian),
+                        ConvertedNpcLeaf::Civilian { current_scroll_set },
+                    ) => civilian.civilian.current_scroll_set = current_scroll_set,
+                    _ => unreachable!("preflighted NPC leaf kind changed in candidate engine"),
+                }
             }
             debug_assert_eq!(
                 engine
@@ -950,6 +994,7 @@ fn convert_npc(
     topology: &LegacyPositionTopology,
     assets: &LevelAssets,
     ai_global: &AiGlobalState,
+    line_topology: &LegacyLineTopology,
 ) -> Result<ConvertedNpc, LegacyElementAdoptError> {
     let mut detectable_lists = Vec::with_capacity(DetectableType::COUNT);
     let mut detection_suspects = [0; DetectableType::COUNT];
@@ -1025,6 +1070,7 @@ fn convert_npc(
             topology,
             assets,
             ai_global,
+            line_topology,
             alert_level(saved.view.alert_status, creation_order, "view.alert_status")?,
         )?,
     })
@@ -1125,6 +1171,7 @@ fn convert_local_ai(
     topology: &LegacyPositionTopology,
     assets: &LevelAssets,
     ai_global: &AiGlobalState,
+    line_topology: &LegacyLineTopology,
     view_alert_status: AlertLevel,
 ) -> Result<ConvertedLocalAi, LegacyElementAdoptError> {
     let owner = entities.resolve_ai_element(saved.common.owner)?;
@@ -1191,6 +1238,14 @@ fn convert_local_ai(
                     entities,
                     topology,
                 )?,
+                frame_when_missed_charly: tail.frame_when_missed_charly,
+                heard_nets: ai_handle_list(
+                    &tail.heard_nets,
+                    ReferenceKind::Net,
+                    creation_order,
+                    "local_ai.enemy.heard_nets",
+                    entities,
+                )?,
                 frame_when_enemy_detected: tail.frame_when_enemy_detected,
                 fleeing_seen_enemy_counter: tail.fleeing_seen_enemy_counter,
                 other_seen_ale: ai_handle_list(
@@ -1201,12 +1256,19 @@ fn convert_local_ai(
                     entities,
                 )?,
                 pc_gone_away_direction: tail.pc_gone_away_direction,
+                detected_something_there: ai_position(
+                    tail.detected_something_there,
+                    topology,
+                    creation_order,
+                    "local_ai.enemy.detected_something_there.sector",
+                )?,
                 missed_pc: ai_handle(
                     entities.resolve_ai_element(tail.missed_pc)?,
                     ReferenceKind::Human,
                     creation_order,
                     "local_ai.enemy.missed_pc",
                 )?,
+                last_seek_direction_index: tail.last_seek_direction_index,
                 beggar_to_examine: ai_handle(
                     entities.resolve_ai_element(tail.beggar_to_examine)?,
                     ReferenceKind::Human,
@@ -1223,6 +1285,7 @@ fn convert_local_ai(
                 current_task_priority: tail.current_task_priority,
                 minimal_task_priority: tail.minimal_task_priority,
                 new_task_priority: tail.new_task_priority,
+                number_of_different_checkpoints: tail.number_of_different_checkpoints,
                 delta_sorrow_level: tail.delta_sorrow_level,
                 missed_in_action: ai_handle_list(
                     &tail.missed_in_action,
@@ -1245,6 +1308,7 @@ fn convert_local_ai(
                     "local_ai.enemy.beggars_to_control",
                     entities,
                 )?,
+                thirsty: tail.thirsty,
                 old_life_points: tail.old_life_points,
                 initial_life_points: tail.initial_life_points,
                 list_them: ai_handle_list(
@@ -1255,6 +1319,7 @@ fn convert_local_ai(
                     entities,
                 )?,
                 old_odds: tail.old_odds,
+                position_change_locked_for_test: tail.position_change_locked_for_test,
                 ambush_point_array_reset: tail.ambush_point_array_reset,
                 ambush_point_status,
                 my_seek_points: convert_seek_point_ids(
@@ -1392,6 +1457,9 @@ fn convert_local_ai(
                     "local_ai.enemy.already_seen_bodies",
                     entities,
                 )?,
+                my_line_jump: line_topology
+                    .resolve("local_ai.enemy.jump_line", tail.jump_line)?
+                    .map(crate::jump_line::JumpLineIndex::get),
                 shield_bearer_direction: tail.shield_bearer_direction,
                 phalanx_aborted: tail.phalanx_aborted,
                 changed_to_alert_path: tail.changed_to_alert_path,
@@ -1715,25 +1783,32 @@ fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
             ConvertedLocalAi::Enemy {
                 common,
                 last_stimulus_dispatched_to_patrol,
+                frame_when_missed_charly,
+                heard_nets,
                 frame_when_enemy_detected,
                 fleeing_seen_enemy_counter,
                 other_seen_ale,
                 pc_gone_away_direction,
+                detected_something_there,
                 missed_pc,
+                last_seek_direction_index,
                 beggar_to_examine,
                 pc_missed,
                 search_charly_way,
                 current_task_priority,
                 minimal_task_priority,
                 new_task_priority,
+                number_of_different_checkpoints,
                 delta_sorrow_level,
                 missed_in_action,
                 other_bodies_to_examine,
                 beggars_to_control,
+                thirsty,
                 old_life_points,
                 initial_life_points,
                 list_them,
                 old_odds,
+                position_change_locked_for_test,
                 ambush_point_array_reset,
                 ambush_point_status,
                 my_seek_points,
@@ -1774,6 +1849,7 @@ fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
                 archer_behind_me,
                 shield_bearer_before_me,
                 already_seen_bodies,
+                my_line_jump,
                 shield_bearer_direction,
                 phalanx_aborted,
                 changed_to_alert_path,
@@ -1789,25 +1865,32 @@ fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
         ) => {
             apply_local_ai_common(&mut ai.base, common);
             ai.last_stimulus_dispatched_to_patrol = Some(last_stimulus_dispatched_to_patrol);
+            ai.frame_when_missed_charly = frame_when_missed_charly;
+            ai.heard_nets = heard_nets;
             ai.base.frame_when_enemy_detected = frame_when_enemy_detected;
             ai.fleeing_seen_enemy_counter = fleeing_seen_enemy_counter;
             ai.other_seen_ale = other_seen_ale;
             ai.pc_gone_away_in_this_direction = pc_gone_away_direction;
+            ai.detected_something_there = detected_something_there;
             ai.missed_pc = missed_pc;
+            ai.last_seek_direction_index = last_seek_direction_index;
             ai.beggar_to_examine = beggar_to_examine;
             ai.pc_missed = pc_missed;
             ai.search_charly_way = search_charly_way;
             ai.current_task_priority = current_task_priority;
             ai.minimal_task_priority = minimal_task_priority;
             ai.new_task_priority = new_task_priority;
+            ai.number_of_different_checkpoints = number_of_different_checkpoints;
             ai.base.delta_sorrow_level = delta_sorrow_level;
             ai.base.missed_in_action = missed_in_action;
             ai.other_bodies_to_examine = other_bodies_to_examine;
             ai.beggars_to_control = beggars_to_control;
+            ai.thirsty = thirsty;
             ai.old_life_points = old_life_points;
             ai.initial_life_points = initial_life_points;
             ai.list_them = list_them;
             ai.old_odds = old_odds;
+            ai.position_change_locked_for_test = position_change_locked_for_test;
             ai.ambush_point_array_reset = ambush_point_array_reset;
             ai.ambush_point_status = ambush_point_status;
             ai.my_seek_points = my_seek_points;
@@ -1848,6 +1931,7 @@ fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
             ai.archer_behind_me = archer_behind_me;
             ai.shield_bearer_before_me = shield_bearer_before_me;
             ai.already_seen_bodies = already_seen_bodies;
+            ai.my_line_jump = my_line_jump;
             ai.shield_bearer_direction = shield_bearer_direction;
             ai.phalanx_aborted = phalanx_aborted;
             ai.changed_to_alert_path = changed_to_alert_path;
@@ -1974,6 +2058,41 @@ fn payload_parts(
         LegacyElementPayload::Target(target) => (&target.fx.element, None, None),
         LegacyElementPayload::Fx(fx) => (&fx.fx.element, None, None),
         LegacyElementPayload::FxMasked(fx) => (&fx.element, None, None),
+    }
+}
+
+fn convert_npc_leaf(
+    payload: &LegacyElementPayload,
+    entity_id: EntityId,
+    creation_order: u32,
+) -> Result<Option<ConvertedNpcLeaf>, LegacyElementAdoptError> {
+    use crate::entity_id::EntityIdKind;
+    match payload {
+        LegacyElementPayload::ActorNpcSoldier(saved) => {
+            if entity_id.kind() != EntityIdKind::Soldier {
+                return Err(LegacyElementAdoptError::NpcLeafKindMismatch {
+                    creation_order,
+                    saved_kind: "Soldier",
+                    runtime_kind: entity_id.kind(),
+                });
+            }
+            Ok(Some(ConvertedNpcLeaf::Soldier {
+                apple_smell: saved.leaf.apple_smell,
+            }))
+        }
+        LegacyElementPayload::ActorNpcCivilian(saved) => {
+            if entity_id.kind() != EntityIdKind::Civilian {
+                return Err(LegacyElementAdoptError::NpcLeafKindMismatch {
+                    creation_order,
+                    saved_kind: "Civilian",
+                    runtime_kind: entity_id.kind(),
+                });
+            }
+            Ok(Some(ConvertedNpcLeaf::Civilian {
+                current_scroll_set: saved.leaf.current_scroll_set,
+            }))
+        }
+        _ => Ok(None),
     }
 }
 
