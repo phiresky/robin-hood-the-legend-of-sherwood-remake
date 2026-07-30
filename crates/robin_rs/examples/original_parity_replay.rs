@@ -1097,6 +1097,12 @@ struct TraceFrame {
 
 const TRACE_CACHE_VERSION: u32 = 4;
 const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v4.native-bincode.zst";
+// Full-session JSONL recordings are compressed as a single zstd frame. Some
+// encoders select a frame window from the total uncompressed size, so long
+// recordings legitimately exceed zstd's conservative 128 MiB decoder default.
+// Keep the reader bounded at zstd's platform maximum while accepting those
+// valid trace frames.
+const TRACE_ZSTD_WINDOW_LOG_MAX: u32 = if usize::BITS >= 64 { 31 } else { 30 };
 const TRACE_CACHE_ZSTD_LEVEL: i32 = 0;
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -2550,12 +2556,20 @@ fn open_jsonl_trace(trace_path: &std::path::Path) -> Box<dyn BufRead> {
     });
 
     if magic_len == ZSTD_MAGIC.len() && magic == ZSTD_MAGIC {
-        let decoder = zstd::stream::read::Decoder::new(file).unwrap_or_else(|error| {
+        let mut decoder = zstd::stream::read::Decoder::new(file).unwrap_or_else(|error| {
             panic!(
                 "start parity trace decompression {}: {error}",
                 trace_path.display()
             )
         });
+        decoder
+            .window_log_max(TRACE_ZSTD_WINDOW_LOG_MAX)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "configure parity trace decompression {}: {error}",
+                    trace_path.display()
+                )
+            });
         Box::new(BufReader::new(decoder))
     } else {
         Box::new(BufReader::new(file))
@@ -3976,6 +3990,33 @@ mod tests {
                 .unwrap();
             assert_eq!(decoded.as_bytes(), jsonl);
         }
+    }
+
+    #[test]
+    fn jsonl_trace_reader_accepts_zstd_frames_with_large_declared_windows() {
+        let jsonl = b"{\"type\":\"header\"}\n{\"type\":\"rng_prefix\"}\n";
+        let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), 1).unwrap();
+        encoder.window_log(28).unwrap();
+        encoder.write_all(jsonl).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        // Ensure this fixture exercises a frame rejected by zstd's default
+        // 128 MiB window cap rather than merely duplicating the ordinary-zstd
+        // coverage above.
+        let mut default_decoder =
+            zstd::stream::read::Decoder::new(std::io::Cursor::new(&compressed)).unwrap();
+        let mut default_output = Vec::new();
+        assert!(default_decoder.read_to_end(&mut default_output).is_err());
+
+        let directory = tempfile::tempdir().unwrap();
+        let compressed_path = directory.path().join("large-window-trace.jsonl.zst");
+        std::fs::write(&compressed_path, compressed).unwrap();
+
+        let mut decoded = String::new();
+        open_jsonl_trace(&compressed_path)
+            .read_to_string(&mut decoded)
+            .unwrap();
+        assert_eq!(decoded.as_bytes(), jsonl);
     }
 
     #[test]
