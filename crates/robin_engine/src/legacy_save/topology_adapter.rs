@@ -7,17 +7,23 @@
 //! Facts discarded during level loading fail with a named, typed error rather
 //! than being reconstructed heuristically.
 
-use std::fmt;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    element::{AiBrain, Entity, EntityId, ObjectType},
     engine::{EngineInner, LevelAssets},
-    level_data::WaypointCommand,
+    level_data::{MissionElementChunk, MissionElementGroup, ProtoElementChunk, WaypointCommand},
 };
 
 use super::{
-    payload_context::LegacyMissionPayloadMetadata,
+    elements::LegacyElementClass,
+    payload_ai::LegacyLocalAiKind,
+    payload_context::{LegacyElementPayloadMetadata, LegacyMissionPayloadMetadata},
     post_grid::LegacyGridTopology,
     post_hiking::{LegacyHikingGuideTopology, LegacyHikingPathTopology, LegacyWaypointTopology},
     post_tail::LegacyPostTailTopology,
@@ -55,6 +61,9 @@ pub enum LegacyTopologyAdapterError {
         engine_value: String,
         asset_value: String,
     },
+    ElementTopologyMismatch {
+        detail: String,
+    },
 }
 
 impl fmt::Display for LegacyTopologyAdapterError {
@@ -76,27 +85,527 @@ impl fmt::Display for LegacyTopologyAdapterError {
                 formatter,
                 "cannot derive {fact}: initialized engine value {engine_value} does not match attached level asset value {asset_value}"
             ),
+            Self::ElementTopologyMismatch { detail } => {
+                write!(
+                    formatter,
+                    "cannot derive Original element topology: {detail}"
+                )
+            }
         }
     }
 }
 
 impl std::error::Error for LegacyTopologyAdapterError {}
 
-/// Derive phase-two element metadata.
+/// Original's pre-mission constructor prefix.
 ///
-/// This intentionally fails until Original creation orders are retained
-/// explicitly.  `entity_id.index() + 31` is not a general solution: the
-/// engine-owned `RHElementMobile` masters consume creation orders without
-/// entering `RHEngine::marrayElements`.
-pub fn derive_element_payload_metadata(
-    _engine: &EngineInner,
-    _assets: &LevelAssets,
-) -> Result<LegacyMissionPayloadMetadata, LegacyTopologyAdapterError> {
-    Err(LegacyTopologyAdapterError::MissingRetainedFact {
-        fact: LegacyMissingTopologyFact::ElementCreationOrders,
-        original_owner: "RHElement::gulCreationCounter / RHElement::mulCreationOrder",
-        detail: "Rust retains entity slots but not every non-array constructor that advances the counter",
+/// `RHEngine::CreateMasters` constructs thirty `RHElementObjectMaster`
+/// instances and the engine constructor creates one standalone projectile
+/// trajectory. None enters `marrayElements`, but all increment
+/// `RHElement::gulCreationCounter`.
+const PRE_LEVEL_ELEMENT_COUNT: u32 = 31;
+
+/// Exact static element identity derived from one initialized mission.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LegacyStaticElementTopology {
+    pub payload_metadata: LegacyMissionPayloadMetadata,
+    /// Rust entity IDs omit mobile masters, so keep this explicit mapping
+    /// instead of inviting callers to use `EntityId::index() + 31`.
+    pub creation_order_by_entity: BTreeMap<EntityId, u32>,
+    /// Original `RHEngine::mulNumberOfCreatedStaticElements`.
+    pub static_creation_order_boundary: u32,
+}
+
+/// Derive exact Original static element order and all phase-two shape facts.
+///
+/// Original provenance:
+///
+/// - `RHElement::RHElement` assigns `mulCreationOrder = gulCreationCounter++`.
+/// - `RHEngine::CreateMasters` plus the projectile helper consume 31 orders.
+/// - Every later mission-created `RHElement` is inserted into
+///   `marrayElements` in construction order.
+/// - `RHEngine::AddElement(RHElementMobile*)` inserts the already-constructed
+///   mobile master followed immediately by all of its masked child FX.
+/// - `PopulateBeamMes` constructs PCs only after every mission chunk.
+///
+/// Rust deliberately stores mobile masters outside `Entities` and currently
+/// constructs category batches independently of source chunk order. The
+/// retained `LevelEntityAssets` source-order descriptors are therefore
+/// authoritative; this function refuses to infer a missing descriptor.
+pub fn derive_static_element_topology(
+    engine: &EngineInner,
+    assets: &LevelAssets,
+) -> Result<LegacyStaticElementTopology, LegacyTopologyAdapterError> {
+    let sequence = build_original_static_element_sequence(engine, assets)?;
+    let mut payload_metadata = LegacyMissionPayloadMetadata::default();
+    let mut creation_order_by_entity = BTreeMap::new();
+
+    for (original_slot, element) in sequence.iter().enumerate() {
+        let slot = u32::try_from(original_slot).map_err(|_| {
+            element_mismatch(format!("static element slot {original_slot} exceeds u32"))
+        })?;
+        let creation_order = PRE_LEVEL_ELEMENT_COUNT
+            .checked_add(slot)
+            .ok_or_else(|| element_mismatch("static creation order overflow"))?;
+        let (entity_id, metadata) = match *element {
+            StaticElementSource::Entity(entity_id) => {
+                let entity = engine.world.entities.get(entity_id).ok_or_else(|| {
+                    element_mismatch(format!(
+                        "retained static entity {entity_id} is absent from initialized engine"
+                    ))
+                })?;
+                (Some(entity_id), metadata_for_entity(entity)?)
+            }
+            StaticElementSource::MobileMaster(mobile_index) => {
+                let mobile = engine.world.mobile_elements.get(mobile_index).ok_or_else(|| {
+                    element_mismatch(format!(
+                        "retained mobile master {mobile_index} is absent from initialized engine"
+                    ))
+                })?;
+                (
+                    None,
+                    LegacyElementPayloadMetadata {
+                        class: LegacyElementClass::Mobile,
+                        script_class: None,
+                        local_ai_kind: None,
+                        mobile_sprite_count: Some(mobile.sprite_ids.len()),
+                    },
+                )
+            }
+        };
+        if let Some(entity_id) = entity_id {
+            if creation_order_by_entity
+                .insert(entity_id, creation_order)
+                .is_some()
+            {
+                return Err(element_mismatch(format!(
+                    "static entity {entity_id} occurs more than once in retained construction order"
+                )));
+            }
+        }
+        if payload_metadata
+            .by_creation_order
+            .insert(creation_order, metadata)
+            .is_some()
+        {
+            return Err(element_mismatch(format!(
+                "duplicate static creation order {creation_order}"
+            )));
+        }
+    }
+
+    let sequence_len = u32::try_from(sequence.len())
+        .map_err(|_| element_mismatch("static element count exceeds u32"))?;
+    let static_creation_order_boundary = PRE_LEVEL_ELEMENT_COUNT
+        .checked_add(sequence_len)
+        .ok_or_else(|| element_mismatch("static creation-order boundary overflow"))?;
+
+    Ok(LegacyStaticElementTopology {
+        payload_metadata,
+        creation_order_by_entity,
+        static_creation_order_boundary,
     })
+}
+
+/// Derive phase-two element metadata.
+pub fn derive_element_payload_metadata(
+    engine: &EngineInner,
+    assets: &LevelAssets,
+) -> Result<LegacyMissionPayloadMetadata, LegacyTopologyAdapterError> {
+    Ok(derive_static_element_topology(engine, assets)?.payload_metadata)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StaticElementSource {
+    Entity(EntityId),
+    MobileMaster(usize),
+}
+
+fn build_original_static_element_sequence(
+    engine: &EngineInner,
+    assets: &LevelAssets,
+) -> Result<Vec<StaticElementSource>, LegacyTopologyAdapterError> {
+    let entity_assets = &assets.entities;
+    if engine.world.mobile_elements.len() != entity_assets.mobile_element_count {
+        return Err(LegacyTopologyAdapterError::MissionAttachmentMismatch {
+            fact: "mobile element count",
+            engine_value: engine.world.mobile_elements.len().to_string(),
+            asset_value: entity_assets.mobile_element_count.to_string(),
+        });
+    }
+
+    let patch_ids = entity_assets
+        .patch_animation_entities
+        .iter()
+        .enumerate()
+        .map(|(patch_index, handle)| {
+            let handle = handle.ok_or_else(|| {
+                element_mismatch(format!(
+                    "patch {patch_index} has no retained FX entity handle"
+                ))
+            })?;
+            let slot = u32::try_from(handle).map_err(|_| {
+                element_mismatch(format!(
+                    "patch {patch_index} has negative FX entity handle {handle}"
+                ))
+            })?;
+            engine
+                .world
+                .entities
+                .id_at_legacy_slot(slot)
+                .ok_or_else(|| {
+                    element_mismatch(format!(
+                        "patch {patch_index} FX handle {handle} is absent from initialized engine"
+                    ))
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if entity_assets.legacy_proto_patch_count > patch_ids.len() {
+        return Err(element_mismatch(format!(
+            "retained proto patch count {} exceeds total patch FX count {}",
+            entity_assets.legacy_proto_patch_count,
+            patch_ids.len()
+        )));
+    }
+    let (proto_patch_ids, mission_patch_ids) =
+        patch_ids.split_at(entity_assets.legacy_proto_patch_count);
+    let patch_id_set = patch_ids.iter().copied().collect::<BTreeSet<_>>();
+
+    let proto_animation_ids = engine
+        .world
+        .entities
+        .occupied()
+        .filter_map(|(id, entity)| match entity {
+            Entity::Fx(fx)
+                if fx.fx.mobile_index.is_none()
+                    && !patch_id_set.contains(&id)
+                    && fx.fx.patch_index.is_none() =>
+            {
+                Some(id)
+            }
+            _ => None,
+        })
+        .take(entity_assets.legacy_proto_animation_count)
+        .collect::<Vec<_>>();
+    if proto_animation_ids.len() != entity_assets.legacy_proto_animation_count {
+        return Err(element_mismatch(format!(
+            "retained proto animation count {} has only {} matching initialized FX",
+            entity_assets.legacy_proto_animation_count,
+            proto_animation_ids.len()
+        )));
+    }
+
+    let civilians = entities_matching(engine, |entity| matches!(entity, Entity::Civilian(_)));
+    let targets = entities_matching(engine, |entity| matches!(entity, Entity::Target(_)));
+    let bonuses = entities_matching(engine, |entity| matches!(entity, Entity::Bonus(_)));
+    let rescue_pcs = entities_matching(
+        engine,
+        |entity| matches!(entity, Entity::Pc(pc) if pc.pc.beam_me_index < 0),
+    );
+    let beam_pcs = entities_matching(
+        engine,
+        |entity| matches!(entity, Entity::Pc(pc) if pc.pc.beam_me_index >= 0),
+    );
+    let soldiers = validate_typed_id_list(
+        engine,
+        "soldier",
+        &entity_assets.soldier_entity_ids,
+        |entity| matches!(entity, Entity::Soldier(_)),
+    )?;
+    let scrolls = validate_typed_id_list(
+        engine,
+        "scroll",
+        &entity_assets.scroll_entity_ids,
+        |entity| matches!(entity, Entity::Scroll(_)),
+    )?;
+
+    let mut sequence = Vec::new();
+    let mut used = BTreeSet::new();
+    let mut append_entities = |ids: &[EntityId],
+                               sequence: &mut Vec<StaticElementSource>|
+     -> Result<(), LegacyTopologyAdapterError> {
+        for &id in ids {
+            if !used.insert(id) {
+                return Err(element_mismatch(format!(
+                    "static entity {id} belongs to more than one retained construction group"
+                )));
+            }
+            sequence.push(StaticElementSource::Entity(id));
+        }
+        Ok(())
+    };
+
+    for chunk in &entity_assets.legacy_proto_element_chunk_order {
+        match chunk {
+            ProtoElementChunk::Animation => append_entities(&proto_animation_ids, &mut sequence)?,
+            ProtoElementChunk::Patch => append_entities(proto_patch_ids, &mut sequence)?,
+        }
+    }
+    if (!proto_animation_ids.is_empty() || !proto_patch_ids.is_empty())
+        && entity_assets.legacy_proto_element_chunk_order.is_empty()
+    {
+        return Err(missing_element_order(
+            "proto RHElement constructors exist but proto element chunk order was not retained",
+        ));
+    }
+
+    for chunk in &entity_assets.legacy_mission_element_chunk_order {
+        match chunk {
+            MissionElementChunk::Element => {
+                if entity_assets.legacy_mission_element_group_order.is_empty()
+                    && (!civilians.is_empty()
+                        || !soldiers.is_empty()
+                        || !targets.is_empty()
+                        || !rescue_pcs.is_empty())
+                {
+                    return Err(missing_element_order(
+                        "mission actor constructors exist but ELEMENT group order was not retained",
+                    ));
+                }
+                for group in &entity_assets.legacy_mission_element_group_order {
+                    match group {
+                        MissionElementGroup::Civilian => {
+                            append_entities(&civilians, &mut sequence)?
+                        }
+                        MissionElementGroup::Soldier => append_entities(&soldiers, &mut sequence)?,
+                        MissionElementGroup::Target => append_entities(&targets, &mut sequence)?,
+                        MissionElementGroup::PcToRescue => {
+                            append_entities(&rescue_pcs, &mut sequence)?
+                        }
+                        MissionElementGroup::BeamMe | MissionElementGroup::Animal => {}
+                    }
+                }
+            }
+            MissionElementChunk::Scroll => append_entities(&scrolls, &mut sequence)?,
+            MissionElementChunk::Bonus => append_entities(&bonuses, &mut sequence)?,
+            MissionElementChunk::Patch => append_entities(mission_patch_ids, &mut sequence)?,
+            MissionElementChunk::Mobile => {
+                for (mobile_index, mobile) in engine.world.mobile_elements.iter().enumerate() {
+                    sequence.push(StaticElementSource::MobileMaster(mobile_index));
+                    append_entities(&mobile.sprite_ids, &mut sequence)?;
+                }
+            }
+        }
+    }
+    if (!mission_patch_ids.is_empty()
+        || !civilians.is_empty()
+        || !soldiers.is_empty()
+        || !targets.is_empty()
+        || !rescue_pcs.is_empty()
+        || !scrolls.is_empty()
+        || !bonuses.is_empty()
+        || !engine.world.mobile_elements.is_empty())
+        && entity_assets.legacy_mission_element_chunk_order.is_empty()
+    {
+        return Err(missing_element_order(
+            "mission RHElement constructors exist but mission element chunk order was not retained",
+        ));
+    }
+
+    // `RHEngine::PopulateBeamMes` runs after the complete mission chunk loop.
+    append_entities(&beam_pcs, &mut sequence)?;
+
+    validate_mobile_children(engine, &used)?;
+    Ok(sequence)
+}
+
+fn entities_matching(engine: &EngineInner, predicate: impl Fn(&Entity) -> bool) -> Vec<EntityId> {
+    engine
+        .world
+        .entities
+        .occupied()
+        .filter_map(|(id, entity)| predicate(entity).then_some(id))
+        .collect()
+}
+
+fn validate_typed_id_list(
+    engine: &EngineInner,
+    kind: &'static str,
+    ids: &[EntityId],
+    predicate: impl Fn(&Entity) -> bool,
+) -> Result<Vec<EntityId>, LegacyTopologyAdapterError> {
+    ids.iter()
+        .copied()
+        .map(|id| {
+            let entity = engine.world.entities.get(id).ok_or_else(|| {
+                element_mismatch(format!(
+                    "retained {kind} entity {id} is absent from initialized engine"
+                ))
+            })?;
+            if !predicate(entity) {
+                return Err(element_mismatch(format!(
+                    "retained {kind} entity {id} has incompatible Rust variant"
+                )));
+            }
+            Ok(id)
+        })
+        .collect()
+}
+
+fn validate_mobile_children(
+    engine: &EngineInner,
+    used: &BTreeSet<EntityId>,
+) -> Result<(), LegacyTopologyAdapterError> {
+    for (mobile_index, mobile) in engine.world.mobile_elements.iter().enumerate() {
+        if mobile.sprite_ids.is_empty() {
+            return Err(element_mismatch(format!(
+                "mobile {mobile_index} has no masked child sprites"
+            )));
+        }
+        for &id in &mobile.sprite_ids {
+            let Some(Entity::Fx(fx)) = engine.world.entities.get(id) else {
+                return Err(element_mismatch(format!(
+                    "mobile {mobile_index} child {id} is absent or not FX"
+                )));
+            };
+            if fx.fx.mobile_index != u16::try_from(mobile_index).ok() {
+                return Err(element_mismatch(format!(
+                    "mobile {mobile_index} child {id} records owner {:?}",
+                    fx.fx.mobile_index
+                )));
+            }
+            if !used.contains(&id) {
+                return Err(element_mismatch(format!(
+                    "mobile {mobile_index} child {id} was not inserted into retained Original order"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn metadata_for_entity(
+    entity: &Entity,
+) -> Result<LegacyElementPayloadMetadata, LegacyTopologyAdapterError> {
+    let (class, script_class, local_ai_kind) = match entity {
+        Entity::Pc(pc) => (
+            LegacyElementClass::ActorPc,
+            nonempty(&pc.actor.script_class),
+            None,
+        ),
+        Entity::Soldier(soldier) => {
+            let kind = match soldier.npc.ai_brain {
+                AiBrain::Enemy(_) => LegacyLocalAiKind::Enemy,
+                ref actual => {
+                    return Err(element_mismatch(format!(
+                        "ActorNpcSoldier has incompatible local AI {actual:?}; expected Enemy"
+                    )));
+                }
+            };
+            (
+                LegacyElementClass::ActorNpcSoldier,
+                nonempty(&soldier.actor.script_class),
+                Some(kind),
+            )
+        }
+        Entity::Civilian(civilian) => {
+            let kind = match civilian.npc.ai_brain {
+                AiBrain::Friendly(_) => LegacyLocalAiKind::Friendly,
+                ref actual => {
+                    return Err(element_mismatch(format!(
+                        "ActorNpcCivilian has incompatible local AI {actual:?}; expected Friendly"
+                    )));
+                }
+            };
+            (
+                LegacyElementClass::ActorNpcCivilian,
+                nonempty(&civilian.actor.script_class),
+                Some(kind),
+            )
+        }
+        Entity::Fx(fx) => (
+            if fx.fx.mobile_index.is_some() {
+                LegacyElementClass::FxMasked
+            } else {
+                LegacyElementClass::Fx
+            },
+            None,
+            None,
+        ),
+        Entity::Target(target) => (
+            LegacyElementClass::Target,
+            nonempty(&target.target.script_class),
+            None,
+        ),
+        Entity::Scroll(scroll) => (
+            LegacyElementClass::Scroll,
+            nonempty(&scroll.script_class),
+            None,
+        ),
+        Entity::Bonus(bonus) => (legacy_object_class(bonus.object.object_type)?, None, None),
+        Entity::Projectile(projectile) => (
+            legacy_object_class(projectile.object.object_type)?,
+            None,
+            None,
+        ),
+        Entity::Net(_) => (LegacyElementClass::Net, None, None),
+    };
+    Ok(LegacyElementPayloadMetadata {
+        class,
+        script_class,
+        local_ai_kind,
+        mobile_sprite_count: None,
+    })
+}
+
+fn legacy_object_class(
+    object_type: ObjectType,
+) -> Result<LegacyElementClass, LegacyTopologyAdapterError> {
+    Ok(match object_type {
+        ObjectType::Arrow => LegacyElementClass::Arrow,
+        ObjectType::Apple => LegacyElementClass::Apple,
+        ObjectType::Purse => LegacyElementClass::Purse,
+        ObjectType::Stone => LegacyElementClass::Stone,
+        ObjectType::WaspNest => LegacyElementClass::WaspNest,
+        ObjectType::Wasp => LegacyElementClass::Wasp,
+        ObjectType::Net => LegacyElementClass::Net,
+        ObjectType::Coin => LegacyElementClass::Coin,
+        ObjectType::Ale => LegacyElementClass::Ale,
+        ObjectType::Cape => LegacyElementClass::SpyCape,
+        ObjectType::Scroll => LegacyElementClass::Scroll,
+        ObjectType::BonusAle => LegacyElementClass::BonusAle,
+        ObjectType::BonusAmulet => LegacyElementClass::BonusAmulet,
+        ObjectType::BonusArrow => LegacyElementClass::BonusArrow,
+        ObjectType::BonusApple => LegacyElementClass::BonusApple,
+        ObjectType::BonusBlazon => LegacyElementClass::BonusBlazon,
+        ObjectType::BonusLambLeg => LegacyElementClass::BonusLambLeg,
+        ObjectType::BonusNet => LegacyElementClass::BonusNet,
+        ObjectType::BonusPlants => LegacyElementClass::BonusPlants,
+        ObjectType::BonusPurse => LegacyElementClass::BonusPurse,
+        ObjectType::BonusStone => LegacyElementClass::BonusStone,
+        ObjectType::BonusWaspNest => LegacyElementClass::BonusWaspNest,
+        ObjectType::BonusRansom => LegacyElementClass::BonusRansom,
+        ObjectType::BonusAmpulla => LegacyElementClass::BonusAmpulla,
+        ObjectType::BonusCoronationSpoon => LegacyElementClass::BonusCoronationSpoon,
+        ObjectType::BonusRichardsCrown => LegacyElementClass::BonusRichardsCrown,
+        ObjectType::BonusRoyalSeal => LegacyElementClass::BonusRoyalSeal,
+        ObjectType::BonusRoyalSceptre => LegacyElementClass::BonusRoyalSceptre,
+        ObjectType::BonusDomesdayBook => LegacyElementClass::BonusDomesdayBook,
+        ObjectType::BonusSwordOfTheState => LegacyElementClass::BonusSwordOfTheState,
+        ObjectType::None | ObjectType::VirtualJumper | ObjectType::VirtualListen => {
+            return Err(element_mismatch(format!(
+                "initialized marrayElements entity has non-concrete object type {object_type:?}"
+            )));
+        }
+    })
+}
+
+fn nonempty(value: &str) -> Option<String> {
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+fn element_mismatch(detail: impl Into<String>) -> LegacyTopologyAdapterError {
+    LegacyTopologyAdapterError::ElementTopologyMismatch {
+        detail: detail.into(),
+    }
+}
+
+fn missing_element_order(detail: &'static str) -> LegacyTopologyAdapterError {
+    LegacyTopologyAdapterError::MissingRetainedFact {
+        fact: LegacyMissingTopologyFact::ElementCreationOrders,
+        original_owner: "retained proto/mission RHElement construction order",
+        detail,
+    }
 }
 
 /// Derive the exact `RHFastFindGrid::Serialize` walk topology.
@@ -112,8 +621,7 @@ pub fn derive_grid_topology(
     Err(LegacyTopologyAdapterError::MissingRetainedFact {
         fact: LegacyMissingTopologyFact::GridGateOrder,
         original_owner: "RHFastFindGrid::marrayGates",
-        detail:
-            "Rust separates doors from jump gates and does not retain their shared insertion order",
+        detail: "Rust separates doors from jump gates and does not retain their shared insertion order",
     })
 }
 
@@ -240,8 +748,17 @@ mod tests {
 
     use crate::{
         ai::{PointArchery, Position, SectorArchery, SeekPoint},
+        ai_enemy::EnemyAi,
+        coordinates::{MapPoint, MapVec},
+        element::{
+            ActorData, ActorPc, ActorSoldier, ElementBonus, ElementData, ElementFx, ElementTarget,
+            FxData, HumanData, NpcData, ObjectData, PcData, SoldierData, TargetData,
+        },
         engine::EngineInner,
-        level_data::{RawHikingPath, RawWaypoint},
+        level_data::{
+            MissionElementChunk, MissionElementGroup, ProtoElementChunk, RawHikingPath, RawWaypoint,
+        },
+        mobile::MobileElement,
         pathfinder::PathGraph,
         sector::SectorNumber,
     };
@@ -335,16 +852,116 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_exact_topologies_name_the_discarded_fact() {
+    fn element_metadata_preserves_original_mixed_mobile_order_and_shape() {
+        let mut engine = EngineInner::new();
+        let mut assets = LevelAssets::new();
+
+        let proto_fx = engine.add_entity(fx(None));
+        let soldier = engine.add_entity(soldier(
+            "GuardScript",
+            AiBrain::Enemy(Box::new(EnemyAi::new(0))),
+        ));
+        let target = engine.add_entity(target("BellTarget"));
+        let bonus = engine.add_entity(bonus(ObjectType::BonusAle));
+        let scroll = engine.add_entity(Entity::Scroll(crate::element::ElementScroll {
+            script_class: "ClueScroll".to_owned(),
+            ..Default::default()
+        }));
+        let beam_pc = engine.add_entity(pc("RobinScript", 0));
+        let mobile_child = engine.add_entity(fx(Some(0)));
+        engine
+            .world
+            .mobile_elements
+            .push(mobile(vec![mobile_child]));
+
+        assets.entities.mobile_element_count = 1;
+        assets.entities.soldier_entity_ids = vec![soldier];
+        assets.entities.scroll_entity_ids = vec![scroll];
+        assets.entities.legacy_proto_animation_count = 1;
+        assets.entities.legacy_proto_element_chunk_order = vec![ProtoElementChunk::Animation];
+        assets.entities.legacy_mission_element_chunk_order = vec![
+            MissionElementChunk::Element,
+            MissionElementChunk::Bonus,
+            MissionElementChunk::Scroll,
+            MissionElementChunk::Mobile,
+        ];
+        assets.entities.legacy_mission_element_group_order =
+            vec![MissionElementGroup::Soldier, MissionElementGroup::Target];
+
+        let topology = derive_static_element_topology(&engine, &assets).unwrap();
+        assert_eq!(topology.static_creation_order_boundary, 39);
+        assert_eq!(topology.creation_order_by_entity[&proto_fx], 31);
+        assert_eq!(topology.creation_order_by_entity[&soldier], 32);
+        assert_eq!(topology.creation_order_by_entity[&target], 33);
+        assert_eq!(topology.creation_order_by_entity[&bonus], 34);
+        assert_eq!(topology.creation_order_by_entity[&scroll], 35);
+        assert_eq!(topology.creation_order_by_entity[&mobile_child], 37);
+        assert_eq!(topology.creation_order_by_entity[&beam_pc], 38);
+
+        let mobile_metadata = &topology.payload_metadata.by_creation_order[&36];
+        assert_eq!(mobile_metadata.class, LegacyElementClass::Mobile);
+        assert_eq!(mobile_metadata.mobile_sprite_count, Some(1));
+        assert_eq!(
+            topology.payload_metadata.by_creation_order[&32],
+            LegacyElementPayloadMetadata {
+                class: LegacyElementClass::ActorNpcSoldier,
+                script_class: Some("GuardScript".to_owned()),
+                local_ai_kind: Some(LegacyLocalAiKind::Enemy),
+                mobile_sprite_count: None,
+            }
+        );
+        assert_eq!(
+            topology.payload_metadata.by_creation_order[&33]
+                .script_class
+                .as_deref(),
+            Some("BellTarget")
+        );
+        assert_eq!(
+            topology.payload_metadata.by_creation_order[&35]
+                .script_class
+                .as_deref(),
+            Some("ClueScroll")
+        );
+        assert_eq!(
+            topology.payload_metadata.by_creation_order[&38]
+                .script_class
+                .as_deref(),
+            Some("RobinScript")
+        );
+    }
+
+    #[test]
+    fn element_metadata_rejects_attachment_and_local_ai_mismatches() {
+        let mut engine = EngineInner::new();
+        let mut assets = LevelAssets::new();
+        let soldier = engine.add_entity(soldier("Guard", AiBrain::None));
+        assets.entities.soldier_entity_ids = vec![soldier];
+        assets.entities.legacy_mission_element_chunk_order = vec![MissionElementChunk::Element];
+        assets.entities.legacy_mission_element_group_order = vec![MissionElementGroup::Soldier];
+
+        let error = derive_static_element_topology(&engine, &assets).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("ActorNpcSoldier has incompatible local AI")
+        );
+
+        let child = engine.add_entity(fx(Some(0)));
+        engine.world.mobile_elements.push(mobile(vec![child]));
+        let error = derive_static_element_topology(&engine, &assets).unwrap_err();
+        assert!(matches!(
+            error,
+            LegacyTopologyAdapterError::MissionAttachmentMismatch {
+                fact: "mobile element count",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn unsupported_grid_topology_names_the_discarded_fact() {
         let engine = EngineInner::new();
         let assets = LevelAssets::new();
-        assert!(matches!(
-            derive_element_payload_metadata(&engine, &assets),
-            Err(LegacyTopologyAdapterError::MissingRetainedFact {
-                fact: LegacyMissingTopologyFact::ElementCreationOrders,
-                ..
-            })
-        ));
         assert!(matches!(
             derive_grid_topology(&engine, &assets),
             Err(LegacyTopologyAdapterError::MissingRetainedFact {
@@ -352,6 +969,105 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    fn fx(mobile_index: Option<u16>) -> Entity {
+        Entity::Fx(ElementFx {
+            element: ElementData {
+                kind: crate::element::ElementKind::Fx,
+                ..Default::default()
+            },
+            fx: FxData {
+                mobile_index,
+                ..Default::default()
+            },
+        })
+    }
+
+    fn soldier(script_class: &str, ai_brain: AiBrain) -> Entity {
+        Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                ..Default::default()
+            },
+            actor: ActorData {
+                script_class: script_class.to_owned(),
+                ..Default::default()
+            },
+            human: HumanData::default(),
+            npc: NpcData {
+                ai_brain,
+                ..Default::default()
+            },
+            soldier: SoldierData::default(),
+        })
+    }
+
+    fn target(script_class: &str) -> Entity {
+        Entity::Target(ElementTarget {
+            element: ElementData {
+                kind: crate::element::ElementKind::Target,
+                ..Default::default()
+            },
+            fx: FxData::default(),
+            target: TargetData {
+                script_class: script_class.to_owned(),
+                ..Default::default()
+            },
+        })
+    }
+
+    fn bonus(object_type: ObjectType) -> Entity {
+        Entity::Bonus(ElementBonus {
+            element: ElementData {
+                kind: crate::element::ElementKind::ObjectBonus,
+                ..Default::default()
+            },
+            object: ObjectData {
+                object_type,
+                ..Default::default()
+            },
+        })
+    }
+
+    fn pc(script_class: &str, beam_me_index: i16) -> Entity {
+        Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: crate::element::ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: ActorData {
+                script_class: script_class.to_owned(),
+                ..Default::default()
+            },
+            human: HumanData::default(),
+            pc: PcData {
+                beam_me_index,
+                ..Default::default()
+            },
+        })
+    }
+
+    fn mobile(sprite_ids: Vec<EntityId>) -> MobileElement {
+        MobileElement {
+            sprite_ids,
+            motion_polygon: Vec::new(),
+            position: MapPoint::default(),
+            old_position: MapPoint::default(),
+            path_index: 0,
+            current_waypoint: 0,
+            forward: true,
+            layer: 0,
+            sector: 0,
+            obstacle: None,
+            active: true,
+            stopped: false,
+            speed: 0.0,
+            speed_goal: 0.0,
+            acceleration: 0.0,
+            increment: MapVec::ZERO,
+            goal: MapPoint::default(),
+        }
     }
 
     fn waypoint(command: WaypointCommand) -> RawWaypoint {
