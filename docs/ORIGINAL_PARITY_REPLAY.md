@@ -1484,6 +1484,20 @@ animation while one of those three wait commands is selected but not yet
 executed. Linux3 Profile 001 save 004 consequently matches every recorded
 frame, including its combat-animation RNG at frame 1950.
 
+### Wasp movement is a serialized 3-D vector
+
+`RHElementWasp::Serialize` writes `mvtMovement` before deliberately invoking
+the `RHElementObject` parent serializer. Although most of the wasp's steering
+logic operates in map space, the member is an `SBGeoVector3D`, whose serializer
+writes all three floating-point components.
+
+The Linux-v48 decoder previously treated that member as a 2-D point. Active
+wasps therefore shifted the following object payload by four bytes, making the
+movement Z component appear to be the first bytes of the
+`RHElementObject` fingerprint. The decoder now consumes the full 3-D vector,
+matching both the declared Original member type and its serializer. This is a
+save-format correction for every active wasp, independent of replay content.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

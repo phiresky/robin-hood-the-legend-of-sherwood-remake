@@ -438,7 +438,7 @@ pub struct LegacyWaspPayload {
     pub victim: LegacyElementRef,
     pub stinging: bool,
     pub timeout: u32,
-    pub movement: LegacyPoint2,
+    pub movement: LegacyPoint3,
     pub object: LegacyObjectPayload,
 }
 
@@ -455,7 +455,7 @@ impl LegacyWaspPayload {
             let victim = read_element_ref(reader, "victim")?;
             let stinging = reader.read_bool("stinging")?;
             let timeout = reader.read_u32("timeout")?;
-            let movement = read_point2(reader, "movement")?;
+            let movement = read_point3(reader, "movement")?;
             // Intentional Original behavior: wasps inherit Projectile but
             // serialize only their Object base.
             let object = read_object_payload(
@@ -749,6 +749,30 @@ mod tests {
             assert!(error.field.ends_with("fingerprint"));
             assert!(error.to_string().contains("RHElementPurse fingerprint"));
             assert_eq!(reader.offset(), 16);
+        });
+    }
+
+    #[test]
+    fn wasp_consumes_three_dimensional_movement_before_object_parent() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&FINGERPRINT_WASP);
+        bytes.extend_from_slice(&u32::MAX.to_le_bytes());
+        bytes.extend_from_slice(&u32::MAX.to_le_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        bytes.extend_from_slice(&[0; 12]);
+        bytes.extend_from_slice(&[0; 16]);
+        with_reader(&bytes, |reader| {
+            let error = LegacyWaspPayload::read(
+                reader,
+                LegacySaveAbiProfile::PortLinuxI386V48,
+                &LegacyPayloadLimits::default(),
+                1,
+            )
+            .unwrap_err();
+            assert_eq!(error.offset, 41);
+            assert!(error.field.ends_with("object.fingerprint"));
+            assert_eq!(reader.offset(), 57);
         });
     }
 
