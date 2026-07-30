@@ -16,12 +16,12 @@ use crate::{
 };
 
 use super::{
+    LegacySaveAbiProfile,
     adopt::{LegacyEntityFixups, LegacySaveAdoptError},
     post_grid::{
         LegacyFastFindGridState, LegacyGateState, LegacyPatchState, LegacySpecialSectorState,
     },
-    topology_adapter::{derive_grid_topology, LegacyTopologyAdapterError},
-    LegacySaveAbiProfile,
+    topology_adapter::{LegacyTopologyAdapterError, derive_grid_topology},
 };
 
 #[derive(Debug, Error)]
@@ -62,9 +62,7 @@ pub enum LegacyGridAdoptError {
         patch_index: usize,
         entity_id: EntityId,
     },
-    #[error(
-        "saved patch {patch_index} FX points at patch {saved_patch:?}, expected {patch_index}"
-    )]
+    #[error("saved patch {patch_index} FX points at patch {saved_patch:?}, expected {patch_index}")]
     PatchFxOwnerMismatch {
         patch_index: usize,
         saved_patch: Option<i16>,
@@ -1072,10 +1070,10 @@ mod tests {
             old_mask_indices: vec![crate::mask::MaskIndex::new(0).unwrap()],
             new_mask_indices: vec![crate::mask::MaskIndex::new(1).unwrap()],
             old_sight_obstacle_indices: vec![
-                crate::sight_obstacle::SightObstacleIndex::new(0).unwrap()
+                crate::sight_obstacle::SightObstacleIndex::new(0).unwrap(),
             ],
             new_sight_obstacle_indices: vec![
-                crate::sight_obstacle::SightObstacleIndex::new(1).unwrap()
+                crate::sight_obstacle::SightObstacleIndex::new(1).unwrap(),
             ],
             door_indices: vec![0],
             ..Patch::default()
