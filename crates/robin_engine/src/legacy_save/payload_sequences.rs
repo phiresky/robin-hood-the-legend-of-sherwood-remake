@@ -11,8 +11,9 @@ use serde::{Deserialize, Serialize};
 use crate::legacy_io::{LegacyReader, LegacyResult};
 
 use super::payload_base::{
-    LegacyElementRef, LegacyLineRef, LegacyPoint2, LegacyPoint3, LegacySectorRef, read_element_ref,
-    read_line_ref, read_sector_ref,
+    LegacyElementRef, LegacyLineRef, LegacyPoint2, LegacyPoint3, LegacySectorRef,
+    LegacySequenceElementRef, LegacySequenceRef, read_element_ref, read_line_ref, read_sector_ref,
+    read_sequence_element_ref, read_sequence_ref,
 };
 
 const FINGERPRINT_SEQUENCE: [u8; 16] = hex16("462542ef9f0ef300dff9647c2091d151");
@@ -86,14 +87,26 @@ impl LegacyInlineSequence {
         reader: &mut LegacyReader<'_>,
         limits: &LegacySequencePayloadLimits,
     ) -> LegacyResult<Self> {
-        reader.scope("RHSequence", |reader| read_sequence(reader, limits, 0))
+        reader.scope("RHSequence", |reader| {
+            read_sequence(reader, limits, 0, false)
+        })
     }
+}
+
+pub(crate) fn read_sequence_with_pre_serialization(
+    reader: &mut LegacyReader<'_>,
+    limits: &LegacySequencePayloadLimits,
+) -> LegacyResult<LegacyInlineSequence> {
+    reader.scope("RHSequence", |reader| {
+        read_sequence(reader, limits, 0, true)
+    })
 }
 
 fn read_sequence(
     reader: &mut LegacyReader<'_>,
     limits: &LegacySequencePayloadLimits,
     nesting_depth: usize,
+    use_pre_serialization: bool,
 ) -> LegacyResult<LegacyInlineSequence> {
     if nesting_depth > limits.nested_sequences {
         let offset = reader.offset();
@@ -121,7 +134,7 @@ fn read_sequence(
     let mut counted_in_progress = 0_usize;
     for index in 0..count {
         let element = reader.scope(format!("elements[{index}]"), |reader| {
-            LegacyInlineSequenceElement::read(reader, limits, nesting_depth)
+            LegacyInlineSequenceElement::read(reader, limits, nesting_depth, use_pre_serialization)
         })?;
         if element.base().state == 2 {
             counted_in_progress += 1;
@@ -163,16 +176,26 @@ impl LegacyInlineSequenceElement {
         reader: &mut LegacyReader<'_>,
         limits: &LegacySequencePayloadLimits,
         nesting_depth: usize,
+        use_pre_serialization: bool,
     ) -> LegacyResult<Self> {
         let type_offset = reader.offset();
         let element_type = reader.read_u8("type")?;
         match element_type {
-            0 => LegacySequenceElementBase::read(reader, limits).map(Self::Simple),
-            1 => LegacySequenceElementDamage::read(reader, limits).map(Self::Damage),
-            2 => LegacySequenceElementGeneric::read(reader, limits).map(Self::Generic),
-            3 => LegacySequenceElementInteraction::read(reader, limits).map(Self::Interaction),
-            4 => LegacySequenceElementMovement::read(reader, limits, nesting_depth)
-                .map(Self::Movement),
+            0 => LegacySequenceElementBase::read(reader, limits, use_pre_serialization)
+                .map(Self::Simple),
+            1 => LegacySequenceElementDamage::read(reader, limits, use_pre_serialization)
+                .map(Self::Damage),
+            2 => LegacySequenceElementGeneric::read(reader, limits, use_pre_serialization)
+                .map(Self::Generic),
+            3 => LegacySequenceElementInteraction::read(reader, limits, use_pre_serialization)
+                .map(Self::Interaction),
+            4 => LegacySequenceElementMovement::read(
+                reader,
+                limits,
+                nesting_depth,
+                use_pre_serialization,
+            )
+            .map(Self::Movement),
             _ => Err(reader.invalid_value(
                 type_offset,
                 "type",
@@ -206,12 +229,26 @@ pub struct LegacySequenceElementBase {
     pub script_driven: bool,
     pub owner: LegacyElementRef,
     pub orders: Vec<LegacyInlineOrder>,
+    /// Present only for manager-owned sequences serialized with
+    /// `bUsePreSerialization=true`.
+    pub manager_fixups: Option<LegacySequenceElementFixups>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LegacySequenceElementFixups {
+    pub next_offset: u64,
+    pub next: LegacySequenceElementRef,
+    pub postponed_offset: u64,
+    pub postponed: LegacySequenceElementRef,
+    pub mummy_offset: u64,
+    pub mummy: LegacySequenceRef,
 }
 
 impl LegacySequenceElementBase {
     fn read(
         reader: &mut LegacyReader<'_>,
         limits: &LegacySequencePayloadLimits,
+        use_pre_serialization: bool,
     ) -> LegacyResult<Self> {
         reader.read_signature(
             "fingerprint",
@@ -253,7 +290,24 @@ impl LegacySequenceElementBase {
         for index in 0..order_count {
             orders.push(reader.scope(format!("orders[{index}]"), LegacyInlineOrder::read)?);
         }
-        // bUsePreSerialization=false: no next, postponed, or mummy pointer IDs.
+        let manager_fixups = if use_pre_serialization {
+            let next_offset = reader.offset();
+            let next = read_sequence_element_ref(reader, "next_sequence_element")?;
+            let postponed_offset = reader.offset();
+            let postponed = read_sequence_element_ref(reader, "postponed_sequence_element")?;
+            let mummy_offset = reader.offset();
+            let mummy = read_sequence_ref(reader, "mummy_sequence")?;
+            Some(LegacySequenceElementFixups {
+                next_offset,
+                next,
+                postponed_offset,
+                postponed,
+                mummy_offset,
+                mummy,
+            })
+        } else {
+            None
+        };
         Ok(Self {
             command,
             state,
@@ -266,6 +320,7 @@ impl LegacySequenceElementBase {
             script_driven,
             owner,
             orders,
+            manager_fixups,
         })
     }
 }
@@ -326,9 +381,10 @@ impl LegacySequenceElementDamage {
     fn read(
         reader: &mut LegacyReader<'_>,
         limits: &LegacySequencePayloadLimits,
+        use_pre_serialization: bool,
     ) -> LegacyResult<Self> {
         let base = reader.scope("base", |reader| {
-            LegacySequenceElementBase::read(reader, limits)
+            LegacySequenceElementBase::read(reader, limits, use_pre_serialization)
         })?;
         let harder_hit = reader.read_bool("harder_hit")?;
         let sword_strike = reader.read_i32("sword_strike")?;
@@ -377,10 +433,11 @@ impl LegacySequenceElementInteraction {
     fn read(
         reader: &mut LegacyReader<'_>,
         limits: &LegacySequencePayloadLimits,
+        use_pre_serialization: bool,
     ) -> LegacyResult<Self> {
         Ok(Self {
             base: reader.scope("base", |reader| {
-                LegacySequenceElementBase::read(reader, limits)
+                LegacySequenceElementBase::read(reader, limits, use_pre_serialization)
             })?,
             element: read_element_ref(reader, "element")?,
         })
@@ -397,9 +454,10 @@ impl LegacySequenceElementGeneric {
     fn read(
         reader: &mut LegacyReader<'_>,
         limits: &LegacySequencePayloadLimits,
+        use_pre_serialization: bool,
     ) -> LegacyResult<Self> {
         let base = reader.scope("base", |reader| {
-            LegacySequenceElementBase::read(reader, limits)
+            LegacySequenceElementBase::read(reader, limits, use_pre_serialization)
         })?;
         let count = reader.read_count_u32("fields.count", limits.generic_fields)?;
         let mut fields = Vec::new();
@@ -612,6 +670,9 @@ pub struct LegacySequenceElementMovement {
     pub line: LegacyLineRef,
     pub sector: LegacySectorRef,
     pub post_seek_sequence: Option<Box<LegacyInlineSequence>>,
+    /// Present only for manager-owned movement elements.
+    pub manager_linked_seek_fixup_offset: Option<u64>,
+    pub manager_linked_seek_fixup: Option<LegacySequenceElementRef>,
 }
 
 impl LegacySequenceElementMovement {
@@ -619,9 +680,10 @@ impl LegacySequenceElementMovement {
         reader: &mut LegacyReader<'_>,
         limits: &LegacySequencePayloadLimits,
         nesting_depth: usize,
+        use_pre_serialization: bool,
     ) -> LegacyResult<Self> {
         let base = reader.scope("base", |reader| {
-            LegacySequenceElementBase::read(reader, limits)
+            LegacySequenceElementBase::read(reader, limits, use_pre_serialization)
         })?;
         let action = reader.read_i32("action")?;
         let tolerance = reader.read_f32("tolerance")?;
@@ -636,12 +698,24 @@ impl LegacySequenceElementMovement {
         let sector = read_sector_ref(reader, "sector")?;
         let post_seek_sequence = if reader.read_bool("post_seek_sequence.present")? {
             Some(Box::new(reader.scope("post_seek_sequence", |reader| {
-                read_sequence(reader, limits, nesting_depth + 1)
+                read_sequence(reader, limits, nesting_depth + 1, false)
             })?))
         } else {
             None
         };
-        // bUsePreSerialization=false: no linked-seek element pointer ID.
+        let (manager_linked_seek_fixup_offset, manager_linked_seek_fixup) = if use_pre_serialization
+        {
+            let offset = reader.offset();
+            (
+                Some(offset),
+                Some(read_sequence_element_ref(
+                    reader,
+                    "linked_seek_sequence_element",
+                )?),
+            )
+        } else {
+            (None, None)
+        };
         Ok(Self {
             base,
             action,
@@ -656,6 +730,8 @@ impl LegacySequenceElementMovement {
             line,
             sector,
             post_seek_sequence,
+            manager_linked_seek_fixup_offset,
+            manager_linked_seek_fixup,
         })
     }
 }
