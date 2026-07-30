@@ -1093,6 +1093,34 @@ preserves all flag/null combinations exactly without synthesizing a PC or
 normalizing the flag. Non-finite danger points and non-null references to the
 wrong entity class remain rejected.
 
+### Loaded-campaign mission initialization
+
+Before applying an embedded engine body, replay constructs the mission against
+the recorded campaign. Initialization scripts can request `AddPCToGang` for
+the exact VIP description already present in that campaign. Rust's gang list
+was already deduplicated by character index, but a debug assertion ran before
+that no-op check and aborted valid loaded-save setup. Re-adding the same
+description is now explicitly idempotent; the duplicate-VIP-profile guard
+still applies when a genuinely different description would be inserted.
+
+### Restored `MOVE_OK` stop priority
+
+`RHCOMMAND_MOVE_OK` is the internal translated form of `MOVE` and normally
+retains the priority assigned before translation. Some v48 saves retain an
+in-progress `MOVE_OK` with `RHPRIORITY_NOT_YET_SET`. Original's base
+`DeterminePriority` has no arm for this internal command: its release-build
+default yields `RHPRIORITY_NONE`, and `RHSequenceElement::Stop` immediately
+promotes that result to Normal. Rust models this explicit fallback for
+`MOVE_OK` while retaining diagnostics for every other unhandled command.
+
+### Automatic divergence dump location
+
+Default replay failures retain the configured rolling frame window as JSONL
+under `.codex-tmp/parity-dumps/`, with a unique filename containing the first
+divergent frame. The diagnostic no longer uses the host temporary directory,
+so full-corpus work stays inside the workspace and concurrent replays do not
+clobber a shared path.
+
 ## Current Linux-v48 loaded-save result
 
 As of Rust commit `4bf11cd69`, the schema-11 runner decodes and atomically
