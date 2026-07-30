@@ -1022,6 +1022,25 @@ interface. Preflight fails explicitly if the saved PC's profile references a
 move-box table entry absent from the loaded mission, rather than fabricating a
 unit box. Static PCs continue to retain their mission-start constructor state.
 
+### Linux-v48 exact PC campaign-description identity
+
+After constructor geometry was restored, every representative save reached its
+first snapshot but reported groups of PC ammunition counters from a different
+character. Rust had validated the serialized `mpDescription` index and then
+discarded it, resolving later status access through the first campaign
+description with the same character profile. Profiles are not unique: rescued
+and replacement characters routinely share one profile while owning separate
+status records.
+
+`RHElementActorPC` retains `mpDescription` and its `mpStatus` alias exactly;
+`mubListIndex` is unrelated actor/UI state serialized separately. Rust now
+stores the exact campaign-description index on each PC, sets it on every
+mission/rescue/reinforcement constructor, and restores it from the saved
+pointer during Linux-v48 adoption. Status access validates both the index and
+profile identity and never falls back to a profile search. A focused duplicate-
+profile test keeps the first matching description full while the selected
+description is empty, proving pickup capacity follows the exact pointer.
+
 ### Linux-v48 dormant carried-posture storage
 
 Profile 011 creation order 157 stores `mCarriedPosture = 161437968` while

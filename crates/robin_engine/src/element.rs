@@ -1187,6 +1187,14 @@ pub struct PcData {
     pub robin: bool,
     pub already_selected: bool,
     pub list_index: u8,
+    /// Exact index of Original's `mpDescription` pointer in
+    /// `RHCampaign::mapPCDescription`.
+    ///
+    /// This is independent of `mubListIndex`: multiple campaign
+    /// descriptions may share one character profile, while the list byte is
+    /// actor/UI state serialized separately by `RHElementActorPC`.
+    #[serde(default)]
+    pub campaign_description_index: Option<u32>,
 
     /// Whether this PC can currently be selected and controlled.
     /// Set/cleared by the `Activate` and `Deactivate` script natives,
@@ -1327,6 +1335,7 @@ impl Default for PcData {
             robin: false,
             already_selected: false,
             list_index: 0,
+            campaign_description_index: None,
             playable: true,
             interface_hidden: false,
             current_action: Action::default(),

@@ -657,6 +657,10 @@ fn apply_human(human: &mut HumanData, saved: ConvertedHuman) {
 
 fn apply_pc(pc: &mut PcData, saved: &ConvertedPc) {
     pc.life_points = saved.status.life_points;
+    pc.campaign_description_index = Some(
+        u32::try_from(saved.character_index)
+            .expect("saved campaign description index originated as an Original u32"),
+    );
     pc.ammo = PcAmmoData {
         ales: saved.status.num_ales,
         arrows: saved.status.num_arrows,

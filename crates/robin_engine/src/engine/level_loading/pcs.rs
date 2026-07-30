@@ -705,6 +705,7 @@ impl EngineInner {
                         robin: is_robin,
                         profile_index: profile_idx,
                         list_index,
+                        campaign_description_index: Some(char_idx as u32),
                         kind,
                         has_lockpick,
                         has_climb,

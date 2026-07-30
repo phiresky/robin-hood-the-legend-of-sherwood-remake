@@ -3863,6 +3863,7 @@ mod tests {
             human: HumanData::default(),
             pc: PcData {
                 profile_index: crate::profiles::CharacterProfileIdx(0),
+                campaign_description_index: Some(0),
                 life_points: 50,
                 ..PcData::default()
             },
@@ -3896,7 +3897,7 @@ mod tests {
         }
 
         let profile_idx = crate::profiles::CharacterProfileIdx(2);
-        let status_idx = 1u8;
+        let description_idx = 1u32;
 
         let mut pm = ProfileManager::new();
         pm.characters.push(CharacterProfile::default());
@@ -3911,11 +3912,13 @@ mod tests {
 
         let mut engine = EngineInner::new();
         let mut campaign = crate::campaign::Campaign::default();
-        campaign.characters.push(crate::campaign::PcDescription {
-            character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
+        let mut other_description = crate::campaign::PcDescription {
+            character_profile_idx: Some(profile_idx),
             instanced: false,
             ..Default::default()
-        });
+        };
+        other_description.status.num_arrows = 12;
+        campaign.characters.push(other_description);
         campaign.characters.push(crate::campaign::PcDescription {
             character_profile_idx: Some(profile_idx),
             instanced: true,
@@ -3934,7 +3937,10 @@ mod tests {
             human: HumanData::default(),
             pc: PcData {
                 profile_index: profile_idx,
-                list_index: status_idx,
+                // Deliberately independent identities: neither the first
+                // matching profile nor mubListIndex owns this actor's status.
+                list_index: 0,
+                campaign_description_index: Some(description_idx),
                 life_points: 50,
                 ..PcData::default()
             },
@@ -4662,9 +4668,10 @@ mod tests {
     }
 
     #[test]
-    fn pickup_dispatch_resolves_campaign_status_by_profile_identity() {
+    fn pickup_dispatch_resolves_exact_campaign_description_identity() {
         // C++ PCs read ammo from their own mpStatus, not from a
-        // campaign array slot equal to the static profile index or mubListIndex.
+        // campaign array slot equal to the first matching profile or
+        // mubListIndex.
         let (mut engine, assets, pc_id) =
             setup_pc_engine_with_split_profile_and_status(&[(Action::Bow, 12)]);
         let id = spawn_bonus(&mut engine, ObjectType::BonusArrow, true, Action::Bow);

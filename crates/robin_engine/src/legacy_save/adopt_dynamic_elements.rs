@@ -498,6 +498,7 @@ fn construct_pc(
             life_points: description.status.life_points,
             robin: kind.is_some_and(|kind| kind.is_robin()),
             list_index,
+            campaign_description_index: Some(description_index),
             profile_index,
             kind,
             has_lockpick,

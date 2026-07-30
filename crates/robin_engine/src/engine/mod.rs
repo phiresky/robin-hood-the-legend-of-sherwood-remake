@@ -362,20 +362,34 @@ impl EngineInner {
         pc_data: &crate::element::PcData,
     ) -> Option<usize> {
         let campaign = &self.mission_domain.campaign;
-        let Some(idx) = campaign.get_character_by_profile(pc_data.profile_index) else {
+        let Some(raw_index) = pc_data.campaign_description_index else {
             tracing::warn!(
-                "campaign has no PC description for profile {}",
+                "PC profile {} has no campaign description identity",
                 pc_data.profile_index
             );
             return None;
         };
+        let idx = raw_index as usize;
+        let Some(description) = campaign.characters.get(idx) else {
+            tracing::error!(
+                "PC campaign description index {raw_index} is outside campaign character table of length {}",
+                campaign.characters.len()
+            );
+            return None;
+        };
+        if description.character_profile_idx != Some(pc_data.profile_index) {
+            tracing::error!(
+                "PC campaign description index {raw_index} has profile {:?}, entity has profile {}",
+                description.character_profile_idx,
+                pc_data.profile_index
+            );
+            return None;
+        }
         // Original RHElementActorPC keeps mpDescription/mpStatus as aliases
         // into RHCampaign and serializes that description pointer separately.
         // mubListIndex is independent actor/UI storage and is never used to
-        // resolve the campaign status. The Rust actor retains the profile
-        // identity validated against that saved description during adoption,
-        // so resolve the same campaign object by profile rather than treating
-        // the unrelated list byte as a character-table index.
+        // resolve the campaign status. Profiles are not unique in the
+        // campaign character table, so retaining this exact index is required.
         Some(idx)
     }
 

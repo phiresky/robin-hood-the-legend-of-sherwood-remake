@@ -219,6 +219,10 @@ impl EngineInner {
             pc: PcData {
                 robin: false,
                 profile_index: profile_idx,
+                campaign_description_index: Some(
+                    u32::try_from(char_idx)
+                        .expect("campaign character index must fit Original pointer index"),
+                ),
                 kind,
                 has_lockpick,
                 has_climb,
