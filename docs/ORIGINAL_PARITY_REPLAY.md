@@ -1378,6 +1378,32 @@ its first concrete order. This is the general selected-element ownership rule,
 independent of patrols or replay identities. Linux3 Profile 003 save 054 now
 passes its former frame-312 goal divergence.
 
+### Restoring in-progress ability ownership from loaded sequences
+
+Original does not serialize a separate hero-ability controller. Its selected
+in-progress sequence element and current `RHOrder` remain the authority after a
+load, and the actor resumes executing that order directly. Rust normally
+creates an `ActiveAbility` latch while translating a newly launched command,
+so Linux saves taken after translation previously restored the animation and
+sequence but lost the Rust-only latch. The animation then continued without
+its completion effect; for example, a saved `TYING` order finished without
+changing its antagonist from lying to tied.
+
+Linux-v48 post-load adoption now derives the latch from each current recognized
+ability order, retaining its sequence/element/order identity and antagonist.
+This covers the ordinary one-shot abilities as well as the phase-specific
+Listen and ReceivePurse order chains. It is a reconstruction of Rust-only
+bookkeeping from Original's authoritative state, not new serialized state.
+
+Ability termination also now closes `SendCondolationCard` synchronously for
+every ability. Original clears the actor's selected sequence/order at that
+boundary, making `GetCommand()` report `WAIT`, and may instruct a successor
+before returning. Rust previously performed that owner-boundary dispatch only
+for Strangle. Tie also repeats Original's antagonist-validity check on every
+Execute: its own DONE effect changes the target from lying to tied, so the next
+Execute aborts and releases the now-invalid Tie order rather than playing its
+unused animation tail. Linux3 Profile 003 save 011 exercises these fixes with
+a tie that was already in progress when the save was written.
 
 ## Current Linux-v48 loaded-save result
 

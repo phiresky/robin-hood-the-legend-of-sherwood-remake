@@ -187,6 +187,10 @@ impl LegacyPostLoadAdoptionPlan {
     /// last because it reads the fixed-up active order.
     pub fn apply(self, engine: &mut EngineInner, assets: &LevelAssets) -> LegacyPostLoadHostOutput {
         engine.complete_legacy_loaded_remarks(&self.active_remark_completions, assets);
+        crate::abilities::restore_loaded_active_abilities(
+            &mut engine.world.entities,
+            &engine.orders.sequence_manager,
+        );
 
         if self.rng_policy == LegacyRngRestorePolicy::RestoreSavedSeed {
             engine.restore_rng_from_seed(self.saved_rng_seed);

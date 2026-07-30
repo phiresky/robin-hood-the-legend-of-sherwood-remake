@@ -17,7 +17,7 @@
 
 use crate::coordinates::MapPoint;
 use crate::element::{
-    ActionState, Entity, EntityId, GameMaterial, ListenPhase, Posture, ReceivePursePhase,
+    ActionState, Command, Entity, EntityId, GameMaterial, ListenPhase, Posture, ReceivePursePhase,
 };
 use crate::entities::Entities;
 use crate::movement::{AbilityKind, ActiveAbility};
@@ -1895,6 +1895,138 @@ pub(crate) fn ability_order_type(kind: AbilityKind) -> OrderType {
     }
 }
 
+/// Rebuild Rust's derived ability owner latch after loading an Original save.
+///
+/// Original does not serialize a second "active ability" object: the selected
+/// in-progress sequence element and its current `RHOrder` are the authority.
+/// Rust normally creates this latch in `begin_*`, but a loaded sequence has
+/// already crossed that boundary. Reconstruct it from the same authoritative
+/// order so completion effects continue on the correct frame.
+pub(crate) fn restore_loaded_active_abilities(
+    entities: &mut Entities,
+    sequence_manager: &SequenceManager,
+) {
+    let active = sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| {
+            sequence
+                .elements
+                .iter()
+                .enumerate()
+                .filter_map(move |(element_index, element)| {
+                    let owner = element.owner?;
+                    if element.state != crate::sequence::SequenceState::InProgress {
+                        return None;
+                    }
+                    let order = element.current_order()?;
+                    let (kind, listen_phase, receive_purse_phase) = match order.order_type {
+                        OrderType::TransitionWaitingUprightCarryingCorpse => {
+                            (AbilityKind::Carry, None, None)
+                        }
+                        OrderType::TransitionCarryingCorpseWaitingUpright => {
+                            (AbilityKind::Drop, None, None)
+                        }
+                        OrderType::Tying => (AbilityKind::Tie, None, None),
+                        OrderType::Healing | OrderType::Eating
+                            if element.command == Command::HealCmd =>
+                        {
+                            (AbilityKind::Heal, None, None)
+                        }
+                        OrderType::Whistling => (AbilityKind::Whistle, None, None),
+                        OrderType::TransitionWaitingUprightListening => (
+                            AbilityKind::Listen,
+                            Some(ListenPhase::EnterTransition),
+                            None,
+                        ),
+                        OrderType::Listening => {
+                            (AbilityKind::Listen, Some(ListenPhase::CountingDown), None)
+                        }
+                        OrderType::TransitionListeningWaitingUpright => {
+                            (AbilityKind::Listen, Some(ListenPhase::ExitTransition), None)
+                        }
+                        OrderType::ThrowingNet => (AbilityKind::ThrowNet, None, None),
+                        OrderType::ThrowingWaspNest => (AbilityKind::ThrowWaspNest, None, None),
+                        OrderType::ThrowingPurse => (AbilityKind::ThrowPurse, None, None),
+                        OrderType::ThrowingApple => (AbilityKind::ThrowApple, None, None),
+                        OrderType::ThrowingStone => (AbilityKind::ThrowStone, None, None),
+                        OrderType::Paying => (AbilityKind::Pay, None, None),
+                        OrderType::ReceivingPurse => (
+                            AbilityKind::ReceivePurse,
+                            None,
+                            Some(ReceivePursePhase::Receiving),
+                        ),
+                        OrderType::WaitingWithPurse => (
+                            AbilityKind::ReceivePurse,
+                            None,
+                            Some(ReceivePursePhase::Waiting),
+                        ),
+                        OrderType::TransitionWaitingWithPurseWaitingUpright => (
+                            AbilityKind::ReceivePurse,
+                            None,
+                            Some(ReceivePursePhase::Transition),
+                        ),
+                        OrderType::Hitting => (AbilityKind::Hit, None, None),
+                        OrderType::Strangling => (AbilityKind::Strangle, None, None),
+                        OrderType::Eating => (AbilityKind::Eat, None, None),
+                        OrderType::ClimbingUpOnShoulders => {
+                            (AbilityKind::ClimbOnShoulders, None, None)
+                        }
+                        OrderType::ClimbingDownFromShoulders => {
+                            (AbilityKind::ClimbDownFromShoulders, None, None)
+                        }
+                        _ => return None,
+                    };
+                    Some((
+                        owner,
+                        ActiveAbility {
+                            kind: Some(kind),
+                            sequence_id: Some(sequence.id),
+                            element_index,
+                            target: order.antagonist,
+                            order_id: Some(order.order_id),
+                            // A current serialized order has not yet been
+                            // removed at its DONE boundary. Its world-side
+                            // effects, if any, are already authoritative in
+                            // the save and must not be applied twice.
+                            done_effect_applied: order.done,
+                            // Execute-time strangle initialization precedes
+                            // installation of the Strangling order.
+                            strangle_initialized: kind == AbilityKind::Strangle,
+                        },
+                        listen_phase,
+                        receive_purse_phase,
+                    ))
+                })
+        })
+        .collect::<Vec<_>>();
+
+    for (owner, mut ability, listen_phase, receive_purse_phase) in active {
+        let entity = entities
+            .get_mut(owner)
+            .unwrap_or_else(|| panic!("loaded ability owner {owner:?} disappeared"));
+        if ability.kind == Some(AbilityKind::Drop) && ability.target.is_none() {
+            ability.target = entity
+                .pc_data()
+                .unwrap_or_else(|| panic!("loaded Drop owner {owner:?} is not a PC"))
+                .carried;
+            assert!(
+                ability.target.is_some(),
+                "loaded Drop owner {owner:?} has neither an order antagonist nor a carried body"
+            );
+        }
+        let actor = entity
+            .actor_data_mut()
+            .unwrap_or_else(|| panic!("loaded ability owner {owner:?} is not an actor"));
+        actor.active_ability = ability;
+        if let Some(phase) = listen_phase {
+            actor.listen_phase = phase;
+        }
+        if let Some(phase) = receive_purse_phase {
+            actor.receive_purse_phase = phase;
+        }
+    }
+}
+
 /// Advance the active ability for one actor.
 ///
 /// This is the per-owner unit used by the engine's creation-ordered element
@@ -1928,6 +2060,30 @@ pub fn tick_ability(
     let listen_phase = actor.listen_phase;
     let receive_purse_phase = actor.receive_purse_phase;
     let kind = ability.kind.unwrap(); // safe: is_active() checked
+
+    // RHElementActorPC::Execute(TYING) revalidates the antagonist every
+    // frame. The DONE callback itself changes Lying -> Tied, so the next
+    // Execute deliberately fails this check and aborts/releases the Tie
+    // element instead of playing the unused animation tail.
+    if kind == AbilityKind::Tie {
+        let target_id = ability
+            .target
+            .expect("active Tie ability must retain its antagonist");
+        let target_valid = entities.get(target_id).is_some_and(|target| {
+            target.human_data().is_some_and(|human| human.unconscious)
+                && target.element_data().posture == Posture::Lying
+        });
+        if !target_valid {
+            results.push(AbilityTickResult::Aborted {
+                actor_id: entity_id,
+                kind,
+                seq_id: ability.sequence_id.expect("Tie ability sequence"),
+                elem_idx: ability.element_index,
+                order_id: ability.order_id,
+            });
+            return results;
+        }
+    }
 
     // RHElementActorPC::Perform(STRANGLING) uses C++ `&&` ordering:
     // attacker TurnFast runs first, and the victim is not advanced until a
@@ -2163,7 +2319,6 @@ pub fn tick_ability(
     };
     let direction = u16::try_from(entity.element_data().direction())
         .unwrap_or_else(|_| panic!("{kind:?} owner {entity_id:?} has invalid animation direction"));
-
     // Drive the animation through the sprite state machine.
     let motion = if sprite_frozen {
         SpriteMotionState::InProgress
@@ -2811,6 +2966,46 @@ mod tests {
         let seq_id = manager.launch_element(SequenceElement::new(1, command, Some(owner)));
         manager.element_in_progress(seq_id, 0);
         seq_id
+    }
+
+    #[test]
+    fn loaded_tying_order_reconstructs_rust_only_ability_latch() {
+        let mut entities = Entities::new();
+        for _ in 0..2 {
+            entities.push(Some(Entity::Pc(ActorPc {
+                element: ElementData {
+                    kind: ElementKind::ActorPc,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: HumanData::default(),
+                pc: PcData::default(),
+            })));
+        }
+        let owner = entities.id_at_legacy_slot(0).unwrap();
+        let target = entities.id_at_legacy_slot(1).unwrap();
+        let mut manager = SequenceManager::new();
+        let seq_id = launch_ability_element(&mut manager, Command::TieCmd, owner);
+        let order_id = std::num::NonZeroU32::new(41).unwrap();
+        let mut order = Order::new(OrderType::Tying, 12.0, 34.0, order_id);
+        order.antagonist = Some(target);
+        order.target_actor = Some(target.index());
+        manager.push_order_on(seq_id, 0, order);
+
+        restore_loaded_active_abilities(&mut entities, &manager);
+
+        let restored = &entities
+            .get(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability;
+        assert_eq!(restored.kind, Some(AbilityKind::Tie));
+        assert_eq!(restored.sequence_id, Some(seq_id));
+        assert_eq!(restored.element_index, 0);
+        assert_eq!(restored.target, Some(target));
+        assert_eq!(restored.order_id, Some(order_id));
+        assert!(!restored.done_effect_applied);
     }
 
     #[test]

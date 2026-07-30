@@ -3288,9 +3288,13 @@ impl EngineInner {
                     elem_idx,
                 } => {
                     self.do_next_order(seq_id, elem_idx);
-                    if kind == crate::movement::AbilityKind::Strangle {
-                        self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
-                    }
+                    // `DoNextOrder` terminates the exhausted element, and
+                    // Original immediately runs SendCondolationCard before
+                    // returning from that SetState stack. This is required
+                    // for every ability, not only Strangle: it clears the
+                    // actor's selected element (so GetCommand becomes Wait)
+                    // and may synchronously instruct a successor.
+                    self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
                     let next = self
                         .orders
                         .sequence_manager
