@@ -685,8 +685,9 @@ impl EngineInner {
                     let computed = script
                         .state
                         .computed_locations
-                        .get(index - script.bindings.script_location_count)?;
-                    Some((computed.position, computed.layer_sector))
+                        .get(index - script.bindings.script_location_count)?
+                        .as_ref()?;
+                    Some((computed.position, computed.layer.zip(computed.sector)))
                 }
             });
             let Some(((x, y), dest_layer_sector)) = resolved else {
@@ -4169,10 +4170,13 @@ mod script_context_tests {
         script
             .state
             .computed_locations
-            .push(crate::natives::ComputedScriptLocation {
+            .push(Some(crate::natives::ComputedScriptLocation {
                 position: (12.5, -8.0),
-                layer_sector: Some((2, 44)),
-            });
+                layer: Some(2),
+                sector: Some(44),
+                active: true,
+                legacy_dummy: false,
+            }));
         script.state.sequence_recorder.sequence_id = 3;
         script.state.sequence_recorder.recording = Some(crate::sequence::RecordingSession::new());
         let location_positions = std::sync::Arc::new(vec![(12.0, 34.0)]);

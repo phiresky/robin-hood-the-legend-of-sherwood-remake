@@ -88,6 +88,38 @@ impl LegacySequenceAdoptionPlan {
             .restore_v48_state(self.manager);
         engine.orders.next_order_id = self.next_order_id;
     }
+
+    /// Resolve a tail-owned Original sequence-element pointer against the
+    /// exact converted manager that will be installed. Tail preflight runs
+    /// before this plan is consumed, so no live-manager fallback is needed.
+    pub(crate) fn resolve_element(
+        &self,
+        field: &'static str,
+        reference: super::payload_base::LegacySequenceElementRef,
+    ) -> Result<Option<(SequenceElementRef, &SequenceElement)>, LegacySequenceAdoptError> {
+        let Some(id) = reference.0 else {
+            return Ok(None);
+        };
+        let (element_ref, element) = self
+            .manager
+            .sequences
+            .iter()
+            .find_map(|sequence| {
+                sequence
+                    .elements
+                    .iter()
+                    .enumerate()
+                    .find(|(_, element)| element.id == id)
+                    .map(|(element_index, element)| {
+                        (
+                            SequenceElementRef::new(sequence.id, element_index),
+                            element,
+                        )
+                    })
+            })
+            .ok_or(LegacySequenceAdoptError::MissingIdentity { field, id })?;
+        Ok(Some((element_ref, element)))
+    }
 }
 
 /// Convert every manager-owned sequence and deferred element without mutating
@@ -966,6 +998,12 @@ mod tests {
     fn preflights_and_atomically_restores_manager_identity_and_fifo_order() {
         let (entities, owner, target) = entities();
         let plan = preflight_v48_sequence_manager(&fixture(), &entities, &topology()).unwrap();
+        let (resolved_ref, resolved) = plan
+            .resolve_element("tail.timer", LegacySequenceElementRef(Some(101)))
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved_ref, SequenceElementRef::new(SequenceId(10), 1));
+        assert_eq!(resolved.id, 101);
         let mut engine = crate::engine::EngineInner::new();
         plan.apply(&mut engine);
 

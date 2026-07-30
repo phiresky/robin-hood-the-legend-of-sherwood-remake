@@ -1068,10 +1068,15 @@ fn get_distance_invalid_handle() {
 #[test]
 fn camera_commands_copy_static_and_vm_local_computed_points() {
     let mut host = BoundScriptEffects::new();
-    host.state.computed_locations.push(ComputedScriptLocation {
-        position: (90.0, 123.0),
-        layer_sector: Some((2, 44)),
-    });
+    host.state
+        .computed_locations
+        .push(Some(ComputedScriptLocation {
+            position: (90.0, 123.0),
+            layer: Some(2),
+            sector: Some(44),
+            active: true,
+            legacy_dummy: false,
+        }));
     let bindings = AttachedScriptBindings {
         script_location_count: 1,
         script_point_count: 1,

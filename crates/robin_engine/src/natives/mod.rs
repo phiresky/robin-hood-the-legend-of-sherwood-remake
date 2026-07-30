@@ -2700,6 +2700,7 @@ impl NativeContext<'_, '_> {
             self.script_state
                 .computed_locations
                 .get(computed_idx)
+                .and_then(Option::as_ref)
                 .map(|location| location.position)
         }
     }
@@ -2725,7 +2726,8 @@ impl NativeContext<'_, '_> {
         self.script_state
             .computed_locations
             .get(computed_idx)?
-            .layer_sector
+            .as_ref()
+            .and_then(|location| location.layer.zip(location.sector))
     }
 
     /// Create a new dynamic location at (x, y) and return its script handle.
@@ -2739,10 +2741,13 @@ impl NativeContext<'_, '_> {
     ) -> i32 {
         self.script_state
             .computed_locations
-            .push(ComputedScriptLocation {
+            .push(Some(ComputedScriptLocation {
                 position: (x, y),
-                layer_sector,
-            });
+                layer: layer_sector.map(|(layer, _)| layer),
+                sector: layer_sector.map(|(_, sector)| sector),
+                active: true,
+                legacy_dummy: false,
+            }));
         ScriptHandleCodec::location_handle_from_index(
             self.bindings.script_location_count + self.script_state.computed_locations.len() - 1,
         )

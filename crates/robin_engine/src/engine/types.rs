@@ -1566,6 +1566,20 @@ impl MissionScript {
         self.bindings = bindings;
     }
 
+    /// Identity and mutable heap of the engine-global Original VM object.
+    ///
+    /// Linux-v48 adoption validates the decoded member schema against this
+    /// class before replacing the heap. Keeping the access here avoids
+    /// exposing the global `ScriptInstance` as a second public state owner.
+    pub(crate) fn global_vm_class_and_heap(&self) -> (&crate::scb::ClassEntry, &[u8]) {
+        let class = &self.manager.program.scb.classes[self.instance.class_idx()];
+        (class, &self.instance.vm.heap)
+    }
+
+    pub(crate) fn replace_global_vm_heap(&mut self, heap: Vec<u8>) {
+        self.instance.vm.heap = heap;
+    }
+
     pub(super) fn push_active_driver_frame(&mut self, frame: crate::natives::ScriptCallFrame) {
         self.call_stack.push(frame);
     }

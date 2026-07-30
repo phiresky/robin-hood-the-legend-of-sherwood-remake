@@ -22,6 +22,7 @@ pub mod adopt_preamble;
 pub mod adopt_sequences;
 pub mod adopt_simple;
 pub mod adopt_tail_basic;
+pub mod adopt_tail_runtime;
 pub mod body;
 pub mod campaign;
 pub mod elements;
