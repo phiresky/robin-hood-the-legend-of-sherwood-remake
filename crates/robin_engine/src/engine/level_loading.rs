@@ -59,6 +59,321 @@ struct MissionLevelBuildPlan {
     patch_count: usize,
 }
 
+fn retain_legacy_grid_topology(
+    assets: &mut LevelAssets,
+    loaded: &crate::level_data::LoadedLevel,
+    script_enabled: bool,
+) -> Result<(), MissionLevelBuildError> {
+    use crate::level_data::{MissionGridChunk, ProtoGridChunk, RawBuildingEntry};
+
+    assets.entities.legacy_proto_element_chunk_order = loaded.proto.element_chunk_order.clone();
+    assets.entities.legacy_mission_element_chunk_order = loaded.mission.element_chunk_order.clone();
+    assets.entities.legacy_mission_element_group_order = loaded.mission.element_group_order.clone();
+    assets.entities.legacy_proto_patch_count = loaded.proto.patches.len();
+    assets.entities.legacy_proto_animation_count = loaded.proto.animations.len();
+
+    let has_proto_grid_data = !loaded.proto.patches.is_empty()
+        || loaded.proto.motion_data.is_some()
+        || !loaded.proto.material_sectors.is_empty()
+        || !loaded.proto.sight_obstacles.is_empty()
+        || !loaded.proto.lifts.is_empty()
+        || !loaded.proto.buildings.is_empty()
+        || !loaded.proto.light_sectors.is_empty()
+        || !loaded.proto.jump_zones.is_empty()
+        || !loaded.proto.jump_line_pairs.is_empty();
+    if has_proto_grid_data && loaded.proto.grid_chunk_order.is_empty() {
+        return Err(MissionLevelBuildError::MissingGridChunkOrder {
+            stream: "proto-level".to_owned(),
+        });
+    }
+    let has_mission_grid_data = !loaded.mission.mission_patches.is_empty()
+        || loaded.mission.script_objects.is_some()
+        || loaded
+            .mission
+            .tactic_data
+            .as_ref()
+            .is_some_and(|tactic| !tactic.reinforcement_points.is_empty());
+    if has_mission_grid_data && loaded.mission.grid_chunk_order.is_empty() {
+        return Err(MissionLevelBuildError::MissingGridChunkOrder {
+            stream: "mission".to_owned(),
+        });
+    }
+
+    let mut topology = LegacyGridTopologyAssets::default();
+    let mut sectors = LegacySectorTopologyBuilder::default();
+    let mut material_sector_numbers = Vec::new();
+    let mut seen_proto = std::collections::BTreeSet::new();
+    for &chunk in &loaded.proto.grid_chunk_order {
+        if !seen_proto.insert(chunk as u8) {
+            return Err(MissionLevelBuildError::DuplicateGridConstructionChunk {
+                stream: "proto-level".to_owned(),
+                chunk: format!("{chunk:?}"),
+            });
+        }
+        match chunk {
+            ProtoGridChunk::Patch => {
+                append_patch_sector_constructors(&mut sectors, &loaded.proto.patches);
+            }
+            ProtoGridChunk::Motion => {
+                let Some(motion) = loaded.proto.motion_data.as_ref() else {
+                    continue;
+                };
+                for layer in &motion.layers {
+                    for area in layer {
+                        let area_number = sectors.construct();
+                        sectors.add(
+                            area_number,
+                            if area.is_lift {
+                                LegacyGridSectorAsset::Lift
+                            } else {
+                                LegacyGridSectorAsset::NullOrOrdinary
+                            },
+                        );
+                        for _ in &area.obstacles {
+                            let obstacle_number = sectors.construct();
+                            sectors.add(obstacle_number, LegacyGridSectorAsset::NullOrOrdinary);
+                        }
+                    }
+                }
+                // `InitializeMotionObstaclesFromProtoStream` constructs and
+                // appends the out-of-map motion area after all authored areas.
+                sectors.construct();
+                sectors.insert_last(LegacyGridSectorAsset::NullOrOrdinary);
+            }
+            ProtoGridChunk::Sight => {
+                for &material_index in &loaded.proto.sight_material_indices {
+                    let sector_number = material_sector_numbers
+                        .get(usize::from(material_index))
+                        .copied()
+                        .ok_or_else(|| MissionLevelBuildError::MissingGridChunkOrder {
+                            stream: format!(
+                                "proto-level SIGHT references material {material_index} before its MATERIAL constructor"
+                            ),
+                        })?;
+                    sectors.add(sector_number, LegacyGridSectorAsset::NullOrOrdinary);
+                }
+                // Every projection-area obstacle owns a constructed plane
+                // sector. The synthetic ground projection obstacle does not.
+                for _ in loaded
+                    .proto
+                    .sight_obstacles
+                    .iter()
+                    .filter(|obstacle| obstacle.projection_area.is_some())
+                {
+                    let plane_number = sectors.construct();
+                    sectors.add(plane_number, LegacyGridSectorAsset::NullOrOrdinary);
+                }
+            }
+            ProtoGridChunk::Material => {
+                material_sector_numbers = loaded
+                    .proto
+                    .material_sectors
+                    .iter()
+                    .map(|_| sectors.construct())
+                    .collect();
+            }
+            ProtoGridChunk::Lift => {
+                for lift in &loaded.proto.lifts {
+                    // The associated click sector consumes a global sector
+                    // number, but both AddSector calls are commented out.
+                    // A later added door therefore exposes this as a null hole.
+                    sectors.construct();
+                    for door in &lift.doors {
+                        append_door_constructor(&mut topology, &mut sectors, door);
+                    }
+                }
+            }
+            ProtoGridChunk::Building => {
+                for entry in &loaded.proto.buildings {
+                    let (building_number, doors) = match entry {
+                        RawBuildingEntry::Building { doors } => (Some(sectors.construct()), doors),
+                        RawBuildingEntry::StandaloneDoors { doors } => (None, doors),
+                    };
+                    for door in doors {
+                        append_door_constructor(&mut topology, &mut sectors, door);
+                    }
+                    if let Some(building_number) = building_number {
+                        sectors.add(building_number, LegacyGridSectorAsset::Building);
+                    }
+                }
+            }
+            ProtoGridChunk::Light => {
+                for light in &loaded.proto.light_sectors {
+                    let sector_number = sectors.construct();
+                    if light.ambience & loaded.mission.header.ambiance != 0 {
+                        sectors.add(sector_number, LegacyGridSectorAsset::NullOrOrdinary);
+                    }
+                }
+            }
+            ProtoGridChunk::Jump => {
+                let jump_sector_numbers = loaded
+                    .proto
+                    .jump_zones
+                    .iter()
+                    .map(|_| sectors.construct())
+                    .collect::<Vec<_>>();
+                topology.gates.extend(std::iter::repeat_n(
+                    LegacyGridGateAsset::Stateless,
+                    loaded.proto.jump_line_pairs.len(),
+                ));
+                for sector_number in jump_sector_numbers {
+                    sectors.add(sector_number, LegacyGridSectorAsset::NullOrOrdinary);
+                }
+            }
+        }
+    }
+
+    let mut seen_mission = std::collections::BTreeSet::new();
+    for &chunk in &loaded.mission.grid_chunk_order {
+        if !seen_mission.insert(chunk as u8) {
+            return Err(MissionLevelBuildError::DuplicateGridConstructionChunk {
+                stream: "mission".to_owned(),
+                chunk: format!("{chunk:?}"),
+            });
+        }
+        match chunk {
+            MissionGridChunk::Tactic => {
+                let count = loaded
+                    .mission
+                    .tactic_data
+                    .as_ref()
+                    .map_or(0, |tactic| tactic.reinforcement_points.len());
+                topology
+                    .gates
+                    .extend(std::iter::repeat_n(LegacyGridGateAsset::Door, count));
+            }
+            MissionGridChunk::Script => {
+                if let Some(objects) = loaded.mission.script_objects.as_ref() {
+                    topology.script_objects.extend(std::iter::repeat_n(
+                        LegacyGridScriptObjectAsset::NonSector,
+                        objects.points.len() + objects.lines.len(),
+                    ));
+                    for sector in &objects.sectors {
+                        topology
+                            .script_objects
+                            .push(LegacyGridScriptObjectAsset::Sector {
+                                associated_class: script_enabled
+                                    .then(|| sector.script_class.clone())
+                                    .flatten(),
+                            });
+                        let sector_number = sectors.construct();
+                        if sector.polygon.points.len() >= 3 {
+                            sectors.add(sector_number, LegacyGridSectorAsset::NullOrOrdinary);
+                        }
+                    }
+                }
+            }
+            MissionGridChunk::Patch => {
+                append_patch_sector_constructors(&mut sectors, &loaded.mission.mission_patches);
+            }
+        }
+    }
+
+    let patches = loaded
+        .proto
+        .patches
+        .iter()
+        .chain(&loaded.mission.mission_patches)
+        .enumerate()
+        .collect::<Vec<_>>();
+    let mut next_index_by_layer = std::collections::BTreeMap::<u16, u16>::new();
+    for (patch_index, patch) in patches {
+        let index_in_layer = next_index_by_layer.entry(patch.final_layer).or_default();
+        let fx_entity_handle = assets
+            .entities
+            .patch_animation_entities
+            .get(patch_index)
+            .copied()
+            .flatten();
+        if fx_entity_handle.is_none() {
+            return Err(MissionLevelBuildError::MissingPatchFxIdentity { patch_index });
+        }
+        topology.patches.push(LegacyGridPatchAsset {
+            patch_index: patch_index as u32,
+            layer: patch.final_layer,
+            index_in_layer: *index_in_layer,
+            fx_entity_handle,
+        });
+        *index_in_layer = index_in_layer.checked_add(1).ok_or_else(|| {
+            MissionLevelBuildError::PatchAttachmentCountMismatch {
+                attachment_count: usize::from(u16::MAX),
+                patch_count: patch_index + 1,
+            }
+        })?;
+    }
+    topology
+        .patches
+        .sort_by_key(|patch| (patch.layer, patch.index_in_layer));
+    topology.sectors = sectors.slots;
+    assets.legacy_grid_topology = Some(topology);
+    Ok(())
+}
+
+#[derive(Default)]
+struct LegacySectorTopologyBuilder {
+    next_constructor_number: usize,
+    slots: Vec<LegacyGridSectorAsset>,
+}
+
+impl LegacySectorTopologyBuilder {
+    fn construct(&mut self) -> usize {
+        let number = self.next_constructor_number;
+        self.next_constructor_number += 1;
+        number
+    }
+
+    fn add(&mut self, constructor_number: usize, kind: LegacyGridSectorAsset) {
+        if self.slots.len() <= constructor_number {
+            self.slots.resize(
+                constructor_number + 1,
+                LegacyGridSectorAsset::NullOrOrdinary,
+            );
+        }
+        self.slots[constructor_number] = kind;
+    }
+
+    fn insert_last(&mut self, kind: LegacyGridSectorAsset) {
+        self.slots.push(kind);
+    }
+}
+
+fn append_patch_sector_constructors(
+    sectors: &mut LegacySectorTopologyBuilder,
+    patches: &[crate::level_data::RawPatch],
+) {
+    // RHPatch constructs old mouse, old masking, new mouse, new masking,
+    // apply, and no-apply sectors unconditionally. Empty polygons are
+    // deleted but still leave their constructor-numbered array hole.
+    for patch in patches {
+        for polygon in [
+            &patch.old_mouse_sector,
+            &patch.old_masking_sector,
+            &patch.new_mouse_sector,
+            &patch.new_masking_sector,
+            &patch.apply_sector,
+        ] {
+            let sector_number = sectors.construct();
+            if !polygon.points.is_empty() {
+                sectors.add(sector_number, LegacyGridSectorAsset::NullOrOrdinary);
+            }
+        }
+        // The no-apply sector is constructed but never passed to AddSector.
+        sectors.construct();
+    }
+}
+
+fn append_door_constructor(
+    topology: &mut LegacyGridTopologyAssets,
+    sectors: &mut LegacySectorTopologyBuilder,
+    door: &crate::level_data::RawDoor,
+) {
+    topology.gates.push(LegacyGridGateAsset::Door);
+    let sector_number = sectors.construct();
+    if !door.door_sector.points.is_empty() {
+        sectors.add(sector_number, LegacyGridSectorAsset::Door);
+    }
+}
+
 impl MissionLevelBuilder {
     fn new(
         mission_name: &str,
@@ -1567,6 +1882,7 @@ impl EngineInner {
             force_visible_scroll_ids,
         );
 
+        retain_legacy_grid_topology(assets, &loaded, config.script_enabled)?;
         let level_plan = level_builder.preflight(self, assets, &loaded)?;
         self.build_mission_level_stages(assets, &loaded, &level_plan)?;
         self.install_reinforcement_doors_stage(&loaded);

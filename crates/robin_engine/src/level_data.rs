@@ -1344,6 +1344,59 @@ pub enum ProtoElementChunk {
     Patch,
 }
 
+/// Source-file order of proto chunks which construct `RHSector` or
+/// `RHGate` instances in Original.  The v48 save stream omits the sizes of
+/// those arrays, so preserving this order is required to reconstruct their
+/// exact serialization topology.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub enum ProtoGridChunk {
+    Patch,
+    Motion,
+    Sight,
+    Material,
+    Lift,
+    Building,
+    Light,
+    Jump,
+}
+
+/// Source-file order of mission chunks which extend Original's grid arrays.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub enum MissionGridChunk {
+    Tactic,
+    Script,
+    Patch,
+}
+
+/// Source order of mission chunks which construct `RHElement` instances.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub enum MissionElementChunk {
+    Element,
+    Scroll,
+    Bonus,
+    Mobile,
+    Patch,
+}
+
+/// Source order of groups nested inside the mission ELEMENT chunk.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub enum MissionElementGroup {
+    Civilian,
+    Soldier,
+    BeamMe,
+    Target,
+    PcToRescue,
+    Animal,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct LoadedProtoLevel {
     pub format: LevelFormat,
@@ -1351,6 +1404,9 @@ pub struct LoadedProtoLevel {
     /// Source-file order of chunks that create script/render entities.
     #[serde(default)]
     pub element_chunk_order: Vec<ProtoElementChunk>,
+    /// Exact source order for non-self-describing legacy grid topology.
+    #[serde(default)]
+    pub grid_chunk_order: Vec<ProtoGridChunk>,
     pub patches: Vec<RawPatch>,
     pub animations: Vec<RawElementFx>,
     pub material_sectors: Vec<RawMaterialSector>,
@@ -1379,6 +1435,15 @@ pub struct LoadedProtoLevel {
 pub struct LoadedMission {
     pub format: LevelFormat,
     pub header: MissionHeader,
+    /// Exact source order for chunks which append to legacy grid arrays.
+    #[serde(default)]
+    pub grid_chunk_order: Vec<MissionGridChunk>,
+    /// Exact source order for chunks which append to `marrayElements`.
+    #[serde(default)]
+    pub element_chunk_order: Vec<MissionElementChunk>,
+    /// Exact group order inside the ELEMENT chunk.
+    #[serde(default)]
+    pub element_group_order: Vec<MissionElementGroup>,
     pub beam_mes: Vec<BeamMe>,
     pub soldiers: Vec<RawSoldier>,
     pub civilians: Vec<RawCivilian>,
@@ -1425,6 +1490,7 @@ impl LoadedLevel {
                 format: LevelFormat::Fullgame,
                 misc: None,
                 element_chunk_order: Vec::new(),
+                grid_chunk_order: Vec::new(),
                 patches: Vec::new(),
                 animations: Vec::new(),
                 material_sectors: Vec::new(),
@@ -1448,6 +1514,9 @@ impl LoadedLevel {
                     map_filename: String::new(),
                     mission_profile_id: 0,
                 },
+                grid_chunk_order: Vec::new(),
+                element_chunk_order: Vec::new(),
+                element_group_order: Vec::new(),
                 beam_mes: Vec::new(),
                 soldiers: Vec::new(),
                 civilians: Vec::new(),
@@ -1535,6 +1604,7 @@ pub fn load_proto_level(
 
     let mut misc = None;
     let mut element_chunk_order = Vec::new();
+    let mut grid_chunk_order = Vec::new();
     let mut patches = Vec::new();
     let mut animations = Vec::new();
     let mut material_sectors = Vec::new();
@@ -1560,6 +1630,7 @@ pub fn load_proto_level(
         } else if tag == *format.patch_tag() {
             tracing::debug!("Proto: loading PATCH chunk");
             element_chunk_order.push(ProtoElementChunk::Patch);
+            grid_chunk_order.push(ProtoGridChunk::Patch);
             patches = read_proto_patches(reader, format, true)?;
         } else if tag == *format.animation_tag() {
             tracing::debug!("Proto: loading ANIMATION chunk");
@@ -1567,9 +1638,11 @@ pub fn load_proto_level(
             animations = read_proto_animations(reader, format)?;
         } else if tag == *format.material_tag() {
             tracing::debug!("Proto: loading MATERIAL chunk");
+            grid_chunk_order.push(ProtoGridChunk::Material);
             material_sectors = read_material_sectors(reader, format)?;
         } else if tag == *format.light_tag() {
             tracing::debug!("Proto: loading LIGHT chunk");
+            grid_chunk_order.push(ProtoGridChunk::Light);
             light_sectors = read_light_sectors(reader, format)?;
         } else if tag == *format.bond_tag() {
             tracing::debug!("Proto: loading BOND chunk");
@@ -1579,6 +1652,7 @@ pub fn load_proto_level(
             masks = read_masks(reader, format)?;
         } else if tag == *format.sight_tag() {
             tracing::debug!("Proto: loading SIGHT chunk");
+            grid_chunk_order.push(ProtoGridChunk::Sight);
             let sight = read_sight_obstacles(reader, format)?;
             sight_obstacles = sight.obstacles;
             sight_material_indices = sight.material_indices;
@@ -1587,15 +1661,19 @@ pub fn load_proto_level(
             sound_sources = read_sound_sources(reader, format)?;
         } else if tag == *format.jump_tag() {
             tracing::debug!("Proto: loading JUMP chunk");
+            grid_chunk_order.push(ProtoGridChunk::Jump);
             (jump_zones, jump_line_pairs) = read_jump_stuff(reader, format)?;
         } else if tag == *format.lift_tag() {
             tracing::debug!("Proto: loading LIFT chunk");
+            grid_chunk_order.push(ProtoGridChunk::Lift);
             lifts = read_lifts(reader, format)?;
         } else if tag == *format.building_tag() {
             tracing::debug!("Proto: loading BUILDING chunk");
+            grid_chunk_order.push(ProtoGridChunk::Building);
             buildings = read_buildings(reader, format)?;
         } else if tag == *format.motion_tag() {
             tracing::debug!("Proto: loading MOTION chunk");
+            grid_chunk_order.push(ProtoGridChunk::Motion);
             motion_data = Some(read_motion_data(reader, format)?);
         } else if tag == *format.background_tag() {
             // "There is no background in proto-levels!" — proto-level streams
@@ -1638,6 +1716,7 @@ pub fn load_proto_level(
         format,
         misc,
         element_chunk_order,
+        grid_chunk_order,
         patches,
         animations,
         material_sectors,
@@ -2073,6 +2152,9 @@ pub fn load_mission(
     );
 
     let mut beam_mes = Vec::new();
+    let mut grid_chunk_order = Vec::new();
+    let mut element_chunk_order = Vec::new();
+    let mut element_group_order = Vec::new();
     let mut soldiers = Vec::new();
     let mut civilians = Vec::new();
     let mut targets = Vec::new();
@@ -2090,33 +2172,42 @@ pub fn load_mission(
     while !reader.at_end_of_chunk() {
         let tag = reader.peek_next_chunk()?;
         if tag == *format.element_tag() {
+            element_chunk_order.push(MissionElementChunk::Element);
             let elems = read_elements(reader, format, is_beggar)?;
+            element_group_order = elems.group_order;
             beam_mes = elems.beam_mes;
             soldiers = elems.soldiers;
             civilians = elems.civilians;
             targets = elems.targets;
             pcs_to_rescue = elems.pcs_to_rescue;
         } else if tag == *format.bonus_tag() {
+            element_chunk_order.push(MissionElementChunk::Bonus);
             bonuses = read_bonuses(reader, format)?;
         } else if tag == *format.scroll_tag() {
+            element_chunk_order.push(MissionElementChunk::Scroll);
             scrolls = read_scrolls(reader, format)?;
         } else if tag == *format.patch2_tag() || tag == *format.patch_tag() {
             tracing::debug!("Mission: loading PATCH_2 chunk");
+            grid_chunk_order.push(MissionGridChunk::Patch);
+            element_chunk_order.push(MissionElementChunk::Patch);
             mission_patches = read_proto_patches(reader, format, false)?;
         } else if tag == *format.tenant_tag() {
             tracing::debug!("Mission: loading TENANT chunk");
             building_tenants = read_building_tenants(reader, format)?;
         } else if tag == *format.mobile_tag() {
             tracing::debug!("Mission: loading MOBILE chunk");
+            element_chunk_order.push(MissionElementChunk::Mobile);
             mobile_elements = read_mobile_elements(reader, format)?;
         } else if tag == *format.script_tag() {
             tracing::debug!("Mission: loading SCRIPT chunk");
+            grid_chunk_order.push(MissionGridChunk::Script);
             script_objects = Some(read_script_objects(reader, format)?);
         } else if tag == *format.path_tag() {
             tracing::debug!("Mission: loading PATH chunk");
             hiking_paths = read_hiking_paths(reader, format)?;
         } else if tag == *format.tactic_tag() {
             tracing::debug!("Mission: loading TACTIC chunk");
+            grid_chunk_order.push(MissionGridChunk::Tactic);
             tactic_data = Some(read_tactic_data(reader, format)?);
         } else {
             let name = tag_str(&tag);
@@ -2155,6 +2246,9 @@ pub fn load_mission(
     Ok(LoadedMission {
         format,
         header,
+        grid_chunk_order,
+        element_chunk_order,
+        element_group_order,
         beam_mes,
         soldiers,
         civilians,
@@ -2195,6 +2289,7 @@ fn read_header(reader: &mut ChunkReader, format: LevelFormat) -> Result<MissionH
 
 /// Collected entity data from the ELEMENT chunk.
 struct ParsedElements {
+    group_order: Vec<MissionElementGroup>,
     beam_mes: Vec<BeamMe>,
     soldiers: Vec<RawSoldier>,
     civilians: Vec<RawCivilian>,
@@ -2212,6 +2307,7 @@ fn read_elements(
     let mut civilians = Vec::new();
     let mut targets = Vec::new();
     let mut pcs_to_rescue = Vec::new();
+    let mut group_order = Vec::new();
     reader.chunk_start(format.element_tag(), format.element_ver())?;
 
     let num_groups = reader.read_u16()?;
@@ -2219,16 +2315,22 @@ fn read_elements(
     for _ in 0..num_groups {
         let tag = reader.peek_next_chunk()?;
         if tag == *format.civilian_tag() {
+            group_order.push(MissionElementGroup::Civilian);
             civilians = read_civilians(reader, format, is_beggar)?;
         } else if tag == *format.soldier_tag() {
+            group_order.push(MissionElementGroup::Soldier);
             soldiers = read_soldiers(reader, format)?;
         } else if tag == *format.beamme_tag() {
+            group_order.push(MissionElementGroup::BeamMe);
             beam_mes = read_beam_mes(reader, format)?;
         } else if tag == *format.target_tag() {
+            group_order.push(MissionElementGroup::Target);
             targets = read_targets(reader, format)?;
         } else if tag == *format.pc_tag() {
+            group_order.push(MissionElementGroup::PcToRescue);
             pcs_to_rescue = read_pcs_to_rescue(reader, format)?;
         } else if tag == *format.animal_tag() {
+            group_order.push(MissionElementGroup::Animal);
             read_animals(reader, format)?;
         } else {
             return Err(LevelError::UnknownElementChunk(tag_str(&tag)));
@@ -2237,6 +2339,7 @@ fn read_elements(
 
     reader.chunk_end()?;
     Ok(ParsedElements {
+        group_order,
         beam_mes,
         soldiers,
         civilians,

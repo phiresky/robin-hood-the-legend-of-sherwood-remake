@@ -837,6 +837,10 @@ pub struct LevelAssets {
     pub scripts: LevelScriptAssets,
     /// Immutable entity identities and construction-time script attachments.
     pub entities: LevelEntityAssets,
+    /// Exact immutable construction topology of Original's
+    /// `RHFastFindGrid` arrays. `None` is reserved for synthetic/test levels
+    /// which did not retain source chunk order.
+    pub legacy_grid_topology: Option<LegacyGridTopologyAssets>,
     // TODO(level-assets): migrate rendering, navigation, environment, and
     // audio fields into equivalent domain groups in focused follow-up slices.
     /// Host-provided per-pixel sprite hit-test callback. `None` before
@@ -951,6 +955,54 @@ pub struct LevelEntityAssets {
     pub soldier_entity_ids: Vec<super::EntityId>,
     /// Soldier load-order index to subordinate soldier load-order IDs.
     pub soldier_subordinate_ids: Vec<Vec<u16>>,
+    /// Exact source order needed to reconstruct Original element creation
+    /// orders after the parsed level data has been released.
+    pub legacy_proto_element_chunk_order: Vec<crate::level_data::ProtoElementChunk>,
+    pub legacy_mission_element_chunk_order: Vec<crate::level_data::MissionElementChunk>,
+    pub legacy_mission_element_group_order: Vec<crate::level_data::MissionElementGroup>,
+    pub legacy_proto_patch_count: usize,
+    pub legacy_proto_animation_count: usize,
+}
+
+/// Source-derived identity for a patch in Original's per-layer serialization
+/// walk.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LegacyGridPatchAsset {
+    pub patch_index: u32,
+    pub layer: u16,
+    pub index_in_layer: u16,
+    /// Rust handle of the patch-owned FX. Original always constructs this
+    /// object, even when its frame-profile name is empty.
+    pub fx_entity_handle: Option<i32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum LegacyGridGateAsset {
+    Door,
+    Stateless,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum LegacyGridScriptObjectAsset {
+    NonSector,
+    Sector { associated_class: Option<String> },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum LegacyGridSectorAsset {
+    NullOrOrdinary,
+    Door,
+    Building,
+    Lift,
+}
+
+/// Exact ordered arrays traversed by `RHFastFindGrid::Serialize`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LegacyGridTopologyAssets {
+    pub patches: Vec<LegacyGridPatchAsset>,
+    pub gates: Vec<LegacyGridGateAsset>,
+    pub script_objects: Vec<LegacyGridScriptObjectAsset>,
+    pub sectors: Vec<LegacyGridSectorAsset>,
 }
 
 /// Sample duration in sim frames (40 ms each), keyed by
@@ -981,6 +1033,7 @@ impl LevelAssets {
             bank_signature: 0,
             scripts: LevelScriptAssets::default(),
             entities: LevelEntityAssets::default(),
+            legacy_grid_topology: None,
             pixel_opacity: None,
             peasant_firstnames: Vec::new(),
             peasant_surnames: Vec::new(),
@@ -2304,6 +2357,21 @@ pub enum MissionLevelBuildError {
         attachment_count: usize,
         patch_count: usize,
     },
+
+    #[error(
+        "cannot retain exact legacy grid topology: {stream} source chunk order is missing for non-empty authored grid data"
+    )]
+    MissingGridChunkOrder { stream: String },
+
+    #[error(
+        "cannot retain exact legacy grid topology: {stream} contains duplicate {chunk} construction chunks"
+    )]
+    DuplicateGridConstructionChunk { stream: String, chunk: String },
+
+    #[error(
+        "patch {patch_index} has no retained FX entity, but Original always constructs and serializes its RHElementFX"
+    )]
+    MissingPatchFxIdentity { patch_index: usize },
 
     #[error(
         "{lift_type} lift sector {sector_number} is missing a {endpoint} authored door endpoint"
