@@ -2718,6 +2718,15 @@ impl AiController {
         dx.max(dy) < tolerance
     }
 
+    /// `GoNear` has a separate early-out from ordinary `GoTo`: Original
+    /// compares `RHposition::SquareNorm()` with the squared near tolerance.
+    /// Do not reuse the MaxNorm-based five-pixel `GoTo` gate above.
+    fn check_already_near(&self, destination: &Position, tolerance: f32, ctx: &AiContext) -> bool {
+        let dx = ctx.position.x - destination.x;
+        let dy = ctx.position.y - destination.y;
+        dx * dx + dy * dy <= tolerance * tolerance
+    }
+
     /// Low-level movement primitive — queues a movement intent without
     /// committing to a substate transition.  Prefer the `EnemyAi::go_to` /
     /// `FriendlyAi::go_to` wrappers, which enforce the Shape 1 contract
@@ -2950,7 +2959,7 @@ impl AiController {
         self.couldnt_reachpoint = false;
 
         let same_layer = destination.level == ctx.position.level;
-        if same_layer && self.check_already_on_point(&destination, effective_distance as f32, ctx) {
+        if same_layer && self.check_already_near(&destination, effective_distance as f32, ctx) {
             self.already_on_point = true;
             return;
         }

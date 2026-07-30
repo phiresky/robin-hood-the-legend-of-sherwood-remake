@@ -1830,6 +1830,20 @@ prepared Thrust D began at frame 518. The handoff is now restricted to the
 source-backed Thrust A path; Thrust D remains special through its own
 completion, and the replay advances to a later independent combat boundary.
 
+### `GoNear` uses Euclidean squared distance for its immediate reach test
+
+The Original has two distinct early-arrival predicates inside `GoTo`: ordinary
+movement uses `MaxNorm() < 5`, while `GOTO_NEAR` uses
+`SquareNorm() <= tolerance * tolerance` on the same layer. Rust reused the
+ordinary MaxNorm predicate with the near tolerance, accepting diagonal points
+outside the requested circle.
+
+Linux3 Profile 001 Continue exposed this at frame 554. Soldier 114 was within
+50 units on each axis but about 66 units away in Euclidean distance; Rust
+stopped its run and entered swordfight while the Original continued `MoveOk`
+in `AttackingRunningToEnemy`. The near fast path now uses the exact circular
+predicate without changing ordinary `GoTo`.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
