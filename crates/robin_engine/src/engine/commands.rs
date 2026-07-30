@@ -482,7 +482,15 @@ impl EngineInner {
                 } else {
                     let elem =
                         SequenceElement::new_interaction(1, *command, Some(*actor), Some(*target));
-                    self.launch_element(elem);
+                    // Original mouse-command handling calls
+                    // SequenceManager::LaunchSequenceElement here.  A
+                    // preference strike is therefore registered for the
+                    // post-entity manager drain; it does not arbitrate
+                    // against and interrupt the actor's current order on the
+                    // input callback stack.
+                    let mut sequence = Sequence::new();
+                    sequence.append_element(elem);
+                    self.launch_sequence(sequence);
                 }
             }
             SetPrincipalOpponent { actor, opponent_id } => {
