@@ -212,7 +212,7 @@ impl EngineInner {
         // required for faithful state/cascade ownership even when other
         // elements are already queued for this actor.
         if is_seek {
-            let Some(replacement_data) = self
+            let Some(mut replacement_data) = self
                 .orders
                 .sequence_manager
                 .get_element(sequence_id, element_index)
@@ -220,6 +220,15 @@ impl EngineInner {
             else {
                 return;
             };
+            if let crate::sequence::SequenceElementData::Movement { flags, .. } =
+                &mut replacement_data
+            {
+                // Original Translate(SEEK) changes the command to MOVE and
+                // adds RHMOVE_SEEK before RefreshSeek launches the concrete
+                // movement. PerformSeek dispatch and its refresh countdown
+                // are keyed by this flag, not by the now-replaced command.
+                flags.insert(crate::sequence::MoveFlags::SEEK);
+            }
             let mut replacement = crate::sequence::SequenceElement::new_movement(
                 1,
                 Command::Move,
