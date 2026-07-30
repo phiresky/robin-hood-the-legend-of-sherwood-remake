@@ -1193,6 +1193,22 @@ startup door action and reach independent later divergences between frames
 2,192 and 9,271 (save 052 instead reaches its later RNG exhaustion at frame
 4,060).
 
+### Synchronous attentive look continuations
+
+Several loaded saves resumed `LookLeft` (and potentially the following
+`LookRight`/`LeanOut`) through a terminal owner condolence card. Original
+`SetState -> SendCondolationCard -> Ready -> Go -> Instruct` remains on the
+same stack, but Rust's synchronous owner dispatcher supported attentive-mode
+entry/exit commands without the look commands translated by the same ordinary
+sequence path.
+
+The synchronous route now delegates `LookLeft`, `LookRight`, and `LeanOut` to
+`NpcAttentionCommandContext`, including the live attentive-state choice
+between ordinary and alerted animation rows. Linux3 Profile 003 saves 022,
+030, 031, 045, 056, and 061 all pass their former unsupported-command
+boundary and reach independent later divergences. Save 064 advances from
+frame 5,992 to 6,048.
+
 ### Large-window compressed trace input
 
 The expanded Linux2/Linux3 corpus includes single-frame zstd streams whose

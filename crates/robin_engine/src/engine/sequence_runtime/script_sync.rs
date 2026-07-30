@@ -290,6 +290,20 @@ impl EngineInner {
                     }
                 } else if matches!(
                     command,
+                    Command::LookLeft | Command::LookRight | Command::LeanOut
+                ) {
+                    // A completed attentive animation can release the next
+                    // look booking through the same Ready -> Go -> Instruct
+                    // stack. Reuse the normal translator so the actor's live
+                    // attentive flag selects the correct alerted row.
+                    NpcAttentionCommandContext {
+                        entities: &mut self.world.entities,
+                        sequence_manager: &mut self.orders.sequence_manager,
+                        next_order_id: &mut self.orders.next_order_id,
+                    }
+                    .dispatch(owner, command, sequence_id, element_index);
+                } else if matches!(
+                    command,
                     Command::EnterAttentiveMode
                         | Command::LeaveAttentiveMode
                         | Command::LeaveAttentiveModeOfficer
