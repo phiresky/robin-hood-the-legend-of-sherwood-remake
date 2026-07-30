@@ -1660,6 +1660,26 @@ only while the position interface has a live door, including the duplicated
 camp-soldier snapshot path. A focused regression preserves both the null-door
 fallback and the live-door forecast case.
 
+### Patrol regrouping uses the virtual combat predicate and full 360-degree sight
+
+`ReturnToDutyCommonStuff` only sends a patrol member to its chief when the
+chief's virtual `IsAbleToFight()` succeeds and `IsDetecting360Degrees(chief)`
+can see the chief. The latter is not a radius-only convenience check: both
+humans must be active outside buildings, their posture-aware eye/detection
+points must fit inside the NPC's live 3-D view radius, and opaque line of sight
+must be clear.
+
+Rust previously approximated this branch with a flat distance to the chief.
+Its shared entity snapshot also treated every living civilian as able to
+fight, although civilians inherit the Original base-human implementation that
+always returns false. Linux3 Profile 003 Restart consequently diverted an
+entire civilian-led patrol toward its chief instead of resuming route 17.
+Entity views now preserve the virtual hierarchy semantics (including the PC
+Tree/Spy exclusions), and patrol regrouping uses the same posture-aware,
+opaque-LOS 360-degree query as the other synchronous AI callers. Restart now
+passes the patrol transition and advances from frame 121 to the next unrelated
+movement divergence at frame 193.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

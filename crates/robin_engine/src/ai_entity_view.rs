@@ -435,10 +435,12 @@ pub fn entity_view_from_entity(
         ),
     };
 
-    // `IsAbleToFight` for soldiers layers tied/carried checks and a
-    // state-machine switch on top of the base-class human body.
-    // Civilians and PCs keep the plain Human body (not unconscious,
-    // element active, life points > 0).  Non-human entities are false.
+    // `IsAbleToFight` is virtual in the original hierarchy. The base
+    // human implementation is always false, so civilians (which do not
+    // override it) can never fight. Soldiers layer tied/carried checks
+    // and a state-machine switch on top of their body state. PCs reject
+    // the two disguised postures in addition to the common live/active
+    // gates. Non-human entities are false.
     let is_able_to_fight = match entity {
         Entity::Soldier(s) => {
             let human_ok = !s.human.unconscious
@@ -461,8 +463,13 @@ pub fn entity_view_from_entity(
                 }
             }
         }
-        Entity::Civilian(c) => !c.human.unconscious && c.element.active && c.npc.life_points > 0,
-        Entity::Pc(pc) => !pc.human.unconscious && pc.element.active && pc.pc.life_points > 0,
+        Entity::Civilian(_) => false,
+        Entity::Pc(pc) => {
+            !pc.human.unconscious
+                && pc.element.active
+                && pc.pc.life_points > 0
+                && !matches!(pc.element.posture, Posture::Tree | Posture::Spy)
+        }
         _ => false,
     };
 

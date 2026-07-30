@@ -3304,38 +3304,47 @@ impl AiController {
         }
 
         // If this NPC has a live patrol chief that's able to fight
-        // *and* within 360° detection range, run to them and enter
-        // `DefaultGotoChief` — let the chief re-gather the patrol as
-        // the minion closes. Only abandon the goto-chief path when
-        // `couldnt_reachpoint` fires (then fall through to the normal
-        // return-to-post logic below).
+        // *and* detectable with the authoritative 360° human query,
+        // run to them and enter `DefaultGotoChief` — let the chief
+        // re-gather the patrol as the minion closes. The original query
+        // requires both actors to be active outside buildings, checks
+        // the live view radius in 3-D, and tests opaque LOS; distance
+        // alone is not sufficient. Only abandon the goto-chief path
+        // when `couldnt_reachpoint` fires (then fall through to the
+        // normal return-to-post logic below).
         if let Some(chief_id) = self.patrol_chief
             && let Some(chief_view) = ctx.entity_view(chief_id.index())
             && chief_view.is_able_to_fight
+            && chief_view.active
+            && crate::ai_enemy::soldier_detects_target_360(
+                ctx.position,
+                ctx.elevation,
+                ctx.self_is_rider,
+                ctx.self_view_radius,
+                ctx.in_building,
+                chief_view.position,
+                chief_view.elevation,
+                chief_view.posture,
+                chief_view.is_rider,
+                chief_view.direction as i16,
+                chief_view.in_building,
+                ctx.obstacle_list(),
+            )
         {
-            // `IsDetecting360Degrees`: aspect-ratio-corrected distance
-            // from me to the chief against our squared view radius.
-            // Distance-only form (no LOS check), matching
-            // `EnemyAi::is_detecting_360_degrees` in ai_enemy.rs.
-            let dx = chief_view.position.x - ctx.position.x;
-            let dy = chief_view.position.y - ctx.position.y;
-            let sq_distance = crate::position_interface::vector_square_norm_iso(dx, dy);
-            if sq_distance <= ctx.sq_standard_view_radius {
-                self.set_ai_state(AiState::Default);
-                self.current_substate = Substate::DefaultGotoChief;
-                self.go_near(
-                    chief_view.position,
-                    crate::parameters_ai::AI_TALK_DISTANCE,
-                    GotoFlags::empty(),
-                    ctx,
-                );
-                if !self.couldnt_reachpoint {
-                    return;
-                }
-                // Couldn't reach — reset flag and fall through to the
-                // post/patrol-path logic.
-                self.couldnt_reachpoint = false;
+            self.set_ai_state(AiState::Default);
+            self.current_substate = Substate::DefaultGotoChief;
+            self.go_near(
+                chief_view.position,
+                crate::parameters_ai::AI_TALK_DISTANCE,
+                GotoFlags::empty(),
+                ctx,
+            );
+            if !self.couldnt_reachpoint {
+                return;
             }
+            // Couldn't reach — reset flag and fall through to the
+            // post/patrol-path logic.
+            self.couldnt_reachpoint = false;
         }
 
         let hiking_paths = &ctx.hiking_paths;
