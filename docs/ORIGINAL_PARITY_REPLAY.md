@@ -2006,6 +2006,41 @@ Full swordfight exit now retains each survivor list's first remaining entry and
 performs only the `DeleteOpponent` strength/initiative consequences. The replay
 advances to an independent command-order divergence at frame 6275.
 
+### Zero-opponent evaluation preserves pending movement
+
+`RHElementActorHuman::EvaluateOpponents` treats the actor's selected movement
+element as mutable authoritative work. When the last opponent disappears, an
+active `WALKING_WITH_SWORD` or `RUNNING_WITH_SWORD` action is rewritten to its
+upright equivalent before `QUIT_SWORDFIGHT` is launched. The sequence manager
+postpones that same movement while the sword is lowered, then translates it
+again without losing the destination or movement flags.
+
+Rust previously left the movement's authored sword action unchanged. After
+lowering, retranslating it immediately discovered an empty opponent list and
+launched another quit instead of resuming the move. Linux3 Profile 003 Savegame
+006 exposed this at frame 6275. Zero-opponent evaluation now performs the same
+in-place action rewrite on the actor's current movement and rejects any
+unexpected movement action as an invariant violation.
+
+### Patrol direction turns wait for SequenceManager instruction
+
+Every eighth frame a patrol chief synchronously calls
+`CALL_PATROL_COORDINATE` and `GetInstructedPatrolDirection` on its members.
+Those calls can construct a `FaceTo` sequence before a later member's actor
+slot, but the Original only registers the new sequence element there. Its
+separate SequenceManager hourglass instructs the owner after the element walk,
+so the member's already-selected transition still receives that frame's
+`Execute`.
+
+Linux3 Profile 001 Savegame 035 exposed Rust promoting the direction turn
+immediately at frame 50176. That restarted the member's walk-to-wait
+transition one actor slot early and completed it at frame 50180 instead of
+50181. Patrol direction delivery now uses the existing generic deferred
+`FaceTo` instruction path: synchronous AI state and sequence registration stay
+visible immediately, while translation and owner instruction occur at the
+Original SequenceManager boundary. Savegame 035 now matches every recorded
+frame.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
