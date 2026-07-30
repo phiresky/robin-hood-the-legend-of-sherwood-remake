@@ -1587,8 +1587,10 @@ impl EngineInner {
             return (BowTarget::Invalid, ShootMode::Normal);
         };
 
-        // No ammo → invalid target.
-        if !self.check_bow_ammo(shooter_id) {
+        // Original only rejects an empty quiver here for PCs. Scripted NPC
+        // archers may execute ShootBowOnce with a zero live arrow counter;
+        // the mission owns those staged shots rather than the inventory UI.
+        if shooter.is_pc() && !self.check_bow_ammo(shooter_id) {
             return (BowTarget::Invalid, ShootMode::Normal);
         }
 

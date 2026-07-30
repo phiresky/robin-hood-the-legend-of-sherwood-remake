@@ -2555,6 +2555,22 @@ impl SequenceManager {
             self.next_element_id = self.next_element_id.wrapping_add(1);
         }
         let id = sequence.id;
+        tracing::trace!(
+            sequence_id = id.0,
+            elements = ?sequence
+                .elements
+                .iter()
+                .map(|element| (
+                    element.owner,
+                    element.command,
+                    element.command_level,
+                    element.state,
+                    element.priority,
+                    &element.data,
+                ))
+                .collect::<Vec<_>>(),
+            "launching sequence"
+        );
         sequence.launch();
 
         // Start the first batch of elements

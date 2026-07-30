@@ -1624,6 +1624,27 @@ checks instead of identity evidence. QuickSave passes frame 74697 and reaches
 the next unrelated command divergence at frame 74701; Linux2 Profile 002 saves
 011 and 013 and Linux3 Profile 003 save 064 remain fully matched.
 
+### Scripted NPC bow shots do not use the PC empty-quiver gate
+
+Linux3 Profile 003 QuickSave's mission script locks Soldier 245 and launches a
+two-element `ShootBowOnce`/`UnlockAI` sequence at Target 257. The saved
+soldier's live arrow counter is zero. Original still accepts the shot:
+`RHElementActorHuman::CanShootWithBowAt` rejects zero ammunition only when
+`IsPC()`, and the release build's later NPC decrement saturates at zero.
+
+Rust had copied the empty-quiver rejection into both generic bow-target
+validation and sequence dispatch without the `IsPC()` condition. The scripted
+sequence was therefore allocated correctly and immediately marked impossible,
+leaving the actor on `Wait` at frame 74701. Both gates now apply only to PCs;
+ordinary NPC AI still uses its own remaining-arrow decisions, while authored
+NPC shots retain Original semantics. A trace-level sequence-launch record now
+prints every launched element's owner, command level, state, priority, and
+typed data, making this class of transient rejection observable without adding
+replay-specific instrumentation.
+
+QuickSave now matches all 250 recorded frames. Linux2 Profile 002 saves 011 and
+013 and Linux3 Profile 003 save 064 remain fully matched.
+
 ### Loaded target hotspots retain the serialized sprite position
 
 `RHSprite::GetCurrentPointMap` adds the current row's hotspot to the cached

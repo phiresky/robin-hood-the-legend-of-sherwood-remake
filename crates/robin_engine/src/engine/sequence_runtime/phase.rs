@@ -464,12 +464,14 @@ impl EngineInner {
                                     continue;
                                 }
                             };
-                            // Check ammo before starting the shot
-                            // (PCs only).  Zero bow ammo → impossible.
-                            // Soldiers have unlimited ammo (no ammo
-                            // counter).
+                            // Original rejects zero ammo here only for PCs.
+                            // Scripted NPC shots remain valid with an empty
+                            // counter (the release build's later decrement
+                            // saturates it at zero).
                             let ammo_count = self.get_bow_ammo_count(owner);
-                            if ammo_count == 0 {
+                            let owner_is_pc =
+                                self.get_entity(owner).is_some_and(|entity| entity.is_pc());
+                            if owner_is_pc && ammo_count == 0 {
                                 self.orders
                                     .sequence_manager
                                     .element_impossible(seq_id, elem_idx);
