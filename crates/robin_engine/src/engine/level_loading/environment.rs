@@ -826,7 +826,10 @@ impl EngineInner {
 
         // Store motion data for processing when the background bitmap
         // is applied (grid sector registration needs map dimensions).
-        staging.motion.motion_data = loaded.proto.motion_data.take();
+        // Keep the parsed source descriptor on `LoadedLevel` until
+        // `retain_legacy_grid_topology` has reconstructed Original's exact
+        // constructor walk. The runtime staging copy is consumed below.
+        staging.motion.motion_data = loaded.proto.motion_data.clone();
 
         // Pre-load *only* the move-box half-diagonal table from the
         // motion-data proto stream, so the soldier / civilian / PC
@@ -863,13 +866,17 @@ impl EngineInner {
         staging.motion.elevation_lines = std::mem::take(&mut loaded.proto.elevation_lines);
         // Stash jump-zone + jump-line-pair data for post-sector processing
         // in `load_jump_lines_from_proto`.
-        staging.motion.jump_zones = std::mem::take(&mut loaded.proto.jump_zones);
-        staging.motion.jump_line_pairs = std::mem::take(&mut loaded.proto.jump_line_pairs);
+        // These counts/order also define Original's sparse sector and mixed
+        // gate arrays, so do not erase them before topology retention.
+        staging.motion.jump_zones = loaded.proto.jump_zones.clone();
+        staging.motion.jump_line_pairs = loaded.proto.jump_line_pairs.clone();
         // Stash light/shadow sectors so `initialize_motion_from_level_data`
         // can register them into the grid once layers are allocated and
         // sector numbers have been assigned to the motion / lift / building
         // sectors.
-        staging.motion.light_sectors = std::mem::take(&mut loaded.proto.light_sectors);
+        // Light-sector constructors participate in the same sparse Original
+        // sector numbering retained after the motion stage.
+        staging.motion.light_sectors = loaded.proto.light_sectors.clone();
 
         // Load order (ProtoStream → MissionStream): size the grid and
         // register every motion sector / lift / mask / elevation-line
