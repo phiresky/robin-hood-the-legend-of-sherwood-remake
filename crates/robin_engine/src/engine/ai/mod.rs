@@ -8568,9 +8568,12 @@ impl EngineInner {
                 })
                 .set_instructed_patrol_direction(cmd.direction, &live_ctx);
             // GetInstructedPatrolDirection may synchronously FaceTo when the
-            // member is still waiting. Close that sequence/callback work
-            // before the chief advances to the next patrol member.
-            self.drain_direct_ai_owner_boundary_without_forecast(sim, minion_id, assets);
+            // member is still waiting. Close its AI/callback work before the
+            // chief advances, but leave owner instruction to the later
+            // SequenceManager hourglass just like the Original.
+            self.drain_direct_ai_owner_boundary_without_forecast_deferred_instruct(
+                sim, minion_id, assets,
+            );
         }
     }
 
