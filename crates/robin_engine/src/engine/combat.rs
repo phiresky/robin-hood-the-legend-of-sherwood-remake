@@ -3662,7 +3662,7 @@ impl EngineInner {
                         }
                         if let Some(pc) = helper.pc_data_mut() {
                             pc.carried = None;
-                            pc.carried_posture = crate::element::Posture::Lying;
+                            pc.set_live_carried_posture(crate::element::Posture::Lying);
                         }
                     }
 

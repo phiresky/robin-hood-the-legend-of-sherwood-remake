@@ -423,7 +423,7 @@ pub fn begin_carry(
     // the transition, the condolation handler would have nothing to drop.
     if let Some(pc) = carrier.pc_data_mut() {
         pc.carried = Some(target_id);
-        pc.carried_posture = target_posture;
+        pc.set_live_carried_posture(target_posture);
     }
 
     // Set up the ability tracker and push the pickup animation order.
@@ -730,7 +730,7 @@ pub fn begin_climb_on_shoulders(
     }
     if let Some(pc) = helper.pc_data_mut() {
         pc.carried = Some(climber_id);
-        pc.carried_posture = Posture::OnShoulders;
+        pc.set_live_carried_posture(Posture::OnShoulders);
     }
     // Snapshot climber pos for the facing computation.
     let climber_pos = entities
@@ -2222,7 +2222,7 @@ pub fn tick_ability(
                     .unwrap_or_else(|| {
                         panic!("Drop owner {entity_id:?} requires PC carried-posture state")
                     })
-                    .carried_posture;
+                    .live_carried_posture();
                 results.push(AbilityTickResult::DropDone {
                     carrier_id: entity_id,
                     target_id: ability.target.expect("Drop target"),
@@ -2303,7 +2303,7 @@ pub fn tick_ability(
                 .unwrap_or_else(|| {
                     panic!("Carry owner {entity_id:?} requires PC carried-posture state")
                 })
-                .carried_posture;
+                .live_carried_posture();
             // Set carrier posture (target posture set by engine).
             entity.set_posture(Posture::CarryingCorpse);
             AbilityTickResult::CarryDone {
@@ -2322,7 +2322,7 @@ pub fn tick_ability(
                 .unwrap_or_else(|| {
                     panic!("Drop owner {entity_id:?} requires PC carried-posture state")
                 })
-                .carried_posture;
+                .live_carried_posture();
             entity.set_posture(Posture::Upright);
             AbilityTickResult::DropDone {
                 carrier_id: entity_id,
@@ -2581,7 +2581,7 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
         // re-resolve from the sight-obstacle list here.
         let plane = entity.element.sprite.position_iface.get_plane().copied();
 
-        let carried_posture = pc.carried_posture;
+        let carried_posture = pc.live_carried_posture();
 
         // Snapshot the carried entity's sprite too so the OnShoulders
         // branch can sync the helper's `TransitionHelpingClimbingUp` to

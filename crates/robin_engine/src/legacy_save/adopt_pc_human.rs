@@ -191,7 +191,7 @@ struct ConvertedPc {
     titbits: Vec<u32>,
     portrait: PcPortraitState,
     carried: Option<EntityId>,
-    carried_posture: Posture,
+    carried_posture: u32,
     shield_danger_point: WorldPoint3D,
     shield_protected: Option<EntityId>,
     shield_protector: Option<EntityId>,
@@ -502,6 +502,23 @@ fn convert_pc(
         titbits.push(action.metadata.titbit);
     }
     let status = pc_status(&saved.post_human.status);
+    let carried = checked_ref(
+        entities.resolve_element(saved.post_human.carried)?,
+        creation_order,
+        "carried",
+        "Human",
+        is_human_kind,
+    )?;
+    let carried_posture =
+        preserve_dormant_carried_posture(saved.post_human.carried_posture, carried.is_some())
+            .map_err(|value| {
+                invalid(
+                    creation_order,
+                    "carried_posture",
+                    value,
+                    "RHposture 0..24 while a carried Human is present",
+                )
+            })?;
     Ok(ConvertedPc {
         character_index,
         status,
@@ -560,21 +577,8 @@ fn convert_pc(
                     running: icon.running,
                 }),
         },
-        carried: checked_ref(
-            entities.resolve_element(saved.post_human.carried)?,
-            creation_order,
-            "carried",
-            "Human",
-            is_human_kind,
-        )?,
-        carried_posture: Posture::try_from(saved.post_human.carried_posture).map_err(|_| {
-            invalid(
-                creation_order,
-                "carried_posture",
-                saved.post_human.carried_posture,
-                "RHposture 0..24",
-            )
-        })?,
+        carried,
+        carried_posture,
         shield_danger_point: point3(saved.post_human.shield_danger_point),
         shield_protected: checked_ref(
             entities.resolve_element(saved.post_human.shield_protected)?,
@@ -862,6 +866,13 @@ fn is_human_kind(kind: EntityIdKind) -> bool {
     )
 }
 
+fn preserve_dormant_carried_posture(raw: u32, carried_is_present: bool) -> Result<u32, u32> {
+    if carried_is_present && Posture::try_from(raw).is_err() {
+        return Err(raw);
+    }
+    Ok(raw)
+}
+
 fn action(
     raw: u32,
     creation_order: u32,
@@ -967,6 +978,23 @@ mod tests {
             checked_ref(Some(soldier), 31, "carrier", "PC", |kind| kind
                 == EntityIdKind::Pc)
             .is_err()
+        );
+    }
+
+    #[test]
+    fn carried_posture_is_raw_only_while_no_body_is_carried() {
+        let indeterminate = 161_437_968;
+        assert_eq!(
+            preserve_dormant_carried_posture(indeterminate, false),
+            Ok(indeterminate)
+        );
+        assert_eq!(
+            preserve_dormant_carried_posture(indeterminate, true),
+            Err(indeterminate)
+        );
+        assert_eq!(
+            preserve_dormant_carried_posture(Posture::Lying as u32, true),
+            Ok(Posture::Lying as u32)
         );
     }
 }

@@ -789,7 +789,7 @@ impl EngineInner {
                 plane,
                 elem.direction(),
                 carried_id,
-                pc.carried_posture,
+                pc.live_carried_posture(),
             )
         };
 

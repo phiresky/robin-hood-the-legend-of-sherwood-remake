@@ -1241,7 +1241,12 @@ pub struct PcData {
 
     // Carried person
     pub carried: Option<EntityId>,
-    pub carried_posture: Posture,
+    /// Raw Original `mCarriedPosture` storage.
+    ///
+    /// The Original constructor leaves it indeterminate while `carried` is
+    /// null. It is validated as a [`Posture`] whenever a carried body makes
+    /// the field semantically live.
+    pub carried_posture: u32,
 
     // Shield
     pub shield_danger_point: WorldPoint3D,
@@ -1345,7 +1350,7 @@ impl Default for PcData {
             max_teleport_counter: 0,
             fried_psykokwack: false,
             carried: None,
-            carried_posture: Posture::Undefined,
+            carried_posture: Posture::Undefined as u32,
             shield_danger_point: WorldPoint3D::default(),
             shield_danger_point_layer: 0,
             shield_protected: None,
@@ -1374,6 +1379,19 @@ impl Default for PcData {
 }
 
 impl PcData {
+    pub fn live_carried_posture(&self) -> Posture {
+        Posture::try_from(self.carried_posture).unwrap_or_else(|_| {
+            panic!(
+                "live carried_posture contains invalid Original enum word {}",
+                self.carried_posture
+            )
+        })
+    }
+
+    pub fn set_live_carried_posture(&mut self, posture: Posture) {
+        self.carried_posture = posture as u32;
+    }
+
     pub fn movement_auth_from_profile(profile: &CharacterProfile) -> (bool, bool, bool) {
         (
             profile.has_contextual_action(Action::Lockpick),
