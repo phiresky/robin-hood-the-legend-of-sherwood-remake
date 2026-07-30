@@ -2915,7 +2915,7 @@ fn convert_macro_command(
     hiking_paths: &[crate::level_data::RawHikingPath],
 ) -> Result<(Vec<u8>, usize), LegacyElementAdoptError> {
     if !saved.has_patrol_path {
-        if saved.macro_in_progress || saved.remaining_macro_bytes != 0 {
+        if saved.macro_in_progress {
             return Err(LegacyElementAdoptError::MacroWithoutPatrolPath { creation_order });
         }
         return Ok((Vec::new(), 0));
@@ -2962,7 +2962,7 @@ fn convert_waypoint_macro_cursor(
     macro_in_progress: bool,
     creation_order: u32,
 ) -> Result<(Vec<u8>, usize), LegacyElementAdoptError> {
-    let inactive = remaining == 0 && !macro_in_progress;
+    let inactive = !macro_in_progress;
     let macro_data = match command {
         WaypointCommand::Macro(data) => data,
         WaypointCommand::None if inactive => return Ok((Vec::new(), offset)),
@@ -2981,12 +2981,14 @@ fn convert_waypoint_macro_cursor(
         }
     };
 
-    // RHArtificialIntelligence initializes mpubMacroCommand to null, then
-    // serializes pointer subtraction whenever a patrol path exists—even if no
-    // macro was ever assigned. The resulting UWORD is indeterminate and may
-    // lie far beyond the waypoint bytes. Original never dereferences it while
-    // both remaining==0 and macro_in_progress==false; preserve that diagnostic
-    // storage exactly, but keep strict bounds for every live cursor.
+    // RHArtificialIntelligence::BreakMacro only clears mbMacroInProgress; it
+    // deliberately leaves both the byte counter and mpubMacroCommand alone.
+    // SerializeThisAI also writes the pointer subtraction whenever a patrol
+    // path exists, so an interrupted macro can retain a non-zero count and an
+    // indeterminate/out-of-waypoint cursor. Original gates every later resume
+    // on mbMacroInProgress and never dereferences those dormant fields.
+    // Preserve their diagnostic storage exactly, but keep strict bounds for
+    // every cursor whose macro is still live.
     if inactive {
         return Ok((macro_data.clone(), offset));
     }
@@ -3671,15 +3673,10 @@ mod tests {
         assert_eq!(bytes.len(), 26);
         assert_eq!(offset, 12_304);
 
-        assert!(matches!(
-            convert_waypoint_macro_cursor(&command, 12_304, 1, false, 89),
-            Err(LegacyElementAdoptError::InvalidMacroCursor {
-                offset: 12_304,
-                remaining: 1,
-                length: 26,
-                ..
-            })
-        ));
+        let (bytes, offset) =
+            convert_waypoint_macro_cursor(&command, 12_304, 1, false, 89).unwrap();
+        assert_eq!(bytes.len(), 26);
+        assert_eq!(offset, 12_304);
         assert!(matches!(
             convert_waypoint_macro_cursor(&command, 12_304, 0, true, 89),
             Err(LegacyElementAdoptError::InvalidMacroCursor {
