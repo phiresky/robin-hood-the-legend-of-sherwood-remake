@@ -5784,6 +5784,18 @@ impl EngineInner {
                             crate::sequence::FieldValue::Integer(0),
                         );
                     }
+                    // `RHArtificialMalignity::BeginSwordfight` performs
+                    // `StopAll()` before registering ENTER_SWORDFIGHT.  The
+                    // old Move may survive StopMovement long enough to be
+                    // postponed behind the fight element, but its sprite
+                    // destination is no longer authoritative once this
+                    // replacement is registered.
+                    self.world
+                        .entities
+                        .get_mut(npc_id)
+                        .expect("AI swordfight owner disappeared before launch")
+                        .position_iface_mut()
+                        .set_map_goal(crate::coordinates::MapPoint::ZERO);
                     self.launch_element(elem);
                 }
             }
