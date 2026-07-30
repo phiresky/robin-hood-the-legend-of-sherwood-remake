@@ -1515,6 +1515,29 @@ Both patrol admission paths now use the NPC's base/real radius while retaining
 the shared posture, rider-height, building, and opaque-ray checks. This is the
 same field selected by the Original overload and applies to every patrol.
 
+### Pre-bound actor VMs keep their initialized beam-slot class
+
+Beam-me assignment can place the same saved character in a different authored
+slot while loading a campaign. PC identity adoption therefore maps saved and
+initialized actors by campaign-description/profile identity rather than
+incidental construction order. The authored per-slot script classes can differ
+after that remap.
+
+This is legal in the Original. `RHElementActor::Serialize` reads the saved
+`mstrScriptClass`, but calls `Bind` only when `mbScriptInitialized` is false.
+Mission-created beam-me PCs were already bound by
+`InitializeScriptFromStream`, so their live VM remains bound to the newly
+assigned slot class. The save's member payload is then deserialized through
+that live binding. Linux3 Profile 003 save 046 demonstrates this with saved
+`hidden_pc02_800000b5` and initialized `hidden_pc03_800000b6`; both expose the
+same `deja_fait` member schema.
+
+Actor VM adoption now reproduces that distinction: class names may differ for
+an already initialized actor, but member count, names, types, heap ranges, and
+referenced values remain strictly validated against the live class. Target and
+scroll VMs retain exact class-name validation because they do not pass through
+the actor serializer's `mbScriptInitialized` guard.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

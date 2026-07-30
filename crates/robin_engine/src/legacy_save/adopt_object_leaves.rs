@@ -723,7 +723,16 @@ pub(crate) fn preflight_vm(
     let (Some(saved), Some((class, current_heap))) = (saved, runtime) else {
         return Ok(None);
     };
-    if saved.class_name != class.class_name {
+    // RHElementActor::Serialize always reads mstrScriptClass, but only calls
+    // Bind when mbScriptInitialized is false. Mission-created actors have
+    // already been bound by InitializeScriptFromStream, so a loaded beam-me
+    // PC can retain the VM class of its freshly assigned slot while storing
+    // another slot's serialized class name. The member payload is still read
+    // through that live binding and must therefore match its schema below.
+    //
+    // Targets and scrolls do not use this actor-specific initialized-binding
+    // guard, so retain strict class identity for them.
+    if saved.class_name != class.class_name && !matches!(owner_kind, LegacyVmOwnerKind::Actor) {
         return Err(LegacyObjectLeafAdoptError::VmClassMismatch {
             owner_kind: owner_kind.name(),
             creation_order,
