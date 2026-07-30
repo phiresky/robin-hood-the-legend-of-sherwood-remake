@@ -1580,6 +1580,24 @@ impl MissionScript {
         self.instance.vm.heap = heap;
     }
 
+    /// Identity and heap of one mission-authored Actor VM.
+    pub(crate) fn actor_vm_class_and_heap(
+        &self,
+        handle: i32,
+    ) -> Option<(&crate::scb::ClassEntry, &[u8])> {
+        let instance = self.actor_instances.get(&handle)?;
+        let class = &self.manager.program.scb.classes[instance.class_idx()];
+        Some((class, &instance.vm.heap))
+    }
+
+    pub(crate) fn replace_actor_vm_heap(&mut self, handle: i32, heap: Vec<u8>) {
+        self.actor_instances
+            .get_mut(&handle)
+            .expect("preflighted actor VM disappeared")
+            .vm
+            .heap = heap;
+    }
+
     /// Identity and heap of one mission-authored Target VM.
     pub(crate) fn target_vm_class_and_heap(
         &self,

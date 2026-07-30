@@ -30,7 +30,7 @@ use crate::{
 use super::{
     adopt::LegacyEntityFixups,
     gate_topology::derive_legacy_gate_order,
-    payload_base::{LegacyLineRef, LegacySectorRef},
+    payload_base::{LegacyLineRef, LegacyOrderRef, LegacySectorRef},
     payload_sequences::{
         LegacyGateRef, LegacyGenericField, LegacyGenericFieldKind, LegacyGenericFieldValue,
         LegacyInlineOrder, LegacyInlineSequence, LegacyInlineSequenceElement,
@@ -176,6 +176,78 @@ impl LegacySequenceAdoptionPlan {
             })
             .ok_or(LegacySequenceAdoptError::MissingIdentity { field, id })?;
         Ok(Some((element_ref, element)))
+    }
+
+    /// Resolve an Original order pointer in the manager-owned identity space.
+    ///
+    /// Rust reserves zero as the null `NonZeroU32` value, so sequence
+    /// conversion maps every Original order ID bijectively to `id + 1`.
+    pub(crate) fn resolve_order(
+        &self,
+        field: &'static str,
+        reference: LegacyOrderRef,
+    ) -> Result<Option<(SequenceElementRef, usize, &Order)>, LegacySequenceAdoptError> {
+        let Some(original_id) = reference.0 else {
+            return Ok(None);
+        };
+        let runtime_id = original_id
+            .checked_add(1)
+            .ok_or_else(|| invalid(field, original_id, "at most 0xfffffffe"))?;
+        let resolved = self.manager.sequences.iter().find_map(|sequence| {
+            sequence
+                .elements
+                .iter()
+                .enumerate()
+                .find_map(|(element_index, element)| {
+                    element
+                        .orders
+                        .iter()
+                        .enumerate()
+                        .find(|(_, order)| order.order_id.get() == runtime_id)
+                        .map(|(order_index, order)| {
+                            (
+                                SequenceElementRef::new(sequence.id, element_index),
+                                order_index,
+                                order,
+                            )
+                        })
+                })
+        });
+        resolved
+            .map(Some)
+            .ok_or(LegacySequenceAdoptError::MissingIdentity {
+                field,
+                id: original_id,
+            })
+    }
+
+    /// Actor selection reconstructed by the converted manager's canonical
+    /// in-progress index.
+    pub(crate) fn current_element_for_actor(&self, actor: EntityId) -> Option<SequenceElementRef> {
+        let mut in_progress = self.manager.sequences.iter().flat_map(|sequence| {
+            sequence
+                .elements
+                .iter()
+                .enumerate()
+                .filter(move |(_, element)| {
+                    element.owner == Some(actor) && element.state == SequenceState::InProgress
+                })
+                .map(move |(element_index, element)| {
+                    (
+                        SequenceElementRef::new(sequence.id, element_index),
+                        element.command,
+                    )
+                })
+        });
+        let first = in_progress.next()?;
+        let Some(second) = in_progress.next() else {
+            return Some(first.0);
+        };
+        std::iter::once(first)
+            .chain(std::iter::once(second))
+            .chain(in_progress)
+            .find_map(|(reference, command)| (command != Command::Wait).then_some(reference))
+            .or(Some(first.0))
     }
 }
 
@@ -1129,6 +1201,21 @@ mod tests {
             .unwrap();
         assert_eq!(resolved_ref, SequenceElementRef::new(SequenceId(10), 1));
         assert_eq!(resolved.id, 101);
+        let (order_element, order_index, order) = plan
+            .resolve_order("actor.order", LegacyOrderRef(Some(0)))
+            .unwrap()
+            .unwrap();
+        assert_eq!(order_element, SequenceElementRef::new(SequenceId(10), 0));
+        assert_eq!(order_index, 0);
+        assert_eq!(order.order_id.get(), 1);
+        assert_eq!(
+            plan.current_element_for_actor(owner),
+            Some(SequenceElementRef::new(SequenceId(10), 1))
+        );
+        assert!(
+            plan.resolve_order("actor.order", LegacyOrderRef(Some(u32::MAX)))
+                .is_err()
+        );
         let mut engine = crate::engine::EngineInner::new();
         plan.apply(&mut engine);
 

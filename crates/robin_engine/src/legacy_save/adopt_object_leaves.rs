@@ -252,14 +252,16 @@ struct PlannedFx {
 }
 
 #[derive(Clone, Copy)]
-enum VmOwnerKind {
+pub(crate) enum LegacyVmOwnerKind {
+    Actor,
     Target,
     Scroll,
 }
 
-impl VmOwnerKind {
+impl LegacyVmOwnerKind {
     fn name(self) -> &'static str {
         match self {
+            Self::Actor => "actor",
             Self::Target => "target",
             Self::Scroll => "scroll",
         }
@@ -321,7 +323,7 @@ impl LegacyObjectLeafAdoptionPlan {
                         entities,
                         entity_id,
                         creation_order,
-                        VmOwnerKind::Scroll,
+                        LegacyVmOwnerKind::Scroll,
                         saved.script_members.as_ref(),
                         location_prefix,
                         &mut computed_locations,
@@ -373,7 +375,7 @@ impl LegacyObjectLeafAdoptionPlan {
                         entities,
                         entity_id,
                         creation_order,
-                        VmOwnerKind::Target,
+                        LegacyVmOwnerKind::Target,
                         saved.script_members.as_ref(),
                         location_prefix,
                         &mut computed_locations,
@@ -688,13 +690,13 @@ fn apply_fx(runtime: &mut crate::element::FxData, saved: PlannedFx) {
     runtime.restore_background = saved.restore_background;
 }
 
-fn preflight_vm(
+pub(crate) fn preflight_vm(
     engine: &EngineInner,
     assets: &LevelAssets,
     entities: &LegacyEntityFixups,
     owner: EntityId,
     creation_order: u32,
-    owner_kind: VmOwnerKind,
+    owner_kind: LegacyVmOwnerKind,
     saved: Option<&LegacyVmMemberSection>,
     location_prefix: usize,
     computed_locations: &mut Vec<Option<ComputedScriptLocation>>,
@@ -705,8 +707,9 @@ fn preflight_vm(
         .mission
         .as_ref()
         .and_then(|mission| match owner_kind {
-            VmOwnerKind::Target => mission.target_vm_class_and_heap(handle),
-            VmOwnerKind::Scroll => mission.scroll_vm_class_and_heap(handle),
+            LegacyVmOwnerKind::Actor => mission.actor_vm_class_and_heap(handle),
+            LegacyVmOwnerKind::Target => mission.target_vm_class_and_heap(handle),
+            LegacyVmOwnerKind::Scroll => mission.scroll_vm_class_and_heap(handle),
         });
     if saved.is_some() != runtime.is_some() {
         return Err(LegacyObjectLeafAdoptError::VmPresenceMismatch {
@@ -906,7 +909,7 @@ fn preflight_vm(
 fn vm_entity_handle(
     engine: &EngineInner,
     entities: &LegacyEntityFixups,
-    owner_kind: VmOwnerKind,
+    owner_kind: LegacyVmOwnerKind,
     creation_order: u32,
     member: &str,
     member_kind: &'static str,
