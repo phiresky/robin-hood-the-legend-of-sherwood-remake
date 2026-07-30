@@ -32,6 +32,7 @@ pub mod post_hiking;
 pub mod post_simple;
 pub mod post_sequence_manager;
 pub mod post_tail;
+pub mod topology_adapter;
 
 use serde::{Deserialize, Serialize};
 
