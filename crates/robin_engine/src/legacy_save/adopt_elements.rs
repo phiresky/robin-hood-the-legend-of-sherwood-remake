@@ -11,9 +11,10 @@ use thiserror::Error;
 
 use crate::{
     ai::{
-        AiController, AiState, AlertLevel, Attitude, CombatInfo, DoorCombatInfo, GotoFlags, Hint,
-        Noise, NoiseType, PathHistoryEntry, PathId, PatrolPath, Position, ReconnaissanceReport,
-        Remark, ReportType, Stimulus, StimulusInfo, StimulusType, StolenObject, Substate,
+        AiController, AiGlobalState, AiState, AlertLevel, Attitude, CombatInfo, DoorCombatInfo,
+        GotoFlags, Hint, Noise, NoiseType, PathHistoryEntry, PathId, PatrolPath, Position,
+        ReconnaissanceReport, Remark, ReportType, Stimulus, StimulusInfo, StimulusType,
+        StolenObject, Substate,
     },
     coordinates::{GroundPoint, MapPoint, MapVec},
     element::{
@@ -241,6 +242,24 @@ pub enum LegacyElementAdoptError {
         "saved NPC creation order {creation_order} has macro progress without a patrol-path-relative cursor"
     )]
     MacroWithoutPatrolPath { creation_order: u32 },
+    #[error(
+        "saved NPC creation order {creation_order} field {field} has {saved} entries, but initialized AI topology has {initialized}"
+    )]
+    AiTopologyCount {
+        creation_order: u32,
+        field: &'static str,
+        saved: usize,
+        initialized: usize,
+    },
+    #[error(
+        "saved NPC creation order {creation_order} field {field} index {index} is invalid for initialized count {count}"
+    )]
+    InvalidAiIndex {
+        creation_order: u32,
+        field: &'static str,
+        index: u32,
+        count: usize,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -369,22 +388,77 @@ enum ConvertedLocalAi {
     },
     Enemy {
         common: ConvertedLocalAiCommon,
+        last_stimulus_dispatched_to_patrol: Stimulus,
         frame_when_enemy_detected: u32,
         fleeing_seen_enemy_counter: u16,
+        other_seen_ale: Vec<u32>,
+        pc_gone_away_direction: u16,
+        missed_pc: u32,
+        beggar_to_examine: u32,
         pc_missed: bool,
+        search_charly_way: Vec<Position>,
         current_task_priority: u16,
         minimal_task_priority: u16,
         new_task_priority: u16,
+        delta_sorrow_level: u16,
+        missed_in_action: Vec<u32>,
+        other_bodies_to_examine: Vec<u32>,
+        beggars_to_control: Vec<u32>,
+        old_life_points: u8,
+        initial_life_points: u8,
+        list_them: Vec<u32>,
+        old_odds: i16,
+        ambush_point_array_reset: bool,
+        ambush_point_status: Vec<crate::ai_enemy::AmbushPointStatus>,
+        my_seek_points: Vec<u16>,
+        personal_seek_point_1: Option<crate::ai::SeekPoint>,
+        personal_seek_point_2: Option<crate::ai::SeekPoint>,
+        seek_center: Position,
+        actual_seek_point: Option<u16>,
+        seek_point_view_directions: Vec<u16>,
+        positions_of_beggars_to_control: Vec<Position>,
+        seek_flags: crate::ai_enemy::SeekFlags,
+        forced_next_battle_decision: crate::ai::Decision,
+        reset_battle_decision: bool,
+        synchronize_index: u16,
         seen_dead_body: bool,
         seeking_charly: bool,
+        initial_view_cone: crate::ai::ViewCone,
+        company_number: u16,
+        left_combat_neighbour: u32,
+        right_combat_neighbour: u32,
+        attentive: bool,
+        will_be_attentive: bool,
+        forced_attentive: bool,
+        guarded_pc: Option<crate::entity_id::PcId>,
+        tower_guard: bool,
+        combat_trainer: bool,
+        gather_position: Position,
+        gather_direction: u16,
+        gather_position_instructed: bool,
+        officers_position: Position,
+        previous_state: AiState,
+        previous_substate: Substate,
         reported_to_officer: bool,
         missed_soldier_timer: u16,
         old_money: u16,
+        other_seen_money: Vec<u32>,
+        money_fight_enemies: Vec<u32>,
+        money_fight_victims: Vec<u32>,
+        archer_behind_me: u32,
+        shield_bearer_before_me: u32,
+        already_seen_bodies: Vec<u32>,
         shield_bearer_direction: u16,
         phalanx_aborted: bool,
         changed_to_alert_path: bool,
+        my_shooting_point: Option<(u16, u16)>,
+        my_archery_sector: Option<u16>,
+        my_archery_sector_index: u16,
+        my_archery_point_index: crate::sector::ArcheryPointIdx,
+        my_archery_point_increment: i8,
         enemy_seen_below: bool,
         enemy_had_this_elevation: u16,
+        known_enemy_strikes: [Option<crate::weapons::SwordStrike>; 3],
     },
 }
 
@@ -560,6 +634,7 @@ impl LegacyStaticElementAdoption {
                             entities,
                             position_topology,
                             assets,
+                            &engine.ai.global,
                         )
                     })
                     .transpose()?,
@@ -766,6 +841,7 @@ fn convert_npc(
     entities: &LegacyEntityFixups,
     topology: &LegacyPositionTopology,
     assets: &LevelAssets,
+    ai_global: &AiGlobalState,
 ) -> Result<ConvertedNpc, LegacyElementAdoptError> {
     let mut detectable_lists = Vec::with_capacity(DetectableType::COUNT);
     let mut detection_suspects = [0; DetectableType::COUNT];
@@ -840,6 +916,7 @@ fn convert_npc(
             entities,
             topology,
             assets,
+            ai_global,
             alert_level(saved.view.alert_status, creation_order, "view.alert_status")?,
         )?,
     })
@@ -939,6 +1016,7 @@ fn convert_local_ai(
     entities: &LegacyEntityFixups,
     topology: &LegacyPositionTopology,
     assets: &LevelAssets,
+    ai_global: &AiGlobalState,
     view_alert_status: AlertLevel,
 ) -> Result<ConvertedLocalAi, LegacyElementAdoptError> {
     let owner = entities.resolve_ai_element(saved.common.owner)?;
@@ -973,25 +1051,258 @@ fn convert_local_ai(
                 can_go_away: tail.can_go_away,
             })
         }
-        (LegacyLocalAiTail::Enemy(tail), AiBrain::Enemy(_)) => Ok(ConvertedLocalAi::Enemy {
-            common,
-            frame_when_enemy_detected: tail.frame_when_enemy_detected,
-            fleeing_seen_enemy_counter: tail.fleeing_seen_enemy_counter,
-            pc_missed: tail.pc_missed,
-            current_task_priority: tail.current_task_priority,
-            minimal_task_priority: tail.minimal_task_priority,
-            new_task_priority: tail.new_task_priority,
-            seen_dead_body: tail.seen_dead_body,
-            seeking_charly: tail.seeking_charly,
-            reported_to_officer: tail.reported_to_officer,
-            missed_soldier_timer: tail.missed_soldier_timer,
-            old_money: tail.old_money,
-            shield_bearer_direction: tail.shield_bearer_direction,
-            phalanx_aborted: tail.phalanx_aborted,
-            changed_to_alert_path: tail.changed_to_alert_path,
-            enemy_seen_below: tail.enemy_seen_below,
-            enemy_had_this_elevation: tail.enemy_had_this_elevation,
-        }),
+        (LegacyLocalAiTail::Enemy(tail), AiBrain::Enemy(_)) => {
+            let actual_seek_point = convert_actual_seek_point(
+                tail.actual_seek_point_id,
+                tail.personal_seek_point_1.is_some(),
+                tail.personal_seek_point_2.is_some(),
+                ai_global.seek_points.len(),
+                creation_order,
+            )?;
+            let ambush_point_status = tail
+                .ambush_point_statuses
+                .iter()
+                .copied()
+                .map(|value| ambush_status(value, creation_order))
+                .collect::<Result<Vec<_>, _>>()?;
+            if ambush_point_status.len() != ai_global.ambush_points.len() {
+                return Err(LegacyElementAdoptError::AiTopologyCount {
+                    creation_order,
+                    field: "local_ai.enemy.ambush_point_statuses",
+                    saved: ambush_point_status.len(),
+                    initialized: ai_global.ambush_points.len(),
+                });
+            }
+            let (my_shooting_point, my_archery_sector) =
+                convert_archery_refs(tail, ai_global, creation_order)?;
+            Ok(ConvertedLocalAi::Enemy {
+                common,
+                last_stimulus_dispatched_to_patrol: convert_stimulus(
+                    &tail.last_stimulus_dispatched_to_patrol,
+                    creation_order,
+                    entities,
+                    topology,
+                )?,
+                frame_when_enemy_detected: tail.frame_when_enemy_detected,
+                fleeing_seen_enemy_counter: tail.fleeing_seen_enemy_counter,
+                other_seen_ale: ai_handle_list(
+                    &tail.other_seen_ale,
+                    ReferenceKind::Object,
+                    creation_order,
+                    "local_ai.enemy.other_seen_ale",
+                    entities,
+                )?,
+                pc_gone_away_direction: tail.pc_gone_away_direction,
+                missed_pc: ai_handle(
+                    entities.resolve_ai_element(tail.missed_pc)?,
+                    ReferenceKind::Human,
+                    creation_order,
+                    "local_ai.enemy.missed_pc",
+                )?,
+                beggar_to_examine: ai_handle(
+                    entities.resolve_ai_element(tail.beggar_to_examine)?,
+                    ReferenceKind::Human,
+                    creation_order,
+                    "local_ai.enemy.beggar_to_examine",
+                )?,
+                pc_missed: tail.pc_missed,
+                search_charly_way: ai_position_list(
+                    &tail.search_charly_way,
+                    topology,
+                    creation_order,
+                    "local_ai.enemy.search_charly_way.sector",
+                )?,
+                current_task_priority: tail.current_task_priority,
+                minimal_task_priority: tail.minimal_task_priority,
+                new_task_priority: tail.new_task_priority,
+                delta_sorrow_level: tail.delta_sorrow_level,
+                missed_in_action: ai_handle_list(
+                    &tail.missed_in_action,
+                    ReferenceKind::Npc,
+                    creation_order,
+                    "local_ai.enemy.missed_in_action",
+                    entities,
+                )?,
+                other_bodies_to_examine: ai_handle_list(
+                    &tail.other_bodies_to_examine,
+                    ReferenceKind::Human,
+                    creation_order,
+                    "local_ai.enemy.other_bodies_to_examine",
+                    entities,
+                )?,
+                beggars_to_control: ai_handle_list(
+                    &tail.beggars_to_control,
+                    ReferenceKind::Human,
+                    creation_order,
+                    "local_ai.enemy.beggars_to_control",
+                    entities,
+                )?,
+                old_life_points: tail.old_life_points,
+                initial_life_points: tail.initial_life_points,
+                list_them: ai_handle_list(
+                    &tail.them,
+                    ReferenceKind::Human,
+                    creation_order,
+                    "local_ai.enemy.them",
+                    entities,
+                )?,
+                old_odds: tail.old_odds,
+                ambush_point_array_reset: tail.ambush_point_array_reset,
+                ambush_point_status,
+                my_seek_points: convert_seek_point_ids(
+                    &tail.seek_point_ids,
+                    tail.personal_seek_point_1.is_some(),
+                    tail.personal_seek_point_2.is_some(),
+                    ai_global.seek_points.len(),
+                    creation_order,
+                )?,
+                personal_seek_point_1: tail
+                    .personal_seek_point_1
+                    .as_ref()
+                    .map(|point| convert_seek_point(point, 1111, topology, creation_order))
+                    .transpose()?,
+                personal_seek_point_2: tail
+                    .personal_seek_point_2
+                    .as_ref()
+                    .map(|point| convert_seek_point(point, 2222, topology, creation_order))
+                    .transpose()?,
+                seek_center: ai_position(
+                    tail.seek_center,
+                    topology,
+                    creation_order,
+                    "local_ai.enemy.seek_center.sector",
+                )?,
+                actual_seek_point,
+                seek_point_view_directions: tail.seek_point_view_directions.clone(),
+                positions_of_beggars_to_control: ai_position_list(
+                    &tail.positions_of_beggars_to_control,
+                    topology,
+                    creation_order,
+                    "local_ai.enemy.positions_of_beggars_to_control.sector",
+                )?,
+                seek_flags: seek_flags(
+                    tail.repeated_seek_flags,
+                    creation_order,
+                    "local_ai.enemy.seek_flags",
+                )?,
+                forced_next_battle_decision: decision(
+                    tail.forced_next_battle_decision,
+                    creation_order,
+                )?,
+                reset_battle_decision: tail.reset_battle_decision,
+                synchronize_index: tail.synchronize_index,
+                seen_dead_body: tail.seen_dead_body,
+                seeking_charly: tail.seeking_charly,
+                initial_view_cone: view_cone(tail.initial_view_cone, creation_order)?,
+                company_number: tail.company_number,
+                left_combat_neighbour: ai_handle(
+                    entities.resolve_ai_element(tail.left_combat_neighbour)?,
+                    ReferenceKind::Human,
+                    creation_order,
+                    "local_ai.enemy.left_combat_neighbour",
+                )?,
+                right_combat_neighbour: ai_handle(
+                    entities.resolve_ai_element(tail.right_combat_neighbour)?,
+                    ReferenceKind::Human,
+                    creation_order,
+                    "local_ai.enemy.right_combat_neighbour",
+                )?,
+                attentive: tail.attentive,
+                will_be_attentive: tail.will_be_attentive,
+                forced_attentive: tail.forced_attentive,
+                guarded_pc: optional_pc_id(
+                    entities.resolve_ai_element(tail.guarded_pc)?,
+                    creation_order,
+                    "local_ai.enemy.guarded_pc",
+                )?,
+                tower_guard: tail.tower_guard,
+                combat_trainer: tail.combat_trainer,
+                gather_position: ai_position(
+                    tail.gather_position,
+                    topology,
+                    creation_order,
+                    "local_ai.enemy.gather_position.sector",
+                )?,
+                gather_direction: tail.gather_direction,
+                gather_position_instructed: tail.gather_position_instructed,
+                officers_position: ai_position(
+                    tail.officers_position,
+                    topology,
+                    creation_order,
+                    "local_ai.enemy.officers_position.sector",
+                )?,
+                previous_state: ai_state(
+                    tail.previous_state,
+                    creation_order,
+                    "local_ai.enemy.previous_state",
+                )?,
+                previous_substate: substate(
+                    tail.previous_substate,
+                    creation_order,
+                    "local_ai.enemy.previous_substate",
+                )?,
+                reported_to_officer: tail.reported_to_officer,
+                missed_soldier_timer: tail.missed_soldier_timer,
+                old_money: tail.old_money,
+                other_seen_money: ai_handle_list(
+                    &tail.other_seen_money,
+                    ReferenceKind::Object,
+                    creation_order,
+                    "local_ai.enemy.other_seen_money",
+                    entities,
+                )?,
+                money_fight_enemies: ai_handle_list(
+                    &tail.money_fight_enemies,
+                    ReferenceKind::Npc,
+                    creation_order,
+                    "local_ai.enemy.money_fight_enemies",
+                    entities,
+                )?,
+                money_fight_victims: ai_handle_list(
+                    &tail.money_fight_victims,
+                    ReferenceKind::Npc,
+                    creation_order,
+                    "local_ai.enemy.money_fight_victims",
+                    entities,
+                )?,
+                archer_behind_me: ai_handle(
+                    entities.resolve_ai_element(tail.archer_behind_me)?,
+                    ReferenceKind::Npc,
+                    creation_order,
+                    "local_ai.enemy.archer_behind_me",
+                )?,
+                shield_bearer_before_me: ai_handle(
+                    entities.resolve_ai_element(tail.shield_bearer_before_me)?,
+                    ReferenceKind::Npc,
+                    creation_order,
+                    "local_ai.enemy.shield_bearer_before_me",
+                )?,
+                already_seen_bodies: ai_handle_list(
+                    &tail.already_seen_bodies,
+                    ReferenceKind::Human,
+                    creation_order,
+                    "local_ai.enemy.already_seen_bodies",
+                    entities,
+                )?,
+                shield_bearer_direction: tail.shield_bearer_direction,
+                phalanx_aborted: tail.phalanx_aborted,
+                changed_to_alert_path: tail.changed_to_alert_path,
+                my_shooting_point,
+                my_archery_sector,
+                my_archery_sector_index: tail.archery_sector_index,
+                my_archery_point_index: crate::sector::ArcheryPointIdx(tail.archery_point_index),
+                my_archery_point_increment: tail.archery_point_increment,
+                enemy_seen_below: tail.enemy_seen_below,
+                enemy_had_this_elevation: tail.enemy_had_this_elevation,
+                known_enemy_strikes: tail
+                    .known_enemy_strike_commands
+                    .map(|command| known_enemy_strike(command, creation_order))
+                    .into_iter()
+                    .collect::<Result<Vec<_>, _>>()?
+                    .try_into()
+                    .expect("fixed-size strike conversion preserves length"),
+            })
+        }
         (LegacyLocalAiTail::Friendly(_), brain) => Err(LegacyElementAdoptError::AiKindMismatch {
             creation_order,
             saved_kind: "Friendly",
@@ -1295,41 +1606,154 @@ fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
             AiBrain::Enemy(ai),
             ConvertedLocalAi::Enemy {
                 common,
+                last_stimulus_dispatched_to_patrol,
                 frame_when_enemy_detected,
                 fleeing_seen_enemy_counter,
+                other_seen_ale,
+                pc_gone_away_direction,
+                missed_pc,
+                beggar_to_examine,
                 pc_missed,
+                search_charly_way,
                 current_task_priority,
                 minimal_task_priority,
                 new_task_priority,
+                delta_sorrow_level,
+                missed_in_action,
+                other_bodies_to_examine,
+                beggars_to_control,
+                old_life_points,
+                initial_life_points,
+                list_them,
+                old_odds,
+                ambush_point_array_reset,
+                ambush_point_status,
+                my_seek_points,
+                personal_seek_point_1,
+                personal_seek_point_2,
+                seek_center,
+                actual_seek_point,
+                seek_point_view_directions,
+                positions_of_beggars_to_control,
+                seek_flags,
+                forced_next_battle_decision,
+                reset_battle_decision,
+                synchronize_index,
                 seen_dead_body,
                 seeking_charly,
+                initial_view_cone,
+                company_number,
+                left_combat_neighbour,
+                right_combat_neighbour,
+                attentive,
+                will_be_attentive,
+                forced_attentive,
+                guarded_pc,
+                tower_guard,
+                combat_trainer,
+                gather_position,
+                gather_direction,
+                gather_position_instructed,
+                officers_position,
+                previous_state,
+                previous_substate,
                 reported_to_officer,
                 missed_soldier_timer,
                 old_money,
+                other_seen_money,
+                money_fight_enemies,
+                money_fight_victims,
+                archer_behind_me,
+                shield_bearer_before_me,
+                already_seen_bodies,
                 shield_bearer_direction,
                 phalanx_aborted,
                 changed_to_alert_path,
+                my_shooting_point,
+                my_archery_sector,
+                my_archery_sector_index,
+                my_archery_point_index,
+                my_archery_point_increment,
                 enemy_seen_below,
                 enemy_had_this_elevation,
+                known_enemy_strikes,
             },
         ) => {
             apply_local_ai_common(&mut ai.base, common);
+            ai.last_stimulus_dispatched_to_patrol = Some(last_stimulus_dispatched_to_patrol);
             ai.base.frame_when_enemy_detected = frame_when_enemy_detected;
             ai.fleeing_seen_enemy_counter = fleeing_seen_enemy_counter;
+            ai.other_seen_ale = other_seen_ale;
+            ai.pc_gone_away_in_this_direction = pc_gone_away_direction;
+            ai.missed_pc = missed_pc;
+            ai.beggar_to_examine = beggar_to_examine;
             ai.pc_missed = pc_missed;
+            ai.search_charly_way = search_charly_way;
             ai.current_task_priority = current_task_priority;
             ai.minimal_task_priority = minimal_task_priority;
             ai.new_task_priority = new_task_priority;
+            ai.base.delta_sorrow_level = delta_sorrow_level;
+            ai.base.missed_in_action = missed_in_action;
+            ai.other_bodies_to_examine = other_bodies_to_examine;
+            ai.beggars_to_control = beggars_to_control;
+            ai.old_life_points = old_life_points;
+            ai.initial_life_points = initial_life_points;
+            ai.list_them = list_them;
+            ai.old_odds = old_odds;
+            ai.ambush_point_array_reset = ambush_point_array_reset;
+            ai.ambush_point_status = ambush_point_status;
+            ai.my_seek_points = my_seek_points;
+            ai.personal_seek_point_1 = personal_seek_point_1;
+            ai.personal_seek_point_2 = personal_seek_point_2;
+            ai.seek_center = seek_center;
+            ai.actual_seek_point = actual_seek_point;
+            ai.seek_point_view_directions = seek_point_view_directions;
+            ai.positions_of_beggars_to_control = positions_of_beggars_to_control;
+            ai.seek_flags = seek_flags;
+            ai.forced_next_battle_decision = forced_next_battle_decision;
+            ai.reset_battle_decision = reset_battle_decision;
+            ai.base.synchronize_index = synchronize_index;
             ai.seen_dead_body = seen_dead_body;
             ai.seeking_charly = seeking_charly;
+            ai.base.initial_view_cone = initial_view_cone;
+            ai.company_number = company_number;
+            ai.left_combat_neighbour = left_combat_neighbour;
+            ai.right_combat_neighbour = right_combat_neighbour;
+            ai.attentive = attentive;
+            ai.will_be_attentive = will_be_attentive;
+            ai.forced_attentive = forced_attentive;
+            ai.guarded_pc = guarded_pc;
+            ai.tower_guard = tower_guard;
+            ai.combat_trainer = combat_trainer;
+            ai.gather_position = gather_position;
+            ai.gather_direction = gather_direction;
+            ai.gather_position_instructed = gather_position_instructed;
+            ai.officers_position = officers_position;
+            ai.previous_state = previous_state;
+            ai.previous_substate = previous_substate;
             ai.reported_to_officer = reported_to_officer;
             ai.missed_soldier_timer = missed_soldier_timer;
             ai.old_money = old_money;
+            ai.other_seen_money = other_seen_money;
+            ai.money_fight_enemies = money_fight_enemies;
+            ai.money_fight_victims = money_fight_victims;
+            ai.archer_behind_me = archer_behind_me;
+            ai.shield_bearer_before_me = shield_bearer_before_me;
+            ai.already_seen_bodies = already_seen_bodies;
             ai.shield_bearer_direction = shield_bearer_direction;
             ai.phalanx_aborted = phalanx_aborted;
             ai.changed_to_alert_path = changed_to_alert_path;
+            ai.my_shooting_point = my_shooting_point;
+            ai.my_archery_sector = my_archery_sector;
+            ai.my_archery_sector_index = my_archery_sector_index;
+            ai.my_archery_point_index = my_archery_point_index;
+            ai.my_archery_point_increment = my_archery_point_increment;
             ai.enemy_seen_below = enemy_seen_below;
             ai.enemy_had_this_elevation = enemy_had_this_elevation;
+            let [strike_1, strike_2, strike_3] = known_enemy_strikes;
+            ai.known_enemy_strike_1 = strike_1;
+            ai.known_enemy_strike_2 = strike_2;
+            ai.known_enemy_strike_3 = strike_3;
         }
         _ => unreachable!("preflighted local-AI kind changed in candidate engine"),
     }
@@ -1644,6 +2068,301 @@ fn ai_position(
         sector: sector(saved.sector.0, topology, creation_order, field)?,
         level: saved.level,
     })
+}
+
+fn ai_position_list(
+    saved: &[LegacyAiPosition],
+    topology: &LegacyPositionTopology,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<Vec<Position>, LegacyElementAdoptError> {
+    saved
+        .iter()
+        .copied()
+        .map(|position| ai_position(position, topology, creation_order, field))
+        .collect()
+}
+
+fn ambush_status(
+    value: i32,
+    creation_order: u32,
+) -> Result<crate::ai_enemy::AmbushPointStatus, LegacyElementAdoptError> {
+    match raw_i32(value, creation_order, "local_ai.enemy.ambush_point_status")? {
+        0 => Ok(crate::ai_enemy::AmbushPointStatus::Far),
+        1 => Ok(crate::ai_enemy::AmbushPointStatus::Near),
+        2 => Ok(crate::ai_enemy::AmbushPointStatus::Checked),
+        value => Err(LegacyElementAdoptError::UnknownEnum {
+            creation_order,
+            field: "local_ai.enemy.ambush_point_status",
+            value,
+        }),
+    }
+}
+
+fn decision(
+    value: i32,
+    creation_order: u32,
+) -> Result<crate::ai::Decision, LegacyElementAdoptError> {
+    let value = raw_i32(
+        value,
+        creation_order,
+        "local_ai.enemy.forced_next_battle_decision",
+    )?;
+    crate::ai::Decision::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
+        creation_order,
+        field: "local_ai.enemy.forced_next_battle_decision",
+        value,
+    })
+}
+
+fn view_cone(
+    value: i32,
+    creation_order: u32,
+) -> Result<crate::ai::ViewCone, LegacyElementAdoptError> {
+    use crate::ai::ViewCone;
+    let value = raw_i32(value, creation_order, "local_ai.enemy.initial_view_cone")?;
+    let result = match value {
+        0 => ViewCone::Commandoslike,
+        1 => ViewCone::Patrol,
+        2 => ViewCone::QuickSearch,
+        3 => ViewCone::GetOverview,
+        4 => ViewCone::QuickOverview,
+        5 => ViewCone::SlowOverview,
+        6 => ViewCone::GattlingOverview,
+        7 => ViewCone::LookDown,
+        8 => ViewCone::LookTo,
+        9 => ViewCone::LookToOrCommandoslikeDependingOnIq,
+        10 => ViewCone::LookForward,
+        11 => ViewCone::Focus,
+        12 => ViewCone::GattlingFocus,
+        13 => ViewCone::Idle,
+        14 => ViewCone::Slow,
+        15 => ViewCone::LongRange,
+        16 => ViewCone::Sniper,
+        17 => ViewCone::SceneOfTheCrime,
+        18 => ViewCone::Valium,
+        value => {
+            return Err(LegacyElementAdoptError::UnknownEnum {
+                creation_order,
+                field: "local_ai.enemy.initial_view_cone",
+                value,
+            });
+        }
+    };
+    Ok(result)
+}
+
+fn seek_flags(
+    value: u16,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<crate::ai_enemy::SeekFlags, LegacyElementAdoptError> {
+    crate::ai_enemy::SeekFlags::from_bits(value).ok_or(LegacyElementAdoptError::InvalidFlags {
+        creation_order,
+        field,
+        value,
+    })
+}
+
+fn convert_seek_point(
+    saved: &super::payload_ai::LegacySeekPoint,
+    id: u16,
+    topology: &LegacyPositionTopology,
+    creation_order: u32,
+) -> Result<crate::ai::SeekPoint, LegacyElementAdoptError> {
+    Ok(crate::ai::SeekPoint {
+        position: Position {
+            x: saved.position_x,
+            y: saved.position_y,
+            sector: sector(
+                saved.position_sector.0,
+                topology,
+                creation_order,
+                "local_ai.enemy.personal_seek_point.sector",
+            )?,
+            level: saved.position_level,
+        },
+        // SerializeAllData writes these members a second time at the end;
+        // the second values are the final state after Original loads.
+        frame_when_full_interest: saved.repeated_frame_when_fully_interesting,
+        directions: saved.directions.clone(),
+        last_calculated_interest: saved.repeated_last_calculated_interest,
+        locked: saved.repeated_locked,
+        id,
+    })
+}
+
+fn validate_seek_point_id(
+    value: u32,
+    has_personal_1: bool,
+    has_personal_2: bool,
+    global_count: usize,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<u16, LegacyElementAdoptError> {
+    match value {
+        1111 if has_personal_1 => Ok(1111),
+        2222 if has_personal_2 => Ok(2222),
+        1111 | 2222 => Err(LegacyElementAdoptError::InvalidAiIndex {
+            creation_order,
+            field,
+            index: value,
+            count: global_count,
+        }),
+        value if usize::try_from(value).is_ok_and(|index| index < global_count) => {
+            u16::try_from(value).map_err(|_| LegacyElementAdoptError::InvalidAiIndex {
+                creation_order,
+                field,
+                index: value,
+                count: global_count,
+            })
+        }
+        value => Err(LegacyElementAdoptError::InvalidAiIndex {
+            creation_order,
+            field,
+            index: value,
+            count: global_count,
+        }),
+    }
+}
+
+fn convert_seek_point_ids(
+    values: &[u32],
+    has_personal_1: bool,
+    has_personal_2: bool,
+    global_count: usize,
+    creation_order: u32,
+) -> Result<Vec<u16>, LegacyElementAdoptError> {
+    values
+        .iter()
+        .copied()
+        .map(|value| {
+            validate_seek_point_id(
+                value,
+                has_personal_1,
+                has_personal_2,
+                global_count,
+                creation_order,
+                "local_ai.enemy.seek_point_ids",
+            )
+        })
+        .collect()
+}
+
+fn convert_actual_seek_point(
+    value: u32,
+    has_personal_1: bool,
+    has_personal_2: bool,
+    global_count: usize,
+    creation_order: u32,
+) -> Result<Option<u16>, LegacyElementAdoptError> {
+    if value == 6666 {
+        return Ok(None);
+    }
+    validate_seek_point_id(
+        value,
+        has_personal_1,
+        has_personal_2,
+        global_count,
+        creation_order,
+        "local_ai.enemy.actual_seek_point",
+    )
+    .map(Some)
+}
+
+fn optional_pc_id(
+    entity_id: Option<EntityId>,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<Option<crate::entity_id::PcId>, LegacyElementAdoptError> {
+    match checked_reference(entity_id, ReferenceKind::Human, creation_order, field)? {
+        None => Ok(None),
+        Some(EntityId::Pc(id)) => Ok(Some(id)),
+        Some(entity_id) => Err(LegacyElementAdoptError::WrongReferenceKind {
+            creation_order,
+            field,
+            entity_id,
+            actual: entity_id.kind(),
+            expected: "PC",
+        }),
+    }
+}
+
+fn convert_archery_refs(
+    saved: &super::payload_ai::LegacyEnemyAiTail,
+    ai_global: &AiGlobalState,
+    creation_order: u32,
+) -> Result<(Option<(u16, u16)>, Option<u16>), LegacyElementAdoptError> {
+    let shooting_point = saved
+        .shooting_point
+        .map(|reference| {
+            let sector = ai_global
+                .archery_sectors
+                .get(usize::from(reference.sector_index))
+                .ok_or(LegacyElementAdoptError::InvalidAiIndex {
+                    creation_order,
+                    field: "local_ai.enemy.shooting_point.sector",
+                    index: u32::from(reference.sector_index),
+                    count: ai_global.archery_sectors.len(),
+                })?;
+            if usize::from(reference.point_index) >= sector.points.len() {
+                return Err(LegacyElementAdoptError::InvalidAiIndex {
+                    creation_order,
+                    field: "local_ai.enemy.shooting_point.point",
+                    index: u32::from(reference.point_index),
+                    count: sector.points.len(),
+                });
+            }
+            Ok((reference.sector_index, reference.point_index))
+        })
+        .transpose()?;
+    let archery_sector = saved
+        .archery_sector
+        .map(|index| {
+            if usize::from(index) >= ai_global.archery_sectors.len() {
+                return Err(LegacyElementAdoptError::InvalidAiIndex {
+                    creation_order,
+                    field: "local_ai.enemy.archery_sector",
+                    index: u32::from(index),
+                    count: ai_global.archery_sectors.len(),
+                });
+            }
+            Ok(index)
+        })
+        .transpose()?;
+    Ok((shooting_point, archery_sector))
+}
+
+fn known_enemy_strike(
+    value: i32,
+    creation_order: u32,
+) -> Result<Option<crate::weapons::SwordStrike>, LegacyElementAdoptError> {
+    use crate::{element::Command, weapons::SwordStrike};
+    let command = Command::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
+        creation_order,
+        field: "local_ai.enemy.known_enemy_strike",
+        value: value as u32,
+    })?;
+    let strike = match command {
+        Command::Null => None,
+        Command::SwordstrikeThrustA => Some(SwordStrike::A),
+        Command::SwordstrikeThrustB => Some(SwordStrike::B),
+        Command::SwordstrikeThrustC => Some(SwordStrike::C),
+        Command::SwordstrikeThrustD => Some(SwordStrike::D),
+        Command::SwordstrikeThrustE => Some(SwordStrike::E),
+        Command::SwordstrikeThrustF => Some(SwordStrike::F),
+        Command::SwordstrikeThrustG => Some(SwordStrike::G),
+        Command::SwordstrikeThrustH => Some(SwordStrike::H),
+        Command::SwordstrikeThrustI => Some(SwordStrike::I),
+        _ => {
+            return Err(LegacyElementAdoptError::UnknownEnum {
+                creation_order,
+                field: "local_ai.enemy.known_enemy_strike",
+                value: value as u32,
+            });
+        }
+    };
+    Ok(strike)
 }
 
 fn convert_patrol_path(
@@ -2336,5 +3055,30 @@ mod tests {
         assert!(!restored.forward);
         assert_eq!(restored.history[0].position.sector.unwrap().get(), 1);
         assert_eq!(restored.history[0].distance, 4);
+    }
+
+    #[test]
+    fn soldier_seek_point_ids_validate_global_and_personal_domains() {
+        assert_eq!(
+            convert_seek_point_ids(&[0, 2, 1111, 2222], true, true, 3, 31).unwrap(),
+            vec![0, 2, 1111, 2222]
+        );
+        assert!(convert_seek_point_ids(&[3], false, false, 3, 31).is_err());
+        assert!(convert_seek_point_ids(&[1111], false, false, 3, 31).is_err());
+        assert_eq!(
+            convert_actual_seek_point(6666, false, false, 0, 31).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn soldier_known_strikes_accept_only_null_and_thrust_commands() {
+        use crate::{element::Command, weapons::SwordStrike};
+        assert_eq!(known_enemy_strike(Command::Null as i32, 31).unwrap(), None);
+        assert_eq!(
+            known_enemy_strike(Command::SwordstrikeThrustI as i32, 31).unwrap(),
+            Some(SwordStrike::I)
+        );
+        assert!(known_enemy_strike(Command::Move as i32, 31).is_err());
     }
 }
