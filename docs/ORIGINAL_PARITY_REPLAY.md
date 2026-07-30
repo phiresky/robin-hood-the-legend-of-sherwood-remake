@@ -38,6 +38,11 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   simulation frames and applied before the following frame's commands
 - Start point: each Original engine session has its own numbered file. Menu and
   raw input-device behavior are out of scope.
+- Completion: a cleanly closed Original session always ends with an
+  `rng_suffix` record, even when its draw batch is empty. The terminator also
+  records `final_frame` and `frame_count`; raw EOF without this record means
+  the capture was interrupted or truncated and must not be accepted as a
+  complete replay oracle.
 - Pathfinding: deterministic synchronous A*, while retaining the Original's
   request/processing phase boundary
 - Randomness: the Original's filtered gameplay `rand()` values form one global
@@ -363,6 +368,7 @@ initial entity mapping and are not parity oracles.
 
 | Status | Area | Trace evidence and Original behavior | Rust change / regression coverage |
 | --- | --- | --- | --- |
+| Open | Strict clean-close footer validation | Schema-10 traces whose final frame consumed the last RNG draw previously ended at that frame because `RHParity::Close` emitted `rng_suffix` only when trailing values existed. Clean completion was therefore byte-for-byte indistinguishable from abrupt EOF after the same flushed frame. Original commit `5b7495da` now always emits the suffix and adds `final_frame` plus `frame_count`, without changing the schema or RNG batch shape. | The Rust decoder already accepts an empty suffix and ignores the additive extent fields, so existing parsing remains compatible. Its cache builder still synthesizes an in-memory end record when raw JSONL reaches EOF; it must instead require the explicit suffix and validate the declared extent before treating a new capture as complete. |
 | Done | Authored attentive-before-swordfight ordering | At Nottingham frame 390 a near-enemy `EventView` calls `SetState(ATTACKING, REACTIONTIME)` before `BattleDecisions -> BeginSwordfight`. Original synchronously registers `ENTER_ATTENTIVE_MODE` first, then registers `ENTER_SWORDFIGHT`; Rust collected both effects but drained swordfight first, making the PC and soldier enter combat before the authored attentive transition. | The owner-local effect drain now applies the pending attentive request before its later swordfight request. This preserves call order for every near-enemy reaction and removes the PC 252 / soldier 131 command divergences without actor-specific logic. |
 | Recording required | Typed civilian panic stimuli | `NearbyCiviliansPanic`, brawl completion, and the international-war violation broadcast all constructed `EVENT_PANIC` through a human-pointer overload, but the civilian handler reads `stimulusInfo.posPosition`. Nottingham frame 390 exercised the first path and selected an escape door from pointer/stale-memory-derived coordinates; all three were address-dependent. | Original now constructs all three broadcasts with a concrete `RHposition`: `Position(mpMe)` for AI-owned broadcasts and the PC's current position for the static violation helper. Rust closes the recipient's complete owner-local `Think(EVENT_PANIC)` boundary so state, speech, door choice, and queued movement settle synchronously. The old trace is invalid from frame 390 and must not be patched with its accidental door identity. |
 | Done | `INFO_STOLEN` stimulus serialization boundary | `RHStimulus::Serialize` serialized the two `RHstolenObject` pointers, then fell through into `INFO_COMBAT`. Saving wrote unrelated stale union bytes and loading overwrote the reconstructed stolen-object payload as combat fields/pointers, so a queued `EVENT_OBJECT_AWAY` could be corrupted across save/load. | Original now terminates the `INFO_STOLEN` switch arm after its two authoritative pointers. This changes only malformed legacy serialization; new recordings and saves retain a typed, stable stolen-object stimulus instead of depending on union residue. |
