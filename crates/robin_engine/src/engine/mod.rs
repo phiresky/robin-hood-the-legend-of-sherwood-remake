@@ -1152,13 +1152,15 @@ impl EngineInner {
 
         // Original leaves the overloaded seek countdown untouched when the
         // post-seek interaction takes over. Rust has already cleared
-        // `active_movement` at that boundary, but the split seek field remains
-        // the isomorphic value until another ordinary wait owns the scalar.
-        if data.wait_time == 0 && data.seek_refresh_wait != 0 {
-            data.seek_refresh_wait
-        } else {
-            data.wait_time
+        // `active_movement` at that boundary, but the retained post-seek
+        // sequence identifies the seek copy as the isomorphic value. This
+        // explicit ownership test also handles loaded saves, where adoption
+        // seeds both split fields from the serialized scalar.
+        if data.post_seek_sequence.is_some() && data.seek_target.is_some() {
+            return data.seek_refresh_wait;
         }
+
+        data.wait_time
     }
 
     /// Current animation/order type for parity diagnostics.
@@ -2612,6 +2614,12 @@ impl EngineInner {
                 return false;
             };
             let target = actor.seek_target;
+            // Original retains the single overloaded `mulWaitTime` value
+            // when StartPostSeekSequence replaces the seek with its
+            // interaction. Fold Rust's seek-specific copy back into the
+            // ordinary slot before dropping the state that identifies which
+            // split field currently owns that legacy scalar.
+            actor.wait_time = actor.seek_refresh_wait;
             actor.seek_target = None;
             (target, actor.post_seek_sequence.take())
         };

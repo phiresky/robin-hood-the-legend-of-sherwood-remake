@@ -306,6 +306,34 @@ impl EngineInner {
                     sequence_id: seq_id,
                     element_index: elem_idx,
                 } => {
+                    // Every RHElementActor::Instruct call begins by asking
+                    // the owner to DeterminePriority when the serialized
+                    // element still carries NOT_YET_SET. Prebuilt and loaded
+                    // sequences can reach this manager boundary without
+                    // passing through the eager single-element launch
+                    // wrappers, so resolve them here too. In particular an
+                    // active PASS_DOOR must become NON_INTERRUPTABLE before a
+                    // same-frame AI Move is instructed.
+                    let resolved_priority = self
+                        .orders
+                        .sequence_manager
+                        .get_element(seq_id, elem_idx)
+                        .filter(|element| {
+                            element.priority == crate::sequence::SequencePriority::NotYetSet
+                        })
+                        .map(|element| {
+                            let resolver = Self::priority_resolver(&self.world.entities);
+                            resolver(element)
+                        });
+                    if let Some(priority) = resolved_priority
+                        && let Some(element) = self
+                            .orders
+                            .sequence_manager
+                            .get_element_mut(seq_id, elem_idx)
+                    {
+                        element.priority = priority;
+                    }
+
                     // Sword damage produced by an actor strike is launched
                     // through the ordinary manager queue so it reaches its
                     // native Instruct boundary only after every actor's

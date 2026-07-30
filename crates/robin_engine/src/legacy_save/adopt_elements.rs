@@ -805,6 +805,13 @@ impl LegacyStaticElementAdoption {
                 actor.is_ignored_for_anti_collision = saved.ignored_for_anti_collision;
                 actor.execute_order_initialising = saved.new_order;
                 actor.wait_time = saved.wait_time;
+                // Original serializes one overloaded `mulWaitTime` for both
+                // WAIT_TIMER and seek-refresh aging. Rust separates those
+                // responsibilities, but the live sequence is adopted later
+                // and therefore cannot select the owner of this scalar here.
+                // Seed both candidates from the authoritative saved value;
+                // starting a new wait or seek will overwrite its own field.
+                actor.seek_refresh_wait = saved.wait_time;
                 actor.seek_target = saved.seek_target;
                 actor.last_seek_target_position = saved.last_seek_target_position;
                 actor.seek_distance = saved.seek_distance;
