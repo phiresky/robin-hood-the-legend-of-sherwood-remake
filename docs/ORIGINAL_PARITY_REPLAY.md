@@ -996,6 +996,31 @@ serialization now propagates that failure instead of continuing a malformed
 stream. All five authentic Linux fixtures load with this rule; only Profile
 011's `Restart` needs the dormant-field recovery.
 
+## Current Linux-v48 loaded-save result
+
+As of Rust commit `4bf11cd69`, the schema-11 runner decodes and atomically
+installs the embedded Linux-v48 save before replay. Dynamic elements are
+constructed on the detached candidate before payload preflight, the shared VM
+arena and post-load consequences are applied in Original order, the recorded
+global RNG stream remains authoritative, and serialized camera/minimap/view
+state is carried into headless and visual replay hosts.
+
+Every frame in all five current compressed Linux traces matches:
+
+- Profile 005 `Continue-session-0002`
+- Profile 005 `Restart-session-0002`
+- Profile 011 `Continue-session-0002`
+- Profile 011 `Restart-session-0002`
+- Profile 011 `Savegame_000-session-0001`
+
+This result supersedes the older “in progress” wording in the historical
+loaded-save audit rows above. It proves the complete current Linux corpus, not
+every possible v48 save shape: the fixtures each contain 127 static elements
+and no saved dynamic elements. Dynamic factories are implemented and wired,
+but still need corpus coverage. Windows `GSHR` compatibility and exposing this
+adoption path through the ordinary interactive save loader remain separate
+follow-up work.
+
 ## Coverage limits
 
 A clean baseline proves exact parity only for the state fields serialized by the
