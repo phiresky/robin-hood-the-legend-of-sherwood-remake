@@ -532,6 +532,12 @@ pub struct Order {
     /// state side effect must remain suppressed once for that booking.
     #[serde(default)]
     pub transition_distance_continuation: bool,
+    /// The preceding PC transition-distance continuation deliberately hid
+    /// its first walking `START`. When this authored successor is booked,
+    /// it must establish the deferred movement action state if it remains
+    /// short of its goal, independently of the sprite/wrapper motion result.
+    #[serde(default)]
+    pub deferred_movement_state_start: bool,
     /// Tolerance for reaching the destination.
     pub tolerance: f32,
     /// Lock the AI while this order is being executed.
@@ -579,6 +585,7 @@ impl Order {
             compute_direction: true,
             defer_initial_turn_step: false,
             transition_distance_continuation: false,
+            deferred_movement_state_start: false,
             tolerance: 0.0,
             lock_ai: false,
             reverse: false,
@@ -781,6 +788,7 @@ impl AiOrderIntent {
             compute_direction: self.compute_direction,
             defer_initial_turn_step: self.defer_initial_turn_step,
             transition_distance_continuation: false,
+            deferred_movement_state_start: false,
             tolerance: self.tolerance,
             lock_ai: self.lock_ai,
             reverse: self.reverse,

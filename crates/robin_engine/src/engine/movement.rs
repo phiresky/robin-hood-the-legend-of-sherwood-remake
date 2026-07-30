@@ -445,6 +445,10 @@ fn take_transition_distance_start_suppression(
     matches!(motion, MotionState::Start) && std::mem::take(transition_distance_continuation)
 }
 
+fn take_deferred_movement_state_start(deferred_movement_state_start: &mut bool) -> bool {
+    std::mem::take(deferred_movement_state_start)
+}
+
 fn actor_line_crossing_eligible(
     posture: crate::element::Posture,
     human_is_carried: bool,
@@ -5215,6 +5219,7 @@ impl EngineInner {
                 order_compute_direction,
                 order_reverse,
                 transition_distance_continuation,
+                deferred_movement_state_start,
                 next_destination_same_action,
                 legacy_serialized_order_chain,
             ) = {
@@ -5310,6 +5315,7 @@ impl EngineInner {
                 let order_compute_direction = order.compute_direction;
                 let order_reverse = order.reverse;
                 let transition_distance_continuation = order.transition_distance_continuation;
+                let deferred_movement_state_start = order.deferred_movement_state_start;
                 let next_destination_same_action = self
                     .orders
                     .sequence_manager
@@ -5393,6 +5399,7 @@ impl EngineInner {
                     order_compute_direction,
                     order_reverse,
                     transition_distance_continuation,
+                    deferred_movement_state_start,
                     next_destination_same_action,
                     legacy_serialized_order_chain,
                 )
@@ -6203,6 +6210,32 @@ impl EngineInner {
                 !is_transition_anim && (dist <= speed || reaches_order_tolerance_this_step),
                 entity_target_seek,
             );
+            let deferred_movement_state_start_due = if deferred_movement_state_start {
+                let current_order = self
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(move_seq_id, move_elem_idx)
+                    .and_then(|element| element.orders.front_mut())
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "deferred movement-state successor for {entity_id:?} disappeared during execution"
+                        )
+                    });
+                assert_eq!(
+                    Some(current_order.order_id),
+                    order_id,
+                    "deferred movement-state successor changed identity during execution"
+                );
+                assert!(
+                    take_deferred_movement_state_start(
+                        &mut current_order.deferred_movement_state_start
+                    ),
+                    "deferred movement-state successor marker was already consumed"
+                );
+                true
+            } else {
+                false
+            };
             // The initiative handoff belongs to the Human Execute START arm,
             // so it observes entity-target PerformSeek's wrapper result just
             // like posture/action-state changes do. A raw sprite START hidden
@@ -6235,16 +6268,20 @@ impl EngineInner {
             let suppress_transition_continuation_start = transition_distance_continuation
                 && matches!(state_effect_motion, MotionState::Start);
             if suppress_transition_continuation_start {
-                let current_order = self
+                let element = self
                     .orders
                     .sequence_manager
                     .get_element_mut(move_seq_id, move_elem_idx)
-                    .and_then(|element| element.orders.front_mut())
                     .unwrap_or_else(|| {
                         panic!(
                             "transition-distance continuation for {entity_id:?} disappeared during its START execution"
                         )
                     });
+                let current_order = element.orders.front_mut().unwrap_or_else(|| {
+                    panic!(
+                        "transition-distance continuation for {entity_id:?} lost its current order during START execution"
+                    )
+                });
                 assert_eq!(
                     Some(current_order.order_id),
                     order_id,
@@ -6581,17 +6618,28 @@ impl EngineInner {
                                 let mut continuation = element.orders.front().unwrap().clone();
                                 continuation.order_type = animation;
                                 // Loaded-save parity shows a PC-specific
-                                // booking edge here: PC continuations expose
-                                // their first walking tick as IN_PROGRESS,
-                                // while the equivalent soldier continuation
-                                // exposes START and enters Moving normally.
-                                // TODO(parity): identify the hidden Original
-                                // order/sprite identity interaction which
-                                // creates this class split.
+                                // booking edge here: the copied continuation
+                                // hides its START, while the authored
+                                // successor establishes the movement state.
+                                // Soldiers have at least two distinct
+                                // continuation timings which cannot be
+                                // classified from target identity alone.
+                                // TODO(parity): model the Original's hidden
+                                // per-booking continuation lifetime directly.
                                 continuation.transition_distance_continuation = is_pc;
                                 continuation.reseed_id(crate::order::alloc_order_id(next_order_id));
                                 continuation_door_action = Some((animation, continuation.reverse));
                                 element.insert_order(insertion, continuation);
+                                if is_pc
+                                    && let Some(authored_successor) =
+                                        element.orders.get_mut(insertion + 1)
+                                {
+                                    assert_eq!(
+                                        authored_successor.order_type, animation,
+                                        "transition-distance continuation must precede the authored order whose animation it continues"
+                                    );
+                                    authored_successor.deferred_movement_state_start = true;
+                                }
                             } else {
                                 element.orders.truncate(1);
                             }
@@ -7365,6 +7413,28 @@ impl EngineInner {
                     // material.
                     sound_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
                 }
+            }
+            // The authored successor owns the deferred movement START only
+            // if it remains current after this Execute. A very short
+            // successor can complete and hand off to its stop transition in
+            // the same call; Original retains Waiting in that case.
+            if deferred_movement_state_start_due
+                && !entity
+                    .position_iface()
+                    .is_goal_reached(&self.world.fast_grid, None)
+                && self
+                    .orders
+                    .sequence_manager
+                    .get_element(move_seq_id, move_elem_idx)
+                    .and_then(|element| element.orders.front())
+                    .is_some_and(|order| Some(order.order_id) == order_id)
+                && let Some((posture, next_action_state)) =
+                    movement_execute_state_effect(order_action, MotionState::Start)
+            {
+                if is_sword_motion {
+                    sword_movement_starts.push(entity_id);
+                }
+                movement_state_effects.push((entity_id, posture, next_action_state));
             }
         }
 
@@ -10346,6 +10416,18 @@ mod line_jump_tests {
         assert!(
             continuation,
             "a non-START result must leave the continuation marker pending"
+        );
+    }
+
+    #[test]
+    fn deferred_movement_state_start_promotes_only_the_successor_handoff() {
+        let mut deferred = true;
+
+        assert!(take_deferred_movement_state_start(&mut deferred));
+        assert!(!deferred);
+        assert!(
+            !take_deferred_movement_state_start(&mut deferred),
+            "the synthetic START is a one-shot order handoff"
         );
     }
 

@@ -1129,13 +1129,23 @@ and exposed `MOVING` one frame early.
 
 Generated PC transition-distance continuations now carry a one-shot runtime
 tag. Their first START-owned posture/action-state effect is suppressed, then
-the tag is consumed; ordinary walking starts and later continuation ticks keep
-their existing behavior. The equivalent soldier continuation remains an
-ordinary START, as demonstrated by Linux3 Profile 002 `ExQuickSave` at frame
-17,422. The precise hidden Original order/sprite identity interaction behind
-this class split remains a documented runtime TODO. Linux2 Profile 002 saves
-013 and 021 subsequently match every recorded frame; Linux3 Profile 003 save
-064 advances from frame 5,929 to 5,983.
+the tag is consumed. When that copied order hands off to the authored walking
+order, a second one-shot tag establishes the deferred movement state if the
+authored order remains short of its goal after executing. This matters when
+the sprite continues the same animation or the proximity wrapper reports
+`TERMINATED`: neither diagnostic result alone reproduces the Original actor
+state. An authored successor which actually reaches its goal and hands off to
+the stop transition in the same call retains `WAITING`.
+
+This two-stage handoff fixes the repeated Linux3 Profile 001 `MoveOk` cluster;
+save 021 now matches through its complete recording instead of diverging on
+PC 114 at frame 202. It also preserves the complete matches for Linux2 Profile
+002 saves 013 and 021 and Linux3 Profile 003 save 064, including the latter
+save's earlier continuation at frame 5,929. The equivalent soldier
+continuation remains an ordinary START, as demonstrated by Linux3 Profile 002
+`ExQuickSave` at frame 17,422. The precise hidden Original order/sprite
+identity interaction behind this class split remains a documented runtime
+TODO.
 
 ### Isometric smalltalk step-back direction
 
