@@ -294,6 +294,19 @@ impl<K: StateHash, V: StateHash> StateHash for std::collections::BTreeMap<K, V> 
     }
 }
 
+/// `IndexMap` iteration order is deterministic insertion order and can be
+/// authoritative simulation state, so hash entries without key sorting.
+impl<K: StateHash, V: StateHash> StateHash for indexmap::IndexMap<K, V> {
+    #[inline]
+    fn state_hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.len() as u64);
+        for (key, value) in self {
+            key.state_hash(state);
+            value.state_hash(state);
+        }
+    }
+}
+
 impl<T: StateHash> StateHash for std::collections::BTreeSet<T> {
     #[inline]
     fn state_hash<H: Hasher>(&self, state: &mut H) {

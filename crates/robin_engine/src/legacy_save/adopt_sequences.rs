@@ -163,10 +163,6 @@ pub enum LegacySequenceAdoptError {
         field: &'static str,
         identity: String,
     },
-    #[error(
-        "manager sequence list is not representable in Rust's identity-ordered manager: ID {current} follows {previous}"
-    )]
-    NonMonotonicManagerOrder { previous: u32, current: u32 },
     #[error("saved sequence {sequence_id} has duplicate generic field {field:?}")]
     DuplicateGenericField { sequence_id: u32, field: Field },
 }
@@ -297,8 +293,6 @@ pub(crate) fn preflight_v48_sequence_manager(
     entities: &LegacyEntityFixups,
     topology: &LegacySequenceTopology,
 ) -> Result<LegacySequenceAdoptionPlan, LegacySequenceAdoptError> {
-    validate_manager_order(saved)?;
-
     let sequence_ids = saved
         .sequences
         .iter()
@@ -354,19 +348,6 @@ pub(crate) fn preflight_v48_sequence_manager(
             .checked_add(1)
             .ok_or_else(|| invalid("order_static.next_id", u32::MAX, "at most 0xfffffffe"))?,
     })
-}
-
-fn validate_manager_order(
-    saved: &LegacySequenceManagerState,
-) -> Result<(), LegacySequenceAdoptError> {
-    for pair in saved.sequences.windows(2) {
-        let previous = pair[0].body.unique_id.0;
-        let current = pair[1].body.unique_id.0;
-        if current <= previous {
-            return Err(LegacySequenceAdoptError::NonMonotonicManagerOrder { previous, current });
-        }
-    }
-    Ok(())
 }
 
 fn convert_sequence(
@@ -1611,30 +1592,32 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unrepresentable_manager_order_before_mutating_engine() {
-        let (entities, owner, _) = entities();
+    fn restores_nonmonotonic_ids_in_original_manager_order() {
+        let (entities, _owner, _) = entities();
         let mut saved = fixture();
         saved.sequences.swap(0, 1);
         let mut engine = crate::engine::EngineInner::new();
-        let mut existing = Sequence::new();
-        existing.append_element(SequenceElement::new(1, Command::Wait, Some(owner)));
-        let existing_id = engine.orders.sequence_manager.launch_sequence(existing);
-
-        let error = preflight_v48_sequence_manager(&saved, &entities, &topology()).unwrap_err();
-
+        let plan = preflight_v48_sequence_manager(&saved, &entities, &topology()).unwrap();
+        plan.apply(&mut engine);
+        let restored_ids: Vec<_> = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .map(|sequence| sequence.id.0)
+            .collect();
         assert_eq!(
-            error,
-            LegacySequenceAdoptError::NonMonotonicManagerOrder {
-                previous: 20,
-                current: 10,
-            }
+            restored_ids,
+            saved
+                .sequences
+                .iter()
+                .map(|sequence| sequence.body.unique_id.0)
+                .collect::<Vec<_>>()
         );
-        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
         assert!(
             engine
                 .orders
                 .sequence_manager
-                .get_sequence(existing_id)
+                .get_sequence(SequenceId(20))
                 .is_some()
         );
     }

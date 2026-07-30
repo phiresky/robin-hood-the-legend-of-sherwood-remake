@@ -29,6 +29,7 @@ use std::{
 };
 
 use bitflags::bitflags;
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::element::{
@@ -2133,18 +2134,17 @@ pub enum SequenceAction {
 /// - Handles launching, termination, and cleanup
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct SequenceManager {
-    /// All active sequences, keyed by `SequenceId`. `BTreeMap` gives
-    /// O(log N) id lookup without a side-car `id_to_index` table, and
-    /// `BTreeMap::retain` in `friday_evening_cleanup` doesn't shift
-    /// keys — so every `SequenceId` stored elsewhere (in
+    /// All active sequences, keyed by `SequenceId` in Original manager
+    /// insertion order. `IndexMap` preserves that scan order while retaining
+    /// efficient ID lookup, and cleanup does not change any stored ID.
+    /// Every `SequenceId` stored elsewhere (in
     /// `elements_to_go`, `actor_in_progress`, `cross_postponed`,
     /// `post_seek_sequence`, etc.) stays valid across cleanup.
     ///
-    /// Iteration order is ascending by `SequenceId`, which since
-    /// `launch_sequence` stamps monotonic ids matches the launch
-    /// order — preserving the prior "iterate sequences in vec order,
-    /// first match wins" semantic that several scans rely on.
-    sequences: BTreeMap<SequenceId, Sequence>,
+    /// Fresh sequences normally have monotonic IDs, but loaded Original
+    /// managers can legitimately contain non-monotonic IDs in launch order.
+    /// Several first-match scans depend on preserving that order exactly.
+    sequences: IndexMap<SequenceId, Sequence>,
 
     /// Actor → every `SequenceElementRef` whose element is currently
     /// live (`Todo`, `InProgress`, or `Postponed`) and owned by that
@@ -2325,7 +2325,7 @@ impl SequenceManager {
 
     pub fn new() -> Self {
         Self {
-            sequences: BTreeMap::new(),
+            sequences: IndexMap::new(),
             actor_live: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
             actor_instructing: BTreeMap::new(),
