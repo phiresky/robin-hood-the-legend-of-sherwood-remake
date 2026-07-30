@@ -526,10 +526,10 @@ pub struct Order {
     /// the original queues them during that first frame, so their first
     /// visible Execute must not advance the body yet.
     pub defer_initial_turn_step: bool,
-    /// This distance order is the copy which finishes the unreached target of
-    /// an exhausted `TillLastFrame` transition. Original exposes its first
+    /// This PC distance order is the copy which finishes the unreached target
+    /// of an exhausted `TillLastFrame` transition. Original exposes its first
     /// walking tick as `RHMOTION_IN_PROGRESS`, so the walking START action
-    /// state side effect must remain suppressed for that one booking.
+    /// state side effect must remain suppressed once for that booking.
     #[serde(default)]
     pub transition_distance_continuation: bool,
     /// Tolerance for reaching the destination.

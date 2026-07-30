@@ -1106,11 +1106,15 @@ so the `RHMOTION_START` arm does not change the actor from `WAITING` to
 continuation and exact displacement, but treated it as a fresh walking start
 and exposed `MOVING` one frame early.
 
-Generated transition-distance continuations now carry an explicit runtime tag.
-Their one START-owned posture/action-state effect is suppressed while all
-ordinary walking starts and all later continuation ticks keep their existing
-behavior. Linux2 Profile 002 saves 013 and 021 subsequently match every
-recorded frame; Linux3 Profile 003 save 064 advances from frame 5,929 to 5,983.
+Generated PC transition-distance continuations now carry a one-shot runtime
+tag. Their first START-owned posture/action-state effect is suppressed, then
+the tag is consumed; ordinary walking starts and later continuation ticks keep
+their existing behavior. The equivalent soldier continuation remains an
+ordinary START, as demonstrated by Linux3 Profile 002 `ExQuickSave` at frame
+17,422. The precise hidden Original order/sprite identity interaction behind
+this class split remains a documented runtime TODO. Linux2 Profile 002 saves
+013 and 021 subsequently match every recorded frame; Linux3 Profile 003 save
+064 advances from frame 5,929 to 5,983.
 
 ### Large-window compressed trace input
 

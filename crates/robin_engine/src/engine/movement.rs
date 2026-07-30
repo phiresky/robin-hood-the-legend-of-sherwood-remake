@@ -438,6 +438,13 @@ fn movement_execute_state_effect(
     }
 }
 
+fn take_transition_distance_start_suppression(
+    transition_distance_continuation: &mut bool,
+    motion: MotionState,
+) -> bool {
+    matches!(motion, MotionState::Start) && std::mem::take(transition_distance_continuation)
+}
+
 fn actor_line_crossing_eligible(
     posture: crate::element::Posture,
     human_is_carried: bool,
@@ -6175,9 +6182,34 @@ impl EngineInner {
             // Original applies the Execute switch's state side effect after
             // PerformMotion returns that final result, before Proceed rewrites
             // the diagnostic motion for a successor order.
+            let suppress_transition_continuation_start = transition_distance_continuation
+                && matches!(state_effect_motion, MotionState::Start);
+            if suppress_transition_continuation_start {
+                let current_order = self
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(move_seq_id, move_elem_idx)
+                    .and_then(|element| element.orders.front_mut())
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "transition-distance continuation for {entity_id:?} disappeared during its START execution"
+                        )
+                    });
+                assert_eq!(
+                    Some(current_order.order_id),
+                    order_id,
+                    "transition-distance continuation changed identity during START execution"
+                );
+                assert!(
+                    take_transition_distance_start_suppression(
+                        &mut current_order.transition_distance_continuation,
+                        state_effect_motion,
+                    ),
+                    "transition-distance continuation START marker was already consumed"
+                );
+            }
             if !is_transition_anim
-                && !(transition_distance_continuation
-                    && matches!(state_effect_motion, MotionState::Start))
+                && !suppress_transition_continuation_start
                 && let Some((posture, action_state)) =
                     movement_execute_state_effect(order_action, state_effect_motion)
             {
@@ -6497,7 +6529,15 @@ impl EngineInner {
                             if let Some((insertion, animation)) = next_animation {
                                 let mut continuation = element.orders.front().unwrap().clone();
                                 continuation.order_type = animation;
-                                continuation.transition_distance_continuation = true;
+                                // Loaded-save parity shows a PC-specific
+                                // booking edge here: PC continuations expose
+                                // their first walking tick as IN_PROGRESS,
+                                // while the equivalent soldier continuation
+                                // exposes START and enters Moving normally.
+                                // TODO(parity): identify the hidden Original
+                                // order/sprite identity interaction which
+                                // creates this class split.
+                                continuation.transition_distance_continuation = is_pc;
                                 continuation.reseed_id(crate::order::alloc_order_id(next_order_id));
                                 continuation_door_action = Some((animation, continuation.reverse));
                                 element.insert_order(insertion, continuation);
@@ -10206,6 +10246,31 @@ mod line_jump_tests {
                 MotionState::Done
             ),
             Some((Posture::Upright, ActionState::Waiting))
+        );
+    }
+
+    #[test]
+    fn transition_distance_start_suppression_is_consumed_once() {
+        let mut continuation = true;
+
+        assert!(take_transition_distance_start_suppression(
+            &mut continuation,
+            MotionState::Start
+        ));
+        assert!(!continuation);
+        assert!(!take_transition_distance_start_suppression(
+            &mut continuation,
+            MotionState::Start
+        ));
+
+        let mut continuation = true;
+        assert!(!take_transition_distance_start_suppression(
+            &mut continuation,
+            MotionState::InProgress
+        ));
+        assert!(
+            continuation,
+            "a non-START result must leave the continuation marker pending"
         );
     }
 
