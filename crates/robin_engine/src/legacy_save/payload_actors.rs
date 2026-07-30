@@ -358,9 +358,7 @@ pub struct LegacyPcPostHuman {
     pub guard: LegacyElementRef,
     pub time_until_reinforcement: u32,
     pub last_ammo_dropping_position: LegacyPoint2,
-    /// The Original accidentally serializes this same member twice.
-    pub last_dropped_ammo_first: LegacyElementRef,
-    pub last_dropped_ammo_second: LegacyElementRef,
+    pub last_dropped_ammo: LegacyElementRef,
     pub update_last_dropped_ammo: bool,
     pub last_dropping_direction: u8,
 }
@@ -378,8 +376,7 @@ impl LegacyPcPostHuman {
                 guard: read_element_ref(reader, "guard")?,
                 time_until_reinforcement: reader.read_u32("time_until_reinforcement")?,
                 last_ammo_dropping_position: read_point2(reader, "last_ammo_dropping_position")?,
-                last_dropped_ammo_first: read_element_ref(reader, "last_dropped_ammo_first")?,
-                last_dropped_ammo_second: read_element_ref(reader, "last_dropped_ammo_second")?,
+                last_dropped_ammo: read_element_ref(reader, "last_dropped_ammo")?,
                 update_last_dropped_ammo: reader.read_bool("update_last_dropped_ammo")?,
                 last_dropping_direction: reader.read_u8("last_dropping_direction")?,
             })
@@ -747,7 +744,6 @@ mod tests {
         push_f32(&mut bytes, 92.0);
         push_f32(&mut bytes, 93.0);
         push_u32(&mut bytes, 53);
-        push_u32(&mut bytes, 54);
         bytes.push(1);
         bytes.push(15);
         bytes
@@ -790,12 +786,8 @@ mod tests {
             assert_eq!(payload.portrait.life_level, 0.75);
             assert_eq!(payload.post_human.status.name, "PC");
             assert_eq!(
-                payload.post_human.last_dropped_ammo_first,
+                payload.post_human.last_dropped_ammo,
                 LegacyElementRef(Some(53))
-            );
-            assert_eq!(
-                payload.post_human.last_dropped_ammo_second,
-                LegacyElementRef(Some(54))
             );
         });
     }
