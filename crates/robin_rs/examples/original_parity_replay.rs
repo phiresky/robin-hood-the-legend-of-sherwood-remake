@@ -1562,8 +1562,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     );
     let rewind_loaded_save_rng =
         header.start_state == TraceStartState::LoadedSave && prefix_end == 0;
-    let (mut engine, assets, host, background, mission_scb) =
+    let (mut engine, assets, mut host, background, mission_scb) =
         initialize_engine(&header, all_rng_draws.clone());
+    let mut loaded_save_host = None;
     if let Some(initial_save) = initial_save {
         let save = robin_engine::legacy_save::initialized::decode_initialized_v48_save(
             initial_save,
@@ -1589,14 +1590,15 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 ))
                 .count()
         );
-        match robin_engine::legacy_save::adopt_engine::preflight_known_linux_v48_adoption(
-            &engine, &assets, &save,
-        ) {
-            Ok(()) => eprintln!("all currently assembled Linux-v48 adoption slices preflighted"),
-            Err(error) => eprintln!("Linux-v48 adoption preflight stopped: {error}"),
-        }
-        // TODO(legacy-save-adoption): resolve creation-order references and
-        // apply the typed body before replaying the first loaded-save frame.
+        loaded_save_host = Some(
+            robin_engine::legacy_save::adopt_engine::adopt_known_linux_v48_replay(
+                &mut engine,
+                &assets,
+                &save,
+            )
+            .unwrap_or_else(|error| panic!("adopt schema-11 initial_save body: {error}")),
+        );
+        eprintln!("atomically adopted schema-11 Original Linux-v48 save");
     }
     if rewind_loaded_save_rng {
         let setup_draws = engine
@@ -1607,6 +1609,23 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     }
     let mut motion_line_parity = MotionLineParity::build(&engine, &header.motion_grid);
     engine.set_external_director_completion_replay(true);
+    let mut dev = DevState::new();
+    let mut display = HostDisplayState::default();
+    let mut input = InputState::default();
+    let mut selected_view_element = None;
+    if let Some(loaded) = &loaded_save_host {
+        loaded.apply_display_to(&mut display);
+        loaded.apply_display_to(&mut host.engine_display);
+        selected_view_element = loaded.selected_view_element();
+        host.selected_view_element = selected_view_element;
+        assert!(
+            loaded.trajectory_output().clear_preview,
+            "Original loaded-save adoption must invalidate trajectory preview"
+        );
+        let _post_load = loaded.post_load_output();
+        // This replay host and input state were constructed afresh, so all
+        // explicit Original post-load transient clears already hold.
+    }
     let mut visual =
         visual_window.map(|window| VisualReplay::new(window, host, &engine, background));
     assert_eq!(
@@ -1624,10 +1643,6 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             eprintln!("Rust startup RNG {index}: {site:?}");
         }
     }
-    let mut dev = DevState::new();
-    let mut display = HostDisplayState::default();
-    let mut input = InputState::default();
-    let mut selected_view_element = None;
     let mut entity_map: Option<EntityMap> = None;
     let mut divergent_frames = 0_u64;
     let mut first_by_field = BTreeMap::<String, (u64, String)>::new();

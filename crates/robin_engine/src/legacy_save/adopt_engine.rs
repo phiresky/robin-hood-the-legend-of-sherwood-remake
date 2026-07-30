@@ -315,13 +315,37 @@ impl LegacyKnownAdoptionPlan {
     }
 }
 
-pub(crate) struct LegacyKnownHostState {
-    pub preamble: LegacyPreambleHostState,
-    pub camera: LegacyCameraHostState,
-    pub grid: LegacyGridHostState,
-    pub simple: LegacySimpleHostState,
-    pub trajectory: LegacyTrajectoryHostOutput,
-    pub post_load: LegacyPostLoadHostOutput,
+pub struct LegacyKnownHostState {
+    preamble: LegacyPreambleHostState,
+    camera: LegacyCameraHostState,
+    grid: LegacyGridHostState,
+    simple: LegacySimpleHostState,
+    trajectory: LegacyTrajectoryHostOutput,
+    post_load: LegacyPostLoadHostOutput,
+}
+
+impl LegacyKnownHostState {
+    /// Restore the host-owned display state serialized by the Original.
+    ///
+    /// Replay callers have two display-state holders (the logical replay
+    /// driver and, in visual mode, the renderer host), so this deliberately
+    /// borrows and may be applied to both.
+    pub fn apply_display_to(&self, display: &mut crate::engine::HostDisplayState) {
+        self.camera.clone().apply_to(display);
+        self.simple.clone().apply_minimap_to(display);
+    }
+
+    pub fn selected_view_element(&self) -> Option<crate::element::EntityId> {
+        self.simple.selected_view_element
+    }
+
+    pub fn trajectory_output(&self) -> LegacyTrajectoryHostOutput {
+        self.trajectory
+    }
+
+    pub fn post_load_output(&self) -> LegacyPostLoadHostOutput {
+        self.post_load
+    }
 }
 
 /// Validate every adoption slice currently assembled into the coordinator
@@ -347,7 +371,25 @@ pub fn preflight_known_linux_v48_adoption(
     .map(drop)
 }
 
-pub(crate) fn adopt_known_linux_v48_candidate(
+/// Atomically replace an initialized mission with a decoded Original
+/// Linux-v48 save while retaining the replay's authoritative RNG draw stream.
+///
+/// Every fallible conversion is performed against a detached candidate. The
+/// live engine changes only after the complete save has passed preflight.
+pub fn adopt_known_linux_v48_replay(
+    engine: &mut Engine,
+    assets: &LevelAssets,
+    body: &LegacySaveBody,
+) -> Result<LegacyKnownHostState, LegacyKnownAdoptionError> {
+    adopt_known_linux_v48_candidate(
+        engine,
+        assets,
+        body,
+        LegacyRngRestorePolicy::PreserveRecordedGlobalDrawStream,
+    )
+}
+
+fn adopt_known_linux_v48_candidate(
     engine: &mut Engine,
     assets: &LevelAssets,
     body: &LegacySaveBody,
