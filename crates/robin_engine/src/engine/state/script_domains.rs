@@ -32,6 +32,15 @@ pub(crate) struct MissionUiState {
     pub(crate) outline_display: bool,
     pub(crate) force_check: bool,
     pub(crate) men_to_blazon_conversion_mode: bool,
+    /// Exact serialized RHGame flow/widget latches. They remain simulation
+    /// state here; rendering and widget mutation are host-side consequences.
+    pub(crate) campaign_map: bool,
+    pub(crate) campaign_map_displayed: bool,
+    pub(crate) game_post_initialized: bool,
+    pub(crate) start_mission_disabled_temp: bool,
+    pub(crate) quit_mission_disabled_temp: bool,
+    pub(crate) start_mission_enabled: bool,
+    pub(crate) quit_mission_enabled: bool,
     pub(crate) blinking_blazons: u32,
     pub(crate) blink_expire_frame: u32,
 }
@@ -42,6 +51,13 @@ impl Default for MissionUiState {
             outline_display: false,
             force_check: false,
             men_to_blazon_conversion_mode: false,
+            campaign_map: false,
+            campaign_map_displayed: false,
+            game_post_initialized: false,
+            start_mission_disabled_temp: false,
+            quit_mission_disabled_temp: false,
+            start_mission_enabled: false,
+            quit_mission_enabled: false,
             blinking_blazons: 0,
             blink_expire_frame: u32::MAX,
         }

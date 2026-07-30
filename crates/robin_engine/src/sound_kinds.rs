@@ -13,6 +13,13 @@ use crate::sound_source::SoundSourceManager;
 #[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct SoundSimState {
     pub sources: SoundSourceManager,
+    /// Exact v48 sound director/backend snapshot retained across save import.
+    ///
+    /// Sources, music mode/weights, loop identity, and geometry are
+    /// authoritative simulation inputs. The readiness/3D/active/channel/
+    /// stream members describe the Original host backend and are retained for
+    /// lossless save compatibility but never drive Rust audio output.
+    pub legacy_v48: Option<LegacyV48SoundState>,
     /// Exclamations that finished this frame: `(actor_id, exclamation_id)`.
     /// Populated by the engine each tick from `playing_exclamations`
     /// entries whose `finish_frame` has elapsed; consumed by the AI tick
@@ -41,6 +48,26 @@ pub struct SoundSimState {
     /// hourglass channel-stop clears the active flag, so we need
     /// this stash to restore the active set on resume.
     pub suspended_active_sources: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct LegacyV48SoundState {
+    pub sound_system_ready: bool,
+    pub three_d_sound: bool,
+    pub active: bool,
+    pub listen_point: crate::coordinates::MapPoint,
+    pub zoom_factor: f32,
+    pub music_mode: MusicMode,
+    /// Uninitialized dummy channel bytes written by Original. Retained only
+    /// for compatibility; Rust must never branch on this value.
+    pub dummy_channel: i16,
+    pub quiet_mode_weight: u32,
+    pub alert_mode_weight: u32,
+    pub fight_mode_weight: u32,
+    pub loop_index: i16,
+    /// Original v48 writes zero, then uses the value only to seek the host
+    /// music stream during load.
+    pub stream_position: u32,
 }
 
 /// A scheduled exclamation finish. `actor_id` and `exclamation_id`

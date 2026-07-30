@@ -22,6 +22,7 @@ pub mod adopt_grid;
 pub mod adopt_hiking_tail;
 pub mod adopt_paths;
 pub mod adopt_preamble;
+pub mod adopt_preamble_services;
 pub mod adopt_sequences;
 pub mod adopt_simple;
 pub mod adopt_tail_basic;
