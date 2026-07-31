@@ -223,8 +223,10 @@ The focused counter regression covers one- and multi-PC teams plus overflow.
 The two frontiers exposed after `516728654` now create their arrows with the
 correct identities:
 
-- Cyrdach Restart replay 001: Original creation order 159.
-- Cyrdach Savegame 000 replay 002: Original creation order 161.
+- Cyrdach Restart replay 001 maps Original creation order 159 and advances to
+  an independent sword-walk divergence at frame 578.
+- Cyrdach Savegame 000 replay 002 maps Original creation order 161 and matches
+  every recorded frame.
 
 When another fix lands, add the commit, Original source boundary, focused test,
 all affected traces, and their new exact result or next independent frontier
