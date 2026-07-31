@@ -10015,6 +10015,25 @@ impl EngineInner {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
                         self.process_synchronous_officer_reports_for(sim, source_id, assets)
                     }
+                    crate::ai::CrossNpcAction::Say { target, remark } => {
+                        let target_id = EntityId::Soldier(SoldierId(target));
+                        let Entity::Soldier(s) =
+                            self.world.entities.get_mut(target_id).unwrap_or_else(|| {
+                                panic!("cross-NPC speech target {target} is missing")
+                            })
+                        else {
+                            panic!("cross-NPC speech target {target} is not a soldier")
+                        };
+                        s.npc
+                            .ai_brain
+                            .enemy_mut()
+                            .unwrap_or_else(|| {
+                                panic!("cross-NPC speech target {target} has no EnemyAi")
+                            })
+                            .base
+                            .say(remark);
+                        self.drain_ai_owner_work_for(sim, assets, target_id);
+                    }
                     _ => unreachable!("ordered synchronous drain received deferred action"),
                 }
 

@@ -1057,6 +1057,7 @@ impl AiController {
                     | CrossNpcAction::ConsiderReport { .. }
                     | CrossNpcAction::FinalizeAlertSoldiers { .. }
                     | CrossNpcAction::InstructGatherPosition { .. }
+                    | CrossNpcAction::Say { .. }
             ) {
                 synchronous.push(action);
             } else {
@@ -1082,6 +1083,7 @@ impl AiController {
                         | CrossNpcAction::ConsiderReport { .. }
                         | CrossNpcAction::FinalizeAlertSoldiers { .. }
                         | CrossNpcAction::InstructGatherPosition { .. }
+                        | CrossNpcAction::Say { .. }
                 )
             })
     }
@@ -4400,3 +4402,31 @@ impl ConsiderationAccumulator {
 }
 
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn direct_cross_npc_say_is_drained_synchronously() {
+        let mut ai = AiController::new(17);
+        ai.outbox
+            .reentrant
+            .cross_npc_actions
+            .push(CrossNpcAction::Say {
+                target: 23,
+                remark: Remark::ArchersBehindShieldBearers,
+            });
+
+        let actions = ai.take_pending_synchronous_cross_npc_actions();
+
+        assert!(matches!(
+            actions.as_slice(),
+            [CrossNpcAction::Say {
+                target: 23,
+                remark: Remark::ArchersBehindShieldBearers
+            }]
+        ));
+        assert!(ai.outbox.reentrant.cross_npc_actions.is_empty());
+    }
+}
