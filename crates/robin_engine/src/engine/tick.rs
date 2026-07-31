@@ -3133,12 +3133,6 @@ impl EngineInner {
                         .sequence_manager
                         .current_order_for_actor(entity_id)
                         .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_id));
-                    let selected_order_type = self
-                        .orders
-                        .sequence_manager
-                        .current_order_for_actor(entity_id)
-                        .map(|(_, _, order)| order.order_type)
-                        .unwrap_or(crate::order::OrderType::Invalid);
                     let selected_owner_family = self
                         .orders
                         .sequence_manager
@@ -3280,6 +3274,25 @@ impl EngineInner {
                         ability_selection,
                         beggar_selection,
                     );
+                    if selected_owner_family.is_some()
+                        && self.world.entities.get(entity_id).is_some_and(|entity| {
+                            entity.element_data().sprite.last_motion_state
+                                == Some(crate::sprite::MotionState::Done)
+                        })
+                    {
+                        let (entry_seq_id, entry_elem_idx, entry_order_id) =
+                            selected_order.unwrap_or_else(|| {
+                                panic!(
+                                    "specialized actor owner {entity_id:?} recorded Done without an entry-latched order"
+                                )
+                            });
+                        self.mark_entry_order_done(
+                            entity_id,
+                            entry_seq_id,
+                            entry_elem_idx,
+                            entry_order_id,
+                        );
+                    }
 
                     #[cfg(test)]
                     observe_actor_animation_boundary(ActorAnimationBoundaryPhase::GenericExecute(
@@ -3365,7 +3378,12 @@ impl EngineInner {
                         self.apply_actor_post_execute_wait_modifier(entity_id, &mut result);
                         completed_execute_may_need_idle_successor =
                             result.motion == crate::sprite::MotionState::Terminated;
-                        self.stage_actor_execute_completion(entity_id, result, &mut outcomes);
+                        self.stage_actor_execute_completion(
+                            entity_id,
+                            selected_order.map(|(_, _, order_id)| order_id),
+                            result,
+                            &mut outcomes,
+                        );
                     }
 
                     // Original soldier Execute calls Think before returning
@@ -3392,7 +3410,13 @@ impl EngineInner {
                     // Actor::Hourglass's idle Wait when the completed order
                     // left the owner empty. Its translated animation must be
                     // visible to the same-slot ActionChange callback.
+                    let mut installed_idle_successor = false;
                     if completed_execute_may_need_idle_successor {
+                        let had_live_order = self
+                            .orders
+                            .sequence_manager
+                            .current_order_for_actor(entity_id)
+                            .is_some();
                         self.ensure_wait_element(entity_id);
                         self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
                             .unwrap_or_else(|error| {
@@ -3400,6 +3424,12 @@ impl EngineInner {
                                     "actor {entity_id:?} post-completion Wait at legacy slot {slot} failed to drain synchronous sequence work: {error:?}"
                                 )
                             });
+                        installed_idle_successor = !had_live_order
+                            && self
+                                .orders
+                                .sequence_manager
+                                .current_order_for_actor(entity_id)
+                                .is_some();
                     }
                     #[cfg(test)]
                     observe_actor_animation_boundary(
@@ -3414,31 +3444,39 @@ impl EngineInner {
                         entity_id,
                     ));
                     self.dispatch_actor_action_change_for(sim, assets, entity_id);
-                    // `mpOrder` is latched at Actor::Hourglass entry. When
-                    // `DoNextOrder` advances within that same sequence
-                    // element it points at the successor order immediately.
-                    // But when the element terminates and SetState/Ready
-                    // instructs a different element, the actor's
-                    // `mpSequenceElement` changes while `mpOrder` keeps
-                    // pointing at the just-executed order until next frame.
-                    // Human::RefreshProducedNoise and the rest of the
-                    // derived Hourglass tail observe that asymmetric state.
-                    let derived_tail_order_type = if let Some((selected_seq, selected_idx, _)) =
-                        selected_order
-                    {
-                        self.orders
-                            .sequence_manager
-                            .current_order_for_actor(entity_id)
-                            .filter(|(seq, idx, _)| *seq == selected_seq && *idx == selected_idx)
-                            .map(|(_, _, order)| order.order_type)
-                            .unwrap_or(selected_order_type)
-                    } else {
-                        self.orders
-                            .sequence_manager
-                            .current_order_for_actor(entity_id)
-                            .map(|(_, _, order)| order.order_type)
-                            .unwrap_or(crate::order::OrderType::Invalid)
-                    };
+                    // `mpOrder` is latched at Actor::Hourglass entry.
+                    // `DoNextOrder` updates it when it advances within the
+                    // same element. Terminating the element clears it through
+                    // SendCondolationCard; a synchronously instructed real
+                    // successor writes its own first order, while the
+                    // synthetic idle Wait Rust installs for the next frame
+                    // must remain invisible to this derived tail.
+                    let derived_tail_order_type =
+                        if let Some((selected_seq, selected_idx, _)) = selected_order {
+                            let current = self
+                                .orders
+                                .sequence_manager
+                                .current_order_for_actor(entity_id);
+                            if let Some((_, _, order)) = current.filter(|(seq, idx, _)| {
+                                *seq == selected_seq && *idx == selected_idx
+                            }) {
+                                order.order_type
+                            } else if installed_idle_successor {
+                                crate::order::OrderType::Invalid
+                            } else {
+                                current
+                                    .map(|(_, _, order)| order.order_type)
+                                    .unwrap_or(crate::order::OrderType::Invalid)
+                            }
+                        } else if installed_idle_successor {
+                            crate::order::OrderType::Invalid
+                        } else {
+                            self.orders
+                                .sequence_manager
+                                .current_order_for_actor(entity_id)
+                                .map(|(_, _, order)| order.order_type)
+                                .unwrap_or(crate::order::OrderType::Invalid)
+                        };
                     after_slot(self, entity_id, derived_tail_order_type);
 
                     if let Some(actor) = self
@@ -3978,8 +4016,9 @@ impl EngineInner {
     /// owner's live `mpSequenceElement`; ABORTED alone uses the sequence
     /// element snapshot captured before Execute.
     fn stage_actor_execute_completion(
-        &self,
+        &mut self,
         owner: EntityId,
+        entry_order_id: Option<std::num::NonZeroU32>,
         execute_result: super::animation::ActorExecuteResult,
         outcomes: &mut super::animation::AnimCompletionOutcomes,
     ) {
@@ -4018,14 +4057,75 @@ impl EngineInner {
                     }
                 }
             }
-            crate::sprite::MotionState::Done
-            | crate::sprite::MotionState::Start
-            | crate::sprite::MotionState::InProgress => {}
+            crate::sprite::MotionState::Done => {
+                let order_id = entry_order_id.unwrap_or_else(|| {
+                    panic!(
+                        "actor {owner:?} returned Done without an entry-latched order for {:?}/{}",
+                        execute_result.entry_seq_id, execute_result.entry_elem_idx
+                    )
+                });
+                self.mark_entry_order_done(
+                    owner,
+                    execute_result.entry_seq_id,
+                    execute_result.entry_elem_idx,
+                    order_id,
+                );
+            }
+            crate::sprite::MotionState::Start | crate::sprite::MotionState::InProgress => {}
             crate::sprite::MotionState::Error => panic!(
                 "actor {owner:?} Execute returned MotionState::Error from entry {:?}/{}",
                 execute_result.entry_seq_id, execute_result.entry_elem_idx
             ),
         }
+    }
+
+    fn mark_entry_order_done(
+        &mut self,
+        owner: EntityId,
+        entry_seq_id: crate::sequence::SequenceId,
+        entry_elem_idx: usize,
+        order_id: std::num::NonZeroU32,
+    ) {
+        let Some(element) = self
+            .orders
+            .sequence_manager
+            .get_element_mut(entry_seq_id, entry_elem_idx)
+        else {
+            // Execute may synchronously terminate and collect its own entry
+            // element before returning. Original still writes through the
+            // retained mpOrder allocation, but no later priority decision can
+            // observe that detached order.
+            tracing::trace!(
+                ?owner,
+                ?entry_seq_id,
+                entry_elem_idx,
+                %order_id,
+                "Done entry element was synchronously collected before Actor::Hourglass write-back"
+            );
+            return;
+        };
+        let Some(order) = element
+            .orders
+            .iter_mut()
+            .find(|order| order.order_id == order_id)
+        else {
+            // The same re-entrant teardown can retain the terminal element
+            // shell while deleting its order list.
+            tracing::trace!(
+                ?owner,
+                ?entry_seq_id,
+                entry_elem_idx,
+                %order_id,
+                "Done entry order was synchronously removed before Actor::Hourglass write-back"
+            );
+            return;
+        };
+        // Original Actor::Hourglass sets mpOrder->bDone immediately after
+        // Execute returns. Later callbacks in this same owner slot and
+        // SequenceManager::Hourglass can therefore terminate a blocker
+        // instead of postponing behind an animation which already reached its
+        // action point.
+        order.done = true;
     }
 
     /// Run the NPC Hourglass tail and its immediately adjacent notification
