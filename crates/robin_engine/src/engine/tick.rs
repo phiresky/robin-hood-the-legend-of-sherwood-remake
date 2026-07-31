@@ -255,7 +255,7 @@ mod mobile_owner_boundary_tests {
                 observations.push(engine.first_live_mobile_polygon_point(0).x);
             },
             |_, _, _, _, _, _, _| {},
-            |_, _| {},
+            |_, _, _| {},
         );
         observations
     }
@@ -306,7 +306,7 @@ mod mobile_owner_boundary_tests {
             },
             |_, _| {},
             |_, _, _, _, _, _, _| {},
-            |_, _| {},
+            |_, _, _| {},
         );
         assert_eq!(engine.world.mobile_elements[0].position.x, 2.0);
         assert_eq!(engine.world.mobile_elements[1].position.x, 2.0);
@@ -345,7 +345,7 @@ mod mobile_owner_boundary_tests {
             },
             |_, _| {},
             |_, _, _, _, _, _, _| {},
-            |_, _| {},
+            |_, _, _| {},
         );
         assert_eq!(*trace.borrow(), vec!["mobile", "static"]);
     }
@@ -371,7 +371,7 @@ mod mobile_owner_boundary_tests {
             |_, owner| visited.borrow_mut().push(owner),
             |_, _| {},
             |_, _, _, _, _, _, _| {},
-            |_, _| {},
+            |_, _, _| {},
         );
 
         assert_eq!(*visited.borrow(), vec![second, third, first]);
@@ -3021,7 +3021,7 @@ impl EngineInner {
             |_, _| {},
             |_, _| {},
             |_, _, _, _, _, _, _| {},
-            |_, _| {},
+            |_, _, _| {},
         );
     }
 
@@ -3038,7 +3038,7 @@ impl EngineInner {
             |_, _| {},
             |_, _| {},
             |_, _, _, _, _, _, _| {},
-            after_slot,
+            |engine, owner, _| after_slot(engine, owner),
         );
     }
 
@@ -3057,7 +3057,7 @@ impl EngineInner {
             Option<(crate::sequence::SequenceId, usize, std::num::NonZeroU32)>,
             Option<std::num::NonZeroU32>,
         ),
-        mut after_slot: impl FnMut(&mut Self, EntityId),
+        mut after_slot: impl FnMut(&mut Self, EntityId, crate::order::OrderType),
     ) {
         let mut original_slots = self
             .world
@@ -3133,6 +3133,12 @@ impl EngineInner {
                         .sequence_manager
                         .current_order_for_actor(entity_id)
                         .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_id));
+                    let selected_order_type = self
+                        .orders
+                        .sequence_manager
+                        .current_order_for_actor(entity_id)
+                        .map(|(_, _, order)| order.order_type)
+                        .unwrap_or(crate::order::OrderType::Invalid);
                     let selected_owner_family = self
                         .orders
                         .sequence_manager
@@ -3414,7 +3420,32 @@ impl EngineInner {
                         entity_id,
                     ));
                     self.dispatch_actor_action_change_for(sim, assets, entity_id);
-                    after_slot(self, entity_id);
+                    // `mpOrder` is latched at Actor::Hourglass entry. When
+                    // `DoNextOrder` advances within that same sequence
+                    // element it points at the successor order immediately.
+                    // But when the element terminates and SetState/Ready
+                    // instructs a different element, the actor's
+                    // `mpSequenceElement` changes while `mpOrder` keeps
+                    // pointing at the just-executed order until next frame.
+                    // Human::RefreshProducedNoise and the rest of the
+                    // derived Hourglass tail observe that asymmetric state.
+                    let derived_tail_order_type = if let Some((selected_seq, selected_idx, _)) =
+                        selected_order
+                    {
+                        self.orders
+                            .sequence_manager
+                            .current_order_for_actor(entity_id)
+                            .filter(|(seq, idx, _)| *seq == selected_seq && *idx == selected_idx)
+                            .map(|(_, _, order)| order.order_type)
+                            .unwrap_or(selected_order_type)
+                    } else {
+                        self.orders
+                            .sequence_manager
+                            .current_order_for_actor(entity_id)
+                            .map(|(_, _, order)| order.order_type)
+                            .unwrap_or(crate::order::OrderType::Invalid)
+                    };
+                    after_slot(self, entity_id, derived_tail_order_type);
 
                     if let Some(actor) = self
                         .world
@@ -3652,7 +3683,7 @@ impl EngineInner {
                     engine.tick_beggar_bid_for(sim, assets, owner, order_id);
                 }
             },
-            |engine, owner| {
+            |engine, owner, derived_tail_order_type| {
                 let is_human = engine
                     .world
                     .entities
@@ -3670,7 +3701,10 @@ impl EngineInner {
                 }
                 match owner {
                     EntityId::Pc(_) => {
-                        engine.refresh_pc_produced_noise_for(owner);
+                        engine.refresh_pc_produced_noise_for_with_order(
+                            owner,
+                            derived_tail_order_type,
+                        );
                         #[cfg(test)]
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanNoise(owner));
                         engine.tick_tiredness_for(owner, assets);

@@ -2041,6 +2041,26 @@ visible immediately, while translation and owner instruction occur at the
 Original SequenceManager boundary. Savegame 035 now matches every recorded
 frame.
 
+### Produced noise observes the Actor entry-latched order
+
+`RHElementActor::Hourglass` latches `mpOrder` before `Execute`. If
+`DoNextOrder` advances within the same sequence element, that pointer changes
+to the next order immediately. If the element instead terminates and
+`SetState`/`Ready` instructs a different element, `mpSequenceElement` changes
+but `mpOrder` continues to name the just-executed order until the actor's next
+slot. The later `RHElementActorHuman::RefreshProducedNoise` call therefore
+observes the old animation for the remainder of this slot.
+
+Rust previously sampled the sequence manager's newly selected order in the
+Human tail. Linux2 Profile 002 Savegame 003 exposed this at frame 13843:
+raising a sword terminated and selected `WaitingSword`, so Rust emitted its
+200-volume fight noise immediately. The Original remained silent in that
+slot, and the nearby sleeping guard did not hear the sound until the next
+three-frame acoustic phase. The fused owner walk now carries the
+entry-latched order through the derived tail unless completion advanced
+within the same sequence element. The replay advances to an independent AI
+substate divergence at frame 13861.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

@@ -3876,7 +3876,28 @@ impl EngineInner {
     /// boundary. Original `RefreshProducedNoise` follows the base Actor slice,
     /// so only NPC slots after this PC may observe the new volume this frame.
     pub(super) fn refresh_pc_produced_noise_for(&mut self, pc_id: EntityId) {
-        let (order_type, material, in_building, active, previous, noise) = {
+        let order_type = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(pc_id)
+            .map(|(_, _, order)| order.order_type)
+            .unwrap_or(crate::order::OrderType::Invalid);
+        self.refresh_pc_produced_noise_for_with_order(pc_id, order_type);
+    }
+
+    /// Refresh produced noise using the `mpOrder` animation visible to the
+    /// Original Human::Hourglass tail.
+    ///
+    /// Actor completion may already have instructed a different sequence
+    /// element by this boundary. In that case the sequence manager's current
+    /// order is newer than Original's latched `mpOrder`; the fused owner walk
+    /// supplies the correctly stale animation explicitly.
+    pub(super) fn refresh_pc_produced_noise_for_with_order(
+        &mut self,
+        pc_id: EntityId,
+        order_type: crate::order::OrderType,
+    ) {
+        let (material, in_building, active, previous, noise) = {
             let entity = self.world.entities.get(pc_id).unwrap_or_else(|| {
                 panic!(
                     "PC produced-noise owner {} disappeared from its legacy slot",
@@ -3886,12 +3907,6 @@ impl EngineInner {
             let Entity::Pc(pc) = entity else {
                 panic!("produced-noise owner {} is not a PC actor", pc_id.index());
             };
-            let order_type = self
-                .orders
-                .sequence_manager
-                .current_order_for_actor(pc_id)
-                .map(|(_, _, order)| order.order_type)
-                .unwrap_or(crate::order::OrderType::Invalid);
             let position = pc.element.position_map();
             let noise = crate::ai::Noise {
                 origin: crate::ai::Position {
@@ -3915,7 +3930,6 @@ impl EngineInner {
                 }),
             };
             (
-                order_type,
                 pc.element.sprite.position_iface.get_material(),
                 self.entity_building_sector(pc.element.sector()).is_some(),
                 pc.element.active,
