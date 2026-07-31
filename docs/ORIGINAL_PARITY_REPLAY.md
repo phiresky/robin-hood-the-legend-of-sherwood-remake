@@ -3601,6 +3601,33 @@ match every recorded frame. These are tracked explicitly so later changes to
 save adoption or mission restart do not silently regress the smaller profiles
 while attention is focused on the larger save archives.
 
+## Frozen full-corpus audit at `2a3e842df`
+
+The first no-unknown audit froze the debug parity runner built from commit
+`2a3e842df` (SHA-256
+`081fe21e80a2ffcb78863fb98f83d282273406ac2dc419c6b327ec28592adf1d`) before
+launching parallel workers. This prevents later diagnostic edits or rebuilds
+from changing semantics halfway through the count. The workers replayed all
+103 previously unaudited recordings and the 14 then-known failures. Earlier
+complete exact results supply the remaining classifications; the frozen runner
+also rechecked the ten small-Linux/Linux3 Profile 002 traces and representative
+Linux3 Profile 003 Savegame 053.
+
+- 419 recordings match every recorded frame exactly.
+- 26 recordings have a reproduced divergence or authoritative RNG/entity-map
+  assertion.
+- Zero recordings remain unaudited.
+
+The shard totals are: 233 pass / 19 fail for the 252 Windows, nicouzouf, and
+randomguy recordings; 46 / 2 for Linux2 Profile 002; 49 / 5 for Linux3
+Profile 001; and 91 / 0 across the small Linux profiles plus Linux3 Profiles
+002 and 003. The resulting corpus-wide exact rate is 94.2 percent.
+
+The audit artifacts and individual logs live under
+`.codex-tmp/full-corpus-audit-2a3e842df/`. Future large audits should use a
+frozen release-mode runner after first proving one known-green trace matches
+under both debug and release builds.
+
 ## Coverage limits
 
 A clean baseline proves exact parity only for the state fields serialized by the
