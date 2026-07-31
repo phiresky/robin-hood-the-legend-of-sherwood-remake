@@ -1362,6 +1362,15 @@ pub(super) fn load_level_and_sprite_bank(
             Err(e) => tracing::warn!("Mission script {name}: {e}"),
         }
     }
+    let legacy_capture_scb = args.mission_start_legacy_save.as_ref().map(|_| {
+        let name = mission_name
+            .as_ref()
+            .expect("legacy frame-zero capture requires a current mission");
+        scripts
+            .get(name)
+            .unwrap_or_else(|| panic!("legacy frame-zero capture has no mission script {name}"))
+            .clone()
+    });
     let script_programs = scripts
         .iter()
         .map(|(name, scb)| {
@@ -1492,7 +1501,7 @@ pub(super) fn load_level_and_sprite_bank(
     // the preserving constructor returns the exact allocation on ingestion
     // failure.
     let replay_campaign = campaign.clone();
-    let engine = {
+    let mut engine = {
         let mut progress = |delta: f32| {
             tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
         };
@@ -1520,6 +1529,39 @@ pub(super) fn load_level_and_sprite_bank(
             }
         }
     };
+    if let Some(save_bytes) = args.mission_start_legacy_save.as_ref() {
+        let mission_scb = legacy_capture_scb
+            .as_ref()
+            .expect("legacy frame-zero capture lost its mission script");
+        let save = robin_engine::legacy_save::initialized::decode_initialized_v48_save(
+            save_bytes.clone(),
+            "frame-zero parity capture",
+            &engine,
+            &assets,
+            mission_scb,
+            &robin_engine::legacy_save::body::LegacySaveBodyLimits::default(),
+        )
+        .map_err(|error| {
+            MissionLoadError::new(
+                replay_campaign.clone(),
+                format!("decode frame-zero Original save: {error}"),
+            )
+        })?;
+        let loaded_host = robin_engine::legacy_save::adopt_engine::adopt_known_linux_v48_replay(
+            &mut engine,
+            &assets,
+            &save,
+        )
+        .map_err(|error| {
+            MissionLoadError::new(
+                replay_campaign.clone(),
+                format!("adopt frame-zero Original save: {error}"),
+            )
+        })?;
+        loaded_host.apply_display_to(&mut host.engine_display);
+        host.selected_view_element = loaded_host.selected_view_element();
+        tracing::info!("adopted Original v48 save for frame-zero viewport capture");
+    }
     if rng_seed != 0 {
         tracing::info!(seed = rng_seed, "engine RNG seeded at construction");
     }

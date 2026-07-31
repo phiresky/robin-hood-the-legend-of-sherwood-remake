@@ -1133,7 +1133,6 @@ struct Options {
     http_server: Option<u16>,
     start_paused: bool,
     frame_zero_screenshot_dir: Option<PathBuf>,
-    frame_zero_screenshot_only: bool,
 }
 
 struct DumpOptions {
@@ -1462,15 +1461,6 @@ impl VisualReplay {
         }
     }
 
-    fn capture_png(&mut self, engine: &Engine, path: &Path) {
-        self.queue_frame(engine);
-        let (width, height, rgba) = self
-            .renderer
-            .capture_frame_rgba()
-            .expect("capture frame-zero parity screenshot from GPU");
-        write_rgba_png(path, width, height, &rgba);
-    }
-
     fn render(&mut self, engine: &Engine) -> bool {
         let _events = self.window.poll_events();
         if self.window.close_requested {
@@ -1492,10 +1482,22 @@ impl VisualReplay {
 }
 
 fn main() {
-    tracing_subscriber::fmt::init();
-
     let options = parse_options();
-    if options.visual || options.frame_zero_screenshot_dir.is_some() {
+    if options.frame_zero_screenshot_dir.is_some() {
+        let exit = robin_rs::window::run_with_game_visibility(
+            "Robin Hood — Original parity frame-zero capture",
+            1024,
+            768,
+            options.visual,
+            move |mut window| async move {
+                capture_full_frame_zero_screenshot(options, &mut window).await
+            },
+        )
+        .unwrap_or_else(|error| panic!("start frame-zero parity capture: {error}"));
+        std::process::exit(exit);
+    }
+    tracing_subscriber::fmt::init();
+    if options.visual {
         let visible = options.visual;
         let exit = robin_rs::window::run_with_game_visibility(
             "Robin Hood — Original parity replay",
@@ -1510,22 +1512,80 @@ fn main() {
     std::process::exit(run_replay(options, None));
 }
 
+async fn capture_full_frame_zero_screenshot(
+    options: Options,
+    window: &mut robin_rs::window::GameWindow,
+) -> i32 {
+    let invocation_dir =
+        std::env::current_dir().expect("resolve invocation directory for frame-zero screenshot");
+    let trace_path = options
+        .trace_path
+        .canonicalize()
+        .unwrap_or_else(|error| panic!("canonicalize parity trace: {error}"));
+    let output_dir = options
+        .frame_zero_screenshot_dir
+        .expect("frame-zero capture lost its output directory");
+    let output_dir = if output_dir.is_absolute() {
+        output_dir
+    } else {
+        invocation_dir.join(output_dir)
+    };
+    let output_path = frame_zero_screenshot_path(&output_dir, &trace_path);
+
+    let cache_path = ensure_binary_trace_cache(&trace_path);
+    let header = read_binary_trace_header(&cache_path).trace;
+    validate_trace_schema(header.schema);
+    let initial_save = decode_and_validate_initial_save(&header);
+
+    let (_launcher_campaign, profiles, application_context) = robin_rs::main_entry::rust_init()
+        .unwrap_or_else(|error| panic!("initialize game: {error}"));
+    let campaign = restore_campaign(&header.campaign, &profiles);
+    let mut game_args = robin_rs::main_entry::try_parse_cli_from([
+        "original_parity_replay",
+        "--mission",
+        header.mission.as_str(),
+        "--proto",
+        header.proto_level.as_str(),
+        "--no-sound",
+        "--http-server=0",
+        "--rollback-check=false",
+    ])
+    .unwrap_or_else(|error| panic!("construct frame-zero game arguments: {error}"));
+    game_args.mission_start_map_output = Some(output_path.clone());
+    game_args.mission_start_map_frame = 0;
+    game_args.mission_start_viewport_capture = true;
+    game_args.mission_start_legacy_save = initial_save;
+    game_args.preserve_forced_mission_campaign = true;
+    game_args.fast_forward = true;
+
+    match robin_rs::main_entry::run_rust_game(
+        window,
+        campaign,
+        profiles,
+        application_context,
+        &game_args,
+    )
+    .await
+    {
+        Ok(_) => {
+            eprintln!(
+                "full frame-zero parity screenshot written to {}",
+                output_path.display()
+            );
+            0
+        }
+        Err(error) => {
+            eprintln!("frame-zero parity screenshot failed: {error}");
+            1
+        }
+    }
+}
+
 fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWindow>) -> i32 {
     let scan_all = options.scan_all;
     let no_auto_dump = options.no_auto_dump;
-    let visual_enabled = options.visual;
     let trace_path = options.trace_path;
     let http_server = options.http_server;
-    let frame_zero_screenshot_dir = options.frame_zero_screenshot_dir.map(|path| {
-        if path.is_absolute() {
-            path
-        } else {
-            std::env::current_dir()
-                .expect("resolve current directory for frame-zero screenshots")
-                .join(path)
-        }
-    });
-    let frame_zero_screenshot_only = options.frame_zero_screenshot_only;
     let mut manual_pause = options.start_paused;
     let trace_path = trace_path
         .canonicalize()
@@ -1663,26 +1723,6 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     }
     let mut visual =
         visual_window.map(|window| VisualReplay::new(window, host, &engine, background));
-    if let Some(output_dir) = frame_zero_screenshot_dir {
-        let output_path = frame_zero_screenshot_path(&output_dir, &trace_path);
-        visual
-            .as_mut()
-            .expect("frame-zero screenshots require a GPU-backed parity window")
-            .capture_png(&engine, &output_path);
-        eprintln!(
-            "frame-zero parity screenshot written to {}",
-            output_path.display()
-        );
-    }
-    if frame_zero_screenshot_only {
-        return 0;
-    }
-    if !visual_enabled {
-        // Screenshot-only capture uses a hidden GPU window for exactly one
-        // render. Keep the remaining parity scan headless and do not wait for
-        // an invisible window after a successful replay.
-        visual = None;
-    }
     assert_eq!(
         engine.original_rng_replay_cursor(),
         Some(prefix_end),
@@ -2180,7 +2220,6 @@ fn parse_options() -> Options {
         http_server,
         start_paused,
         frame_zero_screenshot_dir,
-        frame_zero_screenshot_only,
         dump: dump_path.map(|path| DumpOptions {
             path,
             from_frame: dump_from,
@@ -2213,31 +2252,6 @@ fn frame_zero_screenshot_path(output_dir: &Path, trace_path: &Path) -> PathBuf {
         }
     }
     output_dir.join(format!("{flat_name}.png"))
-}
-
-fn write_rgba_png(path: &Path, width: u32, height: u32, rgba: &[u8]) {
-    assert_eq!(
-        rgba.len(),
-        width as usize * height as usize * 4,
-        "invalid frame-zero screenshot RGBA buffer"
-    );
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent).unwrap_or_else(|error| {
-            panic!("create screenshot directory {}: {error}", parent.display())
-        });
-    }
-    let file = File::create(path)
-        .unwrap_or_else(|error| panic!("create screenshot {}: {error}", path.display()));
-    let mut writer = BufWriter::new(file);
-    let mut encoder = png::Encoder::new(&mut writer, width, height);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    encoder
-        .write_header()
-        .and_then(|mut png_writer| png_writer.write_image_data(rgba))
-        .unwrap_or_else(|error| panic!("encode screenshot {}: {error}", path.display()));
 }
 
 fn parse_trace_frame(line: &str, line_number: usize) -> Option<TraceFrame> {

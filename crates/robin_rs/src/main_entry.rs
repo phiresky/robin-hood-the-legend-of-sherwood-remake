@@ -303,6 +303,27 @@ pub struct CliArgs {
     #[clap(skip)]
     #[serde(skip)]
     pub mission_start_reveal_all: bool,
+
+    /// Internal one-shot capture mode used by parity tooling. Unlike the map
+    /// exporter, this captures the saved viewport and includes the ordinary
+    /// gameplay HUD.
+    #[clap(skip)]
+    #[serde(skip)]
+    pub mission_start_viewport_capture: bool,
+
+    /// Exact Original v48 save bytes to adopt after constructing the mission
+    /// topology and before the one-shot frame-zero capture.
+    #[clap(skip)]
+    #[serde(skip)]
+    pub mission_start_legacy_save: Option<Vec<u8>>,
+
+    /// Preserve the caller-supplied campaign when `--mission` selects the
+    /// one-shot capture mission. Parity captures supply the exact recorded
+    /// roster and campaign state instead of the map exporter's representative
+    /// team.
+    #[clap(skip)]
+    #[serde(skip)]
+    pub preserve_forced_mission_campaign: bool,
 }
 
 /// Subset of [`crate::main_menu::custom_missions::CustomMissionLaunch`]
@@ -355,6 +376,9 @@ impl Default for CliArgs {
             mission_start_map_output: None,
             mission_start_map_frame: 0,
             mission_start_reveal_all: false,
+            mission_start_viewport_capture: false,
+            mission_start_legacy_save: None,
+            preserve_forced_mission_campaign: false,
         };
         install_global_options(&mut args);
         args
@@ -2062,8 +2086,10 @@ fn force_mission_launch(
     tracing::info!("--mission: launching `{mission_name}` with proto-level `{proto_name}`");
 
     let profiles_mut = std::sync::Arc::make_mut(profiles);
-    campaign.reset(profiles_mut, application_context.sim_config().difficulty);
-    if args.mission_start_map_output.is_some() {
+    if !args.preserve_forced_mission_campaign {
+        campaign.reset(profiles_mut, application_context.sim_config().difficulty);
+    }
+    if args.mission_start_map_output.is_some() && !args.preserve_forced_mission_campaign {
         // Use the walkthrough's practical campaign teams where it gives one.
         // For optional missions, derive the recruited heroes from prerequisite
         // history and fill the remaining slots with useful Merry Men. This

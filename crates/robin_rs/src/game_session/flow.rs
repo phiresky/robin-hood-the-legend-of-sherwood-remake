@@ -145,10 +145,12 @@ impl InteractiveMission {
             );
             pre_render_engine_setup(manager, host, assets.as_ref(), &mut presentation.renderer);
 
-            // A map export is not an interactive screenshot. Keep the cursor out
-            // of the top-left map pixel while retaining the normal render path for
-            // terrain, decals, ambiance, sprites, masks, and overlays.
-            host.input.mouse_opacity = 0;
+            // A full-map export is not an interactive screenshot. Keep the
+            // cursor out of its top-left map pixel. Viewport captures retain
+            // the ordinary cursor/HUD composition.
+            if !args.mission_start_viewport_capture {
+                host.input.mouse_opacity = 0;
+            }
             let display_snapshot = host.engine_display.clone();
             let capture_result = {
                 let mut render_ctx = presentation.render_context(
@@ -165,8 +167,8 @@ impl InteractiveMission {
                 );
                 let screenshot = crate::http_server::ScreenshotRequest {
                     frame: Some(args.mission_start_map_frame),
-                    hide_ui: true,
-                    full_map: true,
+                    hide_ui: !args.mission_start_viewport_capture,
+                    full_map: !args.mission_start_viewport_capture,
                     ..Default::default()
                 };
                 capture_screenshot_to_path(
