@@ -2987,8 +2987,10 @@ The same frozen runner also verifies formerly excluded Savegame 021: all 250
 frames (13 through 263), its 72-element save including 21 dynamic elements,
 and 346 authoritative RNG draws match exactly through EOF. Savegame 030 is
 exact as well across all 250 frames (1729 through 1979), with 85 saved elements
-including 34 dynamic elements and 424 authoritative RNG draws. No
-replay-specific compatibility or code change was required for these traces.
+including 34 dynamic elements and 424 authoritative RNG draws. Savegame 033
+also matches all 250 frames (3713 through 3963), including its 92 saved elements,
+41 dynamic elements, and 424 authoritative RNG draws. No replay-specific
+compatibility or code change was required for these traces.
 
 Windows `GSHR` saves now share the atomic adoption path. The complete Cyrdach
 Savegame 000–037 corpus matches every recorded frame; Nescafe Profile 003
