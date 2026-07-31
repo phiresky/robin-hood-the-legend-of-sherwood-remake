@@ -1342,13 +1342,13 @@ impl EngineInner {
             tracing::warn!(?entity_id, "jump landing lost actor");
             return;
         };
-        self.finalize_special_move_position(
+        self.finalize_special_move_position_with_ground(
             assets,
             entity_id,
             super::special_motion::SpecialMovePosition::World(position),
             Some(new_layer),
             new_sector,
-            Some(projection_point),
+            projection_point,
             "jump landing",
         );
     }

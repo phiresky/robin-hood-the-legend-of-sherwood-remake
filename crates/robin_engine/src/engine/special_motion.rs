@@ -55,6 +55,35 @@ impl EngineInner {
             sector,
             None,
             obstacle_probe,
+            false,
+            context,
+        );
+    }
+
+    /// Jump landings always install the destination sector's projection
+    /// area. Original's synthetic ground projection is represented by no
+    /// Rust obstacle, so a missing authored obstacle must clear the previous
+    /// plane rather than preserve it.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn finalize_special_move_position_with_ground(
+        &mut self,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        position: SpecialMovePosition,
+        layer: Option<u16>,
+        sector: Option<u16>,
+        obstacle_probe: MapPoint,
+        context: &'static str,
+    ) {
+        self.finalize_special_move_position_inner(
+            assets,
+            entity_id,
+            position,
+            layer,
+            sector,
+            None,
+            Some(obstacle_probe),
+            true,
             context,
         );
     }
@@ -82,6 +111,7 @@ impl EngineInner {
             None,
             Some((projection_layer, projection_sector)),
             Some(obstacle_probe),
+            false,
             context,
         );
     }
@@ -96,6 +126,7 @@ impl EngineInner {
         sector: Option<u16>,
         projection_topology: Option<(u16, u16)>,
         obstacle_probe: Option<MapPoint>,
+        clear_projection_when_missing: bool,
         context: &'static str,
     ) {
         let Some((target_layer, target_sector)) = self.get_entity(entity_id).map(|entity| {
@@ -157,8 +188,10 @@ impl EngineInner {
         // on that boundary) therefore does not clear the old obstacle/plane.
         // Only replace projection state when this operation resolves a real
         // successor obstacle.
-        if let Some(Some(obstacle)) = obstacle {
-            self.set_obstacle_and_material(assets, entity_id, Some(obstacle));
+        if let Some(resolved) = obstacle
+            && (resolved.is_some() || clear_projection_when_missing)
+        {
+            self.set_obstacle_and_material(assets, entity_id, resolved);
             if let Some(entity) = self.get_entity_mut(entity_id) {
                 let point = position.map_point();
                 entity.element_data_mut().set_position_map(point);
