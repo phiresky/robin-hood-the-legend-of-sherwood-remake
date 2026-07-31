@@ -2731,6 +2731,15 @@ continuation: either the live target has entered the actor's sector and
 tolerance, or the final seek order has terminated and passed its live-target
 validation.
 
+`RHElementActor::RefreshSeek` also leaves that continuation attached to the
+actor whenever a moving target causes it to replace the current cross-sector
+route. Rust previously moved the continuation into the first transient gate
+route. A later refresh interrupted that route and destroyed the continuation,
+so reaching the target merely entered the frozen seek wait instead of launching
+the intended interaction. Route replacement now retains the actor-owned
+continuation across any number of refreshes. Linux3 Profile 001 Savegame 008
+advances past its cross-sector swordfight arrival at frame 4,029.
+
 Rust also had a fallback in generic `DoNextOrder` cleanup which launched the
 post-seek sequence whenever any SEEK-flagged `MoveOk` exhausted its local
 orders. That incorrectly fired Tie at the first gate approach, where a later

@@ -630,13 +630,6 @@ impl crate::engine::EngineInner {
             return true;
         };
 
-        let tail_elements = self
-            .get_entity_mut(owner)
-            .and_then(|e| e.actor_data_mut())
-            .and_then(|actor| actor.post_seek_sequence.take())
-            .map(|seq| seq.elements)
-            .unwrap_or_default();
-
         self.stop_selected_seek_for_refresh(owner, seq_id, elem_idx);
         self.orders.sequence_manager.element_interrupted(
             seq_id,
@@ -659,7 +652,14 @@ impl crate::engine::EngineInner {
             resolved.speed_factor,
             flags,
             Vec::new(),
-            tail_elements,
+            // RHElementActor::RefreshSeek leaves mpPostSeekSequence on the
+            // actor while replacing the path sequence. It may refresh the
+            // seek repeatedly as a moving target crosses sectors, and every
+            // replacement must retain the same eventual interaction.
+            //
+            // Appending the interaction to this transient gate route instead
+            // loses it when the next RefreshSeek interrupts that route.
+            Vec::new(),
             false,
             true,
         );
