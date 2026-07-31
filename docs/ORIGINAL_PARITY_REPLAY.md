@@ -2607,8 +2607,12 @@ step direction. Physical motion follows the current sector, while
 input, and the legacy passing-door flag use the saved direction and hence the
 committed gate-side point. Owner-slot AI views preserve that committed point;
 periodic visibility continues to inspect the live interpolated position.
-Linux3 Profile 001 Savegame 008 consequently matches the Original detection
-and facing decision after its restored PC door pass.
+The override is the complete Original `RHposition`, including gate-side sector
+and layer rather than only map coordinates. Battle decisions can therefore
+recognize that a pursued target is committed to a ladder before its animated
+body crosses the sector boundary. Linux3 Profile 001 Savegame 008 consequently
+matches the Original detection, facing, and ladder-approach decisions after
+its restored PC door pass.
 
 ### Seek transitions inherit the movement speed factor
 

@@ -753,6 +753,7 @@ type PrimaryTargetMetadata = (
 pub(super) fn lookup_primary_target_metadata(
     entities: &crate::entities::Entities,
     sequence_manager: &crate::sequence::SequenceManager,
+    doors: &[crate::gate::Door],
     target_id: crate::element::EntityId,
 ) -> Option<PrimaryTargetMetadata> {
     if target_id.index() == 0 {
@@ -760,12 +761,40 @@ pub(super) fn lookup_primary_target_metadata(
     }
     let target = entities.get(target_id)?;
     let elem = target.element_data();
-    let position = crate::ai::Position {
+    let mut position = crate::ai::Position {
         x: elem.position_map().x,
         y: elem.position_map().y,
         sector: elem.sector(),
         level: elem.layer(),
     };
+    // `RHArtificialIntelligence::Position(actor)` returns the complete
+    // committed gate-side RHposition while an actor is passing a door, not
+    // merely that point's x/y. The sector and layer are significant to
+    // battle decisions (notably detecting a target committed to a ladder).
+    if let Some(pass) = target
+        .actor_data()
+        .and_then(|actor| actor.active_door_pass.as_ref())
+    {
+        let door = doors.get(pass.door_index.0 as usize).unwrap_or_else(|| {
+            panic!(
+                "AI metadata target {target_id:?} references missing door {}",
+                pass.door_index
+            )
+        });
+        if pass.position_direct {
+            position.x = door.point_in.x;
+            position.y = door.point_in.y;
+            position.sector =
+                crate::position_interface::SectorHandle::new(u16::from(door.sector_in));
+            position.level = door.layer_in;
+        } else {
+            position.x = door.point_out.x;
+            position.y = door.point_out.y;
+            position.sector =
+                crate::position_interface::SectorHandle::new(u16::from(door.sector_out));
+            position.level = door.layer_out;
+        }
+    }
     let posture = elem.posture;
     // Orders live on the target's owning `SequenceElement.orders` —
     // look up the current in-progress element for the target actor.
@@ -1057,13 +1086,19 @@ fn build_entity_views_inner(
             && let Some(dp) = actor.active_door_pass.as_ref()
             && let Some(door) = doors_ref.get(dp.door_index.0 as usize)
         {
-            let rail_point = if dp.position_direct {
-                door.point_in
+            if dp.position_direct {
+                view.position.x = door.point_in.x;
+                view.position.y = door.point_in.y;
+                view.position.sector =
+                    crate::position_interface::SectorHandle::new(u16::from(door.sector_in));
+                view.position.level = door.layer_in;
             } else {
-                door.point_out
-            };
-            view.position.x = rail_point.x;
-            view.position.y = rail_point.y;
+                view.position.x = door.point_out.x;
+                view.position.y = door.point_out.y;
+                view.position.sector =
+                    crate::position_interface::SectorHandle::new(u16::from(door.sector_out));
+                view.position.level = door.layer_out;
+            }
         }
 
         // PC riding on someone's shoulders reports the carrier's
@@ -1550,6 +1585,7 @@ impl EngineInner {
         let target_meta = lookup_primary_target_metadata(
             &self.world.entities,
             &self.orders.sequence_manager,
+            self.script_domains.interactables.doors.as_slice(),
             target_id,
         );
 
