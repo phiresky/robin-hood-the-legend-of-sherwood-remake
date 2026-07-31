@@ -10786,8 +10786,15 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
+        owner_boundary_positions: &[(u32, crate::ai::Position)],
     ) {
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let mut scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let views = std::sync::Arc::make_mut(&mut scratch.ai_entity_views);
+        for &(handle, position) in owner_boundary_positions {
+            if let Some(view) = views.get_mut(&handle) {
+                view.position = position;
+            }
+        }
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
         let live_animation = self
@@ -10833,6 +10840,224 @@ impl EngineInner {
                 )
             })
             .resume_goto_route_reach_point(sim, &ctx);
+
+        // Original calls InitializePatrol inline, immediately after the
+        // virtual SetState callback returns. Delaying this to the next
+        // RHArtificialIntelligence::Hourglass changes which side of the
+        // formation equally-close members occupy because later legacy slots
+        // have moved by then.
+        self.initialize_patrol_for_npc_from_owner_views(assets, npc_id, &scratch.ai_entity_views);
+    }
+
+    /// Run Original's `InitializePatrol` at a captured owner boundary.
+    ///
+    /// Non-position fields are intentionally resolved from the live world
+    /// after `FilterAIEvent`: that callback is authoritative and may change
+    /// actor state. Positions instead come from the owner-boundary views
+    /// because Rust's globally batched movement has already advanced later
+    /// legacy slots.
+    fn initialize_patrol_for_npc_from_owner_views(
+        &mut self,
+        assets: &LevelAssets,
+        chief_id: EntityId,
+        views: &crate::ai_entity_view::AiEntityViewMap,
+    ) {
+        #[derive(Clone, Copy)]
+        struct PatrolSnap {
+            position: crate::ai::Position,
+            direction: u16,
+            ground_z: f32,
+            posture: crate::element::Posture,
+            is_rider: bool,
+            in_building: bool,
+            ai_state: crate::ai::AiState,
+            is_alive: bool,
+            is_active: bool,
+            is_civilian: bool,
+            is_able_to_fight: bool,
+        }
+
+        let theoretical = self
+            .world
+            .entities
+            .get(chief_id)
+            .and_then(Entity::ai_controller)
+            .unwrap_or_else(|| {
+                panic!(
+                    "synchronous patrol initialization owner {} has no AI",
+                    chief_id.index()
+                )
+            })
+            .theoretical_patrol
+            .clone();
+
+        let chief_entity = self.world.entities.get(chief_id).unwrap_or_else(|| {
+            panic!(
+                "synchronous patrol initialization owner {} disappeared",
+                chief_id.index()
+            )
+        });
+        let chief_real_view_radius = chief_entity
+            .npc_data()
+            .unwrap_or_else(|| {
+                panic!(
+                    "synchronous patrol initialization owner {} is not an NPC",
+                    chief_id.index()
+                )
+            })
+            .view_radius_base;
+
+        let snapshot = |id: EntityId| {
+            let view = views.get(&id.index()).unwrap_or_else(|| {
+                panic!(
+                    "synchronous patrol initialization owner {} lacks boundary view for member {}",
+                    chief_id.index(),
+                    id.index()
+                )
+            });
+            let entity = self.world.entities.get(id).unwrap_or_else(|| {
+                panic!(
+                    "synchronous patrol initialization owner {} references missing member {}",
+                    chief_id.index(),
+                    id.index()
+                )
+            });
+            PatrolSnap {
+                position: view.position,
+                direction: entity.element_data().direction() as u16,
+                ground_z: entity.element_data().position().z,
+                posture: entity.element_data().posture,
+                is_rider: entity.soldier_data().is_some_and(|soldier| soldier.rider),
+                in_building: self.entity_data_inside_building(entity.element_data()),
+                ai_state: entity
+                    .npc_data()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "patrol member {} referenced by owner {} is not an NPC",
+                            id.index(),
+                            chief_id.index()
+                        )
+                    })
+                    .ai_state(),
+                is_alive: !entity.is_dead(),
+                is_active: entity.is_active(),
+                is_civilian: entity.is_civilian(),
+                is_able_to_fight: match entity {
+                    crate::element::Entity::Soldier(soldier) => {
+                        use crate::element::Human as _;
+                        soldier.is_able_to_fight()
+                    }
+                    crate::element::Entity::Pc(pc) => {
+                        use crate::element::Human as _;
+                        pc.is_able_to_fight()
+                    }
+                    _ => false,
+                },
+            }
+        };
+
+        let chief_snap = snapshot(chief_id);
+        let obstacles_owned = self.build_ai_sight_obstacles(assets);
+        let obstacles = obstacles_owned.list();
+        let mut patrol = Vec::new();
+        let mut missed = Vec::new();
+
+        for member in theoretical {
+            if member == chief_id {
+                continue;
+            }
+            let snap = snapshot(member);
+            let mut admit = snap.is_active
+                && snap.is_alive
+                && snap.ai_state == crate::ai::AiState::Default
+                && (snap.is_civilian || snap.is_able_to_fight);
+            if admit {
+                admit = crate::ai_enemy::soldier_detects_target_360(
+                    chief_snap.position,
+                    chief_snap.ground_z,
+                    chief_snap.is_rider,
+                    chief_real_view_radius,
+                    chief_snap.in_building,
+                    snap.position,
+                    snap.ground_z,
+                    snap.posture,
+                    snap.is_rider,
+                    snap.direction as i16,
+                    snap.in_building,
+                    obstacles,
+                );
+            }
+            if admit {
+                patrol.push((member, snap));
+            } else if snap.is_alive {
+                missed.push(member);
+            }
+        }
+
+        let square_distance = |snap: PatrolSnap| {
+            let dx = snap.position.x - chief_snap.position.x;
+            let dy_world =
+                (snap.position.y + snap.ground_z) - (chief_snap.position.y + chief_snap.ground_z);
+            let dy = dy_world * crate::position_interface::INVERSE_ASPECT_RATIO;
+            let dz = snap.ground_z - chief_snap.ground_z;
+            dx * dx + dy * dy + dz * dz
+        };
+        let mut sorted: Vec<(EntityId, PatrolSnap)> = Vec::with_capacity(patrol.len());
+        for entry in patrol {
+            let distance = square_distance(entry.1);
+            let insert_at = sorted
+                .iter()
+                .position(|existing| distance <= square_distance(existing.1))
+                .unwrap_or(sorted.len());
+            sorted.insert(insert_at, entry);
+        }
+        for pair_end in (1..sorted.len()).step_by(2) {
+            let even = sorted[pair_end - 1].1.position;
+            let odd = sorted[pair_end].1.position;
+            let ex = even.x - chief_snap.position.x;
+            let ey = even.y - chief_snap.position.y;
+            let ox = odd.x - chief_snap.position.x;
+            let oy = odd.y - chief_snap.position.y;
+            if ex * oy - ey * ox < 0.0 {
+                sorted.swap(pair_end - 1, pair_end);
+            }
+        }
+
+        let patrol_ids: Vec<_> = sorted.into_iter().map(|(id, _)| id).collect();
+        {
+            let ai = self
+                .world
+                .entities
+                .get_mut(chief_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "synchronous patrol initialization owner {} lost its AI",
+                        chief_id.index()
+                    )
+                });
+            ai.needs_patrol_reinit = false;
+            ai.patrol = patrol_ids.clone();
+            ai.missed_patrol_members = missed;
+        }
+        for member in patrol_ids {
+            self.world
+                .entities
+                .get_mut(member)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "patrol member {} admitted by owner {} lost its AI",
+                        member.index(),
+                        chief_id.index()
+                    )
+                })
+                .patrol_chief = Some(chief_id);
+        }
+
+        // TODO: share this sorting/admission core with the initialization
+        // paths that run before the per-owner hourglass instead of retaining
+        // the equivalent delayed-path implementation in patrol coordination.
     }
 
     fn drain_direct_ai_owner_boundary_mode(

@@ -2448,6 +2448,24 @@ created later during live play keep Rust's established generated-prefix
 representation, so save provenance cannot leak into subsequent pathfinding.
 Cyrdach Profile 156 Savegame 028 now matches every recorded frame.
 
+### Route arrival rebuilds patrols at the synchronous owner boundary
+
+The `SUBSTATE_DEFAULT_GOTOROUTE` `EVENT_REACHPOINT` handler calls the virtual
+`SetState`, waits for its `FilterAIEvent` callback, and then invokes
+`InitializePatrol` inline. Rust previously represented the callback barrier
+correctly but reduced the following patrol initialization to a one-shot flag
+consumed by the next NPC hourglass. That one-frame delay exposed movement from
+later legacy slots and could reorder equally close formation members, changing
+their assigned side, facing, and subsequent commands.
+
+The route-arrival continuation now carries the positions visible at its exact
+owner boundary. After the script callback returns, patrol admission, distance
+ordering, pair orientation, and chief assignment run synchronously from those
+positions while all non-position state is read live so callback mutations
+remain authoritative. Other initialization sites retain their existing
+owner-ticked behavior. Linux3 Profile 001 Restart now matches every recorded
+frame instead of diverging at frame 32.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

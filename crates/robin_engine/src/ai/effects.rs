@@ -106,7 +106,14 @@ pub enum AiOwnerWork {
     StateChange(AiStateChangeNotification),
     /// Continue the common `EVENT_REACHPOINT` route handler after its
     /// virtual `SetState` callback has returned and committed.
-    ResumeGotoRouteReachPoint,
+    ResumeGotoRouteReachPoint {
+        /// Positions visible at the Original owner boundary where
+        /// `EVENT_REACHPOINT` was dispatched. Rust moves actors in a global
+        /// batch, so rebuilding these from the live world after the
+        /// `FilterAIEvent` callback would expose later legacy slots one
+        /// movement phase too early.
+        owner_boundary_positions: Vec<(u32, Position)>,
+    },
     Speech(AiSpeechAttempt),
     RestoreDetectableObjects {
         knocked_out_in_money_fight: bool,

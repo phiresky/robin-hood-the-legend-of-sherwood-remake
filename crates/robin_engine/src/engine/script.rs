@@ -2836,8 +2836,15 @@ impl EngineInner {
 
             let notification = match work {
                 crate::ai::AiOwnerWork::StateChange(notification) => notification,
-                crate::ai::AiOwnerWork::ResumeGotoRouteReachPoint => {
-                    self.resume_goto_route_reach_point_for_npc(sim, owner, assets);
+                crate::ai::AiOwnerWork::ResumeGotoRouteReachPoint {
+                    owner_boundary_positions,
+                } => {
+                    self.resume_goto_route_reach_point_for_npc(
+                        sim,
+                        owner,
+                        assets,
+                        &owner_boundary_positions,
+                    );
                     continue;
                 }
                 crate::ai::AiOwnerWork::Speech(attempt) => {

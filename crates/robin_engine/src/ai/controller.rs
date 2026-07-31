@@ -584,7 +584,12 @@ impl AiController {
     /// is borrowed, so preserve the actor-effect prefix and queue an
     /// owner-local barrier. Effects issued by statements after this call stay
     /// in the live outbox and are hidden until the callback returns.
-    fn suspend_goto_route_reach_point_for_set_state(&mut self, state: AiState, substate: Substate) {
+    fn suspend_goto_route_reach_point_for_set_state(
+        &mut self,
+        state: AiState,
+        substate: Substate,
+        ctx: &AiContext,
+    ) {
         if self.current_substate != substate {
             let actor_effects_before_callback = std::mem::take(&mut self.outbox.actor);
             self.outbox
@@ -604,7 +609,13 @@ impl AiController {
         self.outbox
             .reentrant
             .owner_work
-            .push(AiOwnerWork::ResumeGotoRouteReachPoint);
+            .push(AiOwnerWork::ResumeGotoRouteReachPoint {
+                owner_boundary_positions: ctx
+                    .entity_views
+                    .iter()
+                    .map(|(&handle, view)| (handle, view.position))
+                    .collect(),
+            });
     }
 
     // -- Locks --
@@ -3845,6 +3856,7 @@ impl AiController {
                     self.suspend_goto_route_reach_point_for_set_state(
                         AiState::Default,
                         Substate::DefaultGotoRouteTurn,
+                        ctx,
                     );
                     return false;
                 }
