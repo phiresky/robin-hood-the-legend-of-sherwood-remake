@@ -127,6 +127,10 @@ pub enum SynchronousScriptRequest {
         direction: i32,
         native_return: i32,
     },
+    SwitchToAlertPath {
+        actor: i32,
+        native_return: i32,
+    },
 }
 
 /// One accepted `RHScript::SetAIState` operation. The native validates its
@@ -185,7 +189,8 @@ impl SynchronousScriptRequest {
             | Self::LockAi { native_return, .. }
             | Self::UnlockAi { native_return, .. }
             | Self::AssignPath { native_return, .. }
-            | Self::AssignPost { native_return, .. } => native_return,
+            | Self::AssignPost { native_return, .. }
+            | Self::SwitchToAlertPath { native_return, .. } => native_return,
         }
     }
 }

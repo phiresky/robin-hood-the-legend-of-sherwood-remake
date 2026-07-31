@@ -524,8 +524,6 @@ impl NativeContext<'_, '_> {
                 //       return_to_duty(sim, );
                 //   }
                 let actor = stack.pop_i32();
-                let hiking_paths = self.bindings.hiking_paths.clone();
-
                 let Some(entity) = self.get_entity(actor) else {
                     tracing::error!(
                         "Script Error: SwitchToAlertPath with invalid soldier ({actor})"
@@ -536,39 +534,14 @@ impl NativeContext<'_, '_> {
                     tracing::error!("Script Error: SwitchToAlertPath with non-soldier ({actor})");
                     return 0;
                 }
-
-                if let Some(entity) = self.get_entity_mut(actor) {
-                    // Snapshot the values needed before splitting the
-                    // mutable borrow between `ai_controller_mut` and
-                    // `enemy_ai_mut`.
-                    let alert_path_id = entity.ai_controller().and_then(|ai| ai.alert_path_id);
-                    let in_default = entity
-                        .ai_controller()
-                        .is_some_and(|ai| ai.current_state == crate::ai::AiState::Default);
-
-                    if let Some(alert_path_id) = alert_path_id {
-                        // Init the patrol path and mark
-                        // `has_patrol_path = true`.
-                        if let Some(ai) = entity.ai_controller_mut() {
-                            ai.path_id = Some(alert_path_id);
-                            ai.patrol_path =
-                                crate::ai::PatrolPath::new(alert_path_id, &hiking_paths);
-                            ai.has_patrol_path = ai.patrol_path.is_some();
-                        }
-                        // `changed_to_alert_path = true` — only set
-                        // when an alert path was configured.
-                        if let Some(enemy) = entity.enemy_ai_mut() {
-                            enemy.changed_to_alert_path = true;
-                        }
-                    }
-
-                    // ReturnToDuty fires regardless of whether
-                    // an alert path was configured, as long as
-                    // the soldier is in the Default state.
-                    if in_default && let Some(ai) = entity.ai_controller_mut() {
-                        ai.fire_self_stimulus(crate::ai::StimulusType::EventReturnToDuty);
-                    }
-                }
+                let request = crate::interp::SynchronousScriptRequest::SwitchToAlertPath {
+                    actor,
+                    native_return: 0,
+                };
+                self.pending_yield = Some(crate::interp::NativeYield {
+                    resume: crate::interp::ResumePolicy::Fixed(request.native_return()),
+                    operation: crate::interp::NativeOperation::EngineAction(request),
+                });
                 0
             }
             SetNPCEmoticon => {

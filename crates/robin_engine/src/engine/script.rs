@@ -675,6 +675,94 @@ impl EngineInner {
                 self.drain_pending_move_requests_for_owner(sim, owner);
                 Ok(0)
             }
+            crate::interp::SynchronousScriptRequest::SwitchToAlertPath { actor, .. } => {
+                let owner = self.entity_id_for_actor_handle(actor).ok_or_else(|| {
+                    format!(
+                        "SwitchToAlertPath owner handle {actor} became stale at its synchronous barrier"
+                    )
+                })?;
+                let entity = self.get_entity(owner).ok_or_else(|| {
+                    format!(
+                        "SwitchToAlertPath owner {} disappeared at its synchronous barrier",
+                        owner.index()
+                    )
+                })?;
+                if !entity.is_soldier() || entity.enemy_ai().is_none() {
+                    return Err(format!(
+                        "SwitchToAlertPath owner {} lost its required soldier AI at its synchronous barrier",
+                        owner.index()
+                    )
+                    .into());
+                }
+
+                let (alert_path_id, in_default) = {
+                    let ai = entity
+                        .ai_controller()
+                        .expect("validated SwitchToAlertPath soldier has no AI controller");
+                    (
+                        ai.alert_path_id,
+                        ai.current_state == crate::ai::AiState::Default,
+                    )
+                };
+                if let Some(alert_path_id) = alert_path_id {
+                    let entity = self
+                        .get_entity_mut(owner)
+                        .expect("validated SwitchToAlertPath soldier disappeared");
+                    let ai = entity
+                        .ai_controller_mut()
+                        .expect("validated SwitchToAlertPath soldier lost its AI controller");
+                    ai.path_id = Some(alert_path_id);
+                    ai.patrol_path =
+                        crate::ai::PatrolPath::new(alert_path_id, &assets.hiking_paths);
+                    ai.has_patrol_path = ai.patrol_path.is_some();
+                    entity
+                        .enemy_ai_mut()
+                        .expect("validated SwitchToAlertPath soldier lost its enemy AI")
+                        .changed_to_alert_path = true;
+                }
+                if in_default {
+                    // Original calls virtual ReturnToDuty directly here,
+                    // rather than routing through Think and FilterAIEvent.
+                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                    let tick_data = self.build_npc_tick_data(sim, owner, &scratch, assets);
+                    let frame = self.control.frame_counter;
+                    let in_uninterruptible_command = self.is_very_very_busy(owner);
+                    let building_sector = self.entity_building_sector(
+                        self.get_entity(owner)
+                            .expect("validated SwitchToAlertPath soldier disappeared")
+                            .element_data()
+                            .sector(),
+                    );
+                    let entity = self.world.entities.get_mut(owner).expect(
+                        "validated SwitchToAlertPath soldier disappeared before ReturnToDuty",
+                    );
+                    let mut ctx = super::ai::build_ai_context_from_entity(
+                        entity,
+                        frame,
+                        building_sector,
+                        self.world.weather.is_forest_level,
+                        self.world.weather.ambiance,
+                        self.ai.standard_view_polygon_radius,
+                        &scratch.ai_entity_views,
+                        &scratch.ai_sight_obstacles,
+                        &self.world.fast_grid,
+                        &assets.hiking_paths,
+                        &self.ai.global.all_soldier_handles,
+                        self.control.sim_config.difficulty,
+                    );
+                    ctx.in_uninterruptible_command = in_uninterruptible_command;
+                    entity
+                        .enemy_ai_mut()
+                        .expect("validated SwitchToAlertPath soldier lost its enemy AI")
+                        .return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx, &tick_data);
+
+                    // Close the direct owner-local AI boundary and
+                    // materialize any GoTo before the script VM resumes.
+                    self.drain_direct_ai_owner_boundary_without_forecast(sim, owner, assets);
+                    self.drain_pending_move_requests_for_owner(sim, owner);
+                }
+                Ok(0)
+            }
         }
     }
 

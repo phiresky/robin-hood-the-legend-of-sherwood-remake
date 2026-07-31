@@ -3648,6 +3648,19 @@ The candidate scan now applies the same Y stretch and no longer writes
 fixes Linux3 Profile 001 Savegame 030's frame-30495 branch and makes the entire
 recording match exactly.
 
+### SwitchToAlertPath closes its direct ReturnToDuty call synchronously
+
+Original `SwitchToAlertPathByScript` installs the alert path and, for a
+Default-state soldier, directly invokes the virtual `ReturnToDuty` method
+before returning to the mission script. Rust previously queued an
+`EVENT_RETURN_TO_DUTY`; besides resuming the VM too early, that translation
+incorrectly routed the call through `FilterAIEvent`, which can reject it while
+the soldier is moving. The native now yields to an engine-owned synchronous
+barrier, invokes the enemy AI's `ReturnToDuty` method directly with a live
+owner context, and closes its resulting AI/movement work before resuming the
+VM. Nicouzouf Profile 001 Savegame 065 now consumes both patrol macro forecasts
+at the Original call boundary and matches every recorded frame.
+
 ### Small Linux profiles match end to end
 
 The complete `Savegame_linux` corpus currently consists of Profile 005
