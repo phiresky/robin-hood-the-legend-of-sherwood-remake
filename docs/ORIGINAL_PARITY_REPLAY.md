@@ -3543,6 +3543,23 @@ Profile 004 Savegame 024 advances from frame 35 to the next independent
 mismatch at frame 36; Windows Savegame 014 and Linux Profile 003 Savegame 053
 remain exact across their full recordings.
 
+### Bow OUTOFVIEW handling preserves the Original switch fallthrough
+
+Original's `EVENT_OUTOFVIEW` switch places the five active bow substates
+(`OBSERVING_LOADING`, `OBSERVING`, `SHOOTING`, `LOADING`, and `AIMING`)
+immediately before `_ANY_SWORDFIGHT_SUBSTATE_`. Unless the special
+`enemy_seen_below` branch consumes the event, those labels deliberately fall
+through the swordfight 360-degree test, then the moving-combat stare-vector
+guard, and finally the common lost-enemy handler.
+
+Rust previously sent these substates to the match default, which only rebuilt
+the enemy list. An archer that genuinely lost its last target could remain in
+`BOW_LOADING` instead of facing the missed NPC and entering the battle
+overview. The explicit Rust arm now preserves every stage of the C++
+fallthrough. This fixes Windows SuN1Sh1nE Profile 004 Savegame 024 frame 36
+and advances it to the next independent RNG mismatch at frame 40. Windows
+Savegame 014 and Linux Profile 003 Savegame 053 remain exact.
+
 ### ClearPatrol keeps the chief formation live through member callbacks
 
 Original `RHArtificialIntelligence::ClearPatrol` walks the theoretical patrol

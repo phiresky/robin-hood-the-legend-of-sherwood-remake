@@ -254,6 +254,33 @@ impl EnemyAi {
                 {
                     // Lost sight of enemy while attacking.
                     match self.base.current_substate {
+                        Substate::AttackingBowObservingLoading
+                        | Substate::AttackingBowObserving
+                        | Substate::AttackingBowShooting
+                        | Substate::AttackingBowLoading
+                        | Substate::AttackingBowAiming => {
+                            // These five labels precede
+                            // `_ANY_SWORDFIGHT_SUBSTATE_` in Original and
+                            // deliberately fall through it unless the special
+                            // below-target recovery consumes the event.
+                            if self.enemy_seen_below {
+                                self.reinitialize_them_list(ctx, tick);
+                                return true;
+                            }
+                            if enemy == self.base.primary_target
+                                && self.is_detecting_360_degrees(enemy, ctx)
+                            {
+                                return false;
+                            }
+                            // The swordfight labels in turn fall through the
+                            // moving-combat stare-vector guard before the
+                            // shared lost-enemy handler.
+                            if self.enemy_is_behind_me(ctx) {
+                                return false;
+                            }
+                            self.out_of_view_seek_handler(sim, enemy, global, ctx, tick, grid);
+                        }
+
                         s if s.is_any_swordfight() => {
                             // _ANY_SWORDFIGHT_SUBSTATE_ 360° short-circuit
                             // — if the target is still within the NPC's
