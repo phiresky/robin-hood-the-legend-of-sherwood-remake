@@ -340,7 +340,7 @@ impl FriendlyAi {
             | StimulusType::CallYouJustWait
             | StimulusType::EventAppleChaseNear
             | StimulusType::EventNetAway => {
-                self.think_unexpected_event(sim, stimulus, ctx, tick, grid, doors)
+                self.think_unexpected_event(sim, stimulus, global, ctx, tick, grid, doors)
             }
 
             // Alerting events
@@ -1156,14 +1156,11 @@ impl FriendlyAi {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
+        global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &FriendlyPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        // `_doors` is not consumed by the Apple-Chase / Sees-Soldier
-        // arms in this dispatcher; threaded for symmetry with the
-        // other think_* methods so the caller doesn't need to know
-        // which sub-handlers reach `alert_soldier`.
-        _doors: Option<&[crate::gate::Door]>,
+        doors: Option<&[crate::gate::Door]>,
     ) -> bool {
         let stimulus_type = stimulus.stimulus_type;
 
@@ -1199,15 +1196,10 @@ impl FriendlyAi {
             }
 
             StimulusType::EventAfterScriptGoOn => {
-                // Drain any stimuli that the script lock held back,
-                // queuing them on `pending_self_stimuli` so the
-                // engine's self-stimulus drain re-fires them in
-                // order.  We defer instead of recursing to avoid
-                // re-borrowing the `&mut AiGlobalState` our caller
-                // already holds.  This drain runs unconditionally
-                // on every `EventAfterScriptGoOn`; the
-                // `state==Default` gate is only on the tail branch
-                // below.
+                // Drain retained stimuli exactly as the Original's recursive
+                // Think(stimulus) loop does. Preserve the complete stimulus:
+                // reducing an EventView to its type discards the viewed actor
+                // and turns the remembered event into a silent no-op.
                 //
                 // Re-check the AI lock / script-lock flags at the
                 // top of every iteration and return false if either
@@ -1224,11 +1216,7 @@ impl FriendlyAi {
                     }
                     let q = self.base.stimulus_queue.remove(0);
                     if q.stimulus_type != StimulusType::EventAfterScriptGoOn {
-                        self.base
-                            .outbox
-                            .reentrant
-                            .self_stimuli
-                            .push(q.stimulus_type);
+                        self.think(sim, &q, global, ctx, tick, grid, doors);
                     }
                 }
 

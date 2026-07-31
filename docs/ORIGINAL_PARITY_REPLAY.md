@@ -3013,6 +3013,21 @@ consume counter-strike RNG or launch another action.
 Together these corrections make Linux3 Profile 003 Savegames 043–051 match
 every recorded frame.
 
+### Remembered stimuli retain their complete payload
+
+`EVENT_AFTER_SCRIPT_GO_ON` drains the Original AI stimulus queue by recursively
+calling `Think` with each saved `RHStimulus`. The payload is authoritative:
+for example, a remembered `EVENT_VIEW` carries the human that was seen, and a
+fleeing civilian can react to that human with another directed panic in the
+same call chain.
+
+The friendly Rust AI previously reduced queued stimuli to `StimulusType` before
+re-dispatch. This discarded the viewed actor, so the second `EVENT_VIEW` was
+logged but did nothing and two panic RNG draws were skipped. Friendly AI now
+mirrors the Original and the enemy implementation by recursively dispatching
+the complete saved stimulus in FIFO order. This advances Linux3 Profile 001
+Savegame 008 from frame 4056 to its next independent divergence at frame 4075.
+
 ## Coverage limits
 
 A clean baseline proves exact parity only for the state fields serialized by the
