@@ -1058,19 +1058,22 @@ impl EngineInner {
             is_npc: false,
         };
 
-        let strike =
-            match crate::combat::propose_good_sword_strike(sim, &ctx, &nearby, &mut boredom, false)
-            {
-                Some(crate::combat::ProposedCombatAction::Strike(s)) => s,
-                _ => return,
-            };
+        let proposed =
+            crate::combat::propose_good_sword_strike(sim, &ctx, &nearby, &mut boredom, false);
 
-        // Persist the updated boredom array back onto the PC.
+        // ProposeGoodSwordStrike mutates the live boredom counters while
+        // evaluating candidates, even when no strike is ultimately viable.
+        // Persist those decrements before the no-proposal return.
         if let Some(entity) = self.world.entities.get_mut(pc_id)
             && let Some(human) = entity.human_data_mut()
         {
             human.sword_strike_boredom = boredom;
         }
+
+        let strike = match proposed {
+            Some(crate::combat::ProposedCombatAction::Strike(s)) => s,
+            _ => return,
+        };
 
         // Launch the strike as a per-target interaction.
         let cmd = strike.to_command();

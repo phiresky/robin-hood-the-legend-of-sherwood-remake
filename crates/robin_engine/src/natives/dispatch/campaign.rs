@@ -10,14 +10,40 @@ impl NativeContext<'_, '_> {
             // --- mission team ---
             GetPCFromMissionTeam => {
                 let idx = stack.pop_i32();
-                self.campaign.as_ref().map_or(0, |campaign| {
-                    campaign
-                        .mission_team_indices
-                        .get(idx as usize)
-                        .and_then(|&char_idx| campaign.characters.get(char_idx))
-                        .and_then(|desc| desc.character_profile_idx)
-                        .map_or(0, |pi| u32::from(pi) as i32)
-                })
+                let Some(character_index) = self
+                    .campaign
+                    .as_ref()
+                    .and_then(|campaign| campaign.mission_team_indices.get(idx as usize))
+                    .copied()
+                else {
+                    tracing::warn!(
+                        "GetPCFromMissionTeam index {idx} is outside the current mission team"
+                    );
+                    return 0;
+                };
+
+                // RHScript::GetPCFromMissionTeam passes the selected
+                // RHPCDescription to RHEngine::GetPC and returns that live
+                // actor, not the description's character-profile number.
+                // Character profiles are shared by many peasants, whereas
+                // campaign_description_index is the stable identity of the
+                // exact RHPCDescription instantiated by this PC.
+                self.occupied_entities()
+                    .find_map(|(id, entity)| {
+                        entity
+                            .pc_data()
+                            .is_some_and(|pc| {
+                                pc.campaign_description_index == Some(character_index as u32)
+                            })
+                            .then_some(Self::actor_handle(id))
+                    })
+                    .unwrap_or_else(|| {
+                        tracing::warn!(
+                            "GetPCFromMissionTeam member {idx} (campaign character \
+                             {character_index}) has no live PC instance"
+                        );
+                        0
+                    })
             }
             AddPCToMissionTeam => {
                 let actor = stack.pop_i32();
