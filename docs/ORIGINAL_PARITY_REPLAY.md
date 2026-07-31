@@ -2637,14 +2637,15 @@ The AI's combat target and the NPC view cone's followed element are therefore
 independent state.
 
 Rust's edge-triggered bridge between deferred AI target writes and NPC focus
-mistook the event's target assignment for an implicit `Focus` call. A soldier
-restored while following one PC would begin a fight with another PC, turn its
+mistook every target assignment for an implicit `Focus` call. A soldier
+restored while following one PC could begin a fight with another PC, turn its
 eyes toward the new opponent one frame later, and consequently accept
 `EVENT_OUTOFVIEW` events that Original rejects using the old stare vector.
-The event handler now consumes the bookkeeping edge without changing the
-restored view target. Nescafe Profile 003 Savegame 010 and Savegame 014 match
-every recorded frame, and the related traces proceed to later independent
-combat decisions.
+There is no such automatic synchronization in Original, so the bridge has
+been removed: translated `Focus(element)`, `Focus(position)`, and
+`Focus(NULL)` calls are now the only operations that change NPC focus.
+Nescafe Profile 003 Savegames 010, 011, and 014 match every recorded frame,
+and the related traces proceed to later independent combat decisions.
 
 ## Current Linux-v48 loaded-save result
 

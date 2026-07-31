@@ -4409,7 +4409,7 @@ impl EngineInner {
         }
 
         // ── Phase 1: read-only — gather context ──
-        let (ctx, ai_primary_target, ai_last_synced_focus) = {
+        let ctx = {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
@@ -4479,70 +4479,31 @@ impl EngineInner {
                 })
             });
 
-            // Read enemy AI's primary_target, last-synced focus
-            // marker, and drunkenness for the focus edge check
-            // and wobble inputs.
-            let (primary_target, last_synced, blood_alcohol) = entity
+            let blood_alcohol = entity
                 .enemy_ai()
-                .map(|e| {
-                    (
-                        e.base.primary_target,
-                        e.base.last_synced_focus_target,
-                        e.base.blood_alcohol,
-                    )
-                })
-                .unwrap_or((0, None, 0));
+                .map(|enemy| enemy.base.blood_alcohol)
+                .unwrap_or(0);
 
-            (
-                ai_vision::RefreshViewContext {
-                    body_direction: edata.direction(),
-                    posture: edata.posture,
-                    animation,
-                    is_unconscious,
-                    is_tied: edata.posture == crate::element::Posture::Tied,
-                    is_dead: entity.is_dead(),
-                    is_active_and_outside_building,
-                    is_rider: matches!(entity, Entity::Soldier(s) if s.soldier.rider),
-                    blood_alcohol,
-                    own_position: pos,
-                    follow_target_position,
-                },
-                primary_target,
-                last_synced,
-            )
+            ai_vision::RefreshViewContext {
+                body_direction: edata.direction(),
+                posture: edata.posture,
+                animation,
+                is_unconscious,
+                is_tied: edata.posture == crate::element::Posture::Tied,
+                is_dead: entity.is_dead(),
+                is_active_and_outside_building,
+                is_rider: matches!(entity, Entity::Soldier(s) if s.soldier.rider),
+                blood_alcohol,
+                own_position: pos,
+                follow_target_position,
+            }
         };
         // shared borrow dropped ──
 
-        let ai_primary_target_focus = (ai_primary_target != 0).then_some(ai_primary_target);
-        let ai_primary_target_id = ai_primary_target_focus
-            .map(|handle| self.expect_human_id_for_ai_handle(handle, "AI primary-target focus"));
-
-        // ── Phase 2: mutable — apply refresh_view + focus sync ──
+        // ── Phase 2: mutable — apply RefreshView ──
         let Some(entity) = self.world.entities.get_mut(npc_id) else {
             return;
         };
-        // Edge-triggered focus sync: only react when
-        // `primary_target` *changed* since the last reconcile.
-        // The explicit `pending_focus`/`pending_unfocus` channels
-        // are honoured by the drain — they update
-        // `last_synced_focus_target` so the next pass sees no
-        // edge and won't re-assert focus.  `focus(NULL)` on self
-        // is a separate concern from `primary_target` lifecycle
-        // (e.g. rider charge passing).
-        if ai_primary_target_focus != ai_last_synced_focus
-            && let Some(npc) = entity.npc_data_mut()
-        {
-            if let Some(target_id) = ai_primary_target_id {
-                ai_vision::focus_entity(npc, target_id);
-            } else {
-                ai_vision::unfocus(npc);
-            }
-        }
-        if ai_primary_target_focus != ai_last_synced_focus
-            && let Some(ai) = entity.enemy_ai_mut()
-        {
-            ai.base.last_synced_focus_target = ai_primary_target_focus;
-        }
         if let Some(npc) = entity.npc_data_mut() {
             ai_vision::refresh_view(npc, &ctx);
         }
