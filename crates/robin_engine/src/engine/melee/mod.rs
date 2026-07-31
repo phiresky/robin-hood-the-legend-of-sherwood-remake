@@ -1839,9 +1839,9 @@ fn collect_arc_victims(
         ) {
             continue;
         }
-        // Use ground position (which includes elevation in the Y
-        // coordinate) for MOTION_DONE victim collection.
-        let pos = entity.ground_position();
+        // Original computes strike geometry from GetPositionMap(); elevation
+        // is handled independently by IsPossibleSwordStrikeVictim.
+        let pos = entity.element_data().position_map();
         let dx = pos.x - attacker_pos.0;
         let dy = (pos.y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
         // Quick reject
@@ -1924,9 +1924,12 @@ fn collect_circle_warn_victims(
         ) {
             continue;
         }
-        let pos = entity.ground_position();
-        let dx = pos.x - attacker_pos.0;
-        let dy = (pos.y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
+        let pos = entity.element_data().position_map();
+        // GetPossibleVictimsOfCircleSwordStrike forms this vector as
+        // attacker - victim. Distance is symmetric, but the same vector's
+        // sector drives the walking-with-sword warning tolerance below.
+        let dx = attacker_pos.0 - pos.x;
+        let dy = (attacker_pos.1 - pos.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
         if dx.abs().max(dy.abs()) > 150.0 {
             continue;
         }
@@ -2018,9 +2021,8 @@ fn collect_push_victims(
         if (attacker_elevation - victim_elev).abs() > MAX_ELEVATION_SWORDFIGHT {
             continue;
         }
-        // Use ground position (which includes elevation in Y) for
-        // MOTION_DONE victim collection.
-        let pos = entity.ground_position();
+        // Original's rectangle is projected from GetPositionMap().
+        let pos = entity.element_data().position_map();
         let dx = pos.x - attacker_pos.0;
         let dy = (pos.y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
         if dx.abs().max(dy.abs()) > 150.0 {

@@ -3745,6 +3745,26 @@ nearest. At SuN1Sh1nE frame 58, soldier 48 consequently selected the enemy at
 and sector 9. The shared primary-target selector now constructs the exact
 world-space delta used by Original before applying either norm.
 
+### Sword-strike areas use map coordinates, not world-ground coordinates
+
+Original's lateral, half-circle, circle, and push victim collectors all build
+their 2D strike geometry by subtracting `GetPositionMap()` values. The separate
+`IsPossibleSwordStrikeVictim` gate retains its 3D belt-point reachability test;
+elevation is not also folded into the strike vector's Y coordinate. Rust used
+`ground_position()` for
+three shared collectors, adding each actor's elevation to map Y and changing
+both range and angular admission across sloped or stacked surfaces.
+The circle-warning collector also now preserves Original's authored
+attacker-minus-victim vector direction when deriving its approach tolerance;
+the direction is observable there even though its length is symmetric.
+
+At SuN1Sh1nE frame 67 this admitted soldier 112 as a fourth victim of soldier
+54's F sweep. Original hits only soldiers 103, 105, and 110. Interrupting the
+extra victim's parry then triggered a synchronous swordfight reconsideration
+and four unrecorded combat RNG draws. The hit, circle-warning, and push
+collectors now retain map-space geometry exactly as the corresponding Original
+methods do.
+
 ### Inactive scripted motion bypasses anti-collision
 
 Original `RHSprite::PerformMotion` calls `UpdatePositionAntiCollision` only
