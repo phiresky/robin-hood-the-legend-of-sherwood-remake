@@ -7212,6 +7212,15 @@ impl EngineInner {
             flags |= crate::ai::GotoFlags::DONT_STOP;
         }
         ai.go_to(waypoint_position, flags, &ctx);
+
+        // SetPathWalkingFlags calls GoTo directly inside the script native.
+        // Promote that exact owner's intent now instead of leaving it for the
+        // next frame's global pending-order pass. The enclosing script driver
+        // subsequently drains the resulting deferred InstructOwner action
+        // with the still-active VM stack, so the replacement transition is
+        // constructed from this call frame's position just like Original.
+        self.launch_pending_orders_for_npc(npc_id);
+        let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
     }
 
     /// Drain a queued [`PanicRequest`] on a single NPC.

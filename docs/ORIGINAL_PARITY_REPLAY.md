@@ -2647,6 +2647,21 @@ been removed: translated `Focus(element)`, `Focus(position)`, and
 Nescafe Profile 003 Savegames 010, 011, and 014 match every recorded frame,
 and the related traces proceed to later independent combat decisions.
 
+### Path walking-style changes relaunch movement inside the native
+
+Original `RHArtificialIntelligence::SetPathWalkingFlags` writes the new
+default flags and immediately calls `GoTo` for an NPC already travelling its
+patrol route. This entire replacement launch is nested inside the
+`SetPathWalkingStyle` script native. Rust already reproduced the route and
+flag selection, but left the resulting order in the AI outbox for the next
+frame's global order pass.
+
+The script-effect bridge now promotes that owner's move immediately and leaves
+only its ordinary deferred `InstructOwner` action for the active script driver
+to close. Consequently a RUN-to-WALK transition samples the actor position
+visible to the native call rather than its next-frame position. Linux2 Profile
+002 QuickSave now passes the former frame-2061 transition-goal mismatch.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
