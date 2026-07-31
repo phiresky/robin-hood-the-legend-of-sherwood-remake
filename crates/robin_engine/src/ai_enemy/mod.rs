@@ -2436,10 +2436,15 @@ impl EnemyAi {
             if !state_ok {
                 continue;
             }
-            // Range check against my position (not against `pos`).
+            // Range check against my position (not against `pos`).  The
+            // original subtracts RHElement::GetPosition(), i.e. full
+            // world-space `(map_x, map_y + z, z)` points, before calling
+            // SquareNorm.  A projected map-space check incorrectly lets a
+            // guard on a raised platform alert soldiers far below it.
             let dx = view.position.x - my_pos.x;
-            let dy = view.position.y - my_pos.y;
-            if dx * dx + dy * dy >= radius_sq {
+            let dz = view.elevation - ctx.elevation;
+            let dy = (view.position.y + view.elevation) - (my_pos.y + ctx.elevation);
+            if dx * dx + dy * dy + dz * dz >= radius_sq {
                 continue;
             }
 
