@@ -1497,6 +1497,14 @@ impl EnemyAi {
                         );
                     }
                     self.base.primary_target = enemy;
+                    // Original EVENT_ENTER_SWORDFIGHT only replaces
+                    // mpPrimaryTarget; unlike the ordinary
+                    // BattleDecisions path, it does not call Focus on the
+                    // new opponent. Consume Rust's deferred
+                    // primary-target/focus reconciliation edge so a
+                    // restored EYES_FOLLOW lock remains on its independently
+                    // saved target.
+                    self.base.last_synced_focus_target = Some(enemy);
                     self.enemy_seen_below = false;
                     self.base.set_transient_emoticon(EmoticonType::XMark, 30, 0);
                     self.set_state(AiState::Attacking, Substate::AttackingSwordfight);

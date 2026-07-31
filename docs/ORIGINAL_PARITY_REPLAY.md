@@ -2618,6 +2618,24 @@ a transition carrying `RHMOVE_SEEK` calls `RHElementActor::PerformSeek`,
 which explicitly forwards the movement element's speed factor. Rust now makes
 the same distinction instead of treating every transition as unscaled.
 
+### Swordfight event retargeting does not retarget the eyes
+
+`EVENT_ENTER_SWORDFIGHT` assigns the incoming opponent to
+`mpPrimaryTarget`, but does not call `Focus`. This differs from the ordinary
+`BattleDecisions` approach path, which explicitly focuses its chosen target.
+The AI's combat target and the NPC view cone's followed element are therefore
+independent state.
+
+Rust's edge-triggered bridge between deferred AI target writes and NPC focus
+mistook the event's target assignment for an implicit `Focus` call. A soldier
+restored while following one PC would begin a fight with another PC, turn its
+eyes toward the new opponent one frame later, and consequently accept
+`EVENT_OUTOFVIEW` events that Original rejects using the old stare vector.
+The event handler now consumes the bookkeeping edge without changing the
+restored view target. Nescafe Profile 003 Savegame 010 and Savegame 014 match
+every recorded frame, and the related traces proceed to later independent
+combat decisions.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
