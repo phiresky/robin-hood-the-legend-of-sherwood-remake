@@ -3881,6 +3881,20 @@ conversation-order difference at frame 54501 (Rust has already queued soldier 18
 ahead of Original soldier 172's exclamation 74). That next issue is AI
 conversation scheduling, not sound-duration reconstruction.
 
+### EnterSwordfight instruction preserves a postponed movement goal
+
+Original `RHElementActor::Stop` retains an in-progress movement long enough to
+play its transition to waiting. A stronger `EnterSwordfight` element can then
+postpone that movement, leaving the sprite's existing map goal authoritative
+until the raising-sword order actually executes. Rust previously cleared the
+goal while merely translating/instructing `TransitionRaisingSword`, one actor
+execution boundary too early.
+
+EnterSwordfight instruction now only queues the order and marks the element in
+progress; sprite destination side effects remain owned by order execution.
+Linux2 Profile 002 Savegame 042 consequently preserves soldier 151's
+`(768, 1796)` movement goal through the former frame-6987 boundary.
+
 ## Frozen full-corpus audit at `2a3e842df`
 
 The first no-unknown audit froze the debug parity runner built from commit

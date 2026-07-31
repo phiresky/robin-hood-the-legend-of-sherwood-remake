@@ -236,21 +236,6 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .push_order_on(seq_id, elem_idx, order);
-
-            // `RHSprite::PerformAction` copies a fresh order's
-            // `pointDestination2D` into the sprite map goal. The raising-
-            // sword order has the default zero destination, so entering a
-            // swordfight clears the destination of a movement that the
-            // stronger element postponed. Rust installs this order after the
-            // generic-animation owner slot in some recursive AI paths; apply
-            // the same initialization at instruction time so the value is
-            // observable in the launch frame rather than one frame late.
-            self.world
-                .entities
-                .get_mut(owner)
-                .unwrap_or_else(|| panic!("EnterSwordfight owner {owner:?} disappeared"))
-                .position_iface_mut()
-                .set_map_goal(crate::coordinates::MapPoint::ZERO);
         }
         if transition.is_some() {
             self.orders

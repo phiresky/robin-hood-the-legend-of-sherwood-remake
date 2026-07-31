@@ -4080,6 +4080,45 @@ mod tests {
     }
 
     #[test]
+    fn enter_swordfight_instruct_preserves_live_sprite_destination() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let owner = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let retained_goal = crate::coordinates::MapPoint::new(768.0, 1796.0);
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .position_iface_mut()
+            .set_map_goal(retained_goal);
+
+        let mut sequence = crate::sequence::Sequence::new();
+        sequence.append_element(crate::sequence::SequenceElement::new_generic(
+            1,
+            Command::EnterSwordfight,
+            Some(owner),
+        ));
+        let seq_id = engine.launch_sequence(sequence);
+        engine.dispatch_enter_swordfight(&sim, &LevelAssets::default(), owner, None, seq_id, 0);
+
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .position_iface()
+                .map_goal(),
+            retained_goal,
+            "translation must not apply TransitionRaisingSword's zero destination before Execute"
+        );
+    }
+
+    #[test]
     fn preparing_swordfight_delivers_interrupted_done_before_enter_event() {
         use crate::ai::{AiState, LogLineType, StimulusType, Substate};
         use crate::profiles::{CharacterProfile, HtHWeaponProfile, ProfileManager, SoldierProfile};
