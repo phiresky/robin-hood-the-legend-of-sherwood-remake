@@ -18,6 +18,10 @@ pub struct AiContext {
     /// handlers, as distinct from the periodic detectable-list pass.
     pub self_eye_position: MapPoint,
     pub self_eye_z: f32,
+    /// Live `mViewParameters.starePoint` in ground-plane coordinates.
+    /// Unexpected OUTOFVIEW handling compares this against the actor's
+    /// ground position before deciding whether the lost target is behind.
+    pub self_stare_point: crate::coordinates::GroundPoint,
     pub self_view_direction: [f32; 2],
     pub self_view_radius: u16,
     pub self_real_half_aperture: f32,

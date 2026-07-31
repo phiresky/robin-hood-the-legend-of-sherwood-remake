@@ -633,6 +633,12 @@ pub(super) fn build_ai_context_from_entity(
         })
         .unwrap_or_else(|| elem.position_map());
     let self_eye_z = self_eye.map(|eye| eye.z).unwrap_or(elem.position().z);
+    let self_stare_point = entity
+        .npc_data()
+        .map(|npc| npc.stare_point)
+        .unwrap_or_else(|| {
+            crate::coordinates::GroundPoint::from_map_and_z(elem.position_map(), elem.position().z)
+        });
     let self_view_direction = entity
         .npc_data()
         .map(|npc| npc.view_direction)
@@ -661,6 +667,7 @@ pub(super) fn build_ai_context_from_entity(
         posture: elem.posture,
         self_eye_position,
         self_eye_z,
+        self_stare_point,
         self_view_direction,
         self_view_radius: self_view_radius as u16,
         self_real_half_aperture,

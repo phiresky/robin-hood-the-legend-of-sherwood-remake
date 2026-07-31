@@ -2281,12 +2281,13 @@ impl EnemyAi {
     /// target is "just out of view because I'm looking the wrong
     /// way" and the OUTOFVIEW is ignored.
     ///
-    /// Uses `seek_position` as the stare target (where the AI last
-    /// thought the enemy was), which is kept updated by the same
-    /// detection path that drives this handler.
     fn enemy_is_behind_me(&self, ctx: &AiContext) -> bool {
-        let stare_dx = (self.base.seek_position.x - ctx.position.x) * ASPECT_RATIO;
-        let stare_dy = self.base.seek_position.y - ctx.position.y;
+        let actor_ground = crate::coordinates::GroundPoint::from_map_and_z(
+            crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y),
+            ctx.elevation,
+        );
+        let stare_dx = (ctx.self_stare_point.x - actor_ground.x) * ASPECT_RATIO;
+        let stare_dy = ctx.self_stare_point.y - actor_ground.y;
         // `SetSector0to15` inverse — turn the 0..15 direction back into
         // a unit vector (y is the isometric-stretched component).
         let angle = (ctx.direction as f32) * (std::f32::consts::TAU / 16.0);

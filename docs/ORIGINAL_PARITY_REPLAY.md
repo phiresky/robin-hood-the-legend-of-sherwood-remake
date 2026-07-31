@@ -2293,6 +2293,21 @@ the same widths as the Original. Cyrdach Profile 156 Savegame 018's crowded
 PC movement at frame 1164 now matches bit-for-bit; Savegame 007 remains a full
 match.
 
+### Lost-enemy handling uses the live ground-space stare point
+
+Original's `_ANY_SWORDFIGHT_SUBSTATE_` switch arm intentionally has no
+`break`: when the primary target is not still detectable in 360 degrees, it
+falls through the same look-vector/stare-vector guard as
+`REACTIONTIME_RUNNING`, `APPROACH_TO_OBSERVE`, and `ADVANCING_WITH_SHIELD`.
+Rust previously skipped that guard for swordfight substates. Its existing
+guard also substituted the AI's map-space `seek_position` for
+`mViewParameters.starePoint`, although the latter is a ground-space point and
+can lie on the other side of the actor after elevation projection. The AI
+context now carries the live ground-space stare point and all of these
+fallthrough cases share the exact guard. This prevents a simultaneous
+OUTOFVIEW pair from spuriously launching a seek-area RNG burst in Linux2
+Profile 002 `Continue-session-0002`.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

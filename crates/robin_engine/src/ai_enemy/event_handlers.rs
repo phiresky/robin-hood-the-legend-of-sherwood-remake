@@ -280,8 +280,16 @@ impl EnemyAi {
                                 // Still close — stay in swordfight.
                                 return false;
                             }
+                            // Original's `_ANY_SWORDFIGHT_SUBSTATE_` case has
+                            // no break here. A failed 360-degree check falls
+                            // through the same stare-vector guard used by
+                            // REACTIONTIME_RUNNING / APPROACH_TO_OBSERVE /
+                            // ADVANCING_WITH_SHIELD before reaching the
+                            // shared lost-enemy body.
+                            if self.enemy_is_behind_me(ctx) {
+                                return false;
+                            }
                             self.out_of_view_seek_handler(sim, enemy, global, ctx, tick, grid);
-                            // else: detecting 360° — ignore, stay in swordfight.
                         }
 
                         // REACTIONTIME_RUNNING / APPROACH_TO_OBSERVE /
