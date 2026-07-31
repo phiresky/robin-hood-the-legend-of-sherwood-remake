@@ -2607,13 +2607,15 @@ impl EnemyAi {
             return;
         }
 
-        // (7) Combat trainer special path: snap to face the target,
-        //     stop, set Observe, launch 20-tick timer.
+        // (7) Combat trainer special path: progressively face the target,
+        //     stop, set Observe, launch 20-tick timer. The Original calls
+        //     `SetDirection`, which changes the goal only; the actor's normal
+        //     turn step advances the current direction on the following frame.
         if self.combat_trainer {
             if let Some(primary) = self.find_fighter(new_primary, tick) {
                 let v = pos_diff(&primary.position, &me_pos);
                 let dir = vec_to_sector_ar(v.0, v.1, ASPECT_RATIO);
-                self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
+                self.base.set_direction_goal(dir as u16);
             }
             self.base.outbox.actor.set_focus(new_primary);
             self.base.stop_all();
