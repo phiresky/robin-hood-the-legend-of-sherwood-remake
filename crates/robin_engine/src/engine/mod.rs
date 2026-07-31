@@ -2229,7 +2229,10 @@ impl EngineInner {
                             self.orders
                                 .sequence_manager
                                 .get_element_mut(new_seq, new_idx),
-                        ) {
+                        ) && element
+                            .get_property(crate::sequence::Field::RetainedMovementGoal)
+                            .is_none()
+                        {
                             element.set_property(
                                 crate::sequence::Field::RetainedMovementGoal,
                                 crate::sequence::FieldValue::GeoPoint2D {
