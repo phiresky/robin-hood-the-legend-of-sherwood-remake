@@ -3465,8 +3465,16 @@ including its 59 saved elements, 8 dynamic elements, and 311 authoritative RNG
 draws. Savegame 013 matches all 250 frames (121 through 371), including its 59
 saved elements, 8 dynamic elements, and 327 authoritative RNG draws. Savegame
 015 matches all 250 frames (68 through 318), including its 59 saved elements, 8
-dynamic elements, and 326 authoritative RNG draws. No replay-specific
-compatibility or code change was required.
+dynamic elements, and 326 authoritative RNG draws. Savegame 017 matches all 250
+frames (56 through 306), including its 59 saved elements, 8 dynamic elements,
+and 308 authoritative RNG draws. No replay-specific compatibility or code
+change was required.
+
+This completes the frozen recheck of the entire excluded static batch: 15
+Linux3 Profile 003 traces and 5 nicouzouf Profile 001 traces, totaling 5,000
+exactly matching frames and 9,223 authoritative RNG draws. Their loaded start
+states collectively exercise 1,868 saved element entries, including 848 dynamic
+element entries.
 
 The remaining failures group into reusable behavior boundaries rather than
 save-specific mismatches:
