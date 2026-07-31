@@ -691,6 +691,13 @@ impl EngineInner {
 
         // Dispatch combat stimulus to attacker's AI: EventLethalStrike
         // if victim died, EventGoodStrike if damage was dealt.
+        //
+        // Original provenance: `RHElementActorHuman::TranslateDamage` calls
+        // the attacker's `Think(EVENT_{LETHAL,GOOD}_STRIKE)` inline
+        // (`original-code/RHelementactorhuman.cpp:2633-2665`). In particular,
+        // the good-strike handler must still observe
+        // `SUBSTATE_ATTACKING_SWORDFIGHT_SPECIAL_STRIKE`; leaving this in the
+        // ordinary NPC-phase queue can suppress the associated combat remark.
         if !result.is_empty()
             && !result.contains(combat::SwordDamageResult::NO_DAMAGE_PARRIED)
             && let Some(atk_id) = attacker_id
@@ -701,6 +708,7 @@ impl EngineInner {
                 crate::ai::StimulusType::EventGoodStrike
             };
             self.dispatch_ai_stimulus(atk_id, crate::ai::Stimulus::new(stimulus_type));
+            self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, atk_id, assets, None, None);
         }
 
         // Death push-vs-drop selector: a non-rider killed by a strike
