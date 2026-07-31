@@ -427,6 +427,7 @@ initial entity mapping and are not parity oracles.
 | Done | Exact Original visibility | Original's performance cache reduced a 3D ray to a lossy integer key in one of 2,000 buckets and reused the cached Boolean without incorporating obstacle state. Distinct rays could therefore share stale visibility, making target discovery depend on unrelated prior queries. Rust already tested the exact active obstacle set on every query. | The Original now always executes its existing exact obstacle test. Legacy key/offset values remain diagnostic fields in the trace, but new captures report no cache hits. This is a general engine-correctness change rather than a replay-specific exception; a fresh recording is required because session 2 contains the old cached result. |
 | Done | Structured Rust frame dump | Broad parity snapshots did not expose transient AI, sequence, movement, and vision state, forcing repeated one-off logging changes. | `original_parity_replay --dump-jsonl` writes stable JSONL records containing the complete serializable engine snapshot, resolved commands, RNG cursor/batch, entity mapping, and parity differences. `--dump-from`, `--dump-through`, and repeatable `--dump-entity kind:index` filters keep targeted captures manageable; omitting the entity filter retains the whole engine. An ordinary first-divergence run now retains a rolling full-engine window and automatically writes the divergent frame plus its 32 predecessors to a unique temporary JSONL file. Explicit dump and `--scan-all` behavior remains unchanged. |
 | Done | Visual parity replay | A headless mismatch report does not show how the divergent frame looks in motion. | `original_parity_replay --visual` runs the same authoritative resolved-command/RNG replay in the normal window/GPU runner, ignores live gameplay input, renders the decoded map and current sprites at a visible rate, and freezes the first divergent state until the window is closed. Headless remains the default for fast iteration. |
+| Done | Corpus frame-zero screenshots | Save adoption can be logically wrong in a visually obvious way even before the first simulation frame, but opening every replay interactively is impractical. | `original_parity_replay --frame-zero-screenshot-dir DIR` renders the adopted state before any recorded command or hourglass tick, captures it through a hidden GPU window, and writes a PNG into the requested directory. Corpus-relative path components are flattened into the filename so profiles with identical save-slot names cannot overwrite one another. Combining the option with `--visual` keeps the window visible. |
 | Done | Global RNG replay | Bored/waiting choices affect head direction and later AI behavior; reproducing only a seed is insufficient across different implementations. | Rust can consume the trace's filtered global libc `rand()` draw stream and records typed Rust consumption sites. Startup and every frame assert the exact draw cursor. |
 | Done | Stable RNG domains | Rebuilding the Original shifted every raw return-address offset, so the first quiet-music draw was misclassified as simulation RNG despite identical values and state. | Original schema 3 introduced a parallel `simulation`/`audio` domain for every global libc draw while retaining callsite offsets as diagnostics (`a72d8c0`). The schema-8-only Rust runner consumes stable domains directly and has no symbol lookup or hard-coded-offset fallback. A fingerprinted RNG sidecar avoids rescanning multi-gigabyte traces during every first-divergence iteration. |
 | Done | Isomorphic identity | Original and Rust IDs and hidden startup objects differ, while the logical world is equivalent. | The runner constructs a mission-start entity bijection from kind, stable data, and creation order. Original's hidden 31-object prefix is retained where creation order is itself gameplay state, such as staggered detection. |
@@ -776,6 +777,19 @@ the first divergence while the normal logical mismatch report is printed:
 TRACE_JSONL=/path/to/schema10-trace.jsonl
 ROBINHOOD_DATA_DIR=datadirs/demo_leicester_linux \
   target/debug/examples/original_parity_replay --visual \
+  "$TRACE_JSONL"
+```
+
+To capture the adopted state before frame 1 into a chosen directory, use the
+frame-zero screenshot option. It keeps the required GPU window hidden unless
+`--visual` is also present and uses flattened corpus-relative names to avoid
+collisions between profiles:
+
+```sh
+TRACE_JSONL=/path/to/parity-save-replays/traces/Profile/Savegame_000-session-0001.jsonl.zst
+ROBINHOOD_DATA_DIR=datadirs/fullgame_linux \
+  target/release/examples/original_parity_replay \
+  --frame-zero-screenshot-dir output/parity-frame-zero \
   "$TRACE_JSONL"
 ```
 
@@ -3603,6 +3617,36 @@ The shared passes now operate on `NpcData`, and loaded FriendlyAI ownership is
 backfilled for the corresponding civilian NPCs. Linux3 Profile 001 Savegame
 030 matches through its former frame-30378 divergence and now reaches the next
 independent mismatch at frame 30435.
+
+### Legacy AI adoption restores both saved seek positions
+
+Original saves serialize both `mposSeekPosition` and
+`mposAlertSoldiersPoint`. The Linux-v48 decoder already read both values, but
+the conversion and atomic-adoption layers omitted them, leaving loaded AI with
+zero/default coordinates. Rust now carries both positions through the legacy
+save plan and installs them in the live AI state. Linux3 Profile 001 Savegame
+030 consequently advances from frame 30435 to its next independent mismatch at
+frame 30465.
+
+### Civilian alert reports launch their timer after changing state
+
+Original's civilian `CALL_REPORT` handling enters the alert-report look state,
+faces the report point, and only then launches the 30-frame timer. Rust launched
+the timer before `SetState`; state replacement cancels active timers, so the
+report never reached the same completion boundary. Rust now preserves the
+Original ordering and uses the Original 3D `Face(RHposition)` operation at the
+timer expiration boundary. Linux3 Profile 001 Savegame 030 advances from frame
+30465 to frame 30495.
+
+### Officer alert radius uses isometric max-norm distance
+
+Original `AlertOfficer` calls `MaxNormDistance`, which stretches world Y by
+`INVERSE_ASPECT_RATIO` before taking the max norm. Rust used raw map X/Y and
+therefore admitted officers much farther away vertically on the isometric map.
+The candidate scan now applies the same Y stretch and no longer writes
+`alert_soldiers_point`, which Original `AlertOfficer` does not mutate. This
+fixes Linux3 Profile 001 Savegame 030's frame-30495 branch and makes the entire
+recording match exactly.
 
 ### Small Linux profiles match end to end
 

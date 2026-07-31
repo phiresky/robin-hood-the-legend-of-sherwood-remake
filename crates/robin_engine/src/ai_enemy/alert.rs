@@ -888,7 +888,7 @@ impl EnemyAi {
     pub fn alert_officer(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        center: Position,
+        _center: Position,
         _flags: u16,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -899,8 +899,6 @@ impl EnemyAi {
         // soldier doesn't keep staring at the trigger entity while running
         // to the officer.
         self.base.outbox.actor.set_unfocus();
-
-        self.base.alert_soldiers_point = center;
 
         let my_pos = ctx.position;
         let my_layer = ctx.position.level;
@@ -957,7 +955,11 @@ impl EnemyAi {
 
                         // MaxNorm distance
                         let dx = (cs.position.x - my_pos.x).abs();
-                        let dy = (cs.position.y - my_pos.y).abs();
+                        // Original MaxNormDistance stretches world Y before
+                        // taking the max norm.  Using raw map Y makes the
+                        // alert radius much too tall in the isometric view.
+                        let dy = (cs.position.y - my_pos.y).abs()
+                            * crate::position_interface::INVERSE_ASPECT_RATIO;
                         let mut distance = dx.max(dy);
 
                         // Layer change penalty (only fires
