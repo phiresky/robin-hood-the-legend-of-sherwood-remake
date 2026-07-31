@@ -559,14 +559,26 @@ pub fn entity_view_from_entity(
     // in-Entity logic at `element.rs:2926` / `compute_eyes_point`.
     let is_rider = matches!(entity, Entity::Soldier(s) if s.soldier.rider);
 
-    // `in_coma` + `guard` on PCs — look up through campaign status
-    // because `PcStatus` isn't embedded in `PcData`.
+    // `in_coma` + `guard` on PCs — look up through the exact campaign
+    // description because `PcStatus` isn't embedded in `PcData`.
+    // `list_index` is only the actor/UI list byte; it is not the identity of
+    // Original's `mpDescription` and can point at an unrelated campaign PC.
     let (in_coma, guard) = match entity {
         Entity::Pc(pc) => {
-            let coma = campaign
-                .and_then(|c| c.characters.get(pc.pc.list_index as usize))
-                .map(|p| p.status.in_coma)
-                .unwrap_or(false);
+            let coma = campaign.map_or(false, |c| {
+                let description_index = pc.pc.campaign_description_index.unwrap_or_else(|| {
+                    panic!("live PC is missing its required campaign-description identity")
+                });
+                c.characters
+                    .get(description_index as usize)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "live PC campaign-description index {description_index} is outside the campaign character table"
+                        )
+                    })
+                    .status
+                    .in_coma
+            });
             let guard_handle = pc.pc.guard.map(|eid| eid.index());
             (coma, guard_handle)
         }
