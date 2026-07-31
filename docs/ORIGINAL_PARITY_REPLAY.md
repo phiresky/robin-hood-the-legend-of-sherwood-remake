@@ -3197,6 +3197,116 @@ therefore observe the same selected-owner boundary instead of clearing the
 goal when the first Turning order initializes. This advances nicouzouf
 Savegame 008 from frame 110 to the mobile-motion boundary at frame 178.
 
+### Loaded building occupants update the house AI view
+
+`RHSectorBuilding::Serialize` restores each building's ordered occupant list
+and arrow reserve from the save. Rust already adopted those values into the
+script-facing building domain, but `EnemyInHouseAlert` reads the separate
+typed occupant list held by `AiGlobalState::houses`. That view remained at its
+mission-start contents, so a loaded house containing both camps and civilians
+could incorrectly skip panic propagation and battle-before-door setup.
+
+Grid adoption now updates both representations from the same preflighted,
+typed occupant list while preserving the save's ordering. This follows the
+Original's single authoritative building list and makes Linux3 Profile 001
+Savegame 014 match every recorded frame.
+
+### Actor movement snapshots are frame-local
+
+`RHElementActor::Hourglass` calls `NewMove` after installing a lazy Wait and
+immediately before it samples the selected order and enters `Execute`.
+Delayed-position branches take an earlier snapshot for their crossing segment
+and still reach this second call. Rust now performs the same per-owner
+snapshot, so `IsMoving` and `IsMovingMap` compare against the start of the
+actor's current hourglass slot rather than a stale loaded-save or previous
+movement snapshot.
+
+### Anti-collision queries use the actor's current radius
+
+`RHPositionInterface::UpdatePositionAntiCollision` computes its neighbour
+query half-diagonal as `MAX_REPULSIVE_DISTANCE + mfRadius`. The radius is live
+state: repeated blocked moves can shrink it below the normal human radius.
+Rust previously used the fixed normal radius for this query even though it
+correctly used the shrunken radius in the later deviation math.
+
+The extra query width could include a neighbour which the Original excluded;
+the mere presence of that neighbour also enables the level-corner repulsion
+pass, making a one-unit query discrepancy produce a visible turn and position
+change. Rust now uses the same current radius for both the query and deviation
+stages. This makes Nescafe Profile 001 Continue, Restart, and Savegames 000–004
+match every recorded frame. The complete Nescafe Profile 003 corpus—Continue,
+Restart, Savegames 000–016, and Sherwood—also matches every recorded frame.
+
+### Non-enemy visibility retains its periodic cadence
+
+Original `ComputeVisibility(RHDetectable&)` computes a `bRefreshAlways` flag
+when an observer is staring, following, or visually above Green alert, but only
+consults that flag in the Lacklandist Enemy branches. Body, Friend,
+MissedFriend, Beggar, and Object entries continue to reuse their cached
+visibility until the detectable type's modulo frequency opens.
+
+Rust had applied the enemy-only shortcut to every detectable type. An alerted
+soldier therefore refreshed a nearby friend early, emitted
+`EVENT_SEES_SOLDIER`, and launched a new movement one frame before Original.
+The non-enemy human and object passes now remain strictly cadence-bound while
+the existing enemy behavior retains its refresh shortcut. This is a direct,
+general translation of the Original branch structure and makes Linux3 Profile
+001 Savegame 016 match every recorded frame.
+
+### Loaded standard strikes rebuild their execution cache
+
+Original persists an in-flight standard sword strike through the actor's
+selected sequence element, its current order and antagonist, and the sprite's
+live action cursor. Rust additionally uses `ActiveMelee` as a derived runtime
+cache, so restoring only the serialized Original objects left a resumed strike
+visually active but unable to deliver its pending hit.
+
+Save adoption now rebuilds `ActiveMelee` from those authoritative pieces. The
+sprite order identity and action-done cursor determine whether the hit is
+still pending, preventing both a lost hit before the action frame and a
+duplicate hit after it.
+
+### Parry countdowns run in actor creation order
+
+`RHElementActorHuman::Execute` decrements `muwParryCounter` inside the active
+parry animation. A normal parry queues `STOP_PARRY_SWORD` at that exact actor
+slot; a low parry terminates its own order. This ordering is observable when a
+later-created attacker queues damage during the same engine traversal.
+
+Rust now advances the counter in each actor's Execute slot rather than in a
+post-traversal combat batch. It also preserves the Original unsigned decrement
+followed by signed 16-bit expiry check, including zero wrapping to an expired
+negative value.
+
+### `EVENT_OUTOFVIEW` handles the event's explicit enemy
+
+The Original handler receives the actor which left view and applies the active
+approach or stationary-attacking branch to that explicit actor. It does not
+require the actor to remain the AI's current primary target. Rust removed that
+extra primary-target guard, so target replacement during queued visibility
+events no longer causes a valid out-of-view event to be discarded.
+
+### Too-proud combat facing includes elevation
+
+The `ATTACKING_TOO_PROUD_TO_ATTACK` decision calls `Face(mpPrimaryTarget)` in
+Original. That overload uses the target element's full position, including
+elevation, before choosing the 16-way direction. Rust now uses the same
+element-aware facing path instead of projecting only the map-plane delta.
+
+### An amulet coma preserves the interrupted action state
+
+`RHElementActorPC::GetWounded` activates a lethal-hit amulet by setting the
+campaign coma flag, five life points, maximum concussion, lying posture, UI
+state, and campaign inventory. `SetConcussionOfTheBrain` quits swordfight, but
+neither function rewrites the actor action state. That retained state selects
+the appropriate ordinary or sword-specific unconscious animation after the
+damage interruption.
+
+Rust's coma helper no longer forces `Waiting`; it leaves the interrupted state
+intact while clearing only Rust's derived live execution caches. This advances
+Linux3 Profile 003 Savegame 066 beyond the resumed strike, parry-expiry,
+elevation-facing, and coma sequence.
+
 ## Coverage limits
 
 A clean baseline proves exact parity only for the state fields serialized by the
