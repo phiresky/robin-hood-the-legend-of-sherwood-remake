@@ -2393,10 +2393,7 @@ impl EngineInner {
 
         // PCs are royalist fighters from the enemy AI's perspective.
         if my_camp != Camp::Royalists {
-            for &pc_id in &self.world.pc_ids {
-                let Some(Entity::Pc(pc)) = self.world.entities.get(pc_id) else {
-                    continue;
-                };
+            for (pc_id, pc) in self.world.entities.pcs() {
                 let p = pc.element.position_map();
                 let dx = p.x - me_pos_pt.x;
                 let dy = (p.y - me_pos_pt.y) * crate::position_interface::INVERSE_ASPECT_RATIO;

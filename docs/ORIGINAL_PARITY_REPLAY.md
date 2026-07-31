@@ -3473,6 +3473,23 @@ authoritative loaded state. The cleanup is now limited to ordinary runtime
 Turns; legacy-restored elements preserve their adopted sprite goal. Windows
 SuN1Sh1nE Profile 004 Savegame 038 now matches every recorded frame.
 
+### Combat fighter scans include non-party PCs
+
+Original rebuilds swordfight `mlistThem` from the complete camp fighter
+registry, not from the current controllable party. Scripted and training PCs
+therefore remain valid combat candidates even when they are absent from the
+party's `pc_ids` selection list. Rust's combat snapshot now iterates every PC
+entity and applies the ordinary active, radius, and fighting gates afterward.
+
+The same path exposed a geometry error in `IsDetecting180Degrees`. Original
+builds `GetDirectionVector()` with Y compressed by `ASPECT_RATIO`, then
+stretches that Y by `INVERSE_ASPECT_RATIO` for the dot product. The result is
+the plain unit direction table. Rust started from that already-uncompressed
+table and stretched it again, incorrectly narrowing the forward half-plane.
+It now uses the unit table directly. The nearby training PC at this boundary
+is consequently admitted and selected exactly as in Original, and Windows
+SuN1Sh1nE Profile 004 Savegame 014 matches every recorded frame.
+
 ### ClearPatrol keeps the chief formation live through member callbacks
 
 Original `RHArtificialIntelligence::ClearPatrol` walks the theoretical patrol

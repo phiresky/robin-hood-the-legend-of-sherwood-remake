@@ -2142,10 +2142,14 @@ impl EnemyAi {
             return false;
         }
 
-        // Direction unit vector, with the same Y-stretch.
+        // `GetDirectionVector()` first compresses the table Y by
+        // ASPECT_RATIO; Original then stretches it back here.  The shared
+        // Rust table is already the resulting uncompressed unit vector, so
+        // applying INVERSE_ASPECT_RATIO a second time would narrow the
+        // forward half-plane incorrectly.
         let dir = crate::shadow_polygon::sector_to_direction(ctx.direction as i16);
         let fx = dir[0];
-        let fy = dir[1] * crate::position_interface::INVERSE_ASPECT_RATIO;
+        let fy = dir[1];
 
         // Step 4: very-near "beside me" short-circuit.
         if sq_distance < 50.0 * 50.0 {
