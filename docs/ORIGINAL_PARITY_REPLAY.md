@@ -1169,6 +1169,13 @@ result alone reproduces the Original actor state. An authored successor which
 actually reaches its goal and hands off to the stop transition in the same call
 retains `WAITING`.
 
+The ordinary START side-effect path must also skip tagged PC successors. The
+tagged handoff owns that effect exclusively after it verifies that the order is
+still current; otherwise the generic path can set `MOVING` before a short
+successor is replaced by its stop transition. Cyrdach's Windows
+`Continue-session-0005` exercises this exact same-call replacement and now
+matches its complete recording.
+
 This two-stage handoff fixes the repeated Linux3 Profile 001 `MoveOk` cluster;
 save 021 now matches through its complete recording instead of diverging on
 PC 114 at frame 202. It also preserves the complete matches for Linux2 Profile

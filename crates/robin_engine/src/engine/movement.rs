@@ -6402,6 +6402,11 @@ impl EngineInner {
             }
             if !is_transition_anim
                 && !suppress_transition_continuation_start
+                // A deferred PC successor deliberately postpones this
+                // START-only state effect until after order completion has
+                // decided whether the authored walking order survived.  The
+                // guarded handoff below owns that one-shot side effect.
+                && !deferred_movement_state_start_due
                 && let Some((posture, action_state)) =
                     movement_execute_state_effect(order_action, state_effect_motion)
             {
