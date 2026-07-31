@@ -45,10 +45,20 @@ fn enough_nearer_friends_to_observe(
 
 impl EnemyAi {
     pub(super) fn enter_battle_reserve(&mut self, ctx: &AiContext, tick: &AiPerTickData) {
-        let target = self.get_new_primary_target(
+        self.enter_battle_reserve_with_multiplicity(ctx, tick, None);
+    }
+
+    fn enter_battle_reserve_with_multiplicity(
+        &mut self,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+        target_multiplicity: Option<&std::collections::BTreeMap<HumanHandle, u32>>,
+    ) {
+        let target = self.get_new_primary_target_with_mult_override(
             PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
             ctx,
             tick,
+            target_multiplicity,
         );
         self.base.primary_target = target;
         if target != 0 {
@@ -395,13 +405,29 @@ impl EnemyAi {
         // friend-seen injection.
         let mut num_enemies_i_can_see = self.list_them.len();
 
+        // BattleDecisions owns a fresh, local multiplicity calculation in
+        // the original. It first resets every enemy currently in mlistThem,
+        // then increments targets claimed by nearby swordfighting friends
+        // and finally ensures every enemy already in a swordfight has at
+        // least one claimant. The engine-wide snapshot is deliberately not
+        // equivalent: it still contains claims from actors outside this
+        // decision's rebuilt us/them lists.
+        let mut decision_target_multiplicity = std::collections::BTreeMap::new();
+        for &enemy in &self.list_them {
+            decision_target_multiplicity.insert(enemy, 0_u32);
+        }
+
         // Original chooses the primary target from the persistent personal
         // Them list before walking nearby friends and appending the enemies
         // they are attacking. Those appended entries broaden later tactical
         // scans, but must not retroactively replace this decision's primary
         // target merely because one is nearer.
-        self.base.primary_target =
-            self.get_new_primary_target(PrimaryTargetFlags::empty(), ctx, tick);
+        self.base.primary_target = self.get_new_primary_target_with_mult_override(
+            PrimaryTargetFlags::empty(),
+            ctx,
+            tick,
+            Some(&decision_target_multiplicity),
+        );
 
         // Walk same-camp soldiers in STATE_ATTACKING and inject their
         // primary target into list_them so we hunt where they are
@@ -430,9 +456,6 @@ impl EnemyAi {
                 if target == 0 || target == me {
                     continue;
                 }
-                if self.list_them.contains(&target) || friend_seen.contains(&target) {
-                    continue;
-                }
                 // Don't inject same-camp by accident — primary_target
                 // can briefly be a same-camp during the cross-camp
                 // setup race; skip if the target maps to a friendly
@@ -442,6 +465,12 @@ impl EnemyAi {
                     .map(|f| f.is_friendly)
                     .unwrap_or(false);
                 if target_is_friendly {
+                    continue;
+                }
+                if super::util::is_any_swordfight_substate(cs.ai_substate as u32) {
+                    *decision_target_multiplicity.entry(target).or_insert(0) += 1;
+                }
+                if self.list_them.contains(&target) || friend_seen.contains(&target) {
                     continue;
                 }
                 friend_seen.push(target);
@@ -476,6 +505,13 @@ impl EnemyAi {
                                 is_robin: view.is_robin,
                                 is_vip: view.is_vip,
                             });
+                        }
+                        if !is_friend
+                            && view.is_able_to_fight
+                            && view.is_swordfighting
+                            && decision_target_multiplicity.get(&h).copied().unwrap_or(0) == 0
+                        {
+                            decision_target_multiplicity.insert(h, 1);
                         }
                         is_friend || !view.is_able_to_fight
                     }
@@ -843,7 +879,16 @@ impl EnemyAi {
             "battle_decisions: chose decision"
         );
         // Carry out decision (with possible fallback loop)
-        self.execute_battle_decision(sim, decision, cover_shield_bearer, global, ctx, tick, grid);
+        self.execute_battle_decision(
+            sim,
+            decision,
+            cover_shield_bearer,
+            &decision_target_multiplicity,
+            global,
+            ctx,
+            tick,
+            grid,
+        );
 
         self.base
             .register_log_line(LogLineType::BattleDecision, decision as u16);
@@ -857,6 +902,7 @@ impl EnemyAi {
         sim: &crate::sim_rng::SimulationContext,
         mut decision: Decision,
         cover_shield_bearer: HumanHandle,
+        target_multiplicity: &std::collections::BTreeMap<HumanHandle, u32>,
         global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -866,10 +912,11 @@ impl EnemyAi {
         for _ in 0..5 {
             match decision {
                 Decision::Fight => {
-                    let target = self.get_new_primary_target(
+                    let target = self.get_new_primary_target_with_mult_override(
                         PrimaryTargetFlags::UNOCCUPIED_PREFERRED,
                         ctx,
                         tick,
+                        Some(target_multiplicity),
                     );
                     if target != 0 {
                         self.base.primary_target = target;
@@ -886,14 +933,19 @@ impl EnemyAi {
                 }
 
                 Decision::Reserve => {
-                    self.enter_battle_reserve(ctx, tick);
+                    self.enter_battle_reserve_with_multiplicity(
+                        ctx,
+                        tick,
+                        Some(target_multiplicity),
+                    );
                 }
 
                 Decision::LastReserve => {
-                    let target = self.get_new_primary_target(
+                    let target = self.get_new_primary_target_with_mult_override(
                         PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
                         ctx,
                         tick,
+                        Some(target_multiplicity),
                     );
                     self.base.primary_target = target;
                     if ctx.self_action_state.is_sword() {
@@ -929,10 +981,11 @@ impl EnemyAi {
                 }
 
                 Decision::Observe => {
-                    let target = self.get_new_primary_target(
+                    let target = self.get_new_primary_target_with_mult_override(
                         PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
                         ctx,
                         tick,
+                        Some(target_multiplicity),
                     );
                     self.base.primary_target = target;
                     if target != 0 {
@@ -1385,10 +1438,11 @@ impl EnemyAi {
                 }
 
                 Decision::ArcherObserve => {
-                    let target = self.get_new_primary_target(
+                    let target = self.get_new_primary_target_with_mult_override(
                         PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
                         ctx,
                         tick,
+                        Some(target_multiplicity),
                     );
                     self.base.primary_target = target;
                     if target != 0 {
