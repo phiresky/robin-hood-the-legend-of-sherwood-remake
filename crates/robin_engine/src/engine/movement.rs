@@ -428,9 +428,14 @@ fn movement_execute_state_effect(
         (OT::TransitionRunningUprightWalkingUpright, MS::Done | MS::Terminated) => {
             Some((P::Upright, AS::Moving))
         }
-        (OT::WalkingUpright | OT::WalkingAlerted | OT::WalkingCrouched, MS::Start) => {
-            Some((P::Upright, AS::Moving))
-        }
+        (
+            OT::WalkingUpright
+            | OT::WalkingAlerted
+            | OT::WalkingCrouched
+            | OT::WalkingStairs
+            | OT::RunningStairs,
+            MS::Start,
+        ) => Some((P::Upright, AS::Moving)),
         (OT::RunningUpright, MS::Start) => Some((P::Upright, AS::MovingFast)),
         (OT::WalkingWithSword, MS::Start) => Some((P::Upright, AS::MovingSword)),
         (OT::RunningWithSword, MS::Start) => Some((P::Upright, AS::MovingFastSword)),
@@ -10108,34 +10113,18 @@ impl EngineInner {
 
         // Splice startup / end transitions into the order queue
         // based on the actor's posture + action state.
-        let had_launch_transition = self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .is_some_and(|e| e.num_transition_orders > 0 && e.orders.front().is_some());
-        let inserted_path_start_transition = self.post_process_path(seq_id, elem_idx);
-        // `generate_transition` owns the serialized leading-transition span;
-        // `post_process_path` reports its own startup insertion directly.
-        // This also covers a short path whose walking order is relabelled in
-        // place (no queue-length delta), exactly as C++
-        // `InsertTransitionStart` does.
-        let have_start_transition = had_launch_transition || inserted_path_start_transition;
+        self.post_process_path(seq_id, elem_idx);
 
-        // Update actor state. When a startup transition was prepended,
-        // leave `action_state` alone so the transition's `MS::Done`
-        // handler flips it on completion. Sword movement without a startup
-        // transition also stays WaitingSword until `PerformMotion` returns
-        // START in the actor's later execution slot, matching
-        // RHElementActorHuman::Execute.
+        // Install the derived Rust movement latch, but do not change the
+        // actor's action state here. Original Translate/PostProcessPath only
+        // builds the order queue; the later actor Execute slot changes state
+        // when PerformMotion returns START (for every movement family, not
+        // only sword movement). This distinction is observable when the
+        // sequence manager instructs a Move after the actor loop: that frame
+        // must retain the pre-movement action state.
         if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
-            if !have_start_transition && !sword_movement_context {
-                actor.action_state = match move_action {
-                    OrderType::RunningUpright => crate::element::ActionState::MovingFast,
-                    _ => crate::element::ActionState::Moving,
-                };
-            }
             actor.active_movement = ActiveMovement::new(seq_id, elem_idx);
             // The outer SEEK translation or RefreshSeek owns the target
             // snapshot and TIME_SEEK_REFRESH assignment. AppendMoveToSequence

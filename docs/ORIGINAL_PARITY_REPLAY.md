@@ -2980,8 +2980,24 @@ the original recursion boundary: calls made inside `Think` defer through
 `already_on_point`, while calls made by the macro timer outside `Think` queue
 the synchronous owner-boundary `EVENT_REACHPOINT` re-entry. Nescafe Profile 003
 Restart now consumes its complete recorded RNG stream and reaches the end of
-the 240-frame session; its remaining audit item is an isolated loaded-state
-action mismatch on frame 1.
+the 240-frame session.
+
+### Movement translation does not enter the moving action state
+
+Original `RHElementActor::Translate` and `PostProcessPath` populate the order
+queue but do not update the actor's posture/action pair. The corresponding
+`Execute` animation arm performs that update only when `PerformMotion` returns
+`RHMOTION_START`. This is a full frame later when `RHSequenceManager::Hourglass`
+instructs the movement after the entity loop.
+
+Rust previously entered `Moving` or `MovingFast` as soon as a path was
+installed. The eager update usually became invisible because the actor still
+executed later in the same frame, but it leaked at the post-entity manager
+boundary. Movement setup now installs only the active-movement identity; the
+ordinary Execute START effects cover upright, alerted, stairs, running, sword,
+and wall movement. This resolves Nescafe Profile 003 Restart's loaded-state
+Civilian 94 mismatch on frame 1 without special-casing the save or actor, and
+the entire recording now matches.
 
 ### Postponed actor commands re-enter the manager instruction boundary
 
