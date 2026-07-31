@@ -46,6 +46,67 @@ enum ArrowHitOutcome {
 impl EngineInner {
     // ─── Bow shots & arrow projectiles ───────────────────────────
 
+    /// Rebuild Rust's derived active-shot latch after loading an Original
+    /// save in the middle of a shooting order. Original needs no parallel
+    /// latch: the selected sequence element and current RHOrder are sufficient
+    /// for `Execute` to call `ShootWithBowAt` on the action-done pulse.
+    pub(crate) fn restore_loaded_active_shots(&mut self) {
+        let owners = self
+            .world
+            .entities
+            .actors()
+            .map(|(id, _)| EntityId::from(id))
+            .collect::<Vec<_>>();
+        let active = owners
+            .into_iter()
+            .filter_map(|owner| {
+                let (sequence_id, element_index, _order) = self
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(owner)?;
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence_id, element_index)?;
+                if !matches!(element.command, Command::ShootBow | Command::ShootBowOnce) {
+                    return None;
+                }
+                let (shoot_mode, shoot_order_id) = element.orders.iter().find_map(|order| {
+                    crate::bow_shot::shoot_mode_for_order(order.order_type)
+                        .map(|mode| (mode, order.order_id))
+                })?;
+                let target = match &element.data {
+                    crate::sequence::SequenceElementData::Interaction { antagonist } => {
+                        (*antagonist)?
+                    }
+                    _ => return None,
+                };
+                Some((
+                    owner,
+                    crate::movement::ActiveShot {
+                        sequence_id: Some(sequence_id),
+                        element_index,
+                        target: Some(target),
+                        order_id: Some(shoot_order_id),
+                        released: false,
+                        shoot_mode: Some(shoot_mode),
+                    },
+                ))
+            })
+            .collect::<Vec<_>>();
+
+        for (owner, shot) in active {
+            self.world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::actor_data_mut)
+                .unwrap_or_else(|| {
+                    panic!("loaded bow-shot owner {owner:?} is missing required actor state")
+                })
+                .active_shot = shot;
+        }
+    }
+
     pub(super) fn apply_projectile_landing_resolution(
         &mut self,
         assets: &LevelAssets,

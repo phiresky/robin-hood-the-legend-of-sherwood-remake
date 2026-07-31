@@ -334,6 +334,19 @@ fn shoot_order_type_for_mode(mode: ShootMode, anonymous: bool) -> OrderType {
     }
 }
 
+/// Recover the authored shoot mode from a concrete shooting order. Used when
+/// rebuilding Rust's derived active-shot latch after loading an Original save.
+pub(crate) fn shoot_mode_for_order(order: OrderType) -> Option<ShootMode> {
+    match order {
+        OrderType::ShootingWithBow | OrderType::ShootingWithBowAnonymous => Some(ShootMode::Normal),
+        OrderType::ShootingWithBowUp | OrderType::ShootingWithBowUpAnonymous => {
+            Some(ShootMode::Long)
+        }
+        OrderType::ShootingWithBowLeaningOut => Some(ShootMode::Down),
+        _ => None,
+    }
+}
+
 /// C++ `RHElementActorHuman::ComputeBowPoint` selects these non-anonymous
 /// animation ids for hotspot lookup even when the active shoot animation is
 /// an anonymous archer variant.
