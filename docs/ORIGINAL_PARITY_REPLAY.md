@@ -3013,6 +3013,22 @@ consume counter-strike RNG or launch another action.
 Together these corrections make Linux3 Profile 003 Savegames 043–051 match
 every recorded frame.
 
+### A cleared actor order reports the non-animation sentinel
+
+`RHElementActor::GetAnimation()` returns `RHNONANIMATION_END` when its
+authoritative `mpOrder` has been cleared. This is not the same thing as either
+the sprite's last visible action or an invalid animation value. In particular,
+`GoTo` includes `RHNONANIMATION_END` in its close-point fast path: a patrol
+member already within five map units of its new formation coordinate
+synchronously reports `EVENT_REACHPOINT`, remains in the waiting patrol
+substate, and can then accept the chief's instructed turn.
+
+Rust's actor-hourglass latch uses `OrderType::Invalid` to represent that
+cleared-order boundary. AI contexts now translate that internal latch to
+`NonanimationEnd`, preserving the Original API's observable sentinel and the
+synchronous `GoTo` shortcut. This makes Linux3 Profile 003 Savegames 052–058
+match every recorded frame.
+
 ### Remembered stimuli retain their complete payload
 
 `EVENT_AFTER_SCRIPT_GO_ON` drains the Original AI stimulus queue by recursively
