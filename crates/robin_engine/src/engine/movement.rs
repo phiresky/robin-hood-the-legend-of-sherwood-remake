@@ -4791,6 +4791,14 @@ impl EngineInner {
         // `self.world.entities` mutably while consulting
         // `self.orders.sequence_manager` for the factor.
         let mut speed_factors = EntitySlots::filled(self.world.entities.len(), 1.0);
+        // `RHSprite::PerformMotion` passes its cached `mpTargetElement` into
+        // `RHPositionInterface::IsGoalReached`.  The target radius matters
+        // when anti-collision left the actor deviated and blocked: Original
+        // accepts center separation below `self.radius + target.radius + 10`
+        // even when the ordinary zero tolerance has not crossed the waypoint.
+        // Snapshot it before the mutable movement pass for the same reason as
+        // the speed factor and live-seek metadata below.
+        let mut goal_target_infos = EntitySlots::filled(self.world.entities.len(), None);
         // Per-entity final-waypoint tolerance snapshot for the arrival
         // check.  The seek-arrival predicate is:
         //
@@ -4857,6 +4865,13 @@ impl EngineInner {
             let (seq_id, elem_idx) = (selected.seq_id, selected.elem_idx);
             if let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) {
                 speed_factors[actor_id] = elem.speed_factor();
+                goal_target_infos[actor_id] = elem
+                    .current_order()
+                    .and_then(|order| order.antagonist)
+                    .and_then(|target| self.world.entities.get(target))
+                    .map(|target| crate::position_interface::TargetInfo {
+                        radius: target.position_iface().get_radius(),
+                    });
                 if let crate::sequence::SequenceElementData::Movement {
                     flags,
                     tolerance: _,
@@ -6260,7 +6275,7 @@ impl EngineInner {
                     projected_position.x += dx_step;
                     projected_position.y += dy_step;
                     projected.set_map_position(projected_position);
-                    projected.is_goal_reached(&self.world.fast_grid, None)
+                    projected.is_goal_reached(&self.world.fast_grid, goal_target_infos[actor_id])
                 }
             } else {
                 false
@@ -6682,7 +6697,7 @@ impl EngineInner {
                 // loops unless the next order uses the same animation.
                 let transition_goal_reached = entity
                     .position_iface()
-                    .is_goal_reached(&self.world.fast_grid, None);
+                    .is_goal_reached(&self.world.fast_grid, goal_target_infos[actor_id]);
                 let transition_increment_nonzero = {
                     let increment = entity.position_iface().get_increment_map();
                     increment.x != 0.0 || increment.y != 0.0
@@ -7631,7 +7646,7 @@ impl EngineInner {
                     // `RHPositionInterface::IsGoalReached`.
                     let movement_goal_reached = entity
                         .position_iface()
-                        .is_goal_reached(&self.world.fast_grid, None);
+                        .is_goal_reached(&self.world.fast_grid, goal_target_infos[actor_id]);
                     point_seek_post_arrival = is_final_waypoint
                         && movement_goal_reached
                         && point_seek_post_sectors[actor_id]

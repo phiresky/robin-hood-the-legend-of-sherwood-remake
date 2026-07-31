@@ -2876,6 +2876,22 @@ following scripted animation reached the later sequence-manager pass. The
 immediate handler now closes the outgoing stop and its condolence stack at the
 LockAi boundary. Linux2 Profile 002 Savegame 018 matches every recorded frame.
 
+### Deviated goal checks include the current antagonist radius
+
+`RHPositionInterface::IsGoalReached` has a special anti-collision arrival
+branch. When a mover is deviated and still has a nonzero blocked counter, it
+accepts a waypoint whose center separation is below the mover radius plus the
+current target radius plus ten units. `RHSprite::PerformMotion` supplies the
+target cached from the current order.
+
+Rust implemented the radius-aware predicate but every movement caller passed
+`None`, disabling it. This was particularly visible immediately after loading
+a mid-pursuit save: both engines committed the same final step, but Original
+retired the waypoint while Rust left its `MoveOk` element and movement goal
+live. Movement now snapshots the current order antagonist's radius and supplies
+it to every projected, transition, and committed goal check. Linux2 Profile 002
+Savegame 023 matches every recorded frame.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
