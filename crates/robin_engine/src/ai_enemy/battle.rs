@@ -2453,16 +2453,14 @@ impl EnemyAi {
         // focus arrow / cone stops chasing the previous focus target.
         self.base.outbox.actor.set_unfocus();
 
-        // If the target is moving and not yet swordfighting, freeze it
-        // via Stop() so the swordfight starts from a stable position.
-        // The engine drains `pending_stop_target` before launching
-        // ENTER_SWORDFIGHT, matching the reference ordering.
-        if let Some(target) = self.find_fighter(self.base.primary_target, tick)
-            && !target.is_swordfighting
-            && target.action_state.is_moving()
-        {
-            self.base.outbox.actor.stop_target = Some(self.base.primary_target);
-        }
+        // Ask the engine to apply BeginSwordfight's conditional target Stop
+        // at the outbox-drain boundary. The reference reads the target's live
+        // action state here, after every earlier-created entity has already
+        // run its Hourglass. `tick.fighters` is the pre-entity snapshot and
+        // can still say Waiting when the target completed its start-running
+        // transition earlier in this same frame. The engine therefore owns
+        // both live gates (`!IsSwordfighting` and Moving/MovingFast).
+        self.base.outbox.actor.stop_target = Some(self.base.primary_target);
 
         // No SetDirection here. Direction is set by the engine-side
         // ENTER_SWORDFIGHT pipeline: the

@@ -5811,7 +5811,27 @@ impl EngineInner {
         // runs.
         if let Some(target_handle) = effects.stop_target {
             let target_id = self.expect_human_id_for_ai_handle(target_handle, "AI stop_target");
-            self.stop_owner(target_id, crate::sequence::SequencePriority::Normal);
+            // Original BeginSwordfight queries these members at this exact
+            // point in the live entity walk. Do not use the AI tick snapshot:
+            // an earlier-created target may have completed a movement-start
+            // transition since that snapshot was built.
+            let should_stop = self
+                .get_entity(target_id)
+                .and_then(|entity| {
+                    Some((
+                        entity.human_data()?.opponents.is_empty(),
+                        entity.actor_data()?.action_state.is_moving(),
+                    ))
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "AI stop_target {} did not resolve to a human actor",
+                        target_id.index()
+                    )
+                });
+            if should_stop.0 && should_stop.1 {
+                self.stop_owner(target_id, crate::sequence::SequencePriority::Normal);
+            }
         }
 
         // The near-enemy EventView path calls

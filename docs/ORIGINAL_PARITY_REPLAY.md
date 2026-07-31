@@ -3613,6 +3613,20 @@ match every recorded frame. These are tracked explicitly so later changes to
 save adoption or mission restart do not silently regress the smaller profiles
 while attention is focused on the larger save archives.
 
+### `BeginSwordfight` evaluates its target at the live entity boundary
+
+Original `RHArtificialMalignity::BeginSwordfight` reads the primary target's
+current opponent list and action state immediately before issuing its Normal
+priority `Stop`. Those values can change after the frame snapshot: in SuN1Sh1nE
+Savegame 024, soldier 58 completed a start-running transition earlier in the
+same creation-order walk. Rust tested the stale AI snapshot, skipped the Normal
+stop, and its later Preference stop postponed different movement work. The
+result first appeared as three missing combat RNG draws at frame 41. The AI now
+emits a conditional stop intent and the engine applies both source gates
+(`!IsSwordfighting` and Moving/MovingFast) against the live target when draining
+that intent. The soldier-58 command/state and global RNG stream now match at
+that boundary; the recording proceeds to an independent frame-41 divergence.
+
 ## Frozen full-corpus audit at `2a3e842df`
 
 The first no-unknown audit froze the debug parity runner built from commit
