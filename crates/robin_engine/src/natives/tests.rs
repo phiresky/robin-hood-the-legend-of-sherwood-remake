@@ -2668,6 +2668,7 @@ fn persistent_property_test_host(
     let mut pc = native_test_pc(vec![true; 3], vec![false; 3]);
     let pc_data = pc.pc_data_mut().expect("test entity must be a PC");
     pc_data.profile_index = CharacterProfileIdx(0);
+    pc_data.campaign_description_index = with_campaign.then_some(0);
     pc_data.current_action = Action::Bow;
     pc_data.saved_action = Action::Bow;
     host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(pc)]);

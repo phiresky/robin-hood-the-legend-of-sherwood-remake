@@ -2113,8 +2113,10 @@ impl NativeContext<'_, '_> {
                         // RHElementActorPC::GetAmmoAmount does.
                         self.campaign
                             .as_ref()
-                            .and_then(|c| c.get_character_by_profile(e.pc.profile_index))
-                            .and_then(|idx| self.campaign.as_ref()?.characters.get(idx))
+                            .and_then(|campaign| {
+                                let idx = usize::try_from(e.pc.campaign_description_index?).ok()?;
+                                campaign.characters.get(idx)
+                            })
                             .map(|desc| desc.status.get_ammo(Action::Bow))
                             .or_else(|| e.pc.ammo.get(Action::Bow))
                             .expect("Bow has a live PC ammo counter") as i32
@@ -2184,8 +2186,10 @@ impl NativeContext<'_, '_> {
                 };
                 self.campaign
                     .as_ref()
-                    .and_then(|c| c.get_character_by_profile(pc.profile_index))
-                    .and_then(|idx| self.campaign.as_ref()?.characters.get(idx))
+                    .and_then(|campaign| {
+                        let idx = usize::try_from(pc.campaign_description_index?).ok()?;
+                        campaign.characters.get(idx)
+                    })
                     .map(|desc| desc.status.get_ammo(action))
                     .or_else(|| pc.ammo.get(action))
                     .expect("persistent PC ammo property has a live counter") as i32
@@ -2271,12 +2275,13 @@ impl NativeContext<'_, '_> {
                     );
                     return false;
                 };
-                let profile_index = match self.get_entity(actor).and_then(|e| e.pc_data()) {
-                    Some(pc) => pc.profile_index,
+                let description_index = match self.get_entity(actor).and_then(|e| e.pc_data()) {
+                    Some(pc) => pc.campaign_description_index,
                     None => return false,
                 };
                 if let Some(campaign) = self.campaign.as_mut()
-                    && let Some(char_idx) = campaign.get_character_by_profile(profile_index)
+                    && let Some(char_idx) =
+                        description_index.and_then(|idx| usize::try_from(idx).ok())
                     && let Some(desc) = campaign.characters.get_mut(char_idx)
                 {
                     desc.status.name_override = Some(slot);
@@ -2338,7 +2343,7 @@ impl NativeContext<'_, '_> {
 
         if let Some(action) = action {
             // Validate entity type and extract profile index.
-            let profile_index = match self.get_entity(actor) {
+            let (profile_index, description_index) = match self.get_entity(actor) {
                 Some(entity) => {
                     if prop == 0 {
                         // Arrows: must be human and have a bow.
@@ -2358,7 +2363,7 @@ impl NativeContext<'_, '_> {
                         }
                     }
                     match entity.pc_data() {
-                        Some(pc) => pc.profile_index,
+                        Some(pc) => (pc.profile_index, pc.campaign_description_index),
                         None => {
                             // For an NPC archer, write `number_of_arrows`
                             // directly.  C++ gates `SetPersistentProperty`
@@ -2466,7 +2471,8 @@ impl NativeContext<'_, '_> {
             }
 
             if let Some(campaign) = self.campaign.as_mut() {
-                if let Some(char_idx) = campaign.get_character_by_profile(profile_index) {
+                if let Some(char_idx) = description_index.and_then(|idx| usize::try_from(idx).ok())
+                {
                     let Some(desc) = campaign.characters.get_mut(char_idx) else {
                         tracing::warn!(
                             char_idx,

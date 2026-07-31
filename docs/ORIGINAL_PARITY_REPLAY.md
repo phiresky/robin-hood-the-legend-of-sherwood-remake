@@ -2537,6 +2537,22 @@ recomputation before sprite motion. Linux3 Profile 001 Savegame 008 therefore
 matches the restored fast-ladder step and advances from frame 3915 to a later,
 independent AI transition.
 
+### Persistent PC properties use saved campaign-description identity
+
+`RHElementActorPC::Serialize` restores `mpDescription` from a serialized
+campaign-description pointer and aliases `mpStatus` to that exact
+description. Character profiles are not unique identities: Sherwood can
+instantiate several workers with the same profile but independent inventory.
+
+Rust's persistent-property natives previously searched the campaign for the
+first matching profile. A Windows Sherwood worker with zero arrows therefore
+read ten arrows from another worker, passed the arrow-training script gate,
+and launched a movement sequence that the Original never created. Persistent
+ammo and name reads/writes now use the PC's adopted
+`campaign_description_index`; live actor ammo remains the fallback only when
+there is no campaign-backed description. Nescafe Profile 003 Savegame 016 now
+matches every recorded frame.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
