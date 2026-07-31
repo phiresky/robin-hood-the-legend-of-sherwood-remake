@@ -3504,9 +3504,27 @@ An interrupted officer `POINT` could consequently deliver its old
 `EVENT_DONE` after changing to `ATTACKING_SWORDFIGHT`, reinterpret the
 completion as a swordfight heartbeat, and quit the fight before the engine
 attached opponents. The preparation path now closes the stopped owner's
-condolence boundary first. In Windows SuN1Sh1nE Profile 004 Savegame 024 this
-makes soldier 112 and the RNG prefix through its combat entry exact; a separate
-fighter-registry count mismatch later in frame 31 remains under investigation.
+condolence boundary first.
+
+### Swordfight reconsideration uses the 3D camp-fighter registry
+
+Original `ReconsiderSwordfight` does not reuse the general nearby-fighter
+query when rebuilding `mlistUs`. It walks every entry in
+`marrayFighters[myCamp]`, keeps the actively swordfighting entries without an
+`IsAbleToFight` gate, and compares `(UWORD)MaxNormDistance` with 500.
+`MaxNormDistance` operates on the full 3D world positions and stretches world
+Y by `INVERSE_ASPECT_RATIO`; projected map Y is therefore not equivalent for
+actors at different elevations.
+
+Rust now prepares a dedicated, registration-ordered friendly snapshot for
+this one call site. The shared map-space `nearby_fighters` query remains
+unchanged because its other consumers depend on its able-to-fight and
+projected-radius contract. In Windows SuN1Sh1nE Profile 004 Savegame 024 this
+admits the elevated friendly soldier that Original counts, restores the
+missing `CombatReposition` RNG draw at frame 31, and advances parity to the
+next independent mismatch at frame 35. Linux Profile 003 Savegame 053 remains
+exact across the complete recording, guarding the shared fighter-cache
+contract that an earlier broad geometry change disturbed.
 
 ### ClearPatrol keeps the chief formation live through member callbacks
 

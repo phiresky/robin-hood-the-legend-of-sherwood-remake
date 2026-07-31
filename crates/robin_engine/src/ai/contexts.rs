@@ -364,6 +364,22 @@ pub struct SleepingEnemyInfo {
     pub is_vip: bool,
 }
 
+/// Same-camp swordfighter considered by `ReconsiderSwordfight`.
+///
+/// This deliberately is not derived from [`crate::ai_enemy::FighterSnapshot`].
+/// The Original rebuilds this particular list from the complete camp fighter
+/// registry and gates it with `MaxNormDistance`, which uses the actors' 3D
+/// world positions.  The general fighter snapshot is instead a map-space,
+/// able-to-fight scan used by several other combat systems.
+#[derive(Debug, Clone, Copy)]
+pub struct ReconsiderSwordfightFriend {
+    pub handle: HumanHandle,
+    /// `(UWORD)MaxNormDistance(friend)` after the Original's isometric-Y
+    /// stretch. The cast precedes the `< 500` radius comparison.
+    pub max_norm_distance: u16,
+    pub number_of_opponents: u16,
+}
+
 /// Per-tick analysis data computed by the engine's detection loop.
 /// Populated once per detection tick, consumed by battle_decisions
 /// and swordfight tactics. Passed alongside AiContext.
@@ -393,6 +409,10 @@ pub struct AiPerTickData {
     pub simple_soldiers_near: bool,
     pub primary_target_multiplicity: Vec<(HumanHandle, u32)>,
     pub nearby_fighters: Vec<crate::ai_enemy::FighterSnapshot>,
+    /// Complete same-camp, actively swordfighting registry scan for
+    /// `ReconsiderSwordfight`. Unlike `nearby_fighters`, its radius uses 3D
+    /// world positions and does not apply `IsAbleToFight`.
+    pub reconsider_swordfight_friends: Vec<ReconsiderSwordfightFriend>,
     /// Same-camp soldiers snapshot for alert functions (`alert_officer`,
     /// `alert_soldiers`).  Populated every tick from the engine's soldier
     /// snapshot list, filtered to the evaluating NPC's camp.
@@ -620,6 +640,7 @@ impl AiPerTickData {
             simple_soldiers_near: false,
             primary_target_multiplicity: Vec::new(),
             nearby_fighters: Vec::new(),
+            reconsider_swordfight_friends: Vec::new(),
             camp_soldiers: Vec::new(),
             camp_ko_money_fighters: Vec::new(),
             visible_seeking_friends: 0,

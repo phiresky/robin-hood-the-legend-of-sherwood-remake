@@ -1541,6 +1541,7 @@ impl EngineInner {
         // observe an empty list outside swordfight substates.
         tick.nearby_fighters =
             self.build_nearby_fighters_for(npc_id, assets, &scratch.ai_sight_obstacles);
+        tick.reconsider_swordfight_friends = self.build_reconsider_swordfight_friends_for(npc_id);
 
         // Phalanx right-chain "them" snapshots — consumed by
         // `PhalanxReinitializeThemList` so the leftmost member can
@@ -2406,6 +2407,73 @@ impl EngineInner {
             }
         }
 
+        out
+    }
+
+    /// Build the friendly half of Original `ReconsiderSwordfight`'s
+    /// per-call camp-fighter scan.
+    ///
+    /// This cannot reuse `build_nearby_fighters_for`: that shared cache uses
+    /// projected map positions and filters non-self soldiers through
+    /// `IsAbleToFight`, while `ReconsiderSwordfight` walks every fighter in
+    /// `marrayFighters[myCamp]`, tests only `IsSwordfighting`, and computes
+    /// `MaxNormDistance` from full 3D world positions.
+    fn build_reconsider_swordfight_friends_for(
+        &self,
+        npc_id: crate::element::EntityId,
+    ) -> Vec<crate::ai::ReconsiderSwordfightFriend> {
+        use crate::ai::ReconsiderSwordfightFriend;
+
+        let Some(Entity::Soldier(me)) = self.world.entities.get(npc_id) else {
+            return Vec::new();
+        };
+        let Some(me_ai) = me.npc.ai_brain.enemy() else {
+            return Vec::new();
+        };
+        let me_world = me.element.position();
+        let my_camp = me.soldier.cached_camp;
+        let radius = crate::parameters_ai::MAX_SWORDFIGHT_CONSIDERATION_RADIUS as u16;
+        let mut out = Vec::new();
+
+        // Entity slots retain registration order, matching the Original's
+        // append-only camp fighter arrays (including the PC/soldier
+        // interleaving established during level creation).
+        for (id, entity) in self.world.entities.occupied() {
+            let (handle, world, opponents, same_camp) = match entity {
+                Entity::Soldier(friend) => (
+                    id.index(),
+                    friend.element.position(),
+                    &friend.human.opponents,
+                    friend.soldier.cached_camp == my_camp,
+                ),
+                Entity::Pc(friend) => (
+                    id.index(),
+                    friend.element.position(),
+                    &friend.human.opponents,
+                    my_camp == Camp::Royalists,
+                ),
+                _ => continue,
+            };
+            if handle == me_ai.base.me || !same_camp || opponents.is_empty() {
+                continue;
+            }
+
+            let dx = (world.x - me_world.x).abs();
+            let dy =
+                ((world.y - me_world.y) * crate::position_interface::INVERSE_ASPECT_RATIO).abs();
+            let dz = (world.z - me_world.z).abs();
+            // Original explicitly casts the FLOAT result to UWORD before
+            // comparing it with MAX_SWORDFIGHT_CONSIDERATION_RADIUS.
+            let max_norm_distance = dx.max(dy).max(dz) as u16;
+            if max_norm_distance >= radius {
+                continue;
+            }
+            out.push(ReconsiderSwordfightFriend {
+                handle,
+                max_norm_distance,
+                number_of_opponents: opponents.len().min(u16::MAX as usize) as u16,
+            });
+        }
         out
     }
 

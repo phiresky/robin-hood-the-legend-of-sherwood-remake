@@ -2185,7 +2185,6 @@ impl EnemyAi {
         // Build the us / them lists from the cached snapshot.
         // -----------------------------------------------------------------
         let me_pos = ctx.position;
-        let max_radius = parameters_ai::MAX_SWORDFIGHT_CONSIDERATION_RADIUS as f32;
 
         self.base.list_us.clear();
         self.base.list_us.push(self.base.me);
@@ -2194,23 +2193,15 @@ impl EnemyAi {
         let mut nearest_friend_solo_dist = f32::MAX;
         let mut number_of_swordfighting_enemies: u16 = 0;
 
-        // First pass: us list (only friends actively swordfighting).
-        // MaxNormDistance (Chebyshev) for this radius check.
-        for f in &tick.nearby_fighters {
-            if f.handle == self.base.me || !f.is_friendly {
-                continue;
-            }
-            if !f.is_swordfighting {
-                continue;
-            }
-            let dv = pos_diff(&f.position, &me_pos);
-            let dist = max_norm(dv);
-            if dist < max_radius {
-                self.base.list_us.push(f.handle);
-                if f.number_of_opponents > 1 && dist < nearest_friend_solo_dist {
-                    nearest_friend_solo = f.handle;
-                    nearest_friend_solo_dist = dist;
-                }
+        // First pass: us list (only friends actively swordfighting). The
+        // engine builds this dedicated snapshot from the complete friendly
+        // fighter registry using Original's 3D-world `MaxNormDistance`.
+        for f in &tick.reconsider_swordfight_friends {
+            self.base.list_us.push(f.handle);
+            let dist = f.max_norm_distance as f32;
+            if f.number_of_opponents > 1 && dist < nearest_friend_solo_dist {
+                nearest_friend_solo = f.handle;
+                nearest_friend_solo_dist = dist;
             }
         }
 
