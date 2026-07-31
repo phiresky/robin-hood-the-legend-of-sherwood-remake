@@ -3934,6 +3934,21 @@ which silently selected a fixed direction and skipped the authoritative draw.
 The translated handler now preserves the omitted-argument behavior for every
 officer-directed search.
 
+### VIP PC sword wounds apply the amulet coma save before speech classification
+
+Original sword damage calls `GetWounded` virtually. For a VIP PC whose lethal
+hit can consume an amulet, `RHElementActorPC::GetWounded` establishes the
+5-life-point coma state through `SetLifePoints` before applying maximum
+concussion. That `SetLifePoints` call emits `HERO_HURT` when the drop exceeds
+twenty; the PC is neither dead nor unconscious at that callback boundary.
+Rust previously let the shared damage primitive reach zero, emitted
+`HERO_DIE`, and only then applied its existing coma save during post-damage
+handling. Sword damage now closes the virtual PC wound boundary immediately,
+preserves the 5-HP state for all later death classification, and emits the
+same hurt expression before the unconscious speech gate. Linux3 Profile 003
+Savegame 066 consequently matches the Original exclamation resolution at
+frame 38597 and every recorded frame through EOF.
+
 ### Position authorization rejects boxes outside the map
 
 Original `RHFastFindGrid::IsPositionAutorized` rejects a bounding box that

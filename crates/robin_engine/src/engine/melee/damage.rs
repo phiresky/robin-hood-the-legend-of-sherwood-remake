@@ -337,6 +337,7 @@ impl EngineInner {
             .actor_data()
             .map(|a| a.action_state)
             .unwrap_or(ActionState::Waiting);
+        let life_points_before = get_life_points(victim);
 
         // Look up defender's weapon profile
         let defender_profile_idx = get_hth_weapon_id_full(victim, &assets.profile_manager);
@@ -380,6 +381,7 @@ impl EngineInner {
             Some(e) => e,
             None => return,
         };
+        let victim_is_pc = victim.kind().is_pc();
         let (human, lp) = match victim.human_and_life_points_mut() {
             Some(pair) => pair,
             None => return,
@@ -387,7 +389,32 @@ impl EngineInner {
 
         let (result, cutting_inflicted) = combat::receive_sword_damage(sim, human, lp, &params);
 
-        let life_points_after = *lp;
+        let raw_life_points_after = *lp;
+        // RHElementActorHuman::ReceiveSwordDamage dispatches GetWounded
+        // virtually. For a VIP PC, RHElementActorPC::GetWounded consumes an
+        // amulet and establishes the 5-HP coma state *inside* the cutting
+        // damage call, before ReceiveSwordDamage returns and before SayOuch
+        // classifies the result as HERO_HURT or HERO_DIE. Rust's shared
+        // damage primitive cannot mutate campaign state, so close that
+        // virtual boundary here rather than deferring it to
+        // handle_post_damage.
+        let coma_saved = victim_is_pc
+            && raw_life_points_after <= 0
+            && cutting_inflicted > 0
+            && self.try_pc_coma_save(sim, assets, victim_id, cutting_inflicted);
+        if coma_saved && 5 < life_points_before - 20 {
+            // PC::GetWounded marks the campaign coma, stores the 5-HP
+            // floor through PC::SetLifePoints (which emits HERO_HURT for a
+            // drop greater than twenty), and only then applies maximum
+            // concussion. The shared SayOuch path below intentionally skips
+            // unconscious actors, so preserve that virtual SetLifePoints
+            // callback explicitly at this boundary.
+            self.hero_speaking(assets, victim_id, HERO_HURT);
+        }
+        let life_points_after = self
+            .get_entity(victim_id)
+            .map(get_life_points)
+            .unwrap_or(raw_life_points_after);
         // Use the attempted damage (not the clamped lp delta) so
         // overkill hits display the same number as a non-overkill hit
         // would have shown.
@@ -543,7 +570,8 @@ impl EngineInner {
         }
 
         // SayOuch on the victim (unless parried or push already said it).
-        if !pushed
+        if !coma_saved
+            && !pushed
             && !result.is_empty()
             && !result.contains(combat::SwordDamageResult::NO_DAMAGE_PARRIED)
         {
