@@ -4419,7 +4419,6 @@ impl EngineInner {
                         //   EXTRACTING_ARROW_SWORD, RAISING_SHIELD,
                         //   ROLLING, TAKING_NET,
                         //   TAKING, DRINKING_ALE,
-                        //   BEING_UNCONSCIOUS_SWORD,
                         //   TRANSITION_CARRYING_CORPSE_WAITING_UPRIGHT.
                         // Step the rotation here, then sync `element.direction`
                         // to match before the sprite picks the row to play.
@@ -4452,7 +4451,6 @@ impl EngineInner {
                                 | OrderType::HandlingTarget
                                 | OrderType::UnlockingDoor
                                 | OrderType::UnlockingTrap
-                                | OrderType::BeingUnconsciousSword
                                 | OrderType::TransitionCarryingCorpseWaitingUpright
                                 | OrderType::TransitionCrouchingUp
                                 | OrderType::TransitionCrouchingDown

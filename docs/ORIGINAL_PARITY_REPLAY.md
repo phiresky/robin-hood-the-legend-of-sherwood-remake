@@ -3793,6 +3793,20 @@ rewritten in place to its exit transition remains live and therefore retains
 its goal as before. Linux3 Profile 001 Savegame 008 and the retained-goal Linux2
 Profile 002 QuickSave both match every recorded frame.
 
+### Settled unconscious sword holds do not turn
+
+Original `RHElementActorHuman::Execute` handles
+`BEING_UNCONSCIOUS_SWORD` by calling `PerformAction`, applying the lying and
+waiting-sword states on `START`, and then holding the order while the human is
+unconscious. Unlike active sword-combat animations, this arm never calls
+`Turn()`.
+
+Rust's generic per-animation Turn table incorrectly included this settled hold.
+An unconscious soldier restored with body direction 2 and direction goal 3
+therefore rotated on the first replay frame even though Original retained
+direction 2. Removing the hold from that table makes Linux3 Profile 001
+Savegame 036 match every recorded frame.
+
 ## Frozen full-corpus audit at `2a3e842df`
 
 The first no-unknown audit froze the debug parity runner built from commit
