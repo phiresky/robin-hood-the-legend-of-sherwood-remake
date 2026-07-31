@@ -2979,6 +2979,12 @@ ExQuickSave, QuickSave, Restart, and Sherwood all match every recorded frame.
 The remaining corpus is the active completion set; failures are grouped by
 their first general cause and the whole affected shard is rerun after each fix.
 
+The formerly excluded static Linux3 Profile 003 Savegame 013 trace received a
+separate frozen release-mode recheck after the loaded-save and battle-ordering
+repairs. Its 250 frames (7597 through 7847), 67-element save including 16
+dynamic elements, and 360 authoritative RNG draws match exactly through EOF.
+No replay-specific compatibility or code change was required.
+
 Windows `GSHR` saves now share the atomic adoption path. The complete Cyrdach
 Savegame 000–037 corpus matches every recorded frame; Nescafe Profile 003
 Savegames 010–014 and 016 have also been verified. The remaining Windows
