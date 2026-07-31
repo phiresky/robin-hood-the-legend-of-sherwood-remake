@@ -2853,7 +2853,7 @@ impl EnemyAi {
             // Stay in place, face primary target.
             let to_target = pos_diff(&primary.position, &ctx.position);
             let dir = vec_to_sector(to_target.0, to_target.1);
-            self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
+            self.base.set_direction_goal(dir as u16);
             self.base.outbox.actor.set_focus(self.base.primary_target);
             self.base.stop_all();
             self.set_state(AiState::Attacking, Substate::AttackingObserve);
