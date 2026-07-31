@@ -2496,7 +2496,7 @@ impl EnemyAi {
         // synchronously when an idle actor already faces the requested
         // sector. Keep the context-aware short-circuit here instead of
         // registering a redundant one-frame TURN sequence.
-        self.base.face_position_with_ctx(*pos, ctx);
+        self.base.face_position_3d_with_ctx(*pos, ctx);
         self.base.launch_timer(100, ctx.frame);
     }
 

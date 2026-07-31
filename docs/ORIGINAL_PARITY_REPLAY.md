@@ -3720,6 +3720,16 @@ entering BowLoading instead of the source BowObservingLoading fallback. All
 frame-41 state, command, direction, and RNG fields now match; the replay reaches
 the next independent divergence at frame 53.
 
+### `CALL_LOOKTHERE` faces the full authored position
+
+At SuN1Sh1nE frame 53, soldiers 95 and 106 received the same positional look
+hint while already facing sector 3. Original `Face(RHposition)` projects the
+hint through `PositionToPoint3D`; its elevation contribution keeps sector 3 and
+the idle `FaceTo` call completes synchronously. Rust used the explicitly 2D
+face helper, derived sector 1, and launched two spurious Turn commands. The
+standard look-there procedure now uses the shared 3D positional-face path, just
+as its existing Focus operation already does. The replay advances to frame 58.
+
 ### Inactive scripted motion bypasses anti-collision
 
 Original `RHSprite::PerformMotion` calls `UpdatePositionAntiCollision` only
