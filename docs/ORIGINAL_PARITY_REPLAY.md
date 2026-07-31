@@ -3473,6 +3473,20 @@ authoritative loaded state. The cleanup is now limited to ordinary runtime
 Turns; legacy-restored elements preserve their adopted sprite goal. Windows
 SuN1Sh1nE Profile 004 Savegame 038 now matches every recorded frame.
 
+### ClearPatrol keeps the chief formation live through member callbacks
+
+Original `RHArtificialIntelligence::ClearPatrol` walks the theoretical patrol
+in order. For each member it clears `patrol_chief` and synchronously calls
+`ForceReturnToDuty`; only after every nested member callback returns does it
+clear the chief's theoretical, missed, and active patrol lists.
+
+Rust previously cleared the chief lists before dispatching any returning-member
+callback. Nested patrol/path decisions could therefore observe a formation that
+Original still exposes, advancing a member an extra waypoint. Rust now
+interleaves each member detach with its callback and clears the chief only after
+the loop, matching the Original call boundary exercised by Linux Profile 001
+Savegame 030.
+
 ### Small Linux profiles match end to end
 
 The complete `Savegame_linux` corpus currently consists of Profile 005

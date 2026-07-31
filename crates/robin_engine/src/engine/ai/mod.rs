@@ -8736,34 +8736,26 @@ impl EngineInner {
             .theoretical_patrol
             .clone();
 
-        let mut returning = Vec::new();
         for member in members.iter().copied() {
-            let ai = self
-                .world
-                .entities
-                .get_mut(member)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "RemoveAllSubordinates chief {} references missing NPC member {}",
-                        chief.index(),
-                        member.index()
-                    )
-                });
-            ai.patrol_chief = None;
-            if ai.current_state == crate::ai::AiState::Default {
-                returning.push(member);
+            let should_return = {
+                let ai = self
+                    .world
+                    .entities
+                    .get_mut(member)
+                    .and_then(Entity::ai_controller_mut)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "RemoveAllSubordinates chief {} references missing NPC member {}",
+                            chief.index(),
+                            member.index()
+                        )
+                    });
+                ai.patrol_chief = None;
+                ai.current_state == crate::ai::AiState::Default
+            };
+            if !should_return {
+                continue;
             }
-        }
-
-        self.world
-            .entities
-            .get_mut(chief)
-            .and_then(Entity::ai_controller_mut)
-            .expect("validated RemoveAllSubordinates chief vanished")
-            .clear_patrol();
-
-        for member in returning {
             let scratch = self.build_owner_context_scratch_without_forecast(assets);
             let ctx = {
                 let entity = self.world.entities.get(member).unwrap_or_else(|| {
@@ -8798,6 +8790,13 @@ impl EngineInner {
                 assets,
             );
         }
+
+        self.world
+            .entities
+            .get_mut(chief)
+            .and_then(Entity::ai_controller_mut)
+            .expect("validated RemoveAllSubordinates chief vanished")
+            .clear_patrol();
     }
 
     // ─── One-shot noise broadcast ──────────────────────────────────
