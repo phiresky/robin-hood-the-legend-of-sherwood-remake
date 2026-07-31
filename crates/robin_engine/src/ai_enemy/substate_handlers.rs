@@ -2443,7 +2443,10 @@ impl EnemyAi {
                         // I said "Soldier! Examine this place!"
                         self.base.outbox.reentrant.cross_npc_actions.push(
                             CrossNpcAction::SendStimulus {
-                                fallback_to_sender: Some(self.base.me),
+                                // Original directly calls
+                                // `mpAntagonist->Think(CALL_YOURTALK_1)` and
+                                // does not retry the call on the speaker.
+                                fallback_to_sender: None,
                                 to_whole_patrol: false,
                                 target: self.base.antagonist,
                                 stimulus_type: StimulusType::CallYourTalk1,
@@ -2667,7 +2670,9 @@ impl EnemyAi {
                         // I said "What's your order, Sir?"
                         self.base.outbox.reentrant.cross_npc_actions.push(
                             CrossNpcAction::SendStimulus {
-                                fallback_to_sender: Some(self.base.me),
+                                // Direct antagonist Think; no sender fallback
+                                // in the Original conversation chain.
+                                fallback_to_sender: None,
                                 to_whole_patrol: false,
                                 target: self.base.antagonist,
                                 stimulus_type: StimulusType::CallYourTalk1,
@@ -2684,7 +2689,9 @@ impl EnemyAi {
                             // Already examined — skip search, return to officer
                             self.base.outbox.reentrant.cross_npc_actions.push(
                                 CrossNpcAction::SendStimulus {
-                                    fallback_to_sender: Some(self.base.me),
+                                    // Direct antagonist Think; no sender
+                                    // fallback in the Original.
+                                    fallback_to_sender: None,
                                     to_whole_patrol: false,
                                     target: self.base.antagonist,
                                     stimulus_type: StimulusType::CallYourTalk2,
@@ -2706,7 +2713,9 @@ impl EnemyAi {
                         // I said "Sir, yes, Sir!"
                         self.base.outbox.reentrant.cross_npc_actions.push(
                             CrossNpcAction::SendStimulus {
-                                fallback_to_sender: Some(self.base.me),
+                                // Direct antagonist Think; no sender fallback
+                                // in the Original conversation chain.
+                                fallback_to_sender: None,
                                 to_whole_patrol: false,
                                 target: self.base.antagonist,
                                 stimulus_type: StimulusType::CallYourTalk2,
@@ -2844,7 +2853,10 @@ impl EnemyAi {
                     StimulusType::EventMyTalk1 => {
                         self.base.outbox.reentrant.cross_npc_actions.push(
                             CrossNpcAction::SendStimulus {
-                                fallback_to_sender: Some(self.base.me),
+                                // Original directly calls
+                                // `mpAntagonist->Think(CALL_YOURTALK_1, mpMe)`;
+                                // it never retries on the reporting soldier.
+                                fallback_to_sender: None,
                                 to_whole_patrol: false,
                                 target: self.base.antagonist,
                                 stimulus_type: StimulusType::CallYourTalk1,
