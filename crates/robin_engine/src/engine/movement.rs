@@ -6869,8 +6869,10 @@ impl EngineInner {
                         (*pi.get_move_box(), pi.get_half_diagonal())
                     };
                     let (dx_step, dy_step, deviated, recovered_from_deviation) =
-                        if let Some(mover_snap) =
-                            anti_snapshots.get(actor_id).and_then(|slot| slot.as_ref())
+                        if let Some(mover_snap) = anti_snapshots
+                            .get(actor_id)
+                            .and_then(|slot| slot.as_ref())
+                            .filter(|snapshot| snapshot.active)
                         {
                             let pi = entity.position_iface_mut();
                             let was_deviated = pi.is_deviated();
@@ -7729,8 +7731,10 @@ impl EngineInner {
                         recovered_from_deviation,
                         rebuild_after_deviation,
                     ) = if anti_on
-                        && let Some(mover_snap) =
-                            anti_snapshots.get(actor_id).and_then(|slot| slot.as_ref())
+                        && let Some(mover_snap) = anti_snapshots
+                            .get(actor_id)
+                            .and_then(|slot| slot.as_ref())
+                            .filter(|snapshot| snapshot.active)
                     {
                         let goal_map = crate::coordinates::MapPoint::new(goal.x, goal.y);
                         let (move_box, half_diagonal) = {

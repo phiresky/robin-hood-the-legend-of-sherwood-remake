@@ -3684,6 +3684,19 @@ emits a conditional stop intent and the engine applies both source gates
 that intent. The soldier-58 command/state and global RNG stream now match at
 that boundary; the recording proceeds to an independent frame-41 divergence.
 
+### Inactive scripted motion bypasses anti-collision
+
+Original `RHSprite::PerformMotion` calls `UpdatePositionAntiCollision` only
+when the owning actor is active. Inactive actors can still execute scripted
+movement, but they commit the requested map increment directly and leave the
+persistent deviation state untouched. Rust previously ran anti-collision for
+those actors, which cleared a deviation restored from the save, snapped the
+actor to the final waypoint, and later recomputed its facing from the
+overshooting step. The movement driver now excludes inactive owners from both
+ordinary and transition anti-collision, with the lower-level helper retaining
+the same guard. Randomguy Profile 004 Savegame 031 and Linux2 Profile 002
+Savegame 040 now match every recorded frame.
+
 ## Frozen full-corpus audit at `2a3e842df`
 
 The first no-unknown audit froze the debug parity runner built from commit

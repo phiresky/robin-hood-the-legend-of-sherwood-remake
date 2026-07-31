@@ -573,7 +573,10 @@ pub fn apply_anti_collision_step(
     anti_collision_on: bool,
 ) -> (f32, f32) {
     let naive = (nx * speed, ny * speed);
-    if !anti_collision_on {
+    // RHSprite::PerformMotion only calls UpdatePositionAntiCollision when the
+    // owning actor is active. Inactive actors still execute scripted motion,
+    // but commit the naive step without touching persistent deviation state.
+    if !anti_collision_on || !mover.active {
         return naive;
     }
     if mover.repulsive_point.is_none() && !mover.is_actor {
@@ -1169,6 +1172,31 @@ mod tests {
             extra_repulsive_points: Vec::new(),
             repulsive_lines: Vec::new(),
         }
+    }
+
+    #[test]
+    fn inactive_mover_bypasses_anti_collision() {
+        let mut mover = mk_snapshot(0, 0.0, 0.0);
+        mover.active = false;
+        let neighbour = mk_snapshot(1, 8.0, 0.0);
+        let snapshots = vec![Some(mover.clone()), Some(neighbour)];
+
+        let movement = apply_anti_collision_step(
+            &mover,
+            &snapshots,
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            1.0,
+            0.0,
+            1.0,
+            true,
+        );
+
+        assert_eq!(movement, (1.0, 0.0));
     }
 
     #[test]
