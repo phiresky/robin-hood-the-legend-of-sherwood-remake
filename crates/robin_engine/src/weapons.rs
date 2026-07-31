@@ -63,7 +63,11 @@ pub enum WeaponDistance {
     Uber = 3,
 }
 
-/// Named sword strikes (A–I plus Charge).
+/// Named sword strikes.
+///
+/// The two smalltalk strikes are not backed by entries in an HtH weapon
+/// profile.  Original nevertheless routes a successful back-hit through the
+/// regular `RECEIVE_SWORD_DAMAGE` sequence with these enum values.
 #[repr(u8)]
 #[derive(
     Debug,
@@ -88,6 +92,8 @@ pub enum SwordStrike {
     H = 7,
     I = 8,
     Charge = 9,
+    SmalltalkLeft = 12,
+    SmalltalkRight = 13,
 }
 
 /// Number of normal (non-charge) strikes: A through I.
@@ -97,6 +103,10 @@ pub const NUM_NORMAL_SWORD_STRIKES: usize = SwordStrike::Charge as usize; // 9
 pub const NUM_REAL_STRIKES: usize = 10;
 
 impl SwordStrike {
+    pub fn is_smalltalk(self) -> bool {
+        matches!(self, Self::SmalltalkLeft | Self::SmalltalkRight)
+    }
+
     /// Convert a live actor command to the corresponding normal sword strike.
     ///
     /// Original combat-learning code reads `GetCommand()` from the attacker
@@ -132,6 +142,9 @@ impl SwordStrike {
             Self::H => Command::SwordstrikeThrustH,
             Self::I => Command::SwordstrikeThrustI,
             Self::Charge => Command::SwordstrikeThrustB, // charge uses strong-strike anim
+            Self::SmalltalkLeft | Self::SmalltalkRight => {
+                panic!("smalltalk damage has no swordstrike command")
+            }
         }
     }
 }

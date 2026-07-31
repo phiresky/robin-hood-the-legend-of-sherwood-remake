@@ -466,9 +466,6 @@ pub fn receive_sword_damage(
     let mut cutting_inflicted: u16 = 0;
 
     // Check if the defender is parrying.
-    // Smalltalk strikes are animation-driven from the attacker's
-    // WaitingSword Execute arm and never route through this function, so the
-    // parry check here does not apply to them.
     let is_parrying = defender.action_state == ActionState::ParryingSwordLow
         || defender.action_state == ActionState::ParryingSword;
 
@@ -512,7 +509,7 @@ pub fn receive_sword_damage(
             let roll: u16 =
                 crate::sim_rng::u16(sim, crate::sim_rng::RngSite::SwordDamageProtection, 1..=99);
             if roll > bludgeon_prot {
-                let stunning = attacker_profile.thrusts[*strike as usize].stunning;
+                let stunning = get_strike_stunning_effect(attacker_profile, *strike);
                 if stunning > 0 {
                     add_concussion(human, stunning as i16, *life_points, concussion_ctx);
                     result |= SwordDamageResult::STUNNING_DAMAGE;
@@ -522,7 +519,7 @@ pub fn receive_sword_damage(
             // No armor — take full cutting + stunning damage.
             result |= SwordDamageResult::CUTTING_DAMAGE | SwordDamageResult::STUNNING_DAMAGE;
         }
-    } else {
+    } else if defender.action_state == ActionState::ParryingSwordLow || !strike.is_smalltalk() {
         // Parry successful.
         result |= SwordDamageResult::NO_DAMAGE_PARRIED;
     }
@@ -594,6 +591,9 @@ pub fn get_strike_direction(
     profile: &HtHWeaponProfile,
     strike: SwordStrike,
 ) -> WeaponThrustDirection {
+    if strike.is_smalltalk() {
+        return WeaponThrustDirection::NonApplicable;
+    }
     let thrust = &profile.thrusts[strike as usize];
     match thrust.kind {
         WeaponThrustKind::Lateral
@@ -613,6 +613,11 @@ pub fn get_strike_cutting_effect(
     fighting_ability: u16,
     is_rank_soldier: bool,
 ) -> u16 {
+    // Original assigns the playful back-hit a fixed one point of cutting
+    // damage, independent of weapon profile and fighting ability.
+    if strike.is_smalltalk() {
+        return 1;
+    }
     let base = profile.thrusts[strike as usize].cutting;
 
     let factor = if is_rank_soldier {
@@ -624,10 +629,22 @@ pub fn get_strike_cutting_effect(
     (base as f32 * factor) as u16
 }
 
+/// Get the stunning effect for a strike. Smalltalk hits never stun.
+pub fn get_strike_stunning_effect(profile: &HtHWeaponProfile, strike: SwordStrike) -> u16 {
+    if strike.is_smalltalk() {
+        0
+    } else {
+        profile.thrusts[strike as usize].stunning
+    }
+}
+
 /// Returns `true` if the strike has a push effect (push aside, circle, charge).
 ///
 /// Used to decide whether to apply push-back movement vs. sword damage animation.
 pub fn strike_has_push_effect(profile: &HtHWeaponProfile, strike: SwordStrike) -> bool {
+    if strike.is_smalltalk() {
+        return false;
+    }
     let kind = profile.thrusts[strike as usize].kind;
     matches!(
         kind,

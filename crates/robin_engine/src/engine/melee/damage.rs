@@ -554,6 +554,7 @@ impl EngineInner {
         // gate before the later hero-speech checks.
         if !result.is_empty()
             && !result.contains(combat::SwordDamageResult::NO_DAMAGE_PARRIED)
+            && !strike.is_smalltalk()
             && let Some(atk_id) = attacker_id
         {
             // Original evaluates the random chance before its selected-PC
@@ -710,7 +711,7 @@ impl EngineInner {
                 self.get_entity(victim_id),
                 Some(Entity::Soldier(s)) if s.soldier.rider
             );
-            let stunning_effect = attacker_profile.thrusts[strike as usize].stunning;
+            let stunning_effect = combat::get_strike_stunning_effect(&attacker_profile, strike);
             if !is_rider && stunning_effect > 0 {
                 self.get_entity(victim_id)
                     .and_then(|e| {

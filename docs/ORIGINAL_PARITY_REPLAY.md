@@ -2521,6 +2521,28 @@ recursive unlock order. Linux2 Profile 002 QuickSave therefore selects the same
 search point and keeps the global seek-point RNG stream attributed to the same
 candidates.
 
+### Fresh motion orders advance through an inherited action-done frame
+
+`RHSprite::PerformMotion` has its own new-order path. It initializes the
+action-done marker, retains `RHMOTION_START`, and then advances the animation
+unconditionally. Unlike `PerformAction`, it does not rewrite that start result
+to `RHMOTION_DONE` merely because a preceding order left the same animation on
+its action-done frame.
+
+Rust implemented motion by calling `perform_action` and only performed the
+motion-specific first increment when that helper still returned `Start`.
+Consecutive patrol orders could therefore inherit the same running animation
+exactly at action-done, return `Done`, and skip one animation increment. The
+positions initially remained equal because adjacent authored frames happened
+to carry the same distance, but the chief reached its later running-to-walking
+handoff one frame late and generated formation transition goals from newer
+positions.
+
+Fresh motion-order detection now owns the first-increment decision and restores
+the Original `Start` result independently of `PerformAction`'s action-done
+classification. This applies to every movement animation and order identity;
+Linux2 Profile 002 QuickSave no longer shifts the patrol handoff at frame 2061.
+
 ### Initializing climb orders keep the lift-facing direction
 
 Every ladder/wall climbing Execute arm calls `SetDirection` with the lift
@@ -2553,6 +2575,25 @@ ammo and name reads/writes now use the PC's adopted
 there is no campaign-backed description. Nescafe Profile 003 Savegame 016 now
 matches every recorded frame.
 
+### Smalltalk back-strikes use the normal delayed damage pipeline
+
+The four playful smalltalk sword animations do more than play a swipe sound.
+At their action-done tag, Original tests the animation's actual antagonist
+(rather than looking up the actor's current principal opponent). If that
+antagonist is holding a sword and the attacker is behind them, it launches a
+normal delayed `RECEIVE_SWORD_DAMAGE` element with special left/right
+smalltalk strike values.
+
+Rust now retains the antagonist and handedness through the deferred animation
+side-effect drain, performs the same facing/action-state test, and launches the
+ordinary manager-tail damage element. The special strikes have Original's
+fixed cutting effect of one, zero stunning and push effects, and no directional
+thrust. They still consume both protection draws when the defender has a
+weapon, but are excluded from the provoke draw because they are not real
+profile thrusts. Their unusual parry behavior is also preserved: a high sword
+parry silently absorbs smalltalk damage, while a low sword parry reports an
+ordinary parry. Linux3 Profile 003 Savegame 022 now matches every frame.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
@@ -2573,10 +2614,10 @@ Every frame in the original five-trace corpus matches:
 The expanded authoritative Linux audit adds 48 `Savegame_linux2` traces and
 140 `Savegame_linux3` traces. Unlike the first group, these exercise up to
 hundreds of dynamic bonuses/projectiles and a much wider set of interrupted
-runtime states. All five Linux3 Profile 002 traces currently match every
-recorded frame. The remaining corpus is the active completion set; failures
-are grouped by their first general cause and the whole affected shard is rerun
-after each fix.
+runtime states. All five Linux3 Profile 002 traces and the audited Profile 003
+traces through Savegame 022 currently match every recorded frame. The remaining
+corpus is the active completion set; failures are grouped by their first
+general cause and the whole affected shard is rerun after each fix.
 
 Windows `GSHR` compatibility and exposing this adoption path through the
 ordinary interactive save loader remain separate follow-up work.

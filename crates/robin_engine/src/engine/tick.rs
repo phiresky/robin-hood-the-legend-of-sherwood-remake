@@ -5254,17 +5254,42 @@ impl EngineInner {
             );
         }
 
-        for actor_id in sides.smalltalk_swipes {
-            let (target_id, position, weapon1) = {
-                let Some(entity) = self.get_entity(actor_id) else {
-                    continue;
-                };
-                let Some(target_id) = entity
-                    .human_data()
-                    .and_then(|h| h.opponents.first().copied())
-                else {
-                    continue;
-                };
+        for (actor_id, target_id, strike) in sides.smalltalk_strikes {
+            let wound_target = {
+                let attacker = self
+                    .get_entity(actor_id)
+                    .unwrap_or_else(|| panic!("smalltalk attacker {actor_id:?} disappeared"));
+                let target = self
+                    .get_entity(target_id)
+                    .unwrap_or_else(|| panic!("smalltalk antagonist {target_id:?} disappeared"));
+                let attacker_pos = attacker.element_data().position_map();
+                let target_pos = target.element_data().position_map();
+                let (dx, dy) =
+                    crate::element_kinds::direction_vector_16(target.element_data().direction());
+                let relative_x = target_pos.x - attacker_pos.x;
+                let relative_y = target_pos.y - attacker_pos.y;
+                target
+                    .actor_data()
+                    .is_some_and(|actor| actor.action_state.is_sword())
+                    && dx * relative_x + dy * relative_y > 0.0
+            };
+            if wound_target {
+                let profile_idx = self
+                    .get_entity(actor_id)
+                    .and_then(|entity| {
+                        super::melee::get_hth_weapon_id_full(entity, &assets.profile_manager)
+                    })
+                    .unwrap_or_else(|| {
+                        panic!("smalltalk attacker {actor_id:?} has no HtH weapon profile")
+                    });
+                self.queue_sword_damage(sim, assets, target_id, actor_id, strike, profile_idx);
+                continue;
+            }
+
+            let (position, weapon1) = {
+                let entity = self
+                    .get_entity(actor_id)
+                    .unwrap_or_else(|| panic!("smalltalk attacker {actor_id:?} disappeared"));
                 let target_mutual = self
                     .get_entity(target_id)
                     .and_then(|e| e.human_data())
@@ -5277,7 +5302,7 @@ impl EngineInner {
                 let pos = entity.element_data().position_map();
                 let weapon1 =
                     super::melee::weapon_material_from_profile(entity, &assets.profile_manager);
-                (target_id, pos, weapon1)
+                (pos, weapon1)
             };
             let weapon2 = self
                 .get_entity(target_id)

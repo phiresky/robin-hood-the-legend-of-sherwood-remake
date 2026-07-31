@@ -2067,6 +2067,8 @@ fn strike_to_animation(strike: SwordStrike) -> crate::order::OrderType {
         SwordStrike::H => OrderType::StrikingRoundLeftSword,
         SwordStrike::I => OrderType::StrikingRoundRightSword,
         SwordStrike::Charge => OrderType::StrikingStraightStrongSword, // charge uses strong strike anim
+        SwordStrike::SmalltalkLeft => OrderType::StrikingLeftSmalltalk,
+        SwordStrike::SmalltalkRight => OrderType::StrikingRightSmalltalk,
     }
 }
 

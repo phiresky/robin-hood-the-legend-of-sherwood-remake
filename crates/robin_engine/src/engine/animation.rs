@@ -1517,10 +1517,11 @@ pub(super) struct ExecuteSideOutcomes {
     /// depending on Soldier vs Civilian, plus a `HEEELP` noise at
     /// the entity's position (volume 200).
     pub cry_for_help_under_net: Vec<EntityId>,
-    /// Actors whose smalltalk sword strike reached its action-done tag.
-    /// Plays a STRIKE_SWIPE FX when principal opponents are still
-    /// mutually engaged.
-    pub smalltalk_swipes: Vec<EntityId>,
+    /// `(attacker, antagonist, strike)` triples whose smalltalk sword strike
+    /// reached its action-done tag. A back-hit against a swordfighting
+    /// antagonist launches real sword damage; a harmless mutually-engaged
+    /// swipe only plays its FX.
+    pub smalltalk_strikes: Vec<(EntityId, EntityId, crate::weapons::SwordStrike)>,
     /// `(victim, killer)` pairs launched when STRIKING_DOWN_SWORD
     /// reaches its action-done tag.
     pub killed_at_bottom: Vec<(EntityId, EntityId)>,
@@ -4781,19 +4782,27 @@ impl EngineInner {
                             entity_id,
                             &mut combat_injury_terminated,
                         );
-                        if matches!(motion_state, MotionState::Done)
-                            && matches!(
-                                anim_type,
+                        if matches!(motion_state, MotionState::Done) {
+                            let strike = match anim_type {
                                 OrderType::StrikingLeftSmalltalk
-                                    | OrderType::StrikingRightSmalltalk
-                                    | OrderType::StrikingLowLeftSmalltalk
-                                    | OrderType::StrikingLowRightSmalltalk
-                            )
-                        {
-                            completion_outcomes
-                                .execute_sides
-                                .smalltalk_swipes
-                                .push(entity_id);
+                                | OrderType::StrikingLowLeftSmalltalk => {
+                                    Some(crate::weapons::SwordStrike::SmalltalkLeft)
+                                }
+                                OrderType::StrikingRightSmalltalk
+                                | OrderType::StrikingLowRightSmalltalk => {
+                                    Some(crate::weapons::SwordStrike::SmalltalkRight)
+                                }
+                                _ => None,
+                            };
+                            if let Some(strike) = strike {
+                                completion_outcomes.execute_sides.smalltalk_strikes.push((
+                                    entity_id,
+                                    antagonist.expect(
+                                        "smalltalk strike order must retain its antagonist",
+                                    ),
+                                    strike,
+                                ));
+                            }
                         }
                         if matches!(motion_state, MotionState::Done)
                             && let Some(crate::order::OrderCompletion::UnlockDoor { door_id }) =
