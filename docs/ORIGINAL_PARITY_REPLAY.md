@@ -2308,6 +2308,17 @@ fallthrough cases share the exact guard. This prevents a simultaneous
 OUTOFVIEW pair from spuriously launching a seek-area RNG burst in Linux2
 Profile 002 `Continue-session-0002`.
 
+### Entering a swordfight retains the outgoing movement goal
+
+`RHArtificialMalignity::BeginSwordfight` calls `StopAll()` and then registers
+`ENTER_SWORDFIGHT`, but `Stop(PREFERENCE)` does not directly run the selected
+movement element's condolence callback. The sprite therefore retains its last
+`PositionGoalMap` while the sword transition takes ownership. Rust had an
+eager clear at the AI request-drain boundary, exposing `(0, 0)` as soon as the
+snapshot switched from movement to `ENTER_SWORDFIGHT`. The eager clear is
+removed; ordinary selected-element completion remains responsible for clearing
+the goal at its actual callback boundary.
+
 ### Walking START state waits for the committed step result
 
 `RHSprite::PerformMotion` commits its movement before it returns to the

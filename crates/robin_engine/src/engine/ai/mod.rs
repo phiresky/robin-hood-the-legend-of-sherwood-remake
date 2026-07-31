@@ -5754,17 +5754,11 @@ impl EngineInner {
                         );
                     }
                     // `RHArtificialMalignity::BeginSwordfight` performs
-                    // `StopAll()` before registering ENTER_SWORDFIGHT.  The
-                    // old Move may survive StopMovement long enough to be
-                    // postponed behind the fight element, but its sprite
-                    // destination is no longer authoritative once this
-                    // replacement is registered.
-                    self.world
-                        .entities
-                        .get_mut(npc_id)
-                        .expect("AI swordfight owner disappeared before launch")
-                        .position_iface_mut()
-                        .set_map_goal(crate::coordinates::MapPoint::ZERO);
+                    // `StopAll()` before registering ENTER_SWORDFIGHT.
+                    // `Stop(PREFERENCE)` does not itself run the selected
+                    // movement's condolence callback, so the sprite retains
+                    // its last movement goal while the sword transition takes
+                    // ownership.
                     self.launch_element(elem);
                 }
             }
