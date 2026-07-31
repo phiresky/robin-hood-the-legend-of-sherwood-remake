@@ -2966,6 +2966,23 @@ when no prefix was needed. This is general command-order behavior rather than a
 trace exception. It advances Nescafe Profile 003 Restart from frame 147 to its
 next independent movement-geometry divergence at frame 207.
 
+### AI `GetAnimation` reads the actor order, not a background idle
+
+The original `RHElementActor::GetAnimation()` returns the current actor order.
+That can remain `WAITING_UPRIGHT` while the sprite independently displays a
+bored background animation. Rust's AI context instead exposed
+`Sprite::last_action`, causing `GoTo` to miss its five-unit already-on-point
+shortcut and launch a redundant movement to an adjacent patrol waypoint.
+
+AI contexts now prefer the actor's latched current order and use the sprite only
+before the first order has been latched. The close-point callback also preserves
+the original recursion boundary: calls made inside `Think` defer through
+`already_on_point`, while calls made by the macro timer outside `Think` queue
+the synchronous owner-boundary `EVENT_REACHPOINT` re-entry. Nescafe Profile 003
+Restart now consumes its complete recorded RNG stream and reaches the end of
+the 240-frame session; its remaining audit item is an isolated loaded-state
+action mismatch on frame 1.
+
 ### Postponed actor commands re-enter the manager instruction boundary
 
 `StartPostponedSequenceElement` appends a released element to the sequence
@@ -3057,6 +3074,34 @@ Rust now closes that same owner-local path-construction boundary after issuing
 the fallback `GoTo`, then observes and processes route failure before the
 enclosing AI fixed point returns. This advances Linux3 Profile 001 Savegame 008
 from frame 4075 to its next independent divergence at frame 4079.
+
+### Mission-team queries return the exact live PC
+
+`RHScript::GetPCFromMissionTeam` retrieves an `RHPCDescription` from the
+campaign and passes it to `RHEngine::GetPC`. Its result is the live actor
+instantiated from that exact campaign description, not the description's
+shared character-profile number.
+
+Rust previously returned the character-profile index as a raw script value.
+This happened to resemble a small integer handle but could never compare equal
+to a real actor. Sherwood's deployment-zone cleanup consequently classified
+every member of a five-PC mission team as an outsider and launched moves for
+all of them. The native now resolves the mission-team character index through
+each live PC's stable campaign-description index and returns the corresponding
+actor handle.
+
+### Failed strike proposals still decay strike boredom
+
+`RHElementActorHuman::ProposeGoodSwordStrike` decrements all normal-strike
+boredom counters while evaluating a proposal. Those mutations remain even
+when no strike is viable and the function returns `RHCOMMAND_NULL`.
+
+The Rust PC wrapper evaluated a cloned boredom array but only wrote it back
+after selecting a strike. Repeated failed proposals therefore retained stale
+boredom and could suppress a later strike that the Original accepted. Rust now
+persists the evaluated array before the no-proposal return. Together with the
+mission-team query correction, this makes Linux2 Profile 002 Savegame 038 match
+every recorded frame.
 
 ## Coverage limits
 
