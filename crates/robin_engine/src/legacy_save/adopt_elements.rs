@@ -648,6 +648,8 @@ struct ConvertedLocalAiCommon {
     last_stimulus_multiplicity: [u16; 5],
     is_master: bool,
     master: u32,
+    seek_position: Position,
+    alert_soldiers_point: Position,
     first_try: bool,
     panic_center_x: f32,
     panic_center_y: f32,
@@ -1868,6 +1870,18 @@ fn convert_local_ai_common(
             creation_order,
             "local_ai.master",
         )?,
+        seek_position: ai_position(
+            saved.seek_position,
+            topology,
+            creation_order,
+            "local_ai.seek_position.sector",
+        )?,
+        alert_soldiers_point: ai_position(
+            saved.alert_soldiers_point,
+            topology,
+            creation_order,
+            "local_ai.alert_soldiers_point.sector",
+        )?,
         first_try: saved.first_try,
         panic_center_x: saved.panic_center_x,
         panic_center_y: saved.panic_center_y,
@@ -2231,6 +2245,8 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.last_stimulus_multiplicity = saved.last_stimulus_multiplicity;
     ai.is_master = saved.is_master;
     ai.master = saved.master;
+    ai.seek_position = saved.seek_position;
+    ai.alert_soldiers_point = saved.alert_soldiers_point;
     ai.first_try = saved.first_try;
     ai.panic_center_x = saved.panic_center_x;
     ai.panic_center_y = saved.panic_center_y;
