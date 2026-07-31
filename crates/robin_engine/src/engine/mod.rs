@@ -3438,30 +3438,6 @@ impl EngineInner {
             return;
         }
 
-        if let Some(owner_id) = owner
-            && self
-                .orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx)
-                .is_some_and(|elem| {
-                    matches!(
-                        elem.command,
-                        crate::element::Command::Seek | crate::element::Command::MoveOk
-                    ) && matches!(
-                        &elem.data,
-                        crate::sequence::SequenceElementData::Movement { flags, .. }
-                            if flags.contains(crate::sequence::MoveFlags::SEEK)
-                    )
-                })
-            && self
-                .get_entity(owner_id)
-                .and_then(|e| e.actor_data())
-                .is_some_and(|a| a.post_seek_sequence.is_some())
-        {
-            self.start_post_seek_sequence(owner_id, Some((seq_id, elem_idx)));
-            return;
-        }
-
         // Queue exhausted. RHElementActor::SendCondolationCard clears the
         // current element's map goal before dropping mpSequenceElement and
         // mpOrder. `do_next_order` is only called for the actor's selected

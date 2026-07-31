@@ -887,22 +887,12 @@ pub fn begin_tie(
         target: Some(target_id),
         order_id: Some(order_id),
     };
-    actor.clear_path();
-    actor.action_state = ActionState::Waiting;
 
     let mut order = Order::new(OrderType::Tying, target_pos.x, target_pos.y, order_id);
     order.target_actor = Some(target_id.index());
     order.compute_direction = false;
     order.lock_ai = true;
     sequence_manager.push_order_on(seq_id, elem_idx, order);
-
-    // Face the target.
-    let actor_pos = actor_entity.element_data().position_map();
-    let dx = target_pos.x - actor_pos.x;
-    let dy = target_pos.y - actor_pos.y;
-    actor_entity.element_data_mut().set_direction_instantly(
-        crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
-    );
 
     BeginResult::Started
 }
@@ -2298,13 +2288,13 @@ pub fn tick_ability(
     } else {
         ability_order_type(kind)
     };
-    // HITTING and PAYING turn progressively toward the direction installed at
-    // Execute-time initialization. Keep the first sprite frame frozen until
-    // alignment, matching their Original
-    // `Turn() ? RHPROGRESSION_FROZEN_FIRST_FRAME : default` branches.
+    // HITTING, HEALING, PAYING, and TYING turn progressively toward the
+    // direction installed at Execute-time initialization. Only Hit and Pay
+    // freeze the first sprite frame until alignment; Original Tie calls
+    // `Turn()` for its side effect and advances the action unconditionally.
     let turning = matches!(
         kind,
-        AbilityKind::Hit | AbilityKind::Heal | AbilityKind::Pay
+        AbilityKind::Hit | AbilityKind::Heal | AbilityKind::Pay | AbilityKind::Tie
     ) && entity.position_iface_mut().turn();
     let frame_progression = if matches!(kind, AbilityKind::Hit | AbilityKind::Pay) && turning {
         crate::sprite::FrameProgression::FrozenFirstFrame

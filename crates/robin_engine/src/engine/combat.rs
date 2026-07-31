@@ -3160,6 +3160,86 @@ impl EngineInner {
             }
         }
 
+        let pending_tie_init = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::Tie)
+                    && actor.execute_order_initialising)
+                    .then(|| {
+                        (
+                            ability
+                                .sequence_id
+                                .expect("pending Tie initialization lost sequence identity"),
+                            ability.element_index,
+                            ability
+                                .target
+                                .expect("pending Tie initialization lost antagonist identity"),
+                            ability
+                                .order_id
+                                .expect("pending Tie initialization lost order identity"),
+                        )
+                    })
+            });
+        if let Some((seq_id, elem_idx, target_id, order_id)) = pending_tie_init {
+            let valid = {
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .unwrap_or_else(|| {
+                        panic!("pending Tie owner {actor_id:?} lost element {seq_id:?}/{elem_idx}")
+                    });
+                assert_eq!(element.owner, Some(actor_id));
+                assert_eq!(element.command, crate::element::Command::TieCmd);
+                let order = element.current_order().unwrap_or_else(|| {
+                    panic!("pending Tie element {seq_id:?}/{elem_idx} lost its selected order")
+                });
+                assert_eq!(order.order_id, order_id);
+                assert_eq!(order.target_actor, Some(target_id.index()));
+                self.check_sequence_element_validity(assets, actor_id, element, true)
+            };
+            if !valid {
+                self.cleanup_aborted_ability(
+                    actor_id,
+                    crate::movement::AbilityKind::Tie,
+                    seq_id,
+                    elem_idx,
+                    Some(order_id),
+                );
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                return;
+            }
+
+            let actor_pos = self
+                .get_entity(actor_id)
+                .expect("validated Tie owner vanished during initialization")
+                .element_data()
+                .position_map();
+            let target_pos = self
+                .get_entity(target_id)
+                .expect("validated Tie target vanished during initialization")
+                .element_data()
+                .position_map();
+            let facing = crate::position_interface::vector_to_sector_0_to_15_iso(
+                target_pos.x - actor_pos.x,
+                target_pos.y - actor_pos.y,
+            );
+            // RHElementActorPC::Execute(TYING) installs only the progressive
+            // direction goal during the order's first Execute. Translation
+            // itself must not rotate or stop a moving PC: the Tie can still
+            // be interrupted by an earlier manager-FIFO continuation before
+            // its animation ever owns an actor slot.
+            self.get_entity_mut(actor_id)
+                .expect("validated Tie owner vanished before direction initialization")
+                .element_data_mut()
+                .set_direction_goal(facing);
+        }
+
         let pending_heal_facing = self
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
