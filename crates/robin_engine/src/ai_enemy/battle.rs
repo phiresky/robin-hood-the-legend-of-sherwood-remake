@@ -440,12 +440,32 @@ impl EnemyAi {
         // able-to-fight, drop it. Each removal that falls within
         // `num_enemies_i_can_see` decrements the personally-visible
         // counter. Friends accidentally on the list are also dropped.
+        let mut unconscious_enemies_from_them = Vec::new();
         {
             let mut idx = 0;
             while idx < self.list_them.len() {
                 let h = self.list_them[idx];
                 let drop_entry = match ctx.entity_view(h) {
-                    Some(view) => view.camp == ctx.camp || !view.is_able_to_fight,
+                    Some(view) => {
+                        let is_friend = view.camp == ctx.camp;
+                        if !is_friend && !view.is_dead && view.is_unconscious && !view.is_carried {
+                            // Original builds listUnconsciousEnemies from
+                            // entries removed from the persistent mlistThem
+                            // during this exact cleanup pass.  A fresh
+                            // detection snapshot is not equivalent: an enemy
+                            // can stop being detectable as soon as it falls
+                            // unconscious while its authoritative Them-list
+                            // entry remains until BattleDecisions consumes it.
+                            unconscious_enemies_from_them.push(crate::ai::SleepingEnemyInfo {
+                                handle: h,
+                                position: view.position,
+                                is_pc: view.is_pc,
+                                is_robin: view.is_robin,
+                                is_vip: view.is_vip,
+                            });
+                        }
+                        is_friend || !view.is_able_to_fight
+                    }
                     None => {
                         tracing::warn!(
                             me = self.base.me,
@@ -562,12 +582,12 @@ impl EnemyAi {
                     ctx,
                     tick,
                 );
-            } else if !tick.unconscious_enemies.is_empty() && !self.is_merry_man_forest(ctx) {
-                // Enemies I saw this tick are all unconscious and not
-                // being carried — dump them into list_them, pick a
-                // target, and walk up to finish them off.
+            } else if !unconscious_enemies_from_them.is_empty() && !self.is_merry_man_forest(ctx) {
+                // Enemies removed from the persistent Them list above are
+                // unconscious and not carried — put them back, select one,
+                // and walk up to finish them off.
                 debug_assert!(self.list_them.is_empty());
-                self.approach_sleeping_enemies(sim, &tick.unconscious_enemies, ctx, tick);
+                self.approach_sleeping_enemies(sim, &unconscious_enemies_from_them, ctx, tick);
             } else {
                 // Final "there is literally nothing going on" fallback —
                 // look for sleeping enemies anywhere within the 360°
