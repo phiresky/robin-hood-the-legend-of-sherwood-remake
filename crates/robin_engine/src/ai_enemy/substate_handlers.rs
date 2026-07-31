@@ -5041,10 +5041,10 @@ impl EnemyAi {
                                 }
                             } else {
                                 // Danger is over
-                                self.get_battle_overview(0x0001, ctx, tick);
+                                self.get_battle_overview(0, ctx, tick);
                             }
                         } else {
-                            self.get_battle_overview(0x0001, ctx, tick);
+                            self.get_battle_overview(0, ctx, tick);
                         }
                     }
                 }
