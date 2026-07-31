@@ -2603,7 +2603,11 @@ impl EnemyAi {
                         Substate::SeekingSoldierGoToOfficer,
                         officer_pos,
                         40,
-                        GotoFlags::RUN,
+                        // Original's CALLED_BY_OFFICER timer calls
+                        // `GoNear(Position(mpAntagonist), 40)` without
+                        // `GOTO_RUN`; the separate return-to-officer path is
+                        // the one that explicitly runs.
+                        GotoFlags::empty(),
                         ctx,
                     );
                     self.base.launch_timer(20, ctx.frame);

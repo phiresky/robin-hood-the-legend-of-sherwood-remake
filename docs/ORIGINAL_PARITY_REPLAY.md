@@ -3809,6 +3809,19 @@ therefore rotated on the first replay frame even though Original retained
 direction 2. Removing the hold from that table makes Linux3 Profile 001
 Savegame 036 match every recorded frame.
 
+### A soldier called by an officer approaches at walking speed
+
+Original's `SUBSTATE_SEEKING_SOLDIER_CALLED_BY_OFFICER` timer calls
+`GoNear(Position(mpAntagonist), 40)` without `GOTO_RUN`. This is intentionally
+different from the separate return-to-officer path, which explicitly supplies
+that flag. Rust had conflated the two paths and launched a running transition,
+advancing six pixels where Original's walking transition advanced four.
+
+The called-soldier path now preserves Original's default walking mode. Linux3
+Profile 001 Savegame 038 matches through the former frame-54445 boundary and
+reaches an independent officer-conversation progression divergence at frame
+54506.
+
 ## Frozen full-corpus audit at `2a3e842df`
 
 The first no-unknown audit froze the debug parity runner built from commit
