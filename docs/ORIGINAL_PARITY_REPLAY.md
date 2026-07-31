@@ -2892,6 +2892,22 @@ live. Movement now snapshots the current order antagonist's radius and supplies
 it to every projected, transition, and committed goal check. Linux2 Profile 002
 Savegame 023 matches every recorded frame.
 
+### Fast-climb double motion preserves both position roundings
+
+The non-animation fast stairs, ladder, and wall tokens execute the ordinary
+sprite motion call twice in `RHElementActor::Execute`. Each call immediately
+stores its own map-position update. Even when both calls retain the same cached
+increment, adding their scaled distances first is not binary32-equivalent:
+large map coordinates round once after each Original call.
+
+Rust already advanced the animation and applied the two turn slowdowns
+separately, but combined the resulting distances for one physical commit. It
+now retains both distances and, on the anti-collision-disabled lift/door path,
+commits the two map updates in Original order. This removes the one-ULP X/Y
+drift which a steep stair plane amplified into the first Linux2 Profile 002
+Savegame 029 elevation mismatch at frame 4,041; that replay now advances to an
+independent facing divergence at frame 4,123.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

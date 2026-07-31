@@ -6359,29 +6359,38 @@ impl EngineInner {
             // Direct transition Execute arms call `PerformMotion(...,
             // RHMOTIONMETHOD_TILL_LAST_FRAME)` without a speed factor. Seek
             // transitions instead route through PerformSeek and do pass it.
-            let speed = if let Some(second_distance) = second_frame_dist_raw {
+            let (speed, split_motion_speeds) = if let Some(second_distance) = second_frame_dist_raw
+            {
                 // The fast stairs/ladder/wall arms contain two literal
                 // PerformMotion calls. Each call applies its own turning
                 // slowdown using the direction reached by the immediately
                 // preceding Turn(), so a first call that is still rotating
                 // must not inherit the second call's newly aligned state.
-                scaled_motion_distance(
+                let first_speed = scaled_motion_distance(
                     first_frame_dist_raw,
                     speed_factor,
                     apply_speed_factor,
                     first_direction_differs_from_goal,
-                ) + scaled_motion_distance(
+                );
+                let second_speed = scaled_motion_distance(
                     second_distance,
                     speed_factor,
                     apply_speed_factor,
                     direction_differs_from_goal,
+                );
+                (
+                    first_speed + second_speed,
+                    Some((first_speed, second_speed)),
                 )
             } else {
-                scaled_motion_distance(
-                    frame_dist_raw,
-                    speed_factor,
-                    apply_speed_factor,
-                    direction_differs_from_goal,
+                (
+                    scaled_motion_distance(
+                        frame_dist_raw,
+                        speed_factor,
+                        apply_speed_factor,
+                        direction_differs_from_goal,
+                    ),
+                    None,
                 )
             };
             // PerformMotion applies the distance before returning its motion
@@ -6617,6 +6626,22 @@ impl EngineInner {
                     let nx = increment.x;
                     let ny = increment.y;
                     let anti_on = entity.position_iface().is_anti_collision_on();
+                    // The fast stairs/ladder/wall tokens invoke PerformMotion
+                    // twice. With anti-collision disabled, Original stores the
+                    // first position update before applying the second one.
+                    // Combining both distances and rounding only the final
+                    // sum moves large map coordinates by an ULP and can
+                    // amplify into a visible elevation error on steep planes.
+                    let split_motion_target = split_motion_speeds.filter(|_| !anti_on).map(
+                        |(first_speed, second_speed)| {
+                            let mut target = entity.element_data().position_map();
+                            target.x += nx * first_speed;
+                            target.y += ny * first_speed;
+                            target.x += nx * second_speed;
+                            target.y += ny * second_speed;
+                            target
+                        },
+                    );
                     let goal_map = crate::coordinates::MapPoint::new(goal.x, goal.y);
                     let (move_box, half_diagonal) = {
                         let pi = entity.position_iface();
@@ -6675,9 +6700,12 @@ impl EngineInner {
                         let raw = vector_to_sector_0_to_15(dx_step, dy_step);
                         elem.set_direction_goal(if order_reverse { raw ^ 8 } else { raw });
                     }
-                    let mut position = elem.position_map();
-                    position.x += dx_step;
-                    position.y += dy_step;
+                    let position = split_motion_target.unwrap_or_else(|| {
+                        let mut position = elem.position_map();
+                        position.x += dx_step;
+                        position.y += dy_step;
+                        position
+                    });
                     elem.set_position_map(position);
                     if deviated && (dx_step != 0.0 || dy_step != 0.0) {
                         elem.sprite.position_iface.reset_increment_computed();
@@ -7455,6 +7483,20 @@ impl EngineInner {
                     let nx = cached_increment.x;
                     let ny = cached_increment.y;
                     let anti_on = entity.position_iface().is_anti_collision_on();
+                    // Preserve the two storage roundings of Original's
+                    // double-PerformMotion fast-climb dispatch. See the
+                    // transition branch above for why the summed distance is
+                    // insufficient even when both calls use one increment.
+                    let split_motion_target = split_motion_speeds.filter(|_| !anti_on).map(
+                        |(first_speed, second_speed)| {
+                            let mut target = entity.element_data().position_map();
+                            target.x += nx * first_speed;
+                            target.y += ny * first_speed;
+                            target.x += nx * second_speed;
+                            target.y += ny * second_speed;
+                            target
+                        },
+                    );
                     // Pull transient anti-collision context from position_iface
                     // (move box, half-diagonal) + the current path goal.  The
                     // persistent state (deviated / blocked_count / box_blocked /
@@ -7536,9 +7578,12 @@ impl EngineInner {
                             let raw = vector_to_sector_0_to_15(dx_step, dy_step);
                             elem.set_direction_goal(if order_reverse { raw ^ 8 } else { raw });
                         }
-                        let mut pm = elem.position_map();
-                        pm.x += dx_step;
-                        pm.y += dy_step;
+                        let pm = split_motion_target.unwrap_or_else(|| {
+                            let mut pm = elem.position_map();
+                            pm.x += dx_step;
+                            pm.y += dy_step;
+                            pm
+                        });
                         elem.set_position_map(pm);
                         if rebuild_after_deviation && (dx_step != 0.0 || dy_step != 0.0) {
                             elem.sprite.position_iface.reset_increment_computed();
