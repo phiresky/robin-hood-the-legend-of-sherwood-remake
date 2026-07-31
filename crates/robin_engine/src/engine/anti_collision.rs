@@ -582,11 +582,16 @@ pub fn apply_anti_collision_step(
         return naive;
     }
 
+    // RHPositionInterface::UpdatePositionAntiCollision derives boxFuture's
+    // half diagonal from the *current* mfRadius. Repeated blocked moves can
+    // shrink that radius below RADIUS_GUY, and the narrower query can exclude
+    // a neighbour that would otherwise enable the obstacle-point pass.
+    let actor_radius = state.as_deref().map(|s| s.pi.radius).unwrap_or(RADIUS_GUY);
     let future = MapPoint::new(
         mover.position_map.x + naive.0,
         mover.position_map.y + naive.1,
     );
-    let half = MAX_REPULSIVE_DISTANCE + RADIUS_GUY;
+    let half = MAX_REPULSIVE_DISTANCE + actor_radius;
     let box_future = MapBBox::from_corners(
         MapPoint::new(future.x - half, future.y - half),
         MapPoint::new(future.x + half, future.y + half),
@@ -663,12 +668,6 @@ pub fn apply_anti_collision_step(
             "anti-collision deviation inputs"
         );
     }
-
-    // The actor's effective radius may have shrunk if it's been
-    // blocked (the blocked-count branch below shrinks it by 0.2 per
-    // hit).  Honour that here so the sort + deviation math uses the
-    // current radius.
-    let actor_radius = state.as_deref().map(|s| s.pi.radius).unwrap_or(RADIUS_GUY);
 
     let lists_empty = points.is_empty() && lines.is_empty();
     if lists_empty {

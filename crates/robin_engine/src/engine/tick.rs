@@ -3119,6 +3119,21 @@ impl EngineInner {
                     // would validate stale work.
                     self.pre_tick_pc_execute_validity_for(assets, entity_id);
 
+                    // RHElementActor::Hourglass calls NewMove after lazy Wait
+                    // installation and immediately before it samples the
+                    // current order ID and enters Execute. The delayed-position
+                    // branches perform an earlier NewMove for their crossing
+                    // segment, then reach this second snapshot as well. Keep
+                    // PositionInterface's old-position latch frame-local;
+                    // movement and combat helpers use IsMoving[Map] later in
+                    // this same owner slot.
+                    self.world
+                        .entities
+                        .get_mut(entity_id)
+                        .expect("actor disappeared before Hourglass NewMove")
+                        .position_iface_mut()
+                        .new_move();
+
                     let selected_order = self
                         .orders
                         .sequence_manager
