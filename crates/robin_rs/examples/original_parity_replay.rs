@@ -1025,6 +1025,8 @@ struct TraceElement {
     direction: i16,
     direction_goal: i16,
     #[serde(default)]
+    sprite_frame_count: Option<u16>,
+    #[serde(default)]
     actor: Option<TraceActor>,
     #[serde(default)]
     human: Option<TraceHuman>,
@@ -1048,6 +1050,8 @@ struct TraceActor {
 struct TraceHuman {
     life_points: i16,
     dead: bool,
+    #[serde(default)]
+    opponents: Option<Vec<TraceEntityId>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1072,6 +1076,10 @@ struct TraceElementAmmo {
 struct TraceAi {
     state: u32,
     substate: u32,
+    #[serde(default)]
+    script_locked: Option<bool>,
+    #[serde(default)]
+    locked: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1099,8 +1107,8 @@ struct TraceFrame {
     resolved_exclamations: Vec<TraceResolvedExclamation>,
 }
 
-const TRACE_CACHE_VERSION: u32 = 5;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v5.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 6;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v6.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -3874,6 +3882,15 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
             expected.direction_goal,
             i16::from(pi.get_direction_goal().as_u8()),
         );
+        if let Some(expected_frame_count) = expected.sprite_frame_count {
+            compare(
+                &mut differences,
+                id,
+                "sprite_frame_count",
+                expected_frame_count,
+                element.sprite.frame_count,
+            );
+        }
         if let Some(expected_actor) = &expected.actor {
             let actual_actor = actual
                 .actor_data()
@@ -3927,6 +3944,25 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
                 expected_human.dead,
                 actual.is_dead(),
             );
+            if let Some(expected_opponents) = &expected_human.opponents {
+                let expected_opponents: Vec<EntityId> = expected_opponents
+                    .iter()
+                    .copied()
+                    .map(|opponent| entity_map.translate(opponent))
+                    .collect();
+                let actual_opponents = actual
+                    .human_data()
+                    .unwrap_or_else(|| panic!("trace reports human opponents for non-human {id:?}"))
+                    .opponents
+                    .clone();
+                compare(
+                    &mut differences,
+                    id,
+                    "human.opponents",
+                    expected_opponents,
+                    actual_opponents,
+                );
+            }
         }
         if let Some(expected_pc) = &expected.pc {
             use robin_engine::profiles::Action;
@@ -3970,6 +4006,24 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
                 expected_ai.substate,
                 actual_ai.current_substate as u32,
             );
+            if let Some(expected_script_locked) = expected_ai.script_locked {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.script_locked",
+                    expected_script_locked,
+                    actual_ai.ai_is_script_locked(),
+                );
+            }
+            if let Some(expected_locked) = expected_ai.locked {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.locked",
+                    expected_locked,
+                    actual_ai.ai_is_locked(),
+                );
+            }
         }
     }
     differences
