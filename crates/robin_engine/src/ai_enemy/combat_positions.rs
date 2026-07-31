@@ -2993,7 +2993,7 @@ impl EnemyAi {
                 &them_handles,
                 cp,
                 &mut friends_positions,
-                &enemies_positions,
+                &mut enemies_positions,
                 &tick.nearby_fighters,
                 tick.required_profile_manager(),
                 iq,

@@ -867,12 +867,20 @@ pub struct DoorBattlePosition {
 /// localised protection and stunning damage scaled by bludgeon protection,
 /// then averages and applies the from-behind bonus/malus.
 fn estimate_damage(
-    cp: &CombatPosition,
+    cp: &mut CombatPosition,
     all_fighters: &[FighterSnapshot],
     profile_manager: &crate::profiles::ProfileManager,
     iq: u16,
 ) -> i16 {
+    // RHcombatPosition caches this value. EvaluateCombatPosition mutates
+    // target directions while walking candidate positions, but damage already
+    // estimated for the shared friend/enemy position lists deliberately keeps
+    // the first direction's result.
+    if cp.estimated_damage != NOT_YET_COMPUTED {
+        return cp.estimated_damage;
+    }
     if cp.target == 0 {
+        cp.estimated_damage = 0;
         return 0;
     }
 
@@ -911,6 +919,7 @@ fn estimate_damage(
     // Short-circuit: out of maximal range → 0 damage.
     let max_range = attacker.sword_range_maximal as f32;
     if sq_dist > max_range * max_range {
+        cp.estimated_damage = 0;
         return 0;
     }
 
@@ -1014,14 +1023,15 @@ fn estimate_damage(
         }
     }
 
-    overall_damage.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+    cp.estimated_damage = overall_damage as i16;
+    cp.estimated_damage
 }
 
 /// Evaluates one position by computing damage dealt minus damage
 /// received from targeting enemies.
 fn evaluate_single_position(
-    cp: &CombatPosition,
-    enemy_positions: &[CombatPosition],
+    cp: &mut CombatPosition,
+    enemy_positions: &mut [CombatPosition],
     all_fighters: &[FighterSnapshot],
     profile_manager: &crate::profiles::ProfileManager,
     iq: u16,
@@ -1047,7 +1057,7 @@ pub(super) fn evaluate_combat_position_full(
     them_handles: &[HumanHandle],
     cp: &mut CombatPosition,
     friend_positions: &mut [CombatPosition],
-    enemy_positions: &[CombatPosition],
+    enemy_positions: &mut [CombatPosition],
     all_fighters: &[FighterSnapshot],
     profile_manager: &crate::profiles::ProfileManager,
     iq: u16,
@@ -1064,20 +1074,22 @@ pub(super) fn evaluate_combat_position_full(
     }
 
     // Distance penalty for position changes
-    let distance = if cp.change_position {
-        max_norm(pos_diff(me_pos, &cp.attacker_position))
+    let distance: u16 = if cp.change_position {
+        // Original truncates MaxNorm into UWORD before applying the
+        // fractional distance penalty.
+        max_norm(pos_diff(me_pos, &cp.attacker_position)) as u16
     } else {
-        0.0
+        0
     };
 
     // My own score: estimated combat value + bonus - distance penalty
-    let my_points = evaluate_single_position(cp, enemy_positions, all_fighters, profile_manager, iq)
-        as f32
-        + cp.bonus as f32
-        - combat::DISTANCE_MALUS_FACTOR * distance;
+    let my_points =
+        (evaluate_single_position(cp, enemy_positions, all_fighters, profile_manager, iq) as f32
+            + cp.bonus as f32
+            - combat::DISTANCE_MALUS_FACTOR * distance as f32) as i32;
 
     // Accumulate friends' scores
-    let mut friends_points: f32 = 0.0;
+    let mut friends_points: i32 = 0;
     for fp in friend_positions.iter_mut() {
         if fp.attacker == me_handle {
             continue;
@@ -1095,24 +1107,25 @@ pub(super) fn evaluate_combat_position_full(
 
         let friend_score =
             evaluate_single_position(fp, enemy_positions, all_fighters, profile_manager, iq);
-        friends_points += friend_score as f32;
+        friends_points += friend_score;
 
         if friend_score < combat::FRIEND_IN_TROUBLE_LIMIT {
-            friends_points -= combat::FRIEND_IN_TROUBLE_MALUS as f32;
+            friends_points -= combat::FRIEND_IN_TROUBLE_MALUS;
         }
     }
 
     // Penalize unengaged enemies (enemies nobody is targeting)
-    let mut general_points: f32 = 0.0;
+    let mut general_points: i32 = 0;
     for &enemy_handle in them_handles {
         let is_engaged = enemy_handle == cp.target
             || friend_positions.iter().any(|fp| fp.target == enemy_handle);
         if !is_engaged {
-            general_points -= combat::NON_ENGAGED_ENEMY_MALUS as f32;
+            general_points -= combat::NON_ENGAGED_ENEMY_MALUS;
         }
     }
 
-    (combat::EGOISM_FACTOR * my_points + friends_points + general_points) as i32
+    (combat::EGOISM_FACTOR * my_points as f32 + friends_points as f32 + general_points as f32)
+        as i32
 }
 
 /// Finds the opponent of `maurice` who is nearest (MaxNorm) to `rene_pos`.
@@ -1325,8 +1338,9 @@ mod required_combat_input_tests {
     #[should_panic(expected = "combat position target 2 is absent")]
     fn damage_evaluation_rejects_a_missing_selected_target() {
         let fighters = [fighter(1)];
+        let mut position = combat_position();
         estimate_damage(
-            &combat_position(),
+            &mut position,
             &fighters,
             &crate::profiles::ProfileManager::new(),
             50,
@@ -1337,11 +1351,55 @@ mod required_combat_input_tests {
     #[should_panic(expected = "fighter 1 requires missing HtH weapon profile 1")]
     fn damage_evaluation_rejects_a_missing_required_weapon() {
         let fighters = [fighter(1), fighter(2)];
+        let mut position = combat_position();
         estimate_damage(
-            &combat_position(),
+            &mut position,
             &fighters,
             &crate::profiles::ProfileManager::new(),
             50,
+        );
+    }
+
+    #[test]
+    fn damage_evaluation_reuses_the_combat_position_cache() {
+        let mut position = combat_position();
+        position.estimated_damage = 123;
+        assert_eq!(
+            estimate_damage(
+                &mut position,
+                &[],
+                &crate::profiles::ProfileManager::new(),
+                50,
+            ),
+            123
+        );
+    }
+
+    #[test]
+    fn combat_position_score_truncates_distance_before_fractional_penalty() {
+        let mut position = CombatPosition {
+            attacker_position: Position {
+                x: 52.9,
+                ..Position::default()
+            },
+            change_position: true,
+            ..CombatPosition::default()
+        };
+        let mut friends = [];
+        let mut enemies = [];
+        assert_eq!(
+            evaluate_combat_position_full(
+                1,
+                &Position::default(),
+                &[],
+                &mut position,
+                &mut friends,
+                &mut enemies,
+                &[],
+                &crate::profiles::ProfileManager::new(),
+                50,
+            ),
+            -7
         );
     }
 }

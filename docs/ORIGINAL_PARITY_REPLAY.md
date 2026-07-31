@@ -2252,6 +2252,23 @@ those inline side effects before launching Wait, while animation Execute still
 obeys normal actor ordering. Linux3 Profile 003 Savegame 009 consequently
 matches all recorded frames.
 
+### Combat-position damage and score intermediates retain C++ lifetime
+
+`RHcombatPosition::swEstimatedDamage` is a lazy cache, including for the
+shared friend and enemy positions reused while scoring every proposed
+attacker position. Original may update those records' target directions for a
+later proposal, but an already estimated damage value deliberately remains
+unchanged. Rust recomputed damage after every direction update, causing the
+from-behind bonus to migrate between candidates and selecting a different
+side of the same opponent.
+
+The surrounding arithmetic also has two explicit narrowing boundaries:
+`MaxNorm` is truncated into `UWORD` before the fractional distance malus, and
+the resulting own score is truncated into `SLONG` before applying the egoism
+factor. Rust now preserves both boundaries and the lazy cache. Linux3 Profile
+001 Continue consequently chooses the same positions at frames 594 and 651
+and matches every recorded frame.
+
 ### Side-looking seek completion preserves the Original rank switch
 
 `SUBSTATE_SEEKING_JUST_WATCHING_SIDEWARDS` handles `EVENT_DONE` with explicit
