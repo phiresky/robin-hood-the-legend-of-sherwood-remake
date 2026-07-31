@@ -443,7 +443,7 @@ fn prepare_dynamic_candidate(
     )?;
     let post_dynamic_creation_counter = dynamic.post_load_creation_counter();
     let mut entities = dynamic.apply(&mut candidate);
-    stage(
+    let post_dynamic_creation_counter = stage(
         "beam-me PC identity",
         remap_saved_beam_pc_identities(
             &mut candidate,
@@ -471,7 +471,7 @@ fn remap_saved_beam_pc_identities(
     body: &LegacySaveBody,
     entities: &mut LegacyEntityFixups,
     next_original_creation_order: u32,
-) -> Result<(), String> {
+) -> Result<u32, String> {
     let mut runtime_team = Vec::new();
     for (pc_id, pc) in engine.world.entities.pcs() {
         if pc.pc.beam_me_index < 0 {
@@ -576,11 +576,33 @@ fn remap_saved_beam_pc_identities(
             ));
         }
     }
+    // Original sets `mulNumberOfCreatedStaticElements` immediately before
+    // `PopulateBeamMes` (`RHEngine::PopulateBeamMes`), so every saved team PC
+    // lies on the dynamic side of the load boundary. `SerializeElements`
+    // reconstructs each one, consuming a provisional `gulCreationCounter`
+    // value, and then restores its serialized creation order. Rust reuses the
+    // already initialized, profile-matched PC instead; preserve the otherwise
+    // invisible constructor increments explicitly.
+    let next_original_creation_order =
+        advance_reused_beam_pc_creation_counter(next_original_creation_order, saved_team.len())?;
     engine.world.install_original_creation_orders(
         entities.creation_order_by_entity.clone(),
         next_original_creation_order,
     );
-    Ok(())
+    Ok(next_original_creation_order)
+}
+
+fn advance_reused_beam_pc_creation_counter(
+    counter: u32,
+    reused_pc_count: usize,
+) -> Result<u32, String> {
+    let reused_pc_count = u32::try_from(reused_pc_count)
+        .map_err(|_| format!("reused beam-me PC count {reused_pc_count} does not fit u32"))?;
+    counter.checked_add(reused_pc_count).ok_or_else(|| {
+        format!(
+            "Original creation counter {counter} overflows after reconstructing {reused_pc_count} beam-me PCs"
+        )
+    })
 }
 
 fn stage<T, E: std::fmt::Display>(
@@ -591,4 +613,16 @@ fn stage<T, E: std::fmt::Display>(
         stage,
         detail: error.to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::advance_reused_beam_pc_creation_counter;
+
+    #[test]
+    fn reused_beam_pcs_still_consume_original_load_construction_orders() {
+        assert_eq!(advance_reused_beam_pc_creation_counter(158, 1), Ok(159));
+        assert_eq!(advance_reused_beam_pc_creation_counter(200, 3), Ok(203));
+        assert!(advance_reused_beam_pc_creation_counter(u32::MAX, 1).is_err());
+    }
 }
