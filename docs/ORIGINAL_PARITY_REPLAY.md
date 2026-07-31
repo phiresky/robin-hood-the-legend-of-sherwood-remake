@@ -2476,6 +2476,17 @@ Post-load adoption now rebuilds `ActiveMovement` from each in-progress
 movement element. Linux3 Profile 003 Savegame 019 consequently reaches its
 downed Tie target on the Original path and matches every recorded frame.
 
+### A zero-distance animation frame still exposes movement START
+
+`PerformMotion` can return `START` on an animation frame whose authored
+distance is zero. The actor does not change position on that call, but its
+Execute switch still observes `START` and enters the corresponding Moving
+state. Rust's stationary-motion guard retained the order correctly but skipped
+that state side effect. It now applies the visible Execute result before
+waiting for a later nonzero movement sample. Linux3 Profile 003 Savegame 020
+therefore enters `MovingSword` on the first `WalkingWithSword` frame and
+matches every recorded frame.
+
 ### Route arrival rebuilds patrols at the synchronous owner boundary
 
 The `SUBSTATE_DEFAULT_GOTOROUTE` `EVENT_REACHPOINT` handler calls the virtual

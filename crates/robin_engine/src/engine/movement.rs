@@ -6953,6 +6953,11 @@ impl EngineInner {
             // TERMINATED in Original on that first Execute. Only defer a
             // genuinely stationary motion that has not reached its goal.
             if stationary_motion_waits(speed, tolerance_arrival, dist) {
+                if let Some((posture, next_action_state)) =
+                    movement_execute_state_effect(order_action, state_effect_motion)
+                {
+                    movement_state_effects.push((entity_id, posture, next_action_state));
+                }
                 continue;
             }
 
