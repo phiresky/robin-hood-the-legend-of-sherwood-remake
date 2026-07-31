@@ -3425,6 +3425,15 @@ This prevents an intermediate, subsequently halted `FaceTo` from writing a
 direction goal before the final stimulus is processed. The Windows SuN1Sh1nE
 Profile 004 Continue recording now matches every recorded frame.
 
+### Small Linux profiles match end to end
+
+The complete `Savegame_linux` corpus currently consists of Profile 005
+Continue/Restart and Profile 011 Savegame 000/Continue/Restart. All five
+recordings decode and atomically adopt their Linux-v48 save payloads, then
+match every recorded frame. These are tracked explicitly so later changes to
+save adoption or mission restart do not silently regress the smaller profiles
+while attention is focused on the larger save archives.
+
 ## Coverage limits
 
 A clean baseline proves exact parity only for the state fields serialized by the
