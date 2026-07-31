@@ -482,8 +482,13 @@ impl EngineInner {
             self.hero_speaking(assets, id, expr);
         }
         for (id, expr) in start_eventual {
-            // 50% chance.
-            if crate::sim_rng::bool(sim, crate::sim_rng::RngSite::HeroSpeech) {
+            // Original's DoActionAndEventuallyPlayRemark tests
+            // `rand() > RAND_MAX / 2`, not the low bit. Both are unbiased in
+            // a fresh stream, but replaying a concrete libc draw must preserve
+            // the exact predicate.
+            if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::HeroSpeech, 0..=2_147_483_647)
+                > 2_147_483_647 / 2
+            {
                 self.hero_speaking(assets, id, expr);
             }
         }
