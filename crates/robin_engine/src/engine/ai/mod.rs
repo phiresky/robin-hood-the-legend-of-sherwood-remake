@@ -7662,6 +7662,19 @@ impl EngineInner {
         match anchor {
             Some(idx) => {
                 let dest = self.ai.global.seek_points[idx].position;
+                // The blocked movement order has already sent its
+                // condolence callback before Original enters
+                // EVENT_COULDNT_REACHPOINT.  `GetAnimation()` at this nested
+                // GoTo therefore observes the sequence manager's live order
+                // (usually RHNONANIMATION_END), not the actor's movement
+                // latch, which Rust clears later in the owner drain.
+                let mut goto_ctx = ctx.clone();
+                goto_ctx.self_animation = self
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(npc_id)
+                    .map(|(_, _, order)| order.order_type)
+                    .unwrap_or(crate::order::OrderType::NonanimationEnd);
                 let Some(entity) = self.world.entities.get_mut(npc_id) else {
                     return;
                 };
@@ -7672,7 +7685,7 @@ impl EngineInner {
                 if ai.lasting_panic_runs > 0 {
                     flags |= crate::ai::GotoFlags::DONT_STOP;
                 }
-                ai.go_to(dest, flags, ctx);
+                ai.go_to(dest, flags, &goto_ctx);
 
                 // Original GoTo constructs the route before returning to the
                 // EventCouldntReachPoint handler. The emergency retry below

@@ -3075,6 +3075,20 @@ the fallback `GoTo`, then observes and processes route failure before the
 enclosing AI fixed point returns. This advances Linux3 Profile 001 Savegame 008
 from frame 4075 to its next independent divergence at frame 4079.
 
+### Panic fallback `GoTo` reads the live actor order
+
+The movement that raises `EVENT_COULDNT_REACHPOINT` has already sent its
+condolence callback when Original selects the nearest panic seek point. The
+nested fallback `GoTo` therefore reads the sequence manager's current order
+through `RHElementActor::GetAnimation()`, commonly receiving
+`RHNONANIMATION_END`; it does not see the just-finished running animation.
+
+Rust now refreshes that animation value from the live sequence-manager order
+at the fallback boundary. A seek point coincident with the actor consequently
+takes `GoTo`'s already-on-point path and recursively selects the next panic
+segment in the same frame. With this correction, Linux3 Profile 001 Savegame
+008 matches every recorded frame and all 875 simulation RNG draws.
+
 ### Mission-team queries return the exact live PC
 
 `RHScript::GetPCFromMissionTeam` retrieves an `RHPCDescription` from the
