@@ -3459,8 +3459,10 @@ city states with 321 and 347 loaded elements.
 
 The formerly excluded static Savegame 006 trace also received a frozen
 release-mode recheck. Its 250 frames (61 through 311), 56-element save including
-5 dynamic elements, and 299 authoritative RNG draws match exactly through EOF;
-no replay-specific compatibility or code change was required.
+5 dynamic elements, and 299 authoritative RNG draws match exactly through EOF.
+The static Savegame 009 trace also matches all 250 frames (95 through 345),
+including its 59 saved elements, 8 dynamic elements, and 311 authoritative RNG
+draws. No replay-specific compatibility or code change was required.
 
 The remaining failures group into reusable behavior boundaries rather than
 save-specific mismatches:
