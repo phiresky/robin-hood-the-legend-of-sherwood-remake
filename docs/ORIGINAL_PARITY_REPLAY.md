@@ -2165,6 +2165,17 @@ walk now derives Human-tail noise from the surviving same-element order or a
 truly instructed successor, never from deferred registration or synthetic
 idle bookkeeping.
 
+### PassDoor preserves Soldier runtime animation overrides
+
+`RHElementActorSoldier::Execute` replaces a logical `WalkingUpright` order
+with `WalkingAlerted` whenever the soldier is attentive. That virtual dispatch
+still applies to movement steps created by PassDoor; the logical order itself
+is not rewritten. Rust's door-pass driver used the translated step action
+directly and bypassed the Soldier override, so Linux2 Profile 002 Savegame 003
+moved Soldier 130 by the upright row's 1.2-unit sample instead of the alerted
+row's 1.8-unit sample at frame 13890. Door steps now pass through the same
+runtime Soldier animation selection as ordinary movement.
+
 ### Waiting-sword launches wait for the actor completion boundary
 
 `RHElementActorHuman::Execute` evaluates smalltalk hints and ordinary

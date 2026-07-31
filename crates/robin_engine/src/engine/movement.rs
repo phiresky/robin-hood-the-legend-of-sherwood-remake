@@ -5713,7 +5713,17 @@ impl EngineInner {
             let anim = if let Some(dp_anim) =
                 door_pass_anim.filter(|anim| !is_sword_movement_nonanimation(*anim))
             {
-                dp_anim
+                // PassDoor supplies the current translated movement step, but
+                // Soldier::Execute still dispatches that logical action
+                // through its attentive-animation override. In particular,
+                // an attentive WalkingUpright door step plays
+                // WalkingAlerted and therefore uses its distinct frame
+                // distances.
+                super::animation::soldier_movement_animation(
+                    dp_anim,
+                    soldier_attentive,
+                    action_state,
+                )
             } else if is_combat {
                 if is_sword_motion && combat_target.is_none() {
                     // Plain WALKING_SWORD when a non-soldier is forced
