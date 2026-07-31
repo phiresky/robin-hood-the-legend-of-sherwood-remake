@@ -451,23 +451,13 @@ impl EngineInner {
                         Some(e) => e,
                         None => continue,
                     };
-                    // Pre-flight re-validation, humans only — non-
-                    // human owners (e.g. script-driven objects) skip
-                    // the gate because the validity check only
-                    // applies to humans.  Passes `check_position =
-                    // true` to match the default at all call sites.
-                    let owner_is_human = self
-                        .get_entity(owner)
-                        .map(|e| e.is_human())
-                        .unwrap_or(false);
-                    if owner_is_human
-                        && !self.check_sequence_element_validity(assets, owner, elem, true)
-                    {
-                        self.orders
-                            .sequence_manager
-                            .element_impossible(seq_id, elem_idx);
-                        continue;
-                    }
+                    // Do not run a generic human validity check here.
+                    // Original Human::Instruct delegates directly to
+                    // Actor::Instruct after its dead/unconscious and repeated
+                    // PC bow-shot guards. Commands that require live
+                    // revalidation do so in their specific Execute
+                    // initialization arm; WakeUp, for example, deliberately
+                    // has no position-validity check during instruction.
                     match cmd {
                         Command::Move | Command::Seek => {
                             self.dispatch_ordered_move_seek_instruct(

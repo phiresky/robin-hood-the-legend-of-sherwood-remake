@@ -3522,64 +3522,6 @@ impl EngineInner {
         // separate drain-and-rebook step.
     }
 
-    pub(super) fn process_turn_orders(&mut self) {
-        use crate::order::OrderType;
-        use crate::position_interface::vector_to_sector_0_to_15_iso;
-
-        // `TurnFast` sets the direction goal on the
-        // `PositionInterface` and drops a single `Turning` order onto
-        // the sequence element.  The animation driver special-cases
-        // `Turning` and drives `turn_fast()` each tick until the body
-        // reaches the goal; the default `advance_element` completion
-        // then pops the order and terminates the element.
-        //
-        // All that remains here is to apply the goal direction on the
-        // actor — the order itself is already sitting on the Turn
-        // element (pushed by `Command::Turn` in tick.rs or by
-        // `process_pending_ai_orders` for free-standing turn commands).
-        //
-        // `Turn` computes the goal via
-        // `vector_to_sector_0_to_15_iso` — i.e. applies the isometric
-        // aspect correction to dy.  `face_position_impl` (which
-        // produces the target position stored in the order) also
-        // applies the correction.  We MUST match it here; otherwise
-        // the actor gets snapped to a sector 1 off from what the AI
-        // computed, which breaks `FaceTo` early-return parity and
-        // causes a spurious 18-frame Turn animation blocking the
-        // REACTIONTIME_TURNING → REACTIONTIME transition (~5 visible
-        // frames of "standing alerted" before the enemy starts
-        // running).
-        let mut updates: Vec<(crate::element::EntityId, i16)> = Vec::new();
-        for (npc_id, entity) in self.world.entities.npcs() {
-            let Some((_, _, front)) = self.orders.sequence_manager.current_order_for_actor(npc_id)
-            else {
-                continue;
-            };
-            if front.order_type != OrderType::Turning {
-                continue;
-            }
-            if !front.compute_direction {
-                continue;
-            }
-            let pos = entity.element_data().position_map();
-            let dx = front.target_x - pos.x;
-            let dy = front.target_y - pos.y;
-            let new_dir = vector_to_sector_0_to_15_iso(dx, dy);
-            updates.push((npc_id.into(), new_dir));
-        }
-
-        for (npc_id, new_dir) in updates {
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                continue;
-            };
-            if entity.actor_data().is_some() {
-                entity.position_iface_mut().set_direction(
-                    crate::position_interface::Direction::from_raw(new_dir as i32),
-                );
-            }
-        }
-    }
-
     // ─── EventReachPoint dispatch ───────────────────────────────
 
     /// Dispatch `EventReachPoint` stimulus to NPCs whose movement just

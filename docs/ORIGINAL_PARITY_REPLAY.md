@@ -874,6 +874,30 @@ authoritative deserialized position sector. The first Cyrdach Windows fixture
 now decodes to exact EOF, adopts atomically, and matches all 250 recorded
 frames.
 
+Base-element delayed coordinates are authoritative only while their matching
+`position_map_delayed` or `position_delayed` bit is set. Original's setters
+overwrite the complete point before enabling the bit, so inactive coordinate
+bytes are dormant constructor storage and can legitimately be non-finite.
+Adoption validates active delayed points strictly but does not reject dormant
+bytes; Cyrdach's Windows `Continue-session-0005` contains such an inactive
+`NaN` and now adopts without weakening validation of values Original will
+consume.
+
+`RHElementActor::mmotionState` is likewise a serialized diagnostic rather than
+a load continuation input. On every first post-load `Hourglass`, Original
+assigns the result of `Execute()` before the switch which reads this member.
+Initialized enum values remain preserved, while arbitrary out-of-domain
+Windows storage is canonicalized to the constructor's `RHMOTION_DONE`.
+Cyrdach's `Restart-session-0003` contains a pointer-like word in this dormant
+slot.
+
+The actor's material-boundary distance is a cache serialized twice. Original
+does not validate either copy: a null material sector ignores the cache, while
+a changed map position recomputes it before returning it. Rust retains the
+exact cached float bits, including legacy `NaN`, but still requires both
+redundant copies to agree so a structural decode error cannot pass as cache
+storage.
+
 ### Linux-v48 AI `mOldState` storage
 
 Profile 011 creation order 85 stores `local_ai.old_state = 119`, outside the
@@ -2164,6 +2188,39 @@ elements now use a deferred owned registration path, and their manager work is
 drained only after the actor completion stack settles. The full Savegame 010
 trace matches every recorded frame while Profile 001's prepared lateral strike
 still retains substate 161 when no such interrupted smalltalk element exists.
+
+### Human instruction validates commands at their command-specific boundary
+
+Original `RHElementActorHuman::Instruct` does not run the general sequence
+validity predicate before delegating to `RHElementActor::Instruct`. Commands
+which need a fresh position or target check perform it in their own first
+`Execute` arm. WakeUp intentionally has no such check. Rust's generic
+`InstructOwner` preflight rejected a valid WakeUp in Linux3 Profile 003
+Savegame 009 before its authored turning and interaction orders could run.
+The broad preflight is gone; the existing command-specific Execute checks
+remain authoritative.
+
+### Turning orders retain the direction resolved during translation
+
+Turn, TurnFast, TurnElement, and WakeUp all establish the actor's direction
+goal while translating the command. Their `Turning` order drives the actor
+toward that goal; it does not recompute a direction from the order's generic
+target coordinates. The removed Rust post-pass treated default `(0, 0)` order
+coordinates as a map target and redirected a waking actor toward the origin.
+All turn producers now rely on their translation-time goal, matching the
+Original order contract.
+
+### WakeUp delivers recovery AI synchronously
+
+At `WakingUp DONE`, Original sets the target lying, clears concussion, calls
+the target's `Wait`, and leaves the target's current action-state field for the
+new order lifecycle to replace. Clearing concussion invokes the NPC's
+`Think(EVENT_FITAGAIN)` inline, including resurrection bookkeeping, eye
+changes, and wake redetection broadcasts, even if that NPC's creation-ordered
+actor slot has already run. Rust now drains this exact FIFO prefix and applies
+those inline side effects before launching Wait, while animation Execute still
+obeys normal actor ordering. Linux3 Profile 003 Savegame 009 consequently
+matches all recorded frames.
 
 ## Current Linux-v48 loaded-save result
 

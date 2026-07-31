@@ -2354,15 +2354,6 @@ impl EngineInner {
         // ── Process cross-NPC actions (phalanx coordination) ────
         self.process_pending_cross_npc_actions(sim, assets);
 
-        // ── Process NPC turn orders ──────────────────────────────
-        // Turning orders (from face_direction / face_position) are queued
-        // by process_pending_ai_orders into actor.order_queue. Process
-        // them here: set entity direction and dispatch EventDone back to
-        // the AI so the state machine can advance (e.g. from
-        // DefaultGotoRouteTurn → DefaultEnroute).
-        // Turn: instant turn → SendCondolationCard(EventDone).
-        self.process_turn_orders();
-
         // ── Process AI animation orders ─────────────────────────
         // Drain Pointing/RaisingShield/etc orders from NPC order queues
         // and start them as active_ai_anim. EventDone fires when the
@@ -5354,11 +5345,23 @@ impl EngineInner {
             if !target_is_dead {
                 if let Some(target_entity) = self.get_entity_mut(target) {
                     target_entity.set_posture(crate::element::Posture::Lying);
-                    if let Some(actor) = target_entity.actor_data_mut() {
-                        actor.action_state = crate::element::ActionState::Waiting;
-                    }
                 }
                 self.apply_concussion(sim, assets, target, 0, false);
+                // SetConcussionOfTheBrain synchronously sends FITAGAIN from
+                // the WakingUp DONE stack. This AI consequence is immediate
+                // even when the target's creation-ordered actor slot has
+                // already passed; only its next animation Execute is delayed.
+                self.drain_pending_concussion_side_effects(sim, assets);
+                if !target_is_pc {
+                    assert!(
+                        self.dispatch_pending_fit_again_for_npc(sim, target, assets),
+                        "WakingUp DONE for NPC {target:?} cleared concussion without queueing the required EVENT_FITAGAIN"
+                    );
+                    // These are inline consequences of the NPC's FITAGAIN
+                    // Think call in Original, not work for its next actor slot.
+                    self.tick_ai_pending_resurrection_and_eyes_for_npc(target);
+                    self.apply_wake_redetection_blinks(target);
+                }
                 // Original WAKING_UP DONE calls target->Wait()
                 // unconditionally. That launches a fresh priority-Wait
                 // element even while the old unconscious Wait is live, so
