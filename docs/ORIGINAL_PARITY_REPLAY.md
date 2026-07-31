@@ -3776,6 +3776,23 @@ obstacle erased his carried civilian's independently serialized obstacle and
 surface while the existing moving and shoulder-carry synchronization remains
 unchanged. Randomguy Profile 004 ExQuickSave now matches every recorded frame.
 
+### Halt clears the goal of any detached selected actor command
+
+Original `RHElementActor::SendCondolationCard` clears the sprite map goal when
+the stopped element is the actor's selected `mpSequenceElement`; that rule is
+not limited to movement elements. This matters when an AI calls `FaceTo` twice:
+the first Turn can still own a running-to-waiting transition, and the second
+Turn's leading `Halt` clears that selected Turn's inherited movement goal before
+the replacement Turn is launched.
+
+Rust's synchronous Halt boundary previously tracked only `active_movement`, so
+it missed selected generic commands whose front order happened to be a movement
+transition. Halt now snapshots the exact selected sequence element and clears
+the goal only when `Stop(PREFERENCE)` actually detaches it. A movement element
+rewritten in place to its exit transition remains live and therefore retains
+its goal as before. Linux3 Profile 001 Savegame 008 and the retained-goal Linux2
+Profile 002 QuickSave both match every recorded frame.
+
 ## Frozen full-corpus audit at `2a3e842df`
 
 The first no-unknown audit froze the debug parity runner built from commit

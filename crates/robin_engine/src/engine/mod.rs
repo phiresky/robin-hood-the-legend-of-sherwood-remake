@@ -2743,21 +2743,18 @@ impl EngineInner {
     /// [`EngineInner::process_pending_ai_orders`] whenever a movement
     /// order arrives without `GotoFlags::NO_HALT`.
     pub(crate) fn halt_actor(&mut self, owner: EntityId) {
-        // Snapshot the actor-base selected movement before Stop tears down the
+        // Snapshot the actor-base selected element before Stop tears down the
         // sequence-manager identity. Original SendCondolationCard clears the
         // sprite goal synchronously when this exact selected element is
-        // interrupted. Rust delivers that card later, by which point a
-        // replacement transition may already be selected and obscure the
-        // relationship.
-        let selected_movement = self
-            .get_entity(owner)
-            .and_then(Entity::actor_data)
-            .and_then(|actor| {
-                actor
-                    .active_movement
-                    .sequence_id
-                    .map(|seq| (seq, actor.active_movement.element_index))
-            })
+        // interrupted, regardless of whether it is a movement element. Rust
+        // delivers that card later, by which point replacement work may
+        // already be selected and obscure the relationship. This notably
+        // matters when a second FaceTo halts a Turn whose front order is a
+        // running-to-waiting transition.
+        let selected_element = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner)
             .filter(|&(sequence, element)| {
                 self.orders
                     .sequence_manager
@@ -2780,16 +2777,18 @@ impl EngineInner {
         // has not called Actor::SendCondolationCard in that case, so the
         // sprite's live movement goal remains owned by the retained element
         // until the transition finishes. Clear it synchronously only when the
-        // stop actually detached the element selected before Halt.
-        let selected_movement_was_detached = selected_movement.is_some_and(|movement| {
+        // stop actually detached the element selected before Halt. The same
+        // test covers selected non-movement work, which Stop normally detaches
+        // outright and whose Actor-base condolence clears the goal as well.
+        let selected_element_was_detached = selected_element.is_some_and(|selected| {
             let remains_live = self
                 .orders
                 .sequence_manager
-                .get_element(movement.0, movement.1)
+                .get_element(selected.0, selected.1)
                 .is_some_and(|element| element.state == crate::sequence::SequenceState::InProgress);
             !remains_live
         });
-        if selected_movement_was_detached && let Some(entity) = self.get_entity_mut(owner) {
+        if selected_element_was_detached && let Some(entity) = self.get_entity_mut(owner) {
             entity
                 .position_iface_mut()
                 .set_map_goal(crate::coordinates::MapPoint::ZERO);
