@@ -594,7 +594,7 @@ impl EngineInner {
             .sequence_manager
             .current_element_for_actor(owner);
         let card_element = (seq_id, usize::from(elem_idx));
-        let selected_card_remains_authoritative =
+        let detaches_selected_order =
             was_selected && selected_element.is_none_or(|selected| selected == card_element);
         if let Some(entity) = self.world.entities.get_mut(owner) {
             let active_movement_matches = entity.actor_data().is_some_and(|actor| {
@@ -606,12 +606,18 @@ impl EngineInner {
             // `mpSequenceElement`, independently of whether that element is
             // tracked as movement. A synchronous AssertPosition can select
             // and terminate without ever becoming `active_movement`.
-            if selected_card_remains_authoritative
-                || (active_movement_matches && selected_element.is_none())
-            {
+            if detaches_selected_order || (active_movement_matches && selected_element.is_none()) {
                 entity
                     .position_iface_mut()
                     .set_map_goal(crate::coordinates::MapPoint::ZERO);
+            }
+
+            // `latched_order_type` is Rust's mirror of the selected
+            // `mpOrder`. Original clears that pointer before entering the NPC
+            // condolence callback, so every recursive Think must observe
+            // NONANIMATION_END rather than the completed sprite transition.
+            if detaches_selected_order && let Some(actor) = entity.actor_data_mut() {
+                actor.latched_order_type = Some(crate::order::OrderType::Invalid);
             }
 
             // Rust's movement tracker is separate from Original's selected

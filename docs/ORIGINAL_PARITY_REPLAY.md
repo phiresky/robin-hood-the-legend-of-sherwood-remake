@@ -3388,14 +3388,14 @@ Savegame 075 with 942 loaded elements and 595 dynamic elements.
 
 Every Linux replay in `Savegame_nicouzouf/Profile_001` has been exercised
 through its complete recorded window. Savegames 000, 002, 006, 008–010,
-013, 015–021, 023, 025–038, 040, 042–044, 046–048, 050, 052, 055–056,
+013–021, 023, 025–038, 040, 042–044, 046–048, 050, 052, 055–056,
 058, 060–062, 064, 066–075 match every recorded frame. This includes dense
 city states with 321 and 347 loaded elements.
 
 The remaining failures group into reusable behavior boundaries rather than
 save-specific mismatches:
 
-- Savegames 014, 051, and 057 take the same extra rider anti-collision
+- Savegames 051 and 057 take the same extra rider anti-collision
   deviation at frame 106.
 - Savegames 024, 041, and 049 retain `MoveOk` where Original selects `Turn`
   at frame 95; Savegames 039 and 076 expose related loaded Turn completion
@@ -3424,6 +3424,22 @@ owner-work drains, and uses it when replaying retained stimuli in the NPC tail.
 This prevents an intermediate, subsequently halted `FaceTo` from writing a
 direction goal before the final stimulus is processed. The Windows SuN1Sh1nE
 Profile 004 Continue recording now matches every recorded frame.
+
+### Condolation detaches the completed actor order before NPC Think
+
+Original `RHElementActor::SendCondolationCard` clears the selected
+`mpSequenceElement` and `mpOrder` before dispatching the NPC callback. Rust's
+sequence manager had already deselected the terminal element, but its separate
+actor animation latch still named the just-completed walking transition. A
+patrol reaching its exact destination could therefore enter a recursive
+`EVENT_REACHPOINT`, see a non-idle animation, and launch a zero-distance Move
+instead of taking Original's synchronous GoTo shortcut.
+
+Rust now clears the animation latch at the same actor-base condolence boundary,
+while preserving an incoming replacement order when one is already selected.
+All nested Think callbacks consequently observe `NONANIMATION_END` until they
+install a real replacement. Nicouzouf Profile 001 Savegame 014 now matches
+every recorded frame.
 
 ### Small Linux profiles match end to end
 
