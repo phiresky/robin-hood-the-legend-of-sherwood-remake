@@ -120,6 +120,13 @@ pub struct AiContext {
     /// a missed-in-action friend (`checkpoint_charly`) when bailing out.
     pub self_detectable_missed_friend_count: u16,
 
+    /// Enemy detectable handles whose authoritative `seen_now` latch is set,
+    /// in the detectable-list's pointer order. Original
+    /// `ReinitializeThemList` walks this live list at the exact Think
+    /// boundary; geometric visibility products in [`AiPerTickData`] are not
+    /// interchangeable with it.
+    pub self_seen_enemy_handles: Vec<HumanHandle>,
+
     /// Live animation (`OrderType`) currently playing on this NPC. Read
     /// by AI gates that inspect the actor's current animation directly,
     /// e.g. `DefaultBoredStandardProcedure` skips its head-turn

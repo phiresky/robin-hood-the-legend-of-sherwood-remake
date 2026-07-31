@@ -2356,8 +2356,22 @@ stimuli in the same FIFO fell back to a geometric tick-data reconstruction.
 That could resurrect an enemy after its `seen_now` latch had already been
 cleared. The shared immediate-dispatch path now overlays the live detectable
 list for every visibility callback, just as the retained-stimulus path already
-did. This lets simultaneous falling edges leave the battle overview with an
-empty opponent list and take the Original lost-enemy seek path.
+did. Thus any `ReinitializeThemList` call made by a later visibility handler
+sees the same latch state as Original.
+
+### Opponent-list rebuilds use detectable latches on every Think
+
+`ReinitializeThemList` does not perform a fresh geometric visibility query.
+It walks the NPC's Enemy detectable list in pointer order, keeps entries whose
+live `seen_now` latch is set, and drops dead targets. Rust previously rebuilt
+from `AiPerTickData::enemy_sq_distances`; that happens to agree during many
+detection callbacks but can disagree during timers, animation completion, and
+pathfinding callbacks between detection refreshes. `AiContext` now snapshots
+the authoritative seen handles at every synchronous Think boundary and
+`reinitialize_them_list` consumes that list directly. In Linux2 Profile 002
+Continue this matters when `EVENT_COULDNT_REACHPOINT` enters a battle overview:
+the target remains geometrically visible but its detectable latch is already
+clear, so Original seeks the lost PC instead of re-entering sword combat.
 
 ### Authored beam-me topology and the Original gang-index bug are preserved
 

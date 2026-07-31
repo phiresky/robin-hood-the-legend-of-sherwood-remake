@@ -596,6 +596,17 @@ pub(super) fn build_ai_context_from_entity(
         })
         .map(|lst| lst.len() as u16)
         .unwrap_or(0);
+    let self_seen_enemy_handles = entity
+        .npc_data()
+        .and_then(|npc| {
+            npc.detectable_lists
+                .get(crate::element::DetectableType::Enemy as usize)
+        })
+        .into_iter()
+        .flatten()
+        .filter(|detectable| detectable.seen_now)
+        .filter_map(|detectable| detectable.element.map(|target| target.index()))
+        .collect();
     // The most recently performed sprite animation. Do not use
     // `ActorData::old_action`: that is the previous value retained solely for
     // the next script `ActionChange(new, old)` callback and is still Invalid
@@ -707,6 +718,7 @@ pub(super) fn build_ai_context_from_entity(
         self_is_dead: entity.is_dead(),
         self_detectable_friend_count,
         self_detectable_missed_friend_count,
+        self_seen_enemy_handles,
         self_forced_attentive,
         self_animation,
         antagonist: None,

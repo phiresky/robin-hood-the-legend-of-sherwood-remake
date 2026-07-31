@@ -1163,42 +1163,32 @@ impl EnemyAi {
     }
 
     /// Reinitialize the Them list with all currently visible enemies.
-    fn reinitialize_them_list(&mut self, _ctx: &AiContext, tick: &AiPerTickData) {
+    fn reinitialize_them_list(&mut self, ctx: &AiContext, _tick: &AiPerTickData) {
         // Original: RHArtificialMalignity::ReinitializeThemList
         // (`original-code/RHartificialmalignity.cpp:7015-7036`). The
         // original deletes the old list and rebuilds it only from enemies
         // whose current IsEnemySeen flag is set and who are not dead. It
         // does not preserve mpPrimaryTarget when that target is no longer
         // visible.
-        // Rebuilds `list_them` to include every detectable enemy
-        // currently `seen_now && !dead` — including unconscious
-        // enemies.  The unconscious cleanup (`!is_able_to_fight`)
-        // lives downstream in `battle_decisions`, which splits
-        // unconscious entries into a local list and decrements
-        // `number_of_enemies_i_can_see` for each one removed.
-        //
-        // The set is reconstructed from two tick-data halves:
-        // `tick.enemy_sq_distances` (visible, able-to-fight enemies;
-        // the engine already excluded unconscious at detection time)
-        // and `tick.unconscious_enemies` (visible, non-carried
-        // unconscious enemies).  Earlier the helper read only the
-        // able-to-fight half, which made non-`battle_decisions`
-        // callers (e.g. `get_battle_overview` paths) see a stricter
-        // list.
-        //
+        // Rebuild `list_them` from the live detectable-list snapshot, not
+        // geometric tick products. This includes unconscious enemies; the
+        // cleanup (`!is_able_to_fight`) lives downstream in
+        // `battle_decisions`.
         self.list_them.clear();
-        for &(handle, _) in &tick.enemy_sq_distances {
-            self.list_them.push(handle);
-        }
-        for sleeping in &tick.unconscious_enemies {
-            if !self.list_them.contains(&sleeping.handle) {
-                self.list_them.push(sleeping.handle);
+        for &handle in &ctx.self_seen_enemy_handles {
+            let target = ctx.entity_view(handle).unwrap_or_else(|| {
+                panic!(
+                    "seen Enemy detectable {} for NPC {} has no entity snapshot",
+                    handle, self.base.me
+                )
+            });
+            if !target.is_dead {
+                self.list_them.push(handle);
             }
         }
         tracing::trace!(
             me = self.base.me,
-            enemy_sq_distances_len = tick.enemy_sq_distances.len(),
-            unconscious_enemies_len = tick.unconscious_enemies.len(),
+            seen_enemy_handles_len = ctx.self_seen_enemy_handles.len(),
             list_them = ?self.list_them,
             "reinitialize_them_list"
         );
@@ -4643,25 +4633,6 @@ mod tests {
 
         assert!(ai.list_them.is_empty());
         assert_eq!(ai.base.primary_target, 2);
-    }
-
-    #[test]
-    fn reinitialize_them_list_rebuilds_from_visible_enemy_snapshots() {
-        let mut ai = EnemyAi::new(1);
-        ai.list_them = vec![99];
-        let mut tick = AiPerTickData::stub();
-        tick.enemy_sq_distances = vec![(2, 100), (3, 400)];
-        tick.unconscious_enemies = vec![SleepingEnemyInfo {
-            handle: 4,
-            position: Position::default(),
-            is_pc: true,
-            is_robin: false,
-            is_vip: false,
-        }];
-
-        ai.reinitialize_them_list(&AiContext::default(), &tick);
-
-        assert_eq!(ai.list_them, vec![2, 3, 4]);
     }
 
     #[test]
