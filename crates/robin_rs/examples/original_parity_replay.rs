@@ -1080,6 +1080,10 @@ struct TraceAi {
     script_locked: Option<bool>,
     #[serde(default)]
     locked: Option<bool>,
+    #[serde(default)]
+    list_us: Option<Vec<TraceEntityId>>,
+    #[serde(default)]
+    list_them: Option<Vec<TraceEntityId>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1107,8 +1111,8 @@ struct TraceFrame {
     resolved_exclamations: Vec<TraceResolvedExclamation>,
 }
 
-const TRACE_CACHE_VERSION: u32 = 6;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v6.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 7;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v7.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4022,6 +4026,59 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
                     "ai.locked",
                     expected_locked,
                     actual_ai.ai_is_locked(),
+                );
+            }
+            if let Some(expected_list_us) = &expected_ai.list_us {
+                let expected_list_us: Vec<EntityId> = expected_list_us
+                    .iter()
+                    .copied()
+                    .map(|human| entity_map.translate(human))
+                    .collect();
+                let actual_list_us: Vec<EntityId> = actual_ai
+                    .list_us
+                    .iter()
+                    .map(|&handle| {
+                        engine.entity_id_for_index(handle).unwrap_or_else(|| {
+                            panic!("AI list_us handle {handle} refers to a vacant entity slot")
+                        })
+                    })
+                    .collect();
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.list_us",
+                    expected_list_us,
+                    actual_list_us,
+                );
+            }
+            if let Some(expected_list_them) = &expected_ai.list_them {
+                let expected_list_them: Vec<EntityId> = expected_list_them
+                    .iter()
+                    .copied()
+                    .map(|human| entity_map.translate(human))
+                    .collect();
+                let actual_list_them: Vec<EntityId> = actual
+                    .enemy_ai()
+                    .map(|enemy| {
+                        enemy
+                            .list_them
+                            .iter()
+                            .map(|&handle| {
+                                engine.entity_id_for_index(handle).unwrap_or_else(|| {
+                                    panic!(
+                                        "AI list_them handle {handle} refers to a vacant entity slot"
+                                    )
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.list_them",
+                    expected_list_them,
+                    actual_list_them,
                 );
             }
         }
