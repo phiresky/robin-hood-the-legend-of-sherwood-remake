@@ -4066,7 +4066,11 @@ impl EngineInner {
                         transition_valid: raw.transition_animation_valid,
                         end_valid: raw.end_animation_valid,
                     },
-                    use_changing_obstacles: raw.pathfinder_changing_obstacles != 0,
+                    // Presence of the sector/layer tuple records whether the
+                    // encoded stream value was non-zero.  The decoded obstacle
+                    // index may itself be zero (`(1 - 1) >> 1`), while the C++
+                    // loader still sets mbUseChangingObstacles in that case.
+                    use_changing_obstacles: raw.pathfinder_sector.is_some(),
                     pathfinder_layer: raw.pathfinder_layer.unwrap_or(0),
                     pathfinder_sector: raw.pathfinder_sector.unwrap_or(0),
                     pathfinder_changing_obstacles: raw.pathfinder_changing_obstacles,
