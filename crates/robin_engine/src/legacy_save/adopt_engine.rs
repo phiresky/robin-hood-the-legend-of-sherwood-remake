@@ -99,7 +99,7 @@ impl LegacyKnownAdoptionPlan {
         )?;
         let sequence_topology = stage(
             "sequence topology",
-            LegacySequenceTopology::derive(engine, assets),
+            LegacySequenceTopology::derive(engine, assets, &body.element_payloads),
         )?;
         let preamble = stage(
             "engine preamble",

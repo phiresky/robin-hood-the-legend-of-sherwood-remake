@@ -31,6 +31,7 @@ use super::{
     adopt::LegacyEntityFixups,
     gate_topology::derive_legacy_gate_order,
     payload_base::{LegacyLineRef, LegacyOrderRef, LegacySectorRef},
+    payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
     payload_sequences::{
         LegacyGateRef, LegacyGenericField, LegacyGenericFieldKind, LegacyGenericFieldValue,
         LegacyInlineOrder, LegacyInlineSequence, LegacyInlineSequenceElement,
@@ -51,6 +52,23 @@ pub struct LegacySequenceTopology {
     /// Original sparse `marraySectors` slot to Rust's compact runtime sector.
     /// Constructor holes and non-position sector objects remain `None`.
     pub sectors: Vec<Option<SectorHandle>>,
+    jump_pairs: Vec<LegacyJumpPair>,
+    saved_actor_locations: BTreeMap<u32, LegacyActorLocation>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LegacyJumpPair {
+    source: JumpLineIndex,
+    destination: JumpLineIndex,
+    source_layer: u16,
+    destination_layer: u16,
+    source_a: crate::coordinates::MapPoint,
+    source_b: crate::coordinates::MapPoint,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LegacyActorLocation {
+    map: crate::coordinates::MapPoint,
 }
 
 impl LegacySequenceTopology {
@@ -64,6 +82,7 @@ impl LegacySequenceTopology {
     pub fn derive(
         engine: &EngineInner,
         assets: &LevelAssets,
+        payloads: &LegacyElementPayloadStream,
     ) -> Result<Self, LegacySequenceAdoptError> {
         let retained = assets.legacy_grid_topology.as_ref().ok_or_else(|| {
             LegacySequenceAdoptError::MissingTopology {
@@ -128,6 +147,79 @@ impl LegacySequenceTopology {
             .filter_map(|(layer, handle)| handle.map(|handle| (layer, handle)))
             .collect();
 
+        let jump_lines = &engine.world.fast_grid.level.jump_lines;
+        let mut jump_pairs = Vec::new();
+        for (source_index, source) in jump_lines.iter().enumerate() {
+            let source_index_u32 = u32::try_from(source_index).map_err(|_| {
+                LegacySequenceAdoptError::MissingTopology {
+                    field: "sequence.topology.lines",
+                    identity: format!("runtime jump-line index {source_index} exceeds u32"),
+                }
+            })?;
+            let Some(destination_index) = source.associated_line_index else {
+                continue;
+            };
+            let Some(destination) = jump_lines.get(destination_index as usize) else {
+                return Err(LegacySequenceAdoptError::MissingTopology {
+                    field: "sequence.topology.lines",
+                    identity: format!(
+                        "jump line {source_index} associates with absent runtime line {destination_index}"
+                    ),
+                });
+            };
+            if destination.associated_line_index != Some(source_index_u32) {
+                return Err(LegacySequenceAdoptError::MissingTopology {
+                    field: "sequence.topology.lines",
+                    identity: format!(
+                        "jump lines {source_index} and {destination_index} are not reciprocal"
+                    ),
+                });
+            }
+            let source_handle = JumpLineIndex::new(source_index_u32).ok_or_else(|| {
+                LegacySequenceAdoptError::MissingTopology {
+                    field: "sequence.topology.lines",
+                    identity: "runtime jump-line index equals null sentinel".to_owned(),
+                }
+            })?;
+            let destination_handle = JumpLineIndex::new(destination_index).ok_or_else(|| {
+                LegacySequenceAdoptError::MissingTopology {
+                    field: "sequence.topology.lines",
+                    identity: "runtime associated jump-line index equals null sentinel".to_owned(),
+                }
+            })?;
+            jump_pairs.push(LegacyJumpPair {
+                source: source_handle,
+                destination: destination_handle,
+                source_layer: source.layer,
+                destination_layer: destination.layer,
+                source_a: source.point_a,
+                source_b: source.point_b,
+            });
+        }
+
+        let saved_actor_locations = payloads
+            .records
+            .iter()
+            .filter_map(|record| {
+                let position = match &record.payload {
+                    LegacyElementPayload::ActorPc(pc) => &pc.human.actor.element.sprite.position,
+                    LegacyElementPayload::ActorNpcSoldier(soldier) => {
+                        &soldier.npc.human.actor.element.sprite.position
+                    }
+                    LegacyElementPayload::ActorNpcCivilian(civilian) => {
+                        &civilian.npc.human.actor.element.sprite.position
+                    }
+                    _ => return None,
+                };
+                Some((
+                    record.header.creation_order,
+                    LegacyActorLocation {
+                        map: crate::coordinates::MapPoint::new(position.map.x, position.map.y),
+                    },
+                ))
+            })
+            .collect();
+
         if retained.position_sector_numbers.len() != retained.sectors.len() {
             return Err(LegacySequenceAdoptError::MissingTopology {
                 field: "sequence.topology.sectors",
@@ -171,6 +263,8 @@ impl LegacySequenceTopology {
             lines,
             unique_line_by_layer,
             sectors,
+            jump_pairs,
+            saved_actor_locations,
         })
     }
 }
@@ -565,8 +659,51 @@ fn convert_element(
         }
         LegacyInlineSequenceElement::Generic(generic) => {
             let mut properties = HashMap::with_capacity(generic.fields.len());
+            let jump_pair = if command == Command::JumpCmd {
+                let source = generic.fields.iter().find_map(|field| {
+                    (field.kind == LegacyGenericFieldKind::JumpLineSource).then_some(&field.value)
+                });
+                let destination = generic.fields.iter().find_map(|field| {
+                    (field.kind == LegacyGenericFieldKind::JumpLineDestination)
+                        .then_some(&field.value)
+                });
+                match (source, destination) {
+                    (
+                        Some(LegacyGenericFieldValue::Line(source)),
+                        Some(LegacyGenericFieldValue::Line(destination)),
+                    ) => Some(resolve_jump_pair(
+                        *source,
+                        *destination,
+                        base.owner,
+                        topology,
+                    )?),
+                    (None, None) => None,
+                    _ => {
+                        return Err(LegacySequenceAdoptError::MissingTopology {
+                            field: "generic.jump_lines",
+                            identity: "JumpCmd requires line-valued source and destination fields"
+                                .to_owned(),
+                        });
+                    }
+                }
+            } else {
+                None
+            };
             for field in &generic.fields {
-                let (kind, value, raw) =
+                let converted_jump_line =
+                    jump_pair.and_then(|(source, destination)| match field.kind {
+                        LegacyGenericFieldKind::JumpLineSource => Some(source),
+                        LegacyGenericFieldKind::JumpLineDestination => Some(destination),
+                        _ => None,
+                    });
+                let (kind, value, raw) = if let Some(line) = converted_jump_line {
+                    let kind = match field.kind {
+                        LegacyGenericFieldKind::JumpLineSource => Field::JumplineSource,
+                        LegacyGenericFieldKind::JumpLineDestination => Field::JumplineDestination,
+                        _ => unreachable!("converted jump line is only produced for jump fields"),
+                    };
+                    (kind, FieldValue::LineId(line), None)
+                } else {
                     convert_generic_field(field, entities, topology, sequence_id).map_err(
                         |error| {
                             tracing::error!(
@@ -580,7 +717,8 @@ fn convert_element(
                             );
                             error
                         },
-                    )?;
+                    )?
+                };
                 if properties.insert(kind, value).is_some() {
                     return Err(LegacySequenceAdoptError::DuplicateGenericField {
                         sequence_id,
@@ -707,6 +845,136 @@ fn convert_element(
         generic_raw_unions,
     });
     Ok(element)
+}
+
+/// Resolve the two pointers written together by Original's JumpCmd builder.
+///
+/// Original stores the approached line and then its reciprocal associated
+/// line (`RHengine.cpp` JumpCmd construction). Some retail data editions add
+/// ordinary boundaries before those jump lines, shifting the serialized
+/// per-layer ordinal without changing the actual jump geometry. Exact
+/// identities remain authoritative. For shifted identities, reciprocal layer
+/// topology narrows the candidates and the saved owner's position identifies
+/// the approached segment isomorphically.
+fn resolve_jump_pair(
+    source: LegacyLineRef,
+    destination: LegacyLineRef,
+    owner: super::payload_base::LegacyElementRef,
+    topology: &LegacySequenceTopology,
+) -> Result<(JumpLineIndex, JumpLineIndex), LegacySequenceAdoptError> {
+    let (Some(source_layer), Some(source_index)) = (source.layer, source.index) else {
+        return Err(invalid(
+            "generic.jump_line_source",
+            format!("{:?}", (source.layer, source.index)),
+            "a non-null layer plus non-negative line index",
+        ));
+    };
+    let (Some(destination_layer), Some(destination_index)) = (destination.layer, destination.index)
+    else {
+        return Err(invalid(
+            "generic.jump_line_destination",
+            format!("{:?}", (destination.layer, destination.index)),
+            "a non-null layer plus non-negative line index",
+        ));
+    };
+    if source_index < 0 || destination_index < 0 {
+        return Err(invalid(
+            "generic.jump_lines",
+            format!("source index {source_index}, destination index {destination_index}"),
+            "non-negative line indices",
+        ));
+    }
+
+    let exact_source = topology.lines.get(&(source_layer, source_index)).copied();
+    let exact_destination = topology
+        .lines
+        .get(&(destination_layer, destination_index))
+        .copied();
+    let mut candidates = topology
+        .jump_pairs
+        .iter()
+        .copied()
+        .filter(|pair| {
+            pair.source_layer == source_layer
+                && pair.destination_layer == destination_layer
+                && exact_source.is_none_or(|line| pair.source == line)
+                && exact_destination.is_none_or(|line| pair.destination == line)
+        })
+        .collect::<Vec<_>>();
+
+    if candidates.len() == 1 {
+        let pair = candidates[0];
+        return Ok((pair.source, pair.destination));
+    }
+    if candidates.is_empty() {
+        return Err(LegacySequenceAdoptError::MissingTopology {
+            field: "generic.jump_lines",
+            identity: format!(
+                "reciprocal jump pair from layer {source_layer}, index {source_index} to layer {destination_layer}, index {destination_index}"
+            ),
+        });
+    }
+
+    let owner_id = owner.0.ok_or_else(|| LegacySequenceAdoptError::MissingTopology {
+        field: "generic.jump_lines",
+        identity: format!(
+            "{} reciprocal layer {source_layer}->{destination_layer} pairs and no owner geometry",
+            candidates.len()
+        ),
+    })?;
+    let owner_location = topology.saved_actor_locations.get(&owner_id).ok_or_else(|| {
+        LegacySequenceAdoptError::MissingTopology {
+            field: "generic.jump_lines",
+            identity: format!(
+                "{} reciprocal layer {source_layer}->{destination_layer} pairs and no saved actor geometry for owner {owner_id}",
+                candidates.len()
+            ),
+        }
+    })?;
+    candidates.sort_by(|left, right| {
+        squared_distance_to_segment(owner_location.map, left.source_a, left.source_b).total_cmp(
+            &squared_distance_to_segment(owner_location.map, right.source_a, right.source_b),
+        )
+    });
+    let best_distance = squared_distance_to_segment(
+        owner_location.map,
+        candidates[0].source_a,
+        candidates[0].source_b,
+    );
+    let second_distance = squared_distance_to_segment(
+        owner_location.map,
+        candidates[1].source_a,
+        candidates[1].source_b,
+    );
+    if best_distance == second_distance {
+        return Err(LegacySequenceAdoptError::MissingTopology {
+            field: "generic.jump_lines",
+            identity: format!(
+                "ambiguous reciprocal layer {source_layer}->{destination_layer} pair for owner {owner_id} at ({}, {}): equal squared distance {best_distance}",
+                owner_location.map.x, owner_location.map.y
+            ),
+        });
+    }
+    Ok((candidates[0].source, candidates[0].destination))
+}
+
+fn squared_distance_to_segment(
+    point: crate::coordinates::MapPoint,
+    start: crate::coordinates::MapPoint,
+    end: crate::coordinates::MapPoint,
+) -> f32 {
+    let segment_x = end.x - start.x;
+    let segment_y = end.y - start.y;
+    let length_squared = segment_x * segment_x + segment_y * segment_y;
+    if length_squared == 0.0 {
+        return (point.x - start.x).powi(2) + (point.y - start.y).powi(2);
+    }
+    let projection = (((point.x - start.x) * segment_x + (point.y - start.y) * segment_y)
+        / length_squared)
+        .clamp(0.0, 1.0);
+    let closest_x = start.x + projection * segment_x;
+    let closest_y = start.y + projection * segment_y;
+    (point.x - closest_x).powi(2) + (point.y - closest_y).powi(2)
 }
 
 /// Original `TURN`, `TURN_FAST`, and `TURN_ELEMENT` translation writes the
@@ -1324,6 +1592,7 @@ mod tests {
             lines: [((2, 3), JumpLineIndex::new(5).unwrap())].into(),
             unique_line_by_layer: [(2, JumpLineIndex::new(5).unwrap())].into(),
             sectors: (0..6).map(SectorHandle::new).collect(),
+            ..LegacySequenceTopology::default()
         }
     }
 
@@ -1692,6 +1961,127 @@ mod tests {
                 field: "movement.gate",
                 ..
             }
+        ));
+    }
+
+    fn jump_pair(source: u32, destination: u32, source_x: f32) -> LegacyJumpPair {
+        LegacyJumpPair {
+            source: JumpLineIndex::new(source).unwrap(),
+            destination: JumpLineIndex::new(destination).unwrap(),
+            source_layer: 2,
+            destination_layer: 8,
+            source_a: crate::coordinates::MapPoint::new(source_x, 0.0),
+            source_b: crate::coordinates::MapPoint::new(source_x, 10.0),
+        }
+    }
+
+    #[test]
+    fn shifted_jump_ordinals_resolve_by_unique_owner_geometry() {
+        let topology = LegacySequenceTopology {
+            jump_pairs: vec![jump_pair(10, 11, 0.0), jump_pair(20, 21, 100.0)],
+            saved_actor_locations: [(
+                40,
+                LegacyActorLocation {
+                    map: crate::coordinates::MapPoint::new(3.0, 5.0),
+                },
+            )]
+            .into(),
+            ..LegacySequenceTopology::default()
+        };
+
+        assert_eq!(
+            resolve_jump_pair(
+                LegacyLineRef {
+                    layer: Some(2),
+                    index: Some(196),
+                },
+                LegacyLineRef {
+                    layer: Some(8),
+                    index: Some(241),
+                },
+                LegacyElementRef(Some(40)),
+                &topology,
+            )
+            .unwrap(),
+            (
+                JumpLineIndex::new(10).unwrap(),
+                JumpLineIndex::new(11).unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn exact_jump_identity_remains_authoritative_over_geometry() {
+        let expected_source = JumpLineIndex::new(10).unwrap();
+        let expected_destination = JumpLineIndex::new(11).unwrap();
+        let topology = LegacySequenceTopology {
+            lines: [
+                ((2, 196), expected_source),
+                ((8, 241), expected_destination),
+            ]
+            .into(),
+            jump_pairs: vec![jump_pair(10, 11, 0.0), jump_pair(20, 21, 100.0)],
+            saved_actor_locations: [(
+                40,
+                LegacyActorLocation {
+                    map: crate::coordinates::MapPoint::new(100.0, 5.0),
+                },
+            )]
+            .into(),
+            ..LegacySequenceTopology::default()
+        };
+
+        assert_eq!(
+            resolve_jump_pair(
+                LegacyLineRef {
+                    layer: Some(2),
+                    index: Some(196),
+                },
+                LegacyLineRef {
+                    layer: Some(8),
+                    index: Some(241),
+                },
+                LegacyElementRef(Some(40)),
+                &topology,
+            )
+            .unwrap(),
+            (expected_source, expected_destination)
+        );
+    }
+
+    #[test]
+    fn ambiguous_shifted_jump_geometry_is_rejected() {
+        let topology = LegacySequenceTopology {
+            jump_pairs: vec![jump_pair(10, 11, -10.0), jump_pair(20, 21, 10.0)],
+            saved_actor_locations: [(
+                40,
+                LegacyActorLocation {
+                    map: crate::coordinates::MapPoint::new(0.0, 5.0),
+                },
+            )]
+            .into(),
+            ..LegacySequenceTopology::default()
+        };
+
+        let error = resolve_jump_pair(
+            LegacyLineRef {
+                layer: Some(2),
+                index: Some(196),
+            },
+            LegacyLineRef {
+                layer: Some(8),
+                index: Some(241),
+            },
+            LegacyElementRef(Some(40)),
+            &topology,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            LegacySequenceAdoptError::MissingTopology {
+                field: "generic.jump_lines",
+                identity,
+            } if identity.contains("ambiguous")
         ));
     }
 }
