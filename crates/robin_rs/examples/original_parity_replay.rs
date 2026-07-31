@@ -1133,6 +1133,7 @@ struct Options {
     http_server: Option<u16>,
     start_paused: bool,
     frame_zero_screenshot_dir: Option<PathBuf>,
+    frame_zero_screenshot_only: bool,
 }
 
 struct DumpOptions {
@@ -1524,6 +1525,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 .join(path)
         }
     });
+    let frame_zero_screenshot_only = options.frame_zero_screenshot_only;
     let mut manual_pause = options.start_paused;
     let trace_path = trace_path
         .canonicalize()
@@ -1671,6 +1673,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             "frame-zero parity screenshot written to {}",
             output_path.display()
         );
+    }
+    if frame_zero_screenshot_only {
+        return 0;
     }
     if !visual_enabled {
         // Screenshot-only capture uses a hidden GPU window for exactly one
@@ -2086,6 +2091,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
 fn parse_options() -> Options {
     const USAGE: &str = "usage: original_parity_replay [--scan-all] [--no-auto-dump] [--visual] \
         [--frame-zero-screenshot-dir DIR] \
+        [--frame-zero-screenshot-only] \
         [--http-server PORT [--start-paused]] \
         [--dump-jsonl PATH [--dump-from FRAME] [--dump-through FRAME] \
         [--dump-entity KIND:INDEX]...] TRACE.jsonl[.zst]";
@@ -2102,6 +2108,7 @@ fn parse_options() -> Options {
     let mut http_server = None;
     let mut start_paused = false;
     let mut frame_zero_screenshot_dir = None;
+    let mut frame_zero_screenshot_only = false;
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--scan-all") => scan_all = true,
@@ -2116,6 +2123,7 @@ fn parse_options() -> Options {
                     "{USAGE}"
                 );
             }
+            Some("--frame-zero-screenshot-only") => frame_zero_screenshot_only = true,
             Some("--http-server") => {
                 let port = parse_u64_option(args.next(), "--http-server");
                 let port = u16::try_from(port).expect("--http-server port exceeds 65535");
@@ -2160,6 +2168,10 @@ fn parse_options() -> Options {
         !start_paused || http_server.is_some(),
         "--start-paused requires --http-server"
     );
+    assert!(
+        !frame_zero_screenshot_only || frame_zero_screenshot_dir.is_some(),
+        "--frame-zero-screenshot-only requires --frame-zero-screenshot-dir"
+    );
     Options {
         scan_all,
         no_auto_dump,
@@ -2168,6 +2180,7 @@ fn parse_options() -> Options {
         http_server,
         start_paused,
         frame_zero_screenshot_dir,
+        frame_zero_screenshot_only,
         dump: dump_path.map(|path| DumpOptions {
             path,
             from_frame: dump_from,
