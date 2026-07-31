@@ -1860,21 +1860,18 @@ impl EnemyAi {
 
             Substate::SeekingJustWatchingSidewards => {
                 if stimulus_type == StimulusType::EventDone {
-                    self.base.number_of_looks = self.base.number_of_looks.saturating_sub(1);
-                    if self.base.number_of_looks > 0 {
-                        self.set_state(AiState::Seeking, Substate::SeekingJustWatching);
-                        self.base
-                            .launch_timer(parameters_ai::AI_LOOK_TIME as u32, ctx.frame);
-                    } else {
-                        // The EVENT_DONE arm branches on rank: a
-                        // SOLDIER returns to duty, an OFFICER starts
-                        // looking for a soldier to alert.  (No knight
-                        // arm — they don't reach this state.)
-                        if self.get_rank() == ProfileRank::Officer {
-                            self.officer_look_for_soldier(ReportType::Noise, ctx, tick);
-                        } else {
+                    // Original has explicit SOLDIER and OFFICER arms and no
+                    // default arm. A knight can nevertheless inherit this
+                    // substate from a legacy save, in which case EVENT_DONE
+                    // deliberately leaves it unchanged.
+                    match self.get_rank() {
+                        ProfileRank::Soldier => {
                             self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                         }
+                        ProfileRank::Officer => {
+                            self.officer_look_for_soldier(ReportType::Noise, ctx, tick);
+                        }
+                        ProfileRank::Knight | ProfileRank::None => {}
                     }
                 }
             }

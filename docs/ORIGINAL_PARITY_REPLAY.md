@@ -2252,6 +2252,16 @@ those inline side effects before launching Wait, while animation Execute still
 obeys normal actor ordering. Linux3 Profile 003 Savegame 009 consequently
 matches all recorded frames.
 
+### Side-looking seek completion preserves the Original rank switch
+
+`SUBSTATE_SEEKING_JUST_WATCHING_SIDEWARDS` handles `EVENT_DONE` with explicit
+`RANK_SOLDIER` and `RANK_OFFICER` arms and no default arm. Rust previously
+treated every non-officer as a soldier, making a knight loaded in that
+substate return to duty and launch `LeaveAttentiveMode`. The handler now
+matches the rank switch exactly: ordinary soldiers return to duty, officers
+look for a soldier to report to, and knights or rankless actors remain
+unchanged. Cyrdach Profile 156 Savegame 010 now matches every recorded frame.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
