@@ -690,7 +690,14 @@ impl NativeContext<'_, '_> {
             // as the actor's `mpOrder` until the actor's next Hourglass, so
             // GetAnimation/GetCurrentAction still exposes the preceding
             // animation during this one-frame handoff.
-            Some(entity.sprite().last_action)
+            Some(
+                entity
+                    .actor_data()
+                    .expect("checked actor")
+                    .latched_order_type
+                    .filter(|order_type| *order_type != OrderType::Invalid)
+                    .unwrap_or(entity.sprite().last_action),
+            )
         } else {
             Some(order.order_type)
         }

@@ -3468,6 +3468,12 @@ impl EngineInner {
                                 .map(|(_, _, order)| order.order_type)
                                 .unwrap_or(crate::order::OrderType::Invalid)
                         };
+                    self.world
+                        .entities
+                        .get_mut(entity_id)
+                        .and_then(Entity::actor_data_mut)
+                        .expect("actor disappeared before latching its derived tail order")
+                        .latched_order_type = Some(derived_tail_order_type);
                     after_slot(self, entity_id, derived_tail_order_type);
 
                     if let Some(actor) = self

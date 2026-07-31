@@ -2171,6 +2171,24 @@ walk now derives Human-tail noise from the surviving same-element order or a
 truly instructed successor, never from deferred registration or synthetic
 idle bookkeeping.
 
+### Script animation queries observe the Actor's post-slot order
+
+The same `mpOrder` boundary is visible to script natives such as
+`GetAnimation`. A sequence element can advance from a transition to its bored
+wait order during `RHElementActor::Hourglass`; the new order is then
+authoritative immediately, even though the sprite has not rendered it yet.
+Conversely, when the actor tail derives no surviving order, `mpOrder` is null
+and the deferred-wait compatibility path must retain the sprite action instead
+of inventing an `Invalid` animation.
+
+Rust now latches the derived actor-tail order as an explicit shadow of
+`mpOrder->action`. Deferred wait animation queries use that shadow only while
+it is valid, otherwise preserving the prior rendered action. Linux3 Profile
+003 Savegame 013 consequently performs Sherwood's second
+`MakeRandomBBQActions` draw at frame 7700 and matches through the end, while
+Linux3 Profile 001 Savegame 004 and ExQuickSave retain their prior exact
+results.
+
 ### PassDoor preserves Soldier runtime animation overrides
 
 `RHElementActorSoldier::Execute` replaces a logical `WalkingUpright` order
