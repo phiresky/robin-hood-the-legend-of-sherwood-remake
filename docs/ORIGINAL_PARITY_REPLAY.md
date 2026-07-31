@@ -3117,6 +3117,15 @@ persists the evaluated array before the no-proposal return. Together with the
 mission-team query correction, this makes Linux2 Profile 002 Savegame 038 match
 every recorded frame.
 
+### Additional Linux loaded-session coverage
+
+The current parity implementation also matches every recorded frame in the
+complete Linux3 Profile 002 set: Continue, ExQuickSave, QuickSave, Restart, and
+Savegame 000. The earlier Linux corpus is green in full as well: Profile 005's
+Continue and Restart sessions, and Profile 011's Continue, Restart, and
+Savegame 000 sessions. These are independent loaded-session checks; they do not
+require replay-specific state substitutions or compatibility paths.
+
 ## Coverage limits
 
 A clean baseline proves exact parity only for the state fields serialized by the
