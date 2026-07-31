@@ -3303,9 +3303,7 @@ the appropriate ordinary or sword-specific unconscious animation after the
 damage interruption.
 
 Rust's coma helper no longer forces `Waiting`; it leaves the interrupted state
-intact while clearing only Rust's derived live execution caches. This advances
-Linux3 Profile 003 Savegame 066 beyond the resumed strike, parry-expiry,
-elevation-facing, and coma sequence.
+intact while clearing only Rust's derived live execution caches.
 
 ### Battle cleanup retains newly unconscious targets
 
@@ -3333,6 +3331,33 @@ fail loudly if a production PC lacks a valid campaign identity. The
 approaching-sleeping-enemy handler consequently recognizes the coma PC and
 starts the authored menace interaction rather than issuing a downward killing
 strike.
+
+### MAP Move/Seek disables anti-collision at instruction time
+
+After accepting `RHCOMMAND_MOVE` or `RHCOMMAND_SEEK`, Original inspects the
+movement flags inside `RHElementActor::Instruct`. `RHMOVE_MAP` immediately
+calls `SetAntiCollisionOn(false)` before Seek substitution, path translation,
+or execution. This means a loaded PositionInterface can deserialize with
+anti-collision enabled and then have the selected saved MAP movement disable
+it again during ownership adoption.
+
+Rust now applies that side effect at the same Instruct boundary in both the
+ordinary sequence-manager path and the synchronous script-native path. It is
+not inferred from a later concrete movement order, so pending paths and failed
+paths retain the same state as Original.
+
+### Menace and sleep transitions retain sequence ownership
+
+Soldier `Translate` appends two orders for `START_MENACE` and `STOP_MENACE`,
+and one for `STOP_SLEEP`. The owning sequence element remains selected and in
+progress until the actor executes the final order. Rust previously terminated
+these elements immediately after translation, orphaning their order queues and
+making an idle `Wait` observable instead of the authored command.
+
+These elements now retain ownership through animation completion. Together
+with the resumed-strike, parry, facing, coma, sleeping-target, and campaign
+identity corrections above, Linux3 Profile 003 Savegame 066 matches every
+recorded frame.
 
 ### Nicouzouf Profile 001 loaded-session coverage
 
