@@ -3126,6 +3126,18 @@ Continue and Restart sessions, and Profile 011's Continue, Restart, and
 Savegame 000 sessions. These are independent loaded-session checks; they do not
 require replay-specific state substitutions or compatibility paths.
 
+### Mobile-element topology retains its authored count
+
+Original inserts each `RHElementMobile` master and its masked child sprites in
+the mission element stream. Rust constructs the master outside the ordinary
+entity arena, but loaded-save topology still needs the authoritative number of
+authored masters. The mobile load stage previously populated the live world
+without copying that count into `LevelEntityAssets`, so every mission with a
+mobile master rejected its own initialized topology as one live mobile against
+zero authored mobiles. The stage now retains the count directly from the
+decoded mission stream. This exposes the separate, explicit mobile-master
+state-adoption work instead of failing earlier on inconsistent metadata.
+
 ## Coverage limits
 
 A clean baseline proves exact parity only for the state fields serialized by the

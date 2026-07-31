@@ -11,6 +11,7 @@ impl EngineInner {
         loaded: &crate::level_data::LoadedLevel,
     ) -> Result<(), EngineError> {
         let bank_signature = assets.bank_signature;
+        assets.entities.mobile_element_count = loaded.mission.mobile_elements.len();
         // Spawn the masked child sprites owned by mission mobile elements.
         // Released data contains only the five chariot profiles. The mobile
         // master is simulation-only, matching C++: only its child
