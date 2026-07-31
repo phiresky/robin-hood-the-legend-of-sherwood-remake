@@ -2419,9 +2419,11 @@ mod tests {
     fn apple_chase_does_not_replace_a_missing_chaser_with_undirected_panic() {
         let sim = crate::sim_rng::test_context();
         let mut ai = FriendlyAi::new(1);
+        let mut global = AiGlobalState::default();
         ai.think_unexpected_event(
             &sim,
             &Stimulus::with_human(StimulusType::CallYouJustWait, 42),
+            &mut global,
             &AiContext::default(),
             &FriendlyPerTickData::without_patrol_chief(),
             None,
@@ -2508,12 +2510,14 @@ mod tests {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         let mut ai = FriendlyAi::new(1);
+        let mut global = AiGlobalState::default();
         ai.set_state(AiState::Seeking, Substate::SeekingCivilianRunningToSoldier);
 
         let stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
         ai.think_unexpected_event(
             sim,
             &stimulus,
+            &mut global,
             &AiContext::default(),
             &FriendlyPerTickData::without_patrol_chief(),
             None,
@@ -2530,12 +2534,14 @@ mod tests {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         let mut ai = FriendlyAi::new(1);
+        let mut global = AiGlobalState::default();
         ai.set_state(AiState::Sleeping, Substate::SleepingUnconscious);
 
         let stimulus = Stimulus::new(StimulusType::EventFitAgain);
         ai.think_unexpected_event(
             sim,
             &stimulus,
+            &mut global,
             &AiContext::default(),
             &FriendlyPerTickData::without_patrol_chief(),
             None,
@@ -2555,6 +2561,7 @@ mod tests {
         // ReturnToDuty's state callback so the engine can preserve the
         // Original statement boundary.
         let mut ai = FriendlyAi::new(1);
+        let mut global = AiGlobalState::default();
         ai.set_state(AiState::Sleeping, Substate::SleepingUnconscious);
         ai.base.outbox.reentrant.owner_work.clear();
 
@@ -2562,6 +2569,7 @@ mod tests {
         ai.think_unexpected_event(
             sim,
             &stimulus,
+            &mut global,
             &AiContext::default(),
             &FriendlyPerTickData::without_patrol_chief(),
             None,
@@ -2692,11 +2700,13 @@ mod tests {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         let mut ai = FriendlyAi::new(1);
+        let mut global = AiGlobalState::default();
         let stimulus = Stimulus::new(StimulusType::EventNetAway);
 
         ai.think_unexpected_event(
             sim,
             &stimulus,
+            &mut global,
             &AiContext::default(),
             &FriendlyPerTickData::without_patrol_chief(),
             None,
@@ -2712,6 +2722,7 @@ mod tests {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         let mut ai = FriendlyAi::new(1);
+        let mut global = AiGlobalState::default();
         ai.base.patrol_chief = Some(crate::element::EntityId::Soldier(
             crate::entity_id::SoldierId(2),
         ));
@@ -2744,7 +2755,7 @@ mod tests {
             },
         );
 
-        ai.think_unexpected_event(sim, &stimulus, &ctx, &tick, None, None);
+        ai.think_unexpected_event(sim, &stimulus, &mut global, &ctx, &tick, None, None);
         let orders = ai.base.take_pending_orders();
 
         assert_eq!(orders.len(), 1);
