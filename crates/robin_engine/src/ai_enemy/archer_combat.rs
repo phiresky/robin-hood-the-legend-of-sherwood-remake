@@ -62,14 +62,11 @@ impl EnemyAi {
             .map(|f| f.bow_max_range as f32)
             .unwrap_or(0.0);
         let sqr_range = my_bow_max_range * my_bow_max_range;
-
         // Pre-compute angle and squared distance for each friendly
-        // fighter (excluding self). The reference scans the full
-        // list_us;
-        // Rust scans nearby_fighters (SWORDFIGHT_RADIUS = 500px).  Since the
-        // friendly-fire check requires friends to be closer than the target
-        // (which is within bow range ≤ ~400px), all relevant friends are
-        // always inside the 500px snapshot radius — no practical difference.
+        // fighter (excluding self). The reference scans the `mlistUs` rebuilt
+        // by `BattleDecisions`, not every same-camp fighter in the broader
+        // 500px engine snapshot. In particular, friends outside the owner's
+        // 360-degree detection set must not spuriously block a shot.
         struct FriendInfo {
             sq_distance: f32,
             angle: f32,
@@ -77,10 +74,13 @@ impl EnemyAi {
             is_shield: bool,
         }
         let mut friends: Vec<FriendInfo> = Vec::new();
-        for f in &tick.nearby_fighters {
-            if !f.is_friendly || f.handle == self.base.me {
+        for &friend_handle in &self.base.list_us {
+            if friend_handle == self.base.me {
                 continue;
             }
+            let f = self.find_fighter(friend_handle, tick).unwrap_or_else(|| {
+                panic!("friend {friend_handle} in list_us is absent from fighter snapshot")
+            });
             let dx = f.position.x - my_pos.x;
             let dy = (f.position.y - my_pos.y) * INVERSE_ASPECT_RATIO;
             let to_friend = (dx, dy);
@@ -100,10 +100,13 @@ impl EnemyAi {
         // Only friends in bow substates (shooting/loading/aiming) count — the
         // generic `tick.primary_target_multiplicity` also includes melee fighters.
         let mut bow_multiplicity: Vec<(HumanHandle, u32)> = Vec::new();
-        for f in &tick.nearby_fighters {
-            if !f.is_friendly || f.handle == self.base.me {
+        for &friend_handle in &self.base.list_us {
+            if friend_handle == self.base.me {
                 continue;
             }
+            let f = self.find_fighter(friend_handle, tick).unwrap_or_else(|| {
+                panic!("friend {friend_handle} in list_us is absent from fighter snapshot")
+            });
             if !f.is_soldier {
                 continue;
             }
