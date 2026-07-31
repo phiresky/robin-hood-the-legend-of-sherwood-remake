@@ -8032,7 +8032,16 @@ impl EngineInner {
                     )
                 })
                 .set_instructed_patrol_direction(direction, &ctx);
-            self.drain_direct_ai_owner_boundary_without_forecast(sim, member, assets);
+            // GetInstructedPatrolDirection invokes FaceTo synchronously, but
+            // FaceTo only registers its Turn element with RHSequenceManager.
+            // A patrol direction broadcast can run from the chief's actor
+            // slot, after RHSequenceManager::Hourglass has already run for
+            // this frame. Close the member's AI side effects now while
+            // leaving the registered Turn uninstructed until the next
+            // sequence-manager pass.
+            self.drain_direct_ai_owner_boundary_without_forecast_deferred_instruct(
+                sim, member, assets,
+            );
         }
     }
 
@@ -9430,7 +9439,7 @@ impl EngineInner {
         assets: &LevelAssets,
     ) -> bool {
         self.dispatch_think_with_drain_mode(
-            sim, npc_id, stimulus, ctx, tick_data, assets, false, false,
+            sim, npc_id, stimulus, ctx, tick_data, assets, false, true,
         )
     }
 

@@ -2677,6 +2677,30 @@ to close. Consequently a RUN-to-WALK transition samples the actor position
 visible to the native call rather than its next-frame position. Linux2 Profile
 002 QuickSave now passes the former frame-2061 transition-goal mismatch.
 
+### Patrol direction turns wait for the sequence-manager pass
+
+A patrol chief can finish a movement from its creation-ordered actor slot and
+synchronously broadcast a direction to the other patrol members. Each waiting
+member calls `FaceTo`, but Original `FaceTo` only registers its new Turn with
+`RHSequenceManager`; it cannot instruct that element after the manager's
+Hourglass pass has already completed for the frame.
+
+Rust still closes the member's synchronous AI side effects at the broadcast
+boundary, but now leaves the registered Turn uninstructed until the next
+sequence-manager pass. This prevents later-created patrol members from
+executing the turn one frame early merely because their actor slots have not
+yet run. Linux3 Profile 003 Savegame 024 exercises the boundary with four
+synchronized patrol members.
+
+### Ladder and wall idle waits preserve the moving action state
+
+When Actor::Hourglass installs its implicit Wait while an actor is on a ladder
+or wall, Original translates the command to the non-animation Freezing order.
+`MakeActionTransition` has no ladder/wall arm, so it intentionally leaves the
+actor's prior action state unchanged while holding the last climb frame. Rust
+no longer normalizes that action state to Waiting. This keeps the serialized
+Moving state visible for the frozen ladder/wall idle just as in Original.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
@@ -2698,7 +2722,7 @@ The expanded authoritative Linux audit adds 48 `Savegame_linux2` traces and
 140 `Savegame_linux3` traces. Unlike the first group, these exercise up to
 hundreds of dynamic bonuses/projectiles and a much wider set of interrupted
 runtime states. All five Linux3 Profile 002 traces and the audited Profile 003
-traces through Savegame 022 currently match every recorded frame. The remaining
+traces through Savegame 024 currently match every recorded frame. The remaining
 corpus is the active completion set; failures are grouped by their first
 general cause and the whole affected shard is rerun after each fix.
 

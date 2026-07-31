@@ -3538,9 +3538,10 @@ impl EngineInner {
         {
             entity.set_posture(posture);
             entity.element_data_mut().set_direction_instantly(direction);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = crate::element::ActionState::Waiting;
-            }
+            // Actor::Wait translates to the non-animation Freezing order on
+            // a ladder or wall. Original MakeActionTransition has no
+            // OnLadder/OnWall arm, so it deliberately preserves the current
+            // action state (normally Moving) while holding the climb frame.
             tracing::debug!(
                 entity = ?entity_id,
                 ?posture,
