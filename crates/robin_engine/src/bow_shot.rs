@@ -3624,7 +3624,6 @@ fn tick_arrows_matching(
         // a target a tiny fraction past the nominal endpoint on flat
         // shots, so allow a sub-pixel tolerance while keeping the same
         // old/current range gate.
-        const RANGE_EPSILON: f32 = 0.25;
 
         // Pick the aim anchor by projectile type — arrows and apples
         // aim for the belt, stones aim for the eyes.
@@ -3658,7 +3657,7 @@ fn tick_arrows_matching(
                     // within this frame's reach (segment length).
                     let old_to_target = distance(arrow_old, anchor);
                     let line_distance = point_to_line_distance(anchor, arrow_old, arrow_new);
-                    old_to_target <= range + RANGE_EPSILON && line_distance <= HIT_DISTANCE
+                    old_to_target <= range && line_distance <= HIT_DISTANCE
                 } else {
                     false
                 };
@@ -3687,7 +3686,7 @@ fn tick_arrows_matching(
                         // leaning-out eye retry, unlike the primary human
                         // belt check's "deguillaumized" old-position gate.
                         let new_to_eyes = distance(arrow_new, eyes);
-                        if new_to_eyes <= range + RANGE_EPSILON
+                        if new_to_eyes <= range
                             && point_to_line_distance(eyes, arrow_old, arrow_new) <= HIT_DISTANCE
                         {
                             hit_victim = Some((snap.id, snap.position_map));
@@ -3724,7 +3723,7 @@ fn tick_arrows_matching(
                     // catches the scripted-target case where the
                     // current frame reaches the center exactly.
                     let new_to_target = distance(arrow_new, snap.center);
-                    new_to_target <= range + RANGE_EPSILON
+                    new_to_target <= range
                         && point_to_line_distance(snap.center, arrow_old, arrow_new) <= HIT_DISTANCE
                 } else {
                     // With no movement C++ still evaluates

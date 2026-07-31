@@ -260,6 +260,7 @@ struct PlannedObject {
 struct PlannedProjectile {
     flying: bool,
     falling: bool,
+    falling_direction: u16,
     trajectory_frame_count: u16,
     start_of_trajectory_x: f32,
     start_of_trajectory_y: f32,
@@ -606,6 +607,12 @@ fn preflight_object_item(
     creation_order: u32,
     entities: &LegacyEntityFixups,
 ) -> Result<PlannedLeaf, LegacyObjectLeafAdoptError> {
+    let arrow_falling = match saved {
+        LegacyObjectItemPayload::Arrow(payload) => {
+            Some((payload.falling, u16::from(payload.falling_direction)))
+        }
+        _ => None,
+    };
     let (object, projectile, saved_kind, predicate): (
         &LegacyObjectPayload,
         Option<&LegacyProjectilePayload>,
@@ -679,10 +686,15 @@ fn preflight_object_item(
     require_kind(runtime, entity_id, creation_order, saved_kind, predicate)?;
     let object = preflight_object(object, creation_order, entities)?;
     if let Some(projectile) = projectile {
+        let mut projectile = preflight_projectile(projectile, creation_order, entities)?;
+        if let Some((falling, falling_direction)) = arrow_falling {
+            projectile.falling = falling;
+            projectile.falling_direction = falling_direction;
+        }
         Ok(PlannedLeaf::Projectile {
             entity: entity_id,
             object,
-            projectile: preflight_projectile(projectile, creation_order, entities)?,
+            projectile,
         })
     } else {
         Ok(PlannedLeaf::Object {
@@ -734,7 +746,11 @@ fn preflight_projectile(
     )?;
     Ok(PlannedProjectile {
         flying: saved.flying,
-        falling: saved.dive,
+        // RHElementProjectile::mbDive is the water/hole landing state.
+        // Arrow ricochet state is the derived RHElementArrow::mbFalling
+        // field and is overlaid by preflight_object_item above.
+        falling: false,
+        falling_direction: 0,
         trajectory_frame_count: saved.frame_count,
         start_of_trajectory_x: saved.trajectory_origin_map.x,
         start_of_trajectory_y: saved.trajectory_origin_map.y,
@@ -750,6 +766,7 @@ fn preflight_projectile(
 fn apply_projectile(runtime: &mut ProjectileData, saved: PlannedProjectile) {
     runtime.flying = saved.flying;
     runtime.falling = saved.falling;
+    runtime.falling_direction = saved.falling_direction;
     runtime.trajectory_frame_count = saved.trajectory_frame_count;
     runtime.start_of_trajectory_x = saved.start_of_trajectory_x;
     runtime.start_of_trajectory_y = saved.start_of_trajectory_y;
