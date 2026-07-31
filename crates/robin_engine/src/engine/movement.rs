@@ -482,6 +482,10 @@ fn take_deferred_movement_state_start(deferred_movement_state_start: &mut bool) 
     std::mem::take(deferred_movement_state_start)
 }
 
+fn should_defer_pc_movement_state_start(is_pc: bool, entity_target_seek: bool) -> bool {
+    is_pc && !entity_target_seek
+}
+
 fn actor_line_crossing_eligible(
     posture: crate::element::Posture,
     human_is_carried: bool,
@@ -7102,7 +7106,7 @@ impl EngineInner {
                                 continuation.reseed_id(crate::order::alloc_order_id(next_order_id));
                                 continuation_door_action = Some((animation, continuation.reverse));
                                 element.insert_order(insertion, continuation);
-                                if is_pc
+                                if should_defer_pc_movement_state_start(is_pc, entity_target_seek)
                                     && let Some(authored_successor) =
                                         element.orders.get_mut(insertion + 1)
                                 {
@@ -11080,6 +11084,16 @@ mod line_jump_tests {
             !take_deferred_movement_state_start(&mut deferred),
             "the synthetic START is a one-shot order handoff"
         );
+    }
+
+    #[test]
+    fn entity_target_seek_does_not_synthesize_deferred_pc_movement_start() {
+        assert!(should_defer_pc_movement_state_start(true, false));
+        assert!(
+            !should_defer_pc_movement_state_start(true, true),
+            "entity-target PerformSeek hides START from the Original Execute arm"
+        );
+        assert!(!should_defer_pc_movement_state_start(false, false));
     }
 
     #[test]
