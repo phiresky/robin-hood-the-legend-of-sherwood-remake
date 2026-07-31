@@ -1769,7 +1769,7 @@ pub fn begin_pay(
     // Face opposite to beggar.
     pc_entity
         .element_data_mut()
-        .set_direction_instantly((beggar_direction + 8).rem_euclid(16));
+        .set_direction_goal((beggar_direction + 8).rem_euclid(16));
 
     BeginResult::Started
 }
@@ -2298,13 +2298,15 @@ pub fn tick_ability(
     } else {
         ability_order_type(kind)
     };
-    // HITTING turns progressively toward the live antagonist after its
-    // Execute-time initialization installed the goal. Keep the first sprite
-    // frame frozen until alignment, just like RHANIMATION_HITTING's
-    // `Turn() ? RHPROGRESSION_FROZEN_FIRST_FRAME : default` branch.
-    let turning =
-        matches!(kind, AbilityKind::Hit | AbilityKind::Heal) && entity.position_iface_mut().turn();
-    let frame_progression = if kind == AbilityKind::Hit && turning {
+    // HITTING and PAYING turn progressively toward the direction installed at
+    // Execute-time initialization. Keep the first sprite frame frozen until
+    // alignment, matching their Original
+    // `Turn() ? RHPROGRESSION_FROZEN_FIRST_FRAME : default` branches.
+    let turning = matches!(
+        kind,
+        AbilityKind::Hit | AbilityKind::Heal | AbilityKind::Pay
+    ) && entity.position_iface_mut().turn();
+    let frame_progression = if matches!(kind, AbilityKind::Hit | AbilityKind::Pay) && turning {
         crate::sprite::FrameProgression::FrozenFirstFrame
     } else {
         crate::sprite::FrameProgression::Default
