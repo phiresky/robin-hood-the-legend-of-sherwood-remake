@@ -1692,8 +1692,10 @@ impl EngineInner {
                     );
                 }
             }
-            // Original CleanUpDetectables removes dead enemies only. Missing,
-            // non-human, or policy-impossible targets indicate corrupted NPC
+            // Original CleanUpDetectables removes dead enemies only. The
+            // AddDetectable policy governs new entries, but an existing entry
+            // can outlive a later camp/role change and remains authoritative.
+            // Missing or non-human targets still indicate corrupted NPC
             // state and must fail with observer/target context.
             let before = detectables.len();
             detectables.retain(|d| {
@@ -1713,14 +1715,6 @@ impl EngineInner {
                             npc_id.index()
                         )
                     });
-                assert!(
-                    target_is_allowed(target),
-                    "Enemy detectable target {} is invalid for NPC {} ({:?} civilian={})",
-                    target_id.index(),
-                    npc_id.index(),
-                    viewer.camp,
-                    !viewer_is_soldier
-                );
                 !target.dead
             });
             if before != detectables.len() {

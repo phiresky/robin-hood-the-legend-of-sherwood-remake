@@ -2805,6 +2805,19 @@ later landing-resolution paths require a resolved motion sector before
 assigning a layer. Nescafe Profile 003 Savegame 005 matches every recorded
 frame after this correction.
 
+### Existing enemy detectables survive later camp changes
+
+Original applies its camp/role policy when `AddDetectable(..., ENEMY)` creates
+an entry. `CleanUpDetectables` later removes dead targets only; it does not
+revalidate the original insertion policy. A serialized detectable can
+therefore remain authoritative after its observer or target changes camp.
+
+Rust still applies the policy to newly appended entries, and still rejects
+missing or non-human saved targets as corrupt, but no longer rejects a
+well-formed existing entry solely because its current camps would prevent a
+new insertion. This lets Nescafe Profile 003 Restart adopt and simulate its
+saved historical detection lists instead of panicking on the first frame.
+
 ### Exact-position transitions do not reuse stale movement increments
 
 A generated waiting-to-walking transition may have a destination exactly equal
