@@ -9,7 +9,11 @@
 use thiserror::Error;
 
 use crate::{
-    element::{Entity, EntityId, LegacyV48ObjectRepulsivePointState, ObjectData, ObjectType},
+    coordinates::{WorldPoint3D, WorldVec3D},
+    element::{
+        Entity, EntityId, LegacyV48ObjectRepulsivePointState, ObjectData, ObjectType,
+        ProjectileData, TrajectoryPoint,
+    },
     engine::{EngineInner, LevelAssets},
     natives::{ComputedScriptLocation, ScriptHandleCodec},
     order::OrderType,
@@ -24,7 +28,7 @@ use super::{
     payload_base::{LegacyElementRef, LegacyFxPayload},
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
     payload_nonactors::{LegacyObjectPayload, LegacyRepulsivePointPayload},
-    payload_objects::LegacyObjectItemPayload,
+    payload_objects::{LegacyObjectItemPayload, LegacyProjectilePayload},
     payload_vm::{LegacyVmMemberKind, LegacyVmMemberSection, LegacyVmMemberValue},
 };
 
@@ -210,6 +214,11 @@ enum PlannedLeaf {
         entity: EntityId,
         state: PlannedObject,
     },
+    Projectile {
+        entity: EntityId,
+        object: PlannedObject,
+        projectile: PlannedProjectile,
+    },
     Scroll {
         entity: EntityId,
         state: PlannedObject,
@@ -245,6 +254,21 @@ struct PlannedObject {
     belongs_to_beggar: bool,
     taken: bool,
     legacy_v48_repulsive_point: LegacyV48ObjectRepulsivePointState,
+}
+
+#[derive(Debug)]
+struct PlannedProjectile {
+    flying: bool,
+    falling: bool,
+    trajectory_frame_count: u16,
+    start_of_trajectory_x: f32,
+    start_of_trajectory_y: f32,
+    flight_direction: u16,
+    start: WorldPoint3D,
+    end: WorldPoint3D,
+    shooter: Option<EntityId>,
+    trajectory: Vec<TrajectoryPoint>,
+    velocity_increment: WorldVec3D,
 }
 
 #[derive(Debug)]
@@ -473,6 +497,29 @@ impl LegacyObjectLeafAdoptionPlan {
                         state,
                     );
                 }
+                PlannedLeaf::Projectile {
+                    entity,
+                    object,
+                    projectile,
+                } => {
+                    let runtime = engine
+                        .world
+                        .entities
+                        .get_mut(entity)
+                        .expect("preflighted projectile leaf disappeared");
+                    apply_object(
+                        runtime
+                            .object_data_mut()
+                            .expect("preflighted projectile object leaf changed kind"),
+                        object,
+                    );
+                    let runtime = match runtime {
+                        Entity::Projectile(runtime) => &mut runtime.projectile,
+                        Entity::Net(runtime) => &mut runtime.projectile,
+                        _ => panic!("preflighted projectile leaf changed kind"),
+                    };
+                    apply_projectile(runtime, projectile);
+                }
                 PlannedLeaf::Scroll {
                     entity,
                     state,
@@ -559,58 +606,160 @@ fn preflight_object_item(
     creation_order: u32,
     entities: &LegacyEntityFixups,
 ) -> Result<PlannedLeaf, LegacyObjectLeafAdoptError> {
-    let (object, saved_kind, predicate): (&LegacyObjectPayload, &'static str, fn(&Entity) -> bool) =
-        match saved {
-            // Rust stores plain RHElementObject-derived leaves in the
-            // `Entity::Bonus` representation too. Their ElementKind remains
-            // ObjectOther, so the semantic `Entity::is_bonus` predicate
-            // intentionally returns false for them.
-            LegacyObjectItemPayload::Object(object) => (object, "object", |entity| {
+    let (object, projectile, saved_kind, predicate): (
+        &LegacyObjectPayload,
+        Option<&LegacyProjectilePayload>,
+        &'static str,
+        fn(&Entity) -> bool,
+    ) = match saved {
+        // Rust stores plain RHElementObject-derived leaves in the
+        // `Entity::Bonus` representation too. Their ElementKind remains
+        // ObjectOther, so the semantic `Entity::is_bonus` predicate
+        // intentionally returns false for them.
+        LegacyObjectItemPayload::Object(object) => (object, None, "object", |entity| {
+            matches!(entity, Entity::Bonus(_))
+        }),
+        LegacyObjectItemPayload::Ale(payload) => (&payload.object, None, "ale", |entity| {
+            matches!(entity, Entity::Bonus(_))
+        }),
+        LegacyObjectItemPayload::SpyCape(payload) => {
+            (&payload.object, None, "spy cape", |entity| {
                 matches!(entity, Entity::Bonus(_))
-            }),
-            LegacyObjectItemPayload::Ale(payload) => (&payload.object, "ale", |entity| {
-                matches!(entity, Entity::Bonus(_))
-            }),
-            LegacyObjectItemPayload::SpyCape(payload) => (&payload.object, "spy cape", |entity| {
-                matches!(entity, Entity::Bonus(_))
-            }),
-            LegacyObjectItemPayload::Arrow(payload) => {
-                (&payload.projectile.object, "arrow", Entity::is_projectile)
-            }
-            LegacyObjectItemPayload::Apple(payload) => {
-                (&payload.projectile.object, "apple", Entity::is_projectile)
-            }
-            LegacyObjectItemPayload::Purse(payload) => {
-                (&payload.projectile.object, "purse", Entity::is_projectile)
-            }
-            LegacyObjectItemPayload::Stone(payload) => {
-                (&payload.projectile.object, "stone", Entity::is_projectile)
-            }
-            LegacyObjectItemPayload::WaspNest(payload) => (
-                &payload.projectile.object,
-                "wasp nest",
-                Entity::is_projectile,
-            ),
-            LegacyObjectItemPayload::Wasp(payload) => {
-                (&payload.object, "wasp", Entity::is_projectile)
-            }
-            LegacyObjectItemPayload::Coin(payload) => {
-                (&payload.projectile.object, "coin", Entity::is_projectile)
-            }
-            LegacyObjectItemPayload::Net(payload) => {
-                (&payload.projectile.object, "net", |entity| {
-                    matches!(entity, Entity::Net(_))
-                })
-            }
-            LegacyObjectItemPayload::Mobile(_) => {
-                return Err(LegacyObjectLeafAdoptError::MobileMaster { creation_order });
-            }
-        };
+            })
+        }
+        LegacyObjectItemPayload::Arrow(payload) => (
+            &payload.projectile.object,
+            Some(&payload.projectile),
+            "arrow",
+            Entity::is_projectile,
+        ),
+        LegacyObjectItemPayload::Apple(payload) => (
+            &payload.projectile.object,
+            Some(&payload.projectile),
+            "apple",
+            Entity::is_projectile,
+        ),
+        LegacyObjectItemPayload::Purse(payload) => (
+            &payload.projectile.object,
+            Some(&payload.projectile),
+            "purse",
+            Entity::is_projectile,
+        ),
+        LegacyObjectItemPayload::Stone(payload) => (
+            &payload.projectile.object,
+            Some(&payload.projectile),
+            "stone",
+            Entity::is_projectile,
+        ),
+        LegacyObjectItemPayload::WaspNest(payload) => (
+            &payload.projectile.object,
+            Some(&payload.projectile),
+            "wasp nest",
+            Entity::is_projectile,
+        ),
+        LegacyObjectItemPayload::Wasp(payload) => {
+            (&payload.object, None, "wasp", Entity::is_projectile)
+        }
+        LegacyObjectItemPayload::Coin(payload) => (
+            &payload.projectile.object,
+            Some(&payload.projectile),
+            "coin",
+            Entity::is_projectile,
+        ),
+        LegacyObjectItemPayload::Net(payload) => (
+            &payload.projectile.object,
+            Some(&payload.projectile),
+            "net",
+            |entity| matches!(entity, Entity::Net(_)),
+        ),
+        LegacyObjectItemPayload::Mobile(_) => {
+            return Err(LegacyObjectLeafAdoptError::MobileMaster { creation_order });
+        }
+    };
     require_kind(runtime, entity_id, creation_order, saved_kind, predicate)?;
-    Ok(PlannedLeaf::Object {
-        entity: entity_id,
-        state: preflight_object(object, creation_order, entities)?,
+    let object = preflight_object(object, creation_order, entities)?;
+    if let Some(projectile) = projectile {
+        Ok(PlannedLeaf::Projectile {
+            entity: entity_id,
+            object,
+            projectile: preflight_projectile(projectile, creation_order, entities)?,
+        })
+    } else {
+        Ok(PlannedLeaf::Object {
+            entity: entity_id,
+            state: object,
+        })
+    }
+}
+
+fn preflight_projectile(
+    saved: &LegacyProjectilePayload,
+    creation_order: u32,
+    entities: &LegacyEntityFixups,
+) -> Result<PlannedProjectile, LegacyObjectLeafAdoptError> {
+    let point = |saved: super::payload_base::LegacyPoint3,
+                 field: &'static str|
+     -> Result<WorldPoint3D, LegacyObjectLeafAdoptError> {
+        finite(saved.x, creation_order, field)?;
+        finite(saved.y, creation_order, field)?;
+        finite(saved.z, creation_order, field)?;
+        Ok(WorldPoint3D::new(saved.x, saved.y, saved.z))
+    };
+    finite(
+        saved.trajectory_origin_map.x,
+        creation_order,
+        "RHElementProjectile::mposStartOfTrajectory.mX",
+    )?;
+    finite(
+        saved.trajectory_origin_map.y,
+        creation_order,
+        "RHElementProjectile::mposStartOfTrajectory.mY",
+    )?;
+    let trajectory = saved
+        .trajectory
+        .iter()
+        .map(|saved| {
+            Ok(TrajectoryPoint {
+                position: point(
+                    saved.position,
+                    "RHElementProjectile::mTrajectory[].ptPosition",
+                )?,
+                time: saved.time,
+            })
+        })
+        .collect::<Result<Vec<_>, LegacyObjectLeafAdoptError>>()?;
+    let increment = point(
+        saved.object.element.sprite.position.increment,
+        "RHPositionInterface::mIncrement",
+    )?;
+    Ok(PlannedProjectile {
+        flying: saved.flying,
+        falling: saved.dive,
+        trajectory_frame_count: saved.frame_count,
+        start_of_trajectory_x: saved.trajectory_origin_map.x,
+        start_of_trajectory_y: saved.trajectory_origin_map.y,
+        flight_direction: saved.flight_direction,
+        start: point(saved.start, "RHElementProjectile::mptStart")?,
+        end: point(saved.end, "RHElementProjectile::mptEnd")?,
+        shooter: entities.resolve_element(saved.shooter)?,
+        trajectory,
+        velocity_increment: WorldVec3D::new(increment.x, increment.y, increment.z),
     })
+}
+
+fn apply_projectile(runtime: &mut ProjectileData, saved: PlannedProjectile) {
+    runtime.flying = saved.flying;
+    runtime.falling = saved.falling;
+    runtime.trajectory_frame_count = saved.trajectory_frame_count;
+    runtime.start_of_trajectory_x = saved.start_of_trajectory_x;
+    runtime.start_of_trajectory_y = saved.start_of_trajectory_y;
+    runtime.flight_direction = saved.flight_direction;
+    runtime.start = saved.start;
+    runtime.end = saved.end;
+    runtime.shooter = saved.shooter;
+    runtime.trajectory = saved.trajectory;
+    runtime.velocity_increment = saved.velocity_increment;
+    runtime.retirement_pending = false;
 }
 
 fn preflight_object(
