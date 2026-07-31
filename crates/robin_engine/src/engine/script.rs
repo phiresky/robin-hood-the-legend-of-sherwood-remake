@@ -3273,7 +3273,6 @@ impl EngineInner {
         let profile = campaign.missions[idx].profile(&assets.profile_manager);
         let mission_filename = profile.mission_filename.clone();
         let proto_level_filename = profile.proto_level_filename.clone();
-        let location = profile.location;
 
         self.initialize_from_mission(
             sim,
@@ -3287,8 +3286,11 @@ impl EngineInner {
             progress,
         )?;
 
-        // Set mission-specific engine state from the profile
-        self.world.weather.is_forest_level = location == MissionLocation::Sherwood;
+        // `RHEngine::InitializeMiscFromProtoStream` owns `mbForestLevel`.
+        // Keep the value loaded from the proto MISC chunk above rather than
+        // deriving it from the campaign-map location.  Those are usually
+        // aligned, but not identical: SherwoodOutro uses the Sherwood proto
+        // while its profile location is Cross2.
 
         Ok(())
     }

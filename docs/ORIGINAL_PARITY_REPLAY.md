@@ -2402,6 +2402,18 @@ or retains an initialized zero-member VM. Adoption now preserves that live
 binding, matching Original instead of rejecting the save on a false presence
 mismatch.
 
+### Forest behavior comes from the proto level, not the campaign-map location
+
+Original assigns `RHEngine::mbForestLevel` directly from the proto stream's
+`MISC` chunk. Rust loaded that value correctly and then overwrote it from the
+mission profile's campaign-map location. Most profiles made the two values
+look interchangeable, but `SherwoodOutro` deliberately combines the Sherwood
+proto with the `Cross2` map location. The overwrite disabled forest behavior
+there, including the Royalist 180-degree view rule. Rust now retains the proto
+value as the sole authority, matching `InitializeMiscFromProtoStream`.
+Linux3 Profile 001 QuickSave consequently matches every recorded frame instead
+of missing a civilian's clear view of a hero at frame 5287.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
