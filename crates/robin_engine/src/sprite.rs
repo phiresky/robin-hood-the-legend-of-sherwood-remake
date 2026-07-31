@@ -1726,6 +1726,8 @@ impl Sprite {
         dest_already_at_pos: bool,
     ) -> (MotionState, f32) {
         let order_id = motion_order.map(|ctx| ctx.order_id);
+        let starts_new_motion_order =
+            order_id.is_some_and(|order_id| self.last_processed_order_id != order_id.get());
         // Already-at-destination short-circuit: on the first tick of a
         // new order whose motion method is not `TillLastFrame` and
         // whose destination equals the current map position, set the
@@ -1779,7 +1781,15 @@ impl Sprite {
         // initializes the order and then unconditionally calls
         // IncrementFrame in the same invocation, making frame-zero distance
         // available immediately. Keep the two entry points distinct.
-        if state == MotionState::Start {
+        if starts_new_motion_order {
+            // PerformMotion does not inherit PerformAction's action-done
+            // result on a fresh order.  The Original keeps the new order's
+            // motion state at START and advances the animation once even
+            // when the preceding order left the same animation exactly on
+            // its action-done frame.  Keying this on `state == Start` loses
+            // that advance because PerformAction rewrites START to DONE
+            // before returning.
+            state = MotionState::Start;
             let animation_finished = self.increment_frame(sim, progression);
             if motion_method == MotionMethod::TillLastFrame && animation_finished {
                 state = MotionState::Terminated;
@@ -2561,6 +2571,42 @@ mod tests {
 
         assert_eq!(state, MotionState::Start);
         assert_eq!(sprite.current_frame, 0);
+        assert_eq!(sprite.frame_count, 0);
+        assert_eq!(distance, 3.0);
+    }
+
+    #[test]
+    fn new_motion_order_advances_from_same_animation_action_done_frame() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut sprite = make_test_sprite();
+        sprite.last_action = OrderType::WaitingUprightBored;
+        sprite.current_row = 0;
+        sprite.current_frame = 2;
+        sprite.frame_count = sprite.wait_time(0, 2);
+        sprite.last_processed_order_id = 1;
+
+        let motion_order = MotionOrderContext {
+            order_id: std::num::NonZeroU32::new(2).unwrap(),
+            destination: MapPoint::new(100.0, 0.0),
+            reverse: false,
+            tolerance: 0.0,
+            directional_tolerance: false,
+            compute_direction: true,
+            next_destination_same_action: None,
+        };
+        let (state, distance) = sprite.perform_motion(
+            &sim_context,
+            Some(motion_order),
+            OrderType::WaitingUprightBored,
+            0,
+            FrameProgression::Default,
+            false,
+            MotionMethod::Walk,
+            false,
+        );
+
+        assert_eq!(state, MotionState::Start);
+        assert_eq!(sprite.current_frame, 3);
         assert_eq!(sprite.frame_count, 0);
         assert_eq!(distance, 3.0);
     }
