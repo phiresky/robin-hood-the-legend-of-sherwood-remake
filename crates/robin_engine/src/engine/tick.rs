@@ -5206,6 +5206,7 @@ impl EngineInner {
                     direct,
                     "DoorPass: completed after transition resume"
                 );
+                self.commit_completed_door_pass_position(assets, entity_id, door_index, direct);
                 self.apply_completed_door_pass_lift_entry_state(entity_id, door_index, direct);
             }
             // If the advance yielded another Walk or Transition step,

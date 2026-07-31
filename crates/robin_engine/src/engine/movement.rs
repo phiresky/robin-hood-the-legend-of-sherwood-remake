@@ -8216,6 +8216,7 @@ impl EngineInner {
                 direct,
                 "DoorPass: completed"
             );
+            self.commit_completed_door_pass_position(assets, entity_id, door_index, direct);
             self.apply_completed_door_pass_lift_entry_state(entity_id, door_index, direct);
         }
 

@@ -673,14 +673,31 @@ pub(super) fn build_ai_context_from_entity(
         .npc_data()
         .map(|npc| npc.eye_status)
         .unwrap_or_default();
-    AiContext {
-        difficulty,
-        position: crate::ai::Position {
+    // `RHArtificialIntelligence::Position(mpMe)` uses the committed gate
+    // side while the sprite interpolates along a door rail. The shared view
+    // has already applied that override; raw sprite coordinates here made
+    // self-relative AI geometry disagree with target lookups during PassDoor.
+    let self_position = if actor.is_some_and(|actor| actor.active_door_pass.is_some()) {
+        entity_views
+            .get(&(elem.index_in_elements_list as u32))
+            .unwrap_or_else(|| {
+                panic!(
+                    "door-passing AI owner {} is missing its required entity view",
+                    elem.index_in_elements_list
+                )
+            })
+            .position
+    } else {
+        crate::ai::Position {
             x: elem.position_map().x,
             y: elem.position_map().y,
             sector: elem.sector(),
             level: elem.layer(),
-        },
+        }
+    };
+    AiContext {
+        difficulty,
+        position: self_position,
         frame,
         direction: elem.direction() as u16,
         posture: elem.posture,
@@ -8306,11 +8323,23 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 continue;
             };
-            let pos =
-                self.position_at_owner_boundary(npc_id, owner, positions_before_movement, false);
+            // Every position read in `RefreshPatrol` goes through the AI
+            // `Position(actor)` helper. In particular, a member whose current
+            // sequence command is PassDoor reports the committed gate side,
+            // not its interpolating sprite position. The owner-slot view also
+            // preserves creation-order map positions for ordinary actors.
+            let position = scratch
+                .ai_entity_views
+                .get(&npc_id.index())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "patrol owner {} is missing AI position view for NPC {}",
+                        owner.index(),
+                        npc_id.index()
+                    )
+                })
+                .position;
             let dir = entity.element_data().direction();
-            let sector = entity.element_data().sector();
-            let layer = entity.element_data().layer();
             let npc = entity.npc_data().unwrap_or_else(|| {
                 panic!(
                     "patrol owner {} found NPC slot {} without NPC data",
@@ -8354,10 +8383,10 @@ impl EngineInner {
                 npc_id,
                 NpcSnap {
                     position: Position {
-                        x: pos.x,
-                        y: pos.y,
-                        sector,
-                        level: layer,
+                        x: position.x,
+                        y: position.y,
+                        sector: position.sector,
+                        level: position.level,
                     },
                     direction: dir as u16,
                     ground_z: entity.element_data().position().z,

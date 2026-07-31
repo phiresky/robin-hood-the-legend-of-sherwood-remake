@@ -1496,6 +1496,44 @@ impl EngineInner {
         let _ = is_pc;
     }
 
+    /// Commit the exact endpoint when the final door-pass order completes.
+    ///
+    /// Original's last door-rail movement has already written this position
+    /// before the derived NPC Hourglass tail runs. Keeping Rust's interpolated
+    /// pre-door coordinate until a later movement pass makes same-slot AI
+    /// callbacks observe the wrong side of the gate.
+    pub(super) fn commit_completed_door_pass_position(
+        &mut self,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        door_index: crate::gate::DoorIndex,
+        direct: bool,
+    ) {
+        let door = self
+            .script_domains
+            .interactables
+            .doors
+            .get(usize::from(door_index))
+            .unwrap_or_else(|| {
+                panic!("completed PassDoor for {entity_id:?} references missing door {door_index}")
+            });
+        let point = if direct {
+            door.point_in
+        } else {
+            door.point_out
+        };
+        let point = crate::coordinates::MapPoint::new(point.x, point.y);
+        self.finalize_special_move_position(
+            assets,
+            entity_id,
+            super::special_motion::SpecialMovePosition::Map(point),
+            None,
+            None,
+            Some(point),
+            "completed door pass",
+        );
+    }
+
     pub(super) fn apply_completed_door_pass_lift_entry_state(
         &mut self,
         entity_id: EntityId,

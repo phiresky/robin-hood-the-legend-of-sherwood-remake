@@ -3895,6 +3895,22 @@ progress; sprite destination side effects remain owned by order execution.
 Linux2 Profile 002 Savegame 042 consequently preserves soldier 151's
 `(768, 1796)` movement goal through the former frame-6987 boundary.
 
+### AI position during door passage uses the committed gate side
+
+Original `RHArtificialIntelligence::Position(actor)` does not expose an
+actor's interpolating sprite coordinate while its selected command is
+`PassDoor`. It reports the exact committed `point_in` or `point_out`, including
+that side's sector and layer. This affects self-relative AI geometry, patrol
+formation distance gates, and queued stimuli even though rendering continues
+to show the actor moving along the door rail.
+
+Rust now uses its shared, owner-slot AI entity view for both AI self position
+and every `RefreshPatrol` actor snapshot. Final door-pass completion also
+commits the exact gate endpoint before same-slot AI callbacks run. Linux2
+Profile 002 Savegame 002 therefore skips the same obsolete frame-504 patrol
+coordinate as Original, retains only the frame-512 update while BUSY, and
+matches all 250 recorded frames exactly through frame 726.
+
 ## Frozen full-corpus audit at `2a3e842df`
 
 The first no-unknown audit froze the debug parity runner built from commit
