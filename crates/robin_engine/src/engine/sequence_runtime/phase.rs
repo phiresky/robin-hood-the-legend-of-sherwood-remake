@@ -339,15 +339,13 @@ impl EngineInner {
                         element.priority = priority;
                     }
 
-                    // Sword damage produced by an actor strike is launched
-                    // through the ordinary manager queue so it reaches its
-                    // native Instruct boundary only after every actor's
-                    // frame. Stamp that deferred element from the victim's
-                    // state as it exists now, matching RHElementActor::Instruct.
-                    //
-                    // Other deferred element families retain their existing
-                    // admission behavior; broadening this requires auditing
-                    // their distinct native launch paths.
+                    // Every RHElementActor::Instruct snapshots the actor's
+                    // current posture and action state before the
+                    // non-interruptable guard, transition generation, and
+                    // ordinary priority arbitration. Freshly launched
+                    // elements are eagerly stamped; a postponed element marks
+                    // that snapshot Undefined when it is released because
+                    // this is its second Instruct boundary.
                     let needs_transition = self
                         .orders
                         .sequence_manager
@@ -360,14 +358,7 @@ impl EngineInner {
                             ) && element.posture_after_transition
                                 == crate::element::Posture::Undefined
                         });
-                    let is_deferred_sword_damage = self
-                        .orders
-                        .sequence_manager
-                        .get_element(seq_id, elem_idx)
-                        .is_some_and(|element| {
-                            element.command == crate::element::Command::ReceiveSwordDamage
-                        });
-                    if needs_transition && is_deferred_sword_damage {
+                    if needs_transition {
                         self.stamp_element_transition_state(owner, seq_id, elem_idx);
                     }
                     // Original `RHElementActor::Instruct` handles a selected

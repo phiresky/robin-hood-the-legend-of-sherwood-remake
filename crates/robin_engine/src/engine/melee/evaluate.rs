@@ -1348,19 +1348,19 @@ impl EngineInner {
                     &assets.profile_manager,
                     sim.config().difficulty,
                 );
-                let action = victim
-                    .actor_data()
-                    .map(|a| a.action_state)
-                    .unwrap_or_default();
+                let is_swordfighting = victim
+                    .human_data()
+                    .is_some_and(|human| !human.opponents.is_empty());
                 (
                     is_selected_pc,
                     is_npc_soldier,
                     npc_substate,
                     ability,
-                    action,
+                    is_swordfighting,
                 )
             };
-            let (is_selected_pc, is_npc_soldier, npc_substate, ability, action) = victim_info;
+            let (is_selected_pc, is_npc_soldier, npc_substate, ability, is_swordfighting) =
+                victim_info;
 
             if is_selected_pc {
                 // Player controls parry for selected PCs
@@ -1392,11 +1392,11 @@ impl EngineInner {
             // `propose_good_sword_strike(sim, also_parade=true)`, which
             // may produce a counter-strike or a parry fallback.
             //
-            // Guard: `is_swordfighting() == false → return`.  That
-            // covers every "sword drawn" action state — WaitingSword,
-            // MovingSword, MovingFastSword, ParryingSword,
-            // ParryingSwordLow — not just WaitingSword.
-            if !action.is_sword() {
+            // Original `IsSwordfighting()` is relationship-based:
+            // `mlistOpponents.Size() != 0`. Merely retaining a sword action
+            // after the duel link was cleared does not permit an automatic
+            // parry/counter-strike.
+            if !is_swordfighting {
                 continue;
             }
 

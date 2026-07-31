@@ -13,7 +13,7 @@ use crate::abilities;
 use crate::element::{Command, Entity, EntityId};
 use crate::entities::EntitySlots;
 use crate::game_operation::GameCode;
-use crate::messenger::{Message, MessageType, SimpleMessage};
+use crate::messenger::{MessageType, SimpleMessage};
 use crate::profiles::MissionType;
 
 #[cfg(test)]
@@ -4383,10 +4383,18 @@ impl EngineInner {
                 }
             }
             for pc_id in deselect {
-                self.orders.messenger.send(Message::pc(
-                    crate::messenger::PcMessage::UnselectCharacter,
-                    Some(pc_id),
-                ));
+                // `RHMessenger::ForwardMessage` synchronously routes
+                // MSG_UNSELECT_CHARACTER to the engine/game receivers at
+                // this exact point. Do not leave the authoritative selection
+                // mutation in Rust's next-frame message queue.
+                if self.is_sherwood(&assets.profile_manager)
+                    && let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id)
+                {
+                    pc.pc.interface_hidden = true;
+                }
+                self.unselect_single_pc(pc_id);
+                self.update_recording_after_selection_change();
+                self.players.action_before_recording_macro = crate::profiles::Action::NoAction;
             }
         }
 

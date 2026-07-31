@@ -3840,16 +3840,18 @@ impl SequenceManager {
             self.register_element_to_go(seq_id, postponed_idx);
         }
 
-        // Release the cross-sequence postponed successor and retain the
-        // posture/action snapshot captured by its original Instruct. Original
-        // postponement delays execution; it does not reinterpret the command
-        // from the blocker's terminal pose.
+        // Release the cross-sequence postponed successor. The manager's later
+        // `Go()` calls `RHElementActor::Instruct` again, which snapshots the
+        // actor's posture and action state as they exist at that second
+        // instruction boundary. Mark the old snapshot stale so the engine
+        // performs the same refresh before arbitration and translation.
         if let Some((succ_seq_id, succ_idx)) = resume_cross_postponed
             && let Some(succ_seq) = self.sequences.get_mut(&succ_seq_id)
             && let Some(succ_elem) = succ_seq.elements.get_mut(succ_idx)
             && succ_elem.state == SequenceState::Postponed
         {
             succ_elem.state = SequenceState::Todo;
+            succ_elem.posture_after_transition = crate::element::Posture::Undefined;
             self.register_element_to_go(succ_seq_id, succ_idx);
         }
     }

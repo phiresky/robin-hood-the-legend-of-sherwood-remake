@@ -2878,23 +2878,6 @@ impl EnemyAi {
         );
     }
 
-    /// Complete the preparation wait of a delayed special strike.
-    ///
-    /// Original exposes `...SPECIAL_STRIKE` while the prep `WAIT_TIMER` is
-    /// selected, then returns to ordinary `...SWORDFIGHT` when the following
-    /// strike element is instructed. Keep the independent lifecycle latch set
-    /// until that strike terminates so cancellation reconciliation remains
-    /// explicit.
-    pub fn finish_special_strike_preparation(&mut self, frame: u32) {
-        if self.pending_special_strike
-            && self.base.current_substate == Substate::AttackingSwordfightSpecialStrike
-        {
-            self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-            self.base.launch_timer(20, frame);
-            self.next_sword_strike_frame = frame + 20;
-        }
-    }
-
     /// Reconcile `pending_special_strike` against the sequence
     /// manager.  Called once per tick from
     /// `engine/melee.rs::tick_enemy_sword_attacks`.  If the flag is
@@ -4736,15 +4719,10 @@ mod tests {
             Substate::AttackingSwordfightSpecialStrike
         );
 
-        ai.finish_special_strike_preparation(40);
-        assert!(ai.pending_special_strike);
-        assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
-        assert_eq!(ai.next_sword_strike_frame, 60);
-
         ai.reconcile_special_strike(false, 41);
         assert!(!ai.pending_special_strike);
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
-        assert_eq!(ai.next_sword_strike_frame, 60);
+        assert_eq!(ai.next_sword_strike_frame, 61);
 
         ai.begin_special_strike();
         ai.set_state(AiState::Attacking, Substate::AttackingSwordfightParade);

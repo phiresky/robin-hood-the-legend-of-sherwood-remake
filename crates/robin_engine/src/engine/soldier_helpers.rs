@@ -474,67 +474,14 @@ impl EngineInner {
                 trace.push(card_owner);
             }
         });
-        let cross_postponed_successor = dispatch.cross_postponed_successor();
         self.orders
             .sequence_manager
             .finish_pending_condolation(dispatch);
 
-        // SetState(TERMINATED) resumes after SendCondolationCard with
-        // Ready(), then StartPostponedSequenceElement(). Promote this owner's
-        // queued work through that released element before the actor boundary
-        // closes. Ready registered the old sequence's successors first, so
-        // preserving that owner-local FIFO is essential: extracting only the
-        // postponed successor would let the stale sequence run afterwards and
-        // interrupt the replacement route.
-        if !from_halt && let Some((sequence_id, element_index)) = cross_postponed_successor {
-            // StartPostponedSequenceElement calls the owner's Instruct again.
-            // RHElementActor::Instruct unconditionally snapshots the actor's
-            // *current* posture and action state before it regenerates /
-            // translates the released command. Refresh the snapshot here,
-            // after the blocker's condolence stack has applied its terminal
-            // state effects and before this successor reaches its deferred
-            // InstructOwner action. Otherwise a Move postponed by
-            // EnterSwordfight can resume with its pre-sword upright action
-            // instead of being rewritten to sword movement.
-            self.stamp_element_transition_state(card_owner, sequence_id, element_index);
-            let actions = self
-                .orders
-                .sequence_manager
-                .take_deferred_owner_actions_through(card_owner, sequence_id, element_index)
-                .unwrap_or_else(|detail| {
-                    panic!(
-                        "condolation owner {} postponed successor dispatch failed: {detail}",
-                        card_owner.index()
-                    )
-                });
-            for action in actions {
-                self.dispatch_script_synchronous_action(sim, assets, action, &mut active_scripts)
-                    .unwrap_or_else(|error| {
-                        panic!(
-                            "condolation owner {} postponed successor failed: {error:?}",
-                            card_owner.index()
-                        )
-                    });
-
-                // Each manager-FIFO `Go()` call returns only after every
-                // `SetState -> SendCondolationCard -> Ready()` stack it
-                // opened has closed. In particular, an AssertPosition ahead
-                // of a postponed Seek can make the old sequence's next Move
-                // ready here; that Move must be registered before the Seek
-                // later registers its concrete replacement. Delaying these
-                // cards until the whole extracted batch was dispatched
-                // reversed those two normal-priority FIFO entries.
-                for nested in self.orders.sequence_manager.drain_pending_condolations() {
-                    self.close_owner_boundary_condolation(
-                        sim,
-                        assets,
-                        nested,
-                        resumed_cross_successors,
-                    );
-                }
-            }
-            resumed_cross_successors.push((sequence_id, element_index));
-        }
+        // `StartPostponedSequenceElement` only calls
+        // `RegisterSequenceElementToGo`. Ordinary released work therefore
+        // remains in the manager FIFO until `RHSequenceManager::Hourglass`;
+        // only commands handled by registration itself may run inline.
         self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
             .unwrap_or_else(|error| {
                 panic!(

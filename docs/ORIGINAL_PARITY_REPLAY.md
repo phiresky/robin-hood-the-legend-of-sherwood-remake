@@ -2929,7 +2929,7 @@ The expanded authoritative Linux audit adds 48 `Savegame_linux2` traces and
 140 `Savegame_linux3` traces. Unlike the first group, these exercise up to
 hundreds of dynamic bonuses/projectiles and a much wider set of interrupted
 runtime states. All five Linux3 Profile 002 traces and the audited Profile 003
-traces through Savegame 042 currently match every recorded frame. The remaining
+traces through Savegame 051 currently match every recorded frame. The remaining
 corpus is the active completion set; failures are grouped by their first
 general cause and the whole affected shard is rerun after each fix.
 
@@ -2950,6 +2950,53 @@ Rust now preserves and executes that transition prefix, or terminates normally
 when no prefix was needed. This is general command-order behavior rather than a
 trace exception. It advances Nescafe Profile 003 Restart from frame 147 to its
 next independent movement-geometry divergence at frame 207.
+
+### Postponed actor commands re-enter the manager instruction boundary
+
+`StartPostponedSequenceElement` appends a released element to the sequence
+manager FIFO. It does not call the actor's `Instruct` method synchronously from
+the terminating actor slot. When the manager later drains that FIFO, `Instruct`
+again snapshots the actor's current posture and action state before priority
+arbitration, transition generation, and translation.
+
+Rust previously promoted a cross-postponed command inside the actor callback
+and retained the posture/action snapshot from its first, postponed instruction.
+The early promotion let later work in the same NPC hourglass cancel the command;
+the stale snapshot could also resume an upright run after the actor had raised
+his sword. Released ordinary commands now remain in manager order and mark
+their transition snapshot stale for the later instruction call.
+
+### Special strikes remain special through their strike action
+
+The delayed AI strike sequence is `WAIT_TIMER` followed by the actual
+sword-strike command. `IsLastRealAction` suppresses an event for the preparation
+wait because the strike is a following real action. The
+`ATTACKING_SWORDFIGHT_SPECIAL_STRIKE` substate therefore remains active until
+the strike sends `EVENT_DONE` or its timer expires.
+
+Rust had a Thrust-A-only shortcut which returned to ordinary swordfight when
+the strike element was instructed. That shortcut has been removed; cancellation
+continues to use the independent active-strike reconciliation path.
+
+### End-of-hourglass death unselection is synchronous
+
+After the entity and sequence-manager passes, Original scans selected PCs and
+forwards `MSG_UNSELECT_CHARACTER` immediately for dead or unconscious members.
+The messenger routes that selection mutation synchronously. Rust now applies
+the same selection and macro-recording state at that boundary instead of
+leaving the authoritative unselection queued until the next frame.
+
+### Strike warnings use the original victim and duel predicates
+
+Straight-strike warning candidates now pass through the common
+`IsPossibleSwordStrikeVictim` equivalent. Separately, a PC's `WarnForStrike`
+guard uses the original definition of `IsSwordfighting`: a non-empty opponent
+list, not merely a sword-flavoured action state. A dead PC whose visual action
+has not yet changed but whose duel links are already cleared therefore cannot
+consume counter-strike RNG or launch another action.
+
+Together these corrections make Linux3 Profile 003 Savegames 043–051 match
+every recorded frame.
 
 ## Coverage limits
 

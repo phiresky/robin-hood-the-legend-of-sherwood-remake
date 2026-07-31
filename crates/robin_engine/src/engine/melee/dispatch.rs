@@ -20,7 +20,7 @@ impl EngineInner {
     /// Handles the `SwordstrikeThrustA..I` strike commands.
     pub(crate) fn dispatch_sword_strike(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        _sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
         target: EntityId,
@@ -50,36 +50,6 @@ impl EngineInner {
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
             return;
-        }
-
-        // Delayed AI strikes are authored as WAIT_TIMER -> SWORDSTRIKE.
-        // Thrust A is exceptional: its translation normalises the principal
-        // opponents on both humans, and the resulting Original owner
-        // callback closes the preparation substate before the strike runs.
-        // The other prepared strikes have no such callback and retain the
-        // special-strike substate until their own EventDone. The sequence
-        // shape alone is therefore not enough to end preparation.
-        let follows_preparation_wait = elem_idx > 0
-            && self
-                .orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx - 1)
-                .is_some_and(|element| element.command == Command::WaitTimer);
-        let closes_preparation = follows_preparation_wait && strike == SwordStrike::A;
-        if closes_preparation
-            && let Some(crate::element::Entity::Soldier(soldier)) =
-                self.world.entities.get_mut(owner)
-            && let crate::element::AiBrain::Enemy(ai) = &mut soldier.npc.ai_brain
-        {
-            ai.finish_special_strike_preparation(self.control.frame_counter);
-        }
-        if closes_preparation {
-            // Rust performs the Original EVENT_DONE transition at this
-            // successor-instruction boundary. `SetState` calls the scripted
-            // FilterAIEvent inline in the Original, so do not leave that
-            // owner-local callback queued for the NPC Hourglass: the active
-            // strike lock can legitimately make that Hourglass return early.
-            self.drain_ai_owner_work_for(sim, assets, owner);
         }
 
         if strike == SwordStrike::A {
