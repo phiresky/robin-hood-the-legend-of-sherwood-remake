@@ -2922,6 +2922,19 @@ Savegame 000–037 corpus matches every recorded frame; Nescafe Profile 003
 Savegames 010–014 and 016 have also been verified. The remaining Windows
 sessions are part of the active completion set.
 
+### Rejected bow shots retain their generated action transition
+
+`RHElementActor::Instruct` generates the posture/action transition before
+`RHElementActorHuman::Translate` checks whether a bow target is reachable and
+within range. A rejected `SHOOT_BOW` body therefore does not make the whole
+sequence element impossible: any generated equip/load transition continues to
+run, and only the shot body is absent.
+
+Rust now preserves and executes that transition prefix, or terminates normally
+when no prefix was needed. This is general command-order behavior rather than a
+trace exception. It advances Nescafe Profile 003 Restart from frame 147 to its
+next independent movement-geometry divergence at frame 207.
+
 ## Coverage limits
 
 A clean baseline proves exact parity only for the state fields serialized by the

@@ -511,11 +511,32 @@ impl EngineInner {
                                     ?owner,
                                     ?target,
                                     ?bow_target,
-                                    "ShootBow command rejected during dispatch"
+                                    "ShootBow body rejected after preserving its transition prefix"
                                 );
-                                self.orders
+
+                                // Human::Instruct generates the action
+                                // transition before Human::Translate checks
+                                // CanShootWithBowAt. An out-of-range or
+                                // obstructed shot therefore still equips and
+                                // loads the bow, then completes normally with
+                                // no shoot-body orders. It is not an
+                                // Impossible element. This is visible for
+                                // scripted training shots whose target has
+                                // moved outside the configured bow range.
+                                let has_transition_orders = self
+                                    .orders
                                     .sequence_manager
-                                    .element_impossible(seq_id, elem_idx);
+                                    .get_element(seq_id, elem_idx)
+                                    .is_some_and(|element| !element.orders.is_empty());
+                                if has_transition_orders {
+                                    self.orders
+                                        .sequence_manager
+                                        .element_in_progress(seq_id, elem_idx);
+                                } else {
+                                    self.orders
+                                        .sequence_manager
+                                        .element_terminated(seq_id, elem_idx);
+                                }
                                 continue;
                             }
 
