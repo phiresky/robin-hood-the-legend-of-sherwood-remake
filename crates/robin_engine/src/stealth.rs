@@ -527,7 +527,12 @@ pub fn detection_point_xy(ground: MapPoint, posture: Posture, direction: i16) ->
         return ground;
     }
     let (dx, dy) = crate::element_kinds::direction_vector_16(direction);
-    let (sx, sy) = leaning_out_xy_offset(dx, dy);
+    // Original `ComputeDetectionPoint` obtains this vector through
+    // `RHElement::GetDirectionVector`, whose `SetSector0to15` call scales Y
+    // by the isometric aspect ratio.  Using the unscaled compass vector moves
+    // diagonal leaners too far along Y and can put them inside a view cone
+    // that does not contain the Original detection point.
+    let (sx, sy) = leaning_out_xy_offset(dx, dy * crate::position_interface::ASPECT_RATIO);
     MapPoint::new(ground.x + sx, ground.y + sy)
 }
 
@@ -777,6 +782,19 @@ mod tests {
         let same = detection_point_xy(ground, Posture::Upright, 4);
         assert_eq!(same.x, ground.x);
         assert_eq!(same.y, ground.y);
+    }
+
+    #[test]
+    fn detection_point_xy_leaning_out_scales_diagonal_y_by_aspect_ratio() {
+        let ground = MapPoint::new(100.0, 200.0);
+        let shifted = detection_point_xy(ground, Posture::LeaningOut, 9);
+        let (dx, dy) = crate::element_kinds::direction_vector_16(9);
+
+        assert!((shifted.x - (ground.x + 40.0 * dx)).abs() < 1e-3);
+        assert!(
+            (shifted.y - (ground.y + 40.0 * dy * crate::position_interface::ASPECT_RATIO)).abs()
+                < 1e-3
+        );
     }
 
     #[test]
