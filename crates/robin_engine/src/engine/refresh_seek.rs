@@ -379,6 +379,19 @@ impl crate::engine::EngineInner {
             return;
         }
 
+        // Original stamps these immediately after its same-sector early
+        // returns and before deciding whether AppendMoveToSequence needs a
+        // cross-sector door route. The route builder can synchronously
+        // replace the selected element, so delaying this until the direct
+        // same-sector path loses the observable TIME_SEEK_REFRESH value.
+        if let Some(entity) = self.world.entities.get_mut(owner)
+            && let Some(actor) = entity.actor_data_mut()
+        {
+            actor.last_seek_target_position = new_target_pos;
+            actor.wait_time = 25;
+            actor.seek_refresh_wait = 25;
+        }
+
         if self.try_dispatch_cross_sector_entity_seek(
             sim,
             assets,
@@ -422,19 +435,6 @@ impl crate::engine::EngineInner {
             *t = resolved.tolerance;
             *speed_factor = resolved.speed_factor;
             *destination = resolved.destination;
-        }
-
-        // Stamp the new last-seek-position so the next tick's
-        // threshold check measures against this launch, and re-arm
-        // `seek_refresh_wait` (every refresh re-arms the countdown).
-        // Concrete MOVE|SEEK elements deliberately preserve both values;
-        // RefreshSeek is the source boundary that resamples and rearms them.
-        if let Some(entity) = self.world.entities.get_mut(owner)
-            && let Some(actor) = entity.actor_data_mut()
-        {
-            actor.last_seek_target_position = new_target_pos;
-            actor.wait_time = 0;
-            actor.seek_refresh_wait = 25;
         }
 
         self.relaunch_seek_replacement(owner, seq_id, elem_idx, new_elem);

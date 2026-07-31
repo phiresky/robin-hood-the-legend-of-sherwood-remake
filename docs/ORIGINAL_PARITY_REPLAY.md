@@ -2618,6 +2618,16 @@ a transition carrying `RHMOVE_SEEK` calls `RHElementActor::PerformSeek`,
 which explicitly forwards the movement element's speed factor. Rust now makes
 the same distinction instead of treating every transition as unscaled.
 
+### Seek refresh timing remains observable after route replacement
+
+Original overloads `mulWaitTime` as the seek refresh counter. Both initial
+entity-seek launch and refresh assign `TIME_SEEK_REFRESH` before a cross-sector
+path builder can synchronously replace the selected movement with its door
+route. Rust keeps separate semantic counters, but now mirrors the assignment
+to both at that same source boundary and before either the direct-path or
+cross-sector branch. A following `WAIT_FREE_LIFT` therefore observes the same
+retained actor field as C++.
+
 ### Swordfight event retargeting does not retarget the eyes
 
 `EVENT_ENTER_SWORDFIGHT` assigns the incoming opponent to

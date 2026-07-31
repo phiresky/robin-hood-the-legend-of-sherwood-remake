@@ -120,7 +120,12 @@ impl EngineInner {
                         actor.seek_target = Some(target);
                         actor.last_seek_target_position = target_position;
                         actor.seek_distance = seek_distance;
-                        actor.wait_time = 0;
+                        // Original uses the single `mulWaitTime` field for
+                        // both ordinary waits and the seek refresh countdown.
+                        // Keep the split Rust fields identical at the launch
+                        // boundary so a synchronously installed follow-up
+                        // command observes TIME_SEEK_REFRESH too.
+                        actor.wait_time = 25;
                         actor.seek_refresh_wait = 25;
                     }
                     if self.try_dispatch_cross_sector_entity_seek(
