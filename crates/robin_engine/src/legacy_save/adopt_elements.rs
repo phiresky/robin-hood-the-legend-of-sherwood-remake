@@ -909,26 +909,34 @@ fn convert_element(
     entities: &LegacyEntityFixups,
     topology: &LegacyPositionTopology,
 ) -> Result<ConvertedElementBase, LegacyElementAdoptError> {
-    finite_point(
-        saved.delayed_map_position,
-        creation_order,
-        "delayed_map_position",
-    )?;
-    finite(
-        saved.delayed_position.x,
-        creation_order,
-        "delayed_position.x",
-    )?;
-    finite(
-        saved.delayed_position.y,
-        creation_order,
-        "delayed_position.y",
-    )?;
-    finite(
-        saved.delayed_position.z,
-        creation_order,
-        "delayed_position.z",
-    )?;
+    // RHElement consumes these coordinates only while the corresponding
+    // delayed-position bit is set. Its setters overwrite the complete point
+    // before setting that bit, so inactive bytes are dormant constructor
+    // storage and may legitimately contain non-finite legacy values.
+    if saved.position_map_delayed {
+        finite_point(
+            saved.delayed_map_position,
+            creation_order,
+            "delayed_map_position",
+        )?;
+    }
+    if saved.position_delayed {
+        finite(
+            saved.delayed_position.x,
+            creation_order,
+            "delayed_position.x",
+        )?;
+        finite(
+            saved.delayed_position.y,
+            creation_order,
+            "delayed_position.y",
+        )?;
+        finite(
+            saved.delayed_position.z,
+            creation_order,
+            "delayed_position.z",
+        )?;
+    }
     Ok(ConvertedElementBase {
         outline_colors: saved.outline_colors,
         current_outline: outline(saved.current_outline, creation_order)?,
@@ -1016,16 +1024,10 @@ fn convert_actor(
                 .expect("u32::MAX was handled as the Original null sentinel"),
         ),
     };
-    finite(
-        saved.distance_to_boundary_first,
-        creation_order,
-        "distance_to_boundary_first",
-    )?;
-    finite(
-        saved.distance_to_boundary_second,
-        creation_order,
-        "distance_to_boundary_second",
-    )?;
+    // Original serializes this cache twice and verifies neither copy. Keep
+    // the exact cached bits (including a legacy NaN) while still requiring
+    // the redundant records to agree. GetDistanceToBoundary refreshes it
+    // whenever the actor moves and ignores it when no material sector exists.
     if saved.distance_to_boundary_first.to_bits() != saved.distance_to_boundary_second.to_bits() {
         return Err(LegacyElementAdoptError::DistanceToBoundaryMismatch {
             creation_order,
@@ -1293,6 +1295,12 @@ fn apply_npc(npc: &mut NpcData, saved: ConvertedNpc) {
     apply_local_ai(&mut npc.ai_brain, saved.local_ai);
     let ai = ai_base_mut(&mut npc.ai_brain)
         .expect("preflighted local-AI kind cannot become None in candidate engine");
+    // The saved view status and follow target are already authoritative.
+    // Rust's edge-triggered primary-target reconciliation is runtime-only
+    // bookkeeping; leaving its marker at the constructor default would make
+    // the first post-load RefreshView synthesize a Focus(primary_target) and
+    // overwrite a saved LookForward/Stare state that Original preserves.
+    ai.last_synced_focus_target = (ai.primary_target != 0).then_some(ai.primary_target);
     ai.initial_position = ai_initial_position;
     ai.initial_view_direction = ai_initial_view_direction;
 }
@@ -2380,11 +2388,19 @@ fn motion_state(value: u32, creation_order: u32) -> Result<MotionState, LegacyEl
         3 => Ok(MotionState::Terminated),
         4 => Ok(MotionState::Aborted),
         5 => Ok(MotionState::Error),
-        value => Err(LegacyElementAdoptError::UnknownEnum {
-            creation_order,
-            field: "motion_state",
-            value,
-        }),
+        value => {
+            // RHElementActor::Hourglass overwrites mmotionState with the
+            // result of Execute() before its first post-load read. Retail
+            // Windows saves can therefore contain arbitrary dormant storage
+            // here. Preserve initialized values for diagnostics, but
+            // canonicalize an invalid word to the constructor state.
+            tracing::debug!(
+                creation_order,
+                value,
+                "canonicalizing dormant legacy actor motion state"
+            );
+            Ok(MotionState::Done)
+        }
     }
 }
 
