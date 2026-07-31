@@ -1154,6 +1154,7 @@ struct RollingDumpFrame {
     rng_start: usize,
     expected_rng_end: usize,
     actual_rng_end: usize,
+    rust_rng_sites: Vec<robin_engine::sim_rng::RngSite>,
     differences: Vec<String>,
 }
 
@@ -1856,6 +1857,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         let mut differences =
             motion_line_parity.apply_changes_and_compare(&engine, &frame.motion_line_changes);
         differences.extend(compare_frame(&engine, &frame, map));
+        let rust_rng_sites = engine
+            .original_rng_replay_sites(rng_start..actual_rng_end)
+            .expect("original RNG site history unexpectedly disabled");
         if let Some((options, writer)) = &mut dump
             && options.includes(frame.frame_after)
         {
@@ -1871,6 +1875,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 rng_start,
                 rng_end,
                 actual_rng_end,
+                &rust_rng_sites,
                 &differences,
             );
         }
@@ -1889,6 +1894,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     rng_start,
                     expected_rng_end: rng_end,
                     actual_rng_end,
+                    rust_rng_sites: rust_rng_sites.clone(),
                     differences: differences.clone(),
                 },
             );
@@ -1906,11 +1912,8 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     frame.frame_after,
                 );
             }
-            let sites = engine
-                .original_rng_replay_sites(rng_start..actual_rng_end)
-                .expect("original RNG site history unexpectedly disabled");
             panic!(
-                "Rust consumed RNG draws {:?} at sites {sites:?} during original frame {}; original ended at draw {rng_end}",
+                "Rust consumed RNG draws {:?} at sites {rust_rng_sites:?} during original frame {}; original ended at draw {rng_end}",
                 rng_start..actual_rng_end,
                 frame.frame_before
             );
@@ -2284,6 +2287,7 @@ fn write_engine_dump_frame(
     rng_start: usize,
     expected_rng_end: usize,
     actual_rng_end: usize,
+    rust_rng_sites: &[robin_engine::sim_rng::RngSite],
     differences: &[String],
 ) {
     let diagnostic_engine = engine.diagnostic_snapshot_without_original_rng_replay();
@@ -2301,6 +2305,7 @@ fn write_engine_dump_frame(
         rng_start,
         expected_rng_end,
         actual_rng_end,
+        rust_rng_sites,
         differences,
     );
 }
@@ -2320,6 +2325,7 @@ fn write_engine_dump_snapshot_frame(
     rng_start: usize,
     expected_rng_end: usize,
     actual_rng_end: usize,
+    rust_rng_sites: &[robin_engine::sim_rng::RngSite],
     differences: &[String],
 ) {
     let mapped_entities = options
@@ -2370,6 +2376,7 @@ fn write_engine_dump_snapshot_frame(
                 "cursor_before": rng_start,
                 "expected_cursor_after": expected_rng_end,
                 "actual_cursor_after": actual_rng_end,
+                "rust_sites": rust_rng_sites,
                 "original_frame_draws": rng_draws,
                 "engine_original_replay_stream_omitted": true,
             },
@@ -2461,6 +2468,7 @@ fn write_automatic_rolling_dump(
             frame.rng_start,
             frame.expected_rng_end,
             frame.actual_rng_end,
+            &frame.rust_rng_sites,
             &frame.differences,
         );
     }
