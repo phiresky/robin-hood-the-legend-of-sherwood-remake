@@ -72,6 +72,42 @@ impl SequencePhase {
 }
 
 impl EngineInner {
+    /// Apply the immediate actor-side effect authored by
+    /// `RHElementActor::Instruct` for `RHMOVE_MAP` elements.
+    ///
+    /// This happens when the Move/Seek is instructed, before path
+    /// translation or execution. It is therefore not derivable from the
+    /// eventual concrete movement order: a pending path, a failed path, and
+    /// a delayed script sequence must all already have anti-collision off.
+    fn apply_map_move_instruction_side_effect(
+        &mut self,
+        owner: EntityId,
+        sequence_id: crate::sequence::SequenceId,
+        element_index: usize,
+    ) {
+        let is_map_move = self
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, element_index)
+            .is_some_and(|element| {
+                matches!(
+                    element.data,
+                    crate::sequence::SequenceElementData::Movement { flags, .. }
+                        if flags.contains(crate::sequence::MoveFlags::MAP)
+                )
+            });
+        if is_map_move {
+            self.world
+                .entities
+                .get_mut(owner)
+                .unwrap_or_else(|| {
+                    panic!("MAP movement owner {owner:?} disappeared during Instruct")
+                })
+                .position_iface_mut()
+                .set_anti_collision_on(false);
+        }
+    }
+
     /// Complete the ordinary Move/Seek path translation after its destination
     /// has been resolved. Both the regular hourglass and SetAIState's exact
     /// owner-local native barrier use this same outcome handling.
@@ -1416,11 +1452,12 @@ impl NpcStateCommandContext<'_> {
                     ),
                     _ => unreachable!(),
                 }
-                if matches!(command, Command::LowerBowLeanOut | Command::RaiseBowLeanOut) {
-                    self.sequence_manager.element_in_progress(seq_id, elem_idx);
-                } else {
-                    self.sequence_manager.element_terminated(seq_id, elem_idx);
-                }
+                // These translated orders remain owned by the command's
+                // selected sequence element until the actor executes the
+                // final order. Original Translate only appends the orders;
+                // it never terminates START_MENACE / STOP_MENACE /
+                // STOP_SLEEP at instruction time.
+                self.sequence_manager.element_in_progress(seq_id, elem_idx);
             }
             _ => unreachable!("non-NPC-state command passed to NPC state context"),
         }

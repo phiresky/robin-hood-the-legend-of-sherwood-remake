@@ -517,6 +517,10 @@ impl EngineInner {
             return Ok(());
         }
 
+        // Keep the synchronous native entry point on the same Instruct
+        // boundary as the ordinary sequence-manager path.
+        self.apply_map_move_instruction_side_effect(owner, sequence_id, element_index);
+
         let owner_sector = self
             .get_entity(owner)
             .and_then(|entity| entity.element_data().sector());

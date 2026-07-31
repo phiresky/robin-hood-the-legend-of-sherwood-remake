@@ -61,6 +61,10 @@ impl EngineInner {
             return;
         }
 
+        // Actor::Instruct disables anti-collision as soon as a MAP movement
+        // is accepted, before Seek replacement or path translation.
+        self.apply_map_move_instruction_side_effect(owner, sequence_id, element_index);
+
         let is_seek = command == Command::Seek;
         let destination = if is_seek {
             let post_seek = self
@@ -2093,10 +2097,8 @@ impl EngineInner {
                         // The animation system's DONE/TERMINATED
                         // hooks in `animation.rs` flip posture /
                         // action_state appropriately when each order
-                        // finishes, so the sequence element itself
-                        // can terminate immediately — the visual
-                        // transition plays off the actor's order
-                        // queue.
+                        // finishes. The sequence element remains selected
+                        // and InProgress until its final order completes.
                         Command::StartMenace
                         | Command::StopMenace
                         | Command::StopSleep

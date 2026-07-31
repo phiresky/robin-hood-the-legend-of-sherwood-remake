@@ -6292,7 +6292,7 @@ mod bow_command_body_parity_tests {
             .sequence_manager
             .get_element(seq_id, 0)
             .unwrap();
-        assert_eq!(element.state, SequenceState::Terminated);
+        assert_eq!(element.state, SequenceState::InProgress);
         assert_eq!(
             element
                 .orders
