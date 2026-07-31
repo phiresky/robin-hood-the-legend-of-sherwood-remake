@@ -8,7 +8,10 @@ use crate::ai::*;
 use crate::parameters_ai;
 
 use super::util::{pos_diff, resolve_seek_point_id, vec_to_sector};
-use super::{EnemyAi, PrimaryTargetFlags, ProfileRank, SeekFlags, archer, combat, task_priority};
+use super::{
+    EnemyAi, PrimaryTargetFlags, ProfileRank, SeekFlags, UNDEFINED_DIRECTION, archer, combat,
+    task_priority,
+};
 
 impl EnemyAi {
     // One dispatcher preserves the numeric Substate machine while the
@@ -2754,7 +2757,7 @@ impl EnemyAi {
                             self.base.alert_soldiers_point,
                             0,
                             SeekFlags::LOCATION_FIRST | SeekFlags::REPORT_OFFICER_AFTER,
-                            0,
+                            UNDEFINED_DIRECTION,
                             global,
                             ctx,
                             tick,

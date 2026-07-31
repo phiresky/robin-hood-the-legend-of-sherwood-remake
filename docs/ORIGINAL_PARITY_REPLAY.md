@@ -3911,6 +3911,26 @@ Profile 002 Savegame 002 therefore skips the same obsolete frame-504 patrol
 coordinate as Original, retains only the frame-512 update while BUSY, and
 matches all 250 recorded frames exactly through frame 726.
 
+### Carrying movement restores the PC waiting state on arrival
+
+Ordinary `RHElementActor` walking leaves `MOVING` intact when motion terminates
+and relies on an optional end transition to restore the waiting state. The PC
+overrides for `WALKING_WITH_CORPSE` and `WALKING_CARRYING_ON_SHOULDERS` are
+explicit exceptions: their `RHMOTION_TERMINATED` arms set `WAITING` directly.
+Rust now applies that specialized completion behavior even for a
+`NO_TRANSITIONS` movement. Linux3 Profile 001 Savegame 038 consequently
+restores Little John's waiting state at the former frame-54511 divergence.
+
+### Officer-directed searches retain the undefined direction default
+
+When an instructed soldier acknowledges the officer, Original calls
+`SeekArea` without its optional direction argument. Its default is
+`UNDEFINED_DIRECTION`, causing the personal seek point to select its look
+direction from the global RNG stream. Rust passed direction zero explicitly,
+which silently selected a fixed direction and skipped the authoritative draw.
+The translated handler now preserves the omitted-argument behavior for every
+officer-directed search.
+
 ### Position authorization rejects boxes outside the map
 
 Original `RHFastFindGrid::IsPositionAutorized` rejects a bounding box that

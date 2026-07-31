@@ -7674,8 +7674,17 @@ impl EngineInner {
                                 // RHElementActor's walking Execute arm leaves
                                 // MOVING unchanged on RHMOTION_TERMINATED; the
                                 // transition-to-waiting arm performs the state
-                                // change itself.  With NO_TRANSITIONS there is
-                                // deliberately no waiting-state rewrite here.
+                                // change itself. The two PC carry-walk Execute
+                                // overrides are exceptions: both explicitly
+                                // restore WAITING on RHMOTION_TERMINATED even
+                                // when the Move has NO_TRANSITIONS.
+                                if matches!(
+                                    order_action,
+                                    OrderType::WalkingWithCorpse
+                                        | OrderType::WalkingCarryingOnShoulders
+                                ) {
+                                    actor.action_state = crate::element::ActionState::Waiting;
+                                }
                                 actor.active_movement.clear();
                                 actor.active_door_pass = None;
                                 if is_sword_motion && let Some(human) = entity.human_data_mut() {
