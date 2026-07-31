@@ -4531,7 +4531,7 @@ impl EngineInner {
         &mut self,
         owner: EntityId,
         selected: MovementOwnerSelection,
-    ) {
+    ) -> OrderType {
         let (order_action, flags, target, destination) = self
             .orders
             .sequence_manager
@@ -4554,7 +4554,7 @@ impl EngineInner {
             .expect("globally frozen movement owner lost its selected order");
         if climb_lift_type(order_action).is_some() {
             self.turn_globally_frozen_climb_owner(owner, selected);
-            return;
+            return order_action;
         }
 
         if flags.contains(crate::sequence::MoveFlags::SEEK) {
@@ -4586,7 +4586,7 @@ impl EngineInner {
                         .position_iface_mut()
                         .turn();
                 }
-                return;
+                return order_action;
             };
             assert_eq!(
                 target,
@@ -4636,7 +4636,7 @@ impl EngineInner {
                         owner,
                         Some((selected.seq_id, selected.elem_idx)),
                     );
-                    return;
+                    return order_action;
                 }
                 // PerformAction(FROZEN) returns before sprite motion, then
                 // PerformSeek ages the shared unsigned wait scalar.
@@ -4648,7 +4648,7 @@ impl EngineInner {
                     .expect("globally frozen seek owner lost actor data");
                 actor.seek_refresh_wait = age_seek_refresh_wait(actor.seek_refresh_wait);
                 actor.wait_time = actor.seek_refresh_wait;
-                return;
+                return order_action;
             }
 
             // The moved-target refresh test runs in
@@ -4666,11 +4666,11 @@ impl EngineInner {
             actor.seek_refresh_wait = age_seek_refresh_wait(actor.seek_refresh_wait);
             actor.wait_time = actor.seek_refresh_wait;
             entity.position_iface_mut().turn();
-            return;
+            return order_action;
         }
 
         if !order_turns_before_motion(order_action) {
-            return;
+            return order_action;
         }
         self.world
             .entities
@@ -4678,6 +4678,7 @@ impl EngineInner {
             .unwrap_or_else(|| panic!("globally frozen movement owner {owner:?} disappeared"))
             .position_iface_mut()
             .turn();
+        order_action
     }
 
     /// Mirror the Human Execute guard on the logical sword-movement
@@ -4859,7 +4860,24 @@ impl EngineInner {
             return;
         }
         if self.actors_frozen() {
-            self.execute_globally_frozen_pre_motion_owner(owner, selected);
+            let frozen_order = self.execute_globally_frozen_pre_motion_owner(owner, selected);
+            // RunningUpright is exceptional among the ordinary movement
+            // Execute arms: it calls SetStates(MOVING_FAST) unconditionally
+            // after PerformMotion, not only for RHMOTION_START. Therefore the
+            // IN_PROGRESS returned by globally frozen sprite motion still
+            // changes a waiting actor to moving-fast.
+            if frozen_order == OrderType::RunningUpright {
+                let entity = self
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .unwrap_or_else(|| panic!("globally frozen runner {owner:?} disappeared"));
+                entity.element_data_mut().posture = crate::element::Posture::Upright;
+                entity
+                    .actor_data_mut()
+                    .expect("globally frozen runner is not an actor")
+                    .action_state = crate::element::ActionState::MovingFast;
+            }
             // FrozenAll suppresses Sprite::PerformMotion but not the Execute
             // work before it: climb Turn() above and both rider-specific
             // Soldier arms remain live. RiderCharging performs its polygon
