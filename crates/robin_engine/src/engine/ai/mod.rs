@@ -6782,7 +6782,7 @@ impl EngineInner {
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
-            self.process_pending_panic_seek_fallback_for(npc_id, &ctx);
+            self.process_pending_panic_seek_fallback_for(sim, npc_id, &ctx);
         }
 
         // Drain any pending script-driven SeekArea request.  Matches
@@ -7055,7 +7055,7 @@ impl EngineInner {
 
         // Drain the PanicRequest so a door gets picked and GoTo fires.
         self.process_pending_begin_panic_for(sim, assets, civ_id, &ctx);
-        self.process_pending_panic_seek_fallback_for(civ_id, &ctx);
+        self.process_pending_panic_seek_fallback_for(sim, civ_id, &ctx);
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(source = source.index()))]
@@ -7623,6 +7623,7 @@ impl EngineInner {
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     pub(super) fn process_pending_panic_seek_fallback_for(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         ctx: &crate::ai::AiContext,
     ) {
@@ -7664,11 +7665,30 @@ impl EngineInner {
                     flags |= crate::ai::GotoFlags::DONT_STOP;
                 }
                 ai.go_to(dest, flags, ctx);
+
+                // Original GoTo constructs the route before returning to the
+                // EventCouldntReachPoint handler. The emergency retry below
+                // therefore observes a failed seek-point route immediately.
+                // Rust queues movement construction behind the controller
+                // borrow, so close just that owner-local path boundary here.
+                self.launch_pending_orders_for_npc(npc_id);
+                let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
+                let ai = self
+                    .world
+                    .entities
+                    .get_mut(npc_id)
+                    .and_then(Entity::ai_controller_mut)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "panic seek fallback owner {} disappeared after GoTo",
+                            npc_id.index()
+                        )
+                    });
                 if ai.couldnt_reachpoint {
                     // Emergency-case retry — decrement runs and
                     // self-fire `EventReachPoint` so the common-stuff
-                    // state machine tries a new random direction on
-                    // the next tick.
+                    // state machine tries a new random direction before
+                    // the enclosing Think returns.
                     ai.couldnt_reachpoint = false;
                     ai.lasting_panic_runs = ai.lasting_panic_runs.saturating_sub(1);
                     ai.fire_self_stimulus(crate::ai::StimulusType::EventReachPoint);

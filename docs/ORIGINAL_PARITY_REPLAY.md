@@ -3028,6 +3028,20 @@ mirrors the Original and the enemy implementation by recursively dispatching
 the complete saved stimulus in FIFO order. This advances Linux3 Profile 001
 Savegame 008 from frame 4056 to its next independent divergence at frame 4075.
 
+### Panic seek retries observe synchronous route failure
+
+Original `GoTo` constructs its route before returning to the panic
+`EVENT_COULDNT_REACHPOINT` handler. If the randomly selected emergency
+seek-point route also fails, the handler immediately clears the failure,
+decrements the remaining panic-run count, and recursively processes
+`EVENT_REACHPOINT`. This can consume all five random retry pairs and enter the
+hiding state within one `Think` call.
+
+Rust now closes that same owner-local path-construction boundary after issuing
+the fallback `GoTo`, then observes and processes route failure before the
+enclosing AI fixed point returns. This advances Linux3 Profile 001 Savegame 008
+from frame 4075 to its next independent divergence at frame 4079.
+
 ## Coverage limits
 
 A clean baseline proves exact parity only for the state fields serialized by the
