@@ -3410,6 +3410,21 @@ save-specific mismatches:
 Savegame 076 also successfully decodes and atomically adopts the corpus's
 largest save payload: 636 elements, including 289 dynamic elements.
 
+### Retained detection stimuli preserve the Turn instruction barrier
+
+Original `RefreshDetection` builds a FIFO of stimuli and invokes each `Think`
+before the later `RHSequenceManager::Hourglass`. A script lock can retain those
+stimuli until the NPC's queued-stimulus tail, but replaying them there does not
+make `FaceTo` synchronous: every Turn remains only registered until the same
+later manager hourglass. Nested `SetState`/`FilterAIEvent` callbacks inherit
+that boundary as well.
+
+Rust now carries the deferred-Turn mode through the filtered-Think and nested
+owner-work drains, and uses it when replaying retained stimuli in the NPC tail.
+This prevents an intermediate, subsequently halted `FaceTo` from writing a
+direction goal before the final stimulus is processed. The Windows SuN1Sh1nE
+Profile 004 Continue recording now matches every recorded frame.
+
 ## Coverage limits
 
 A clean baseline proves exact parity only for the state fields serialized by the

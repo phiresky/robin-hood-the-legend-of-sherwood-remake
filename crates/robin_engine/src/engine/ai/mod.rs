@@ -5559,7 +5559,13 @@ impl EngineInner {
     ) {
         // Direct engine-owned AI calls also enter this drain. Close the
         // SetState callback boundary before consuming halt/effect/order work.
-        self.drain_ai_owner_work_for_mode(sim, assets, npc_id, owner_local_no_forecast);
+        self.drain_ai_owner_work_for_mode(
+            sim,
+            assets,
+            npc_id,
+            owner_local_no_forecast,
+            defer_turn_instruction,
+        );
         self.drain_patrol_direction_broadcast_for(sim, npc_id, assets);
 
         // Direct SetDirection calls made before StopAll must update the goal
@@ -9568,6 +9574,23 @@ impl EngineInner {
         )
     }
 
+    /// Owner-local Think before the current frame's SequenceManager hourglass.
+    /// Keep standalone Turns registered but uninstructed just like the
+    /// detection FIFO that originally produced a retained stimulus.
+    pub(super) fn dispatch_think_with_drain_without_forecast_deferred_turn(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: crate::element::EntityId,
+        stimulus: &crate::ai::Stimulus,
+        ctx: &crate::ai::AiContext,
+        tick_data: &crate::ai::AiPerTickData,
+        assets: &LevelAssets,
+    ) -> bool {
+        self.dispatch_think_with_drain_mode(
+            sim, npc_id, stimulus, ctx, tick_data, assets, true, true,
+        )
+    }
+
     fn dispatch_think_with_drain_mode(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -9585,13 +9608,16 @@ impl EngineInner {
             .get(npc_id)
             .and_then(Entity::ai_controller)
             .is_some();
-        let handled = if owner_local_no_forecast {
-            self.dispatch_filtered_stimulus_without_forecast(
-                sim, assets, npc_id, stimulus, ctx, tick_data,
-            )
-        } else {
-            self.dispatch_filtered_stimulus(sim, assets, npc_id, stimulus, ctx, tick_data)
-        };
+        let handled = self.dispatch_filtered_stimulus_with_owner_mode(
+            sim,
+            assets,
+            npc_id,
+            stimulus,
+            ctx,
+            Some(tick_data),
+            owner_local_no_forecast,
+            defer_turn_instruction,
+        );
 
         // `RHArtificialIntelligence::ExecuteWaypointScript` invokes the
         // waypoint VM directly from the active Think handler. Close that

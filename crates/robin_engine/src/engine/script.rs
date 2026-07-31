@@ -2714,6 +2714,7 @@ impl EngineInner {
             ctx,
             Some(tick_data),
             false,
+            false,
         )
     }
 
@@ -2734,6 +2735,7 @@ impl EngineInner {
             ctx,
             Some(tick_data),
             true,
+            false,
         )
     }
 
@@ -2746,11 +2748,11 @@ impl EngineInner {
         ctx: &crate::ai::AiContext,
     ) -> bool {
         self.dispatch_filtered_stimulus_with_owner_mode(
-            sim, assets, entity_id, stimulus, ctx, None, true,
+            sim, assets, entity_id, stimulus, ctx, None, true, false,
         )
     }
 
-    fn dispatch_filtered_stimulus_with_owner_mode(
+    pub(super) fn dispatch_filtered_stimulus_with_owner_mode(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -2759,6 +2761,7 @@ impl EngineInner {
         ctx: &crate::ai::AiContext,
         enemy_tick_data: Option<&crate::ai::AiPerTickData>,
         owner_local_no_forecast: bool,
+        defer_turn_instruction: bool,
     ) -> bool {
         let handle = crate::natives::ScriptHandleCodec::actor_handle(entity_id);
         if !self.filter_stimulus(sim, assets, handle, stimulus) {
@@ -2824,7 +2827,13 @@ impl EngineInner {
         // `SetState` calls FilterAIEvent before any of the caller's deferred
         // effects. The entity borrow above is the first point at which the
         // engine can safely re-enter the actor VM.
-        self.drain_ai_owner_work_for_mode(sim, assets, entity_id, owner_local_no_forecast);
+        self.drain_ai_owner_work_for_mode(
+            sim,
+            assets,
+            entity_id,
+            owner_local_no_forecast,
+            defer_turn_instruction,
+        );
         handled
     }
 
@@ -2844,7 +2853,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: crate::element::EntityId,
     ) {
-        self.drain_ai_owner_work_for_mode(sim, assets, owner, false);
+        self.drain_ai_owner_work_for_mode(sim, assets, owner, false, false);
     }
 
     pub(super) fn drain_ai_owner_work_for_mode(
@@ -2853,6 +2862,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: crate::element::EntityId,
         owner_local_no_forecast: bool,
+        defer_turn_instruction: bool,
     ) {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         enum OwnerAiKind {
@@ -3065,7 +3075,13 @@ impl EngineInner {
             // call stack. Settle that prefix while keeping the pure-Rust
             // caller tail detached from the synchronous script callback.
             if later_actor_effects.is_some() {
-                self.drain_pending_for_npc_mode(sim, owner, assets, owner_local_no_forecast, false);
+                self.drain_pending_for_npc_mode(
+                    sim,
+                    owner,
+                    assets,
+                    owner_local_no_forecast,
+                    defer_turn_instruction,
+                );
             }
 
             let source = match notification.source {

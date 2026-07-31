@@ -822,7 +822,7 @@ impl EngineInner {
             ) {
                 self.overlay_live_enemy_detection_scan_for_think(npc_id, &scratch, &mut tick_data);
             }
-            self.dispatch_think_with_drain_without_forecast(
+            self.dispatch_think_with_drain_without_forecast_deferred_turn(
                 sim, npc_id, &stimulus, &ctx, &tick_data, assets,
             );
         }
