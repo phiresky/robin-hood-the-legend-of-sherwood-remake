@@ -3762,6 +3762,8 @@ both range and angular admission across sloped or stacked surfaces.
 The circle-warning collector also now preserves Original's authored
 attacker-minus-victim vector direction when deriving its approach tolerance;
 the direction is observable there even though its length is symmetric.
+All three collectors also retain Original's strict `MaxNorm() < 150` coarse
+admission boundary rather than admitting an actor exactly 150 units away.
 
 At SuN1Sh1nE frame 67 this admitted soldier 112 as a fourth victim of soldier
 54's F sweep. Original hits only soldiers 103, 105, and 110. Interrupting the
