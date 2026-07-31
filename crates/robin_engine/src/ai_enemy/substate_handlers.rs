@@ -1972,7 +1972,8 @@ impl EnemyAi {
                         self.base.launch_timer(10, ctx.frame);
                     }
                 } else if stimulus_type == StimulusType::EventReachPoint {
-                    self.base.face_position(self.base.seek_position);
+                    self.base
+                        .face_position_3d_with_ctx(self.base.seek_position, ctx);
 
                     // If the body is tied or unconscious, say
                     // AwakensSleeper, transition to
