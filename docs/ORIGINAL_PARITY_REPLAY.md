@@ -1961,6 +1961,10 @@ Adoption now seeds both split candidates from the authoritative saved scalar,
 and every seek-refresh decrement mirrors its wrapped value into the legacy
 wait copy. The live command still selects which Rust counter drives behavior;
 the mirror only preserves the Original scalar across every possible seek exit.
+A live `WAIT_TIMER` likewise owns the isomorphic scalar even if the actor
+retains a seek target and post-seek continuation; the dormant seek-refresh
+copy must not hide the timer decremented by `Actor::Hourglass`. Linux3 Profile
+001 Savegame 002 exposed that projection-only mismatch on its first frame.
 A successful `StartPostSeekSequence` also folds the seek copy back before
 discarding its ownership markers. Linux2 QuickSave consequently advances from
 the first exposed mismatch at frame 1927 to an independent path/command
@@ -2447,6 +2451,16 @@ Only those restored requests reuse the exact saved tail in place. Requests
 created later during live play keep Rust's established generated-prefix
 representation, so save provenance cannot leak into subsequent pathfinding.
 Cyrdach Profile 156 Savegame 028 now matches every recorded frame.
+
+### Paying turns before advancing its animation
+
+`RHElementActorPC::Perform(RHANIMATION_PAYING)` installs the direction opposite
+the beggar as a goal, then calls `Turn` every frame. While the PC is still
+turning, the Paying sprite remains frozen on its first frame. Rust had snapped
+both current and goal directions immediately and advanced the animation during
+alignment. The Pay ability now preserves the current direction at
+initialization and uses the same progressive-turn/frozen-frame branch.
+Linux3 Profile 003 Savegame 018 consequently matches every recorded frame.
 
 ### Route arrival rebuilds patrols at the synchronous owner boundary
 

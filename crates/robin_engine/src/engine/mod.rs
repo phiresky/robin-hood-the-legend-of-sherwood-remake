@@ -1137,6 +1137,14 @@ impl EngineInner {
             .actor_data()
             .unwrap_or_else(|| panic!("actor_legacy_wait_time: non-actor {actor:?}"));
 
+        // A live WAIT_TIMER owns Original's overloaded scalar even when the
+        // actor retains a seek target/post-seek continuation. Rust's split
+        // seek-refresh copy is dormant during this command and must not mask
+        // the timer that Actor::Hourglass just decremented.
+        if self.actor_command(actor) == crate::element::Command::WaitTimer {
+            return data.wait_time;
+        }
+
         if let Some(sequence_id) = data.active_movement.sequence_id
             && let Some(element) = self
                 .orders
