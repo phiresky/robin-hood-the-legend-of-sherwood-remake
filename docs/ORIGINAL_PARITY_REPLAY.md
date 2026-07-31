@@ -2991,7 +2991,9 @@ including 34 dynamic elements and 424 authoritative RNG draws. Savegame 033
 also matches all 250 frames (3713 through 3963), including its 92 saved elements,
 41 dynamic elements, and 424 authoritative RNG draws. Savegame 041 matches all
 250 frames (2174 through 2424), including its 98 saved elements, 47 dynamic
-elements, and 481 authoritative RNG draws. No replay-specific compatibility or
+elements, and 481 authoritative RNG draws. Savegame 045 also matches all 250
+frames (3711 through 3961), including its 105 saved elements, 54 dynamic
+elements, and 499 authoritative RNG draws. No replay-specific compatibility or
 code change was required for these traces.
 
 Windows `GSHR` saves now share the atomic adoption path. The complete Cyrdach
