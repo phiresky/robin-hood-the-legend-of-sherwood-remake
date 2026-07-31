@@ -253,26 +253,17 @@ impl LegacyPayloadDecodeContext for LegacyMissionPayloadDecodeContext<'_> {
         }
 
         let metadata = self.validate_actor_owner(reader, creation_order, class)?;
-        let expected = metadata.script_class.as_deref().ok_or_else(|| {
-            let offset = reader.offset();
-            reader.invalid_value(
-                offset,
-                "script_class",
-                script_class,
-                "a script class attached to the initialized mission actor",
-            )
-        })?;
-        if expected != script_class {
-            let offset = reader.offset();
-            return Err(reader.invalid_value(
-                offset,
-                "script_class",
-                format_args!("{script_class:?} (initialized mission class is {expected:?})"),
-                "the initialized mission script class",
-            ));
-        }
-        LegacyVmMemberDecoder::new(self.scb, self.limits.vm)
-            .read_class_members(reader, script_class)
+        let bound_class = metadata.script_class.as_deref().unwrap_or(script_class);
+        // RHElementActor::Serialize overwrites mstrScriptClass from the save,
+        // but an already initialized mission actor does not Bind that name
+        // again. IsScripted() and SerializeMemberVariable() consequently use
+        // the actor's existing VM binding. This is observable after BeamMe:
+        // the serialized name can belong to the previous PC slot while the
+        // member bytes retain the freshly initialized slot's live schema.
+        // Conversely, when the freshly initialized mission actor has no live
+        // binding, Original binds the serialized name before reading members,
+        // so that name is the schema source.
+        LegacyVmMemberDecoder::new(self.scb, self.limits.vm).read_class_members(reader, bound_class)
     }
 
     fn read_inline_sequence(
@@ -582,29 +573,28 @@ mod tests {
     }
 
     #[test]
-    fn rejects_class_and_serialized_script_conflicts() {
+    fn static_actor_uses_live_binding_when_serialized_class_name_differs() {
         let schema = scb();
         let metadata = metadata(
             31,
             LegacyElementClass::ActorNpcSoldier,
-            Some("Expected"),
+            Some("Fixture"),
             Some(LegacyLocalAiKind::Enemy),
             None,
         );
         let context = LegacyMissionPayloadDecodeContext::with_default_limits(&schema, &metadata);
-        with_reader(&[], |reader| {
-            let error = context
+        with_reader(&0x1020_3040_u32.to_le_bytes(), |reader| {
+            let members = context
                 .read_actor_script_members(
                     reader,
                     31,
                     LegacyElementClass::ActorNpcSoldier,
                     "Serialized",
                 )
-                .unwrap_err();
-            assert!(
-                error
-                    .to_string()
-                    .contains("initialized mission script class")
+                .unwrap();
+            assert_eq!(
+                members.members[0].value,
+                LegacyVmMemberValue::Raw32 { bits: 0x1020_3040 }
             );
 
             let error = context

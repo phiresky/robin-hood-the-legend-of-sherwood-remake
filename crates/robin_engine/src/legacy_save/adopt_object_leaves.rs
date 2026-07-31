@@ -712,6 +712,19 @@ pub(crate) fn preflight_vm(
             LegacyVmOwnerKind::Target => mission.target_vm_class_and_heap(handle),
             LegacyVmOwnerKind::Scroll => mission.scroll_vm_class_and_heap(handle),
         });
+    if matches!(owner_kind, LegacyVmOwnerKind::Actor)
+        && saved.is_none()
+        && runtime.is_some_and(|(class, _)| class.member_variables.is_empty())
+    {
+        // Loading an already initialized Actor overwrites mstrScriptClass
+        // without rebinding the VM. A prior save can therefore leave the
+        // serialized class name empty while the live actor remains bound.
+        // SerializeMemberVariable writes no bytes for a zero-member class,
+        // making that state indistinguishable from an unbound actor in the
+        // byte stream; preserve the initialized binding exactly as Original
+        // does.
+        return Ok(None);
+    }
     if saved.is_some() != runtime.is_some() {
         return Err(LegacyObjectLeafAdoptError::VmPresenceMismatch {
             owner_kind: owner_kind.name(),

@@ -72,34 +72,7 @@ impl EngineInner {
                 })
                 .collect::<Result<_, EngineError>>()?;
 
-            // Hackable overlays can add extra PCs without patching the
-            // binary mission file.  Preserve the original beam-me slots
-            // and synthesize nearby free slots up to the engine's normal
-            // five-character mission cap so overlay-only characters can
-            // actually appear in demo missions.
             const MAX_NUMBER_OF_CHARACTER: usize = 5;
-            if !is_sherwood
-                && team.len() > loaded.mission.beam_mes.len()
-                && loaded.mission.beam_mes.len() < MAX_NUMBER_OF_CHARACTER
-                && let Some(template) = loaded.mission.beam_mes.last().cloned()
-            {
-                let original_len = loaded.mission.beam_mes.len();
-                let target_len = team.len().min(MAX_NUMBER_OF_CHARACTER);
-                for i in original_len..target_len {
-                    let mut beam_me = template.clone();
-                    let offset = (i - original_len + 1) as f32;
-                    beam_me.position.x += 28.0 * offset;
-                    beam_me.index = i as u16;
-                    beam_me.required_pc = 0;
-                    beam_me.script = None;
-                    loaded.mission.beam_mes.push(beam_me);
-                }
-                tracing::info!(
-                    "Synthesized {} overlay beam-me slot(s) for {} mission team members",
-                    loaded.mission.beam_mes.len() - original_len,
-                    team.len()
-                );
-            }
 
             // Snapshot each team member's remembered Sherwood slot now so
             // that later mutations (Phase 1 or the Phase-B write-back of
@@ -258,8 +231,30 @@ impl EngineInner {
             }
 
             let slot_valid_for = |beam_me: &crate::level_data::BeamMe,
-                                  profile_idx: crate::profiles::CharacterProfileIdx|
+                                  mission_team_index: usize|
              -> bool {
+                // Original's IsCharacterValidForThisSlot is passed an index
+                // into mMissionTeam, but (despite that contract) indexes
+                // maGang with it. Preserve this observable bug: it controls
+                // which campaign PC is assigned to each scripted beam-me and
+                // therefore the static actor/script identities used by saves.
+                let gang_character_index = *campaign
+                    .gang_indices
+                    .get(mission_team_index)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Original beam-me gang-index bug addressed missing gang slot {mission_team_index}"
+                        )
+                    });
+                let profile_idx = campaign
+                    .characters
+                    .get(gang_character_index)
+                    .and_then(|description| description.character_profile_idx)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Original beam-me gang slot {mission_team_index} references an absent or profile-less campaign character {gang_character_index}"
+                        )
+                    });
                 let Some(profile) = profiles.get_character(profile_idx) else {
                     return false;
                 };
@@ -342,7 +337,7 @@ impl EngineInner {
                     let candidates: Vec<usize> = available
                         .iter()
                         .copied()
-                        .filter(|&ti| slot_valid_for(beam_me, team[ti].1))
+                        .filter(|&ti| slot_valid_for(beam_me, ti))
                         .collect();
                     let pick =
                         if candidates.len() == 1 || (force_decision && !candidates.is_empty()) {

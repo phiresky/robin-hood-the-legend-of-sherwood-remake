@@ -157,14 +157,21 @@ pub fn derive_static_element_topology(
                         "retained static entity {entity_id} is absent from initialized engine"
                     ))
                 })?;
-                (Some(entity_id), metadata_for_entity(entity)?)
+                (
+                    Some(entity_id),
+                    metadata_for_entity(engine, entity_id, entity)?,
+                )
             }
             StaticElementSource::MobileMaster(mobile_index) => {
-                let mobile = engine.world.mobile_elements.get(mobile_index).ok_or_else(|| {
-                    element_mismatch(format!(
+                let mobile = engine
+                    .world
+                    .mobile_elements
+                    .get(mobile_index)
+                    .ok_or_else(|| {
+                        element_mismatch(format!(
                         "retained mobile master {mobile_index} is absent from initialized engine"
                     ))
-                })?;
+                    })?;
                 (
                     None,
                     LegacyElementPayloadMetadata {
@@ -483,12 +490,21 @@ fn validate_mobile_children(
 }
 
 fn metadata_for_entity(
+    engine: &EngineInner,
+    entity_id: EntityId,
     entity: &Entity,
 ) -> Result<LegacyElementPayloadMetadata, LegacyTopologyAdapterError> {
+    let bound_actor_class = || {
+        engine.scripts.mission.as_ref().and_then(|mission| {
+            mission
+                .actor_vm_class_and_heap(crate::natives::ScriptHandleCodec::actor_handle(entity_id))
+                .map(|(class, _)| class.class_name.clone())
+        })
+    };
     let (class, script_class, local_ai_kind) = match entity {
         Entity::Pc(pc) => (
             LegacyElementClass::ActorPc,
-            nonempty(&pc.actor.script_class),
+            bound_actor_class().or_else(|| nonempty(&pc.actor.script_class)),
             None,
         ),
         Entity::Soldier(soldier) => {
@@ -502,7 +518,7 @@ fn metadata_for_entity(
             };
             (
                 LegacyElementClass::ActorNpcSoldier,
-                nonempty(&soldier.actor.script_class),
+                bound_actor_class().or_else(|| nonempty(&soldier.actor.script_class)),
                 Some(kind),
             )
         }
@@ -517,7 +533,7 @@ fn metadata_for_entity(
             };
             (
                 LegacyElementClass::ActorNpcCivilian,
-                nonempty(&civilian.actor.script_class),
+                bound_actor_class().or_else(|| nonempty(&civilian.actor.script_class)),
                 Some(kind),
             )
         }

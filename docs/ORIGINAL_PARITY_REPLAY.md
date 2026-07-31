@@ -2359,6 +2359,35 @@ list for every visibility callback, just as the retained-stimulus path already
 did. This lets simultaneous falling edges leave the battle overview with an
 empty opponent list and take the Original lost-enemy seek path.
 
+### Authored beam-me topology and the Original gang-index bug are preserved
+
+Original creates PCs only at beam-me slots authored in the mission. Rust's
+overlay convenience previously synthesized extra nearby slots when a campaign
+team was larger than that authored set. Besides changing gameplay, the extra
+PC consumed a static creation identity and caused the first dynamic object in
+a v48 save to collide with an initialized ActorPC. Synthetic slots are no
+longer created by the engine; overlays that need more placements must author
+real beam-mes.
+
+`RHCampaign::IsCharacterValidForThisSlot` also contains an observable indexing
+bug: callers pass an index into `mMissionTeam`, but the function looks that
+index up in `maGang`. Rust now preserves that lookup when solving beam-me
+requirements, because it determines which character receives each scripted
+slot and therefore the static actor/script identity that later saves restore.
+
+### Actor VM decoding follows the live binding, not the serialized name
+
+`RHElementActor::Serialize` always overwrites `mstrScriptClass` while loading,
+but calls `Bind` only for an actor that was not already script-initialized.
+Member bytes for a static actor therefore use its existing live VM class even
+when the serialized class name differs. The v48 decoder now obtains that live
+class from the initialized mission and uses the serialized name only when no
+binding exists. A complementary zero-member case is inherently byte-ambiguous:
+an empty serialized name writes no member bytes whether the actor is unbound
+or retains an initialized zero-member VM. Adoption now preserves that live
+binding, matching Original instead of rejecting the save on a false presence
+mismatch.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
