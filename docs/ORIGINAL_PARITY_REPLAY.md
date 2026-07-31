@@ -3911,6 +3911,24 @@ Profile 002 Savegame 002 therefore skips the same obsolete frame-504 patrol
 coordinate as Original, retains only the frame-512 update while BUSY, and
 matches all 250 recorded frames exactly through frame 726.
 
+### Position authorization rejects boxes outside the map
+
+Original `RHFastFindGrid::IsPositionAutorized` rejects a bounding box that
+does not intersect the level's `mboxMap` before it queries motion lines. Rust
+previously performed only the line query, so an actor wholly outside the map
+could appear authorized. The later pathfinder extraction would then choose a
+different nearby waypoint instead of the command-level extraction immediately
+snapping the actor to an authorized position.
+
+Rust now preserves the map-bounds gate. This restores the one-frame mounted
+soldier correction shared by 13 recordings: Nescafe Profiles 001–003 Restart
+and Profile 002 Continue; SuN1Sh1nE Profile 004 QuickSave and Savegame 038;
+Linux3 Profile 001 Savegame 022 and Profile 003 Savegame 071; nicouzouf Profile
+001 Savegames 014, 051, 057, and 075; and randomguy Profile 004 Restart. All
+clear the former extraction boundary. Twelve match through recorded EOF;
+Linux3 Profile 003 Savegame 071 advances to an independent frame-4601
+`LookLeft` / AI-substate divergence.
+
 ## Frozen full-corpus audit at `2a3e842df`
 
 The first no-unknown audit froze the debug parity runner built from commit

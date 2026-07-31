@@ -2769,12 +2769,14 @@ impl FastFindGrid {
 
     /// Check if a bounding box does not intersect any active motion line.
     pub fn is_position_authorized(&self, bbox: &MapBBox, layer: u16) -> bool {
-        // This gates only on the grid-block bounds; the pathfinder
-        // wrapper (`PathFinder::object_position_authorized`) does the
-        // out-of-grid rejection before invoking this. A previous
-        // `map_bbox.intersects_bbox` precheck here diverged from that:
-        // a bbox inside the grid but outside `map_bbox` would return
-        // false where the line-intersection test should run instead.
+        // RHFastFindGrid::IsPositionAutorized rejects boxes wholly outside
+        // mboxMap before querying motion lines. This matters for direct
+        // callers such as AI GOTO_ASKOBSTACLE, which do not pass through
+        // PathFinder::ObjectPositionAuthorized first.
+        if !self.level.map_bbox.intersects_bbox(bbox) {
+            return false;
+        }
+
         // Check actual intersection (not just block overlap)
         let mut authorized = true;
         self.visit_active_motion_line_indices(layer, bbox, |idx| {
@@ -3616,6 +3618,21 @@ mod tests {
         // A box crossing the line — should fail
         let bbox_cross = MapBBox::from_coords(50.0, 120.0, 70.0, 140.0);
         assert!(!grid.is_position_authorized(&bbox_cross, 0));
+    }
+
+    #[test]
+    fn position_wholly_outside_map_is_not_authorized() {
+        let grid = make_grid_with_line();
+
+        // Original first gates IsPositionAutorized on mboxMap intersection,
+        // even when no motion line intersects the queried box.
+        let outside = MapBBox::from_coords(-80.0, 50.0, -60.0, 70.0);
+        assert!(!grid.is_position_authorized(&outside, 0));
+
+        // A box crossing the map edge still intersects mboxMap and proceeds
+        // to the ordinary motion-line query.
+        let crossing_edge = MapBBox::from_coords(-10.0, 50.0, 10.0, 70.0);
+        assert!(grid.is_position_authorized(&crossing_edge, 0));
     }
 
     #[test]
