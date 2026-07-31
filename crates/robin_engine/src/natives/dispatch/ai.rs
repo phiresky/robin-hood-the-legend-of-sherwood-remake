@@ -483,20 +483,25 @@ impl NativeContext<'_, '_> {
                 } else {
                     ai.default_path_walking_flags.remove(GotoFlags::RUN);
                 }
-                // Relaunch on flag change: if the NPC is
-                // mid-patrol on a path waypoint segment, re-issue
-                // the GoTo so the new RUN/WALK flag takes effect
-                // mid-stride rather than waiting for the next
-                // waypoint.  The engine handler builds AiContext
-                // and looks up the current waypoint via the
-                // level's hiking_paths.
+                // SetPathWalkingFlags re-launches the current patrol GoTo
+                // inline. Yield to the engine before the VM executes its next
+                // statement: a following Thanx() may launch a recorded
+                // sequence, and Original registers the speed-change Move
+                // before that sequence.
                 let needs_relaunch = ai.has_patrol_path
                     && matches!(
                         ai.current_substate,
                         crate::ai::Substate::DefaultGotoRoute | crate::ai::Substate::DefaultEnroute
                     );
                 if needs_relaunch {
-                    self.emit_barrier(DeferredCommand::RelaunchPathAtNewSpeed { actor });
+                    let request = crate::interp::SynchronousScriptRequest::SetPathWalkingStyle {
+                        actor,
+                        native_return: 0,
+                    };
+                    self.pending_yield = Some(crate::interp::NativeYield {
+                        resume: crate::interp::ResumePolicy::Fixed(request.native_return()),
+                        operation: crate::interp::NativeOperation::EngineAction(request),
+                    });
                 }
                 0
             }

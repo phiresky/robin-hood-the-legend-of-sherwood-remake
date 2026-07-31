@@ -763,6 +763,27 @@ impl EngineInner {
                 }
                 Ok(0)
             }
+            crate::interp::SynchronousScriptRequest::SetPathWalkingStyle { actor, .. } => {
+                let owner = self.entity_id_for_actor_handle(actor).ok_or_else(|| {
+                    format!(
+                        "SetPathWalkingStyle owner handle {actor} became stale at its synchronous barrier"
+                    )
+                })?;
+                self.get_entity(owner)
+                    .and_then(crate::element::Entity::ai_controller)
+                    .ok_or_else(|| {
+                        format!(
+                            "SetPathWalkingStyle owner {} lost its required NPC AI at its synchronous barrier",
+                            owner.index()
+                        )
+                    })?;
+                // RHArtificialIntelligence::SetPathWalkingFlags calls GoTo
+                // before returning to the script native. Preserve that
+                // boundary so later VM statements (especially Thanx) cannot
+                // register their sequence ahead of the replacement Move.
+                self.relaunch_path_at_new_speed(sim, assets, owner);
+                Ok(0)
+            }
         }
     }
 
@@ -1480,16 +1501,6 @@ impl EngineInner {
                                     state.clear_slot(slot as usize);
                                 }
                             }
-                        }
-                    }
-                    crate::natives::DeferredCommand::RelaunchPathAtNewSpeed { actor } => {
-                        // From the `SetPathWalkingFlags` relaunch tail:
-                        // re-issue GoTo at the freshly-changed walking
-                        // flags so the speed change takes effect
-                        // mid-segment instead of waiting for the next
-                        // waypoint pickup.
-                        if let Some(id) = self.entity_id_for_actor_handle(actor) {
-                            self.relaunch_path_at_new_speed(sim, assets, id);
                         }
                     }
                 }

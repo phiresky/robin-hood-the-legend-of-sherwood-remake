@@ -596,6 +596,7 @@ impl EngineInner {
         let card_element = (seq_id, usize::from(elem_idx));
         let detaches_selected_order =
             was_selected && selected_element.is_none_or(|selected| selected == card_element);
+        let mut cleared_selected_goal = false;
         if let Some(entity) = self.world.entities.get_mut(owner) {
             let active_movement_matches = entity.actor_data().is_some_and(|actor| {
                 actor.active_movement.sequence_id == Some(seq_id)
@@ -610,6 +611,7 @@ impl EngineInner {
                 entity
                     .position_iface_mut()
                     .set_map_goal(crate::coordinates::MapPoint::ZERO);
+                cleared_selected_goal = true;
             }
 
             // `latched_order_type` is Rust's mirror of the selected
@@ -661,6 +663,16 @@ impl EngineInner {
                     actor.receive_purse_phase = crate::element::ReceivePursePhase::Inactive;
                 }
             }
+        }
+        if cleared_selected_goal {
+            // A queued replacement may carry the outgoing movement's goal
+            // across Rust's eager halt. Once a later selected element has
+            // performed Original's actor-base goal cleanup, that snapshot is
+            // stale and must not be resurrected when the replacement finally
+            // reaches its MoveWaiting/path-request instruction.
+            self.orders
+                .sequence_manager
+                .clear_retained_movement_goals_for_actor(owner);
         }
 
         // When a movement element with the MAP flag terminates, toggle

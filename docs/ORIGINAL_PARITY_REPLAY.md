@@ -2709,11 +2709,16 @@ patrol route. This entire replacement launch is nested inside the
 flag selection, but left the resulting order in the AI outbox for the next
 frame's global order pass.
 
-The script-effect bridge now promotes that owner's move immediately and leaves
-only its ordinary deferred `InstructOwner` action for the active script driver
-to close. Consequently a RUN-to-WALK transition samples the actor position
-visible to the native call rather than its next-frame position. Linux2 Profile
-002 QuickSave now passes the former frame-2061 transition-goal mismatch.
+The script-effect bridge first promoted that owner's move before the next
+frame, but still let the VM execute later statements before the relaunch. This
+is observable when `SetPathWalkingStyle` is followed by `Thanx()`: the recorded
+script sequence was registered ahead of the replacement Move even though the
+C++ native had already returned from `GoTo`. The relaunch is now a synchronous
+VM request. Only after its Move is registered does the script resume and launch
+subsequent recorded work. Consequently both the sampled position and sequence
+arbitration order match the native call stack. Linux2 Profile 002 QuickSave
+passes the former frame-2061 transition-goal mismatch, while nicouzouf Profile
+001 Savegame 024 passes its former frame-95 command/direction divergence.
 
 ### Patrol direction turns wait for the sequence-manager pass
 
@@ -3812,8 +3817,13 @@ it missed selected generic commands whose front order happened to be a movement
 transition. Halt now snapshots the exact selected sequence element and clears
 the goal only when `Stop(PREFERENCE)` actually detaches it. A movement element
 rewritten in place to its exit transition remains live and therefore retains
-its goal as before. Linux3 Profile 001 Savegame 008 and the retained-goal Linux2
-Profile 002 QuickSave both match every recorded frame.
+its goal as before. That selected-element cleanup also invalidates queued
+replacement snapshots of the old goal: once a later selected command has
+cleared the goal, a delayed `MoveWaiting` path request must not resurrect it.
+Linux3 Profile 001 Savegame 008 and the retained-goal Linux2 Profile 002
+QuickSave both match every recorded frame; nicouzouf Profile 001 Savegame 024
+passes the later path-request goal boundary exposed by the walking-style order
+fix.
 
 ### Settled unconscious sword holds do not turn
 

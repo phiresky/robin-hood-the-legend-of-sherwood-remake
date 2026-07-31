@@ -232,12 +232,4 @@ pub enum DeferredCommand {
     /// the engine command path; we iterate here so the native keeps to
     /// entity-state writes.
     ClearAllQuickActionSlots { actor: i32 },
-    /// Re-issue the in-flight `GoTo` for a patrolling NPC so a
-    /// just-changed `default_path_walking_flags` (e.g. RUN ↔ WALK from
-    /// `SetPathWalkingStyle`) takes effect mid-segment instead of
-    /// waiting for the next waypoint to be reached.  The engine
-    /// handler must build the per-tick `AiContext`, look up the
-    /// current hiking-path waypoint, compute `WillStopAtNextWaypoint`,
-    /// and call `ai.go_to(pos, default_flags | DONT_STOP if !will_stop, ctx)`.
-    RelaunchPathAtNewSpeed { actor: i32 },
 }
