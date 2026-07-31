@@ -461,7 +461,7 @@ fn completed_fx_patch_is_visible_to_the_later_live_slot() {
         },
         |_, _| {},
         |_, _, _, _, _, _, _| {},
-        |_, _| {},
+        |_, _, _| {},
     );
     assert!(
         later_observed_final,

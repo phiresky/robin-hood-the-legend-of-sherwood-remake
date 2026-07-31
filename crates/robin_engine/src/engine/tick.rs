@@ -3021,7 +3021,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        after_slot: impl FnMut(&mut Self, EntityId),
+        mut after_slot: impl FnMut(&mut Self, EntityId),
     ) {
         self.tick_actor_animation_action_change_slots_with_hooks(
             sim,

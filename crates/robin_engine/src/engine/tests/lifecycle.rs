@@ -588,7 +588,7 @@ fn all_six_primed_throwables_receive_exactly_one_appended_live_slot_advance() {
             }
         },
         |_, _, _, _, _, _, _| {},
-        |_, _| {},
+        |_, _, _| {},
     );
 
     assert_eq!(spawned.len(), 6);
@@ -1801,7 +1801,7 @@ fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass(
                 .unwrap()
                 .active_shot = ActiveShot::default();
         },
-        |_, _| {},
+        |_, _, _| {},
     );
 
     assert_eq!(
@@ -2021,7 +2021,7 @@ fn active_ability_type_mismatch_is_not_selected_or_allowed_to_suppress_generic_e
         |_, _| {},
         |_, _| {},
         |_, selected_owner, _, _, _, ability, _| observed = Some((selected_owner, ability)),
-        |_, _| {},
+        |_, _, _| {},
     );
     assert_eq!(observed, Some((owner, None)));
     assert_eq!(
@@ -2143,7 +2143,7 @@ fn aborted_ability_cleanup_is_exact_and_allows_later_selection() {
         |_, _| {},
         |_, _| {},
         |_, id, _, _, _, ability, _| selected = Some((id, ability)),
-        |_, _| {},
+        |_, _, _| {},
     );
     assert_eq!(selected, Some((owner, Some((seq, 0, order_id)))));
 }
@@ -3212,7 +3212,7 @@ fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass(
                 .active_ability
                 .clear();
         },
-        |_, _| {},
+        |_, _, _| {},
     );
     assert_eq!(
         engine

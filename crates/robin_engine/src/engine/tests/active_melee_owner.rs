@@ -496,7 +496,7 @@ fn same_owner_replacement_after_selection_cancels_melee_execute_arm() {
                 selected,
             );
         },
-        |_, _| {},
+        |_, _, _| {},
     );
     assert_eq!(
         engine

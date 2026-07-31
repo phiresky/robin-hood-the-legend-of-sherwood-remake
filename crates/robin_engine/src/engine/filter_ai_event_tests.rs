@@ -3275,7 +3275,7 @@ fn same_owner_callback_retargets_execute_termination_to_live_wait_timer() {
                 .take_pending_synchronous_actions();
             replacement_sequence = Some(sequence);
         },
-        |_, _| {},
+        |_, _, _| {},
     );
 
     let replacement_sequence =
