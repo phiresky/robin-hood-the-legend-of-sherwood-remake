@@ -91,12 +91,29 @@ has the same root cause.
 | R12 | 8 | four `other` comparator reports, three layer/sector reports, and one unclassified panic |
 | **Total** | **150** | |
 
+### Live sweep update `2026-07-31-update-002`
+
+The frozen runner has completed 302 of its original 309-trace input snapshot:
+43 exact and 259 divergent. Generation has independently reached 413 complete
+compressed traces. These are deliberately separate numbers: the 104 traces
+created after the runner's input snapshot require an incremental pass.
+
+The initial sweep is not yet declared complete. One shard is inside
+`Savegame_linux3/Profile_001/Savegame_003/replay-002-session-0001.jsonl.zst`
+under its 900-second watchdog, with six later snapshot entries queued behind
+it. A partial total must not be promoted to a final pass rate, and a watchdog
+termination must be recorded as its own failure rather than silently omitted.
+
+The 302 results still use frozen commit `1c02368c8`. They therefore predate
+`516728654` and all later work. Their 259 failures are a discovery baseline,
+not the current engine's expected failure count.
+
 ## Shared-cause ledger
 
 | ID | Status | First visible family | Working interpretation / next proof |
 |---|---|---|---|
 | R01 | Fix landed; rerun required | PC `actor.action_state`, commonly Original idle versus Rust `WalkingUpright` while both retain `MoveOk` | `516728654` preserves Waiting when an entity-target `PerformSeek` remains visibly in progress. All four assigned boundaries clear; one trace is exact and three reach independent later failures. The remaining 53 baseline entries require failure-only reruns before this group can be split or closed. |
-| R02 | In progress | `direction_goal`, frequently at frame 516 | Likely shares the synchronous patrol/door/turn boundary already exposed by silent Linux2 Save002. Prove whether PC random-command cases share that cause before merging groups. |
+| R02 | In progress | `direction_goal`, frequently at frame 516 | Silent Linux2 Save002 proved that Original patrol snapshots expose an active PassDoor member at its committed gate side, while Rust observed its interpolated sprite position and queued a stale patrol target. Door-snapped shared-AI views and exact endpoint completion are under validation; random members still require their own failure-only reruns before this whole group is attributed to that cause. |
 | R03 | Unassigned | `actor.wait_time`, alone or beside action state | Compare the owning command and timer launch/termination frame. Do not normalize the timer in the comparator. |
 | R04 | Unassigned | `position_goal_map` | Audit whether the outgoing selected command is detached, postponed, or retained. Existing Halt and raising-sword fixes are relevant but not assumed sufficient. |
 | R05 | Unassigned | `actor.command` with posture/direction | Inspect wrapper versus concrete command lifetime and the action-change marker that commits posture. |
@@ -105,7 +122,7 @@ has the same root cause.
 | R08 | Unassigned | `position_map` | Requires exact movement increment, collision, transition, and command ownership comparison; no coordinate tolerance or replay-specific snap. |
 | R09 | Unassigned | Resolved speech has no pending Rust request | Separate genuinely absent gameplay `Say` calls from already-fixed synchronous speech boundaries before changing restoration or FIFO policy. |
 | R10 | Unassigned | Resolved speech disagrees with pending FIFO | Compare actor, exclamation, forced/random variant, and the synchronous callback that queued it. Never skip an event to realign the stream. |
-| R11 | Watching | Runtime entity creation/mapping | No members at checkpoint 001. Exact Original creation-order mapping remains mandatory for any later member. |
+| R11 | Fix landed; rerun required | Runtime entity creation/mapping | `516728654` exposed two bow arrows whose Rust identities were one early. Save adoption reused beam-me PCs without consuming the provisional construction orders that Original's dynamic load path consumes. The fix restores those invisible counter increments; both exposed arrows now map at their Original identities. |
 | R12 | Unassigned | Comparator `other`, layer/sector, or unclassified panic | Expand the diagnostic before assigning a cause. Layer/sector identity must remain isomorphic, not raw-index equal. |
 
 ## First-divergence ledger
@@ -185,6 +202,29 @@ clear:
 The checkpoint-001 statuses were produced by the older frozen runner and stay
 unchanged as historical evidence. A new release runner must rerun all R01
 members before publishing the number eliminated by this fix.
+
+The three later R01 frontiers now form two new work items:
+
+- Original projectile creation orders 159 and 161 are assigned together for a
+  source-backed runtime-creation diagnosis.
+- The frame-725 sword-walk divergence remains separate until its first
+  command/animation ownership boundary is identified.
+
+### Beam-me load construction orders — runtime projectile identity
+
+Original `RHEngine::PopulateBeamMes` records the static creation boundary
+before constructing the selected team. During `SerializeElements` load, each
+saved team PC is consequently reconstructed, consuming a provisional
+`gulCreationCounter` value before its serialized identity is restored. Rust
+reuses the already initialized profile-matched PC, so save adoption must
+advance the counter explicitly for every reused beam-me PC.
+
+The focused counter regression covers one- and multi-PC teams plus overflow.
+The two frontiers exposed after `516728654` now create their arrows with the
+correct identities:
+
+- Cyrdach Restart replay 001: Original creation order 159.
+- Cyrdach Savegame 000 replay 002: Original creation order 161.
 
 When another fix lands, add the commit, Original source boundary, focused test,
 all affected traces, and their new exact result or next independent frontier
