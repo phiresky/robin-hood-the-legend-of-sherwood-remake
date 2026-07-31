@@ -3359,6 +3359,25 @@ with the resumed-strike, parry, facing, coma, sleeping-target, and campaign
 identity corrections above, Linux3 Profile 003 Savegame 066 matches every
 recorded frame.
 
+### Nested route continuations finish the completed child Think
+
+Original `DefaultGotoRoute(EVENT_REACHPOINT)` calls `SetState` synchronously
+and resumes `InitializePatrol`, `Turn`, or `Think(EVENT_DONE)` before the
+current `EndThink` returns. Rust must release the AI borrow before running the
+equivalent state callback, so it represents the remainder as a typed route
+continuation and closes the completed handler when that continuation resumes.
+
+A recursively entered Think can still leave a suspended parent at that point.
+The completed child therefore must process its completion flags without
+requiring the controller's total recursion depth to be zero. This is the same
+logical child `EndThink` boundary as Original; it neither drains nor completes
+the suspended parent early.
+
+With that invalid zero-depth assumption removed, every Linux3 Profile 003
+recording in Savegames 067–075, Continue, ExQuickSave, QuickSave, Restart, and
+Sherwood matches every recorded frame. The large states in this group include
+Savegame 075 with 942 loaded elements and 595 dynamic elements.
+
 ### Nicouzouf Profile 001 loaded-session coverage
 
 Every Linux replay in `Savegame_nicouzouf/Profile_001` has been exercised

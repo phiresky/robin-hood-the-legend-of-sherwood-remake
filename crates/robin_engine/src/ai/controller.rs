@@ -4230,18 +4230,17 @@ impl AiController {
             self.think_event_done_on_self(sim, ctx);
         }
 
-        // The outer Enemy/Friendly `Think` had to release its borrow before
-        // the engine could run SetState's callback, so its ordinary EndThink
-        // already ran before this continuation. Close completion flags raised
-        // by the resumed tail at the same logical EndThink boundary.
+        // The Enemy/Friendly `Think` which selected this continuation had to
+        // release its borrow before the engine could run SetState's callback,
+        // so that call's ordinary EndThink already ran. A recursively entered
+        // Think can still have a suspended parent (`think_recursion_depth >
+        // 0`) at this point. Close completion flags raised by the resumed tail
+        // at the completed child's logical EndThink boundary without assuming
+        // the entire owner-local Think stack has unwound.
         self.finish_suspended_common_handler();
     }
 
     fn finish_suspended_common_handler(&mut self) {
-        debug_assert_eq!(
-            self.think_recursion_depth, 0,
-            "route-arrival continuation resumed before the suspended Think unwound"
-        );
         if self.couldnt_reachpoint {
             self.couldnt_reachpoint = false;
             self.outbox
