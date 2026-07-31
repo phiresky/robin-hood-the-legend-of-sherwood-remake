@@ -3307,6 +3307,33 @@ intact while clearing only Rust's derived live execution caches. This advances
 Linux3 Profile 003 Savegame 066 beyond the resumed strike, parry-expiry,
 elevation-facing, and coma sequence.
 
+### Battle cleanup retains newly unconscious targets
+
+`BattleDecisions` begins with the persistent `mlistThem`, removes entries which
+can no longer fight, and simultaneously collects living, unconscious,
+non-carried enemies into a local list. It later uses that exact ordered list to
+approach and finish a sleeping enemy. Re-running visibility is not equivalent:
+an enemy can cease being detectable immediately on knockout while its
+authoritative Them-list entry is still pending consumption.
+
+Rust now constructs the sleeping candidates during the persistent-list cleanup
+itself rather than substituting the current frame's detection snapshot. This
+keeps an opponent knocked into an amulet coma on the approach path instead of
+making the observing soldier return to duty.
+
+### PC coma lookup uses campaign-description identity
+
+Original's `RHElementActorPC::IsInComa` reads the status behind the PC's exact
+`mpDescription` campaign pointer. Rust exposes that identity as
+`campaign_description_index`. The separately serialized `list_index` is only
+actor/UI list state and can refer to a completely different campaign entry.
+
+AI entity views now resolve `in_coma` through `campaign_description_index` and
+fail loudly if a production PC lacks a valid campaign identity. The
+approaching-sleeping-enemy handler consequently recognizes the coma PC and
+starts the authored menace interaction rather than issuing a downward killing
+strike.
+
 ### Nicouzouf Profile 001 loaded-session coverage
 
 Every Linux replay in `Savegame_nicouzouf/Profile_001` has been exercised
