@@ -1080,98 +1080,6 @@ impl EnemyAi {
         }
     }
 
-    /// Propose a phalanx slot as a CombatPosition candidate. Runs for
-    /// shield bearers during `propose_combat_positions`. The position is
-    /// flagged with the `LINE_FORMATION_BONUS` so the evaluator prefers
-    /// it over ad-hoc surround positions once sword reach is acceptable.
-    ///
-    /// Derived from the geometry side of ConsiderShieldBearerAttack +
-    /// FindPhalanxPlace. The full substate-driven shield-bearer flow
-    /// (`refresh_arrow_protection` → phalanx substates) is also ported;
-    /// this proposal path feeds the swordfight position evaluator so
-    /// shield bearers still line up when the phalanx entry conditions
-    /// aren't met.
-    fn propose_phalanx_positions(
-        &self,
-        list: &mut Vec<CombatPosition>,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) {
-        let Some((there, _direction, left_neighbour, right_neighbour)) =
-            self.find_phalanx_place(ctx, tick, grid)
-        else {
-            return;
-        };
-
-        // Target each enemy in range from the proposed slot — same
-        // reachability filter as `propose_line_positions_there`, so the
-        // evaluator has something to score against.
-        let weapon_distance = self
-            .find_fighter(self.base.me, tick)
-            .map(|f| f.sword_range_uber)
-            .unwrap_or(self.sword_range) as f32;
-        let weapon_sq = weapon_distance * weapon_distance;
-
-        let me_pos = ctx.position;
-        let mut pushed_any = false;
-        for enemy_handle in &self.list_them {
-            let Some(enemy) = self.find_fighter(*enemy_handle, tick) else {
-                continue;
-            };
-            let v = pos_diff(&enemy.position, &there);
-            if max_norm(v) >= weapon_distance {
-                continue;
-            }
-            if square_norm(v) >= weapon_sq {
-                continue;
-            }
-
-            let cp = CombatPosition {
-                attacker: self.base.me,
-                attacker_position: there,
-                target: *enemy_handle,
-                target_position: enemy.position,
-                target_direction: enemy.direction,
-                change_position: max_norm(pos_diff(&there, &me_pos)) > 3.0,
-                line_position: true,
-                left_neighbour,
-                right_neighbour,
-                bonus: combat::LINE_FORMATION_BONUS as i16,
-                ..CombatPosition::default()
-            };
-            list.push(cp);
-            pushed_any = true;
-        }
-
-        // Even if no enemy is yet in sword range from the slot, the
-        // shield wall itself is a valuable move — push it as a
-        // "change_position without target" entry so the evaluator can
-        // still pick it when surrounding alternatives are bad.
-        if !pushed_any {
-            let cp = CombatPosition {
-                attacker: self.base.me,
-                attacker_position: there,
-                target: self.base.primary_target,
-                target_position: self
-                    .find_fighter(self.base.primary_target, tick)
-                    .map(|f| f.position)
-                    .unwrap_or(me_pos),
-                target_direction: self
-                    .find_fighter(self.base.primary_target, tick)
-                    .map(|f| f.direction)
-                    .unwrap_or(0),
-                change_position: max_norm(pos_diff(&there, &me_pos)) > 3.0,
-                line_position: true,
-                left_neighbour,
-                right_neighbour,
-                bonus: combat::LINE_FORMATION_BONUS as i16,
-                ..CombatPosition::default()
-            };
-            list.push(cp);
-        }
-    }
-
     /// ComputePositionBehindMyShieldBearer. Given an archer caller with
     /// a linked shield bearer, compute the cover position
     /// `DISTANCE_SHIELD_BEARER_ARCHER` behind that shield bearer along
@@ -2006,22 +1914,6 @@ impl EnemyAi {
         let i_am_a_formation_soldier = self.get_rank() == ProfileRank::Soldier
             && self.base.list_us.len() > 2
             && me_snap.map(|f| f.has_formation).unwrap_or(false);
-        // Shield bearers get a phalanx proposal injected into the
-        // candidate list ahead of the line-formation path. The reference
-        // handles the shield wall through a separate
-        // `ConsiderShieldBearerAttack` decision that owns its own
-        // substate chain; here we fold the geometry into the swordfight
-        // repositioning evaluator so shield bearers still naturally
-        // line up shoulder-to-shoulder. Porting
-        // the full substate-driven "run to phalanx → raise shield →
-        // advance" flow would need a dedicated shield-bearer substate
-        // cluster on top of the existing repositioning code path.
-        let i_am_shield_bearer = me_snap.map(|f| f.is_shield_bearer).unwrap_or(false);
-
-        if i_am_shield_bearer {
-            self.propose_phalanx_positions(list, ctx, tick, grid);
-        }
-
         if i_am_a_formation_soldier {
             let (left, right) = self.propose_left_and_right_neighbour(ctx, tick);
             if left != 0 && right != 0 {
