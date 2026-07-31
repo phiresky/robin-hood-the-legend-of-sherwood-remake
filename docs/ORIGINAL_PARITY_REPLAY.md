@@ -2332,6 +2332,20 @@ when a loaded, nearly complete waypoint terminates immediately, while
 surviving walking orders still enter Moving on their first frame. Cyrdach
 Profile 156 Savegame 023 now matches every recorded frame.
 
+### Anti-collision break-through retains the cached increment
+
+Original distinguishes two anti-collision position commits. A successfully
+accepted repulsive deviation uses `SetPositionMap`, resets the increment
+cache, and recomputes it toward the authored goal. The blocked-count
+break-through path instead calls `MoveMap` and deliberately leaves the old
+cached increment untouched. Rust rebuilt the cache after both paths because
+both leave the persistent `deviated` flag set. That usually produced only
+sub-threshold ULP drift, but a later near-tangent repulsive-point comparison
+could amplify it into a different collision branch. The port now rebuilds
+only after an accepted deviation resets the blocked counter; break-through
+movement retains its previous cache. Cyrdach Profile 156 Savegame 025 now
+matches PC 108's Original trajectory through the former frame-752 divergence.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

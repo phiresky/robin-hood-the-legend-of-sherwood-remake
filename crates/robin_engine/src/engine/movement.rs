@@ -7309,7 +7309,13 @@ impl EngineInner {
                     // (move box, half-diagonal) + the current path goal.  The
                     // persistent state (deviated / blocked_count / box_blocked /
                     // radius) lives on the actor's PI directly now.
-                    let (dx_step, dy_step, deviated, recovered_from_deviation) = if anti_on
+                    let (
+                        dx_step,
+                        dy_step,
+                        deviated,
+                        recovered_from_deviation,
+                        rebuild_after_deviation,
+                    ) = if anti_on
                         && let Some(mover_snap) =
                             anti_snapshots.get(actor_id).and_then(|slot| slot.as_ref())
                     {
@@ -7357,9 +7363,15 @@ impl EngineInner {
                             dy_step,
                             state.pi.is_deviated(),
                             was_deviated && !state.pi.is_deviated(),
+                            // A successfully committed deviation expands the
+                            // blocked box, resets the counter, and Original
+                            // rebuilds the cached increment. Its
+                            // blocked-count break-through path instead uses
+                            // MoveMap and deliberately retains the old cache.
+                            state.pi.is_deviated() && state.pi.blocked_count == 0,
                         )
                     } else {
-                        (nx * speed, ny * speed, false, false)
+                        (nx * speed, ny * speed, false, false, false)
                     };
                     let new_pos_x;
                     let new_pos_y;
@@ -7378,7 +7390,7 @@ impl EngineInner {
                         pm.x += dx_step;
                         pm.y += dy_step;
                         elem.set_position_map(pm);
-                        if deviated && (dx_step != 0.0 || dy_step != 0.0) {
+                        if rebuild_after_deviation && (dx_step != 0.0 || dy_step != 0.0) {
                             elem.sprite.position_iface.reset_increment_computed();
                             elem.sprite.position_iface.compute_increment_all(false);
                         } else if recovered_from_deviation {
