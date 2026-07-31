@@ -2983,7 +2983,10 @@ The formerly excluded static Linux3 Profile 003 Savegame 013 trace received a
 separate frozen release-mode recheck after the loaded-save and battle-ordering
 repairs. Its 250 frames (7597 through 7847), 67-element save including 16
 dynamic elements, and 360 authoritative RNG draws match exactly through EOF.
-No replay-specific compatibility or code change was required.
+The same frozen runner also verifies formerly excluded Savegame 021: all 250
+frames (13 through 263), its 72-element save including 21 dynamic elements,
+and 346 authoritative RNG draws match exactly through EOF. No replay-specific
+compatibility or code change was required for either trace.
 
 Windows `GSHR` saves now share the atomic adoption path. The complete Cyrdach
 Savegame 000–037 corpus matches every recorded frame; Nescafe Profile 003
