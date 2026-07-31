@@ -3592,6 +3592,17 @@ unwind-safe logical Think scope through `ReachPoint` and
 the former frame 30308 divergence and reaches its next independent mismatch at
 frame 30378; Savegame 031 remains exact end to end.
 
+### Non-enemy detection also runs for civilian NPCs
+
+Original defines `RefreshDetection` on `RHElementActorNPC`; after the enemy
+pass, the body, object, friend, missed-friend, and beggar passes therefore run
+for both soldiers and civilians. Rust incorrectly required a soldier for the
+entire post-enemy loop, leaving civilian detection state and callbacks stale.
+The shared passes now operate on `NpcData`, and loaded FriendlyAI ownership is
+backfilled for the corresponding civilian NPCs. Linux3 Profile 001 Savegame
+030 matches through its former frame-30378 divergence and now reaches the next
+independent mismatch at frame 30435.
+
 ### Small Linux profiles match end to end
 
 The complete `Savegame_linux` corpus currently consists of Profile 005
@@ -3622,6 +3633,22 @@ The shard totals are: 233 pass / 19 fail for the 252 Windows, nicouzouf, and
 randomguy recordings; 46 / 2 for Linux2 Profile 002; 49 / 5 for Linux3
 Profile 001; and 91 / 0 across the small Linux profiles plus Linux3 Profiles
 002 and 003. The resulting corpus-wide exact rate is 94.2 percent.
+
+The 26 frozen-run failures are assigned by shared cause rather than archive:
+
+- **AI/sequence/Turn/state ordering (12):** Linux3 Profile 001 Continue,
+  Savegames 008, 030, and 036; Linux2 Profile 002 Savegame 002; nicouzouf
+  Savegames 024, 039, 041, 049, and 076; randomguy Savegames 030 and 038.
+- **Movement/path/geometry (7):** Linux2 Profile 002 Savegame 040; Linux3
+  Profile 001 Savegame 038; nicouzouf Savegames 053, 059, and 065; randomguy
+  ExQuickSave and Savegame 031.
+- **Combat/RNG ordering (4):** SuN1Sh1nE Savegame 024 and nicouzouf Savegames
+  045, 054, and 063.
+- **Runtime entity mapping (3):** randomguy Savegames 020, 029, and 032.
+
+These counts describe the frozen `2a3e842df` baseline. Later commits may move
+a recording to a new independent divergence before the next release-mode full
+audit updates the totals.
 
 The audit artifacts and individual logs live under
 `.codex-tmp/full-corpus-audit-2a3e842df/`. Future large audits should use a
