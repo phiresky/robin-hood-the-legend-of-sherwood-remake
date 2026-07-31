@@ -2086,10 +2086,25 @@ fn force_mission_launch(
     tracing::info!("--mission: launching `{mission_name}` with proto-level `{proto_name}`");
 
     let profiles_mut = std::sync::Arc::make_mut(profiles);
-    if !args.preserve_forced_mission_campaign {
-        campaign.reset(profiles_mut, application_context.sim_config().difficulty);
+    if args.preserve_forced_mission_campaign {
+        let idx = campaign
+            .current_mission_idx
+            .ok_or_else(|| "preserved capture campaign has no current mission".to_owned())?;
+        let profile = campaign.missions[idx].profile(profiles_mut);
+        if !profile.mission_filename.eq_ignore_ascii_case(mission_name)
+            || !profile
+                .proto_level_filename
+                .eq_ignore_ascii_case(&proto_name)
+        {
+            return Err(format!(
+                "preserved capture campaign mission {}/{} disagrees with requested {mission_name}/{proto_name}",
+                profile.mission_filename, profile.proto_level_filename
+            ));
+        }
+        return Ok(Some((idx, profile.location)));
     }
-    if args.mission_start_map_output.is_some() && !args.preserve_forced_mission_campaign {
+    campaign.reset(profiles_mut, application_context.sim_config().difficulty);
+    if args.mission_start_map_output.is_some() {
         // Use the walkthrough's practical campaign teams where it gives one.
         // For optional missions, derive the recruited heroes from prerequisite
         // history and fill the remaining slots with useful Merry Men. This
