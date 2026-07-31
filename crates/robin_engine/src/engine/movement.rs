@@ -188,6 +188,31 @@ fn order_uses_distance_motion(order: OrderType) -> bool {
     )
 }
 
+/// Movement Execute arms which call `Turn()` immediately before entering
+/// `RHSprite::PerformMotion`.
+///
+/// This distinction remains observable under `FreezeAll`: the sprite returns
+/// `RHMOTION_IN_PROGRESS` before animation or displacement, but the actor-side
+/// turn has already happened (`RHelementactor.cpp:1142-1341`).
+fn order_turns_before_motion(order: OrderType) -> bool {
+    order_uses_distance_motion(order)
+        || matches!(
+            order,
+            OrderType::TransitionWalkingUprightWaitingUpright
+                | OrderType::TransitionRunningUprightWaitingUpright
+                | OrderType::TransitionWaitingUprightWalkingUpright
+                | OrderType::TransitionWaitingUprightRunningUpright
+                | OrderType::TransitionWalkingUprightRunningUpright
+                | OrderType::TransitionRunningUprightWalkingUpright
+                | OrderType::TransitionWaitingCrouchedWalkingCrouched
+                | OrderType::TransitionWalkingCrouchedWaitingCrouched
+                | OrderType::TransitionWalkingCrouchedWalkingUpright
+                | OrderType::TransitionWalkingUprightWalkingCrouched
+                | OrderType::TransitionWalkingCrouchedRunningUpright
+                | OrderType::TransitionRunningUprightWalkingCrouched
+        )
+}
+
 /// Match `RHSprite::PerformMotion`: scale the sprite-frame distance by the
 /// movement element's speed factor before applying the turn slowdown and its
 /// minimum useful step. Direct transition orders call `PerformMotion` without
@@ -4502,6 +4527,159 @@ impl EngineInner {
         }
     }
 
+    fn execute_globally_frozen_pre_motion_owner(
+        &mut self,
+        owner: EntityId,
+        selected: MovementOwnerSelection,
+    ) {
+        let (order_action, flags, target, destination) = self
+            .orders
+            .sequence_manager
+            .get_element(selected.seq_id, selected.elem_idx)
+            .and_then(|element| {
+                let (flags, target, destination) = match &element.data {
+                    crate::sequence::SequenceElementData::Movement {
+                        flags,
+                        element,
+                        destination,
+                        ..
+                    } => (*flags, *element, *destination),
+                    _ => return None,
+                };
+                element
+                    .current_order()
+                    .filter(|order| order.order_id == selected.order_id)
+                    .map(|order| (order.order_type, flags, target, destination))
+            })
+            .expect("globally frozen movement owner lost its selected order");
+        if climb_lift_type(order_action).is_some() {
+            self.turn_globally_frozen_climb_owner(owner, selected);
+            return;
+        }
+
+        if flags.contains(crate::sequence::MoveFlags::SEEK) {
+            let (owner_position, owner_sector, seek_target, seek_distance, has_post_seek) = self
+                .world
+                .entities
+                .get(owner)
+                .and_then(|entity| {
+                    let actor = entity.actor_data()?;
+                    Some((
+                        entity.element_data().position_map(),
+                        entity.element_data().sector(),
+                        actor.seek_target,
+                        actor.seek_distance,
+                        actor.post_seek_sequence.is_some(),
+                    ))
+                })
+                .unwrap_or_else(|| panic!("globally frozen seek owner {owner:?} is not an actor"));
+
+            // `mbSeekToPoint` takes the unconditional Turn/PerformMotion arm.
+            // An entity seek whose target was cleared instead returns
+            // TERMINATED before touching either the wait counter or facing.
+            let Some(seek_target) = seek_target else {
+                if target.is_none() {
+                    self.world
+                        .entities
+                        .get_mut(owner)
+                        .expect("globally frozen point-seek owner disappeared")
+                        .position_iface_mut()
+                        .turn();
+                }
+                return;
+            };
+            assert_eq!(
+                target,
+                Some(seek_target),
+                "globally frozen seek owner {owner:?} has inconsistent actor/element targets"
+            );
+
+            let target_entity = self.world.entities.get(seek_target).unwrap_or_else(|| {
+                panic!(
+                    "globally frozen seek owner {owner:?} references missing target {seek_target:?}"
+                )
+            });
+            let target_position = target_entity.element_data().position_map();
+            let target_sector = target_entity.element_data().sector();
+            let use_point = flags.contains(crate::sequence::MoveFlags::USE_POINT);
+            let point = if use_point {
+                target_entity
+                    .cxx_current_point_map()
+                    .filter(|point| *point != target_position)
+                    .unwrap_or(target_position)
+            } else {
+                target_position
+            };
+            let delta = if flags.contains(crate::sequence::MoveFlags::SEEK_SHIELD) {
+                assert!(
+                    self.world
+                        .entities
+                        .get(owner)
+                        .is_some_and(crate::element::Entity::is_pc),
+                    "SEEK_SHIELD owner {owner:?} is not a PC"
+                );
+                destination - owner_position
+            } else {
+                point - owner_position
+            };
+            let dy = if flags.contains(crate::sequence::MoveFlags::DIRECTIONAL_TOLERANCE) {
+                delta.y * 1.743_446_8
+            } else {
+                delta.y
+            };
+            let in_tolerance = owner_sector == target_sector
+                && delta.x * delta.x + dy * dy < seek_distance * seek_distance * 1.1025;
+
+            if in_tolerance {
+                if has_post_seek {
+                    self.start_post_seek_sequence(
+                        owner,
+                        Some((selected.seq_id, selected.elem_idx)),
+                    );
+                    return;
+                }
+                // PerformAction(FROZEN) returns before sprite motion, then
+                // PerformSeek ages the shared unsigned wait scalar.
+                let actor = self
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .and_then(|entity| entity.actor_data_mut())
+                    .expect("globally frozen seek owner lost actor data");
+                actor.seek_refresh_wait = age_seek_refresh_wait(actor.seek_refresh_wait);
+                actor.wait_time = actor.seek_refresh_wait;
+                return;
+            }
+
+            // The moved-target refresh test runs in
+            // `tick_refresh_seek_for_owner` immediately before this owner
+            // Execute. If it did not replace the seek, PerformSeek ages the
+            // counter and turns before frozen PerformMotion returns.
+            let entity = self
+                .world
+                .entities
+                .get_mut(owner)
+                .expect("globally frozen seek owner disappeared before Turn");
+            let actor = entity
+                .actor_data_mut()
+                .expect("globally frozen seek owner lost actor data before Turn");
+            actor.seek_refresh_wait = age_seek_refresh_wait(actor.seek_refresh_wait);
+            actor.wait_time = actor.seek_refresh_wait;
+            entity.position_iface_mut().turn();
+            return;
+        }
+
+        if !order_turns_before_motion(order_action) {
+            return;
+        }
+        self.world
+            .entities
+            .get_mut(owner)
+            .unwrap_or_else(|| panic!("globally frozen movement owner {owner:?} disappeared"))
+            .position_iface_mut()
+            .turn();
+    }
+
     /// Mirror the Human Execute guard on the logical sword-movement
     /// non-animations. A stale sword move can still reach its owner slot after
     /// the actor's final opponent has gone away; unless the movement was
@@ -4681,7 +4859,7 @@ impl EngineInner {
             return;
         }
         if self.actors_frozen() {
-            self.turn_globally_frozen_climb_owner(owner, selected);
+            self.execute_globally_frozen_pre_motion_owner(owner, selected);
             // FrozenAll suppresses Sprite::PerformMotion but not the Execute
             // work before it: climb Turn() above and both rider-specific
             // Soldier arms remain live. RiderCharging performs its polygon

@@ -240,10 +240,6 @@ impl crate::engine::EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) -> bool {
-        if self.actors_frozen() {
-            return false;
-        }
-
         let refresh = {
             let Some(entity) = self.get_entity(owner) else {
                 return false;
