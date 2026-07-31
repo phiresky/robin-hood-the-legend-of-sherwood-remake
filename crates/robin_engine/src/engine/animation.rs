@@ -4306,6 +4306,22 @@ impl EngineInner {
                         let sprite = entity.sprite();
                         (sprite.current_frame, sprite.frame_count)
                     });
+                    if order_is_initialising
+                        && matches!(cur_command, Some(Command::Turn | Command::TurnFast))
+                    {
+                        // FaceTo can be instructed re-entrantly after a
+                        // just-launched GoNear has already written its map
+                        // goal. Original leaves that value observable for the
+                        // launch frame, then the outgoing movement's
+                        // SendCondolationCard clears it before the Turn
+                        // element executes its first order. Rust stages those
+                        // callbacks, so reproduce the selected-actor boundary
+                        // here rather than retaining the superseded movement
+                        // destination throughout the turn transition.
+                        entity
+                            .position_iface_mut()
+                            .set_map_goal(crate::coordinates::MapPoint::ZERO);
+                    }
                     let motion = if is_turn {
                         // Play the turn sprite animation (alerted
                         // variant for attentive soldiers) at the

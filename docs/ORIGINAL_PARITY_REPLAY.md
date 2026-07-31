@@ -2632,6 +2632,17 @@ to both at that same source boundary and before either the direct-path or
 cross-sector branch. A following `WAIT_FREE_LIFT` therefore observes the same
 retained actor field as C++.
 
+### A re-entrant turn clears the superseded movement goal at execution
+
+`FaceTo` can replace a movement sequence re-entrantly after the outgoing
+`GoNear` has already installed its map goal. Original leaves that destination
+observable during the launch frame, then the outgoing movement element's
+condolence callback clears it before the turn element executes its first
+order. Rust stages those callbacks separately, so the selected turn now clears
+the superseded goal at that equivalent first-execution boundary. This preserves
+both the launch-frame observation and the following turn state without a
+replay-specific exception.
+
 ### Swordfight event retargeting does not retarget the eyes
 
 `EVENT_ENTER_SWORDFIGHT` assigns the incoming opponent to
