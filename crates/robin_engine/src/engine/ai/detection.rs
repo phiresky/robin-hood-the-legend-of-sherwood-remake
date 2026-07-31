@@ -250,21 +250,6 @@ impl SoldierSightContext {
             ignore_bodies,
         })
     }
-
-    fn from_viewer(
-        npc_id: EntityId,
-        entity: &Entity,
-        required_camp: Camp,
-        viewer_building_sector: Option<crate::position_interface::SectorHandle>,
-    ) -> Option<Self> {
-        let Entity::Soldier(soldier) = entity else {
-            return None;
-        };
-        if soldier.soldier.cached_camp != required_camp {
-            return None;
-        }
-        Self::from_npc_viewer(npc_id, entity, viewer_building_sector)
-    }
 }
 
 fn attacking_reactiontime_enemy_near_enabled(
@@ -3316,14 +3301,14 @@ impl EngineInner {
             // wired in the Rust AI layer yet, and exposing the loop
             // there would create dead stimuli with no handlers.
             let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let Some(viewer) = SoldierSightContext::from_viewer(
-                npc_id,
-                entity,
-                Camp::Lacklandists,
-                building_sector,
-            ) else {
+            let Some(viewer) =
+                SoldierSightContext::from_npc_viewer(npc_id, entity, building_sector)
+            else {
                 return;
             };
+            if viewer.camp != Camp::Lacklandists {
+                return;
+            }
             viewer
         };
         let eye = viewer.eye;
@@ -3403,23 +3388,27 @@ impl EngineInner {
             ai_vision::BASE_VIEW_SPEED
         };
 
-        // Pull the obstacle view + soldier mut borrow for the rest of
-        // the function.  The body/object detectable lists, suspect
-        // counters, and pending_stimuli all live under `soldier.npc`,
-        // so we keep one mut-borrow scope spanning both passes.
+        // Pull the obstacle view + NPC mut borrow for the rest of the
+        // function. RefreshDetection is defined by RHElementActorNPC and is
+        // therefore shared by soldiers and civilians in the Original.
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
             static_obstacles: assets.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
         let _ai_global = &mut self.ai.global;
-        let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(npc_id) else {
+        let Some(npc) = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::npc_data_mut)
+        else {
             return;
         };
 
         // ── BODY pass ───────────────────────────────────────
         Self::run_human_detectable_pass(
-            soldier,
+            npc,
             npc_id,
             DetectableType::Body,
             ai_vision::DETECTION_FREQUENCY_BODY,
@@ -3472,7 +3461,7 @@ impl EngineInner {
         // Friend, MissedFriend, Beggar. Keep stimulus queue order aligned
         // with that scan order before the per-NPC FIFO Think drain.
         Self::run_object_detectable_pass(
-            soldier,
+            npc,
             npc_id,
             ai_vision::DETECTION_FREQUENCY_OBJECT,
             // InstantDetection for OBJECT (Lacklandists) is
@@ -3505,7 +3494,7 @@ impl EngineInner {
 
         // ── FRIEND pass ─────────────────────────────────────
         Self::run_human_detectable_pass(
-            soldier,
+            npc,
             npc_id,
             DetectableType::Friend,
             ai_vision::DETECTION_FREQUENCY_FRIEND,
@@ -3549,7 +3538,7 @@ impl EngineInner {
 
         // ── MISSED_FRIEND pass ──────────────────────────────
         Self::run_human_detectable_pass(
-            soldier,
+            npc,
             npc_id,
             DetectableType::MissedFriend,
             ai_vision::DETECTION_FREQUENCY_MISSED_FRIEND,
@@ -3595,7 +3584,7 @@ impl EngineInner {
         // compute visibility for stale entries.
         {
             let beggar_idx = DetectableType::Beggar as usize;
-            soldier.npc.detectable_lists[beggar_idx].retain(|det| {
+            npc.detectable_lists[beggar_idx].retain(|det| {
                 let Some(target_id) = det.element else {
                     return false;
                 };
@@ -3606,7 +3595,7 @@ impl EngineInner {
             });
         }
         Self::run_human_detectable_pass(
-            soldier,
+            npc,
             npc_id,
             DetectableType::Beggar,
             ai_vision::DETECTION_FREQUENCY_BEGGAR,
@@ -3672,7 +3661,7 @@ impl EngineInner {
     /// three FRIEND-and-after buckets do not.
     #[allow(clippy::too_many_arguments)]
     fn run_human_detectable_pass<F>(
-        soldier: &mut crate::element::ActorSoldier,
+        npc: &mut crate::element::NpcData,
         npc_id: EntityId,
         kind: DetectableType,
         frequency: u32,
@@ -3700,7 +3689,7 @@ impl EngineInner {
         let mut max_sharpness: u32 = 0;
 
         // (1) Per-detectable visibility pass.
-        for det in soldier.npc.detectable_lists[kind_idx].iter_mut() {
+        for det in npc.detectable_lists[kind_idx].iter_mut() {
             let Some(target_id) = det.element else {
                 det.seen_now = false;
                 det.last_visibility = 0.0;
@@ -3794,14 +3783,14 @@ impl EngineInner {
         // `muwMaximalVisibility` spans the complete outer detectable-type
         // loop, not only Enemy entries. Preserve the Enemy maximum installed
         // by the preceding pass and fold this type's post-cache sharpness in.
-        if let Some(ai) = soldier.npc.ai_brain.base_mut() {
+        if let Some(ai) = npc.ai_brain.base_mut() {
             ai.max_visibility = ai.max_visibility.max(max_sharpness);
         }
 
         // (2) Snapshot the suspect accumulator. Original
         // HandlePredetection reads this value before the current scan is
         // added below.
-        let suspects_before = soldier.npc.detection_suspects[kind_idx];
+        let suspects_before = npc.detection_suspects[kind_idx];
 
         // (3) HandlePredetection shadow events for PC-typed targets.
         // Body is the only kind that fires; the helper is gated on
@@ -3817,7 +3806,7 @@ impl EngineInner {
         // HandlePredetection leaves its shadow latch unchanged.
         let mut shadow_dispatches: Vec<crate::ai::Position> = Vec::new();
         if fire_shadow_for_pc_targets {
-            for det in soldier.npc.detectable_lists[kind_idx].iter_mut() {
+            for det in npc.detectable_lists[kind_idx].iter_mut() {
                 // Only PCs are seen as shadows.
                 let Some(target_id) = det.element else {
                     continue;
@@ -3844,14 +3833,14 @@ impl EngineInner {
 
         // (4) Accumulate and determine whether the full detection commits.
         let suspects_after = suspects_before.saturating_add(sum_of_sharpnesses as u16);
-        soldier.npc.detection_suspects[kind_idx] = suspects_after;
+        npc.detection_suspects[kind_idx] = suspects_after;
         let commit_threshold = suspects_after >= ai_vision::DETECTION_SUSPECT_THRESHOLD as u16
             || (instant_detection && sum_of_sharpnesses > 0);
 
         // worst_detected_type bookkeeping — only on visibility
         // frames where new sharpness was added.
-        if sum_of_sharpnesses > 0 && (soldier.npc.worst_detected_type as u8) > (kind as u8) {
-            soldier.npc.worst_detected_type = kind;
+        if sum_of_sharpnesses > 0 && (npc.worst_detected_type as u8) > (kind as u8) {
+            npc.worst_detected_type = kind;
         }
 
         // (5) Rising-edge dispatch + drop-on-commit.  When the threshold
@@ -3859,8 +3848,8 @@ impl EngineInner {
         // crossed the rising edge this frame and queue its event.
         let mut rising_dispatches: Vec<EntityId> = Vec::new();
         if commit_threshold {
-            soldier.npc.detection_suspects[kind_idx] = 0;
-            soldier.npc.detectable_lists[kind_idx].retain_mut(|det| {
+            npc.detection_suspects[kind_idx] = 0;
+            npc.detectable_lists[kind_idx].retain_mut(|det| {
                 let Some(target_id) = det.element else {
                     return false;
                 };
@@ -3874,26 +3863,24 @@ impl EngineInner {
 
         // (6) Suspect cooldown when nothing visible.
         if sum_of_sharpnesses == 0
-            && soldier.npc.detection_suspects[kind_idx] > 0
+            && npc.detection_suspects[kind_idx] > 0
             && ctx
                 .universal_frame
                 .is_multiple_of(ai_vision::UNSUSPECT_FREQUENCY)
         {
-            soldier.npc.detection_suspects[kind_idx] =
-                soldier.npc.detection_suspects[kind_idx].saturating_sub(1);
+            npc.detection_suspects[kind_idx] = npc.detection_suspects[kind_idx].saturating_sub(1);
         }
 
         // (7) maximal_detection_suspect contribution
         // (`type < FRIEND` only).
-        if contribute_to_maximal
-            && soldier.npc.maximal_detection_suspect < soldier.npc.detection_suspects[kind_idx]
+        if contribute_to_maximal && npc.maximal_detection_suspect < npc.detection_suspects[kind_idx]
         {
-            soldier.npc.maximal_detection_suspect = soldier.npc.detection_suspects[kind_idx];
+            npc.maximal_detection_suspect = npc.detection_suspects[kind_idx];
         }
 
         // (8) Drain the queued stimuli onto pending_stimuli.
         if (!rising_dispatches.is_empty() || !shadow_dispatches.is_empty())
-            && let Some(ai) = soldier.npc.ai_brain.base_mut()
+            && let Some(ai) = npc.ai_brain.base_mut()
         {
             for _shadow_pos in &shadow_dispatches {
                 tracing::trace!(
@@ -3930,7 +3917,7 @@ impl EngineInner {
     /// objects.
     #[allow(clippy::too_many_arguments)]
     fn run_object_detectable_pass(
-        soldier: &mut crate::element::ActorSoldier,
+        npc: &mut crate::element::NpcData,
         npc_id: EntityId,
         frequency: u32,
         instant_detection: bool,
@@ -3945,7 +3932,7 @@ impl EngineInner {
         // CleanUpDetectables for OBJECT: drop entries whose target
         // is no longer active.  Run before the visibility loop so
         // dead entries don't waste a tick of accumulator decay.
-        soldier.npc.detectable_lists[obj_idx].retain(|det| {
+        npc.detectable_lists[obj_idx].retain(|det| {
             let Some(target_id) = det.element else {
                 return false;
             };
@@ -3955,7 +3942,7 @@ impl EngineInner {
         let mut sum_of_sharpnesses: u32 = 0;
         let mut max_sharpness: u32 = 0;
 
-        for det in soldier.npc.detectable_lists[obj_idx].iter_mut() {
+        for det in npc.detectable_lists[obj_idx].iter_mut() {
             let Some(target_id) = det.element else {
                 det.seen_now = false;
                 det.last_visibility = 0.0;
@@ -4007,26 +3994,26 @@ impl EngineInner {
             }
         }
 
-        if let Some(ai) = soldier.npc.ai_brain.base_mut() {
+        if let Some(ai) = npc.ai_brain.base_mut() {
             ai.max_visibility = ai.max_visibility.max(max_sharpness);
         }
 
         let suspects_after =
-            soldier.npc.detection_suspects[obj_idx].saturating_add(sum_of_sharpnesses as u16);
-        soldier.npc.detection_suspects[obj_idx] = suspects_after;
+            npc.detection_suspects[obj_idx].saturating_add(sum_of_sharpnesses as u16);
+        npc.detection_suspects[obj_idx] = suspects_after;
         let commit_threshold = suspects_after >= ai_vision::DETECTION_SUSPECT_THRESHOLD as u16
             || (instant_detection && sum_of_sharpnesses > 0);
 
         if sum_of_sharpnesses > 0
-            && (soldier.npc.worst_detected_type as u8) > (DetectableType::Object as u8)
+            && (npc.worst_detected_type as u8) > (DetectableType::Object as u8)
         {
-            soldier.npc.worst_detected_type = DetectableType::Object;
+            npc.worst_detected_type = DetectableType::Object;
         }
 
         let mut rising_dispatches: Vec<EntityId> = Vec::new();
         if commit_threshold {
-            soldier.npc.detection_suspects[obj_idx] = 0;
-            soldier.npc.detectable_lists[obj_idx].retain_mut(|det| {
+            npc.detection_suspects[obj_idx] = 0;
+            npc.detectable_lists[obj_idx].retain_mut(|det| {
                 let Some(target_id) = det.element else {
                     return false;
                 };
@@ -4039,21 +4026,20 @@ impl EngineInner {
         }
 
         if sum_of_sharpnesses == 0
-            && soldier.npc.detection_suspects[obj_idx] > 0
+            && npc.detection_suspects[obj_idx] > 0
             && ctx
                 .universal_frame
                 .is_multiple_of(ai_vision::UNSUSPECT_FREQUENCY)
         {
-            soldier.npc.detection_suspects[obj_idx] =
-                soldier.npc.detection_suspects[obj_idx].saturating_sub(1);
+            npc.detection_suspects[obj_idx] = npc.detection_suspects[obj_idx].saturating_sub(1);
         }
 
-        if soldier.npc.maximal_detection_suspect < soldier.npc.detection_suspects[obj_idx] {
-            soldier.npc.maximal_detection_suspect = soldier.npc.detection_suspects[obj_idx];
+        if npc.maximal_detection_suspect < npc.detection_suspects[obj_idx] {
+            npc.maximal_detection_suspect = npc.detection_suspects[obj_idx];
         }
 
         if !rising_dispatches.is_empty()
-            && let Some(ai) = soldier.npc.ai_brain.base_mut()
+            && let Some(ai) = npc.ai_brain.base_mut()
         {
             for target_id in rising_dispatches {
                 let mut stimulus =

@@ -227,7 +227,18 @@ impl EngineInner {
                     ..Default::default()
                 },
             });
-            self.add_entity(entity);
+            let eid = self.add_entity(entity);
+            // FriendlyAi is constructed before the entity is inserted, so
+            // its Original `mpMe` equivalent cannot be initialized until the
+            // stable runtime handle is known. Soldiers perform the same
+            // backfill below; civilians need it as well because their alert,
+            // panic, and owner-local callback paths read `base.me`.
+            if let Some(e) = self.world.entities.get_mut(eid)
+                && let Some(ai) = e.ai_controller_mut()
+            {
+                ai.me = eid.index();
+                ai.owner_entity_id = Some(eid);
+            }
             // Civilians contribute to the same level-money pool the
             // debriefing screen surfaces, even though the pool is named
             // "soldier_money".
