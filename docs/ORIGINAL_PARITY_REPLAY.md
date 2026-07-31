@@ -3462,7 +3462,9 @@ release-mode recheck. Its 250 frames (61 through 311), 56-element save including
 5 dynamic elements, and 299 authoritative RNG draws match exactly through EOF.
 The static Savegame 009 trace also matches all 250 frames (95 through 345),
 including its 59 saved elements, 8 dynamic elements, and 311 authoritative RNG
-draws. No replay-specific compatibility or code change was required.
+draws. Savegame 013 matches all 250 frames (121 through 371), including its 59
+saved elements, 8 dynamic elements, and 327 authoritative RNG draws. No
+replay-specific compatibility or code change was required.
 
 The remaining failures group into reusable behavior boundaries rather than
 save-specific mismatches:
