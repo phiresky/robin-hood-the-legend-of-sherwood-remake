@@ -3698,6 +3698,28 @@ emits a conditional stop intent and the engine applies both source gates
 that intent. The soldier-58 command/state and global RNG stream now match at
 that boundary; the recording proceeds to an independent frame-41 divergence.
 
+### Tower-guard completion preserves the synchronous battle boundary
+
+SuN1Sh1nE Savegame 024 exposed three coupled omissions when tower guard 29's
+Point command completed at frame 41. Original calls `TowerGuardCallAlert` and
+then `BattleDecisions`; it does not force the guard directly into its Observe
+state. The alert walks the stable same-camp soldier registry, measures
+`SquareDistance` from world-horizontal `GetPosition()` coordinates (map Y plus
+ground elevation), and synchronously delivers the cry even to inactive but
+alive macro soldiers. Rust had iterated a HashMap and measured projected map Y,
+therefore missing knight 152 on the higher level. The alert now follows the
+camp snapshot order and source coordinate/body gates, so the knight enters the
+expected Seeking/Turn state.
+
+The subsequent battle decision also preserves two source orderings. It chooses
+the guard's primary target from the personal Them list before appending targets
+reported by nearby friends, and only friends admitted to `mlistUs` by the
+360-degree detection gate may append their target. Rust previously injected
+every attacking camp soldier and selected a nearer, unseen target, incorrectly
+entering BowLoading instead of the source BowObservingLoading fallback. All
+frame-41 state, command, direction, and RNG fields now match; the replay reaches
+the next independent divergence at frame 53.
+
 ### Inactive scripted motion bypasses anti-collision
 
 Original `RHSprite::PerformMotion` calls `UpdatePositionAntiCollision` only

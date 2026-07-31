@@ -10,7 +10,7 @@ use crate::coordinates::MapPoint;
 use crate::parameters_ai;
 use crate::position_interface::INVERSE_ASPECT_RATIO;
 
-use super::util::{soldier_is_able_to_help_state, vec_to_sector};
+use super::util::vec_to_sector;
 use super::{CampSoldierInfo, EnemyAi, ProfileRank, SeekFlags, combat, task_priority};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1280,7 +1280,6 @@ impl EnemyAi {
         self.base.seek_position = danger_pos;
         self.base.say(Remark::CryAlert);
 
-        let my_camp = ctx.camp;
         let my_pos = ctx.position;
         let alert_hint = Hint {
             seek_point: danger_pos,
@@ -1298,42 +1297,43 @@ impl EnemyAi {
         let mut nearest_far_officer: Option<(crate::ai::NpcHandle, f32, Position)> = None;
         let sqr_radius = combat::SQR_TOWER_GUARD_ALERT_RADIUS as f32;
 
-        for (&handle, view) in ctx.entity_views.iter() {
-            if handle == self.base.me {
+        // GetSoldier(camp, i) walks the camp registry in stable order.  Do
+        // not iterate the entity-view HashMap here: delivery is synchronous,
+        // so recipient order is observable through re-entrant AI callbacks.
+        for soldier in &tick.camp_soldiers {
+            let handle = soldier.handle;
+            let view = ctx.entity_view(handle).unwrap_or_else(|| {
+                panic!("tower-guard camp soldier {handle} is missing its entity view")
+            });
+            if !soldier.is_able_to_help {
                 continue;
             }
-            if !view.is_soldier() || view.camp != my_camp {
-                continue;
-            }
-            // Uses `is_able_to_help`, not `is_able_to_fight` —
-            // soldiers in STATE_ATTACKING / MENACING / FLEEING /
-            // SLEEPING are excluded so an active swordfighter is not
-            // interrupted by a tower-guard cry.
-            if !soldier_is_able_to_help_state(
-                view.is_able_to_fight,
-                view.ai_state,
-                view.ai_substate,
-            ) {
-                continue;
-            }
-            if view.is_tower_guard {
+            if soldier.is_tower_guard {
                 continue;
             }
             if view.in_building {
                 continue;
             }
-            // SquareDistance stretches Y by `INVERSE_ASPECT_RATIO`.
+            // SquareDistance reads GetPosition(), whose horizontal Y is map
+            // Y plus ground elevation, before applying the aspect stretch.
+            // Comparing projected map Y wrongly excludes soldiers on a
+            // different elevation from the guard.
             let dx = view.position.x - my_pos.x;
-            let dy = (view.position.y - my_pos.y) * INVERSE_ASPECT_RATIO;
+            let dy = ((view.position.y + view.elevation) - (my_pos.y + ctx.elevation))
+                * INVERSE_ASPECT_RATIO;
             let sq_dist = dx * dx + dy * dy;
 
             if sq_dist < sqr_radius {
                 // This soldier hears the cry. Rank
-                // classification happens in the second pass using
-                // the per-tick camp-soldier snapshot, which does
-                // carry rank.
+                // classification happens in this same camp-registry walk in
+                // the reference, reusing the exact SquareDistance result.
                 in_range_soldiers.push(handle);
-            } else if view.rank == ProfileRank::Officer
+                if soldier.rank == ProfileRank::Officer
+                    && nearest_officer.is_none_or(|(_, distance)| sq_dist < distance)
+                {
+                    nearest_officer = Some((handle, sq_dist));
+                }
+            } else if soldier.rank == ProfileRank::Officer
                 && sq_dist
                     < nearest_far_officer
                         .map(|(_, d, _)| d)
@@ -1362,24 +1362,6 @@ impl EnemyAi {
                     fallback_to_sender: None,
                     to_whole_patrol: false,
                 });
-        }
-
-        // Pick the closest in-range officer: use the per-tick camp
-        // soldier snapshot, which does carry rank. Filter
-        // on `pSoldier->GetRank() == RANK_OFFICER`.
-        for cs in tick.camp_soldiers.iter() {
-            if cs.rank != ProfileRank::Officer {
-                continue;
-            }
-            if !in_range_soldiers.contains(&cs.handle) {
-                continue;
-            }
-            let dx = cs.position.x - my_pos.x;
-            let dy = cs.position.y - my_pos.y;
-            let sq_dist = dx * dx + dy * dy;
-            if nearest_officer.is_none_or(|(_, d)| sq_dist < d) {
-                nearest_officer = Some((cs.handle, sq_dist));
-            }
         }
 
         if let Some((officer, _)) = nearest_officer {

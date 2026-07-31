@@ -4769,8 +4769,13 @@ impl EnemyAi {
             Substate::AttackingTowerGuardAlert => {
                 if stimulus_type == StimulusType::EventDone {
                     self.tower_guard_call_alert(self.base.seek_position, ctx, tick);
-                    self.set_state(AiState::Attacking, Substate::AttackingTowerGuardObserve);
-                    self.base.launch_timer(100, ctx.frame);
+                    // TowerGuardCallAlert is synchronous in the reference;
+                    // once every recipient has handled the cry, the guard
+                    // immediately chooses its next battle decision.  Observe
+                    // is only one possible decision and must not be forced
+                    // here (an archer may, for example, lower and reload its
+                    // bow instead).
+                    self.battle_decisions(sim, global, ctx, tick, grid);
                 }
             }
 

@@ -395,6 +395,14 @@ impl EnemyAi {
         // friend-seen injection.
         let mut num_enemies_i_can_see = self.list_them.len();
 
+        // Original chooses the primary target from the persistent personal
+        // Them list before walking nearby friends and appending the enemies
+        // they are attacking. Those appended entries broaden later tactical
+        // scans, but must not retroactively replace this decision's primary
+        // target merely because one is nearer.
+        self.base.primary_target =
+            self.get_new_primary_target(PrimaryTargetFlags::empty(), ctx, tick);
+
         // Walk same-camp soldiers in STATE_ATTACKING and inject their
         // primary target into list_them so we hunt where they are
         // fighting. Skip self, missing primary_target, and anything
@@ -404,7 +412,12 @@ impl EnemyAi {
             let me = self.base.me;
             let mut friend_seen: Vec<HumanHandle> = Vec::new();
             for cs in &tick.camp_soldiers {
-                if cs.handle == me {
+                // Original performs this inside the same friend loop that
+                // first requires IsDetecting360Degrees and inserts the
+                // soldier into mlistUs. A distant or occluded attacking ally
+                // must not contribute its primary target merely because it
+                // exists in the camp snapshot.
+                if cs.handle == me || !self.base.list_us.contains(&cs.handle) {
                     continue;
                 }
                 if cs.ai_state != AiState::Attacking {
@@ -485,10 +498,6 @@ impl EnemyAi {
                 idx += 1;
             }
         }
-
-        // Get primary target
-        self.base.primary_target =
-            self.get_new_primary_target(PrimaryTargetFlags::empty(), ctx, tick);
 
         if num_enemies_i_can_see == 0 {
             // No visible enemies. Ordering:
