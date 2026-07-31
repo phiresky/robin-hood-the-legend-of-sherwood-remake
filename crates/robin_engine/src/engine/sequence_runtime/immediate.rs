@@ -590,22 +590,31 @@ impl EngineInner {
                     .get_entity(owner)
                     .and_then(|entity| entity.human_data())
                     .is_some_and(|human| human.unconscious);
+                let mut stop_for_lock = false;
                 if let Some(ai) = self
                     .get_entity_mut(owner)
                     .and_then(crate::element::Entity::ai_controller_mut)
                 {
                     if cmd == Command::LockAi {
-                        // This is the `RHCOMMAND_LOCK_AI` ExecuteImmediately
-                        // arm itself. C++ has already selected that incoming
-                        // element as `mpSequenceElement`, so ScriptLockAI sees
-                        // `GetCommand() == LOCK_AI` and deliberately does not
-                        // call Stop(). In particular, it must not cancel
-                        // same-level siblings such as the two TurnElement
-                        // commands in an attached-scroll interaction.
+                        // ExecutedImmediately calls the owner directly; it
+                        // does not pass through Go/Instruct and therefore
+                        // does not select the LockAi element. ScriptLockAI
+                        // still sees the actor's outgoing command and calls
+                        // Stop(Normal) synchronously before LockAi itself
+                        // terminates.
+                        //
+                        // Suppress the controller's deferred halt and close
+                        // that Stop explicitly below, at this exact immediate
+                        // command boundary.
                         ai.script_lock(false, true);
+                        stop_for_lock = true;
                     } else if ai.script_locked {
                         ai.script_unlock(unconscious);
                     }
+                }
+                if stop_for_lock {
+                    self.stop_owner(owner, crate::sequence::SequencePriority::Normal);
+                    self.dispatch_condolations(sim, assets);
                 }
                 if cmd == Command::UnlockAi {
                     // ScriptUnlockAI calls Think(EVENT_RETURN_TO_DUTY)

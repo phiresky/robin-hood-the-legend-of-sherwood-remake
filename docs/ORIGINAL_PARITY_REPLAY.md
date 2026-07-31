@@ -2833,6 +2833,49 @@ anti-collision, and line-crossing work. Positive-distance transitions retain
 their existing movement and collision behavior. Linux3 Profile 003 Savegame 042
 matches every recorded frame after this correction.
 
+### Deferred turns keep an explicitly retained movement goal
+
+Rust has a synthetic first-Turn goal clear which compensates for its staged
+condolence callbacks: an ordinary `GoNear` followed by `FaceTo` must not leave
+the superseded movement destination on the sprite. A deferred FaceTo carrying
+`RetainedMovementGoal` represents the opposite Original boundary. The outgoing
+movement's condolence card has already observed that Turn as the actor's
+selected element, so it deliberately preserves the goal; Turn execution itself
+does not clear it.
+
+The synthetic clear now applies only to unmarked Turns. This preserves the
+general staged-callback correction without erasing a goal which the sequence
+explicitly retained. Linux2 Profile 002 QuickSave matches every recorded frame,
+including the former civilian patrol divergence after frame 2,113.
+
+### Final stop transitions complete entity seeks before retiring
+
+`RHElementActor::PerformSeek` wraps the complete movement order stream,
+including the final walking/running-to-waiting transition. When that transition
+terminates, Original revalidates the live entity target just as it does after a
+plain final waypoint: a stale target refreshes the seek, while an unchanged or
+in-range target launches the actor-owned post-seek interaction.
+
+Rust's transition-terminated fast path bypassed that validation and exhausted
+the movement directly into Wait, leaving actions such as `HealCmd` dormant.
+The transition path now performs the same final-target handoff, refresh, and
+no-action frozen-wait behavior as the ordinary arrival path. Linux2 Profile 002
+Savegame 016 matches every recorded frame.
+
+### Immediate LockAi stops the still-selected outgoing command
+
+`RHSequenceElement::ExecutedImmediately` invokes the NPC's
+`ExecuteImmediately` directly; it does not call `Go`/`Instruct` and therefore
+does not install the `LOCK_AI` element as `mpSequenceElement`.
+`ScriptLockAI` consequently sees the actor's outgoing command and calls
+`Stop(Normal)` synchronously before the LockAi element terminates.
+
+Rust previously assumed the immediate element had already been selected and
+suppressed that stop. A moving NPC could advance one extra frame before the
+following scripted animation reached the later sequence-manager pass. The
+immediate handler now closes the outgoing stop and its condolence stack at the
+LockAi boundary. Linux2 Profile 002 Savegame 018 matches every recorded frame.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
