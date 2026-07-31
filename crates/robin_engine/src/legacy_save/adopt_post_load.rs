@@ -126,12 +126,6 @@ impl LegacyPostLoadAdoptionPlan {
         entities: &LegacyEntityFixups,
         rng_policy: LegacyRngRestorePolicy,
     ) -> Result<Self, LegacyPostLoadAdoptError> {
-        if global_ai.abi_profile != LegacySaveAbiProfile::PortLinuxI386V48 {
-            return Err(LegacyPostLoadAdoptError::UnsupportedAbi(
-                global_ai.abi_profile,
-            ));
-        }
-
         let mut active_remark_completions = Vec::new();
         for record in &payloads.records {
             let local_ai = match &record.payload {

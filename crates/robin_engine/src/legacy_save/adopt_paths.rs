@@ -113,11 +113,6 @@ pub(crate) fn preflight_v48_paths(
     sequences: &LegacySequenceAdoptionPlan,
     entities: &LegacyEntityFixups,
 ) -> Result<LegacyPathAdoptionPlan, LegacyPathAdoptError> {
-    if failed.abi_profile != LegacySaveAbiProfile::PortLinuxI386V48 {
-        return Err(LegacyPathAdoptError::UnsupportedAbi {
-            profile: failed.abi_profile,
-        });
-    }
     if pathfinder.do_not_ignore_next_path {
         return Err(LegacyPathAdoptError::IgnoredHeadNotRepresentable);
     }

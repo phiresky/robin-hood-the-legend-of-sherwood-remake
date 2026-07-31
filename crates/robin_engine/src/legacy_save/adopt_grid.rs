@@ -201,11 +201,6 @@ impl LegacyFastFindGridAdoptionPlan {
         position_topology: &LegacyPositionTopology,
         vm_arena: &LegacyVmArenaPlan,
     ) -> Result<Self, LegacyGridAdoptError> {
-        if state.abi_profile != LegacySaveAbiProfile::PortLinuxI386V48 {
-            return Err(LegacyGridAdoptError::UnsupportedAbi {
-                profile: state.abi_profile,
-            });
-        }
         let static_repulsive_points = preflight_static_repulsive_points(state)?;
 
         let decoded_topology = derive_grid_topology(engine, assets)?;
@@ -1094,7 +1089,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_wrong_abi_before_touching_topology() {
+    fn windows_profile_reaches_normal_topology_validation() {
         let mut state = empty_state();
         state.abi_profile = LegacySaveAbiProfile::RetailWindowsX86V48;
         let error = LegacyFastFindGridAdoptionPlan::preflight(
@@ -1106,7 +1101,10 @@ mod tests {
             &LegacyVmArenaPlan::empty_for_tests(),
         )
         .unwrap_err();
-        assert!(matches!(error, LegacyGridAdoptError::UnsupportedAbi { .. }));
+        assert!(!matches!(
+            error,
+            LegacyGridAdoptError::UnsupportedAbi { .. }
+        ));
     }
 
     #[test]

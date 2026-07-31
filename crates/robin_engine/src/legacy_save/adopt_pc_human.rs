@@ -25,6 +25,7 @@ use crate::{
 };
 
 use super::{
+    LegacySaveAbiProfile,
     adopt::{
         LegacyEntityFixups, LegacyLineTopology, LegacyLineTopologyError, LegacyPositionTopology,
         LegacySaveAdoptError,
@@ -221,6 +222,7 @@ impl LegacyPcHumanAdoptionPlan {
     pub(crate) fn preflight(
         engine: &EngineInner,
         payloads: &LegacyElementPayloadStream,
+        abi_profile: LegacySaveAbiProfile,
         entities: &LegacyEntityFixups,
         position_topology: &LegacyPositionTopology,
         sequence_topology: &LegacySequenceTopology,
@@ -256,7 +258,9 @@ impl LegacyPcHumanAdoptionPlan {
                 });
             }
             let human = convert_human(
+                engine,
                 saved_human,
+                abi_profile,
                 creation_order,
                 entities,
                 position_topology,
@@ -327,7 +331,9 @@ impl LegacyPcHumanAdoptionPlan {
 }
 
 fn convert_human(
+    engine: &EngineInner,
     saved: &LegacyHumanPayload,
+    abi_profile: LegacySaveAbiProfile,
     creation_order: u32,
     entities: &LegacyEntityFixups,
     position_topology: &LegacyPositionTopology,
@@ -433,11 +439,12 @@ fn convert_human(
         hulk_direction: saved.hulk_direction,
         hulk_speed: saved.hulk_speed,
         repulsive_point: repulsive_point(&saved.repulsive_point),
-        building_sector: checked_sector(
+        building_sector: convert_building_sector(
+            engine,
+            saved,
+            abi_profile,
             creation_order,
-            "building",
-            saved.building.0,
-            &position_topology.sectors,
+            position_topology,
         )?,
         // Original's CHECKENUM bug writes exactly this word. Human noise
         // production refreshes every other member; retaining only the word is
@@ -452,6 +459,50 @@ fn convert_human(
         },
         pending_shoots,
     })
+}
+
+fn convert_building_sector(
+    engine: &EngineInner,
+    saved: &LegacyHumanPayload,
+    abi_profile: LegacySaveAbiProfile,
+    creation_order: u32,
+    position_topology: &LegacyPositionTopology,
+) -> Result<Option<SectorHandle>, LegacyPcHumanAdoptError> {
+    if abi_profile == LegacySaveAbiProfile::PortLinuxI386V48 {
+        return checked_sector(
+            creation_order,
+            "building",
+            saved.building.0,
+            &position_topology.sectors,
+        );
+    }
+
+    // The retail stream uses both zero and 0xffff for "not in a building".
+    // For any other stale/non-building index, the compatibility loader in
+    // original-code/RHelementactorhuman.cpp resolves the authoritative
+    // building from the actor's already-deserialized position sector.
+    let Some(raw_building) = saved.building.0 else {
+        return Ok(None);
+    };
+    if raw_building == 0 {
+        return Ok(None);
+    }
+    let direct = position_topology
+        .sectors
+        .get(usize::from(raw_building))
+        .copied()
+        .flatten();
+    if engine.entity_building_sector(direct).is_some() {
+        return Ok(direct);
+    }
+
+    let position_sector = checked_sector(
+        creation_order,
+        "actor.position.sector",
+        saved.actor.element.sprite.position.sector.0,
+        &position_topology.sectors,
+    )?;
+    Ok(engine.entity_building_sector(position_sector))
 }
 
 #[allow(clippy::too_many_arguments)]

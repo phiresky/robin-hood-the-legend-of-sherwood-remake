@@ -330,7 +330,7 @@ pub struct LegacyStandaloneObjectPayload {
 impl LegacyStandaloneObjectPayload {
     fn read(
         reader: &mut LegacyReader<'_>,
-        abi_profile: LegacySaveAbiProfile,
+        _abi_profile: LegacySaveAbiProfile,
         limits: &LegacyPostHikingLimits,
     ) -> LegacyResult<Self> {
         reader.scope("object", |reader| {
@@ -347,7 +347,9 @@ impl LegacyStandaloneObjectPayload {
             let object_type = reader.read_u32("object_type")?;
             let associated_action = reader.read_u32("associated_action")?;
             let repulsive_point = reader.scope("repulsive_point", |reader| {
-                LegacyRepulsivePointPayload::read(reader, abi_profile)
+                // This standalone trajectory helper is still serialized by
+                // RHElementObject, whose retail stream uses narrow geometry.
+                LegacyRepulsivePointPayload::read(reader, LegacySaveAbiProfile::PortLinuxI386V48)
             })?;
             let belongs_to_beggar = reader.read_bool("belongs_to_beggar")?;
             let taken = reader.read_bool("taken")?;

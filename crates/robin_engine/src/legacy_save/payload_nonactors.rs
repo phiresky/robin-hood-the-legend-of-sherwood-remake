@@ -174,7 +174,10 @@ pub fn read_object_payload(
         let object_type = reader.read_u32("object_type")?;
         let associated_action = reader.read_u32("associated_action")?;
         let repulsive_point = reader.scope("repulsive_point", |reader| {
-            LegacyRepulsivePointPayload::read(reader, abi_profile)
+            // Retail object payloads use the narrow geometry layout here.
+            // The wide Windows compatibility form is specific to the Human
+            // serializer; RHElementObject calls the ordinary serializer.
+            LegacyRepulsivePointPayload::read(reader, LegacySaveAbiProfile::PortLinuxI386V48)
         })?;
         let belongs_to_beggar = reader.read_bool("belongs_to_beggar")?;
         let taken = reader.read_bool("taken")?;

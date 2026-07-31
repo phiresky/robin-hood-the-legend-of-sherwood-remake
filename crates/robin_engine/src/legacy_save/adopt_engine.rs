@@ -1,4 +1,4 @@
-//! Coordinator for atomic Original Linux-v48 engine adoption.
+//! Coordinator for atomic Original v48 engine adoption.
 //!
 //! Every child plan is constructed against the same initialized mission
 //! before any mutation occurs. Applying the coordinator to a detached clone is
@@ -12,7 +12,6 @@ use thiserror::Error;
 use crate::engine::{Engine, EngineInner, LevelAssets};
 
 use super::{
-    LegacySaveAbiProfile,
     adopt::{LegacyEntityFixups, derive_position_topology},
     adopt_actor_ownership::LegacyActorOwnershipAdoptionPlan,
     adopt_camera::{LegacyCameraAdoptionPlan, LegacyCameraHostState},
@@ -43,7 +42,7 @@ use super::{
 };
 
 #[derive(Debug, Error)]
-#[error("cannot adopt Original Linux-v48 save section {stage}: {detail}")]
+#[error("cannot adopt Original v48 save section {stage}: {detail}")]
 pub struct LegacyKnownAdoptionError {
     pub stage: &'static str,
     pub detail: String,
@@ -84,13 +83,6 @@ impl LegacyKnownAdoptionPlan {
         entities: LegacyEntityFixups,
         post_dynamic_creation_counter: u32,
     ) -> Result<Self, LegacyKnownAdoptionError> {
-        if body.header.abi_profile != LegacySaveAbiProfile::PortLinuxI386V48 {
-            return Err(LegacyKnownAdoptionError {
-                stage: "header",
-                detail: format!("expected Linux i386 v48, got {:?}", body.header.abi_profile),
-            });
-        }
-
         let campaign = stage(
             "campaign",
             LegacyCampaignAdoptionPlan::preflight(
@@ -170,6 +162,7 @@ impl LegacyKnownAdoptionPlan {
             LegacyPcHumanAdoptionPlan::preflight(
                 engine,
                 &body.element_payloads,
+                body.header.abi_profile,
                 &entities,
                 &position_topology,
                 &sequence_topology,

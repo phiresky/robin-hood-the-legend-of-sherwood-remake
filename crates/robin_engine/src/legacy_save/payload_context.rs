@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::legacy_io::{LegacyReader, LegacyResult};
 use crate::scb::ScbFile;
 
+use super::LegacySaveAbiProfile;
 use super::elements::LegacyElementClass;
 use super::payload_ai::{
     LegacyLocalAiDecodeConfig, LegacyLocalAiKind, LegacyLocalAiLimits, LegacyLocalAiPayload,
@@ -67,6 +68,7 @@ pub struct LegacyMissionPayloadDecodeContext<'a> {
     scb: &'a ScbFile,
     metadata: &'a LegacyMissionPayloadMetadata,
     limits: LegacyMissionPayloadDecodeLimits,
+    abi_profile: LegacySaveAbiProfile,
 }
 
 impl<'a> LegacyMissionPayloadDecodeContext<'a> {
@@ -74,11 +76,13 @@ impl<'a> LegacyMissionPayloadDecodeContext<'a> {
         scb: &'a ScbFile,
         metadata: &'a LegacyMissionPayloadMetadata,
         limits: LegacyMissionPayloadDecodeLimits,
+        abi_profile: LegacySaveAbiProfile,
     ) -> Self {
         Self {
             scb,
             metadata,
             limits,
+            abi_profile,
         }
     }
 
@@ -86,7 +90,25 @@ impl<'a> LegacyMissionPayloadDecodeContext<'a> {
         scb: &'a ScbFile,
         metadata: &'a LegacyMissionPayloadMetadata,
     ) -> Self {
-        Self::new(scb, metadata, LegacyMissionPayloadDecodeLimits::default())
+        Self::new(
+            scb,
+            metadata,
+            LegacyMissionPayloadDecodeLimits::default(),
+            LegacySaveAbiProfile::PortLinuxI386V48,
+        )
+    }
+
+    pub fn with_default_limits_for_abi(
+        scb: &'a ScbFile,
+        metadata: &'a LegacyMissionPayloadMetadata,
+        abi_profile: LegacySaveAbiProfile,
+    ) -> Self {
+        Self::new(
+            scb,
+            metadata,
+            LegacyMissionPayloadDecodeLimits::default(),
+            abi_profile,
+        )
     }
 
     fn metadata_for<'r>(
@@ -315,6 +337,7 @@ impl LegacyPayloadDecodeContext for LegacyMissionPayloadDecodeContext<'_> {
             &LegacyLocalAiDecodeConfig {
                 kind: Some(kind),
                 limits: self.limits.local_ai,
+                abi_profile: self.abi_profile,
             },
         )?))
     }

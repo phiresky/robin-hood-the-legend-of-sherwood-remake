@@ -72,8 +72,6 @@ impl LegacyPreambleServicesPlan {
 
 #[derive(Clone, Debug, Error, PartialEq)]
 pub(crate) enum LegacyPreambleServicesError {
-    #[error("preamble service adoption supports Linux i386 v48 only, not {actual:?}")]
-    UnsupportedAbi { actual: LegacySaveAbiProfile },
     #[error("saved messenger action {value} is not a known RHaction")]
     InvalidMessengerAction { value: u16 },
     #[error("saved sound field {field} has value {value}; expected {expected}")]
@@ -103,13 +101,9 @@ pub(crate) enum LegacyPreambleServicesError {
 }
 
 pub(crate) fn preflight_v48_preamble_services(
-    abi: LegacySaveAbiProfile,
+    _abi: LegacySaveAbiProfile,
     preamble: &LegacyEnginePreamble,
 ) -> Result<LegacyPreambleServicesPlan, LegacyPreambleServicesError> {
-    if abi != LegacySaveAbiProfile::PortLinuxI386V48 {
-        return Err(LegacyPreambleServicesError::UnsupportedAbi { actual: abi });
-    }
-
     let messenger = convert_messenger(preamble.messenger)?;
     let sound = convert_sound(&preamble.sound)?;
     let host = LegacyPreambleHostState {
@@ -206,14 +200,6 @@ fn convert_serialized_sound(
             ));
         }
     };
-    if saved.stream_position != 0 {
-        return Err(invalid_sound(
-            "stream_position",
-            saved.stream_position,
-            "zero (the Original v48 writer does not persist playback position)",
-        ));
-    }
-
     let mut sources = SoundSourceManager::new();
     for (slot, entry) in saved.source_manager.slots.iter().enumerate() {
         let Some(entry) = entry else {

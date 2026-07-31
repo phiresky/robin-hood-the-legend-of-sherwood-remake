@@ -60,8 +60,6 @@ pub(crate) struct LegacyCameraAdoptionPlan {
 
 #[derive(Clone, Debug, Error, PartialEq)]
 pub(crate) enum LegacyCameraAdoptionError {
-    #[error("camera adoption supports Linux i386 v48 only, not {actual:?}")]
-    UnsupportedAbi { actual: LegacySaveAbiProfile },
     #[error("saved camera field {field} contains non-finite value {value}")]
     NonFinite { field: String, value: f32 },
     #[error("saved camera zoom_factor must be positive, got {value}")]
@@ -81,13 +79,9 @@ pub(crate) enum LegacyCameraAdoptionError {
 impl LegacyCameraAdoptionPlan {
     pub(crate) fn preflight(
         engine: &EngineInner,
-        abi: LegacySaveAbiProfile,
+        _abi: LegacySaveAbiProfile,
         saved: &LegacyEnginePreamble,
     ) -> Result<Self, LegacyCameraAdoptionError> {
-        if abi != LegacySaveAbiProfile::PortLinuxI386V48 {
-            return Err(LegacyCameraAdoptionError::UnsupportedAbi { actual: abi });
-        }
-
         validate_point("view", saved.view)?;
         validate_finite("zoom_factor", saved.zoom_factor)?;
         if saved.zoom_factor <= 0.0 {

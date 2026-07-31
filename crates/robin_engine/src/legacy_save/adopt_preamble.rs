@@ -42,8 +42,6 @@ pub(crate) struct LegacyLinuxPreambleState {
 
 #[derive(Clone, Debug, Error, PartialEq)]
 pub(crate) enum LegacyPreambleAdoptionError {
-    #[error("legacy preamble adoption currently supports Linux i386 v48 only, not {actual:?}")]
-    UnsupportedAbi { actual: LegacySaveAbiProfile },
     #[error("legacy engine speed must be finite and non-negative, got {value}")]
     InvalidSpeed { value: f32 },
     #[error("legacy scroll speed index {value} exceeds the Original 32-entry scrolling table")]
@@ -78,12 +76,9 @@ impl LegacyLinuxPreambleState {
     }
 
     fn try_from_fields(
-        abi: LegacySaveAbiProfile,
+        _abi: LegacySaveAbiProfile,
         fields: LegacyPreambleFields<'_>,
     ) -> Result<Self, LegacyPreambleAdoptionError> {
-        if abi != LegacySaveAbiProfile::PortLinuxI386V48 {
-            return Err(LegacyPreambleAdoptionError::UnsupportedAbi { actual: abi });
-        }
         if !fields.speed.is_finite() || fields.speed < 0.0 {
             return Err(LegacyPreambleAdoptionError::InvalidSpeed {
                 value: fields.speed,
@@ -271,18 +266,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_windows_and_invalid_scroll_state_before_mutation() {
+    fn accepts_windows_and_rejects_invalid_scroll_state_before_mutation() {
         let source_briefings = briefings();
         let windows = LegacyLinuxPreambleState::try_from_fields(
             LegacySaveAbiProfile::RetailWindowsX86V48,
             fields(&source_briefings),
         );
-        assert_eq!(
-            windows.unwrap_err(),
-            LegacyPreambleAdoptionError::UnsupportedAbi {
-                actual: LegacySaveAbiProfile::RetailWindowsX86V48,
-            }
-        );
+        assert!(windows.is_ok());
 
         let mut invalid = fields(&source_briefings);
         invalid.speed_index = 32;

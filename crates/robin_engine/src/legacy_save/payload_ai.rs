@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
 
+use super::LegacySaveAbiProfile;
 use super::payload_base::{
     LegacyAiElementRef, LegacyElementRef, LegacyLineRef, LegacySectorRef, read_ai_element_ref,
     read_element_ref, read_line_ref, read_sector_ref,
@@ -92,6 +93,7 @@ impl Default for LegacyLocalAiLimits {
 pub struct LegacyLocalAiDecodeConfig {
     pub kind: Option<LegacyLocalAiKind>,
     pub limits: LegacyLocalAiLimits,
+    pub abi_profile: LegacySaveAbiProfile,
 }
 
 impl LegacyLocalAiDecodeConfig {
@@ -99,6 +101,7 @@ impl LegacyLocalAiDecodeConfig {
         Self {
             kind: Some(kind),
             limits: LegacyLocalAiLimits::default(),
+            abi_profile: LegacySaveAbiProfile::PortLinuxI386V48,
         }
     }
 }
@@ -187,6 +190,21 @@ pub struct LegacyAiPathStatus {
     pub forward_movement: bool,
     pub hiking_path_index: Option<u16>,
     pub history: Vec<LegacyAiPathHistoryEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LegacyAiLogLine {
+    /// The Linux port's `CHECKENUM(newLogLine)` writes only the first four
+    /// bytes of the `RHlogLine` aggregate.
+    PortLinuxType(i32),
+    /// Windows retail writes the complete naturally aligned 12-byte
+    /// `RHlogLine` aggregate.
+    RetailWindows {
+        log_type: i32,
+        info: u16,
+        alignment_padding: u16,
+        frame: u32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -346,7 +364,7 @@ pub struct LegacyLocalAiCommon {
     pub forbidden_remarks: Vec<i32>,
     pub current_remark_flags: u16,
     /// `RHlogLine` is serialized through `CHECKENUM`, hence four bytes.
-    pub log_lines: Vec<i32>,
+    pub log_lines: Vec<LegacyAiLogLine>,
     pub owner: LegacyAiElementRef,
     pub current_state: i32,
     pub old_state: i32,
@@ -467,7 +485,7 @@ impl LegacyLocalAiCommon {
         let forbidden_remarks =
             read_i32_list(reader, "forbidden_remarks", config.limits.forbidden_remarks)?;
         let current_remark_flags = reader.read_u16("current_remark_flags")?;
-        let log_lines = read_i32_list(reader, "log_lines", config.limits.log_lines)?;
+        let log_lines = read_ai_log_lines(reader, config.abi_profile, config.limits.log_lines)?;
         let owner = read_ai_element_ref(reader, "owner")?;
 
         let current_state = reader.read_i32("current_state")?;
@@ -1125,6 +1143,38 @@ fn read_u32_list(
     })
 }
 
+fn read_ai_log_lines(
+    reader: &mut LegacyReader<'_>,
+    abi_profile: LegacySaveAbiProfile,
+    maximum: usize,
+) -> LegacyResult<Vec<LegacyAiLogLine>> {
+    reader.scope("log_lines", |reader| {
+        let count = reader.read_count_u32("count", maximum)?;
+        let mut values = reserve(reader, "items", count)?;
+        for index in 0..count {
+            values.push(reader.scope(format!("items[{index}]"), |reader| {
+                Ok(match abi_profile {
+                    LegacySaveAbiProfile::PortLinuxI386V48 => {
+                        LegacyAiLogLine::PortLinuxType(reader.read_i32("log_type")?)
+                    }
+                    LegacySaveAbiProfile::RetailWindowsX86V48 => {
+                        LegacyAiLogLine::RetailWindows {
+                            log_type: reader.read_i32("log_type")?,
+                            info: reader.read_u16("info")?,
+                            // MSVC inserts two bytes before the ULONG frame.
+                            // They are not behavior, but retaining them keeps
+                            // the compatibility decoder lossless.
+                            alignment_padding: reader.read_u16("alignment_padding")?,
+                            frame: reader.read_u32("frame")?,
+                        }
+                    }
+                })
+            })?);
+        }
+        Ok(values)
+    })
+}
+
 fn read_ai_position(
     reader: &mut LegacyReader<'_>,
     field: impl Into<String>,
@@ -1472,6 +1522,43 @@ mod tests {
         u16(bytes, u16::MAX);
     }
 
+    #[test]
+    fn windows_ai_log_lines_consume_complete_aligned_aggregates() {
+        let mut bytes = Vec::new();
+        u32(&mut bytes, 2);
+        i32(&mut bytes, 3);
+        u16(&mut bytes, 17);
+        u16(&mut bytes, 0xabcd);
+        u32(&mut bytes, 120);
+        i32(&mut bytes, 7);
+        u16(&mut bytes, 110);
+        u16(&mut bytes, 0x35e2);
+        u32(&mut bytes, 999);
+
+        with_reader(&bytes, |reader| {
+            let decoded =
+                read_ai_log_lines(reader, LegacySaveAbiProfile::RetailWindowsX86V48, 8).unwrap();
+            assert_eq!(
+                decoded,
+                vec![
+                    LegacyAiLogLine::RetailWindows {
+                        log_type: 3,
+                        info: 17,
+                        alignment_padding: 0xabcd,
+                        frame: 120,
+                    },
+                    LegacyAiLogLine::RetailWindows {
+                        log_type: 7,
+                        info: 110,
+                        alignment_padding: 0x35e2,
+                        frame: 999,
+                    },
+                ]
+            );
+            assert_eq!(reader.offset(), bytes.len() as u64);
+        });
+    }
+
     fn ai_list(bytes: &mut Vec<u8>, fingerprint: [u8; 16]) {
         bytes.extend_from_slice(&fingerprint);
         u32(bytes, 0);
@@ -1709,7 +1796,7 @@ mod tests {
                 assert_eq!(decoded.next_macro_rand, 0x42);
                 assert_eq!(decoded.overlapped_forecast_byte, 0xab);
                 assert!(!decoded.next_macro_rand_forecasted);
-                assert_eq!(decoded.log_lines, Vec::<i32>::new());
+                assert_eq!(decoded.log_lines, Vec::<LegacyAiLogLine>::new());
             });
         }
     }
@@ -1723,6 +1810,7 @@ mod tests {
                 &LegacyLocalAiDecodeConfig {
                     kind: None,
                     limits: LegacyLocalAiLimits::default(),
+                    abi_profile: LegacySaveAbiProfile::PortLinuxI386V48,
                 },
             )
             .unwrap_err();

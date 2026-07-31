@@ -75,9 +75,10 @@ pub fn decode_initialized_v48_save(
         hiking_guide: derive_hiking_guide_topology(engine, assets)?,
         tail: derive_post_tail_topology(engine, assets, eof_offset)?,
     };
-    let element_context = LegacyMissionPayloadDecodeContext::with_default_limits(
+    let element_context = LegacyMissionPayloadDecodeContext::with_default_limits_for_abi(
         scb,
         &static_elements.payload_metadata,
+        header.abi_profile,
     );
     let vm_context = LegacyVmMemberDecoder::with_default_limits(scb);
     let context =
