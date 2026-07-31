@@ -3428,62 +3428,64 @@ struct EntityMap {
 }
 
 impl EntityMap {
-    /// Build a deterministic one-to-one correspondence without consulting raw
-    /// table indices. Entity kind and initial map position are the primary
-    /// labels. Creation order and Rust table order only break ties between
-    /// otherwise indistinguishable colocated entities.
+    /// Build the exact one-to-one correspondence from Original's immutable
+    /// per-engine construction serial.
+    ///
+    /// The trace frame is post-tick while this runs against Rust's pre-tick
+    /// state, so position, active state and posture are all invalid identity
+    /// labels here. In particular, several inactive beam PCs can be colocated
+    /// and then start moving on the first recorded frame. Both mission loading
+    /// and legacy-save adoption install the authoritative Original creation
+    /// order on every Rust entity, including gaps consumed by mobile masters.
     fn build(engine: &Engine, assets: &LevelAssets, frame: &TraceFrame) -> Self {
-        let mut originals: Vec<_> = frame.elements.iter().collect();
-        originals.sort_by_key(|element| (element.creation_order, element.entity_id));
-        let rust_entities: Vec<_> = engine
-            .entities_with_ids_iter()
-            .map(|(id, entity)| {
-                let element = entity.element_data();
-                (
-                    id,
-                    entity.entity_id_kind(),
-                    element.position_map(),
-                    element.active,
-                    element.posture as u32,
-                )
-            })
-            .collect();
+        let mut rust_by_creation_order = BTreeMap::new();
+        for (id, entity) in engine.entities_with_ids_iter() {
+            let creation_order = engine.original_creation_order(id);
+            if let Some((previous, _)) =
+                rust_by_creation_order.insert(creation_order, (id, entity.entity_id_kind()))
+            {
+                panic!(
+                    "Rust entities {previous:?} and {id:?} share Original creation order \
+                     {creation_order}"
+                );
+            }
+        }
         assert_eq!(
-            originals.len(),
-            rust_entities.len(),
+            frame.elements.len(),
+            rust_by_creation_order.len(),
             "entity tables have different cardinality"
         );
 
-        let mut used = BTreeSet::new();
         let mut result = BTreeMap::new();
-        for original in originals {
+        let mut entities_by_creation_order = BTreeMap::new();
+        for original in &frame.elements {
             let expected_kind = EntityIdKind::from(original.entity_id.kind);
-            let expected_position: MapPoint = original.position_map.into();
-            let mut candidates: Vec<_> = rust_entities
-                .iter()
-                .filter(|(id, kind, _, _, _)| *kind == expected_kind && !used.contains(id))
-                .collect();
-            candidates.sort_by_key(|(id, _, position, active, posture)| {
-                let exact = position.x.to_bits() == expected_position.x.to_bits()
-                    && position.y.to_bits() == expected_position.y.to_bits();
-                let dx = f64::from(position.x) - f64::from(expected_position.x);
-                let dy = f64::from(position.y) - f64::from(expected_position.y);
-                (
-                    (!exact) as u8,
-                    exact && *active != original.active,
-                    exact && *posture != original.posture,
-                    (dx * dx + dy * dy).to_bits(),
-                    id.index(),
-                )
-            });
-            let (rust_id, _, _, _, _) = candidates.first().unwrap_or_else(|| {
-                panic!(
-                    "no unused Rust {:?} for original {:?}",
-                    expected_kind, original.entity_id
-                )
-            });
-            used.insert(*rust_id);
-            result.insert(original.entity_id, *rust_id);
+            let &(rust_id, actual_kind) = rust_by_creation_order
+                .get(&original.creation_order)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Original {:?} has creation order {}, absent from the Rust identity table",
+                        original.entity_id, original.creation_order
+                    )
+                });
+            assert_eq!(
+                actual_kind, expected_kind,
+                "Original {:?} creation order {} has kind {:?}, but Rust {rust_id:?} has kind \
+                 {actual_kind:?}",
+                original.entity_id, original.creation_order, expected_kind,
+            );
+            assert!(
+                result.insert(original.entity_id, rust_id).is_none(),
+                "Original trace entity {:?} occurs twice",
+                original.entity_id
+            );
+            assert!(
+                entities_by_creation_order
+                    .insert(original.creation_order, rust_id)
+                    .is_none(),
+                "Original creation order {} occurs twice in the trace",
+                original.creation_order
+            );
         }
         let retained = assets
             .legacy_grid_topology
@@ -3510,18 +3512,6 @@ impl EntityMap {
                 );
             }
         }
-        let entities_by_creation_order = frame
-            .elements
-            .iter()
-            .map(|element| {
-                (
-                    element.creation_order,
-                    *result
-                        .get(&element.entity_id)
-                        .expect("startup entity has an isomorphic mapping"),
-                )
-            })
-            .collect();
         Self {
             entities: result,
             entities_by_creation_order,
@@ -3585,13 +3575,10 @@ impl EntityMap {
     }
 
     /// Extend the mission-start bijection for entities created while replaying
-    /// the mission. Raw table IDs are allocation details in both engines, so
-    /// pair new entities by the same logical labels as startup mapping and use
-    /// each engine's creation order only to break otherwise indistinguishable
-    /// ties.
+    /// the mission, using the same exact Original construction identity.
     fn extend_runtime_entities(&mut self, engine: &Engine, frame: &TraceFrame) {
         self.refresh_trace_indices(frame);
-        let mut originals: Vec<_> = frame
+        let originals: Vec<_> = frame
             .elements
             .iter()
             .filter(|element| {
@@ -3600,60 +3587,48 @@ impl EntityMap {
                     .contains_key(&element.creation_order)
             })
             .collect();
-        originals.sort_by_key(|element| (element.creation_order, element.entity_id));
-
-        let mut used: BTreeSet<_> = self.entities_by_creation_order.values().copied().collect();
-        let rust_entities: Vec<_> = engine
+        let used: BTreeSet<_> = self.entities_by_creation_order.values().copied().collect();
+        let mut rust_by_creation_order = BTreeMap::new();
+        for (id, entity) in engine
             .entities_with_ids_iter()
             .filter(|(id, _)| !used.contains(id))
-            .map(|(id, entity)| {
-                let element = entity.element_data();
-                (
-                    id,
-                    entity.entity_id_kind(),
-                    element.position_map(),
-                    element.active,
-                    element.posture as u32,
-                )
-            })
-            .collect();
+        {
+            let creation_order = engine.original_creation_order(id);
+            if let Some((previous, _)) =
+                rust_by_creation_order.insert(creation_order, (id, entity.entity_id_kind()))
+            {
+                panic!(
+                    "unmapped Rust entities {previous:?} and {id:?} share Original creation \
+                     order {creation_order}"
+                );
+            }
+        }
         assert_eq!(
             originals.len(),
-            rust_entities.len(),
+            rust_by_creation_order.len(),
             "runtime entity tables gained different numbers of unmapped entities"
         );
 
         for original in originals {
             let expected_kind = EntityIdKind::from(original.entity_id.kind);
-            let expected_position: MapPoint = original.position_map.into();
-            let mut candidates: Vec<_> = rust_entities
-                .iter()
-                .filter(|(id, kind, _, _, _)| *kind == expected_kind && !used.contains(id))
-                .collect();
-            candidates.sort_by_key(|(id, _, position, active, posture)| {
-                let exact = position.x.to_bits() == expected_position.x.to_bits()
-                    && position.y.to_bits() == expected_position.y.to_bits();
-                let dx = f64::from(position.x) - f64::from(expected_position.x);
-                let dy = f64::from(position.y) - f64::from(expected_position.y);
-                (
-                    (!exact) as u8,
-                    exact && *active != original.active,
-                    exact && *posture != original.posture,
-                    (dx * dx + dy * dy).to_bits(),
-                    id.index(),
-                )
-            });
-            let (rust_id, _, _, _, _) = candidates.first().unwrap_or_else(|| {
-                panic!(
-                    "no unused runtime Rust {:?} for original {:?} created at order {}",
-                    expected_kind, original.entity_id, original.creation_order
-                )
-            });
-            used.insert(*rust_id);
-            self.entities.insert(original.entity_id, *rust_id);
+            let &(rust_id, actual_kind) = rust_by_creation_order
+                .get(&original.creation_order)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "runtime Original {:?} creation order {} is absent from Rust",
+                        original.entity_id, original.creation_order
+                    )
+                });
+            assert_eq!(
+                actual_kind, expected_kind,
+                "runtime Original {:?} creation order {} has kind {:?}, but Rust {rust_id:?} \
+                 has kind {actual_kind:?}",
+                original.entity_id, original.creation_order, expected_kind,
+            );
+            self.entities.insert(original.entity_id, rust_id);
             assert!(
                 self.entities_by_creation_order
-                    .insert(original.creation_order, *rust_id)
+                    .insert(original.creation_order, rust_id)
                     .is_none(),
                 "Original creation order {} was mapped twice",
                 original.creation_order

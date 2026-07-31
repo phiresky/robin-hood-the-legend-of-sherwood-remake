@@ -1086,6 +1086,18 @@ impl EngineInner {
         self.world.entities.get(id)
     }
 
+    /// Return the authoritative Original `RHElement::mulCreationOrder` for
+    /// an entity.
+    ///
+    /// This is the stable cross-engine identity used by parity tooling and
+    /// legacy-save fixups. Rust entity-table slots are not equivalent:
+    /// Original mobile masters consume creation orders without occupying a
+    /// Rust entity slot, and the Rust loader constructs authored categories
+    /// in a different order.
+    pub fn original_creation_order<I: Into<EntityId>>(&self, id: I) -> u32 {
+        self.world.original_creation_order(id.into())
+    }
+
     /// Resolve a legacy raw entity-table index to the typed ID variant for
     /// the entity currently stored in that slot.
     pub fn entity_id_for_index(&self, index: u32) -> Option<EntityId> {
