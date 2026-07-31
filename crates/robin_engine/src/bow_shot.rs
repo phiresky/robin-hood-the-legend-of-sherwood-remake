@@ -1189,7 +1189,7 @@ pub fn apply_projectile_landing_resolution(
         obstacle_plane.or(resolution.obstacle_plane),
     );
     element.set_sector(resolution.sector);
-    if !resolution.blocked_by_motion_obstacle {
+    if resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle {
         element.set_layer(resolution.layer);
     }
 }
@@ -2148,7 +2148,7 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
         target_pos: _,
         trajectory,
         damage,
-        layer,
+        layer: _trajectory_layer,
         lands_in_hole,
         initial_velocity,
     } = params;
@@ -2166,7 +2166,11 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
     };
     element.set_position_map(map_pos);
     element.set_position(bow_point);
-    element.set_layer(layer);
+    // ComputeTrajectory detaches a projectile from world membership before
+    // constructing its flight: layer = 0xFFFF, sector = NULL, obstacle =
+    // NULL. It only restores a layer when the resolved landing point belongs
+    // to a motion sector on that layer.
+    element.clear_layer();
     let mut object = ObjectData {
         associated_action: Action::Bow,
         object_type: ObjectType::Arrow,

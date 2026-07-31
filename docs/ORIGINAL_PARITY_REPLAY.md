@@ -2722,6 +2722,29 @@ actor's prior action state unchanged while holding the last climb frame. Rust
 no longer normalizes that action state to Waiting. This keeps the serialized
 Moving state visible for the frozen ladder/wall idle just as in Original.
 
+### Post-seek interactions launch only from PerformSeek
+
+Original keeps a pending interaction such as Tie in the actor's
+`mpPostSeekSequence` while a cross-sector seek traverses its intermediate
+movement, door, and assertion elements. Only `PerformSeek` may consume that
+continuation: either the live target has entered the actor's sector and
+tolerance, or the final seek order has terminated and passed its live-target
+validation.
+
+Rust also had a fallback in generic `DoNextOrder` cleanup which launched the
+post-seek sequence whenever any SEEK-flagged `MoveOk` exhausted its local
+orders. That incorrectly fired Tie at the first gate approach, where a later
+route assertion interrupted it, and left an implicit Wait at the real
+destination. The fallback is gone; the existing `PerformSeek` arrival paths
+are now the sole owners of the handoff.
+
+Tie translation itself now only attaches the Tying order. Its first Execute
+validates the target, installs the progressive direction goal, calls `Turn`,
+and advances the action animation, matching `RHElementActorPC::Execute`.
+Translation no longer stops the actor or snaps its facing before that order
+ever owns an actor slot. Linux3 Profile 003 Savegame 035 exercises both
+boundaries and matches every recorded frame.
+
 ### Synchronous GoTo failures re-enter Think before it returns
 
 Original `GoTo` constructs its path through `AppendMoveToSequence` inline.
@@ -2758,6 +2781,21 @@ by the outer drain and resumed afterward with fresh live context. Nescafe
 Profile 003 Savegames 012 and 013 match every recorded frame, including the
 former downstream script-RNG split.
 
+### Flying projectiles remain outside a layer without a landing sector
+
+Original `RHElementProjectile::ComputeTrajectory` first assigns layer
+`0xFFFF`, clears the sector and obstacle, and constructs the complete flight.
+It restores the prospective landing layer only if the landing point resolves
+to a motion sector. An arrow landing outside all motion sectors therefore
+retains the no-layer sentinel throughout its flight.
+
+Rust initialized arrows on the shooter's layer and later assigned the landing
+resolver's default layer even when that resolver returned no sector. Projectile
+creation now starts with the explicit no-layer state, and both initial and
+later landing-resolution paths require a resolved motion sector before
+assigning a layer. Nescafe Profile 003 Savegame 005 matches every recorded
+frame after this correction.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
@@ -2779,7 +2817,7 @@ The expanded authoritative Linux audit adds 48 `Savegame_linux2` traces and
 140 `Savegame_linux3` traces. Unlike the first group, these exercise up to
 hundreds of dynamic bonuses/projectiles and a much wider set of interrupted
 runtime states. All five Linux3 Profile 002 traces and the audited Profile 003
-traces through Savegame 024 currently match every recorded frame. The remaining
+traces through Savegame 035 currently match every recorded frame. The remaining
 corpus is the active completion set; failures are grouped by their first
 general cause and the whole affected shard is rerun after each fix.
 

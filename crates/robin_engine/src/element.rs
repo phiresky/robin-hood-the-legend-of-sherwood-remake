@@ -264,6 +264,12 @@ impl ElementData {
             .expect("layer must be < 0xFFFF; 0xFFFF is the 'no layer' sentinel");
         self.sprite.position_iface.set_layer(layer);
     }
+    #[inline]
+    pub fn clear_layer(&mut self) {
+        self.sprite
+            .position_iface
+            .set_layer(crate::position_interface::Layer::from_saved_raw(u16::MAX));
+    }
 
     #[inline]
     #[must_use]

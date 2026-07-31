@@ -572,7 +572,7 @@ impl EngineInner {
                     .expect("newly added arrow vanished before landing-state initialization");
                 let element = entity.element_data_mut();
                 element.set_sector(resolution.sector);
-                if !resolution.blocked_by_motion_obstacle {
+                if resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle {
                     element.set_layer(resolution.layer);
                 }
             }
