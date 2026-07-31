@@ -2997,8 +2997,10 @@ elements, and 499 authoritative RNG draws. Savegame 047 matches all 250 frames
 (2068 through 2318), including its 105 saved elements, 54 dynamic elements, and
 551 authoritative RNG draws. Savegame 053 matches all 250 frames (1675 through
 1925), including its 104 saved elements, 53 dynamic elements, and 553
-authoritative RNG draws. No replay-specific compatibility or code change was
-required for these traces.
+authoritative RNG draws. Savegame 056 matches all 250 frames (490 through 740),
+including its 108 saved elements, 57 dynamic elements, and 519 authoritative
+RNG draws. No replay-specific compatibility or code change was required for
+these traces.
 
 Windows `GSHR` saves now share the atomic adoption path. The complete Cyrdach
 Savegame 000–037 corpus matches every recorded frame; Nescafe Profile 003
