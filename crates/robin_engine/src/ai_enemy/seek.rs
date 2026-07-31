@@ -569,6 +569,12 @@ impl EnemyAi {
 
         // Pop the next seek point
         let next_id = self.my_seek_points.remove(0);
+        // Original assigns mpActualSeekPoint before testing the candidate.
+        // When a locked or uninteresting point recurses into SeekNextPoint,
+        // the recursive entry therefore unlocks that rejected candidate.
+        // Preserve this seemingly odd global side effect: other investigators
+        // can observe the lock release later in the same simulation frame.
+        self.actual_seek_point = Some(next_id);
 
         // Check if locked or uninteresting — skip (recurse)
         let (is_locked, interest) = {
@@ -622,8 +628,6 @@ impl EnemyAi {
             );
             sp.locked = true;
         }
-
-        self.actual_seek_point = Some(next_id);
 
         // Get position and go there
         let seek_pos = resolve_seek_point_id(

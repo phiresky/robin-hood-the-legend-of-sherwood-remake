@@ -2480,6 +2480,22 @@ remain authoritative. Other initialization sites retain their existing
 owner-ticked behavior. Linux3 Profile 001 Restart now matches every recorded
 frame instead of diverging at frame 32.
 
+### Rejected seek points are unlocked by recursive candidate selection
+
+`RHArtificialMalignity::SeekNextPoint` stores the front candidate in
+`mpActualSeekPoint` before checking its global lock and current interest.
+When that check rejects the point, the recursive call first unlocks the
+candidate it just rejected. This is an observable Original side effect:
+another investigator later in the same frame may consume an RNG draw for the
+newly unlocked point instead of skipping it.
+
+Rust previously assigned `actual_seek_point` only after acceptance, leaving
+locked and uninteresting candidates locked across the recursive call. Candidate
+assignment now occurs immediately after the list pop, matching Original's
+recursive unlock order. Linux2 Profile 002 QuickSave therefore selects the same
+search point and keeps the global seek-point RNG stream attributed to the same
+candidates.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
