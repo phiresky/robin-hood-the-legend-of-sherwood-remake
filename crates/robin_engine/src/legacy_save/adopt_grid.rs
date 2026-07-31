@@ -186,7 +186,7 @@ struct PlannedOccupants {
 #[derive(Clone, Debug)]
 struct PlannedBuilding {
     building_index: usize,
-    occupants: Vec<i32>,
+    occupants: Vec<EntityId>,
     arrow_reserve: bool,
 }
 
@@ -423,10 +423,7 @@ impl LegacyFastFindGridAdoptionPlan {
                         });
                     }
                     let occupants =
-                        resolve_actor_occupants(engine, entities, "building sector", occupants)?
-                            .into_iter()
-                            .map(crate::natives::ScriptHandleCodec::actor_handle)
-                            .collect();
+                        resolve_actor_occupants(engine, entities, "building sector", occupants)?;
                     buildings.push(PlannedBuilding {
                         building_index,
                         occupants,
@@ -649,9 +646,26 @@ impl LegacyFastFindGridAdoptionPlan {
             engine.world.fast_grid.sector_active[sector_index] = active;
         }
         for planned in self.buildings {
-            engine.script_domains.buildings.occupants[planned.building_index] = planned.occupants;
+            engine.script_domains.buildings.occupants[planned.building_index] = planned
+                .occupants
+                .iter()
+                .copied()
+                .map(crate::natives::ScriptHandleCodec::actor_handle)
+                .collect();
             engine.script_domains.buildings.arrow_reserves[planned.building_index] =
                 planned.arrow_reserve;
+            // `RHSectorBuilding::Serialize` restores the authoritative
+            // occupant list from the save. `AiGlobalState::houses` is the
+            // Rust-side view used by EnemyInHouseAlert, so it must observe
+            // the same restored list instead of retaining mission-start
+            // occupants from `initialize_buildings`.
+            if let Some(house) = engine.ai.global.houses.iter_mut().find(|house| {
+                house.building_index
+                    == crate::sector::BuildingIdx::new(planned.building_index as u16)
+            }) {
+                house.occupant_ids = planned.occupants;
+                house.arrow_reserve = planned.arrow_reserve;
+            }
         }
         for (sector_index, lift) in self.lifts {
             if lift.occupants_pc == 0
@@ -1075,6 +1089,8 @@ mod tests {
             by_creation_order: BTreeMap::new(),
             by_saved_slot: Vec::new(),
             creation_order_by_entity: BTreeMap::new(),
+            mobile_by_creation_order: BTreeMap::new(),
+            mobile_owner_by_creation_order: BTreeMap::new(),
         }
     }
 
@@ -1251,6 +1267,10 @@ mod tests {
             .push(ScriptSectorData::default());
         engine.script_domains.buildings.occupants.push(Vec::new());
         engine.script_domains.buildings.arrow_reserves.push(false);
+        engine.ai.global.houses.push(crate::ai::House {
+            building_index: crate::sector::BuildingIdx::new(0),
+            ..crate::ai::House::default()
+        });
 
         let plan = LegacyFastFindGridAdoptionPlan {
             patches: vec![PlannedPatch {
@@ -1281,7 +1301,7 @@ mod tests {
             door_sectors: vec![(2, false)],
             buildings: vec![PlannedBuilding {
                 building_index: 0,
-                occupants: vec![0x1000_0009],
+                occupants: vec![EntityId::Soldier(crate::entity_id::SoldierId(9))],
                 arrow_reserve: true,
             }],
             lifts: vec![(
@@ -1334,6 +1354,11 @@ mod tests {
 
         assert_eq!(engine.script_domains.buildings.occupants[0], [0x1000_0009]);
         assert!(engine.script_domains.buildings.arrow_reserves[0]);
+        assert_eq!(
+            engine.ai.global.houses[0].occupant_ids,
+            [EntityId::Soldier(crate::entity_id::SoldierId(9))]
+        );
+        assert!(engine.ai.global.houses[0].arrow_reserve);
         let lift = engine.world.fast_grid.lift_state.get(&2).unwrap();
         assert_eq!(lift.occupants_pc, 0);
         assert_eq!(lift.occupants, 2);
