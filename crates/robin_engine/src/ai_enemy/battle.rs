@@ -1658,30 +1658,93 @@ impl EnemyAi {
         // carried entity. The reference does
         // `primary_target = primary_target.GetCarrier()`, persisting
         // across ticks because `primary_target` is a member.
-        let target_on_shoulders = matches!(
-            tick.primary_target_posture,
-            Some(crate::element::Posture::OnShoulders)
-        );
-        if target_on_shoulders && let Some(carrier_handle) = tick.primary_target_carrier_handle {
+        let target_snapshot_is_current =
+            tick.primary_target_snapshot_handle == self.base.primary_target;
+        let target_on_shoulders = if target_snapshot_is_current {
+            matches!(
+                tick.primary_target_posture,
+                Some(crate::element::Posture::OnShoulders)
+            )
+        } else {
+            ctx.entity_view(self.base.primary_target)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "ReconsiderEnemyApproach target {} disappeared after synchronous retarget",
+                        self.base.primary_target
+                    )
+                })
+                .posture
+                == crate::element::Posture::OnShoulders
+        };
+        if target_on_shoulders {
+            if !target_snapshot_is_current {
+                // TODO: expose the carrier handle in AiEntityView so a target
+                // changed synchronously to a carried human can be resolved
+                // here without rebuilding the whole tick snapshot.
+                panic!(
+                    "ReconsiderEnemyApproach synchronously retargeted to carried human {}; carrier identity is unavailable",
+                    self.base.primary_target
+                );
+            }
+            let carrier_handle = tick.primary_target_carrier_handle.unwrap_or_else(|| {
+                panic!(
+                    "ReconsiderEnemyApproach target {} is on shoulders without a carrier snapshot",
+                    self.base.primary_target
+                )
+            });
             self.base.primary_target = carrier_handle;
         }
 
         // Position(primary_target) after the substitution resolves to
         // the carrier's position when the carry path fired.
-        let live_target_pos =
+        let live_target_pos = if target_snapshot_is_current {
             if target_on_shoulders && let Some(carrier) = tick.primary_target_carrier_position {
                 carrier
             } else {
-                tick.primary_target_position
-                    .unwrap_or(self.base.seek_position)
-            };
+                tick.primary_target_position.unwrap_or_else(|| {
+                    panic!(
+                        "ReconsiderEnemyApproach target {} has no position snapshot",
+                        self.base.primary_target
+                    )
+                })
+            }
+        } else {
+            // Original reads Position(mpPrimaryTarget) after the timer/event
+            // callback has synchronously changed that pointer. Resolve the
+            // replacement handle through the shared per-frame entity view;
+            // using `tick.primary_target_position` here couples the new
+            // identity to the old target's coordinates.
+            ctx.entity_view(self.base.primary_target)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "ReconsiderEnemyApproach target {} disappeared after synchronous retarget",
+                        self.base.primary_target
+                    )
+                })
+                .forecasted_destination
+        };
 
         // This specific Original routine uses the raw map-coordinate norm and
         // truncates it through UWORD. Do not use the usual isometric Y stretch.
         let distance = reconsider_approach_distance(live_target_pos, ctx.position);
 
         // Pre-computed line-jump for table swordfight.
-        let my_line_jump = tick.primary_target_jump_line;
+        // The precomputed line belongs to the snapshotted target. A newly
+        // selected target must never inherit it; the ordinary same-sector
+        // approach remains valid and a later dispatch rebuilds full metadata.
+        let my_line_jump = target_snapshot_is_current
+            .then_some(tick.primary_target_jump_line)
+            .flatten();
+        let target_in_lift = target_snapshot_is_current && tick.primary_target_in_lift;
+        let target_animation = if target_snapshot_is_current {
+            tick.primary_target_animation
+        } else {
+            Some(
+                ctx.entity_view(self.base.primary_target)
+                    .expect("replacement primary target view was resolved above")
+                    .current_animation,
+            )
+        };
 
         // Target-swap with a same-camp friend if the swap shortens the
         // total travel distance. `friend_swap_candidates` is the
@@ -1735,9 +1798,7 @@ impl EnemyAi {
 
         // Primary target is in a non-stairs lift: run to the entry
         // point matching the evaluating NPC's layer.
-        if tick.primary_target_in_lift
-            && let Some(entry) = tick.primary_target_lift_entry
-        {
+        if target_in_lift && let Some(entry) = tick.primary_target_lift_entry {
             self.base.outbox.actor.set_focus(working_target);
             self.base.seek_position = entry;
             self.go_near(
@@ -1756,7 +1817,7 @@ impl EnemyAi {
         let (mut b_charge, b_first_consideration) = match self.base.current_substate {
             Substate::AttackingRunningToEnemy | Substate::AttackingWalkingToEnemy => (false, false),
             Substate::AttackingChargingEnemy => {
-                if my_line_jump.is_none() && !tick.primary_target_in_lift {
+                if my_line_jump.is_none() && !target_in_lift {
                     (true, false)
                 } else {
                     b_reconsider = true;
@@ -1769,7 +1830,7 @@ impl EnemyAi {
                 c &= (working_distance as i32) >= crate::ai_enemy::combat::CHARGE_MIN_DISTANCE;
                 c &= my_line_jump.is_none();
                 c &= !ctx.self_is_rider;
-                c &= !tick.primary_target_in_lift;
+                c &= !target_in_lift;
                 if c {
                     self.base.say(crate::ai::Remark::Warcry);
                 }
@@ -1831,7 +1892,7 @@ impl EnemyAi {
         // plain sword range. The carry-on-shoulders branch is the
         // quiet path where charge / close-walk are preserved.
         if !matches!(
-            tick.primary_target_animation,
+            target_animation,
             Some(crate::order::OrderType::WalkingCarryingOnShoulders)
         ) {
             b_charge = false;
@@ -2549,6 +2610,51 @@ mod tests {
             (dx * dx + dy * dy).sqrt() > 75.0,
             "the general aspect-corrected distance would miss this swordfight boundary"
         );
+    }
+
+    #[test]
+    fn reconsider_approach_resolves_position_after_synchronous_retarget() {
+        let mut ai = EnemyAi::new(110);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingReactiontime;
+        ai.base.primary_target = 91;
+        ai.sword_range = 50;
+
+        let target_position = Position {
+            x: 695.0,
+            y: 2073.0,
+            ..Position::default()
+        };
+        let mut target_view = pc_view();
+        target_view.position = target_position;
+        target_view.forecasted_destination = target_position;
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(91, target_view);
+        let ctx = AiContext {
+            position: Position {
+                x: 698.0,
+                y: 2119.0,
+                ..Position::default()
+            },
+            entity_views: std::sync::Arc::new(views),
+            ..AiContext::default()
+        };
+
+        let mut tick = AiPerTickData::stub();
+        tick.primary_target_snapshot_handle = 58;
+        tick.primary_target_position = Some(Position {
+            x: 712.0,
+            y: 2053.0,
+            ..Position::default()
+        });
+
+        ai.reconsider_enemy_approach(false, 0.0, &ctx, &tick, None);
+
+        assert_eq!(
+            ai.base.outbox.actor.enter_swordfight,
+            Some(EnterSwordfightRequest::Engage(91))
+        );
+        assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
     }
 
     #[test]

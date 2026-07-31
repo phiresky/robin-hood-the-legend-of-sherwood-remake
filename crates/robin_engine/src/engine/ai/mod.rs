@@ -1497,6 +1497,7 @@ impl EngineInner {
             .unwrap_or(false);
 
         let mut tick = AiPerTickData::stub();
+        tick.primary_target_snapshot_handle = primary_target_handle;
         tick.profile_manager = Some(assets.profile_manager.clone());
         // `SeekArea` scans the live global NPC register at the call site.
         // Despite the old local name "visible friends", the Original applies

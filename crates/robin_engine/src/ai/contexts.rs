@@ -466,6 +466,11 @@ pub struct AiPerTickData {
     /// During a door pass this is the committed destination-side position,
     /// not the actor's interpolated body position.
     pub primary_target_position: Option<Position>,
+    /// Handle for which the primary-target metadata in this snapshot was
+    /// built. A synchronous AI callback can replace `base.primary_target`
+    /// before a later handler consumes the same tick data; consumers must
+    /// not pair that new handle with this old target's geometry.
+    pub primary_target_snapshot_handle: HumanHandle,
     /// The target element's literal current position and sector. This differs
     /// from [`Self::primary_target_position`] while passing a door and is for
     /// source sites that call `GetPosition` / `GetSector` directly.
@@ -655,6 +660,7 @@ impl AiPerTickData {
             nearby_sleeping_enemies: Vec::new(),
             primary_target_jump_line: None,
             primary_target_position: None,
+            primary_target_snapshot_handle: 0,
             primary_target_live_position: None,
             primary_target_posture: None,
             primary_target_animation: None,
