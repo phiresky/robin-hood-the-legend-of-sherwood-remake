@@ -1035,12 +1035,8 @@ impl EnemyAi {
                     // position, NOT seek_position.
                     if !self.is_merry_man_forest(ctx) || !self.merry_man_forest_cassos(ctx, global)
                     {
-                        if crate::sim_rng::u32(
-                            sim,
-                            crate::sim_rng::RngSite::BattlePanicRemark,
-                            0..2,
-                        ) == 0
-                        {
+                        // Original: `(rand() & 1) ? CASSOS : PANIC`.
+                        if crate::sim_rng::bool(sim, crate::sim_rng::RngSite::BattlePanicRemark) {
                             self.base.say(Remark::Cassos);
                         } else {
                             self.base.say(Remark::Panic);
@@ -1088,12 +1084,8 @@ impl EnemyAi {
                         continue;
                     } else {
                         // Random Cassos/Panic remark.
-                        if crate::sim_rng::u32(
-                            sim,
-                            crate::sim_rng::RngSite::BattlePanicRemark,
-                            0..2,
-                        ) == 0
-                        {
+                        // Original: `(rand() & 1) ? CASSOS : PANIC`.
+                        if crate::sim_rng::bool(sim, crate::sim_rng::RngSite::BattlePanicRemark) {
                             self.base.say(Remark::Cassos);
                         } else {
                             self.base.say(Remark::Panic);
@@ -1138,12 +1130,8 @@ impl EnemyAi {
                         continue;
                     } else {
                         // Random Cassos/Panic remark.
-                        if crate::sim_rng::u32(
-                            sim,
-                            crate::sim_rng::RngSite::BattlePanicRemark,
-                            0..2,
-                        ) == 0
-                        {
+                        // Original: `(rand() & 1) ? CASSOS : PANIC`.
+                        if crate::sim_rng::bool(sim, crate::sim_rng::RngSite::BattlePanicRemark) {
                             self.base.say(Remark::Cassos);
                         } else {
                             self.base.say(Remark::Panic);
