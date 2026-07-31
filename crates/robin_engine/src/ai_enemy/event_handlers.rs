@@ -2611,15 +2611,16 @@ impl EnemyAi {
     ) {
         use crate::element::Posture;
         // IsVeryVeryBusy preamble — lock AI BUSY, mark was_busy, re-fire
-        // EVENT_COULDNT_REACHPOINT once the posture clears. Same pattern
-        // as `return_to_duty`'s busy gate. The PassDoor / Fall
-        // sequence-element check from the helper
-        // is deferred (the AI doesn't see the live sequence manager
-        // here); the posture cases cover the dominant path.
-        if matches!(
-            ctx.posture,
-            Posture::Flying | Posture::OnLadder | Posture::OnWall,
-        ) {
+        // EVENT_COULDNT_REACHPOINT once the command/posture clears. The
+        // engine supplies the live sequence-manager result through
+        // `in_uninterruptible_command`; posture covers the actor-local
+        // Flying/OnLadder/OnWall branches of the same Original predicate.
+        if ctx.in_uninterruptible_command
+            || matches!(
+                ctx.posture,
+                Posture::Flying | Posture::OnLadder | Posture::OnWall,
+            )
+        {
             self.base.non_script_lock(crate::ai::AiLockFlags::BUSY);
             self.base.was_busy = true;
             self.base

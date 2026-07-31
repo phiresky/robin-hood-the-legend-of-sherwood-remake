@@ -1282,6 +1282,19 @@ impl EngineInner {
             // have released all temporary borrows.
             for cmd in deferred {
                 match cmd {
+                    crate::natives::DeferredCommand::AddAsSubordinateInitialize { chief } => {
+                        let chief = self.entity_id_for_actor_handle(chief).unwrap_or_else(|| {
+                            panic!(
+                                "AddAsSubordinate lost its validated chief handle {chief} at the script barrier"
+                            )
+                        });
+                        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                        self.initialize_patrol_for_npc_from_owner_views(
+                            assets,
+                            chief,
+                            &scratch.ai_entity_views,
+                        );
+                    }
                     crate::natives::DeferredCommand::RemoveAllSubordinates { actor } => {
                         if let Some(chief) = self.entity_id_for_actor_handle(actor) {
                             self.script_remove_all_subordinates(sim, assets, chief);

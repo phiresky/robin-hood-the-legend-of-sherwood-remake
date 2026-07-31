@@ -11037,7 +11037,7 @@ impl EngineInner {
     /// actor state. Positions instead come from the owner-boundary views
     /// because Rust's globally batched movement has already advanced later
     /// legacy slots.
-    fn initialize_patrol_for_npc_from_owner_views(
+    pub(super) fn initialize_patrol_for_npc_from_owner_views(
         &mut self,
         assets: &LevelAssets,
         chief_id: EntityId,

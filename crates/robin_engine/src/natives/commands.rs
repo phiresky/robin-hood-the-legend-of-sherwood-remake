@@ -178,6 +178,10 @@ pub enum SoundCommand {
     Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
 pub enum DeferredCommand {
+    /// Complete `RHArtificialIntelligence::AddPatrolMember` by running the
+    /// chief's virtual `InitializePatrol` synchronously at the script-native
+    /// boundary. The native has already appended the theoretical member.
+    AddAsSubordinateInitialize { chief: i32 },
     /// Execute `RHArtificialIntelligence::ClearPatrol` at the engine-owned
     /// script barrier. Clearing the chief and each member pointer is
     /// synchronous, and every default-state member immediately runs

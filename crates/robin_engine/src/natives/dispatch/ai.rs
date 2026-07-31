@@ -746,6 +746,11 @@ impl NativeContext<'_, '_> {
                         ai.needs_patrol_reinit = true;
                     }
                 }
+                // Original AddPatrolMember invokes InitializePatrol before
+                // returning to the mission script. Yield through the typed
+                // engine barrier so subsequent natives (notably UnlockAI)
+                // observe the subordinate's freshly assigned patrol chief.
+                self.emit_barrier(DeferredCommand::AddAsSubordinateInitialize { chief: actor });
                 0
             }
             RemoveAllSubordinates => {
