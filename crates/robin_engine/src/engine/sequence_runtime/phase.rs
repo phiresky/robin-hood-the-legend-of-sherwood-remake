@@ -304,7 +304,7 @@ impl EngineInner {
         // front of the action queue, so they fire before the next
         // non-immediate action in the batch rather than waiting for
         // the next `Hourglass()`.
-        while let Some(action) = phase.pop_action() {
+        while let Some(action) = phase.pop_action_after_registration(&mut self.orders) {
             match action {
                 crate::sequence::SequenceAction::InstructOwner {
                     owner,

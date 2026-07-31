@@ -37,6 +37,18 @@ impl SequencePhase {
         self.actions.pop_front()
     }
 
+    /// Pop the next manager action after folding in work registered by the
+    /// preceding callback. Some Instruct arms finish with an early `continue`
+    /// (for example, PC hero speech terminates inside arbitration), so the
+    /// continuation cannot live only in the common post-action epilogue.
+    fn pop_action_after_registration(
+        &mut self,
+        orders: &mut OrderRuntime,
+    ) -> Option<crate::sequence::SequenceAction> {
+        self.splice_registered_actions(orders);
+        self.pop_action()
+    }
+
     /// Continue the manager's live FIFO drain after an action callback.
     ///
     /// Original `RHSequenceManager::Hourglass` loops while its registration
@@ -1639,6 +1651,20 @@ impl StealthCommandContext<'_> {
             self.sequence_manager.element_terminated(seq_id, elem_idx);
             return OwnerActionBarrier::Reach;
         };
+
+        // PC::Translate only appends the crouch transition order. The actor's
+        // posture changes from PerformMotion(DONE), not while Instruct is
+        // translating the command. Keep the element selected/in-progress so
+        // GetCommand reports CROUCH_{DOWN,UP} during that interval.
+        if matches!(command, Command::CrouchDown | Command::CrouchUp) {
+            let id = crate::order::alloc_order_id(self.next_order_id);
+            let mut order = crate::order::Order::new(transition.animation, 0.0, 0.0, id);
+            order.compute_direction = false;
+            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            return OwnerActionBarrier::Reach;
+        }
+
         let hidden_phase = if transition.result_posture.is_hidden() {
             let Some(Entity::Pc(pc)) = self.entities.get(owner) else {
                 self.sequence_manager.element_terminated(seq_id, elem_idx);
