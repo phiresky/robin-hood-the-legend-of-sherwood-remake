@@ -611,6 +611,15 @@ impl EngineInner {
             .unwrap_or(false);
         if !opponent_was_swordfighting {
             self.stop_owner(opponent, crate::sequence::SequencePriority::Preference);
+            // Original `PrepareToEnterSwordFight` calls `Stop(PREFERENCE)`
+            // before `Think(EVENT_ENTER_SWORDFIGHT)`. `Stop` reaches
+            // `SetState(INTERRUPTED)`, whose `SendCondolationCard` callback
+            // is synchronous: the interrupted command's EventDone/
+            // EventImpossible reaction must therefore finish while the NPC
+            // is still in its old AI substate. Leaving the card queued until
+            // after EventEnterSwordfight lets that old completion run as a
+            // swordfight completion and can immediately quit the new fight.
+            self.dispatch_condolations_for_owner_boundary(sim, opponent, assets);
             // Synchronous Think on the opponent if they're a soldier.
             let is_soldier = matches!(self.world.entities.get(opponent), Some(Entity::Soldier(_)));
             if is_soldier {

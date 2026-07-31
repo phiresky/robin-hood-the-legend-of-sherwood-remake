@@ -4077,6 +4077,104 @@ mod tests {
         );
     }
 
+    #[test]
+    fn preparing_swordfight_delivers_interrupted_done_before_enter_event() {
+        use crate::ai::{AiState, LogLineType, StimulusType, Substate};
+        use crate::profiles::{CharacterProfile, HtHWeaponProfile, ProfileManager, SoldierProfile};
+
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let initiator = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let opponent = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        {
+            let Entity::Soldier(soldier) = engine.get_entity_mut(initiator).unwrap() else {
+                unreachable!()
+            };
+            soldier.soldier.cached_camp = crate::element::Camp::Royalists;
+            let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
+            ai.base.me = initiator.index();
+            ai.hth_weapon_id = 1;
+        }
+        {
+            let Entity::Soldier(soldier) = engine.get_entity_mut(opponent).unwrap() else {
+                unreachable!()
+            };
+            let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
+            ai.base.me = opponent.index();
+            ai.base.current_state = AiState::Attacking;
+            ai.base.current_substate = Substate::AttackingOfficerGivingOrders;
+            ai.hth_weapon_id = 1;
+        }
+
+        // Give the opponent a selected command for PrepareToEnterSwordFight's
+        // Stop(PREFERENCE) to interrupt. Its condolence sends EventDone.
+        let mut selected = crate::sequence::Sequence::new();
+        selected.append_element(crate::sequence::SequenceElement::new(
+            1,
+            Command::Point,
+            Some(opponent),
+        ));
+        let selected_id = engine.launch_sequence(selected);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(selected_id, 0);
+
+        let mut profiles = ProfileManager::new();
+        profiles.hth_weapons.push(HtHWeaponProfile::default());
+        profiles.characters.push(CharacterProfile {
+            hth_weapon_id: 1,
+            ..CharacterProfile::default()
+        });
+        profiles.soldiers.push(SoldierProfile {
+            hth_weapon_id: 1,
+            hostile: true,
+            ..SoldierProfile::default()
+        });
+        let assets = LevelAssets {
+            profile_manager: std::sync::Arc::new(profiles),
+            ..LevelAssets::new()
+        };
+
+        let _ = engine.enter_swordfight(sim, &assets, initiator, opponent, false);
+
+        let ai = engine
+            .get_entity(opponent)
+            .unwrap()
+            .ai_controller()
+            .unwrap();
+        let events: Vec<_> = ai
+            .ai_log
+            .iter()
+            .filter(|entry| entry.line_type == LogLineType::Event)
+            .map(|entry| entry.info)
+            .collect();
+        assert_eq!(
+            events,
+            vec![
+                StimulusType::EventDone as u16,
+                StimulusType::EventEnterSwordfight as u16
+            ],
+            "the interrupted command must complete in the old substate before swordfight entry"
+        );
+        assert_eq!(ai.current_substate, Substate::AttackingSwordfight);
+    }
+
     /// Bud-Spencer-style line of three: PC punches the first soldier,
     /// who is launched along +X into a second soldier directly in
     /// front, and a third soldier behind the second. The flight tick

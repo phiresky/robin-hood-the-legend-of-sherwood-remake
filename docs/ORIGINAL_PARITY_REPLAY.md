@@ -3490,6 +3490,24 @@ It now uses the unit table directly. The nearby training PC at this boundary
 is consequently admitted and selected exactly as in Original, and Windows
 SuN1Sh1nE Profile 004 Savegame 014 matches every recorded frame.
 
+### Swordfight preparation completes the interrupted command first
+
+Original `RHElementActorHuman::PrepareToEnterSwordFight` calls
+`Stop(RHPRIORITY_PREFERENCE)` before it dispatches
+`EVENT_ENTER_SWORDFIGHT`. The stop reaches `SetState(INTERRUPTED)`, whose
+`SendCondolationCard` callback is synchronous, so the old command's
+`EVENT_DONE` or `EVENT_IMPOSSIBLE` reaction finishes in the old AI substate
+before swordfight entry begins.
+
+Rust queued that stop condolence while immediately dispatching the enter event.
+An interrupted officer `POINT` could consequently deliver its old
+`EVENT_DONE` after changing to `ATTACKING_SWORDFIGHT`, reinterpret the
+completion as a swordfight heartbeat, and quit the fight before the engine
+attached opponents. The preparation path now closes the stopped owner's
+condolence boundary first. In Windows SuN1Sh1nE Profile 004 Savegame 024 this
+makes soldier 112 and the RNG prefix through its combat entry exact; a separate
+fighter-registry count mismatch later in frame 31 remains under investigation.
+
 ### ClearPatrol keeps the chief formation live through member callbacks
 
 Original `RHArtificialIntelligence::ClearPatrol` walks the theoretical patrol
