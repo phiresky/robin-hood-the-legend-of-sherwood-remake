@@ -2943,10 +2943,11 @@ Every frame in the original five-trace corpus matches:
 The expanded authoritative Linux audit adds 48 `Savegame_linux2` traces and
 140 `Savegame_linux3` traces. Unlike the first group, these exercise up to
 hundreds of dynamic bonuses/projectiles and a much wider set of interrupted
-runtime states. All five Linux3 Profile 002 traces and the audited Profile 003
-traces through Savegame 051 currently match every recorded frame. The remaining
-corpus is the active completion set; failures are grouped by their first
-general cause and the whole affected shard is rerun after each fix.
+runtime states. All five Linux3 Profile 002 traces match every recorded frame.
+Linux3 Profile 003 is also completely green: Savegame 000--075 plus Continue,
+ExQuickSave, QuickSave, Restart, and Sherwood all match every recorded frame.
+The remaining corpus is the active completion set; failures are grouped by
+their first general cause and the whole affected shard is rerun after each fix.
 
 Windows `GSHR` saves now share the atomic adoption path. The complete Cyrdach
 Savegame 000–037 corpus matches every recorded frame; Nescafe Profile 003
