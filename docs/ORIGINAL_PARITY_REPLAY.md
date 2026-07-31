@@ -2722,6 +2722,24 @@ actor's prior action state unchanged while holding the last climb frame. Rust
 no longer normalizes that action state to Waiting. This keeps the serialized
 Moving state visible for the frozen ladder/wall idle just as in Original.
 
+### Synchronous GoTo failures re-enter Think before it returns
+
+Original `GoTo` constructs its path through `AppendMoveToSequence` inline.
+When a seek point is unreachable, that construction sets
+`mbCouldntReachPoint` before the enclosing `EndThink`, which immediately
+re-enters the AI with `EVENT_COULDNT_REACHPOINT`. A single `SeekNextPoint`
+call can consequently reject several unreachable candidates—and consume each
+candidate's acceptance draw—before finding a usable route.
+
+Rust releases the controller borrow before constructing its queued movement.
+The path result was therefore arriving after controller-side `end_think`, and
+the synchronous owner fixed point did not turn it back into a self stimulus.
+Synchronous Think drains now surface an engine-side path failure immediately
+after movement construction, then continue the same owner-local fixed point.
+This is the general `GoTo`/`EndThink` boundary; it contains no actor, point, or
+replay-specific condition. Linux Profile 002 QuickSave advances from frame
+2,074 to frame 2,113.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

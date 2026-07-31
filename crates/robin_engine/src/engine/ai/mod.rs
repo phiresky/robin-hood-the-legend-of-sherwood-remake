@@ -9568,6 +9568,7 @@ impl EngineInner {
             // into a global batch or strand in the outbox.
             self.launch_pending_orders_for_npc_mode(npc_id, defer_turn_instruction);
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
+            self.surface_synchronous_move_failure_for_owner(npc_id);
 
             self.process_synchronous_reentrant_actions_for_mode(
                 sim,
@@ -9646,6 +9647,43 @@ impl EngineInner {
         }
 
         handled
+    }
+
+    /// Deliver a path-construction failure at the same `EndThink` boundary as
+    /// the `GoTo` that produced it.
+    ///
+    /// Original `AppendMoveToSequence` performs path construction inline, so
+    /// a failed route sets `mbCouldntReachPoint` before the enclosing
+    /// `EndThink` recursively dispatches `EVENT_COULDNT_REACHPOINT`. Rust
+    /// cannot construct the movement until the controller borrow is released;
+    /// by then the controller-side `end_think` has already run. Synchronous
+    /// Think drains must therefore close that split explicitly after
+    /// constructing the owner's pending move.
+    fn surface_synchronous_move_failure_for_owner(&mut self, npc_id: EntityId) {
+        let ai = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "synchronous move owner {} disappeared before path-result delivery",
+                    npc_id.index()
+                )
+            })
+            .ai_controller_mut()
+            .unwrap_or_else(|| {
+                panic!(
+                    "synchronous move owner {} lost AI before path-result delivery",
+                    npc_id.index()
+                )
+            });
+        if ai.couldnt_reachpoint {
+            ai.couldnt_reachpoint = false;
+            ai.outbox
+                .reentrant
+                .self_stimuli
+                .push(crate::ai::StimulusType::EventCouldntReachPoint);
+        }
     }
 
     pub(super) fn process_synchronous_reentrant_actions_for(
@@ -10667,6 +10705,7 @@ impl EngineInner {
             );
             self.launch_pending_orders_for_npc_mode(npc_id, defer_turn_instruction);
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
+            self.surface_synchronous_move_failure_for_owner(npc_id);
             self.process_synchronous_reentrant_actions_for_mode(
                 sim,
                 npc_id,
