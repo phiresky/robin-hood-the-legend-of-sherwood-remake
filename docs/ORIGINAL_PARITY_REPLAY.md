@@ -3733,6 +3733,16 @@ ordinary and transition anti-collision, with the lower-level helper retaining
 the same guard. Randomguy Profile 004 Savegame 031 and Linux2 Profile 002
 Savegame 040 now match every recorded frame.
 
+### Carried movement keeps its authored animation
+
+Original movement dispatch preserves `WalkingWithCorpse` and
+`WalkingCarryingOnShoulders` as the distance-producing animation. Rust
+previously replaced either action with `WalkingUpright` whenever the actor's
+state was merely `Moving`, doubling the per-frame distance in Linux3 Profile
+001 Savegame 038. Both carrying actions now remain selected like the other
+authored movement orders. The replay matches through the former frame-54407
+boundary and reaches an independent soldier path divergence at frame 54445.
+
 ## Frozen full-corpus audit at `2a3e842df`
 
 The first no-unknown audit froze the debug parity runner built from commit

@@ -6119,7 +6119,9 @@ impl EngineInner {
                     | OrderType::ClimbingLadderUpAlerted
                     | OrderType::ClimbingLadderDownAlerted
                     | OrderType::ClimbingLadderUpFast
-                    | OrderType::ClimbingLadderDownFast => order_action,
+                    | OrderType::ClimbingLadderDownFast
+                    | OrderType::WalkingWithCorpse
+                    | OrderType::WalkingCarryingOnShoulders => order_action,
                     _ => match action_state {
                         crate::element::ActionState::MovingFast => OrderType::RunningUpright,
                         _ => OrderType::WalkingUpright,
