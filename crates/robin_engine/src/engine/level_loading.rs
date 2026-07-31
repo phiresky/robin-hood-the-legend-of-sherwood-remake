@@ -112,6 +112,20 @@ fn retain_legacy_grid_topology(
     });
     let mut next_runtime_motion_sector = 0usize;
     let mut next_runtime_building_sector = runtime_motion_sector_count;
+    // `SerializeLinePointer` indexes the combined `arrayLines` of a layer.
+    // Reproduce the additions in proto chunk order so jump lines retain the
+    // identity they had even though Rust stores them in a separate array.
+    let mut line_counts = std::collections::BTreeMap::<u16, usize>::new();
+    fn append_lines(
+        line_counts: &mut std::collections::BTreeMap<u16, usize>,
+        layer: u16,
+        count: usize,
+    ) {
+        let total = line_counts.entry(layer).or_default();
+        *total = total
+            .checked_add(count)
+            .expect("Original per-layer line count overflow");
+    }
     let mut seen_proto = std::collections::BTreeSet::new();
     for &chunk in &loaded.proto.grid_chunk_order {
         if !seen_proto.insert(chunk as u8) {
@@ -123,13 +137,32 @@ fn retain_legacy_grid_topology(
         match chunk {
             ProtoGridChunk::Patch => {
                 append_patch_sector_constructors(&mut sectors, &loaded.proto.patches);
+                for patch in &loaded.proto.patches {
+                    if !patch.apply_sector.points.is_empty() {
+                        append_lines(
+                            &mut line_counts,
+                            patch.final_layer,
+                            patch.apply_sector.points.len(),
+                        );
+                    }
+                }
             }
             ProtoGridChunk::Motion => {
                 let Some(motion) = loaded.proto.motion_data.as_ref() else {
                     continue;
                 };
-                for layer in &motion.layers {
+                for (layer_index, layer) in motion.layers.iter().enumerate() {
+                    let layer_index = u16::try_from(layer_index)
+                        .expect("Original motion layer index exceeds u16");
                     for area in layer {
+                        append_lines(&mut line_counts, layer_index, area.polygon.points.len());
+                        for obstacle in &area.obstacles {
+                            append_lines(
+                                &mut line_counts,
+                                layer_index,
+                                obstacle.polygon.points.len(),
+                            );
+                        }
                         let area_number = sectors.construct();
                         sectors.add_position_sector(
                             area_number,
@@ -158,6 +191,18 @@ fn retain_legacy_grid_topology(
                 sectors.insert_last(LegacyGridSectorAsset::NullOrOrdinary);
             }
             ProtoGridChunk::Sight => {
+                for &material_index in &loaded.proto.sight_material_indices {
+                    let material = loaded
+                        .proto
+                        .material_sectors
+                        .get(usize::from(material_index))
+                        .ok_or_else(|| MissionLevelBuildError::MissingGridChunkOrder {
+                            stream: format!(
+                                "proto-level SIGHT references missing material {material_index}"
+                            ),
+                        })?;
+                    append_lines(&mut line_counts, 0, material.polygon.points.len());
+                }
                 for &material_index in &loaded.proto.sight_material_indices {
                     let sector_number = material_sector_numbers
                         .get(usize::from(material_index))
@@ -188,6 +233,11 @@ fn retain_legacy_grid_topology(
                     .iter()
                     .map(|_| sectors.construct())
                     .collect();
+            }
+            ProtoGridChunk::Bond => {
+                for line in &loaded.proto.elevation_lines {
+                    append_lines(&mut line_counts, line.layer, 1);
+                }
             }
             ProtoGridChunk::Lift => {
                 for lift in &loaded.proto.lifts {
@@ -238,6 +288,30 @@ fn retain_legacy_grid_topology(
                     LegacyGridGateAsset::Stateless,
                     loaded.proto.jump_line_pairs.len(),
                 ));
+                for pair in &loaded.proto.jump_line_pairs {
+                    for zone_index in [pair.line2.jump_zone_index, pair.line1.jump_zone_index] {
+                        let zone = loaded
+                            .proto
+                            .jump_zones
+                            .get(usize::from(zone_index))
+                            .ok_or_else(|| MissionLevelBuildError::MissingGridChunkOrder {
+                                stream: format!(
+                                    "proto-level JUMP line references missing zone {zone_index}"
+                                ),
+                            })?;
+                        let index = *line_counts.entry(zone.layer).or_default();
+                        let index = i16::try_from(index).map_err(|_| {
+                            MissionLevelBuildError::MissingGridChunkOrder {
+                                stream: format!(
+                                    "proto-level layer {} exceeds Original signed line-index domain",
+                                    zone.layer
+                                ),
+                            }
+                        })?;
+                        topology.jump_line_identities.push((zone.layer, index));
+                        append_lines(&mut line_counts, zone.layer, 1);
+                    }
+                }
                 for sector_number in jump_sector_numbers {
                     sectors.add(sector_number, LegacyGridSectorAsset::NullOrOrdinary);
                 }

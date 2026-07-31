@@ -1006,6 +1006,10 @@ pub enum LegacyGridSectorAsset {
 pub struct LegacyGridTopologyAssets {
     pub patches: Vec<LegacyGridPatchAsset>,
     pub gates: Vec<LegacyGridGateAsset>,
+    /// Runtime jump-line order mapped to Original `(layer, index-in-layer)`
+    /// identities. Original serializes these through the combined `RHLine`
+    /// array, which also contains motion boundaries and elevation lines.
+    pub jump_line_identities: Vec<(u16, i16)>,
     pub script_objects: Vec<LegacyGridScriptObjectAsset>,
     pub sectors: Vec<LegacyGridSectorAsset>,
     /// Maps Original's sparse `marraySectors` pointer-serialization slots to

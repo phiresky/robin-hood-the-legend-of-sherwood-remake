@@ -1355,6 +1355,8 @@ pub enum ProtoGridChunk {
     Patch,
     Motion,
     Sight,
+    /// Elevation lines share Original's per-layer `RHLine` pointer space.
+    Bond,
     Material,
     Lift,
     Building,
@@ -1646,6 +1648,7 @@ pub fn load_proto_level(
             light_sectors = read_light_sectors(reader, format)?;
         } else if tag == *format.bond_tag() {
             tracing::debug!("Proto: loading BOND chunk");
+            grid_chunk_order.push(ProtoGridChunk::Bond);
             elevation_lines = read_elevation_lines(reader, format)?;
         } else if tag == *format.mask_tag() {
             tracing::debug!("Proto: loading MASK chunk");

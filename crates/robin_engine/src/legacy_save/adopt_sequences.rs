@@ -45,6 +45,9 @@ pub struct LegacySequenceTopology {
     pub gates: Vec<DoorIndex>,
     /// Exact Original `(layer, index-in-layer)` line identity.
     pub lines: BTreeMap<(u16, i16), JumpLineIndex>,
+    /// The sole jump line on layers where identity remains unambiguous even
+    /// when another retail edition inserted ordinary lines before it.
+    pub unique_line_by_layer: BTreeMap<u16, JumpLineIndex>,
     /// Original sparse `marraySectors` slot to Rust's compact runtime sector.
     /// Constructor holes and non-position sector objects remain `None`.
     pub sectors: Vec<Option<SectorHandle>>,
@@ -75,10 +78,33 @@ impl LegacySequenceTopology {
                 identity: error.to_string(),
             })?;
 
-        let mut next_in_layer = BTreeMap::<u16, i16>::new();
+        if retained.jump_line_identities.len() != engine.world.fast_grid.level.jump_lines.len() {
+            return Err(LegacySequenceAdoptError::MissingTopology {
+                field: "sequence.topology.lines",
+                identity: format!(
+                    "retained {} Original jump-line identities for {} runtime jump lines",
+                    retained.jump_line_identities.len(),
+                    engine.world.fast_grid.level.jump_lines.len()
+                ),
+            });
+        }
         let mut lines = BTreeMap::new();
-        for (runtime_index, line) in engine.world.fast_grid.level.jump_lines.iter().enumerate() {
-            let index_in_layer = next_in_layer.entry(line.layer).or_default();
+        let mut unique_line_by_layer = BTreeMap::<u16, Option<JumpLineIndex>>::new();
+        for (runtime_index, (&(layer, index_in_layer), line)) in retained
+            .jump_line_identities
+            .iter()
+            .zip(&engine.world.fast_grid.level.jump_lines)
+            .enumerate()
+        {
+            if line.layer != layer {
+                return Err(LegacySequenceAdoptError::MissingTopology {
+                    field: "sequence.topology.lines",
+                    identity: format!(
+                        "retained jump line {runtime_index} names layer {layer}, runtime uses {}",
+                        line.layer
+                    ),
+                });
+            }
             let runtime_index = u32::try_from(runtime_index).map_err(|_| {
                 LegacySequenceAdoptError::MissingTopology {
                     field: "sequence.topology.lines",
@@ -91,14 +117,16 @@ impl LegacySequenceTopology {
                     identity: "runtime jump-line index equals null sentinel".to_owned(),
                 }
             })?;
-            lines.insert((line.layer, *index_in_layer), handle);
-            *index_in_layer = index_in_layer.checked_add(1).ok_or_else(|| {
-                LegacySequenceAdoptError::MissingTopology {
-                    field: "sequence.topology.lines",
-                    identity: format!("layer {} contains more than i16::MAX lines", line.layer),
-                }
-            })?;
+            lines.insert((layer, index_in_layer), handle);
+            unique_line_by_layer
+                .entry(layer)
+                .and_modify(|unique| *unique = None)
+                .or_insert(Some(handle));
         }
+        let unique_line_by_layer = unique_line_by_layer
+            .into_iter()
+            .filter_map(|(layer, handle)| handle.map(|handle| (layer, handle)))
+            .collect();
 
         if retained.position_sector_numbers.len() != retained.sectors.len() {
             return Err(LegacySequenceAdoptError::MissingTopology {
@@ -141,6 +169,7 @@ impl LegacySequenceTopology {
         Ok(Self {
             gates,
             lines,
+            unique_line_by_layer,
             sectors,
         })
     }
@@ -538,7 +567,20 @@ fn convert_element(
             let mut properties = HashMap::with_capacity(generic.fields.len());
             for field in &generic.fields {
                 let (kind, value, raw) =
-                    convert_generic_field(field, entities, topology, sequence_id)?;
+                    convert_generic_field(field, entities, topology, sequence_id).map_err(
+                        |error| {
+                            tracing::error!(
+                                sequence_id,
+                                ?command,
+                                ?state,
+                                element_id = base.unique_id.0,
+                                field = ?field.kind,
+                                value = ?field.value,
+                                "failed to convert saved generic sequence field"
+                            );
+                            error
+                        },
+                    )?;
                 if properties.insert(kind, value).is_some() {
                     return Err(LegacySequenceAdoptError::DuplicateGenericField {
                         sequence_id,
@@ -1011,6 +1053,10 @@ fn resolve_line(
         (Some(layer), Some(index)) if index >= 0 => topology
             .lines
             .get(&(layer, index))
+            // Retail data editions differ in some non-jump boundary counts.
+            // A lone jump line on a layer still has a unique isomorphic
+            // identity regardless of its raw combined-array ordinal.
+            .or_else(|| topology.unique_line_by_layer.get(&layer))
             .copied()
             .map(Some)
             .ok_or_else(|| LegacySequenceAdoptError::MissingTopology {
@@ -1276,6 +1322,7 @@ mod tests {
         LegacySequenceTopology {
             gates: vec![DoorIndex(7)],
             lines: [((2, 3), JumpLineIndex::new(5).unwrap())].into(),
+            unique_line_by_layer: [(2, JumpLineIndex::new(5).unwrap())].into(),
             sectors: (0..6).map(SectorHandle::new).collect(),
         }
     }
