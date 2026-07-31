@@ -2346,6 +2346,19 @@ only after an accepted deviation resets the blocked counter; break-through
 movement retains its previous cache. Cyrdach Profile 156 Savegame 025 now
 matches PC 108's Original trajectory through the former frame-752 divergence.
 
+### Every queued visibility callback reads the live detectable list
+
+Original executes each `VIEW`/`OUTOFVIEW` callback synchronously and
+`ReinitializeThemList` reads the NPC's authoritative detectable list at that
+exact boundary. Rust correctly overlaid that live list for the one queued
+stimulus carrying the completed detection-scan aggregate, but later visibility
+stimuli in the same FIFO fell back to a geometric tick-data reconstruction.
+That could resurrect an enemy after its `seen_now` latch had already been
+cleared. The shared immediate-dispatch path now overlays the live detectable
+list for every visibility callback, just as the retained-stimulus path already
+did. This lets simultaneous falling edges leave the battle overview with an
+empty opponent list and take the Original lost-enemy seek path.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

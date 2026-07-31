@@ -567,7 +567,7 @@ impl EngineInner {
                 &stimulus,
                 &mut enemy_detection_tick_data,
             );
-            let tick_data = if let Some(aggregate) = detection_aggregate {
+            let mut tick_data = if let Some(aggregate) = detection_aggregate {
                 let target_id = match stimulus.info {
                     crate::ai::StimulusInfo::Human(handle) => {
                         self.entity_id_for_index(handle).unwrap_or_else(|| {
@@ -593,7 +593,6 @@ impl EngineInner {
                     Some(target_id),
                 );
                 overlay_final_detection_scan(&mut live, &aggregate);
-                self.overlay_live_enemy_detection_scan_for_think(npc_id, &scratch, &mut live);
                 if let Some(positions) = positions_before_movement {
                     self.apply_owner_relative_tick_positions(
                         npc_id,
@@ -641,6 +640,18 @@ impl EngineInner {
                 }
                 live
             };
+            if matches!(
+                stimulus.stimulus_type,
+                crate::ai::StimulusType::EventView | crate::ai::StimulusType::EventOutOfView
+            ) {
+                // Only one queued Enemy stimulus owns the completed scan
+                // aggregate, but every synchronous VIEW/OUTOFVIEW Think reads
+                // the authoritative live detectable list. Rebuilding only the
+                // aggregate-owning entry lets a later falling-edge event
+                // resurrect geometrically visible enemies whose `seen_now`
+                // latch has already been cleared.
+                self.overlay_live_enemy_detection_scan_for_think(npc_id, &scratch, &mut tick_data);
+            }
             // Production reaches this FIFO from RefreshDetection in the NPC
             // tail, after the actor's Execute slot has already run. Face/Turn
             // side effects are synchronous as sequence registration, but the
