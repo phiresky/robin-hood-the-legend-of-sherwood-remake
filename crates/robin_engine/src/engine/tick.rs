@@ -1574,8 +1574,6 @@ impl EngineInner {
         let cur_frame = self.control.frame_counter;
         drain_matured_exclamations(&mut self.feedback.sound_sim, cur_frame);
         self.settle_npc_speech_completions(sim, assets);
-        self.launch_expired_parry_stops();
-
         // Drain deferred console-cheat / death reinforcement spawns and
         // scroll-reveal amulet spawns. Both used to live in
         // `Game::run_engine_tick` because they needed `&mut LevelAssets`
@@ -3372,6 +3370,14 @@ impl EngineInner {
                         result.order_type == crate::order::OrderType::WaitingSword
                     }) {
                         self.tick_waiting_sword_execute_for(sim, assets, entity_id);
+                    }
+
+                    // RHElementActorHuman::Execute decrements the parry hold
+                    // counter and queues StopParry before this actor yields
+                    // its legacy slot. Preserve that ordering relative to
+                    // sword hits performed by later-created actors.
+                    if let Some(result) = execute_result.as_mut() {
+                        self.tick_parry_counter_for_execute(entity_id, result);
                     }
 
                     // Original Actor::Hourglass modifies the just-produced

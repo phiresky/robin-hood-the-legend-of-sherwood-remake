@@ -302,9 +302,7 @@ impl EnemyAi {
                         // through to the seek handler below.
                         Substate::AttackingReactiontimeRunning
                         | Substate::AttackingApproachToObserve
-                        | Substate::AttackingAdvancingWithShield
-                            if enemy == self.base.primary_target =>
-                        {
+                        | Substate::AttackingAdvancingWithShield => {
                             if self.enemy_is_behind_me(ctx) {
                                 // Just out of view because we're looking
                                 // the wrong way — ignore the OUTOFVIEW.
@@ -335,9 +333,7 @@ impl EnemyAi {
                         | Substate::AttackingProtectingWithShield
                         | Substate::AttackingPhalanx
                         | Substate::AttackingTooProudToAttack
-                        | Substate::AttackingTooProudToAttackApproach
-                            if enemy == self.base.primary_target =>
-                        {
+                        | Substate::AttackingTooProudToAttackApproach => {
                             self.out_of_view_seek_handler(sim, enemy, global, ctx, tick, grid);
                         }
 

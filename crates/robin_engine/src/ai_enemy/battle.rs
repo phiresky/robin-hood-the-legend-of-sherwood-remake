@@ -1310,15 +1310,13 @@ impl EnemyAi {
                         );
                         if self.base.already_on_point {
                             self.base.already_on_point = false;
-                            let dir = vec_to_sector(d.0, d.1);
-                            self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
+                            self.base.face_entity(target, ctx);
                             self.set_state(AiState::Attacking, Substate::AttackingTooProudToAttack);
                             self.base.launch_timer(20, ctx.frame);
                         }
                     } else {
                         // Good distance — face and observe.
-                        let dir = vec_to_sector(d.0, d.1);
-                        self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
+                        self.base.face_entity(target, ctx);
                         self.base.outbox.actor.set_focus(self.base.primary_target);
                         self.set_state(AiState::Attacking, Substate::AttackingTooProudToAttack);
                         self.base.launch_timer(20, ctx.frame);

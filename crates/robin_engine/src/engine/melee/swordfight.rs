@@ -1424,11 +1424,16 @@ impl EngineInner {
         for slot in 0..crate::macro_store::NUMBER_OF_QA_MEMORY as u8 {
             self.abort_quick_action(pc_id, slot);
         }
-        // Close eyes / stop combat
+        // Stop derived live execution state.  Do not rewrite the actor's
+        // action state here: Original's RHElementActorPC::GetWounded coma
+        // branch calls SetConcussionOfTheBrain (which quits swordfight) and
+        // SetPosture(LYING), but deliberately preserves the interrupted
+        // action state.  The next damage/wait animation is selected from
+        // that state (for example WAITING_SWORD chooses the sword-specific
+        // unconscious animation).
         if let Some(entity) = self.world.entities.get_mut(pc_id)
             && let Some(actor) = entity.actor_data_mut()
         {
-            actor.action_state = ActionState::Waiting;
             actor.active_melee.clear();
             actor.clear_path();
         }
