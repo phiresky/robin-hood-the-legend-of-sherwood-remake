@@ -2279,6 +2279,20 @@ matches the rank switch exactly: ordinary soldiers return to duty, officers
 look for a soldier to report to, and knights or rankless actors remain
 unchanged. Cyrdach Profile 156 Savegame 010 now matches every recorded frame.
 
+### Repulsive deviation preserves float-expression promotion boundaries
+
+The repulsive point and line helpers store geometry, radii, movement distance,
+and force coefficients as `FLOAT`, but use local `DOUBLE` variables for later
+geometry. C++ therefore evaluates coefficient expressions and
+`fMovement * fMovement`/`fRadius * fRadius` in single precision before
+promoting their results. Rust had promoted the operands first and evaluated
+the whole expressions in `f64`. The final displacement is stored back in
+single precision, but repeated crowded anti-collision turns can still expose
+the different intermediate result. The port now stages those expressions at
+the same widths as the Original. Cyrdach Profile 156 Savegame 018's crowded
+PC movement at frame 1164 now matches bit-for-bit; Savegame 007 remains a full
+match.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

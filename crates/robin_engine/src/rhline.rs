@@ -191,7 +191,12 @@ pub fn repulsive_line_compute_deviation(
                 dist_origin -= total_radius;
             }
         } else if dd < (radius + self_action_radius) as f64 {
-            let coeff: f64 = (dd - radius as f64) * self_force_a as f64 + self_force_b as f64;
+            // Every operand in the C++ coefficient expression is FLOAT;
+            // only its assignment target is DOUBLE. Preserve that f32
+            // evaluation boundary before continuing with the double-width
+            // distance update.
+            let coeff =
+                ((distance_destination - radius) * self_force_a + self_force_b) as f64;
             dist_origin -= coeff * dd + (1.0 - coeff) * dist_origin;
         } else {
             return None; // too far
@@ -201,7 +206,9 @@ pub fn repulsive_line_compute_deviation(
             return None;
         }
 
-        let sq = (movement_mag as f64).powi(2) - dist_origin.powi(2);
+        // `fMovement * fMovement` is evaluated as FLOAT in the Original,
+        // then promoted for the subtraction from the DOUBLE distance.
+        let sq = (movement_mag * movement_mag) as f64 - dist_origin * dist_origin;
         let sqrt_val = sq.sqrt() as f32;
         let do_f32 = dist_origin as f32;
 
@@ -219,7 +226,8 @@ pub fn repulsive_line_compute_deviation(
                 dist_origin += total_radius;
             }
         } else if -dd < (radius + self_action_radius) as f64 {
-            let coeff: f64 = (-dd - radius as f64) * self_force_a as f64 + self_force_b as f64;
+            let coeff =
+                ((-distance_destination - radius) * self_force_a + self_force_b) as f64;
             dist_origin -= coeff * dd + (1.0 - coeff) * dist_origin;
         } else {
             return None;
@@ -229,7 +237,7 @@ pub fn repulsive_line_compute_deviation(
             return None;
         }
 
-        let sq = (movement_mag as f64).powi(2) - dist_origin.powi(2);
+        let sq = (movement_mag * movement_mag) as f64 - dist_origin * dist_origin;
         let sqrt_val = sq.sqrt() as f32;
         let do_f32 = dist_origin as f32;
 
@@ -287,8 +295,11 @@ pub fn repulsive_point_compute_deviation(
         v_rel_origin = self_pos.sub(origin);
         dist_origin = v_rel_origin.norm() as f64;
 
-        let coeff: f64 =
-            (distance_destination - radius) as f64 * self_force_a as f64 + self_force_b as f64;
+        // The coefficient is a FLOAT expression assigned to DOUBLE in the
+        // C++ routine. Promoting its individual operands changes crowded
+        // anti-collision trajectories even though the final vector is f32.
+        let coeff =
+            ((distance_destination - radius) * self_force_a + self_force_b) as f64;
         radius = (coeff * distance_destination as f64 + (1.0 - coeff) * dist_origin) as f32;
     } else {
         return None; // too far
@@ -300,14 +311,16 @@ pub fn repulsive_point_compute_deviation(
 
     v_rel_origin = v_rel_origin.scale(1.0 / dist_origin as f32);
 
-    let distance: f64 = 0.5
-        * (dist_origin + ((movement_mag as f64).powi(2) - (radius as f64).powi(2)) / dist_origin);
+    // Both squares are FLOAT expressions in the Original and are rounded
+    // before their difference is promoted by division through dist_origin.
+    let squared_difference = (movement_mag * movement_mag - radius * radius) as f64;
+    let distance: f64 = 0.5 * (dist_origin + squared_difference / dist_origin);
 
     if (movement_mag as f64) < distance.abs() {
         return None;
     }
 
-    let height = ((movement_mag as f64).powi(2) - distance.powi(2)).sqrt();
+    let height = ((movement_mag * movement_mag) as f64 - distance * distance).sqrt();
     let d_f32 = distance as f32;
     let h_f32 = height as f32;
 
