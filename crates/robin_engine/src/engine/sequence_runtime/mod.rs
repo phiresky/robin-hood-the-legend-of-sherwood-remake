@@ -1575,22 +1575,12 @@ impl NpcAttentionCommandContext<'_> {
             return false;
         };
         let currently_attentive = entity.enemy_ai().is_some_and(|enemy| enemy.attentive);
-        let idle = self
-            .sequence_manager
-            .current_element_for_actor(owner)
-            .and_then(|(current_seq, current_idx)| {
-                self.sequence_manager.get_element(current_seq, current_idx)
-            })
-            .map(|element| element.command == Command::Wait)
-            .unwrap_or(true);
         let needs_change = currently_attentive != target_attentive;
-        let can_play_transition = posture_upright_after && idle && needs_change;
-
-        // TODO(parity): `RHElementActorSoldier::Translate` at
-        // `RHelementactorsoldier.cpp:329-370` does not inspect the current Wait
-        // element, and its normal Leave arm animates whenever posture-after is
-        // Upright. Verify whether instruct arbitration makes Rust's retained
-        // `idle && needs_change` gate redundant before changing tick behavior.
+        // RHElementActorSoldier::Translate checks only posture and the current
+        // attentive flag. In particular, a higher-priority attentive element
+        // that postponed a live Move must still play this transition; when it
+        // completes, the movement is translated and path-found again.
+        let can_play_transition = posture_upright_after && needs_change;
         tracing::trace!(
             owner = owner.index(),
             ?command,
@@ -1599,7 +1589,6 @@ impl NpcAttentionCommandContext<'_> {
             currently_attentive,
             target_attentive,
             needs_change,
-            idle,
             can_play_transition,
             "dispatch attentive transition"
         );

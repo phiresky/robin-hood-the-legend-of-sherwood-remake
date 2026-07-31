@@ -872,6 +872,63 @@ fn set_soldier_attentive_mode_plays_transition_from_upright() {
 }
 
 #[test]
+fn set_soldier_attentive_mode_plays_transition_while_movement_is_postponed() {
+    use crate::element::{Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let soldier_id = engine.add_entity(make_test_soldier(Posture::Upright));
+
+    let mut movement = SequenceElement::new_movement(
+        1,
+        Command::MoveOk,
+        Some(soldier_id),
+        OrderType::RunningUpright,
+    );
+    movement.priority = SequencePriority::Normal;
+    movement.orders.push_back(Order::new(
+        OrderType::RunningUpright,
+        100.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    ));
+    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    let _ = engine.orders.sequence_manager.hourglass();
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(movement_sequence, 0);
+
+    engine.set_soldier_attentive_mode(soldier_id, true, false);
+
+    let movement = engine
+        .orders
+        .sequence_manager
+        .get_element(movement_sequence, 0)
+        .expect("postponed movement remains registered");
+    assert_eq!(movement.state, SequenceState::Postponed);
+    assert_eq!(movement.command, Command::Move);
+    assert!(movement.orders.is_empty());
+
+    let mut display = HostDisplayState::default();
+    let mut assets = LevelAssets::default();
+    let mut dev = crate::engine::DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(soldier_id)
+            .map(|(_, _, order)| order.order_type),
+        Some(OrderType::TransitionWaitingUprightWaitingAlerted),
+        "postponing a movement must not suppress the attentive transition",
+    );
+}
+
+#[test]
 fn arbitration_postpone_current_splits_when_current_cannot_interrupt_now() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
