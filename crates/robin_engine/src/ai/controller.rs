@@ -2739,6 +2739,19 @@ impl AiController {
         dx * dx + dy * dy <= tolerance * tolerance
     }
 
+    /// Mirror GoTo's split close-point callback boundary. Inside Think the
+    /// original defers EVENT_REACHPOINT through `mbAlreadyOnPoint` until
+    /// EndThink; callers outside Think invoke Think(EVENT_REACHPOINT)
+    /// synchronously. Rust's owner-boundary drain provides that synchronous
+    /// re-entry for a queued self stimulus.
+    fn finish_already_on_point(&mut self) {
+        if self.think_recursion_depth > 0 {
+            self.already_on_point = true;
+        } else {
+            self.fire_self_stimulus(StimulusType::EventReachPoint);
+        }
+    }
+
     /// Low-level movement primitive — queues a movement intent without
     /// committing to a substate transition.  Prefer the `EnemyAi::go_to` /
     /// `FriendlyAi::go_to` wrappers, which enforce the Shape 1 contract
@@ -2787,7 +2800,7 @@ impl AiController {
         let may_short_circuit =
             idle_for_goto_short_circuit && !self.likes_to_sit_around && !self.special_action;
         if may_short_circuit && self.check_already_on_point(&destination, 5.0, ctx) {
-            self.already_on_point = true;
+            self.finish_already_on_point();
             return;
         }
 
@@ -2907,7 +2920,7 @@ impl AiController {
         let may_short_circuit =
             idle_for_goto_short_circuit && !self.likes_to_sit_around && !self.special_action;
         if may_short_circuit && self.check_already_on_point(&destination, 5.0, ctx) {
-            self.already_on_point = true;
+            self.finish_already_on_point();
             return;
         }
         let quit_swordfight_before_move = self.apply_goto_action_state_teardown(flags, ctx);
@@ -2972,7 +2985,7 @@ impl AiController {
 
         let same_layer = destination.level == ctx.position.level;
         if same_layer && self.check_already_near(&destination, effective_distance as f32, ctx) {
-            self.already_on_point = true;
+            self.finish_already_on_point();
             return;
         }
 

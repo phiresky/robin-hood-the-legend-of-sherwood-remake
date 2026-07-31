@@ -607,20 +607,28 @@ pub(super) fn build_ai_context_from_entity(
         .filter(|detectable| detectable.seen_now)
         .filter_map(|detectable| detectable.element.map(|target| target.index()))
         .collect();
-    // The most recently performed sprite animation. Do not use
-    // `ActorData::old_action`: that is the previous value retained solely for
-    // the next script `ActionChange(new, old)` callback and is still Invalid
-    // during AI initialization. Engine paths modelling Original
-    // `RHElementActor::GetAnimation()` must overwrite this with the live
-    // sequence order: C++ reads `mpOrder->action`, which can advance before
-    // the successor order has performed and updated `Sprite::last_action`.
-    // TODO(parity): thread that live order into all GetAnimation consumers
-    // rather than requiring boundary-specific context overrides.
-    let self_animation = if actor.is_some() {
-        elem.sprite.last_action
-    } else {
-        crate::order::OrderType::default()
-    };
+    // RHElementActor::GetAnimation() reads the actor's current order, not the
+    // sprite's background animation. In particular, GetBored can play a
+    // WAITING_UPRIGHT_BORED sprite while the authoritative actor order remains
+    // WAITING_UPRIGHT; GoTo's close-point shortcut must still recognize that
+    // idle order and synchronously advance the patrol waypoint.
+    //
+    // `latched_order_type` is Rust's current-order equivalent. Fall back to
+    // the sprite only before an actor has latched its first order.
+    let self_animation = actor
+        .and_then(|actor| actor.latched_order_type)
+        .map(|order_type| {
+            // `Invalid` is the actor-hourglass latch for a cleared `mpOrder`.
+            // Original `RHElementActor::GetAnimation()` exposes that state as
+            // the `RHNONANIMATION_END` sentinel, which is significant to
+            // GoTo's close-point shortcut.
+            if order_type == crate::order::OrderType::Invalid {
+                crate::order::OrderType::NonanimationEnd
+            } else {
+                order_type
+            }
+        })
+        .unwrap_or(elem.sprite.last_action);
     // Only soldiers can be forced-attentive; civilians always read
     // `false`.  Threaded into AiContext so
     // `set_alert_status_with_flags` can apply the view-override from
