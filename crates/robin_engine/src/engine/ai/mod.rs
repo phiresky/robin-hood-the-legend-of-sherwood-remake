@@ -5367,6 +5367,7 @@ impl EngineInner {
         positions_before_movement: &EntitySlots<Option<MapPoint>>,
         _prepared: PreparedNpcOwnerPass,
         npc_id: EntityId,
+        derived_tail_order_type: crate::order::OrderType,
     ) {
         let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
             panic!(
@@ -5382,7 +5383,12 @@ impl EngineInner {
         // FrozenAll is volatile script state. Sample it at the consuming NPC
         // slot rather than caching it before earlier owners run callbacks.
         if self.actors_frozen() {
-            self.tick_npc_post_detection_tail_for_npc(sim, npc_id, assets);
+            self.tick_npc_post_detection_tail_for_npc_with_animation(
+                sim,
+                npc_id,
+                assets,
+                derived_tail_order_type,
+            );
             return;
         }
 
@@ -5394,6 +5400,7 @@ impl EngineInner {
             &world,
             Some(positions_before_movement),
             Some(npc_id),
+            Some(derived_tail_order_type),
             false,
         );
     }
@@ -5456,6 +5463,7 @@ impl EngineInner {
             assets,
             &world,
             positions_before_movement,
+            None,
             None,
             positions_before_movement.is_some(),
         );
@@ -10890,11 +10898,28 @@ impl EngineInner {
     // `hourglass`, staggered by NPC index so not all soldiers run on
     // the same frame.
 
+    #[cfg(test)]
     pub(super) fn tick_periodic_ai_for_npc(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
+    ) {
+        let live_animation = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(npc_id)
+            .map(|(_, _, order)| order.order_type)
+            .unwrap_or(crate::order::OrderType::NonanimationEnd);
+        self.tick_periodic_ai_for_npc_with_animation(sim, npc_id, assets, live_animation);
+    }
+
+    pub(super) fn tick_periodic_ai_for_npc_with_animation(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+        live_animation: crate::order::OrderType,
     ) {
         let current_frame = self.control.frame_counter;
 
@@ -10946,13 +10971,6 @@ impl EngineInner {
         // during Actor::Execute and promote its successor before NPC
         // Hourglass reaches The16thFrame; in that window `Sprite::last_action`
         // still names the transition.
-        let live_animation = self
-            .orders
-            .sequence_manager
-            .current_order_for_actor(npc_id)
-            .map(|(_, _, order)| order.order_type)
-            .unwrap_or(crate::order::OrderType::NonanimationEnd);
-
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
         // The16thFrame's only combat-context consumer is
         // RefreshArrowProtection. Original gathers its live fighter data

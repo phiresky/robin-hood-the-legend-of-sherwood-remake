@@ -3755,6 +3755,7 @@ impl EngineInner {
                             positions_before_movement,
                             prepared,
                             owner,
+                            derived_tail_order_type,
                         );
                         #[cfg(test)]
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::NpcTail(owner));

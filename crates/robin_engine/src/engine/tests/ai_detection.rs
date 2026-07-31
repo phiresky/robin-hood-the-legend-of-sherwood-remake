@@ -2369,7 +2369,20 @@ fn optical_detection_uses_owner_relative_positions_and_spawned_current_fallback(
 
         let sim = crate::sim_rng::test_context();
         let prepared = engine.prepare_npc_owner_pass(&sim, &assets);
-        engine.tick_npc_owner_pass(&sim, &assets, &positions, prepared, observer_id);
+        let tail_animation = engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(observer_id)
+            .map(|(_, _, order)| order.order_type)
+            .unwrap_or(crate::order::OrderType::NonanimationEnd);
+        engine.tick_npc_owner_pass(
+            &sim,
+            &assets,
+            &positions,
+            prepared,
+            observer_id,
+            tail_animation,
+        );
 
         engine
             .get_entity(observer_id)

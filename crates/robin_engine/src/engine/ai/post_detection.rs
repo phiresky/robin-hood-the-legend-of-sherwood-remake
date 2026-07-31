@@ -172,6 +172,27 @@ impl EngineInner {
         npc_id: EntityId,
         assets: &LevelAssets,
     ) {
+        let live_animation = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(npc_id)
+            .map(|(_, _, order)| order.order_type)
+            .unwrap_or(crate::order::OrderType::NonanimationEnd);
+        self.tick_npc_post_detection_tail_for_npc_with_animation(
+            sim,
+            npc_id,
+            assets,
+            live_animation,
+        );
+    }
+
+    pub(crate) fn tick_npc_post_detection_tail_for_npc_with_animation(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+        live_animation: crate::order::OrderType,
+    ) {
         let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
             panic!(
                 "creation-ordered post-detection owner {} disappeared",
@@ -231,7 +252,7 @@ impl EngineInner {
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::SixteenthFrame);
         #[cfg(not(test))]
         observe_npc_post_detection_tail_phase(npc_id, ());
-        self.tick_periodic_ai_for_npc(sim, npc_id, assets);
+        self.tick_periodic_ai_for_npc_with_animation(sim, npc_id, assets, live_animation);
 
         #[cfg(test)]
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::NormalTimer);
