@@ -2622,6 +2622,19 @@ approach until the target physically enters the lift. Per-tick AI metadata now
 carries both views explicitly, so each translated source expression selects
 the same one as C++.
 
+### Lost-enemy swordfight exit is an explicit command
+
+`EndSwordfight` launches `QUIT_SWORDFIGHT`; it does not directly clear the
+opponent relationship. The command's translation owns both relationship
+teardown and the lowering-sword transition, including its synchronous AI
+callback and sequence arbitration.
+
+The `EVENT_OUTOFVIEW` no-follow branch also snaps toward the missed human's
+current position and enters the ordinary battle overview. Its forecast is
+only for a possible chase, and the branch does not request `FAST_OVERVIEW`.
+Keeping those three source-level boundaries distinct prevents a speculative
+turn or newly selected nearby target from delaying the swordfight exit.
+
 ### Seek transitions inherit the movement speed factor
 
 Original transition Execute arms have two motion paths. A direct transition
