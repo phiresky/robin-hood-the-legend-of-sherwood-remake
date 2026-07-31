@@ -12,7 +12,7 @@
 use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::{collections::BTreeMap, collections::BTreeSet, collections::VecDeque};
 
@@ -1132,6 +1132,7 @@ struct Options {
     dump: Option<DumpOptions>,
     http_server: Option<u16>,
     start_paused: bool,
+    frame_zero_screenshot_dir: Option<PathBuf>,
 }
 
 struct DumpOptions {
@@ -1374,12 +1375,7 @@ impl VisualReplay {
 
     /// Draw the parity engine's current state while deliberately ignoring all
     /// live keyboard/mouse commands. The trace remains the only input source.
-    fn render(&mut self, engine: &Engine) -> bool {
-        let _events = self.window.poll_events();
-        if self.window.close_requested {
-            return false;
-        }
-
+    fn queue_frame(&mut self, engine: &Engine) {
         let focus = engine
             .selected_pc_ids()
             .first()
@@ -1463,6 +1459,24 @@ impl VisualReplay {
             self.renderer
                 .render_gpu_image(image, None, Some(&dst), BlendMode::Blend);
         }
+    }
+
+    fn capture_png(&mut self, engine: &Engine, path: &Path) {
+        self.queue_frame(engine);
+        let (width, height, rgba) = self
+            .renderer
+            .capture_frame_rgba()
+            .expect("capture frame-zero parity screenshot from GPU");
+        write_rgba_png(path, width, height, &rgba);
+    }
+
+    fn render(&mut self, engine: &Engine) -> bool {
+        let _events = self.window.poll_events();
+        if self.window.close_requested {
+            return false;
+        }
+
+        self.queue_frame(engine);
         self.renderer.present();
         std::thread::sleep(std::time::Duration::from_millis(16));
         true
@@ -1480,11 +1494,13 @@ fn main() {
     tracing_subscriber::fmt::init();
 
     let options = parse_options();
-    if options.visual {
-        let exit = robin_rs::window::run_with_game(
+    if options.visual || options.frame_zero_screenshot_dir.is_some() {
+        let visible = options.visual;
+        let exit = robin_rs::window::run_with_game_visibility(
             "Robin Hood — Original parity replay",
             1024,
             768,
+            visible,
             move |window| async move { run_replay(options, Some(window)) },
         )
         .unwrap_or_else(|error| panic!("start visual parity replay: {error}"));
@@ -1496,8 +1512,18 @@ fn main() {
 fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWindow>) -> i32 {
     let scan_all = options.scan_all;
     let no_auto_dump = options.no_auto_dump;
+    let visual_enabled = options.visual;
     let trace_path = options.trace_path;
     let http_server = options.http_server;
+    let frame_zero_screenshot_dir = options.frame_zero_screenshot_dir.map(|path| {
+        if path.is_absolute() {
+            path
+        } else {
+            std::env::current_dir()
+                .expect("resolve current directory for frame-zero screenshots")
+                .join(path)
+        }
+    });
     let mut manual_pause = options.start_paused;
     let trace_path = trace_path
         .canonicalize()
@@ -1635,6 +1661,23 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     }
     let mut visual =
         visual_window.map(|window| VisualReplay::new(window, host, &engine, background));
+    if let Some(output_dir) = frame_zero_screenshot_dir {
+        let output_path = frame_zero_screenshot_path(&output_dir, &trace_path);
+        visual
+            .as_mut()
+            .expect("frame-zero screenshots require a GPU-backed parity window")
+            .capture_png(&engine, &output_path);
+        eprintln!(
+            "frame-zero parity screenshot written to {}",
+            output_path.display()
+        );
+    }
+    if !visual_enabled {
+        // Screenshot-only capture uses a hidden GPU window for exactly one
+        // render. Keep the remaining parity scan headless and do not wait for
+        // an invisible window after a successful replay.
+        visual = None;
+    }
     assert_eq!(
         engine.original_rng_replay_cursor(),
         Some(prefix_end),
@@ -2042,6 +2085,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
 
 fn parse_options() -> Options {
     const USAGE: &str = "usage: original_parity_replay [--scan-all] [--no-auto-dump] [--visual] \
+        [--frame-zero-screenshot-dir DIR] \
         [--http-server PORT [--start-paused]] \
         [--dump-jsonl PATH [--dump-from FRAME] [--dump-through FRAME] \
         [--dump-entity KIND:INDEX]...] TRACE.jsonl[.zst]";
@@ -2057,11 +2101,21 @@ fn parse_options() -> Options {
     let mut dump_entities = Vec::new();
     let mut http_server = None;
     let mut start_paused = false;
+    let mut frame_zero_screenshot_dir = None;
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--scan-all") => scan_all = true,
             Some("--no-auto-dump") => no_auto_dump = true,
             Some("--visual") => visual = true,
+            Some("--frame-zero-screenshot-dir") => {
+                let value = args.next().unwrap_or_else(|| panic!("{USAGE}"));
+                assert!(
+                    frame_zero_screenshot_dir
+                        .replace(PathBuf::from(value))
+                        .is_none(),
+                    "{USAGE}"
+                );
+            }
             Some("--http-server") => {
                 let port = parse_u64_option(args.next(), "--http-server");
                 let port = u16::try_from(port).expect("--http-server port exceeds 65535");
@@ -2113,6 +2167,7 @@ fn parse_options() -> Options {
         trace_path,
         http_server,
         start_paused,
+        frame_zero_screenshot_dir,
         dump: dump_path.map(|path| DumpOptions {
             path,
             from_frame: dump_from,
@@ -2120,6 +2175,56 @@ fn parse_options() -> Options {
             entities: dump_entities,
         }),
     }
+}
+
+fn frame_zero_screenshot_path(output_dir: &Path, trace_path: &Path) -> PathBuf {
+    let relative = trace_path
+        .ancestors()
+        .find(|ancestor| ancestor.file_name().is_some_and(|name| name == "traces"))
+        .and_then(|trace_root| trace_path.strip_prefix(trace_root).ok());
+    let source_name = relative.unwrap_or_else(|| {
+        trace_path
+            .file_name()
+            .map(Path::new)
+            .expect("parity trace path has no filename")
+    });
+    let mut flat_name = source_name
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("__");
+    for suffix in [".rhrec.jsonl.zst", ".jsonl.zst", ".rhrec.jsonl", ".jsonl"] {
+        if let Some(stem) = flat_name.strip_suffix(suffix) {
+            flat_name = stem.to_owned();
+            break;
+        }
+    }
+    output_dir.join(format!("{flat_name}.png"))
+}
+
+fn write_rgba_png(path: &Path, width: u32, height: u32, rgba: &[u8]) {
+    assert_eq!(
+        rgba.len(),
+        width as usize * height as usize * 4,
+        "invalid frame-zero screenshot RGBA buffer"
+    );
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).unwrap_or_else(|error| {
+            panic!("create screenshot directory {}: {error}", parent.display())
+        });
+    }
+    let file = File::create(path)
+        .unwrap_or_else(|error| panic!("create screenshot {}: {error}", path.display()));
+    let mut writer = BufWriter::new(file);
+    let mut encoder = png::Encoder::new(&mut writer, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder
+        .write_header()
+        .and_then(|mut png_writer| png_writer.write_image_data(rgba))
+        .unwrap_or_else(|error| panic!("encode screenshot {}: {error}", path.display()));
 }
 
 fn parse_trace_frame(line: &str, line_number: usize) -> Option<TraceFrame> {
@@ -2416,9 +2521,7 @@ fn write_automatic_rolling_dump(
         .find(|ancestor| ancestor.join(".git").exists())
         .map(PathBuf::from)
         .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
-    let dump_dir = workspace_root
-        .join(".codex-tmp")
-        .join("parity-dumps");
+    let dump_dir = workspace_root.join(".codex-tmp").join("parity-dumps");
     std::fs::create_dir_all(&dump_dir).expect("create workspace automatic parity dump directory");
     let temporary = tempfile::Builder::new()
         .prefix(&prefix)
