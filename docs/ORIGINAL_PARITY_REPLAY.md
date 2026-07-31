@@ -2462,6 +2462,20 @@ alignment. The Pay ability now preserves the current direction at
 initialization and uses the same progressive-turn/frozen-frame branch.
 Linux3 Profile 003 Savegame 018 consequently matches every recorded frame.
 
+### Loaded movement restores its executing-owner latch
+
+Original retains an executing movement element in the actor's
+`mpSequenceElement`. Rust also keeps a derived `ActiveMovement` identity that
+owner-local movement and anti-collision code use to find the exact current
+order. A loaded in-progress movement previously left that Rust-only latch
+empty, so its final seek order did not hide the antagonist from
+anti-collision and the approaching actor was deflected by the very target it
+was trying to reach.
+
+Post-load adoption now rebuilds `ActiveMovement` from each in-progress
+movement element. Linux3 Profile 003 Savegame 019 consequently reaches its
+downed Tie target on the Original path and matches every recorded frame.
+
 ### Route arrival rebuilds patrols at the synchronous owner boundary
 
 The `SUBSTATE_DEFAULT_GOTOROUTE` `EVENT_REACHPOINT` handler calls the virtual
@@ -2495,6 +2509,22 @@ assignment now occurs immediately after the list pop, matching Original's
 recursive unlock order. Linux2 Profile 002 QuickSave therefore selects the same
 search point and keeps the global seek-point RNG stream attributed to the same
 candidates.
+
+### Initializing climb orders keep the lift-facing direction
+
+Every ladder/wall climbing Execute arm calls `SetDirection` with the lift
+sector's authored direction and clears the selected order's
+`bComputeDirection` during `mbNewOrder` initialization. Rust installed the
+lift-facing goal but left `compute_direction` enabled, so `PerformMotion`
+immediately replaced it with the waypoint vector. This is especially visible
+when a loaded save resumes an already-running fast climb with `mbNewOrder`
+set: two turn/motion iterations then diverge in direction, elevation, and
+position on the first frame.
+
+Initializing authored climb orders now persistently clear direction
+recomputation before sprite motion. Linux3 Profile 001 Savegame 008 therefore
+matches the restored fast-ladder step and advances from frame 3915 to a later,
+independent AI transition.
 
 ## Current Linux-v48 loaded-save result
 

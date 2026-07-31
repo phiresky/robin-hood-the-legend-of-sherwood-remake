@@ -181,6 +181,7 @@ impl LegacyPostLoadAdoptionPlan {
     /// last because it reads the fixed-up active order.
     pub fn apply(self, engine: &mut EngineInner, assets: &LevelAssets) -> LegacyPostLoadHostOutput {
         engine.complete_legacy_loaded_remarks(&self.active_remark_completions, assets);
+        engine.restore_loaded_active_movements();
         crate::abilities::restore_loaded_active_abilities(
             &mut engine.world.entities,
             &engine.orders.sequence_manager,

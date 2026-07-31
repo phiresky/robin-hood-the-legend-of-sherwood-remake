@@ -1324,6 +1324,42 @@ pub(crate) fn build_line_jump_click_sequence(
 }
 
 impl EngineInner {
+    /// Rebuild Rust's derived active-movement latch after loading an Original
+    /// save. Original keeps the executing movement in `mpSequenceElement`;
+    /// Rust additionally caches its sequence identity for owner-local
+    /// movement and anti-collision work.
+    pub(crate) fn restore_loaded_active_movements(&mut self) {
+        let active =
+            self.orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| {
+                    sequence.elements.iter().enumerate().filter_map(
+                        move |(element_index, element)| {
+                            (element.state == crate::sequence::SequenceState::InProgress
+                                && element.data.is_movement())
+                            .then_some((element.owner?, sequence.id, element_index))
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+        let mut owners = std::collections::BTreeSet::new();
+        for (owner, sequence_id, element_index) in active {
+            assert!(
+                owners.insert(owner),
+                "loaded actor {owner:?} owns multiple in-progress movement elements"
+            );
+            self.world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::actor_data_mut)
+                .unwrap_or_else(|| {
+                    panic!("loaded movement owner {owner:?} is missing required actor state")
+                })
+                .active_movement = ActiveMovement::new(sequence_id, element_index);
+        }
+    }
+
     /// Consume one queued `RHElement` position update at the beginning of
     /// this actor's Hourglass, before order selection.
     ///
@@ -5320,7 +5356,7 @@ impl EngineInner {
                 move_elem_idx,
                 active_move_flags,
                 order_tolerance,
-                order_compute_direction,
+                mut order_compute_direction,
                 order_reverse,
                 transition_distance_continuation,
                 deferred_movement_state_start,
@@ -5664,6 +5700,27 @@ impl EngineInner {
                 .actor_data()
                 .expect("movement owner lost actor initialization state")
                 .execute_order_initialising;
+            if execute_order_initialising && is_authored_climb_action(order_action) {
+                // Every climb Execute arm calls SetDirection(lift direction)
+                // and clears the selected order's bComputeDirection during
+                // initialization. Without the clear, PerformMotion
+                // immediately replaces that lift-facing goal with the
+                // destination vector. This is observable when a save resumes
+                // with mbNewOrder set on an already-running climb.
+                let order = self
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(move_seq_id, move_elem_idx)
+                    .and_then(|element| element.orders.front_mut())
+                    .filter(|order| Some(order.order_id) == order_id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "initializing climb owner {entity_id:?} lost selected order {order_id:?}"
+                        )
+                    });
+                order.compute_direction = false;
+                order_compute_direction = false;
+            }
             let elem = entity.element_data_mut();
             let dx = goal.x - elem.position_map().x;
             let dy = goal.y - elem.position_map().y;
