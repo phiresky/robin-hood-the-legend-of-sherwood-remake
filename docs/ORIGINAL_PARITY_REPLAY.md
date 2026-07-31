@@ -3661,6 +3661,20 @@ owner context, and closes its resulting AI/movement work before resuming the
 VM. Nicouzouf Profile 001 Savegame 065 now consumes both patrol macro forecasts
 at the Original call boundary and matches every recorded frame.
 
+### Proud observers use live ally vision and 3D target distance
+
+Original `GetNewPrimaryTarget` scores candidates with `Distance` and gates
+them with `MaxNormDistance`; both operate on the full `RHposition`, stretching
+Y for the isometric projection while retaining the elevation delta. Rust's
+shared target selector previously used only projected X/Y. Original's
+`IsTooProudToAttack` also asks each lower-pride observing soldier whether that
+soldier detects the candidate, using the observer's current real view radius.
+Rust substituted the deciding soldier's fixed standard radius. The selector
+now retains Z in both norms, and the proud-observer branch uses the observing
+soldier's live radius (while preserving the building gate). Linux3 Profile 001
+Continue now stays in the proud-observer behavior at frame 471 and matches the
+entire recording.
+
 ### Small Linux profiles match end to end
 
 The complete `Savegame_linux` corpus currently consists of Profile 005

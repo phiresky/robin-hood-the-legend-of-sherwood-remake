@@ -592,10 +592,15 @@ impl EnemyAi {
             ];
             if observe_substates.contains(&f.current_substate)
                 && let Some(target_view) = ctx.entity_view(self.base.primary_target)
+                && let Some(observer) = tick
+                    .camp_soldiers
+                    .iter()
+                    .find(|soldier| soldier.handle == f.handle)
+                && !observer.in_building
                 && fighter_detects_position_180(
                     f,
                     target_view.position,
-                    ctx.sq_standard_view_radius,
+                    (observer.view_radius as f32).powi(2),
                 )
             {
                 return true;
@@ -3776,11 +3781,14 @@ impl EnemyAi {
             let dx = target.position.x - ctx.position.x;
             let dy = (target.position.y - ctx.position.y)
                 * crate::position_interface::INVERSE_ASPECT_RATIO;
-            let max_norm = dx.abs().max(dy.abs());
+            // Original Distance/MaxNormDistance operate on RHposition:
+            // isometrically stretched X/Y plus the full elevation delta.
+            let dz = target.elevation - ctx.elevation;
+            let max_norm = dx.abs().max(dy.abs()).max(dz.abs());
             if max_norm > f32::from(min_distance) {
                 continue;
             }
-            let mut distance = (dx * dx + dy * dy).sqrt() as u16;
+            let mut distance = (dx * dx + dy * dy + dz * dz).sqrt() as u16;
 
             // Penalize already-targeted enemies.
             let mult = if let Some(map) = mult_override {
