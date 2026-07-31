@@ -3526,6 +3526,23 @@ next independent mismatch at frame 35. Linux Profile 003 Savegame 053 remains
 exact across the complete recording, guarding the shared fighter-cache
 contract that an earlier broad geometry change disturbed.
 
+### Raising a sword initializes the sprite goal in the launch frame
+
+Original `RHSprite::PerformAction` copies every fresh order's
+`pointDestination2D` into the sprite map goal. The order produced by
+`ENTER_SWORDFIGHT` has the default zero destination, so it clears the stale
+goal of a movement element that the stronger swordfight element postponed.
+
+Rust's non-movement animation path is separate from `PositionInterface`, and
+a recursively launched swordfight order can be installed after that actor's
+animation owner slot has already run. Waiting for the next animation tick left
+the old movement goal visible for one extra frame. The enter-swordfight
+instruction now applies its raising-sword order's zero goal when it installs
+the order, matching the Original launch-frame state. Windows SuN1Sh1nE
+Profile 004 Savegame 024 advances from frame 35 to the next independent
+mismatch at frame 36; Windows Savegame 014 and Linux Profile 003 Savegame 053
+remain exact across their full recordings.
+
 ### ClearPatrol keeps the chief formation live through member callbacks
 
 Original `RHArtificialIntelligence::ClearPatrol` walks the theoretical patrol
