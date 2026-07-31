@@ -848,6 +848,32 @@ current sight is recomputed, while host-owned derived displays are invalidated.
 The plan remains outside the public install boundary until the complete
 Linux-v48 coordinator can apply it atomically with every serialized slice.
 
+### Windows-v48 save ABI normalization
+
+Retail Windows `GSHR` saves now use the same atomic adoption path as Linux
+`RHSG` saves after the contextual decoder has normalized their audited
+call-site layouts. `RHArtificialIntelligence::SerializeThisAI` stores each
+Windows AI log entry as the complete naturally aligned 12-byte `RHlogLine`
+aggregate, including its inert two-byte padding, while the Linux port's
+`CHECKENUM` path stores only the first four-byte type word. The producer ABI is
+therefore threaded into every mission-local AI decoder instead of assuming the
+Linux record width.
+
+Repulsive-point width is selected by serializer call site, not merely by file
+magic. Windows Human payloads use the wide geometry compatibility layout, but
+`RHElementObject` payloads (including the standalone trajectory helper) use
+the ordinary narrow layout. The importer preserves that asymmetry without
+scanning for fingerprints or skipping guessed bytes.
+
+Windows music stream positions are legitimate saved values and are retained in
+the deterministic sound/host state. Retail Human building indices use both
+zero and `0xffff` for null and may contain a stale sector from another level
+build; exactly as in the Original compatibility loader, a valid building is
+accepted directly and any other non-null value is resolved from the actor's
+authoritative deserialized position sector. The first Cyrdach Windows fixture
+now decodes to exact EOF, adopts atomically, and matches all 250 recorded
+frames.
+
 ### Linux-v48 AI `mOldState` storage
 
 Profile 011 creation order 85 stores `local_ai.old_state = 119`, outside the
@@ -2040,6 +2066,51 @@ transition one actor slot early and completed it at frame 50180 instead of
 visible immediately, while translation and owner instruction occur at the
 Original SequenceManager boundary. Savegame 035 now matches every recorded
 frame.
+
+### Attentive transitions postpone re-entrant facing turns
+
+An AI state change can synchronously register an attentive-mode transition and
+then deliver a re-entrant `EVENT_REACHPOINT` which registers `FaceTo`. Original
+SequenceManager arbitration postpones that turn without translating it while
+`ENTER_ATTENTIVE_MODE`, `LEAVE_ATTENTIVE_MODE`, or the officer variant is
+selected or waiting to be instructed. The actor therefore retains its previous
+direction goal until the attentive transition finishes.
+
+Linux3 Profile 003 Savegame 009 exposed Rust eagerly translating the re-entrant
+turn at frame 18075. Pending turn launch now checks both the selected element
+and manager-registered elements waiting for instruction, and uses the generic
+deferred untranslated turn path when an attentive transition owns the actor.
+
+### Body queues inspect the complete entity snapshot
+
+`ExamineOtherBodies` stores humans precisely because they are out of order. The
+Original checks each queued body directly with `IsOutOfOrder`; it does not use
+the nearby tactical-fighter list, which deliberately excludes actors unable to
+fight. Linux3 Profile 003 Savegame 009 exposed Rust interpreting absence from
+that filtered list as recovery and discarding a tied, unconscious guard at
+frame 18078. Body pruning now resolves the handle through the complete entity
+view and retains every actor that is still unable to fight.
+
+### Anti-collision recovery rebuilds zero-distance trajectories
+
+When a deviated actor can return to its authored trajectory, Original
+`UpdatePositionAntiCollision` always clears deviation, commits the future
+position, invalidates the cached increment, and calls
+`ComputeIncrementAll(true)`. This also happens when the current animation frame
+contributes a zero-length step. Linux3 Profile 003 Savegame 009 exposed Rust
+leaving the temporary avoidance direction as its goal at frame 18085 because
+the rebuild was incorrectly gated on nonzero displacement. Both movement paths
+now rebuild unconditionally on deviation recovery.
+
+### Seeking-body timers do not stand in for arrival
+
+In `SUBSTATE_SEEKING_BODY`, `EVENT_TIMER` only checks whether the watched human
+has recovered and become detectable; otherwise it rearms the ten-frame timer.
+Body examination, dead-body observation, and waking a tied or unconscious
+human belong exclusively to `EVENT_REACHPOINT`. Rust had merged the timer and
+arrival arms, allowing a timer at frame 18088 of Linux3 Profile 003 Savegame
+009 to wake the target before the movement transition actually completed. The
+two event paths now follow the Original switch independently.
 
 ### Produced noise observes the Actor entry-latched order
 

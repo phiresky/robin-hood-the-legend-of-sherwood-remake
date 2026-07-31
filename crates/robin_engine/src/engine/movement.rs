@@ -6568,7 +6568,9 @@ impl EngineInner {
                     if deviated && (dx_step != 0.0 || dy_step != 0.0) {
                         elem.sprite.position_iface.reset_increment_computed();
                         elem.sprite.position_iface.compute_increment_all(false);
-                    } else if recovered_from_deviation && (dx_step != 0.0 || dy_step != 0.0) {
+                    } else if recovered_from_deviation {
+                        // Original rebuilds the trajectory even when this
+                        // animation frame contributes no movement.
                         elem.sprite.position_iface.reset_increment_computed();
                         elem.sprite.position_iface.compute_increment_all(true);
                     }
@@ -7363,10 +7365,11 @@ impl EngineInner {
                         if deviated && (dx_step != 0.0 || dy_step != 0.0) {
                             elem.sprite.position_iface.reset_increment_computed();
                             elem.sprite.position_iface.compute_increment_all(false);
-                        } else if recovered_from_deviation && (dx_step != 0.0 || dy_step != 0.0) {
+                        } else if recovered_from_deviation {
                             // Original's no-new-deviation recovery branch commits
-                            // the step, clears `IsDeviated`, and rebuilds the
-                            // increment with direction computation enabled.
+                            // the (possibly zero-length) step, clears
+                            // `IsDeviated`, and rebuilds the increment with
+                            // direction computation enabled.
                             elem.sprite.position_iface.reset_increment_computed();
                             elem.sprite.position_iface.compute_increment_all(true);
                         }
@@ -8276,6 +8279,37 @@ impl EngineInner {
                     } else {
                         crate::element::Command::Turn
                     };
+                    // A SetState callback can synchronously register an
+                    // attentive-mode transition, then a re-entrant
+                    // EventReachPoint can register FaceTo before the manager
+                    // hourglass gets to either element. Original arbitration
+                    // postpones the Turn without translating it, so its
+                    // direction goal remains untouched until the attentive
+                    // transition finishes.
+                    let attentive_transition_blocks_turn = self
+                        .orders
+                        .sequence_manager
+                        .current_element_for_actor(entity_id)
+                        .and_then(|(seq, idx)| self.orders.sequence_manager.get_element(seq, idx))
+                        .is_some_and(|element| {
+                            matches!(
+                                element.command,
+                                crate::element::Command::EnterAttentiveMode
+                                    | crate::element::Command::LeaveAttentiveMode
+                                    | crate::element::Command::LeaveAttentiveModeOfficer
+                            )
+                        })
+                        || [
+                            crate::element::Command::EnterAttentiveMode,
+                            crate::element::Command::LeaveAttentiveMode,
+                            crate::element::Command::LeaveAttentiveModeOfficer,
+                        ]
+                        .into_iter()
+                        .any(|command| {
+                            self.orders
+                                .sequence_manager
+                                .element_is_about_to_be_launched(entity_id, command)
+                        });
                     let current_movement = self
                         .orders
                         .sequence_manager
@@ -8332,7 +8366,10 @@ impl EngineInner {
                                 )
                             })
                         });
-                        if defer_standalone_turn || intent.defer_instruction {
+                        if defer_standalone_turn
+                            || intent.defer_instruction
+                            || attentive_transition_blocks_turn
+                        {
                             self.launch_turn_sequence_deferred_no_transitions(
                                 entity_id,
                                 turn_command,
@@ -8380,7 +8417,10 @@ impl EngineInner {
                         if !intent.no_halt {
                             self.halt_actor(entity_id);
                         }
-                        if defer_standalone_turn || intent.defer_instruction {
+                        if defer_standalone_turn
+                            || intent.defer_instruction
+                            || attentive_transition_blocks_turn
+                        {
                             self.launch_turn_sequence_deferred_no_transitions(
                                 entity_id,
                                 turn_command,

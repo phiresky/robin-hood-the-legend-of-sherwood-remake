@@ -1116,9 +1116,14 @@ impl EnemyAi {
         // Prune from the front while the first body
         // `IsOutOfOrder() == false` (i.e. has recovered / woken up).
         while let Some(&first) = self.other_bodies_to_examine.first() {
-            let still_down = self
-                .find_fighter(first, tick)
-                .map(|f| !f.is_able_to_fight)
+            // Body queues deliberately contain out-of-order humans. The
+            // tactical nearby-fighter list filters those actors out before AI
+            // dispatch, so absence there does not mean the body recovered.
+            // Use the complete handle-indexed entity snapshot, matching the
+            // Original's direct `IsOutOfOrder()` call.
+            let still_down = ctx
+                .entity_view(first)
+                .map(|view| !view.is_able_to_fight)
                 .unwrap_or(false);
             if still_down {
                 break;

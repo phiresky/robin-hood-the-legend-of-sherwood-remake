@@ -1958,9 +1958,23 @@ impl EnemyAi {
             }
 
             Substate::SeekingBody => {
-                if stimulus_type == StimulusType::EventReachPoint
-                    || stimulus_type == StimulusType::EventTimer
-                {
+                if stimulus_type == StimulusType::EventTimer {
+                    // The timer only watches for a body that has recovered
+                    // while we are travelling. Body examination itself is
+                    // exclusively driven by EVENT_REACHPOINT in the original.
+                    let body_handle = self.base.detected_body;
+                    let view = ctx.entity_view(body_handle).unwrap_or_else(|| {
+                        panic!(
+                            "SeekingBody timer target {body_handle} has no typed live entity view"
+                        )
+                    });
+                    if !view.is_dead && !view.is_unconscious && self.is_detecting(body_handle, ctx)
+                    {
+                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    } else {
+                        self.base.launch_timer(10, ctx.frame);
+                    }
+                } else if stimulus_type == StimulusType::EventReachPoint {
                     self.base.face_position(self.base.seek_position);
 
                     // If the body is tied or unconscious, say
