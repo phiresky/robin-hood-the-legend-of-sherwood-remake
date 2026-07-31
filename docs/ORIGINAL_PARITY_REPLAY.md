@@ -2308,6 +2308,19 @@ fallthrough cases share the exact guard. This prevents a simultaneous
 OUTOFVIEW pair from spuriously launching a seek-area RNG burst in Linux2
 Profile 002 `Continue-session-0002`.
 
+### Walking START state waits for the committed step result
+
+`RHSprite::PerformMotion` commits its movement before it returns to the
+actor's `Execute` switch. A newly selected walking order can report raw
+`START`, deviate through anti-collision into its goal predicate during that
+same call, and ultimately return `TERMINATED`. The START-only posture/action
+rewrite must therefore not be applied merely from the pre-step sprite state.
+Rust now defers ordinary walking START state effects until the committed step
+has established that the same order remains current. This preserves Waiting
+when a loaded, nearly complete waypoint terminates immediately, while
+surviving walking orders still enter Moving on their first frame. Cyrdach
+Profile 156 Savegame 023 now matches every recorded frame.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

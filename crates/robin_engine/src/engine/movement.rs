@@ -6412,6 +6412,12 @@ impl EngineInner {
                 // decided whether the authored walking order survived.  The
                 // guarded handoff below owns that one-shot side effect.
                 && !deferred_movement_state_start_due
+                // PerformMotion commits the physical step before returning.
+                // A fresh order can therefore reach its goal and return
+                // TERMINATED instead of exposing START to Execute. Defer all
+                // START-only effects until the committed step has decided
+                // whether this exact order survives.
+                && !matches!(state_effect_motion, MotionState::Start)
                 && let Some((posture, action_state)) =
                     movement_execute_state_effect(order_action, state_effect_motion)
             {
@@ -7537,6 +7543,27 @@ impl EngineInner {
             let current_order_will_advance = order_pops
                 .iter()
                 .any(|&(seq_id, elem_idx)| seq_id == move_seq_id && elem_idx == move_elem_idx);
+            // Ordinary walking START effects have the same survival rule as
+            // generated transition-distance and deferred PC successors.
+            // Original PerformMotion moves first and only then returns its
+            // final motion state to Execute; when anti-collision deviation
+            // lands inside the goal predicate on that first call, Execute
+            // observes TERMINATED and must not briefly enter Moving.
+            if matches!(state_effect_motion, MotionState::Start)
+                && !deferred_movement_state_start_due
+                && !transition_distance_first_execute_due
+                && !current_order_will_advance
+                && self
+                    .orders
+                    .sequence_manager
+                    .get_element(move_seq_id, move_elem_idx)
+                    .and_then(|element| element.orders.front())
+                    .is_some_and(|order| Some(order.order_id) == order_id)
+                && let Some((posture, next_action_state)) =
+                    movement_execute_state_effect(order_action, MotionState::Start)
+            {
+                movement_state_effects.push((entity_id, posture, next_action_state));
+            }
             // The authored successor owns the deferred movement START only
             // if it remains current after this Execute. A very short
             // successor can complete and hand off to its stop transition in
