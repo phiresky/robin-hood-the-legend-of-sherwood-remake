@@ -3008,7 +3008,9 @@ dynamic elements, and 537 authoritative RNG draws. Savegame 064 matches all 250
 frames (5865 through 6115), including its 128 saved elements, 77 dynamic
 elements, and 530 authoritative RNG draws. Savegame 070 matches all 250 frames
 (3117 through 3367), including its 137 saved elements, 86 dynamic elements, and
-549 authoritative RNG draws. No replay-specific compatibility or code change
+549 authoritative RNG draws. The static Sherwood trace matches all 250 frames
+(4385 through 4635), including its 137 saved elements, 86 dynamic elements, and
+544 authoritative RNG draws. No replay-specific compatibility or code change
 was required for these traces.
 
 Windows `GSHR` saves now share the atomic adoption path. The complete Cyrdach
