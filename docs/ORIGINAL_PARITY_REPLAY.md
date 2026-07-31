@@ -3457,6 +3457,11 @@ through its complete recorded window. Savegames 000, 002, 006, 008–010,
 058, 060–062, 064, 066–075 match every recorded frame. This includes dense
 city states with 321 and 347 loaded elements.
 
+The formerly excluded static Savegame 006 trace also received a frozen
+release-mode recheck. Its 250 frames (61 through 311), 56-element save including
+5 dynamic elements, and 299 authoritative RNG draws match exactly through EOF;
+no replay-specific compatibility or code change was required.
+
 The remaining failures group into reusable behavior boundaries rather than
 save-specific mismatches:
 
