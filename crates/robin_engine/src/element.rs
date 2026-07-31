@@ -600,6 +600,14 @@ pub struct ActiveDoorPass {
     pub door_index: crate::gate::DoorIndex,
     /// Direction: true = outside→inside (direct), false = inside→outside.
     pub direct: bool,
+    /// Direction stored on the owning movement element.
+    ///
+    /// This normally equals `direct`. A v48 save can resume after the actor
+    /// has already crossed the gate, however, so Rust rebuilds the remaining
+    /// physical steps from the actor's destination-side sector while the
+    /// Original movement element retains its initial traversal direction.
+    /// AI `Position(actor)` and route-source queries read that retained value.
+    pub position_direct: bool,
     /// Remaining steps to execute (front = next step).
     pub steps: VecDeque<DoorPassStep>,
     /// How many PassingDoor triggers have fired (first changes layer, second

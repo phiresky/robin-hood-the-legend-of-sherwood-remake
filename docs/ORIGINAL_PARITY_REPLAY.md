@@ -2594,6 +2594,30 @@ profile thrusts. Their unusual parry behavior is also preserved: a high sword
 parry silently absorbs smalltalk damage, while a low sword parry reports an
 ordinary parry. Linux3 Profile 003 Savegame 022 now matches every frame.
 
+### Resumed door passes retain two direction semantics
+
+A movement element saved after its actor crosses a gate still contains the
+direction with which the complete traversal began. At load time, however, the
+remaining physical step chain must be rebuilt from the actor's current,
+destination-side sector. These directions can therefore be opposites.
+
+Rust now retains the saved C++ direction separately from the physical resumed
+step direction. Physical motion follows the current sector, while
+`RHArtificialIntelligence::Position(actor)`, route-source selection, forecast
+input, and the legacy passing-door flag use the saved direction and hence the
+committed gate-side point. Owner-slot AI views preserve that committed point;
+periodic visibility continues to inspect the live interpolated position.
+Linux3 Profile 001 Savegame 008 consequently matches the Original detection
+and facing decision after its restored PC door pass.
+
+### Seek transitions inherit the movement speed factor
+
+Original transition Execute arms have two motion paths. A direct transition
+calls `RHSprite::PerformMotion` without a factor and uses its default `1.0`;
+a transition carrying `RHMOVE_SEEK` calls `RHElementActor::PerformSeek`,
+which explicitly forwards the movement element's speed factor. Rust now makes
+the same distinction instead of treating every transition as unscaled.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

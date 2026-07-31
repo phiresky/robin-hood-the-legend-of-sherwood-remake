@@ -190,15 +190,21 @@ fn order_uses_distance_motion(order: OrderType) -> bool {
 
 /// Match `RHSprite::PerformMotion`: scale the sprite-frame distance by the
 /// movement element's speed factor before applying the turn slowdown and its
-/// minimum useful step. Transition orders call `PerformMotion` without the
-/// element speed factor, so they retain the default factor of one.
+/// minimum useful step. Direct transition orders call `PerformMotion` without
+/// the element speed factor, while seek transitions route through
+/// `RHElementActor::PerformSeek`, which passes the element factor explicitly.
 fn scaled_motion_distance(
     frame_distance: f32,
     speed_factor: f32,
-    is_transition: bool,
+    apply_speed_factor: bool,
     direction_differs_from_goal: bool,
 ) -> f32 {
-    let mut distance = frame_distance * if is_transition { 1.0 } else { speed_factor };
+    let mut distance = frame_distance
+        * if apply_speed_factor {
+            speed_factor
+        } else {
+            1.0
+        };
     if direction_differs_from_goal && distance > 0.0 {
         distance *= 0.6;
         if distance < 0.7 {
@@ -1118,7 +1124,7 @@ pub(crate) fn current_door_for_route_source(
         .map(|pass| {
             (
                 crate::position_interface::DoorHandle(pass.door_index.0),
-                pass.direct,
+                pass.position_direct,
             )
         })
         .unwrap_or_else(|| {
@@ -6003,6 +6009,12 @@ impl EngineInner {
             // dispatched via tick_move maps to TillLastFrame.
             let is_movement_anim = order_uses_distance_motion(order_action);
             let is_transition_anim = !is_movement_anim;
+            // Execute's transition arms have two distinct C++ call paths.
+            // Ordinary transitions call PerformMotion directly and retain its
+            // default factor of 1. Seek transitions call PerformSeek, which
+            // forwards the movement element's speed factor to PerformMotion.
+            let apply_speed_factor =
+                !is_transition_anim || active_move_flags.contains(crate::sequence::MoveFlags::SEEK);
             // RHElementActorHuman::Execute selects FAST solely from the
             // current logical movement token. The actor can still be in
             // MOVING_FAST_SWORD when a newly selected WALKING_WITH_SWORD
@@ -6194,7 +6206,7 @@ impl EngineInner {
                 let first_speed = scaled_motion_distance(
                     first_frame_dist_raw,
                     speed_factor,
-                    is_transition_anim,
+                    apply_speed_factor,
                     first_direction_differs_from_goal,
                 );
                 if first_speed == 0.0 {
@@ -6329,10 +6341,9 @@ impl EngineInner {
             // applies even though the pre-initialization Turn was a no-op.
             let direction_differs_from_goal =
                 sprite.position_iface.get_direction() != sprite.position_iface.get_direction_goal();
-            // Transition Execute arms call `PerformMotion(...,
-            // RHMOTIONMETHOD_TILL_LAST_FRAME)` without passing the movement
-            // element's speed factor, so C++ uses the default 1.0. Patrol
-            // formation factors only scale the subsequent Walk/Run orders.
+            // Direct transition Execute arms call `PerformMotion(...,
+            // RHMOTIONMETHOD_TILL_LAST_FRAME)` without a speed factor. Seek
+            // transitions instead route through PerformSeek and do pass it.
             let speed = if let Some(second_distance) = second_frame_dist_raw {
                 // The fast stairs/ladder/wall arms contain two literal
                 // PerformMotion calls. Each call applies its own turning
@@ -6342,19 +6353,19 @@ impl EngineInner {
                 scaled_motion_distance(
                     first_frame_dist_raw,
                     speed_factor,
-                    is_transition_anim,
+                    apply_speed_factor,
                     first_direction_differs_from_goal,
                 ) + scaled_motion_distance(
                     second_distance,
                     speed_factor,
-                    is_transition_anim,
+                    apply_speed_factor,
                     direction_differs_from_goal,
                 )
             } else {
                 scaled_motion_distance(
                     frame_dist_raw,
                     speed_factor,
-                    is_transition_anim,
+                    apply_speed_factor,
                     direction_differs_from_goal,
                 )
             };
@@ -10626,17 +10637,17 @@ mod line_jump_tests {
 
     #[test]
     fn turn_minimum_is_applied_after_movement_speed_factor() {
-        let distance = scaled_motion_distance(2.0, 0.582_163_33, false, true);
+        let distance = scaled_motion_distance(2.0, 0.582_163_33, true, true);
         assert_eq!(
             distance, 0.7,
             "Original scales 2.0 by the patrol factor, then applies the 0.6 turn slowdown and 0.7 minimum"
         );
         assert_eq!(
-            scaled_motion_distance(2.0, 0.582_163_33, false, false),
+            scaled_motion_distance(2.0, 0.582_163_33, true, false),
             1.164_326_7
         );
         assert_eq!(
-            scaled_motion_distance(2.0, 0.25, true, false),
+            scaled_motion_distance(2.0, 0.25, false, false),
             2.0,
             "transition motion does not use the movement element's speed factor"
         );

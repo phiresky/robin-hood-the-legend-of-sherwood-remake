@@ -595,12 +595,20 @@ impl<'a> PassDoorLaunchContext<'a> {
                 crate::sequence::SequenceElementData::Movement {
                     gate_id,
                     flags,
+                    direction,
                     action,
                     ..
-                } => Some((*gate_id, *flags, *action)),
+                } => Some((
+                    *gate_id,
+                    *flags,
+                    *direction,
+                    *action,
+                    element.legacy_v48.is_some(),
+                )),
                 _ => None,
             });
-        let (gate_id, flags, authored_action) = movement.unwrap_or_else(|| {
+        let (gate_id, flags, saved_direction, authored_action, restored_from_v48) =
+            movement.unwrap_or_else(|| {
             panic!(
                 "PassDoor sequence element {seq_id:?}/{elem_idx} for {entity_id:?} is not movement data"
             )
@@ -682,6 +690,15 @@ impl<'a> PassDoorLaunchContext<'a> {
         }
 
         let mut built = self.build_door_pass(entity_id, door_index, direct, flags, authored_action);
+        // A live PassDoor writes its traversal direction onto the movement
+        // element before the actor crosses the gate. That field survives a
+        // v48 save, while the actor sector may already be the destination
+        // side. Rebuild the remaining physical steps from the live sector,
+        // but retain the element's C++ truth value for `Position(actor)` and
+        // committed route-source queries.
+        if restored_from_v48 {
+            built.pass.position_direct = saved_direction != 0;
+        }
         self.sequence_manager
             .set_action_recursive(seq_id, elem_idx, built.root_action);
         if let Some(override_action) = built.post_chain_action_recursive {
@@ -983,6 +1000,7 @@ impl PassDoorLaunchContext<'_> {
             pass: ActiveDoorPass {
                 door_index,
                 direct,
+                position_direct: direct,
                 steps,
                 triggers_fired: 0,
                 current_action: action,
@@ -1024,7 +1042,7 @@ impl PassDoorLaunchContext<'_> {
                 )
             });
         actor.active_movement = crate::movement::ActiveMovement::new(seq_id, elem_idx);
-        actor.passing_door_directly = active_door_pass.direct;
+        actor.passing_door_directly = active_door_pass.position_direct;
         actor.active_door_pass = Some(active_door_pass);
         actor.sequence_element_started = true;
     }

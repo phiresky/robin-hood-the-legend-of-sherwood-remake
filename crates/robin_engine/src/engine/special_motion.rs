@@ -203,7 +203,7 @@ impl EngineInner {
             if let Some(actor) = entity.actor_data_mut() {
                 actor.active_movement = ActiveMovement::new(seq_id, elem_idx);
                 if let Some(dp) = active_door_pass {
-                    actor.passing_door_directly = dp.direct;
+                    actor.passing_door_directly = dp.position_direct;
                     actor.active_door_pass = Some(dp);
                 }
                 actor.sequence_element_started = true;

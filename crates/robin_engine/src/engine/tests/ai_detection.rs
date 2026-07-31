@@ -1627,6 +1627,7 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
     pc.actor.active_door_pass = Some(ActiveDoorPass {
         door_index: DoorIndex(0),
         direct: true,
+        position_direct: true,
         steps: VecDeque::new(),
         triggers_fired: 0,
         current_action: crate::order::OrderType::default(),

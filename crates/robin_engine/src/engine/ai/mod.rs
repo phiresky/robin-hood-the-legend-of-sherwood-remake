@@ -473,7 +473,7 @@ pub(super) fn extract_forecast_input(entity: &Entity) -> Option<crate::ai::Forec
         .active_door_pass
         .as_ref()
         .filter(|_| !entity.position_iface().get_door().is_null())
-        .map(|dp| (dp.door_index, dp.direct));
+        .map(|dp| (dp.door_index, dp.position_direct));
     let forecasted_z = entity.position_iface().get_forecasted_movement().z;
     Some(crate::ai::ForecastInput {
         position_map_x: elem.position_map().x,
@@ -1057,7 +1057,7 @@ fn build_entity_views_inner(
             && let Some(dp) = actor.active_door_pass.as_ref()
             && let Some(door) = doors_ref.get(dp.door_index.0 as usize)
         {
-            let rail_point = if dp.direct {
+            let rail_point = if dp.position_direct {
                 door.point_in
             } else {
                 door.point_out
@@ -1218,6 +1218,22 @@ impl EngineInner {
     ) -> SimScratch {
         let mut views = build_entity_views_without_forecast(self);
         for (target, _) in self.world.entities.occupied() {
+            // The initial view builder already applies
+            // `RHArtificialIntelligence::Position(actor)`'s committed
+            // gate-side override. Creation-slot projection is for live map
+            // positions and must not replace that AI-specific value. Periodic
+            // visibility uses `position_at_owner_boundary` directly and
+            // therefore continues to see the actor's actual interpolated
+            // position, as in the Original detection code.
+            let passing_door = self
+                .world
+                .entities
+                .get(target)
+                .and_then(Entity::actor_data)
+                .is_some_and(|actor| actor.active_door_pass.is_some());
+            if passing_door {
+                continue;
+            }
             let position = self.position_at_owner_boundary(
                 target,
                 owner,
@@ -1816,7 +1832,7 @@ impl EngineInner {
                     .active_door_pass
                     .as_ref()
                     .filter(|_| !s.element.sprite.position_iface.get_door().is_null())
-                    .map(|dp| (dp.door_index, dp.direct));
+                    .map(|dp| (dp.door_index, dp.position_direct));
                 let input = crate::ai::ForecastInput {
                     position_map_x: pos_now.x,
                     position_map_y: pos_now.y,

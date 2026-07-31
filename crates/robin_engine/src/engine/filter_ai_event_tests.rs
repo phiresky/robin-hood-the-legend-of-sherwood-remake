@@ -2397,6 +2397,7 @@ fn generic_animation_skip_does_not_skip_action_change() {
                 .active_door_pass = Some(crate::element::ActiveDoorPass {
                 door_index: crate::gate::DoorIndex(u32::MAX),
                 direct: true,
+                position_direct: true,
                 steps: std::collections::VecDeque::new(),
                 triggers_fired: 0,
                 current_action: OrderType::Invalid,
@@ -2501,6 +2502,7 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
                 .active_door_pass = Some(crate::element::ActiveDoorPass {
                 door_index: crate::gate::DoorIndex(u32::MAX),
                 direct: true,
+                position_direct: true,
                 steps: std::collections::VecDeque::new(),
                 triggers_fired: 0,
                 current_action: OrderType::Invalid,
@@ -5081,6 +5083,7 @@ fn install_unrelated_multi_exit_building_actor(engine: &mut EngineInner) -> Enti
     pc.actor.active_door_pass = Some(ActiveDoorPass {
         door_index: DoorIndex(0),
         direct: true,
+        position_direct: true,
         steps: VecDeque::new(),
         triggers_fired: 0,
         current_action: crate::order::OrderType::default(),
@@ -5147,6 +5150,7 @@ fn destination_forecast_ignores_a_stale_door_pass_without_a_live_door() {
     pc.actor.active_door_pass = Some(ActiveDoorPass {
         door_index: DoorIndex(7),
         direct: true,
+        position_direct: true,
         steps: VecDeque::new(),
         triggers_fired: 0,
         current_action: crate::order::OrderType::WalkingUpright,
@@ -5550,6 +5554,7 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
     officer.actor.active_door_pass = Some(ActiveDoorPass {
         door_index: DoorIndex(0),
         direct: true,
+        position_direct: true,
         steps: VecDeque::new(),
         triggers_fired: 0,
         current_action: crate::order::OrderType::default(),
