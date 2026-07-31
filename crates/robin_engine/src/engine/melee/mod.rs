@@ -1845,7 +1845,7 @@ fn collect_arc_victims(
         let dx = pos.x - attacker_pos.0;
         let dy = (pos.y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
         // Quick reject
-        if dx.abs().max(dy.abs()) > 150.0 {
+        if dx.abs().max(dy.abs()) >= 150.0 {
             continue;
         }
         let distance = (dx * dx + dy * dy).sqrt();
@@ -1930,7 +1930,7 @@ fn collect_circle_warn_victims(
         // sector drives the walking-with-sword warning tolerance below.
         let dx = attacker_pos.0 - pos.x;
         let dy = (attacker_pos.1 - pos.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
-        if dx.abs().max(dy.abs()) > 150.0 {
+        if dx.abs().max(dy.abs()) >= 150.0 {
             continue;
         }
         let distance = (dx * dx + dy * dy).sqrt();
@@ -2025,7 +2025,7 @@ fn collect_push_victims(
         let pos = entity.element_data().position_map();
         let dx = pos.x - attacker_pos.0;
         let dy = (pos.y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
-        if dx.abs().max(dy.abs()) > 150.0 {
+        if dx.abs().max(dy.abs()) >= 150.0 {
             continue;
         }
         let front_dist = dx * fx + dy * fy;
