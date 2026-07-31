@@ -1146,7 +1146,7 @@ impl AiController {
     // -- Shield commands --
 
     /// Issue a raise-shield order toward a danger point.
-    pub fn raise_shield(&mut self, danger_point: Position) {
+    pub fn raise_shield(&mut self, danger_point: Position, danger_elevation: f32) {
         use crate::element::Command;
         use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
 
@@ -1158,8 +1158,10 @@ impl AiController {
             Field::ShieldDangerPoint,
             FieldValue::Point3D {
                 x: danger_point.x,
-                y: danger_point.y,
-                z: 0.0,
+                // Original stores RHElement::GetPosition(), whose world Y is
+                // map Y plus ground elevation.
+                y: danger_point.y + danger_elevation,
+                z: danger_elevation,
             },
         );
         let mut sequence = Sequence::new();
@@ -4428,5 +4430,36 @@ mod tests {
             }]
         ));
         assert!(ai.outbox.reentrant.cross_npc_actions.is_empty());
+    }
+
+    #[test]
+    fn raise_shield_records_the_targets_world_ground_point() {
+        use crate::element::EntityId;
+        use crate::entity_id::EntityIdKind;
+        use crate::sequence::{Field, FieldValue};
+
+        let mut ai = AiController::new(17);
+        ai.owner_entity_id = Some(EntityId::new(17, EntityIdKind::Soldier));
+        ai.raise_shield(
+            Position {
+                x: 1083.0,
+                y: 1563.0,
+                ..Position::default()
+            },
+            160.0,
+        );
+
+        let element = ai.outbox.actor.launch_sequences[0]
+            .elements
+            .first()
+            .expect("RaiseShield sequence contains its command");
+        assert!(matches!(
+            element.get_property(Field::ShieldDangerPoint),
+            Some(FieldValue::Point3D {
+                x: 1083.0,
+                y: 1723.0,
+                z: 160.0,
+            })
+        ));
     }
 }

@@ -1825,10 +1825,10 @@ impl EnemyAi {
 
         // Focus primary target. Original Focus updates the NPC's view target;
         // it does not turn the actor's body or overwrite direction_goal.
-        let target_pos = self
+        let (target_pos, target_elevation) = self
             .find_fighter(self.base.primary_target, tick)
-            .map(|f| f.position)
-            .unwrap_or(ctx.position);
+            .map(|f| (f.position, f.elevation as f32))
+            .unwrap_or((ctx.position, ctx.elevation));
         self.base.outbox.actor.set_focus(self.base.primary_target);
 
         // Try to join a phalanx
@@ -1876,7 +1876,7 @@ impl EnemyAi {
         } else {
             // No phalanx slot — raise shield in place
             self.base.stop_all();
-            self.base.raise_shield(target_pos);
+            self.base.raise_shield(target_pos, target_elevation);
 
             // Emoticon: first time gets the X mark, advancing gets nothing
             if self.base.current_substate == Substate::AttackingAdvancingWithShield

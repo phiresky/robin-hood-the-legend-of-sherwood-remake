@@ -4982,11 +4982,11 @@ impl EnemyAi {
 
                     if !my_action.is_shield() {
                         // Reestablish shield state
-                        let target_pos = self
+                        let (target_pos, target_elevation) = self
                             .find_fighter(self.base.primary_target, tick)
-                            .map(|f| f.position)
-                            .unwrap_or(ctx.position);
-                        self.base.raise_shield(target_pos);
+                            .map(|f| (f.position, f.elevation as f32))
+                            .unwrap_or((ctx.position, ctx.elevation));
+                        self.base.raise_shield(target_pos, target_elevation);
                         self.base.launch_timer(20, ctx.frame);
                     } else if self.left_combat_neighbour != 0 || self.right_combat_neighbour != 0 {
                         // You should be doing phalanx stuff
@@ -5118,11 +5118,11 @@ impl EnemyAi {
                         if target != 0 {
                             self.base.primary_target = target;
                             self.set_state(AiState::Attacking, Substate::AttackingPhalanx);
-                            let target_pos = self
+                            let (target_pos, target_elevation) = self
                                 .find_fighter(target, tick)
-                                .map(|f| f.position)
-                                .unwrap_or(ctx.position);
-                            self.base.raise_shield(target_pos);
+                                .map(|f| (f.position, f.elevation as f32))
+                                .unwrap_or((ctx.position, ctx.elevation));
+                            self.base.raise_shield(target_pos, target_elevation);
                             self.base.face_position(target_pos);
                             self.base.launch_timer(20, ctx.frame);
                         } else {
@@ -5144,11 +5144,11 @@ impl EnemyAi {
 
                         if !my_action.is_shield() && self.base.primary_target != 0 {
                             // Reestablish shield state
-                            let target_pos = self
+                            let (target_pos, target_elevation) = self
                                 .find_fighter(self.base.primary_target, tick)
-                                .map(|f| f.position)
-                                .unwrap_or(ctx.position);
-                            self.base.raise_shield(target_pos);
+                                .map(|f| (f.position, f.elevation as f32))
+                                .unwrap_or((ctx.position, ctx.elevation));
+                            self.base.raise_shield(target_pos, target_elevation);
                             self.base.launch_timer(20, ctx.frame);
                         } else if !self.reconsider_phalanx(sim, global, ctx, tick, grid) {
                             if self.base.primary_target != 0 {

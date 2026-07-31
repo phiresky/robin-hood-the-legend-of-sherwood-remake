@@ -4507,7 +4507,7 @@ impl EngineInner {
                             // here rather than at command dispatch: an
                             // exit-action transition can leave the order
                             // queued for several frames.
-                            let position = entity.element_data().position_map();
+                            let position = entity.element_data().position();
                             let dx = danger.x - position.x;
                             let dy = danger.y - position.y;
                             if dx != 0.0 || dy != 0.0 {
