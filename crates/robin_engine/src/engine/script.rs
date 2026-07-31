@@ -631,6 +631,50 @@ impl EngineInner {
                 self.drain_pending_move_requests_for_owner(sim, owner);
                 Ok(0)
             }
+            crate::interp::SynchronousScriptRequest::AssignPost {
+                actor,
+                post_x,
+                post_y,
+                direction,
+                ..
+            } => {
+                let owner = self.entity_id_for_actor_handle(actor).ok_or_else(|| {
+                    format!(
+                        "AssignPost owner handle {actor} became stale at its synchronous barrier"
+                    )
+                })?;
+                let entity = self.get_entity(owner).ok_or_else(|| {
+                    format!(
+                        "AssignPost owner {} disappeared at its synchronous barrier",
+                        owner.index()
+                    )
+                })?;
+                let data = entity.element_data();
+                let post_position = crate::ai::Position {
+                    x: post_x,
+                    y: post_y,
+                    sector: data.sector(),
+                    level: data.layer(),
+                };
+                let ai = self
+                    .get_entity_mut(owner)
+                    .and_then(Entity::ai_controller_mut)
+                    .ok_or_else(|| {
+                        format!(
+                            "AssignPost owner {} lost its required NPC AI at its synchronous barrier",
+                            owner.index()
+                        )
+                    })?;
+                ai.assign_new_post(post_position, direction as u16);
+                // Original AssignNewPost calls Think(EVENT_RETURN_TO_DUTY)
+                // before returning to the script. Close that owner-local AI
+                // stack and materialize its GoTo now. The resulting ordinary
+                // Move remains registered for the later sequence-manager
+                // Hourglass, exactly like AssignPath above.
+                self.drain_direct_ai_owner_boundary_without_forecast(sim, owner, assets);
+                self.drain_pending_move_requests_for_owner(sim, owner);
+                Ok(0)
+            }
         }
     }
 

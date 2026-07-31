@@ -120,6 +120,13 @@ pub enum SynchronousScriptRequest {
         way: i32,
         native_return: i32,
     },
+    AssignPost {
+        actor: i32,
+        post_x: f32,
+        post_y: f32,
+        direction: i32,
+        native_return: i32,
+    },
 }
 
 /// One accepted `RHScript::SetAIState` operation. The native validates its
@@ -177,7 +184,8 @@ impl SynchronousScriptRequest {
             | Self::SetActorActionState { native_return, .. }
             | Self::LockAi { native_return, .. }
             | Self::UnlockAi { native_return, .. }
-            | Self::AssignPath { native_return, .. } => native_return,
+            | Self::AssignPath { native_return, .. }
+            | Self::AssignPost { native_return, .. } => native_return,
         }
     }
 }

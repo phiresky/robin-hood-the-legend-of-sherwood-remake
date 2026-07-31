@@ -319,18 +319,23 @@ impl NativeContext<'_, '_> {
                     tracing::warn!("AssignPost: invalid location handle {loc}");
                     return 0;
                 };
-                if let Some(entity) = self.get_entity_mut(actor) {
-                    let data = entity.element_data();
-                    let post_position = crate::ai::Position {
-                        x: resolved_xy.0,
-                        y: resolved_xy.1,
-                        sector: data.sector(),
-                        level: data.layer(),
-                    };
-                    if let Some(ai) = entity.ai_controller_mut() {
-                        ai.assign_new_post(post_position, direction as u16);
-                    }
+                if !self
+                    .get_entity(actor)
+                    .is_some_and(|entity| entity.ai_controller().is_some())
+                {
+                    return 0;
                 }
+                let request = crate::interp::SynchronousScriptRequest::AssignPost {
+                    actor,
+                    post_x: resolved_xy.0,
+                    post_y: resolved_xy.1,
+                    direction,
+                    native_return: 0,
+                };
+                self.pending_yield = Some(crate::interp::NativeYield {
+                    resume: crate::interp::ResumePolicy::Fixed(request.native_return()),
+                    operation: crate::interp::NativeOperation::EngineAction(request),
+                });
                 0
             }
             ForceBattleDecision => {
