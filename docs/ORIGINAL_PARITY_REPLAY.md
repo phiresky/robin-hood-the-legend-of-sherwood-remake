@@ -2414,6 +2414,22 @@ value as the sole authority, matching `InitializeMiscFromProtoStream`.
 Linux3 Profile 001 QuickSave consequently matches every recorded frame instead
 of missing a civilian's clear view of a hero at frame 5287.
 
+### Restored pending paths retain their serialized waiting-order tail
+
+`RHEngine::ProcessPathRequests` installs the first waypoint by renewing and
+mutating the movement element's existing last order; it does not rebuild the
+whole queue. This is observable when a v48 save contains an unresolved
+`MOVE_WAITING`: the serialized start-transition prefix remains ahead of the
+waiting order that becomes movement. Rust previously retained only its
+runtime-generated transition-count prefix and discarded the rest, moving the
+actor one frame early when the restored request completed.
+
+Pending requests now record whether they came from the v48 pathfinder FIFO.
+Only those restored requests reuse the exact saved tail in place. Requests
+created later during live play keep Rust's established generated-prefix
+representation, so save provenance cannot leak into subsequent pathfinding.
+Cyrdach Profile 156 Savegame 028 now matches every recorded frame.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

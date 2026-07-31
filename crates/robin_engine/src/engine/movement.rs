@@ -757,6 +757,12 @@ impl FailedPathRequest {
     Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
 pub(crate) struct PendingPathRequest {
+    /// This request was decoded from an Original v48 pending-path FIFO.
+    ///
+    /// Its movement element owns the exact serialized pre-path order queue,
+    /// so completion must reuse the saved last waiting order in place.
+    #[serde(default)]
+    pub(crate) restored_from_v48: bool,
     pub(crate) owner: EntityId,
     pub(crate) seq_id: crate::sequence::SequenceId,
     pub(crate) elem_idx: usize,
@@ -9642,6 +9648,7 @@ impl EngineInner {
         }
 
         let request = PendingPathRequest {
+            restored_from_v48: false,
             owner,
             seq_id,
             elem_idx,
@@ -9744,6 +9751,7 @@ impl EngineInner {
         mut waypoints: Vec<MapPoint>,
     ) -> MovePathOutcome {
         let PendingPathRequest {
+            restored_from_v48,
             owner,
             seq_id,
             elem_idx,
@@ -9864,6 +9872,11 @@ impl EngineInner {
                 .sequence_manager
                 .get_element_mut(seq_id, elem_idx)
             {
+                // Fresh Rust movement elements retain their generated
+                // transition prefix through `num_transition_orders`. A
+                // restored Original MOVE_WAITING instead owns the exact
+                // serialized pre-path queue, whose last waiting order must be
+                // reused in place when the saved request completes.
                 // ProcessPathRequests marks a resolved movement element as
                 // MOVE_OK before installing its path orders. The command is
                 // observable by actor execution and condolation logic; it is
@@ -9879,6 +9892,7 @@ impl EngineInner {
                     reverse,
                     final_order_antagonist,
                     next_order_id,
+                    restored_from_v48,
                 );
             }
         }
@@ -10280,6 +10294,7 @@ mod path_request_timing_tests {
 
     fn request(owner: EntityId, speed: crate::pathfinder::PathFinderSpeed) -> PendingPathRequest {
         PendingPathRequest {
+            restored_from_v48: false,
             owner,
             seq_id: crate::sequence::SequenceId(1),
             elem_idx: 0,

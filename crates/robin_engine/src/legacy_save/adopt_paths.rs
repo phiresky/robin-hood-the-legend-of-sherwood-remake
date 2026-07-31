@@ -364,6 +364,7 @@ fn convert_request(
         (posture == Posture::Upright && action_state.is_sword()) || force_sword;
 
     Ok(PendingPathRequest {
+        restored_from_v48: true,
         owner: actor,
         seq_id: element_ref.sequence_id,
         elem_idx: element_ref.element_index,
@@ -578,6 +579,7 @@ mod tests {
 
     fn request(owner: EntityId, legacy_sector: u16) -> PendingPathRequest {
         PendingPathRequest {
+            restored_from_v48: true,
             owner,
             seq_id: SequenceId(7),
             elem_idx: 3,

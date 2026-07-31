@@ -533,7 +533,13 @@ pub fn build_orders_from_path(
     reverse: bool,
     antagonist: Option<crate::element::EntityId>,
     next_order_id: &mut u32,
+    reuse_restored_waiting_tail: bool,
 ) {
+    if !reuse_restored_waiting_tail {
+        let transition_orders = element.num_transition_orders.min(element.orders.len());
+        element.orders.truncate(transition_orders);
+        element.num_transition_orders = transition_orders;
+    }
     let mut first = true;
     let last = waypoints.len().saturating_sub(1);
     for (i, &wp) in waypoints.iter().enumerate() {
@@ -567,7 +573,10 @@ pub fn build_orders_from_path(
             order.tolerance = 0.0;
         }
 
-        if first && let Some(existing) = element.orders.back_mut() {
+        if reuse_restored_waiting_tail
+            && first
+            && let Some(existing) = element.orders.back_mut()
+        {
             // `RHEngine::ProcessPathRequests` reuses the movement element's
             // last pre-path order: `NewID()`, change its action/destination,
             // and leave every preceding order in place. In particular, a
@@ -854,6 +863,7 @@ mod tests {
             false,
             None,
             &mut next_order_id,
+            false,
         );
 
         assert_eq!(elem.orders.len(), 3);
@@ -895,6 +905,7 @@ mod tests {
             false,
             None,
             &mut next_order_id,
+            true,
         );
 
         assert_eq!(elem.orders.len(), 2);
