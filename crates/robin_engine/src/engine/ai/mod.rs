@@ -8490,9 +8490,11 @@ impl EngineInner {
                 continue;
             }
 
-            if patrol_size == 0 {
-                // No active members but there may be missed ones — check below
-            } else {
+            {
+                // The Original calls ComputePatrolPositions even with zero
+                // active members.  Its post-loop cleanup then discards every
+                // history entry except the newest one before missed members
+                // are considered for re-acquisition below.
                 // Expand the chief's move box by 3 on each side
                 // before feeding it to
                 // `is_straight_movement_autorized` for the 3-step

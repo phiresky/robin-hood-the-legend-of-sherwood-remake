@@ -3389,7 +3389,7 @@ Savegame 075 with 942 loaded elements and 595 dynamic elements.
 
 Every Linux replay in `Savegame_nicouzouf/Profile_001` has been exercised
 through its complete recorded window. Savegames 000, 002, 006, 008–010,
-013–021, 023, 025–038, 040, 042–044, 046–048, 050, 052, 055–056,
+013–023, 025–038, 040, 042–044, 046–048, 050, 052, 055–056,
 058, 060–062, 064, 066–075 match every recorded frame. This includes dense
 city states with 321 and 347 loaded elements.
 
@@ -3401,8 +3401,6 @@ save-specific mismatches:
 - Savegames 024, 041, and 049 retain `MoveOk` where Original selects `Turn`
   at frame 95; Savegames 039 and 076 expose related loaded Turn completion
   boundaries.
-- Savegame 022 retains a movement and AI substate at frame 184 after Original
-  returns to its post.
 - Savegames 053, 059, and 065 disable the same eight motion-grid lines at
   frame 176.
 - Savegames 045, 054, and 063 reach late sound/combat/AI activity before an
@@ -3441,6 +3439,23 @@ while preserving an incoming replacement order when one is already selected.
 All nested Think callbacks consequently observe `NONANIMATION_END` until they
 install a real replacement. Nicouzouf Profile 001 Savegame 014 now matches
 every recorded frame.
+
+### Empty patrol formation updates still retire old history
+
+Original `RHArtificialIntelligence::RefreshPatrol` calls
+`RHPath::ComputePatrolPositions` on every eighth eligible frame even when the
+active patrol list is empty but missed members remain. With a requested patrol
+size of zero, the formation loop does no work, but the function's unconditional
+post-loop cleanup discards every history entry except the newest. Only after
+that cleanup does `RefreshPatrol` consider missed members for re-acquisition.
+
+Rust previously skipped the formation call for an empty active list. It could
+therefore retain a long stale trail, re-acquire a nearby missed member on that
+same eighth frame, and have enough old history to coordinate the new member on
+the very next formation update. Rust now invokes the formation computation for
+zero members as well, preserving the Original's history-retirement side effect.
+SuN1Sh1nE Profile 004 Savegame 008 and nicouzouf Profile 001 Savegame 022 now
+match every recorded frame.
 
 ### Small Linux profiles match end to end
 
