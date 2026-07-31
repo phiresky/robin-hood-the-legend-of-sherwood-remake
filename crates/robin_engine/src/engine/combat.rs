@@ -3490,9 +3490,23 @@ impl EngineInner {
                     seq_id,
                     elem_idx,
                 } => {
-                    if let Some(target) = self.get_entity_mut(target_id) {
-                        target.set_posture(crate::element::Posture::Tied);
+                    let target = self
+                        .get_entity_mut(target_id)
+                        .unwrap_or_else(|| panic!("tie target {target_id:?} vanished at Done"));
+                    target.set_posture(crate::element::Posture::Tied);
+                    if target.is_soldier() {
+                        target
+                            .ai_controller_mut()
+                            .expect("tied soldier must have AI")
+                            .say(crate::ai::Remark::TiedUp);
+                        // Original invokes Say directly from the tying PC's
+                        // owner tick, so expose the request at this same
+                        // creation-order boundary.
+                        self.drain_ai_owner_work_for(sim, assets, target_id);
                     }
+                    // RHElementActorPC::PerformAbility refreshes the victim
+                    // with Wait after applying the tied posture and remark.
+                    self.actor_wait(target_id);
                     tracing::debug!(
                         actor = ?actor_id,
                         target = ?target_id,

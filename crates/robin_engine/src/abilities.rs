@@ -824,12 +824,6 @@ pub fn begin_climb_down_from_shoulders(
 ///
 /// Called when `Command::TieCmd` is dispatched.
 ///
-/// ## Known gaps
-///
-/// - **Tied-up remark**: soldiers don't say a "tied up" remark when
-///   tied — no speech system yet.
-/// - **Reset target AI**: the target's AI isn't reset to a Wait state
-///   after tying.
 pub fn begin_tie(
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
