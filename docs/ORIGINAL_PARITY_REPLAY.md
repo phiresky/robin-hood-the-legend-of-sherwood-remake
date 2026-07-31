@@ -2805,6 +2805,21 @@ later landing-resolution paths require a resolved motion sector before
 assigning a layer. Nescafe Profile 003 Savegame 005 matches every recorded
 frame after this correction.
 
+### Exact-position transitions do not reuse stale movement increments
+
+A generated waiting-to-walking transition may have a destination exactly equal
+to the actor's current map position. Original still advances the transition
+animation, but contributes no map displacement. Rust passed the transition's
+nonzero sprite-frame distance to anti-collision together with the
+position-interface increment retained from the preceding order. That moved the
+actor away from the already-reached destination and changed its direction goal.
+
+Transition animation advancement is now independent from physical displacement:
+an exact-position transition continues to tick but skips map movement,
+anti-collision, and line-crossing work. Positive-distance transitions retain
+their existing movement and collision behavior. Linux3 Profile 003 Savegame 042
+matches every recorded frame after this correction.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
@@ -2826,7 +2841,7 @@ The expanded authoritative Linux audit adds 48 `Savegame_linux2` traces and
 140 `Savegame_linux3` traces. Unlike the first group, these exercise up to
 hundreds of dynamic bonuses/projectiles and a much wider set of interrupted
 runtime states. All five Linux3 Profile 002 traces and the audited Profile 003
-traces through Savegame 035 currently match every recorded frame. The remaining
+traces through Savegame 042 currently match every recorded frame. The remaining
 corpus is the active completion set; failures are grouped by their first
 general cause and the whole affected shard is rerun after each fix.
 

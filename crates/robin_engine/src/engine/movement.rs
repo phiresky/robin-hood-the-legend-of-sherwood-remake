@@ -6574,18 +6574,27 @@ impl EngineInner {
                         order_action, entity_id
                     );
                 }
-                let transition_crossing_start =
-                    (transition_has_map_target && speed > 0.0).then(|| {
-                        let old_pos = entity.element_data().position_map();
-                        let layer = entity.element_data().layer();
-                        let eligible = actor_line_crossing_eligible(
-                            entity.element_data().posture,
-                            human_is_carried,
-                            self.world.fast_grid.level.map_bbox.contains_point(old_pos),
-                        );
-                        (old_pos, layer, eligible)
-                    });
-                if transition_has_map_target && speed > 0.0 {
+                // A movement transition can legitimately target the actor's
+                // exact current point (for example the generated
+                // Waiting→Walking pose at the end of a combat sequence).
+                // PerformMotion still advances that animation, but the zero
+                // goal vector contributes no map displacement.  In
+                // particular, do not feed a stale pre-order increment into
+                // anti-collision: ComputeIncrementAll deliberately preserves
+                // the stored vector when the new vector is zero.
+                let transition_has_distance =
+                    transition_has_map_target && speed > 0.0 && dist > f32::EPSILON;
+                let transition_crossing_start = transition_has_distance.then(|| {
+                    let old_pos = entity.element_data().position_map();
+                    let layer = entity.element_data().layer();
+                    let eligible = actor_line_crossing_eligible(
+                        entity.element_data().posture,
+                        human_is_carried,
+                        self.world.fast_grid.level.map_bbox.contains_point(old_pos),
+                    );
+                    (old_pos, layer, eligible)
+                });
+                if transition_has_distance {
                     // Match GetIncrementMap(): PerformMotion seeded this
                     // normalized vector when the order began and reuses it
                     // unchanged until anti-collision explicitly rebuilds it.
