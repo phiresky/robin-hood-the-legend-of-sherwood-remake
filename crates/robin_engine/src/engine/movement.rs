@@ -6873,6 +6873,53 @@ impl EngineInner {
                         human.last_motion_was_step_back_in_combat = active_move_flags
                             .contains(crate::sequence::MoveFlags::STEP_BACK_IN_COMBAT);
                     }
+                    // PerformSeek wraps the transition animation too. When
+                    // the last stop transition terminates, Original checks
+                    // the live target before retiring the movement: an
+                    // unchanged same-sector target completes the seek and
+                    // starts its actor-owned post-seek interaction.
+                    //
+                    // The ordinary walking-arrival path below performs this
+                    // same check, but transition animations return through
+                    // this earlier branch and must close the handoff here.
+                    let movement_is_last_sequence_element = self
+                        .orders
+                        .sequence_manager
+                        .get_sequence(move_seq_id)
+                        .map(|sequence| move_elem_idx + 1 >= sequence.elements.len())
+                        .unwrap_or(false);
+                    let final_entity_seek_arrival = if is_final_waypoint
+                        && movement_is_last_sequence_element
+                        && ft.target_id.is_some()
+                    {
+                        live_seek_target.map(|(target_position, target_sector, _)| {
+                            let same_sector = target_sector.is_some()
+                                && target_sector == entity.element_data().sector();
+                            let target_unchanged = target_position == ft.last_seek_target_position;
+                            same_sector && (target_unchanged || tolerance_arrival)
+                        })
+                    } else {
+                        None
+                    };
+                    if final_entity_seek_arrival == Some(false) {
+                        transition_seek_refreshes.push((eid, move_seq_id, move_elem_idx));
+                        continue 'actors;
+                    }
+                    if final_entity_seek_arrival == Some(true) {
+                        let actor = entity.actor_data_mut().expect("actor-only branch");
+                        if actor.post_seek_sequence.is_some() && actor.active_door_pass.is_none() {
+                            post_seek_arrivals.push((eid, move_seq_id, move_elem_idx));
+                            actor.clear_path();
+                            actor.active_movement.clear();
+                            actor.active_door_pass = None;
+                        } else {
+                            // No action consumes the arrival yet. Match
+                            // PerformSeek's frozen refresh arm rather than
+                            // exhausting the final transition order.
+                            actor.seek_refresh_wait = 0;
+                        }
+                        continue 'actors;
+                    }
                     let actor = entity.actor_data_mut().expect("actor-only branch");
                     // Pop via the element we actually dispatched (`move_seq_id` /
                     // `move_elem_idx`), not `actor.active_movement.sequence_id`
