@@ -438,11 +438,8 @@ fn movement_execute_state_effect(
     }
 }
 
-fn take_transition_distance_start_suppression(
-    transition_distance_continuation: &mut bool,
-    motion: MotionState,
-) -> bool {
-    matches!(motion, MotionState::Start) && std::mem::take(transition_distance_continuation)
+fn take_transition_distance_first_execute(transition_distance_continuation: &mut bool) -> bool {
+    std::mem::take(transition_distance_continuation)
 }
 
 fn take_deferred_movement_state_start(deferred_movement_state_start: &mut bool) -> bool {
@@ -6380,36 +6377,34 @@ impl EngineInner {
             // Original applies the Execute switch's state side effect after
             // PerformMotion returns that final result, before Proceed rewrites
             // the diagnostic motion for a successor order.
-            let suppress_transition_continuation_start = transition_distance_continuation
-                && matches!(state_effect_motion, MotionState::Start);
-            if suppress_transition_continuation_start {
+            let transition_distance_first_execute_due = if transition_distance_continuation {
                 let element = self
                     .orders
                     .sequence_manager
                     .get_element_mut(move_seq_id, move_elem_idx)
                     .unwrap_or_else(|| {
                         panic!(
-                            "transition-distance continuation for {entity_id:?} disappeared during its START execution"
+                            "transition-distance continuation for {entity_id:?} disappeared during its first execution"
                         )
                     });
                 let current_order = element.orders.front_mut().unwrap_or_else(|| {
                     panic!(
-                        "transition-distance continuation for {entity_id:?} lost its current order during START execution"
+                        "transition-distance continuation for {entity_id:?} lost its current order during its first execution"
                     )
                 });
                 assert_eq!(
                     Some(current_order.order_id),
                     order_id,
-                    "transition-distance continuation changed identity during START execution"
+                    "transition-distance continuation changed identity during its first execution"
                 );
-                assert!(
-                    take_transition_distance_start_suppression(
-                        &mut current_order.transition_distance_continuation,
-                        state_effect_motion,
-                    ),
-                    "transition-distance continuation START marker was already consumed"
-                );
-            }
+                take_transition_distance_first_execute(
+                    &mut current_order.transition_distance_continuation,
+                )
+            } else {
+                false
+            };
+            let suppress_transition_continuation_start = transition_distance_first_execute_due
+                && matches!(state_effect_motion, MotionState::Start);
             if !is_transition_anim
                 && !suppress_transition_continuation_start
                 // A deferred PC successor deliberately postpones this
@@ -7535,14 +7530,19 @@ impl EngineInner {
                     sound_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
                 }
             }
+            // Order pops are drained after all actors so the current order is
+            // still physically at the front here. Treat an already-queued
+            // pop as a completed Execute when deciding whether a deferred
+            // START survives this actor slot.
+            let current_order_will_advance = order_pops
+                .iter()
+                .any(|&(seq_id, elem_idx)| seq_id == move_seq_id && elem_idx == move_elem_idx);
             // The authored successor owns the deferred movement START only
             // if it remains current after this Execute. A very short
             // successor can complete and hand off to its stop transition in
             // the same call; Original retains Waiting in that case.
             if deferred_movement_state_start_due
-                && !entity
-                    .position_iface()
-                    .is_goal_reached(&self.world.fast_grid, None)
+                && !current_order_will_advance
                 && self
                     .orders
                     .sequence_manager
@@ -7557,18 +7557,15 @@ impl EngineInner {
                 }
                 movement_state_effects.push((entity_id, posture, next_action_state));
             }
-            // A generated non-PC transition-distance copy reports START when
-            // first booked, but its movement state is authoritative only if
-            // that copied order remains current after the Execute. A short
-            // copy may satisfy its arrival predicate and hand off in the same
+            // A generated transition-distance copy reports START when first
+            // booked, but its movement state is authoritative only if that
+            // copied order remains current after the Execute. A short copy
+            // may satisfy its arrival predicate and hand off in the same
             // call; Original retains the transition's Waiting state for that
-            // one frame. PC copies use the separate deferred-successor
-            // contract above.
-            if suppress_transition_continuation_start
-                && !is_pc
-                && !entity
-                    .position_iface()
-                    .is_goal_reached(&self.world.fast_grid, None)
+            // frame. This survival rule applies to PCs too; their separate
+            // deferred-successor marker covers the later authored order.
+            if transition_distance_first_execute_due
+                && !current_order_will_advance
                 && self
                     .orders
                     .sequence_manager
@@ -10580,28 +10577,20 @@ mod line_jump_tests {
     }
 
     #[test]
-    fn transition_distance_start_suppression_is_consumed_once() {
+    fn transition_distance_first_execute_is_consumed_once() {
         let mut continuation = true;
 
-        assert!(take_transition_distance_start_suppression(
-            &mut continuation,
-            MotionState::Start
-        ));
+        assert!(take_transition_distance_first_execute(&mut continuation));
         assert!(!continuation);
-        assert!(!take_transition_distance_start_suppression(
-            &mut continuation,
-            MotionState::Start
-        ));
+        assert!(!take_transition_distance_first_execute(&mut continuation));
 
         let mut continuation = true;
-        assert!(!take_transition_distance_start_suppression(
-            &mut continuation,
-            MotionState::InProgress
-        ));
+        assert!(take_transition_distance_first_execute(&mut continuation));
         assert!(
-            continuation,
-            "a non-START result must leave the continuation marker pending"
+            !continuation,
+            "the marker belongs to the first Execute slot, even when that slot hides START"
         );
+        assert!(!take_transition_distance_first_execute(&mut continuation));
     }
 
     #[test]

@@ -1178,20 +1178,22 @@ continuation and exact displacement, but treated it as a fresh walking start
 and exposed `MOVING` one frame early.
 
 Every generated transition-distance continuation now carries a one-shot
-runtime tag. Its first START-owned posture/action-state effect is deferred
-until the movement result establishes whether that copied order survived the
-same `Execute` call. A non-PC continuation which remains current enters
+runtime tag for its first `Execute` slot. If that slot exposes `START`, its
+posture/action-state effect is deferred until the movement result establishes
+whether that copied order survived the call. If the first slot already reports
+`IN_PROGRESS`, the tag is still consumed: a later real `START` is authoritative
+and must not be suppressed. A continuation which remains current enters
 `MOVING`; a short continuation which satisfies its arrival predicate and hands
 off in that call retains the transition's `WAITING` state for that frame.
 
 PC continuations retain their distinct two-stage handoff: the copied
-continuation suppresses its START, and a second one-shot tag establishes the
-deferred movement state when the authored walking successor remains short of
-its goal after executing. This matters when the sprite continues the same
-animation or the proximity wrapper reports `TERMINATED`: neither diagnostic
-result alone reproduces the Original actor state. An authored successor which
-actually reaches its goal and hands off to the stop transition in the same call
-retains `WAITING`.
+continuation defers its START until the same survival check, and a second
+one-shot tag establishes the deferred movement state when the authored walking
+successor remains short of its goal after executing. This matters when the
+sprite continues the same animation or the proximity wrapper reports
+`TERMINATED`: neither diagnostic result alone reproduces the Original actor
+state. A copied or authored successor which actually reaches its goal and hands
+off in the same call retains `WAITING`.
 
 The ordinary START side-effect path must also skip tagged PC successors. The
 tagged handoff owns that effect exclusively after it verifies that the order is
@@ -1199,6 +1201,10 @@ still current; otherwise the generic path can set `MOVING` before a short
 successor is replaced by its stop transition. Cyrdach's Windows
 `Continue-session-0005` exercises this exact same-call replacement and now
 matches its complete recording.
+
+Cyrdach Windows save 007 exercises the other branch: its copied PC
+continuation survives its START call. The same post-execution identity check
+therefore establishes `MOVING`, matching Original at frame 1,264.
 
 This two-stage handoff fixes the repeated Linux3 Profile 001 `MoveOk` cluster;
 save 021 now matches through its complete recording instead of diverging on
