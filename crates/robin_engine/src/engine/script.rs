@@ -2866,6 +2866,15 @@ impl EngineInner {
         if !self.filter_stimulus(sim, assets, handle, stimulus) {
             return false;
         }
+        // This predicate is live sequence-manager state in the Original,
+        // queried inside ReconsiderSwordfight. AI contexts can predate a
+        // re-entrant SendCondolationCard callback, so refresh it at the
+        // actual Think boundary.
+        let mut live_ctx = ctx.clone();
+        live_ctx.enter_swordfight_pending = self
+            .orders
+            .sequence_manager
+            .element_is_about_to_be_launched(entity_id, crate::element::Command::EnterSwordfight);
         // Hoist the canonical door slice before grabbing the mutable
         // entity borrow — the friendly AI's `alert_soldier` needs it for the
         // `ALERTFLAG_CHECK_DOOR_PATH` retry.
@@ -2888,7 +2897,7 @@ impl EngineInner {
                     sim,
                     stimulus,
                     ai_global,
-                    ctx,
+                    &live_ctx,
                     enemy_tick_data.unwrap_or_else(|| {
                         panic!(
                             "filtered Enemy AI stimulus for owner {} requires typed enemy tick data",
@@ -2902,7 +2911,7 @@ impl EngineInner {
                     sim,
                     stimulus,
                     ai_global,
-                    ctx,
+                    &live_ctx,
                     &friendly_tick.unwrap_or_else(|| {
                         panic!(
                             "filtered Friendly AI stimulus for owner {} requires truthful friendly tick data",

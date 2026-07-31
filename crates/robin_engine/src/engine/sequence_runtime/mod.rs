@@ -28,8 +28,9 @@ struct SequencePhase {
 
 impl SequencePhase {
     fn begin(orders: &mut OrderRuntime) -> Self {
+        let _ = orders;
         Self {
-            actions: orders.sequence_manager.hourglass().into(),
+            actions: Default::default(),
         }
     }
 
@@ -47,6 +48,7 @@ impl SequencePhase {
     ) -> Option<crate::sequence::SequenceAction> {
         self.splice_registered_actions(orders);
         self.pop_action()
+            .or_else(|| orders.sequence_manager.pop_next_hourglass_action())
     }
 
     /// Continue the manager's live FIFO drain after an action callback.
@@ -56,14 +58,6 @@ impl SequencePhase {
     /// an immediate predecessor belong to this same drain just like
     /// immediate and Wait work; they must not wait for the next frame.
     fn splice_registered_actions(&mut self, orders: &mut OrderRuntime) {
-        let synchronous = orders.sequence_manager.take_pending_synchronous_actions();
-        for action in synchronous.into_iter().rev() {
-            self.actions.push_front(action);
-        }
-        self.actions
-            .extend(orders.sequence_manager.take_pending_deferred_actions());
-        // Invalid deferred registrations can terminate while being decoded
-        // and synchronously open a successor. Preserve the same front rule.
         let synchronous = orders.sequence_manager.take_pending_synchronous_actions();
         for action in synchronous.into_iter().rev() {
             self.actions.push_front(action);
@@ -2736,14 +2730,48 @@ mod sequence_phase_context_tests {
             })
         ));
         assert!(matches!(
-            phase.pop_action(),
+            phase.pop_action_after_registration(&mut orders),
             Some(crate::sequence::SequenceAction::InstructOwner {
                 owner: action_owner,
                 sequence_id: action_sequence,
                 element_index: 0,
             }) if action_owner == owner && action_sequence == sequence_id
         ));
-        assert!(phase.pop_action().is_none());
+        assert!(phase.pop_action_after_registration(&mut orders).is_none());
+    }
+
+    #[test]
+    fn live_hourglass_keeps_later_actor_work_observable() {
+        let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
+        let mut orders = OrderRuntime::new();
+        let mut damage = crate::sequence::SequenceElement::new_generic(
+            1,
+            Command::ReceiveSwordDamage,
+            Some(owner),
+        );
+        damage.priority = crate::sequence::SequencePriority::Injury;
+        let damage_sequence = orders.sequence_manager.launch_element(damage);
+
+        let mut enter = crate::sequence::SequenceElement::new_generic(
+            1,
+            Command::EnterSwordfight,
+            Some(owner),
+        );
+        enter.priority = crate::sequence::SequencePriority::PostponeEverythingButInjuries;
+        orders.sequence_manager.launch_element(enter);
+
+        let mut phase = SequencePhase::begin(&mut orders);
+        assert!(matches!(
+            phase.pop_action_after_registration(&mut orders),
+            Some(crate::sequence::SequenceAction::InstructOwner {
+                sequence_id,
+                element_index: 0,
+                ..
+            }) if sequence_id == damage_sequence
+        ));
+        assert!(orders
+            .sequence_manager
+            .element_is_about_to_be_launched(owner, Command::EnterSwordfight));
     }
 
     #[test]
@@ -3027,7 +3055,7 @@ mod sequence_phase_context_tests {
 
         let mut phase = SequencePhase::begin(&mut engine.orders);
         assert!(matches!(
-            phase.pop_action(),
+            phase.pop_action_after_registration(&mut engine.orders),
             Some(crate::sequence::SequenceAction::InstructOwner {
                 owner: action_owner,
                 sequence_id,
@@ -3063,14 +3091,18 @@ mod sequence_phase_context_tests {
         // joins this same drain rather than waiting for the next frame.
         phase.splice_registered_actions(&mut engine.orders);
         assert!(matches!(
-            phase.pop_action(),
+            phase.pop_action_after_registration(&mut engine.orders),
             Some(crate::sequence::SequenceAction::InstructOwner {
                 owner: action_owner,
                 sequence_id,
                 element_index: 0,
             }) if action_owner == owner && sequence_id == follow_up_seq
         ));
-        assert!(phase.pop_action().is_none());
+        assert!(
+            phase
+                .pop_action_after_registration(&mut engine.orders)
+                .is_none()
+        );
 
         let owner_pc = engine
             .get_entity(owner)

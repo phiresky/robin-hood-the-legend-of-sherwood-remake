@@ -3145,21 +3145,22 @@ impl SequenceManager {
     /// drained here this same frame.
     pub fn hourglass(&mut self) -> Vec<SequenceAction> {
         let mut actions = Vec::new();
-
-        loop {
-            // WAIT Go() and ExecutedImmediately() run at registration,
-            // before deferred non-WAIT work reaches the manager hourglass.
-            while let Some(action) = self.pending_synchronous_actions.pop_front() {
-                actions.push(action);
-            }
-
-            let Some(action) = self.pop_deferred_hourglass_action() else {
-                break;
-            };
+        while let Some(action) = self.pop_next_hourglass_action() {
             actions.push(action);
         }
-
         actions
+    }
+
+    /// Pop exactly one action from the live manager FIFO. Original
+    /// `RHSequenceManager::Hourglass` removes one element, calls `Go()`, and
+    /// only then loops. Keeping the remaining elements registered makes them
+    /// observable to callbacks through `SequenceElementIsAboutToBeLaunched`.
+    pub(crate) fn pop_next_hourglass_action(&mut self) -> Option<SequenceAction> {
+        // WAIT Go() and ExecutedImmediately() run at registration, before
+        // deferred non-WAIT work reaches the manager hourglass.
+        self.pending_synchronous_actions
+            .pop_front()
+            .or_else(|| self.pop_deferred_hourglass_action())
     }
 
     fn pop_deferred_hourglass_action(&mut self) -> Option<SequenceAction> {
