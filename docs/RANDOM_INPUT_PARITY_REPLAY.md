@@ -60,11 +60,42 @@ At the first checkpoint, 46 traces had completed: 9 exact and 37 divergent.
 The sweep continued after that checkpoint. Use the audit status directory for
 the live count until a frozen input snapshot has completed.
 
+### Checkpoint `2026-07-31-update-001`
+
+The second status snapshot is preserved at
+`.codex-tmp/schema12-random-release-audit-1c02368c8/checkpoints/2026-07-31-update-001/`.
+It contains 182 completed audit statuses: 32 exact and 150 divergent. There
+were 362 complete compressed random traces available when this update began;
+generation and the initial audit both continued after the checkpoint.
+
+This remains a baseline for the frozen `1c02368c8` runner. In particular it
+predates the random-input fix `516728654`, so the 57 R01 entries below are
+candidate failure-only reruns, not claims about current `main`.
+
+Every one of the 150 failures is accounted for by the following first-visible
+classification. These are triage groups, not yet assertions that every member
+has the same root cause.
+
+| Group | Count | First visible boundary |
+|---|---:|---|
+| R01 | 57 | `actor.action_state`, sometimes with another field |
+| R02 | 23 | `direction_goal`, without an action-state mismatch |
+| R03 | 8 | `actor.wait_time`, without an action-state mismatch |
+| R04 | 4 | `position_goal_map` |
+| R05 | 19 | command/posture/direction combinations |
+| R06 | 7 | `ai.substate` |
+| R07 | 7 | RNG draw cardinality or ordering |
+| R08 | 3 | `position_map` |
+| R09 | 7 | resolved sound with no Rust pending request |
+| R10 | 7 | resolved-sound FIFO/content mismatch |
+| R12 | 8 | four `other` comparator reports, three layer/sector reports, and one unclassified panic |
+| **Total** | **150** | |
+
 ## Shared-cause ledger
 
 | ID | Status | First visible family | Working interpretation / next proof |
 |---|---|---|---|
-| R01 | In progress | PC `actor.action_state`, commonly Original idle versus Rust `WalkingUpright` while both retain `MoveOk` | Largest cluster. Determine the exact Original selected-movement/animation completion boundary under repeated resolved moves. Assigned as one general lifecycle issue, not one fix per trace. |
+| R01 | Fix landed; rerun required | PC `actor.action_state`, commonly Original idle versus Rust `WalkingUpright` while both retain `MoveOk` | `516728654` preserves Waiting when an entity-target `PerformSeek` remains visibly in progress. All four assigned boundaries clear; one trace is exact and three reach independent later failures. The remaining 53 baseline entries require failure-only reruns before this group can be split or closed. |
 | R02 | In progress | `direction_goal`, frequently at frame 516 | Likely shares the synchronous patrol/door/turn boundary already exposed by silent Linux2 Save002. Prove whether PC random-command cases share that cause before merging groups. |
 | R03 | Unassigned | `actor.wait_time`, alone or beside action state | Compare the owning command and timer launch/termination frame. Do not normalize the timer in the comparator. |
 | R04 | Unassigned | `position_goal_map` | Audit whether the outgoing selected command is detached, postponed, or retained. Existing Halt and raising-sword fixes are relevant but not assumed sufficient. |
@@ -72,13 +103,19 @@ the live count until a frozen input snapshot has completed.
 | R06 | Unassigned | `ai.substate` at frame 282 | Compare synchronous command side effects and owner-local AI callback ordering. |
 | R07 | Unassigned | RNG cardinality/order | Treat the first missing or excess call as a downstream symptom until the responsible Original callsite and state gate are identified. Never consume a trace value merely to realign the stream. |
 | R08 | Unassigned | `position_map` | Requires exact movement increment, collision, transition, and command ownership comparison; no coordinate tolerance or replay-specific snap. |
+| R09 | Unassigned | Resolved speech has no pending Rust request | Separate genuinely absent gameplay `Say` calls from already-fixed synchronous speech boundaries before changing restoration or FIFO policy. |
+| R10 | Unassigned | Resolved speech disagrees with pending FIFO | Compare actor, exclamation, forced/random variant, and the synchronous callback that queued it. Never skip an event to realign the stream. |
+| R11 | Watching | Runtime entity creation/mapping | No members at checkpoint 001. Exact Original creation-order mapping remains mandatory for any later member. |
+| R12 | Unassigned | Comparator `other`, layer/sector, or unclassified panic | Expand the diagnostic before assigning a cause. Layer/sector identity must remain isomorphic, not raw-index equal. |
 
 ## First-divergence ledger
 
 This table is the first human extraction made while generation and the release
-sweep were still running. New failures discovered after this extraction must be
-appended or folded into a proven shared cause. Names use `__` in place of path
-separators, matching audit log filenames.
+sweep were still running. It is not the complete checkpoint-001 list; the
+complete set is preserved by the checkpoint status files and accounted for by
+the group totals above. Newly investigated failures must be appended here or
+folded into a proven shared cause. Names use `__` in place of path separators,
+matching audit log filenames.
 
 | Trace | Frame | First compared boundary |
 |---|---:|---|
@@ -126,8 +163,30 @@ separators, matching audit log filenames.
 
 ## Fix ledger
 
-No random-input failure has been marked Done yet. The first active cluster is
-R01. When a fix lands, add the commit, Original source boundary, focused test,
+### `516728654` — preserve Waiting for entity-target PC seeks
+
+Original `WalkingUpright::Execute` observes an entity-target `PerformSeek` as
+`IN_PROGRESS` and therefore retains the actor's Waiting state. Rust's authored
+transition-successor marker synthesized a delayed Start and forced Moving one
+frame later. The fix suppresses that deferred PC movement Start for
+entity-target seeks while retaining it for point-target continuations.
+
+The focused regression passes. All four initially assigned R01 boundaries
+clear:
+
+- Cyrdach Restart replay 002 now matches every recorded frame.
+- Cyrdach Restart replay 001 advances past frame 349 to an independent missing
+  projectile with Original creation order 159.
+- Cyrdach Savegame 000 replay 001 advances past frame 496 to a sword-walk
+  divergence at frame 725.
+- Cyrdach Savegame 000 replay 002 advances past frame 230 to an independent
+  missing projectile with Original creation order 161.
+
+The checkpoint-001 statuses were produced by the older frozen runner and stay
+unchanged as historical evidence. A new release runner must rerun all R01
+members before publishing the number eliminated by this fix.
+
+When another fix lands, add the commit, Original source boundary, focused test,
 all affected traces, and their new exact result or next independent frontier
 here. Do not silently delete old rows: mark them superseded by the fix so the
 historical coverage remains visible.
