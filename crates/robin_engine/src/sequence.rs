@@ -2537,6 +2537,21 @@ impl SequenceManager {
         self.get_sequence_mut(seq_id)?.get_mut(elem_idx)
     }
 
+    /// Drop queue-time movement-goal snapshots held by live work for an
+    /// actor whose outgoing movement genuinely exhausted. Those snapshots
+    /// only bridge an interrupted replacement handoff; they must not revive
+    /// a goal cleared by ordinary movement completion.
+    pub(crate) fn clear_retained_movement_goals_for_actor(&mut self, actor: EntityId) {
+        let live = self.actor_live.get(&actor).cloned().unwrap_or_default();
+        for element_ref in live {
+            if let Some(element) =
+                self.get_element_mut(element_ref.sequence_id, element_ref.element_index)
+            {
+                element.retained_movement_goal = None;
+            }
+        }
+    }
+
     // ─── Launch ─────────────────────────────────────────────────
 
     /// Launch a fully-built sequence. Returns its ID.

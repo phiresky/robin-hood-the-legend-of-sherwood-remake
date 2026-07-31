@@ -8056,7 +8056,30 @@ impl EngineInner {
         // and the animation driver plays it; its own `do_next_order`
         // on completion then terminates the element.
         for (seq_id, elem_idx) in order_pops {
+            let owner = self
+                .orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .and_then(|element| element.owner);
             self.do_next_order(seq_id, elem_idx);
+            let exhausted = self
+                .orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .is_some_and(|element| {
+                    element.state == crate::sequence::SequenceState::Terminated
+                });
+            if exhausted && let Some(owner) = owner {
+                // A replacement Move can be registered before this actor's
+                // slot and instructed afterward. Genuine exhaustion of the
+                // outgoing movement clears PositionGoalMap in Original; do
+                // not let the later MoveWaiting instruction resurrect its
+                // queue-time retained snapshot. Interrupted handoffs keep
+                // their snapshot and retain the existing replacement rule.
+                self.orders
+                    .sequence_manager
+                    .clear_retained_movement_goals_for_actor(owner);
+            }
         }
         // Original LaunchSequenceElement registers the Provoke from inside
         // Execute, but its Instruct arbitration runs only after the terminal
