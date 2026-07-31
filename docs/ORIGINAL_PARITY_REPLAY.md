@@ -2908,6 +2908,21 @@ drift which a steep stair plane amplified into the first Linux2 Profile 002
 Savegame 029 elevation mismatch at frame 4,041; that replay now advances to an
 independent facing divergence at frame 4,123.
 
+### Sword movement faces opponents in ground space
+
+`RHElementActorHuman::FaceOpponent` subtracts the actors'
+`GetPositionGround()` values and passes that ground-space vector to
+`GetSector0to15(ASPECT_RATIO)`. The elevation contribution to world Y is
+therefore authoritative when combatants stand on different surfaces.
+
+Rust snapshotted projected map positions for the sword-movement facing pass.
+That is equivalent only when the two elevations cancel; otherwise it can place
+the opponent vector in an adjacent direction sector and rotate the mover one
+frame early. Sword opponent snapshots now retain ground X/Y, while shield
+targets keep their existing coordinate contract. Linux2 Profile 002 Savegame
+029 now matches every recorded frame, including the former backward-sword
+facing divergence at frame 4,123.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48

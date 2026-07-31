@@ -4701,6 +4701,8 @@ impl EngineInner {
         // (forward/backward/strafe) based on the angle between
         // movement and facing.
         let mut combat_face_targets = EntitySlots::filled(self.world.entities.len(), None);
+        let mut combat_face_targets_are_ground =
+            EntitySlots::filled(self.world.entities.len(), false);
         for (actor_id, entity) in self
             .world
             .entities
@@ -4775,12 +4777,18 @@ impl EngineInner {
             if let Some(opp_id) = opp_id_opt
                 && let Some(opp) = self.world.entities.get(opp_id)
             {
-                combat_face_targets[actor_id] = Some(opp.element_data().position_map());
+                let position = opp.element_data().position();
+                combat_face_targets[actor_id] =
+                    Some(crate::coordinates::MapPoint::new(position.x, position.y));
+                combat_face_targets_are_ground[actor_id] = true;
             } else {
                 // Sentinel: face self → no rotation, no movement-direction
                 // fallback (the "return WALKING_SWORD without changing
                 // facing" branch).
-                combat_face_targets[actor_id] = Some(entity.element_data().position_map());
+                let position = entity.element_data().position();
+                combat_face_targets[actor_id] =
+                    Some(crate::coordinates::MapPoint::new(position.x, position.y));
+                combat_face_targets_are_ground[actor_id] = true;
             }
         }
 
@@ -5773,8 +5781,14 @@ impl EngineInner {
                 // than instantly snapping facing, so the facing
                 // rotates one step per frame toward the opponent.
                 if let Some(opp_pos) = combat_target {
-                    let fdx = opp_pos.x - elem.position_map().x;
-                    let fdy = opp_pos.y - elem.position_map().y;
+                    let face_origin = if combat_face_targets_are_ground[actor_id] {
+                        let position = elem.position();
+                        crate::coordinates::MapPoint::new(position.x, position.y)
+                    } else {
+                        elem.position_map()
+                    };
+                    let fdx = opp_pos.x - face_origin.x;
+                    let fdy = opp_pos.y - face_origin.y;
                     if fdx * fdx + fdy * fdy > 0.01 {
                         elem.set_direction_goal(
                             crate::position_interface::vector_to_sector_0_to_15_iso(fdx, fdy),
@@ -5827,8 +5841,14 @@ impl EngineInner {
                     //   [3π/4, 5π/4)            → backward
                     //   [5π/4, 7π/4)            → strafe left
                     let facing_angle = if let Some(opp_pos) = combat_target {
-                        let fdx = opp_pos.x - elem.position_map().x;
-                        let fdy = opp_pos.y - elem.position_map().y;
+                        let face_origin = if combat_face_targets_are_ground[actor_id] {
+                            let position = elem.position();
+                            crate::coordinates::MapPoint::new(position.x, position.y)
+                        } else {
+                            elem.position_map()
+                        };
+                        let fdx = opp_pos.x - face_origin.x;
+                        let fdy = opp_pos.y - face_origin.y;
                         if fdx * fdx + fdy * fdy > 0.01 {
                             fdy.atan2(fdx)
                         } else {
