@@ -2182,6 +2182,19 @@ moved Soldier 130 by the upright row's 1.2-unit sample instead of the alerted
 row's 1.8-unit sample at frame 13890. Door steps now pass through the same
 runtime Soldier animation selection as ordinary movement.
 
+### Leaving Sleeping opens eyes at the SetState boundary
+
+Enemy `SetState` calls the scripted state-change filter while the outgoing
+state is still observable, then sets `EYES_LOOK_FORWARD` whenever the
+transition leaves `STATE_SLEEPING`. Rust had placed that eye write in an
+outbox drained only by concussion/recovery paths, so an ordinary noise event
+could move a sleeping guard into Seeking while leaving its view permanently
+closed. Eye restoration now uses the ordered owner-work queue immediately
+after the state-change callback. In Linux2 Profile 002 Savegame 003 this lets
+Soldier 130 acquire visibility after leaving its building and enter the
+expected `AttackingReactiontimeTurning` state at frame 13904. The replay now
+matches every recorded frame.
+
 ### Waiting-sword launches wait for the actor completion boundary
 
 `RHElementActorHuman::Execute` evaluates smalltalk hints and ordinary

@@ -2553,14 +2553,13 @@ impl EnemyAi {
         }
 
         // `set_view_status(EYES_LOOK_FORWARD)` when leaving
-        // STATE_SLEEPING.  Reasserting LookForward for *every*
-        // sleeping departure (not just `SleepingAwakening`) covers
-        // routes that drop straight from a dream/blind substate
-        // into Wondering/Attacking without going through the
-        // SleepingAwakening pipeline.
-        if self.base.current_state == AiState::Sleeping && state != AiState::Sleeping {
-            self.base.outbox.recovery.set_eye_status = Some(crate::element::EyeStatus::LookForward);
-        }
+        // STATE_SLEEPING. Reasserting LookForward for *every* sleeping
+        // departure (not just `SleepingAwakening`) covers routes that drop
+        // straight from a dream/blind substate into Wondering/Attacking
+        // without going through the SleepingAwakening pipeline. The actual
+        // write is queued below, after the state-change callback, matching the
+        // statement order in Original SetState.
+        let opens_eyes = self.base.current_state == AiState::Sleeping && state != AiState::Sleeping;
 
         // Break the archer-behind-me pairing when leaving any
         // substate that isn't shield-protect / phalanx /
@@ -2717,6 +2716,15 @@ impl EnemyAi {
                     source,
                     actor_effects_before_callback,
                 }));
+        }
+        if opens_eyes {
+            self.base
+                .outbox
+                .reentrant
+                .owner_work
+                .push(AiOwnerWork::SetEyeStatus(
+                    crate::element::EyeStatus::LookForward,
+                ));
         }
 
         tracing::trace!(
