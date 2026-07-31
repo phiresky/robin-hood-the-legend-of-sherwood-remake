@@ -2469,7 +2469,11 @@ impl EnemyAi {
         // narrow stare cone so subsequent detection ticks cast a narrow
         // stare rather than the default look-forward cone.
         self.base.outbox.actor.set_focus_point(*pos);
-        self.base.face_position(*pos);
+        // Original `Face(RHposition)` reaches `FaceTo`, which completes
+        // synchronously when an idle actor already faces the requested
+        // sector. Keep the context-aware short-circuit here instead of
+        // registering a redundant one-frame TURN sequence.
+        self.base.face_position_with_ctx(*pos, ctx);
         self.base.launch_timer(100, ctx.frame);
     }
 

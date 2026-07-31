@@ -3154,6 +3154,17 @@ zero authored mobiles. The stage now retains the count directly from the
 decoded mission stream. This exposes the separate, explicit mobile-master
 state-adoption work instead of failing earlier on inconsistent metadata.
 
+### `CALL_LOOKTHERE` completes an already-satisfied turn synchronously
+
+Original `CallLookThereStandardProcedure` calls `Face(RHposition)`, which
+reaches `FaceTo` and immediately raises `EVENT_DONE` when an idle actor already
+faces the requested sector. Rust's context-free facing helper could not make
+that test and always registered a `TURN` sequence, leaving the redundant
+command observable for one frame even though the actor's direction and goal
+were already equal. The handler now uses its available actor context and takes
+the same synchronous completion path. This makes Linux3 Profile 001 Savegame
+010 match every recorded frame.
+
 ## Coverage limits
 
 A clean baseline proves exact parity only for the state fields serialized by the
