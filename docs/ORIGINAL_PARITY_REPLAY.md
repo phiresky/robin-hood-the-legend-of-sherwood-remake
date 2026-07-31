@@ -3307,6 +3307,32 @@ intact while clearing only Rust's derived live execution caches. This advances
 Linux3 Profile 003 Savegame 066 beyond the resumed strike, parry-expiry,
 elevation-facing, and coma sequence.
 
+### Nicouzouf Profile 001 loaded-session coverage
+
+Every Linux replay in `Savegame_nicouzouf/Profile_001` has been exercised
+through its complete recorded window. Savegames 000, 002, 006, 008–010,
+013, 015–021, 023, 025–038, 040, 042–044, 046–048, 050, 052, 055–056,
+058, 060–062, 064, 066–075 match every recorded frame. This includes dense
+city states with 321 and 347 loaded elements.
+
+The remaining failures group into reusable behavior boundaries rather than
+save-specific mismatches:
+
+- Savegames 014, 051, and 057 take the same extra rider anti-collision
+  deviation at frame 106.
+- Savegames 024, 041, and 049 retain `MoveOk` where Original selects `Turn`
+  at frame 95; Savegames 039 and 076 expose related loaded Turn completion
+  boundaries.
+- Savegame 022 retains a movement and AI substate at frame 184 after Original
+  returns to its post.
+- Savegames 053, 059, and 065 disable the same eight motion-grid lines at
+  frame 176.
+- Savegames 045, 054, and 063 reach late sound/combat/AI activity before an
+  RNG draw-count mismatch.
+
+Savegame 076 also successfully decodes and atomically adopts the corpus's
+largest save payload: 636 elements, including 289 dynamic elements.
+
 ## Coverage limits
 
 A clean baseline proves exact parity only for the state fields serialized by the
