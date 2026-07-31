@@ -1591,6 +1591,18 @@ impl EngineInner {
 
         if let Some((pos, posture, anim, carrier_pos, carrier_handle)) = target_meta {
             tick.primary_target_position = Some(pos);
+            let target = self
+                .world
+                .entities
+                .get(target_id)
+                .unwrap_or_else(|| panic!("resolved primary target {target_id:?} disappeared"));
+            let element = target.element_data();
+            tick.primary_target_live_position = Some(crate::ai::Position {
+                x: element.position_map().x,
+                y: element.position_map().y,
+                sector: element.sector(),
+                level: element.layer(),
+            });
             tick.primary_target_posture = Some(posture);
             tick.primary_target_animation = anim;
             tick.primary_target_carrier_position = carrier_pos;
@@ -5663,9 +5675,16 @@ impl EngineInner {
             npc_id.index()
         );
 
-        // Process quit_swordfight.
+        // EndSwordfight launches an explicit QUIT_SWORDFIGHT element.  Do
+        // not tear down the relationship directly here: the command owns
+        // both that teardown and the visible lowering-sword transition, and
+        // LaunchSequenceElement arbitrates it synchronously in the Original.
         if effects.quit_swordfight {
-            self.quit_swordfight(sim, assets, npc_id);
+            self.launch_element(crate::sequence::SequenceElement::new(
+                1,
+                crate::element::Command::QuitSwordfight,
+                Some(npc_id),
+            ));
         }
 
         // Process stop_menace — the explicit `STOP_MENACE` element

@@ -442,9 +442,14 @@ pub struct AiPerTickData {
     /// different sectors reachable via a jump-line pair. Used during
     /// `ReconsiderEnemyApproach`.
     pub primary_target_jump_line: Option<u32>,
-    /// Live position of `primary_target` this tick. Used by
-    /// `ReconsiderEnemyApproach`. `None` = caller didn't look it up.
+    /// Position returned by `RHArtificialIntelligence::Position(actor)`.
+    /// During a door pass this is the committed destination-side position,
+    /// not the actor's interpolated body position.
     pub primary_target_position: Option<Position>,
+    /// The target element's literal current position and sector. This differs
+    /// from [`Self::primary_target_position`] while passing a door and is for
+    /// source sites that call `GetPosition` / `GetSector` directly.
+    pub primary_target_live_position: Option<Position>,
     /// Live posture of `primary_target` this tick.
     pub primary_target_posture: Option<crate::element::Posture>,
     /// Live animation (order type) of `primary_target` this tick.
@@ -629,6 +634,7 @@ impl AiPerTickData {
             nearby_sleeping_enemies: Vec::new(),
             primary_target_jump_line: None,
             primary_target_position: None,
+            primary_target_live_position: None,
             primary_target_posture: None,
             primary_target_animation: None,
             primary_target_carrier_position: None,

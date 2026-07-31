@@ -5652,10 +5652,15 @@ impl EnemyAi {
                 if stimulus_type == StimulusType::EventTimer {
                     // If primary target is on a lift sector, face+focus+wait;
                     // else reconsider enemy approach.
+                    // This source arm calls
+                    // `mpPrimaryTarget->GetSector()->IsLift()` directly. It
+                    // must inspect the target element's physical sector, not
+                    // `RHArtificialIntelligence::Position(actor)`'s committed
+                    // destination-side sector during a door pass.
                     let target_on_lift = grid
                         .and_then(|g| {
-                            ctx.entity_view(self.base.primary_target)
-                                .and_then(|v| v.position.sector)
+                            tick.primary_target_live_position
+                                .and_then(|position| position.sector)
                                 .map(|s| g.sector_type(u32::from(s)).is_lift())
                         })
                         .unwrap_or(false);

@@ -2362,8 +2362,24 @@ impl EnemyAi {
                     tick,
                 );
             } else {
-                self.base.face_position(self.base.seek_position);
-                self.get_battle_overview(0x0001, ctx, tick);
+                // The lost-enemy branch snaps toward the missed human's
+                // current position, then enters the ordinary (non-FAST)
+                // battle overview.  The forecast is retained for a possible
+                // chase, but is not the facing target here.
+                let missed_position = ctx
+                    .entity_view(enemy)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "NPC {} OUTOFVIEW target {} vanished before overview facing",
+                            self.base.me, enemy
+                        )
+                    })
+                    .position;
+                let dx = missed_position.x - ctx.position.x;
+                let dy = missed_position.y - ctx.position.y;
+                self.base.outbox.actor.set_direction_instantly =
+                    Some(crate::ai_enemy::util::vec_to_sector(dx, dy) as i16);
+                self.get_battle_overview(0, ctx, tick);
             }
         }
     }

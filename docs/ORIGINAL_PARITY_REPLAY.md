@@ -2614,6 +2614,14 @@ body crosses the sector boundary. Linux3 Profile 001 Savegame 008 consequently
 matches the Original detection, facing, and ladder-approach decisions after
 its restored PC door pass.
 
+That committed position is not a replacement for the element's physical
+position. Source sites that call `GetSector` directly still observe the live
+interpolated body sector. In particular, the ladder-wait handler tests
+`mpPrimaryTarget->GetSector()->IsLift()` and repeatedly reconsiders its
+approach until the target physically enters the lift. Per-tick AI metadata now
+carries both views explicitly, so each translated source expression selects
+the same one as C++.
+
 ### Seek transitions inherit the movement speed factor
 
 Original transition Execute arms have two motion paths. A direct transition
