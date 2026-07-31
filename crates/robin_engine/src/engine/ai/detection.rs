@@ -1548,7 +1548,6 @@ impl EngineInner {
         let real_half_aperture = viewer.real_half_aperture;
         let npc_posture = viewer.posture;
         let entity_sector = viewer.sector;
-        let alert_status = viewer.alert_status;
         let viewer_blipped = viewer.blipped;
         let me_pos_map = viewer.position_map;
         // Silence the "unused" warning on the `_action_state` slot
@@ -1589,6 +1588,7 @@ impl EngineInner {
         // entity's creation order, not its current marrayElements slot.
         let modified_frame =
             universal_frame.wrapping_add(self.original_static_creation_order(npc_id));
+        let alert_status = viewer.alert_status;
         // Lacklandist ComputeVisibility lets Stare / Follow and non-Green
         // alert status bypass the per-entry cadence. Original's Royalist arm
         // never consults this flag and remains strictly modulo-16.
@@ -3338,7 +3338,6 @@ impl EngineInner {
         let real_half_aperture = viewer.real_half_aperture;
         let npc_posture = viewer.posture;
         let current_substate = viewer.current_substate;
-        let alert_status = viewer.alert_status;
         let ignore_bodies = viewer.ignore_bodies;
         let _ = (
             current_substate,
@@ -3394,14 +3393,6 @@ impl EngineInner {
         // Per-NPC frame phase offset.
         let modified_frame =
             universal_frame.wrapping_add(self.original_static_creation_order(npc_id));
-
-        // refresh-always gate: Stare / Follow eye status and alert
-        // levels above Green force the per-type frequency gate open
-        // so visibility refreshes every tick.
-        let refresh_always = matches!(
-            eye_status,
-            crate::element::EyeStatus::Stare | crate::element::EyeStatus::Follow
-        ) || !matches!(alert_status, crate::ai::AlertLevel::Green);
 
         const BODY_DETECTION_FACTOR: f32 = 3.0;
 
@@ -3468,7 +3459,6 @@ impl EngineInner {
                 per_target_view_radius: &per_target_view_radius,
                 eye_status,
                 view_speed,
-                refresh_always,
                 modified_frame,
                 universal_frame,
                 golden_eye,
@@ -3505,7 +3495,6 @@ impl EngineInner {
                 per_target_view_radius: &per_target_view_radius,
                 eye_status,
                 view_speed,
-                refresh_always,
                 modified_frame,
                 universal_frame,
                 golden_eye,
@@ -3550,7 +3539,6 @@ impl EngineInner {
                 per_target_view_radius: &per_target_view_radius,
                 eye_status,
                 view_speed,
-                refresh_always,
                 modified_frame,
                 universal_frame,
                 golden_eye,
@@ -3592,7 +3580,6 @@ impl EngineInner {
                 per_target_view_radius: &per_target_view_radius,
                 eye_status,
                 view_speed,
-                refresh_always,
                 modified_frame,
                 universal_frame,
                 golden_eye,
@@ -3647,7 +3634,6 @@ impl EngineInner {
                 per_target_view_radius: &per_target_view_radius,
                 eye_status,
                 view_speed,
-                refresh_always,
                 modified_frame,
                 universal_frame,
                 golden_eye,
@@ -3703,7 +3689,12 @@ impl EngineInner {
         F: Fn(&HumanTarget) -> bool,
     {
         let kind_idx = kind as usize;
-        let gate_open = ctx.refresh_always || ctx.modified_frame.is_multiple_of(frequency);
+        // Original `ComputeVisibility(RHDetectable&)` only applies
+        // `bRefreshAlways` to Lacklandist ENEMY entries. Body, Friend,
+        // MissedFriend and Beggar always retain their cached visibility until
+        // their own modulo cadence opens, even at Yellow/Red alert or while
+        // staring/following.
+        let gate_open = ctx.modified_frame.is_multiple_of(frequency);
 
         let mut sum_of_sharpnesses: u32 = 0;
         let mut max_sharpness: u32 = 0;
@@ -3947,7 +3938,9 @@ impl EngineInner {
         ctx: ViewContext<'_>,
     ) {
         let obj_idx = DetectableType::Object as usize;
-        let gate_open = ctx.refresh_always || ctx.modified_frame.is_multiple_of(frequency);
+        // Like the human non-enemy buckets above, OBJECT deliberately ignores
+        // the enemy-only `bRefreshAlways` shortcut in the Original.
+        let gate_open = ctx.modified_frame.is_multiple_of(frequency);
 
         // CleanUpDetectables for OBJECT: drop entries whose target
         // is no longer active.  Run before the visibility loop so
@@ -4101,7 +4094,6 @@ struct ViewContext<'a> {
     per_target_view_radius: &'a std::collections::HashMap<EntityId, f32>,
     eye_status: crate::element::EyeStatus,
     view_speed: u16,
-    refresh_always: bool,
     modified_frame: u32,
     universal_frame: u32,
     golden_eye: bool,
