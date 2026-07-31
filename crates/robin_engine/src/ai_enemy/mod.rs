@@ -2335,7 +2335,8 @@ impl EnemyAi {
         self.reinitialize_them_list(ctx, tick);
 
         if self.list_them.is_empty() {
-            if ctx.is_swordfighting {
+            let defer_overview_until_after_quit = ctx.is_swordfighting;
+            if defer_overview_until_after_quit {
                 self.end_swordfight(ctx, tick);
             }
             self.base.outbox.actor.set_unfocus();
@@ -2379,7 +2380,15 @@ impl EnemyAi {
                 let dy = missed_position.y - ctx.position.y;
                 self.base.outbox.actor.set_direction_instantly =
                     Some(crate::ai_enemy::util::vec_to_sector(dx, dy) as i16);
-                self.get_battle_overview(0, ctx, tick);
+                if defer_overview_until_after_quit {
+                    // LaunchSequenceElement(QuitSwordfight) interrupts the
+                    // selected actor command synchronously. Its condolence
+                    // re-enters Think before this outer handler continues
+                    // into GetBattleOverview.
+                    self.base.outbox.actor.lost_enemy_overview_after_quit = true;
+                } else {
+                    self.get_battle_overview(0, ctx, tick);
+                }
             }
         }
     }

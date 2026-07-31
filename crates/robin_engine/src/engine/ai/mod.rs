@@ -5654,7 +5654,7 @@ impl EngineInner {
         // Later barrier groups remain live so re-entrant sequence work can
         // still enqueue effects that this pass observes at their Original
         // application point.
-        let effects = {
+        let (effects, finish_lost_enemy_overview) = {
             let entity = self
                 .world
                 .entities
@@ -5663,7 +5663,10 @@ impl EngineInner {
             let ai = entity.ai_controller_mut().unwrap_or_else(|| {
                 panic!("pending-drain NPC {} has no AI controller", npc_id.index())
             });
-            ai.outbox.actor.take_core()
+            (
+                ai.outbox.actor.take_core(),
+                ai.outbox.actor.take_lost_enemy_overview_after_quit(),
+            )
         };
         assert!(
             effects.enter_swordfight_jump_line.is_none()
@@ -5685,6 +5688,11 @@ impl EngineInner {
                 crate::element::Command::QuitSwordfight,
                 Some(npc_id),
             ));
+            // LaunchSequenceElement reaches Instruct synchronously. If the
+            // quit replaces a selected command, its SendCondolationCard
+            // callback therefore re-enters Think before EndSwordfight
+            // returns to its caller.
+            self.dispatch_condolations_for_npc(sim, npc_id, assets);
         }
 
         // Process stop_menace — the explicit `STOP_MENACE` element
@@ -6820,6 +6828,49 @@ impl EngineInner {
             let tick_for_seek =
                 self.build_npc_tick_data_without_forecasts(sim, npc_id, &scratch, assets);
             self.process_pending_script_seek_area_for(sim, assets, npc_id, &ctx, &tick_for_seek);
+        }
+
+        if finish_lost_enemy_overview {
+            // EndSwordfight's explicit sequence launch above has now
+            // interrupted the old command and delivered its nested
+            // condolence. Resume the outer EVENT_OUTOFVIEW handler at the
+            // following GetBattleOverview statement with a fresh live view.
+            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let entity = self
+                .world
+                .entities
+                .get(npc_id)
+                .unwrap_or_else(|| panic!("lost-enemy overview owner {npc_id:?} disappeared"));
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let ctx = build_ai_context_from_entity(
+                entity,
+                self.control.frame_counter,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.hiking_paths,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            let tick = self.build_npc_tick_data_without_forecasts(sim, npc_id, &scratch, assets);
+            self.world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::npc_data_mut)
+                .and_then(|npc| npc.ai_brain.enemy_mut())
+                .unwrap_or_else(|| panic!("lost-enemy overview owner {npc_id:?} has no enemy AI"))
+                .get_battle_overview(0, &ctx, &tick);
+            self.drain_pending_for_npc_mode(
+                sim,
+                npc_id,
+                assets,
+                owner_local_no_forecast,
+                defer_turn_instruction,
+            );
         }
     }
 

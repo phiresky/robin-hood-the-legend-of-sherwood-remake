@@ -2740,6 +2740,24 @@ This is the general `GoTo`/`EndThink` boundary; it contains no actor, point, or
 replay-specific condition. Linux Profile 002 QuickSave advances from frame
 2,074 to frame 2,113.
 
+### Swordfight exit interruption re-enters Think before the caller resumes
+
+Original `EndSwordfight` launches an explicit `QUIT_SWORDFIGHT` element. Its
+`Instruct` arbitration can interrupt the selected actor command and deliver
+that command's condolence card synchronously. The resulting `EVENT_DONE`
+therefore re-enters the enemy AI while the caller's old swordfight substate is
+still current; only after that nested callback returns does the outer
+lost-enemy path face the missed human and install its battle overview.
+
+Rust already arbitrated the quit inline, but left the generated condolence card
+queued until after the outer handler had installed the overview. The nested
+`EVENT_DONE` consequently advanced the newly installed look state instead of
+being handled by the outgoing swordfight state. Quit arbitration now closes
+its condolence boundary immediately, while the lost-enemy continuation is held
+by the outer drain and resumed afterward with fresh live context. Nescafe
+Profile 003 Savegames 012 and 013 match every recorded frame, including the
+former downstream script-RNG split.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
@@ -2765,8 +2783,10 @@ traces through Savegame 024 currently match every recorded frame. The remaining
 corpus is the active completion set; failures are grouped by their first
 general cause and the whole affected shard is rerun after each fix.
 
-Windows `GSHR` compatibility and exposing this adoption path through the
-ordinary interactive save loader remain separate follow-up work.
+Windows `GSHR` saves now share the atomic adoption path. The complete Cyrdach
+Savegame 000–037 corpus matches every recorded frame; Nescafe Profile 003
+Savegames 010–014 and 016 have also been verified. The remaining Windows
+sessions are part of the active completion set.
 
 ## Coverage limits
 

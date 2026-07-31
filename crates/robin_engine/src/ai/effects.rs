@@ -239,6 +239,11 @@ impl AttentiveModeEffect {
 pub struct AiActorOutbox {
     pub orders: Vec<AiOrderIntent>,
     pub quit_swordfight: bool,
+    /// Complete the lost-enemy battle-overview continuation only after an
+    /// explicit QUIT_SWORDFIGHT launch has delivered interruption
+    /// condolations from the command it replaced.
+    #[serde(default)]
+    pub lost_enemy_overview_after_quit: bool,
     pub stop_menace: bool,
     pub lower_shield: bool,
     pub deactivate: bool,
@@ -368,6 +373,7 @@ impl AiActorOutbox {
     pub(crate) fn has_boundary_work(&self) -> bool {
         !self.orders.is_empty()
             || self.quit_swordfight
+            || self.lost_enemy_overview_after_quit
             || self.stop_menace
             || self.lower_shield
             || self.deactivate
@@ -427,6 +433,10 @@ impl AiActorOutbox {
 
     pub(crate) fn take_preserve_goal_for_raise_shield(&mut self) -> bool {
         std::mem::take(&mut self.preserve_goal_for_raise_shield)
+    }
+
+    pub(crate) fn take_lost_enemy_overview_after_quit(&mut self) -> bool {
+        std::mem::take(&mut self.lost_enemy_overview_after_quit)
     }
 
     /// Drain a direct `SetDirection` write before the following `StopAll`
