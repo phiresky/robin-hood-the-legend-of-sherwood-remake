@@ -146,6 +146,7 @@ pub enum LegacyDynamicElementAdoptionError {
 
 enum PlannedElement {
     Existing(EntityId),
+    MobileMaster(usize),
     Construct(Entity),
 }
 
@@ -212,16 +213,19 @@ impl LegacyDynamicElementAdoptionPlan {
                             });
                         }
                         PlannedElement::Existing(entity_id)
-                    } else if topology
-                        .payload_metadata
-                        .by_creation_order
+                    } else if let Some(&mobile_index) = topology
+                        .mobile_index_by_creation_order
                         .get(&record.creation_order)
-                        .is_some_and(|metadata| metadata.class == LegacyElementClass::Mobile)
                     {
-                        return Err(LegacyDynamicElementAdoptionError::UnsupportedMobileMaster {
-                            slot: record.slot,
-                            creation_order: record.creation_order,
-                        });
+                        if record.class != LegacyElementClass::Mobile {
+                            return Err(LegacyDynamicElementAdoptionError::StaticClassMismatch {
+                                slot: record.slot,
+                                creation_order: record.creation_order,
+                                saved: record.class,
+                                initialized: LegacyElementClass::Mobile,
+                            });
+                        }
+                        PlannedElement::MobileMaster(mobile_index)
                     } else if let Some(factory) = fallback_factory {
                         validate_factory(record, factory)?;
                         construction_count += 1;
@@ -299,11 +303,22 @@ impl LegacyDynamicElementAdoptionPlan {
         let mut by_creation_order = BTreeMap::new();
         let mut by_saved_slot = vec![None; self.elements.len()];
         let mut creation_order_by_entity = BTreeMap::new();
+        let mut mobile_by_creation_order = BTreeMap::new();
+        let mut mobile_owner_by_creation_order = BTreeMap::new();
         let mut installed_creation_orders = self.static_creation_orders;
 
         for (slot, creation_order, planned) in self.elements {
             let entity_id = match planned {
                 PlannedElement::Existing(entity_id) => entity_id,
+                PlannedElement::MobileMaster(mobile_index) => {
+                    mobile_by_creation_order.insert(creation_order, mobile_index);
+                    let owner = *engine.world.mobile_elements[mobile_index]
+                        .sprite_ids
+                        .first()
+                        .expect("mobile load stage rejects masters without masked children");
+                    mobile_owner_by_creation_order.insert(creation_order, owner);
+                    continue;
+                }
                 PlannedElement::Construct(entity) => {
                     if entity.kind().is_bonus() {
                         // RHElementBonus::Initialize always invokes
@@ -341,11 +356,10 @@ impl LegacyDynamicElementAdoptionPlan {
 
         LegacyEntityFixups {
             by_creation_order,
-            by_saved_slot: by_saved_slot
-                .into_iter()
-                .map(|entity_id| entity_id.expect("phase-one slots are dense and preflighted"))
-                .collect(),
+            by_saved_slot,
             creation_order_by_entity,
+            mobile_by_creation_order,
+            mobile_owner_by_creation_order,
         }
     }
 }
@@ -598,6 +612,7 @@ mod tests {
                 ..Default::default()
             },
             creation_order_by_entity: BTreeMap::new(),
+            mobile_index_by_creation_order: BTreeMap::new(),
             static_creation_order_boundary: boundary,
         }
     }
@@ -674,25 +689,25 @@ mod tests {
 
         assert_eq!(fixups.by_saved_slot.len(), 2);
         assert!(matches!(
-            engine.get_entity(fixups.by_saved_slot[0]),
+            engine.get_entity(fixups.by_saved_slot[0].expect("entity slot")),
             Some(Entity::Projectile(projectile))
                 if projectile.object.object_type == ObjectType::Arrow
         ));
         assert!(matches!(
-            engine.get_entity(fixups.by_saved_slot[1]),
+            engine.get_entity(fixups.by_saved_slot[1].expect("entity slot")),
             Some(Entity::Bonus(bonus))
                 if bonus.object.object_type == ObjectType::BonusPlants
         ));
         assert_eq!(
             engine
                 .world
-                .original_creation_order(fixups.by_saved_slot[0]),
+                .original_creation_order(fixups.by_saved_slot[0].expect("entity slot")),
             45
         );
         assert_eq!(
             engine
                 .world
-                .original_creation_order(fixups.by_saved_slot[1]),
+                .original_creation_order(fixups.by_saved_slot[1].expect("entity slot")),
             91
         );
         assert_eq!(engine.world.next_original_creation_order, 122);
@@ -813,7 +828,7 @@ mod tests {
         .unwrap();
         let fixups = plan.apply(&mut engine);
         let Entity::Pc(pc) = engine
-            .get_entity(fixups.by_saved_slot[0])
+            .get_entity(fixups.by_saved_slot[0].expect("entity slot"))
             .expect("constructed PC")
         else {
             panic!("dynamic PC factory constructed a non-PC entity");

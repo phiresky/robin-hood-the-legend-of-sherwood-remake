@@ -73,6 +73,10 @@ pub enum LegacySaveAdoptError {
         "save references AI element slot {slot}, but the serialized element array contains only {element_count} records"
     )]
     MissingAiElementSlot { slot: u16, element_count: usize },
+    #[error(
+        "save references Original mobile master at AI element slot {slot}; mobile masters are not actors"
+    )]
+    MobileMasterAiReference { slot: u16 },
     #[error("saved position field {field} has value {value}; expected {expected}")]
     InvalidPositionField {
         field: &'static str,
@@ -232,8 +236,14 @@ impl LegacyLineTopology {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LegacyEntityFixups {
     pub by_creation_order: BTreeMap<u32, EntityId>,
-    pub by_saved_slot: Vec<EntityId>,
+    /// `None` is an Original mobile master, whose runtime identity lives in
+    /// `mobile_by_creation_order` instead of Rust's entity arena.
+    pub by_saved_slot: Vec<Option<EntityId>>,
     pub creation_order_by_entity: BTreeMap<EntityId, u32>,
+    pub mobile_by_creation_order: BTreeMap<u32, usize>,
+    /// Mobile masters execute sequence commands through their first masked FX
+    /// child in Rust's sequence runtime.
+    pub mobile_owner_by_creation_order: BTreeMap<u32, EntityId>,
 }
 
 impl LegacyEntityFixups {
@@ -274,10 +284,8 @@ impl LegacyEntityFixups {
                                     metadata.class == LegacyElementClass::Mobile
                                 });
                             if is_mobile {
-                                return Err(LegacySaveAdoptError::UnsupportedMobileMaster {
-                                    slot: record.slot,
-                                    creation_order: record.creation_order,
-                                });
+                                by_saved_slot.push(None);
+                                continue;
                             }
                             return Err(LegacySaveAdoptError::MissingStaticEntity {
                                 slot: record.slot,
@@ -297,7 +305,7 @@ impl LegacyEntityFixups {
             };
 
             by_creation_order.insert(record.creation_order, entity_id);
-            by_saved_slot.push(entity_id);
+            by_saved_slot.push(Some(entity_id));
             if let Some(first_creation_order) =
                 creation_order_by_entity.insert(entity_id, record.creation_order)
             {
@@ -313,6 +321,8 @@ impl LegacyEntityFixups {
             by_creation_order,
             by_saved_slot,
             creation_order_by_entity,
+            mobile_by_creation_order: topology.mobile_index_by_creation_order.clone(),
+            mobile_owner_by_creation_order: BTreeMap::new(),
         })
     }
 
@@ -339,12 +349,14 @@ impl LegacyEntityFixups {
         reference
             .0
             .map(|slot| {
-                self.by_saved_slot.get(usize::from(slot)).copied().ok_or(
-                    LegacySaveAdoptError::MissingAiElementSlot {
+                self.by_saved_slot
+                    .get(usize::from(slot))
+                    .copied()
+                    .ok_or(LegacySaveAdoptError::MissingAiElementSlot {
                         slot,
                         element_count: self.by_saved_slot.len(),
-                    },
-                )
+                    })?
+                    .ok_or(LegacySaveAdoptError::MobileMasterAiReference { slot })
             })
             .transpose()
     }
@@ -809,6 +821,7 @@ mod tests {
                 )]),
             },
             creation_order_by_entity: BTreeMap::from([(entity_id, creation_order)]),
+            mobile_index_by_creation_order: BTreeMap::new(),
             static_creation_order_boundary: 32,
         };
         (envelope, topology, entity_id)

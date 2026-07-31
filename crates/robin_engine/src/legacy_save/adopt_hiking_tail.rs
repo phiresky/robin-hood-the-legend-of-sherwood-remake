@@ -605,6 +605,8 @@ mod tests {
             by_creation_order: BTreeMap::new(),
             by_saved_slot: Vec::new(),
             creation_order_by_entity: BTreeMap::new(),
+            mobile_by_creation_order: BTreeMap::new(),
+            mobile_owner_by_creation_order: BTreeMap::new(),
         }
     }
 

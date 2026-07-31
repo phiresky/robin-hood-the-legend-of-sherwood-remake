@@ -23,6 +23,7 @@ pub mod adopt_elements;
 pub mod adopt_engine;
 pub mod adopt_grid;
 pub mod adopt_hiking_tail;
+pub mod adopt_mobile;
 pub mod adopt_object_leaves;
 pub mod adopt_paths;
 pub mod adopt_pc_human;

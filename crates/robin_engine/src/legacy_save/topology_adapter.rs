@@ -115,6 +115,8 @@ pub struct LegacyStaticElementTopology {
     /// Rust entity IDs omit mobile masters, so keep this explicit mapping
     /// instead of inviting callers to use `EntityId::index() + 31`.
     pub creation_order_by_entity: BTreeMap<EntityId, u32>,
+    /// Original creation order to Rust's separate mobile-master arena.
+    pub mobile_index_by_creation_order: BTreeMap<u32, usize>,
     /// Original `RHEngine::mulNumberOfCreatedStaticElements`.
     pub static_creation_order_boundary: u32,
 }
@@ -142,7 +144,7 @@ pub fn derive_static_element_topology(
     let sequence = build_original_static_element_sequence(engine, assets)?;
     let mut payload_metadata = LegacyMissionPayloadMetadata::default();
     let mut creation_order_by_entity = BTreeMap::new();
-
+    let mut mobile_index_by_creation_order = BTreeMap::new();
     for (original_slot, element) in sequence.iter().enumerate() {
         let slot = u32::try_from(original_slot).map_err(|_| {
             element_mismatch(format!("static element slot {original_slot} exceeds u32"))
@@ -183,6 +185,9 @@ pub fn derive_static_element_topology(
                 )
             }
         };
+        if let StaticElementSource::MobileMaster(mobile_index) = *element {
+            mobile_index_by_creation_order.insert(creation_order, mobile_index);
+        }
         if let Some(entity_id) = entity_id {
             if creation_order_by_entity
                 .insert(entity_id, creation_order)
@@ -214,6 +219,7 @@ pub fn derive_static_element_topology(
     Ok(LegacyStaticElementTopology {
         payload_metadata,
         creation_order_by_entity,
+        mobile_index_by_creation_order,
         static_creation_order_boundary,
     })
 }

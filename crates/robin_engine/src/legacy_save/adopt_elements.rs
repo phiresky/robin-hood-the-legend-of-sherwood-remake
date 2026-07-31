@@ -703,6 +703,12 @@ impl LegacyStaticElementAdoption {
         let line_topology = LegacyLineTopology::derive(engine)?;
         let mut records = Vec::with_capacity(payloads.records.len());
         for record in &payloads.records {
+            if matches!(
+                &record.payload,
+                LegacyElementPayload::ObjectItem(LegacyObjectItemPayload::Mobile(_))
+            ) {
+                continue;
+            }
             let creation_order = record.header.creation_order;
             let entity_id = entities
                 .by_creation_order

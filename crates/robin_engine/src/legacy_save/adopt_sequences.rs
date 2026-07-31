@@ -436,17 +436,18 @@ fn convert_element(
     let base = saved.base();
     let command = Command::try_from(base.command)
         .map_err(|_| invalid("command", base.command, "a known RHcommand discriminant"))?;
-    let owner = entities.resolve_element(base.owner).map_err(|error| {
-        LegacySequenceAdoptError::MissingIdentity {
-            field: "owner",
-            id: match error {
-                super::adopt::LegacySaveAdoptError::MissingCreationOrderReference {
-                    creation_order,
-                } => creation_order,
-                _ => base.owner.0.unwrap_or(u32::MAX),
-            },
-        }
-    })?;
+    let owner = base
+        .owner
+        .0
+        .map(|id| {
+            entities
+                .by_creation_order
+                .get(&id)
+                .or_else(|| entities.mobile_owner_by_creation_order.get(&id))
+                .copied()
+                .ok_or(LegacySequenceAdoptError::MissingIdentity { field: "owner", id })
+        })
+        .transpose()?;
     let state = sequence_state(base.state)?;
     let priority = sequence_priority(base.priority)?;
     // Original's RHSequenceElement constructors do not initialize either
@@ -1118,8 +1119,10 @@ mod tests {
         let target = EntityId::new(9, EntityIdKind::Soldier);
         let fixups = LegacyEntityFixups {
             by_creation_order: [(40, owner), (90, target)].into(),
-            by_saved_slot: vec![owner, target],
+            by_saved_slot: vec![Some(owner), Some(target)],
             creation_order_by_entity: [(owner, 40), (target, 90)].into(),
+            mobile_by_creation_order: BTreeMap::new(),
+            mobile_owner_by_creation_order: BTreeMap::new(),
         };
         (fixups, owner, target)
     }

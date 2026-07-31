@@ -20,6 +20,7 @@ use super::{
     adopt_elements::LegacyStaticElementAdoption,
     adopt_grid::{LegacyFastFindGridAdoptionPlan, LegacyGridHostState},
     adopt_hiking_tail::{LegacyHikingTailAdoptionPlan, LegacyTrajectoryHostOutput},
+    adopt_mobile::LegacyMobileAdoptionPlan,
     adopt_object_leaves::LegacyObjectLeafAdoptionPlan,
     adopt_paths::{LegacyPathAdoptionPlan, preflight_v48_paths},
     adopt_pc_human::LegacyPcHumanAdoptionPlan,
@@ -60,6 +61,7 @@ pub(crate) struct LegacyKnownAdoptionPlan {
     camera: LegacyCameraAdoptionPlan,
     vm_arena: LegacyVmArenaPlan,
     elements: LegacyStaticElementAdoption,
+    mobiles: LegacyMobileAdoptionPlan,
     object_leaves: LegacyObjectLeafAdoptionPlan,
     grid: LegacyFastFindGridAdoptionPlan,
     sequences: LegacySequenceAdoptionPlan,
@@ -127,6 +129,15 @@ impl LegacyKnownAdoptionPlan {
             LegacyStaticElementAdoption::preflight(
                 engine,
                 assets,
+                &body.element_payloads,
+                &entities,
+                &position_topology,
+            ),
+        )?;
+        let mobiles = stage(
+            "mobile master state",
+            LegacyMobileAdoptionPlan::preflight(
+                engine,
                 &body.element_payloads,
                 &entities,
                 &position_topology,
@@ -261,6 +272,7 @@ impl LegacyKnownAdoptionPlan {
             camera,
             vm_arena,
             elements,
+            mobiles,
             object_leaves,
             grid,
             sequences,
@@ -288,6 +300,7 @@ impl LegacyKnownAdoptionPlan {
         let preamble = self.preamble_services.apply(engine);
         let camera = self.camera.apply(engine);
         self.elements.apply(engine);
+        self.mobiles.apply(engine);
         self.object_leaves.apply(engine);
         let grid = self.grid.apply(engine);
         self.sequences.apply(engine);
@@ -549,7 +562,7 @@ fn remap_saved_beam_pc_identities(
             format!("saved PC creation order {creation_order} has absent element slot {slot}")
         })?;
         entities.by_creation_order.insert(creation_order, entity_id);
-        *saved_slot = entity_id;
+        *saved_slot = Some(entity_id);
     }
 
     entities.creation_order_by_entity.clear();

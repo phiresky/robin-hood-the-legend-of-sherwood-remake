@@ -2205,6 +2205,40 @@ impl EngineInner {
                     .sequence_manager
                     .can_interrupt_now(cur_seq, cur_idx)
                 {
+                    // In Original, Instruct installs the incoming Turn as
+                    // `mpSequenceElement` before interrupting the outgoing
+                    // movement. Its synchronous condolence therefore sees
+                    // that it is no longer selected and leaves the sprite's
+                    // movement goal intact. Rust clears active mechanics
+                    // before the incoming element begins executing, so carry
+                    // that selected-owner fact explicitly to the Turn.
+                    if matches!(new_command, Command::Turn | Command::TurnFast)
+                        && self
+                            .orders
+                            .sequence_manager
+                            .get_element(cur_seq, cur_idx)
+                            .is_some_and(|element| element.data.is_movement())
+                    {
+                        let retained_goal = self
+                            .world
+                            .entities
+                            .get(owner)
+                            .map(|entity| entity.position_iface().map_goal());
+                        if let (Some(goal), Some(element)) = (
+                            retained_goal,
+                            self.orders
+                                .sequence_manager
+                                .get_element_mut(new_seq, new_idx),
+                        ) {
+                            element.set_property(
+                                crate::sequence::Field::RetainedMovementGoal,
+                                crate::sequence::FieldValue::GeoPoint2D {
+                                    x: goal.x,
+                                    y: goal.y,
+                                },
+                            );
+                        }
+                    }
                     // New takes over current's postponed chain, current
                     // becomes Interrupted.
                     self.orders

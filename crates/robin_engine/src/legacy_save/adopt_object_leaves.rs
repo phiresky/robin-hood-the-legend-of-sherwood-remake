@@ -283,6 +283,12 @@ impl LegacyObjectLeafAdoptionPlan {
     ) -> Result<Self, LegacyObjectLeafAdoptError> {
         let mut records = Vec::new();
         for record in &payloads.records {
+            if matches!(
+                &record.payload,
+                LegacyElementPayload::ObjectItem(LegacyObjectItemPayload::Mobile(_))
+            ) {
+                continue;
+            }
             let creation_order = record.header.creation_order;
             let entity_id = entities
                 .by_creation_order

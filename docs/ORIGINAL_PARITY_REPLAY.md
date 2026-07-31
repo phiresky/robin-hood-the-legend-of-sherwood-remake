@@ -3165,6 +3165,38 @@ were already equal. The handler now uses its available actor context and takes
 the same synchronous completion path. This makes Linux3 Profile 001 Savegame
 010 match every recorded frame.
 
+### Mobile masters keep a separate save identity
+
+Original places each `RHElementMobile` master in `marrayElements`, while Rust
+stores the master in its dedicated mobile arena and only puts the masked child
+FX in the entity arena. Save adoption now preserves both spaces explicitly:
+ordinary creation orders and AI slots continue to resolve only to real Rust
+entities, and mobile creation orders resolve to mobile indices. Sequence
+commands owned by a mobile master map isomorphically to its first masked child,
+the same proxy used by Rust's existing Start/Stop/Activate/Deactivate runtime.
+
+The mobile payload now restores the master position, old position, goal,
+increment, path cursor and direction, active/stopped state, speed target and
+acceleration, plus masked-child position, active state, and animation speed.
+The motion polygon is translated by the saved master displacement just as
+`RHElementMobile::Serialize` translates its motion sector and collision
+geometry on load. This supports loaded sessions without inventing an entity ID
+for the non-entity master.
+
+### A selected Turn preserves the interrupted movement goal
+
+Original `RHElementActor::SendCondolationCard` clears the sprite goal only when
+the completed or interrupted element is still the actor's selected
+`mpSequenceElement`. During `Instruct`, an incoming Turn becomes selected
+before the outgoing movement is interrupted, so that movement's synchronous
+card deliberately leaves its destination cached.
+
+Rust now records that retained goal on a Turn which wins normal priority
+arbitration against a movement. Its transition-to-waiting and subsequent turn
+therefore observe the same selected-owner boundary instead of clearing the
+goal when the first Turning order initializes. This advances nicouzouf
+Savegame 008 from frame 110 to the mobile-motion boundary at frame 178.
+
 ## Coverage limits
 
 A clean baseline proves exact parity only for the state fields serialized by the
