@@ -3522,6 +3522,24 @@ interleaves each member detach with its callback and clears the chief only after
 the loop, matching the Original call boundary exercised by Linux Profile 001
 Savegame 030.
 
+### Waypoint scripts retain their enclosing Think stack
+
+Original `RHArtificialIntelligence::ExecuteWaypointScript` invokes the
+waypoint's `ReachPoint` VM from inside the route-arrival `Think`, then
+recursively calls `Think(EVENT_AFTER_SCRIPT_GO_ON)` before the outer Think
+returns. A native close-point `GoTo` made by that VM therefore sets the outer
+call's `already_on_point` latch; the recursive Think resets the latch at its
+own `StartThink` boundary instead of scheduling another reach-point event.
+
+Rust must release the controller borrow before entering the VM and previously
+also dropped the logical Think depth. The same close-point call was then
+mistaken for an outside-Think call and queued an extra `EVENT_REACHPOINT`,
+advancing a scripted patrol twice. Waypoint VM dispatch now retains a nested,
+unwind-safe logical Think scope through `ReachPoint` and
+`EVENT_AFTER_SCRIPT_GO_ON`. Linux Profile 001 Savegame 030 consequently passes
+the former frame 30308 divergence and reaches its next independent mismatch at
+frame 30378; Savegame 031 remains exact end to end.
+
 ### Small Linux profiles match end to end
 
 The complete `Savegame_linux` corpus currently consists of Profile 005

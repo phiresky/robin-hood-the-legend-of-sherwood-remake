@@ -277,17 +277,31 @@ fn goto_already_on_point_uses_original_animation_gate() {
     ] {
         let ctx = goto_short_circuit_ctx(animation);
         let mut ai = AiController::new(1);
+        ai.think_recursion_depth = 1;
 
         ai.go_to(ctx.position, GotoFlags::empty(), &ctx);
 
         assert!(ai.already_on_point);
+        assert!(ai.outbox.reentrant.self_stimuli.is_empty());
         assert!(ai.take_pending_orders().is_empty());
 
         let mut speed_ai = AiController::new(1);
+        speed_ai.think_recursion_depth = 1;
         speed_ai.go_to_speed(ctx.position, GotoFlags::empty(), 1.5, &ctx);
         assert!(speed_ai.already_on_point);
+        assert!(speed_ai.outbox.reentrant.self_stimuli.is_empty());
         assert!(speed_ai.take_pending_orders().is_empty());
     }
+
+    let outside_ctx = goto_short_circuit_ctx(crate::order::OrderType::WaitingUpright);
+    let mut outside_ai = AiController::new(1);
+    outside_ai.go_to(outside_ctx.position, GotoFlags::empty(), &outside_ctx);
+    assert!(!outside_ai.already_on_point);
+    assert_eq!(
+        outside_ai.outbox.reentrant.self_stimuli,
+        [StimulusType::EventReachPoint]
+    );
+    assert!(outside_ai.take_pending_orders().is_empty());
 
     let ctx = goto_short_circuit_ctx(crate::order::OrderType::WaitingUprightBored);
     let mut ai = AiController::new(1);

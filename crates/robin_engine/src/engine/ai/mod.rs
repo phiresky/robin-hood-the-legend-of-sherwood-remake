@@ -10886,6 +10886,72 @@ impl EngineInner {
             return;
         }
 
+        self.with_suspended_waypoint_think(npc_id, |engine| {
+            engine
+                .dispatch_waypoint_script_on_suspended_think(sim, npc_id, assets, path_idx, wp_idx);
+        });
+    }
+
+    /// Keep the route-arrival Think logically live while Rust releases its AI
+    /// borrow to enter the waypoint VM. The restoration is unwind-safe so a
+    /// script panic cannot leak a fake recursion level into later AI work.
+    fn with_suspended_waypoint_think<T>(
+        &mut self,
+        npc_id: EntityId,
+        operation: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        // ExecuteWaypointScript is called from inside the route-arrival
+        // Think in the Original. Rust has to release the AI borrow before it
+        // can enter the waypoint VM, but native AI calls made by ReachPoint
+        // must still observe that suspended outer Think. In particular, a
+        // close-point GoTo sets `already_on_point` for the enclosing EndThink
+        // instead of immediately queueing a second EVENT_REACHPOINT. The
+        // recursively entered EVENT_AFTER_SCRIPT_GO_ON resets that latch in
+        // StartThink, exactly as the C++ call stack does.
+        {
+            let ai = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "waypoint-script owner {} lost its AI before ReachPoint",
+                        npc_id.index()
+                    )
+                });
+            ai.think_recursion_depth = ai
+                .think_recursion_depth
+                .checked_add(1)
+                .expect("waypoint-script suspended Think depth overflow");
+        }
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| operation(self)));
+        if let Some(ai) = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::ai_controller_mut)
+        {
+            ai.think_recursion_depth = ai
+                .think_recursion_depth
+                .checked_sub(1)
+                .expect("waypoint-script suspended Think depth underflow");
+        }
+        match result {
+            Ok(value) => value,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
+    fn dispatch_waypoint_script_on_suspended_think(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+        path_idx: crate::ai::PathId,
+        wp_idx: u8,
+    ) {
         let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(npc_id);
         if let Err(error) = self.call_script_vm(
             sim,
@@ -10911,17 +10977,19 @@ impl EngineInner {
         let is_forest_level = self.world.weather.is_forest_level;
         let ambiance = self.world.weather.ambiance;
         let standard_view_polygon_radius = self.ai.standard_view_polygon_radius;
+        let script_driven = self
+            .world
+            .entities
+            .get(npc_id)
+            .and_then(Entity::ai_controller)
+            .is_none_or(|ai| ai.current_substate == crate::ai::Substate::DefaultScriptDriven);
+        if script_driven {
+            return;
+        }
         let ctx = {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
-            let substate = entity
-                .ai_controller()
-                .map(|ai| ai.current_substate)
-                .unwrap_or(crate::ai::Substate::DefaultScriptDriven);
-            if substate == crate::ai::Substate::DefaultScriptDriven {
-                return;
-            }
             build_ai_context_from_entity(
                 entity,
                 frame,
