@@ -534,9 +534,7 @@ pub fn build_orders_from_path(
     antagonist: Option<crate::element::EntityId>,
     next_order_id: &mut u32,
 ) {
-    let transition_orders = element.num_transition_orders.min(element.orders.len());
-    element.orders.truncate(transition_orders);
-    element.num_transition_orders = transition_orders;
+    let mut first = true;
     let last = waypoints.len().saturating_sub(1);
     for (i, &wp) in waypoints.iter().enumerate() {
         let mut order = Order::new(
@@ -568,7 +566,34 @@ pub fn build_orders_from_path(
         } else {
             order.tolerance = 0.0;
         }
-        element.push_order(order);
+
+        if first && let Some(existing) = element.orders.back_mut() {
+            // `RHEngine::ProcessPathRequests` reuses the movement element's
+            // last pre-path order: `NewID()`, change its action/destination,
+            // and leave every preceding order in place. In particular, a
+            // loaded MOVE_WAITING can still own a start transition followed
+            // by a freezing order. Discarding that prefix makes the actor
+            // begin moving one frame earlier than the saved Original.
+            //
+            // Preserve the old order's otherwise-authoritative fields just
+            // like the in-place C++ mutation, while retaining Rust's typed
+            // representation for climb direction handling.
+            existing.order_id = order.order_id;
+            existing.order_type = order.order_type;
+            existing.target_x = order.target_x;
+            existing.target_y = order.target_y;
+            existing.reverse = order.reverse;
+            if !order.compute_direction {
+                existing.compute_direction = false;
+            }
+            if i == last {
+                existing.tolerance = order.tolerance;
+                existing.antagonist = order.antagonist;
+            }
+        } else {
+            element.push_order(order);
+        }
+        first = false;
     }
 }
 
@@ -846,7 +871,7 @@ mod tests {
     }
 
     #[test]
-    fn build_orders_from_path_preserves_transition_orders() {
+    fn build_orders_from_path_reuses_last_wait_and_preserves_prefix() {
         let mut elem = SequenceElement::new(
             1,
             crate::element::Command::Move,
@@ -857,14 +882,11 @@ mod tests {
             0.0,
             0.0,
         ));
-        elem.initialize_transition_orders();
-        // A launch transition may finish before Rust's asynchronous path
-        // result arrives. The teardown path normally decrements this count;
-        // use a stale larger value here to verify path installation also
-        // clamps the serialized span to the remaining queue.
-        elem.num_transition_orders = 2;
+        elem.push_order(Order::test_new(OrderType::Freezing, 0.0, 0.0));
+        let transition_id = elem.orders[0].order_id;
+        let wait_id = elem.orders[1].order_id;
 
-        let mut next_order_id = 1u32;
+        let mut next_order_id = 100u32;
         build_orders_from_path(
             &mut elem,
             &[map_pt(10.0, 20.0)],
@@ -876,12 +898,16 @@ mod tests {
         );
 
         assert_eq!(elem.orders.len(), 2);
+        assert_eq!(elem.orders[0].order_id, transition_id);
         assert_eq!(
             elem.orders[0].order_type,
             OrderType::TransitionWaitingCapeWaitingUpright
         );
         assert_eq!(elem.orders[1].order_type, OrderType::WalkingUpright);
-        assert_eq!(elem.num_transition_orders, 1);
+        assert_ne!(elem.orders[1].order_id, wait_id);
+        assert_eq!(elem.orders[1].order_id.get(), 100);
+        assert_eq!(elem.orders[1].target_x, 10.0);
+        assert_eq!(elem.orders[1].target_y, 20.0);
     }
 
     #[test]
