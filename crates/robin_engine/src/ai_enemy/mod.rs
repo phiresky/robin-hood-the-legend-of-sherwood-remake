@@ -3779,11 +3779,15 @@ impl EnemyAi {
                 )
             });
             let dx = target.position.x - ctx.position.x;
-            let dy = (target.position.y - ctx.position.y)
-                * crate::position_interface::INVERSE_ASPECT_RATIO;
-            // Original Distance/MaxNormDistance operate on RHposition:
-            // isometrically stretched X/Y plus the full elevation delta.
             let dz = target.elevation - ctx.elevation;
+            // Original Distance/MaxNormDistance subtract the actors'
+            // GetPosition() values. GetPosition().y is map Y plus elevation,
+            // so the vertical screen-plane component includes dz before the
+            // isometric stretch; elevation is also retained as the 3D Z
+            // component. Using map Y alone can make a target on another level
+            // appear much farther away and select the wrong primary target.
+            let dy = (target.position.y - ctx.position.y + dz)
+                * crate::position_interface::INVERSE_ASPECT_RATIO;
             let max_norm = dx.abs().max(dy.abs()).max(dz.abs());
             if max_norm > f32::from(min_distance) {
                 continue;

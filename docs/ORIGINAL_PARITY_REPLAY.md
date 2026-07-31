@@ -3730,6 +3730,19 @@ face helper, derived sector 1, and launched two spurious Turn commands. The
 standard look-there procedure now uses the shared 3D positional-face path, just
 as its existing Focus operation already does. The replay advances to frame 58.
 
+### Primary-target distance uses world Y as well as world Z
+
+Original `GetNewPrimaryTarget` calls `Distance` and `MaxNormDistance` on the
+actors' `GetPosition()` values. An actor's world-space Y is map Y plus its
+elevation; after subtraction, the elevation delta is therefore present both in
+the screen-plane Y component (before the inverse-aspect stretch) and separately
+as the 3D Z component. Rust retained Z but measured the stretched component from
+map Y alone. For actors on different levels this can reverse which enemy is
+nearest. At SuN1Sh1nE frame 58, soldier 48 consequently selected the enemy at
+`(357,1541)` and pointed to sector 10 instead of Original's enemy at `(520,1699)`
+and sector 9. The shared primary-target selector now constructs the exact
+world-space delta used by Original before applying either norm.
+
 ### Inactive scripted motion bypasses anti-collision
 
 Original `RHSprite::PerformMotion` calls `UpdatePositionAntiCollision` only

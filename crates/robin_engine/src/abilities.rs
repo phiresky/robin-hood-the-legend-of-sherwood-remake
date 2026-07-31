@@ -2805,7 +2805,14 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
         // otherwise the corpse is one frame late.
         {
             let pi = target.position_iface_mut();
-            pi.set_obstacle(snap.obstacle_index, snap.plane);
+            // `RHANIMATION_WAITING_WITH_CORPSE` synchronizes only the
+            // carried animation and display order. In particular it does
+            // not copy the carrier's obstacle: a loaded carried body can
+            // retain an independently serialized surface/elevation while
+            // the stationary carrier has no obstacle.
+            if on_shoulders || snap.carrier_last_action != OrderType::WaitingWithCorpse {
+                pi.set_obstacle(snap.obstacle_index, snap.plane);
+            }
             pi.set_material(snap.material);
             pi.set_map_position(snap.pos);
         }
