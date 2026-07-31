@@ -4082,12 +4082,12 @@ fn every_canonical_active_bow_order_routes_to_the_production_bow_owner() {
 
 #[test]
 fn every_specialized_melee_and_beggar_order_routes_to_its_production_owner() {
-    use super::tick::{ACTIVE_MELEE_ORDERS, ExecuteOwnerFamily, classify_live_actor_execute_arm};
+    use super::tick::{ExecuteOwnerFamily, MELEE_ORDERS, classify_live_actor_execute_arm};
     use crate::entity_id::PcId;
     use crate::order::OrderType;
 
     let pc = EntityId::Pc(PcId(0));
-    for &order in ACTIVE_MELEE_ORDERS {
+    for &order in MELEE_ORDERS {
         assert_eq!(
             classify_live_actor_execute_arm(pc, order),
             Some(ExecuteOwnerFamily::Melee),

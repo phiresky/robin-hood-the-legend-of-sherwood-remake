@@ -732,10 +732,6 @@ pub struct ActorData {
     /// [`ActiveShot`][crate::movement::ActiveShot] for details.
     pub active_shot: ActiveShot,
 
-    /// Tracks an in-progress melee sword strike.  See
-    /// [`ActiveMelee`][crate::movement::ActiveMelee] for details.
-    pub active_melee: crate::movement::ActiveMelee,
-
     /// Tracks an in-progress hero ability (carry, tie, heal, whistle, etc.).
     /// See [`ActiveAbility`][crate::movement::ActiveAbility] for details.
     pub active_ability: crate::movement::ActiveAbility,
@@ -854,7 +850,6 @@ impl Default for ActorData {
             active_movement: ActiveMovement::none(),
             active_door_pass: None,
             active_shot: ActiveShot::none(),
-            active_melee: crate::movement::ActiveMelee::none(),
             active_ability: crate::movement::ActiveAbility::default(),
             sweep_state: None,
             pending_push_swordfight: Vec::new(),

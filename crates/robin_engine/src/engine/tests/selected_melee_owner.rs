@@ -1,7 +1,6 @@
 use super::*;
 
 use crate::element::{Command, Posture};
-use crate::movement::{ActiveMelee, MELEE_HIT_FRAME, MELEE_STRIKE_DURATION};
 use crate::order::{Order, OrderType};
 use crate::sequence::SequenceElement;
 use crate::weapons::SwordStrike;
@@ -71,8 +70,6 @@ fn install_selected_melee(
     engine: &mut EngineInner,
     attacker: EntityId,
     victim: EntityId,
-    frames_remaining: u16,
-    hit_applied: bool,
 ) -> crate::sequence::SequenceId {
     let seq_id = engine
         .orders
@@ -83,25 +80,18 @@ fn install_selected_melee(
             Some(attacker),
         ));
     let order_id = engine.orders.allocate_order_id();
-    engine.orders.sequence_manager.push_order_on(
-        seq_id,
-        0,
-        Order::new(OrderType::StrikingStraightSword, 0.0, 0.0, order_id),
-    );
+    let mut order = Order::new(OrderType::StrikingStraightSword, 0.0, 0.0, order_id);
+    order.antagonist = Some(victim);
+    engine
+        .orders
+        .sequence_manager
+        .push_order_on(seq_id, 0, order);
     engine
         .orders
         .sequence_manager
         .element_in_progress(seq_id, 0);
-    let mut melee = ActiveMelee::new(victim, SwordStrike::A, Some(seq_id), 0);
-    melee.frames_remaining = frames_remaining;
-    melee.hit_applied = hit_applied;
-    melee.order_id = Some(order_id);
     let entity = engine.get_entity_mut(attacker).expect("attacker exists");
     entity.element_data_mut().active = true;
-    entity
-        .actor_data_mut()
-        .expect("attacker has actor data")
-        .active_melee = melee;
     seq_id
 }
 
@@ -111,50 +101,12 @@ fn run_owner_walk(engine: &mut EngineInner, assets: &LevelAssets) {
 }
 
 #[test]
-fn production_owner_executes_selected_melee_once_and_closes_completion_before_tail() {
-    let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_pc(Posture::Upright));
-    install_selected_melee(&mut engine, attacker, victim, 1, true);
-    let assets = LevelAssets::new();
-    let positions = positions(&engine);
-    let mut observed_after_tail = false;
-    engine.tick_actor_owner_envelopes_with_test_owner_hook(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &positions,
-        |engine, owner| {
-            if owner == attacker {
-                observed_after_tail = true;
-                assert!(
-                    !engine
-                        .get_entity(attacker)
-                        .unwrap()
-                        .actor_data()
-                        .unwrap()
-                        .active_melee
-                        .is_active(),
-                    "completion must close before the Human/PC tail returns"
-                );
-            }
-        },
-    );
-    assert!(observed_after_tail);
-}
-
-#[test]
 fn production_owner_rejects_latent_melee_under_higher_priority_current_arm() {
     let mut engine = EngineInner::new();
     let attacker = engine.add_entity(make_test_pc(Posture::Upright));
     let victim = engine.add_entity(make_test_pc(Posture::Upright));
     bind_animation(&mut engine, attacker, OrderType::WaitingUpright);
-    let melee_sequence = install_selected_melee(
-        &mut engine,
-        attacker,
-        victim,
-        MELEE_STRIKE_DURATION - MELEE_HIT_FRAME,
-        false,
-    );
+    let melee_sequence = install_selected_melee(&mut engine, attacker, victim);
     engine.orders.sequence_manager.element_interrupted(
         melee_sequence,
         0,
@@ -174,12 +126,6 @@ fn production_owner_rejects_latent_melee_under_higher_priority_current_arm() {
         .orders
         .sequence_manager
         .element_in_progress(interrupt, 0);
-    let before = engine
-        .get_entity(attacker)
-        .unwrap()
-        .actor_data()
-        .unwrap()
-        .active_melee;
     run_owner_walk(&mut engine, &LevelAssets::new());
     assert_eq!(
         engine
@@ -191,15 +137,6 @@ fn production_owner_rejects_latent_melee_under_higher_priority_current_arm() {
         order_id.get(),
         "latent melee must not suppress the actual selected generic Execute arm"
     );
-    assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_melee,
-        before
-    );
 }
 
 #[test]
@@ -207,7 +144,12 @@ fn production_owner_obeys_execution_frozen() {
     let mut frozen_actor_engine = EngineInner::new();
     let attacker = frozen_actor_engine.add_entity(make_test_pc(Posture::Upright));
     let victim = frozen_actor_engine.add_entity(make_test_pc(Posture::Upright));
-    install_selected_melee(&mut frozen_actor_engine, attacker, victim, 1, true);
+    bind_animation(
+        &mut frozen_actor_engine,
+        attacker,
+        OrderType::StrikingStraightSword,
+    );
+    let sequence = install_selected_melee(&mut frozen_actor_engine, attacker, victim);
     frozen_actor_engine
         .get_entity_mut(attacker)
         .unwrap()
@@ -215,14 +157,14 @@ fn production_owner_obeys_execution_frozen() {
         .unwrap()
         .execution_frozen = true;
     run_owner_walk(&mut frozen_actor_engine, &LevelAssets::new());
-    assert!(
+    assert_eq!(
         frozen_actor_engine
-            .get_entity(attacker)
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
             .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_melee
-            .is_active()
+            .state,
+        crate::sequence::SequenceState::InProgress
     );
 }
 
@@ -234,19 +176,12 @@ fn frozen_all_bound_melee_animation_leaves_sprite_strike_and_order_untouched() {
     set_map_position(&mut engine, attacker, 0.0, 0.0);
     set_map_position(&mut engine, victim, 40.0, 0.0);
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
-    let sequence =
-        install_selected_melee(&mut engine, attacker, victim, MELEE_STRIKE_DURATION, false);
+    let sequence = install_selected_melee(&mut engine, attacker, victim);
     engine
         .get_entity_mut(attacker)
         .unwrap()
         .element_data_mut()
         .set_direction_instantly(8);
-    let before_melee = engine
-        .get_entity(attacker)
-        .unwrap()
-        .actor_data()
-        .unwrap()
-        .active_melee;
     let before_action_state = engine
         .get_entity(attacker)
         .unwrap()
@@ -279,7 +214,6 @@ fn frozen_all_bound_melee_animation_leaves_sprite_strike_and_order_untouched() {
         7,
         "FrozenAll preserves SetDirection(goal) plus exactly one Turn before the sprite boundary"
     );
-    assert_eq!(entity.actor_data().unwrap().active_melee, before_melee);
     assert_eq!(
         entity.actor_data().unwrap().action_state,
         before_action_state
@@ -312,52 +246,12 @@ fn frozen_all_bound_melee_animation_leaves_sprite_strike_and_order_untouched() {
 }
 
 #[test]
-fn frozen_all_fallback_timer_does_not_hit_or_complete() {
-    let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_pc(Posture::Upright));
-    let sequence = install_selected_melee(&mut engine, attacker, victim, 1, true);
-    let before = engine
-        .get_entity(attacker)
-        .unwrap()
-        .actor_data()
-        .unwrap()
-        .active_melee;
-    let before_state = engine
-        .orders
-        .sequence_manager
-        .get_element(sequence, 0)
-        .unwrap()
-        .state;
-    engine.set_actors_frozen(true);
-    run_owner_walk(&mut engine, &LevelAssets::new());
-    assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_melee,
-        before
-    );
-    assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .get_element(sequence, 0)
-            .unwrap()
-            .state,
-        before_state
-    );
-}
-
-#[test]
 fn selected_melee_start_is_not_double_advanced_by_generic_actor_execute() {
     let mut engine = EngineInner::new();
     let attacker = engine.add_entity(make_test_pc(Posture::Upright));
     let victim = engine.add_entity(make_test_pc(Posture::Upright));
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
-    install_selected_melee(&mut engine, attacker, victim, MELEE_STRIKE_DURATION, false);
+    install_selected_melee(&mut engine, attacker, victim);
     run_owner_walk(&mut engine, &straight_warning_assets(0, 100));
     let entity = engine.get_entity(attacker).unwrap();
     assert_eq!(entity.element_data().sprite.current_frame, 0);
@@ -366,7 +260,6 @@ fn selected_melee_start_is_not_double_advanced_by_generic_actor_execute() {
         crate::element::ActionState::WaitingSword,
         "WaitingSword belongs to the live MotionState::Start transition"
     );
-    assert!(entity.actor_data().unwrap().active_melee.sprite_driving_hit);
 }
 
 #[test]
@@ -393,13 +286,7 @@ fn straight_start_does_not_warn_or_draw_for_out_of_range_or_nonprincipal_target(
             .opponents
             .push(principal);
         bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
-        install_selected_melee(
-            &mut engine,
-            attacker,
-            nominal_target,
-            MELEE_STRIKE_DURATION,
-            false,
-        );
+        install_selected_melee(&mut engine, attacker, nominal_target);
         let assets = straight_warning_assets(10, 50);
         let (((), rng_trace), warnings) = super::super::melee::capture_strike_warnings(|| {
             crate::sim_rng::with_draw_trace(|| run_owner_walk(&mut engine, &assets))
@@ -424,13 +311,7 @@ fn eligible_principal_is_warned_once_on_start_and_not_again_in_progress() {
         .opponents
         .push(principal);
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
-    install_selected_melee(
-        &mut engine,
-        attacker,
-        principal,
-        MELEE_STRIKE_DURATION,
-        false,
-    );
+    install_selected_melee(&mut engine, attacker, principal);
     let assets = straight_warning_assets(10, 50);
 
     let (_, start_warnings) =
@@ -451,14 +332,7 @@ fn same_owner_replacement_after_selection_cancels_melee_execute_arm() {
     let attacker = engine.add_entity(make_test_pc(Posture::Upright));
     let victim = engine.add_entity(make_test_pc(Posture::Upright));
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
-    let melee_sequence =
-        install_selected_melee(&mut engine, attacker, victim, MELEE_STRIKE_DURATION, false);
-    let before = engine
-        .get_entity(attacker)
-        .unwrap()
-        .actor_data()
-        .unwrap()
-        .active_melee;
+    let melee_sequence = install_selected_melee(&mut engine, attacker, victim);
     let assets = LevelAssets::new();
     engine.tick_actor_animation_action_change_slots_with_hooks(
         &crate::sim_rng::test_context(),
@@ -497,15 +371,6 @@ fn same_owner_replacement_after_selection_cancels_melee_execute_arm() {
             );
         },
         |_, _, _| {},
-    );
-    assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_melee,
-        before
     );
     assert_eq!(
         engine

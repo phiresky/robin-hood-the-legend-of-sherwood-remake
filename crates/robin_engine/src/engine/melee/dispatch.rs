@@ -4,7 +4,6 @@
 
 use super::*;
 use crate::element::{ActionState, Command, EntityId};
-use crate::movement::ActiveMelee;
 use crate::sequence::SequenceElementData;
 use crate::weapons::SwordStrike;
 
@@ -14,8 +13,8 @@ impl EngineInner {
     /// Dispatch a sword strike command from the sequence system.
     ///
     /// Called when an `InstructOwner` action delivers a strike command
-    /// (e.g. `SwordstrikeThrustA`) to an actor. Sets up `ActiveMelee`
-    /// on the attacker and marks the sequence element in-progress.
+    /// (e.g. `SwordstrikeThrustA`) to an actor. The resulting sequence order
+    /// is the complete runtime identity of the strike, as in Original.
     ///
     /// Handles the `SwordstrikeThrustA..I` strike commands.
     pub(crate) fn dispatch_sword_strike(
@@ -82,34 +81,22 @@ impl EngineInner {
             })
             .unwrap_or((0.0, 0.0));
 
-        if let Some(entity) = self.world.entities.get_mut(owner) {
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.active_melee = ActiveMelee::new(target, strike, Some(seq_id), elem_idx);
-                actor.clear_path();
-            }
-        }
-
-        // Push the strike animation order via `push_order_with_id` so
-        // the stamped `order_id` the sprite pipeline sees matches the
-        // id stored on `active_melee`.  Mirror the id onto
-        // `active_melee` so `tick_melee_strikes` can pass it to
-        // `sprite.perform_action`; otherwise the sprite's
-        // `last_processed_order_id` would thrash between the
-        // animation driver (reading `order.order_id`) and the melee
-        // tick (reading `active_melee.order_id`), wedging the strike
-        // at `MotionState::Start`.
-        let mut order = crate::order::Order::new(anim, tx, ty, self.orders.allocate_order_id());
-        order.target_actor = Some(target.index());
-        order.compute_direction = false;
-        let order_id = order.order_id;
-        self.orders
-            .sequence_manager
-            .push_order_on(seq_id, elem_idx, order);
         if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
-            actor.active_melee.order_id = Some(order_id);
+            actor.clear_path();
         }
+
+        // RHElementActorHuman::Translate stores the target as the order's
+        // pAntagonist. Execute derives both the target and strike type from
+        // this selected order; there is no parallel melee state object.
+        let mut order = crate::order::Order::new(anim, tx, ty, self.orders.allocate_order_id());
+        order.target_actor = Some(target.index());
+        order.antagonist = Some(target);
+        order.compute_direction = false;
+        self.orders
+            .sequence_manager
+            .push_order_on(seq_id, elem_idx, order);
 
         self.orders
             .sequence_manager
@@ -417,11 +404,6 @@ impl EngineInner {
         // cleanup itself must not lower the sword, and action state stays
         // sword-ready until the transition order actually starts.
         self.quit_swordfight(sim, assets, owner);
-        if let Some(entity) = self.world.entities.get_mut(owner)
-            && let Some(actor) = entity.actor_data_mut()
-        {
-            actor.active_melee.clear();
-        }
         if queue_lower {
             let id = self.orders.allocate_order_id();
             self.orders.sequence_manager.push_order_on(

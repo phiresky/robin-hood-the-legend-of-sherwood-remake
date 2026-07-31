@@ -10,13 +10,13 @@ use crate::campaign::{Campaign, CampaignValue};
 use crate::coordinates::{MapBBox, MapPoint, MapSize, MapVec, SpriteFrameOffset};
 use crate::game_operation::GameCode;
 
-mod active_melee_owner;
 mod ai_detection;
 mod commands;
 mod lifecycle;
 mod macros;
 mod messages;
 mod movement;
+mod selected_melee_owner;
 mod sequence;
 mod serialization;
 mod snapshot;

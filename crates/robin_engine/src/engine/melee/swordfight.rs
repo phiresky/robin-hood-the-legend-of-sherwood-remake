@@ -1434,7 +1434,6 @@ impl EngineInner {
         if let Some(entity) = self.world.entities.get_mut(pc_id)
             && let Some(actor) = entity.actor_data_mut()
         {
-            actor.active_melee.clear();
             actor.clear_path();
         }
         self.quit_swordfight(sim, assets, pc_id);

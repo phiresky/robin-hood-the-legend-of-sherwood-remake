@@ -1124,7 +1124,6 @@ impl EngineInner {
                         {
                             actor.action_state = ActionState::Waiting;
                         }
-                        actor.active_melee.clear();
                         actor.clear_path();
                     }
                     if let Some(npc) = entity.npc_data_mut() {
@@ -1167,7 +1166,6 @@ impl EngineInner {
             if is_dead {
                 let is_pc = if let Some(entity) = self.world.entities.get_mut(victim_id) {
                     if let Some(actor) = entity.actor_data_mut() {
-                        actor.active_melee.clear();
                         actor.clear_path();
                     }
                     if let Some(npc) = entity.npc_data_mut() {

@@ -3253,18 +3253,24 @@ the existing enemy behavior retains its refresh shortcut. This is a direct,
 general translation of the Original branch structure and makes Linux3 Profile
 001 Savegame 016 match every recorded frame.
 
-### Loaded standard strikes rebuild their execution cache
+### Standard strikes are owned by their selected order and sprite cursor
 
 Original persists an in-flight standard sword strike through the actor's
 selected sequence element, its current order and antagonist, and the sprite's
-live action cursor. Rust additionally uses `ActiveMelee` as a derived runtime
-cache, so restoring only the serialized Original objects left a resumed strike
-visually active but unable to deliver its pending hit.
+live action cursor. Rust formerly duplicated those values in an `ActiveMelee`
+cache, including invented fixed-frame fallback timers and a separate
+`hit_applied` latch. Besides having no Original counterpart, that cache could
+desynchronize from the selected order and required special reconstruction
+when adopting a save.
 
-Save adoption now rebuilds `ActiveMelee` from those authoritative pieces. The
-sprite order identity and action-done cursor determine whether the hit is
-still pending, preventing both a lost hit before the action frame and a
-duplicate hit after it.
+`ActiveMelee` has been removed. Strike type now comes from the selected order's
+animation, the target comes from its typed antagonist, and damage occurs only
+on the sprite's one-frame `MotionState::Done` result. Termination closes the
+owning sequence element. Save adoption therefore needs no melee-specific
+reconstruction: the ordinary restored order and sprite cursor resume the exact
+Original execution path directly. Linux3 Profile 003 Savegame 066, whose
+loaded in-flight strike originally exposed the missing execution state, still
+matches every recorded frame with the cache removed.
 
 ### Parry countdowns run in actor creation order
 

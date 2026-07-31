@@ -2537,7 +2537,6 @@ impl EngineInner {
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.active_movement.clear();
-            actor.active_melee = crate::movement::ActiveMelee::none();
             // Original's lateral/circle victim list and angles are
             // human-owned members, not sequence-owned state. They survive an
             // interrupted strike and are cleared only when a sweep genuinely
@@ -3400,12 +3399,9 @@ impl EngineInner {
     }
 
     /// Build a fresh `Order` (via `alloc_order_id` for the id) and push
-    /// it.  Shorthand for the common engine-side pattern of allocating
-    /// a unique id, building an Order at `(x, y)` with `order_type`,
-    /// and pushing onto the given element.  Returns the stamped id so
-    /// callers that need to mirror it onto actor state (e.g.
-    /// `active_melee.order_id`) can do so without re-reading the
-    /// element.
+    /// it. Shorthand for the common engine-side pattern of allocating a
+    /// unique id, building an Order at `(x, y)` with `order_type`, and
+    /// pushing it onto the given element.
     pub(crate) fn push_new_order(
         &mut self,
         seq_id: crate::sequence::SequenceId,

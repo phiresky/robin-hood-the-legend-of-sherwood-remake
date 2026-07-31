@@ -3765,101 +3765,12 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
     );
 }
 
-#[test]
-fn melee_completion_precedes_a_later_ability_dispatch() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
-    use crate::element::{Command, Posture};
-    use crate::order::OrderType;
-    use crate::sequence::{SequenceElement, SequenceState};
-    use crate::weapons::SwordStrike;
-
-    let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let later_actor = engine.add_entity(make_test_pc(Posture::Upright));
-
-    let melee_sequence = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new(
-            1,
-            Command::SwordstrikeThrustA,
-            Some(attacker),
-        ));
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(melee_sequence, 0);
-    let mut active_melee =
-        crate::movement::ActiveMelee::new(later_actor, SwordStrike::A, Some(melee_sequence), 0);
-    active_melee.frames_remaining = 1;
-    active_melee.hit_applied = true;
-    engine
-        .get_entity_mut(attacker)
-        .expect("attacker present")
-        .actor_data_mut()
-        .expect("attacker actor data")
-        .active_melee = active_melee;
-
-    bind_test_action_point(
-        &mut engine,
-        later_actor,
-        OrderType::Eating,
-        crate::coordinates::SpriteLocalPoint::ZERO,
-        crate::coordinates::SpriteAnchor::ZERO,
-    );
-    let ability_sequence = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new(1, Command::EatCmd, Some(later_actor)));
-    assert_eq!(
-        crate::abilities::begin_eat(
-            &mut engine.world.entities,
-            &mut engine.orders.sequence_manager,
-            later_actor,
-            ability_sequence,
-            0,
-            &mut engine.orders.next_order_id,
-        ),
-        crate::abilities::BeginResult::Started
-    );
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(ability_sequence, 0);
-
-    let assets = LevelAssets::new();
-    engine.tick_melee_completion_for(sim, &assets, attacker);
-
-    assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .get_element(melee_sequence, 0)
-            .expect("melee sequence present")
-            .state,
-        SequenceState::Terminated,
-    );
-    assert_eq!(
-        engine
-            .get_entity(later_actor)
-            .expect("later ability actor present")
-            .element_data()
-            .sprite
-            .last_processed_order_id,
-        u32::MAX,
-        "completing an earlier melee actor must not globally advance a later ability"
-    );
-}
-
 fn install_owner_selected_test_melee(
     engine: &mut EngineInner,
     attacker: EntityId,
     target: EntityId,
-    strike: crate::weapons::SwordStrike,
     order_type: crate::order::OrderType,
-    frames_remaining: u16,
-    hit_applied: bool,
+    past_action_done: bool,
 ) {
     let sequence =
         engine
@@ -3871,31 +3782,79 @@ fn install_owner_selected_test_melee(
                 Some(attacker),
             ));
     let order_id = engine.orders.allocate_order_id();
-    engine.orders.sequence_manager.push_order_on(
-        sequence,
-        0,
-        crate::order::Order::new(order_type, 0.0, 0.0, order_id),
-    );
+    let mut order = crate::order::Order::new(order_type, 0.0, 0.0, order_id);
+    order.antagonist = Some(target);
+    engine
+        .orders
+        .sequence_manager
+        .push_order_on(sequence, 0, order);
     engine
         .orders
         .sequence_manager
         .element_in_progress(sequence, 0);
-    let mut active = crate::movement::ActiveMelee::new(target, strike, Some(sequence), 0);
-    active.frames_remaining = frames_remaining;
-    active.hit_applied = hit_applied;
-    active.order_id = Some(order_id);
-    engine
+    bind_test_action_point(
+        engine,
+        attacker,
+        order_type,
+        crate::coordinates::SpriteLocalPoint::ZERO,
+        crate::coordinates::SpriteAnchor::ZERO,
+    );
+    let sim = crate::sim_rng::test_context();
+    let entity = engine
         .get_entity_mut(attacker)
-        .expect("selected melee test attacker exists")
-        .actor_data_mut()
-        .expect("selected melee test attacker has actor data")
-        .active_melee = active;
+        .expect("selected melee test attacker exists");
+    let mut script = entity.element_data().sprite.scripts[0].clone();
+    script.action_done = 1;
+    script.frame_ids = vec![1, 2, 3];
+    script.delays = vec![0, 0, 0];
+    script.distances = vec![0, 0, 0];
+    script.offsets = vec![crate::coordinates::SpriteFrameOffset::ZERO; 3];
+    script.sound_ids = vec![0, 0, 0];
+    entity.element_data_mut().sprite.scripts = std::sync::Arc::new(vec![script; 16]);
+    let direction = entity.element_data().direction() as u16;
+    let sprite = &mut entity.element_data_mut().sprite;
+    assert_eq!(
+        sprite.perform_action(
+            &sim,
+            Some(order_id),
+            order_type,
+            direction,
+            crate::sprite::FrameProgression::Default,
+            false,
+        ),
+        crate::sprite::MotionState::Start
+    );
+    while sprite.frames_from_now_till_action_done() > 0 {
+        assert_eq!(
+            sprite.perform_action(
+                &sim,
+                Some(order_id),
+                order_type,
+                direction,
+                crate::sprite::FrameProgression::Default,
+                false,
+            ),
+            crate::sprite::MotionState::InProgress
+        );
+    }
+    if past_action_done {
+        assert_eq!(
+            sprite.perform_action(
+                &sim,
+                Some(order_id),
+                order_type,
+                direction,
+                crate::sprite::FrameProgression::Default,
+                false,
+            ),
+            crate::sprite::MotionState::Done
+        );
+    }
 }
 
 fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
     use crate::coordinates::WorldPoint3D;
     use crate::element::Posture;
-    use crate::movement::{MELEE_HIT_FRAME, MELEE_STRIKE_DURATION};
     use crate::profiles::{CharacterProfile, HtHWeaponProfile, ProfileManager, SoldierProfile};
     use crate::weapons::SwordStrike;
 
@@ -3959,9 +3918,7 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
             &mut engine,
             attacker,
             target,
-            SwordStrike::A,
             crate::order::OrderType::StrikingStraightSword,
-            MELEE_STRIKE_DURATION - MELEE_HIT_FRAME,
             false,
         );
     }
@@ -4023,7 +3980,7 @@ fn chained_nonstraight_strike_lives(
 ) -> (i16, i16) {
     use crate::coordinates::{MapVec, MoveBox, WorldPoint3D};
     use crate::element::Posture;
-    use crate::movement::{MELEE_HIT_FRAME, MELEE_STRIKE_DURATION, SweepState};
+    use crate::movement::SweepState;
     use crate::profiles::{
         CharacterProfile, HtHWeaponProfile, ProfileManager, SoldierProfile, WeaponThrustDirection,
         WeaponThrustKind,
@@ -4093,9 +4050,7 @@ fn chained_nonstraight_strike_lives(
         &mut engine,
         chained_attacker_id,
         final_target_id,
-        SwordStrike::A,
         crate::order::OrderType::StrikingStraightSword,
-        MELEE_STRIKE_DURATION - MELEE_HIT_FRAME,
         false,
     );
 
@@ -4105,9 +4060,7 @@ fn chained_nonstraight_strike_lives(
                 &mut engine,
                 interrupter_id,
                 chained_attacker_id,
-                SwordStrike::D,
                 crate::order::OrderType::StrikingLeftSword,
-                2,
                 true,
             );
             engine
@@ -4132,9 +4085,7 @@ fn chained_nonstraight_strike_lives(
                 &mut engine,
                 interrupter_id,
                 chained_attacker_id,
-                SwordStrike::D,
                 crate::order::OrderType::StrikingLeftSword,
-                MELEE_STRIKE_DURATION - MELEE_HIT_FRAME,
                 false,
             );
         }

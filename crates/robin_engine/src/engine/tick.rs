@@ -648,10 +648,9 @@ pub(super) fn capture_actor_owner_envelope<T>(
 
 /// Exact base-Actor Execute identity selected at entry to one legacy slot.
 ///
-/// Active melee state can outlive the sequence element which created it. The
-/// coordinator therefore carries all three Original identities and
-/// revalidates them immediately before dispatch instead of treating a latent
-/// `ActiveMelee` as the selected Execute arm.
+/// The coordinator carries the selected Original sequence/element/order
+/// identity and revalidates it immediately before dispatch because an earlier
+/// synchronous callback in the same actor slot may replace that order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::engine) struct MeleeOwnerSelection {
     pub(in crate::engine) seq_id: crate::sequence::SequenceId,
@@ -659,7 +658,7 @@ pub(in crate::engine) struct MeleeOwnerSelection {
     pub(in crate::engine) order_id: std::num::NonZeroU32,
 }
 
-pub(super) const ACTIVE_MELEE_ORDERS: &[crate::order::OrderType] = &[
+pub(super) const MELEE_ORDERS: &[crate::order::OrderType] = &[
     crate::order::OrderType::StrikingStraightSword,
     crate::order::OrderType::StrikingStraightStrongSword,
     crate::order::OrderType::ExecutingSword,
@@ -3179,12 +3178,6 @@ impl EngineInner {
                         });
                     let melee_selection =
                         selected_order.and_then(|(seq_id, elem_idx, order_id)| {
-                            let melee = self
-                                .world
-                                .entities
-                                .get(entity_id)
-                                .and_then(Entity::actor_data)
-                                .map(|actor| actor.active_melee)?;
                             let order_type = self
                                 .orders
                                 .sequence_manager
@@ -3192,11 +3185,7 @@ impl EngineInner {
                                 .and_then(|element| element.current_order())
                                 .map(|order| order.order_type)?;
                             (selected_owner_family == Some(ExecuteOwnerFamily::Melee)
-                                && ACTIVE_MELEE_ORDERS.contains(&order_type)
-                                && melee.is_active()
-                                && melee.sequence_id == Some(seq_id)
-                                && melee.element_index == elem_idx
-                                && melee.order_id == Some(order_id))
+                                && MELEE_ORDERS.contains(&order_type))
                             .then_some(MeleeOwnerSelection {
                                 seq_id,
                                 elem_idx,

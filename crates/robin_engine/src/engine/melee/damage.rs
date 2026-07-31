@@ -2138,7 +2138,6 @@ impl EngineInner {
         // makes the sprite snap to the corpse pose before the dying
         // transition plays, skipping the visible animation.
         if let Some(actor) = victim.actor_data_mut() {
-            actor.active_melee.clear();
             actor.active_movement.clear();
             actor.clear_path();
         }

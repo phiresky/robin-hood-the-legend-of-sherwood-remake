@@ -13,10 +13,8 @@ use thiserror::Error;
 use crate::{
     element::{Command, Entity, EntityId},
     engine::{EngineInner, LevelAssets},
-    movement::ActiveMelee,
     natives::ScriptHandleCodec,
-    sequence::{Sequence, SequenceElementData, SequenceElementRef},
-    weapons::SwordStrike,
+    sequence::{Sequence, SequenceElementRef},
 };
 
 use super::{
@@ -301,56 +299,6 @@ impl LegacyActorOwnershipAdoptionPlan {
                 );
             }
 
-            // `ActiveMelee` is a Rust execution cache; Original persists the
-            // same information as the actor's selected strike element/order
-            // plus the live sprite cursor. Rebuild it before the first resumed
-            // Hourglass so a strike saved before its action-done frame still
-            // delivers damage, while a strike saved after that frame cannot
-            // deliver it twice.
-            let restored_melee = planned.selected_element.and_then(|selected| {
-                let element = engine
-                    .orders
-                    .sequence_manager
-                    .get_element(selected.sequence_id, selected.element_index)?;
-                let strike = SwordStrike::from_command(element.command)?;
-                let target = match element.data {
-                    SequenceElementData::Interaction {
-                        antagonist: Some(target),
-                    } => target,
-                    _ => return None,
-                };
-                let order_id = element.orders.back()?.order_id;
-                Some((selected, target, strike, order_id))
-            });
-
-            if let Some((selected, target, strike, order_id)) = restored_melee {
-                let sprite = &engine
-                    .world
-                    .entities
-                    .get(planned.entity)
-                    .expect("preflighted melee actor disappeared")
-                    .element_data()
-                    .sprite;
-                let sprite_is_driving = sprite.last_processed_order_id == order_id.get();
-                let hit_applied =
-                    sprite_is_driving && sprite.frames_from_now_till_action_done() <= 0;
-                let mut melee = ActiveMelee::new(
-                    target,
-                    strike,
-                    Some(selected.sequence_id),
-                    selected.element_index,
-                );
-                melee.order_id = Some(order_id);
-                melee.sprite_driving_hit = sprite_is_driving;
-                melee.hit_applied = hit_applied;
-                let actor = engine
-                    .world
-                    .entities
-                    .get_mut(planned.entity)
-                    .and_then(Entity::actor_data_mut)
-                    .expect("preflighted melee actor ownership entity changed kind");
-                actor.active_melee = melee;
-            }
             engine
                 .world
                 .entities

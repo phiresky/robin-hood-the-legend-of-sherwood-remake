@@ -511,13 +511,12 @@ impl SmalltalkCommandContext<'_> {
             Command::ParrySmalltalkRight => crate::order::OrderType::ParryingRightSmalltalk,
             _ => unreachable!("non-smalltalk command passed to SmalltalkCommandContext"),
         };
-        let blocked = owner_entity
-            .actor_data()
-            .unwrap_or_else(|| {
-                panic!("smalltalk command {command:?} owner {owner:?} is not an actor")
-            })
-            .active_melee
-            .is_active();
+        let blocked = self
+            .sequence_manager
+            .current_order_for_actor(owner)
+            .is_some_and(|(_, _, order)| {
+                super::melee::sword_strike_from_animation(order.order_type).is_some()
+            });
         if blocked {
             self.sequence_manager.element_terminated(seq_id, elem_idx);
             return;

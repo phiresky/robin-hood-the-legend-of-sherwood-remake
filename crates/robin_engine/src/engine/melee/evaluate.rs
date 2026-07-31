@@ -879,13 +879,11 @@ impl EngineInner {
         let pc = self.get_entity(pc_id).unwrap_or_else(|| {
             panic!("EvaluateSwordfight strike proposal PC {pc_id:?} is missing")
         });
-        let already_striking = pc
-            .actor_data()
-            .unwrap_or_else(|| {
-                panic!("EvaluateSwordfight strike proposal PC {pc_id:?} is not an actor")
-            })
-            .active_melee
-            .is_active();
+        let already_striking = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(pc_id)
+            .is_some_and(|(_, _, order)| sword_strike_from_animation(order.order_type).is_some());
         if already_striking {
             return;
         }

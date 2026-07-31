@@ -148,26 +148,15 @@ impl EngineInner {
         attacker_id: EntityId,
         selected: super::tick::MeleeOwnerSelection,
     ) -> bool {
-        let current_matches = self
-            .orders
+        self.orders
             .sequence_manager
             .current_order_for_actor(attacker_id)
             .is_some_and(|(seq_id, elem_idx, order)| {
                 seq_id == selected.seq_id
                     && elem_idx == selected.elem_idx
                     && order.order_id == selected.order_id
-            });
-        let melee_matches = self
-            .get_entity(attacker_id)
-            .and_then(Entity::actor_data)
-            .is_some_and(|actor| {
-                let melee = actor.active_melee;
-                melee.is_active()
-                    && melee.sequence_id == Some(selected.seq_id)
-                    && melee.element_index == selected.elem_idx
-                    && melee.order_id == Some(selected.order_id)
-            });
-        current_matches && melee_matches
+                    && sword_strike_from_animation(order.order_type).is_some()
+            })
     }
 
     /// Execute the active-melee Human Execute arm selected at base-Actor
@@ -189,19 +178,9 @@ impl EngineInner {
             return;
         }
 
-        let sprite_frozen = self.actors_frozen();
-
-        // The fixed-timer completion arm is already logically past its hit
-        // frame. Close it before attempting to drive the strike sprite again.
-        if !sprite_frozen {
-            self.tick_melee_completion_for(sim, assets, attacker_id);
-        }
-        if !self.selected_melee_identity_is_live(attacker_id, selected) {
-            return;
-        }
-        self.tick_straight_melee_for(sim, assets, attacker_id);
+        self.tick_straight_melee_for(sim, assets, attacker_id, selected);
         let sweep_phase = if self.selected_melee_identity_is_live(attacker_id, selected) {
-            self.tick_nonstraight_melee_for(sim, assets, attacker_id)
+            self.tick_nonstraight_melee_for(sim, assets, attacker_id, selected)
         } else {
             SweepTickPhase::Dormant
         };
@@ -398,11 +377,12 @@ impl EngineInner {
     /// later-created actor before that actor gets its own Hourglass call.
     /// Sweep/push work likewise runs from its owning attacker's slot; this
     /// helper is the narrow straight/assault owner-slot path.
-    pub(crate) fn tick_straight_melee_for(
+    pub(in crate::engine) fn tick_straight_melee_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         attacker_id: EntityId,
+        selected: super::tick::MeleeOwnerSelection,
     ) {
         if self
             .get_entity(attacker_id)
@@ -412,29 +392,36 @@ impl EngineInner {
             return;
         }
 
-        let Some((profile_idx, strike, target_id, strike_kind)) =
-            self.get_entity(attacker_id).and_then(|entity| {
-                let melee = entity.actor_data()?.active_melee;
-                if !melee.is_active() {
-                    return None;
-                }
-                let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
-                let strike_kind = profile_idx
-                    .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
-                    .map(|profile| profile.thrusts[melee.strike as usize].kind)
-                    .unwrap_or(WeaponThrustKind::Straight);
-                Some((
-                    profile_idx,
-                    melee.strike,
-                    melee
-                        .target
-                        .expect("an active melee strike must retain its target"),
-                    strike_kind,
-                ))
+        let Some((strike, target_id, animation)) = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(attacker_id)
+            .filter(|(seq_id, elem_idx, order)| {
+                *seq_id == selected.seq_id
+                    && *elem_idx == selected.elem_idx
+                    && order.order_id == selected.order_id
+            })
+            .and_then(|(_, _, order)| {
+                let strike = sword_strike_from_animation(order.order_type)?;
+                let target = order.antagonist.unwrap_or_else(|| {
+                    panic!(
+                        "selected melee order {:?}/{}/{} for {attacker_id:?} has no antagonist",
+                        selected.seq_id, selected.elem_idx, selected.order_id
+                    )
+                });
+                Some((strike, target, order.order_type))
             })
         else {
             return;
         };
+        let profile_idx = self
+            .get_entity(attacker_id)
+            .map(|entity| get_hth_weapon_id_full(entity, &assets.profile_manager))
+            .unwrap_or_else(|| panic!("selected melee attacker {attacker_id:?} disappeared"));
+        let strike_kind = profile_idx
+            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+            .map(|profile| profile.thrusts[strike as usize].kind)
+            .unwrap_or(WeaponThrustKind::Straight);
         if !matches!(
             strike_kind,
             WeaponThrustKind::Straight | WeaponThrustKind::Assault
@@ -454,88 +441,33 @@ impl EngineInner {
             return;
         }
 
-        let mut hit = false;
-        let mut completion = None;
-        let mut started = false;
-        {
-            let Some(entity) = self.get_entity_mut(attacker_id) else {
-                return;
-            };
-            let direction = entity.element_data().direction() as u16;
-            let actor = entity
-                .actor_data()
-                .expect("straight melee attacker must retain actor data");
-            let order_id = actor.active_melee.order_id;
-            if let Some(order_id) = order_id {
-                let anim = strike_to_animation(strike);
-                let motion = entity.element_data_mut().sprite.perform_action(
-                    sim,
-                    Some(order_id),
-                    anim,
-                    direction,
-                    crate::sprite::FrameProgression::Default,
-                    false,
-                );
-                tracing::trace!(
-                    "tick_straight_melee_for: entity={} order_id={} strike={:?} anim={:?} dir={} motion={:?}",
-                    attacker_id.index(),
-                    order_id,
-                    strike,
-                    anim,
-                    direction,
-                    motion
-                );
-                started = matches!(motion, crate::sprite::MotionState::Start);
-                if !matches!(motion, crate::sprite::MotionState::Error) {
-                    entity
-                        .actor_data_mut()
-                        .expect("straight melee attacker must retain actor data")
-                        .active_melee
-                        .sprite_driving_hit = true;
-                }
-                if matches!(motion, crate::sprite::MotionState::Done) {
-                    let melee = &mut entity
-                        .actor_data_mut()
-                        .expect("straight melee attacker must retain actor data")
-                        .active_melee;
-                    if !melee.hit_applied {
-                        melee.frames_remaining = crate::movement::MELEE_STRIKE_DURATION
-                            - crate::movement::MELEE_HIT_FRAME;
-                    }
-                }
-                if matches!(
-                    motion,
-                    crate::sprite::MotionState::Terminated | crate::sprite::MotionState::Aborted
-                ) {
-                    let melee = &mut entity
-                        .actor_data_mut()
-                        .expect("straight melee attacker must retain actor data")
-                        .active_melee;
-                    if !melee.hit_applied {
-                        melee.frames_remaining = crate::movement::MELEE_STRIKE_DURATION
-                            - crate::movement::MELEE_HIT_FRAME;
-                    } else {
-                        melee.frames_remaining = 0;
-                    }
-                }
-            }
-
-            let actor = entity
-                .actor_data_mut()
-                .expect("straight melee attacker must retain actor data");
-            let melee = actor.active_melee;
-            if !melee.sprite_driving_hit {
-                actor.active_melee.frames_remaining = melee.frames_remaining.saturating_sub(1);
-            }
-            if melee.is_hit_frame() && !melee.hit_applied {
-                actor.active_melee.hit_applied = true;
-                hit = true;
-            }
-            if actor.active_melee.frames_remaining == 0 {
-                actor.active_melee.clear();
-                completion = Some((melee.sequence_id, melee.element_index));
-            }
-        }
+        let entity = self
+            .get_entity_mut(attacker_id)
+            .unwrap_or_else(|| panic!("selected melee attacker {attacker_id:?} disappeared"));
+        let direction = entity.element_data().direction() as u16;
+        let motion = entity.element_data_mut().sprite.perform_action(
+            sim,
+            Some(selected.order_id),
+            animation,
+            direction,
+            crate::sprite::FrameProgression::Default,
+            false,
+        );
+        tracing::trace!(
+            "tick_straight_melee_for: entity={} order_id={} strike={:?} anim={:?} dir={} motion={:?}",
+            attacker_id.index(),
+            selected.order_id,
+            strike,
+            animation,
+            direction,
+            motion
+        );
+        let started = matches!(motion, crate::sprite::MotionState::Start);
+        let hit = matches!(motion, crate::sprite::MotionState::Done);
+        let completed = matches!(
+            motion,
+            crate::sprite::MotionState::Terminated | crate::sprite::MotionState::Aborted
+        );
 
         if started {
             self.begin_selected_melee_motion(sim, assets, attacker_id);
@@ -551,13 +483,13 @@ impl EngineInner {
                 profile_idx,
             );
         }
-        if let Some((sequence_id, element_index)) = completion {
+        if completed {
             self.complete_melee_strike(
                 sim,
                 assets,
                 attacker_id,
-                sequence_id,
-                element_index,
+                Some(selected.seq_id),
+                selected.elem_idx,
                 strike,
                 profile_idx,
             );
@@ -718,19 +650,36 @@ impl EngineInner {
             .map(|(actor_id, _)| actor_id.into())
             .collect();
         for actor_id in actor_ids {
-            self.tick_straight_melee_for(sim, assets, actor_id);
-            let sweep_phase = self.tick_nonstraight_melee_for(sim, assets, actor_id);
+            let Some(selected) = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(actor_id)
+                .and_then(|(seq_id, elem_idx, order)| {
+                    sword_strike_from_animation(order.order_type).map(|_| {
+                        super::tick::MeleeOwnerSelection {
+                            seq_id,
+                            elem_idx,
+                            order_id: order.order_id,
+                        }
+                    })
+                })
+            else {
+                continue;
+            };
+            self.tick_straight_melee_for(sim, assets, actor_id, selected);
+            let sweep_phase = self.tick_nonstraight_melee_for(sim, assets, actor_id, selected);
             self.tick_selected_sweep_phase(sim, assets, actor_id, sweep_phase);
         }
     }
 
     /// Advance one non-straight sequence-driven melee strike at its actor's
     /// creation-order slot.
-    pub(crate) fn tick_nonstraight_melee_for(
+    pub(in crate::engine) fn tick_nonstraight_melee_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         attacker_id: EntityId,
+        selected: super::tick::MeleeOwnerSelection,
     ) -> SweepTickPhase {
         if self
             .get_entity(attacker_id)
@@ -739,7 +688,46 @@ impl EngineInner {
         {
             return SweepTickPhase::Dormant;
         }
-        let sprite_frozen = self.actors_frozen();
+        if self.actors_frozen() {
+            return SweepTickPhase::Dormant;
+        }
+
+        let Some((strike, target_id, animation)) = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(attacker_id)
+            .filter(|(seq_id, elem_idx, order)| {
+                *seq_id == selected.seq_id
+                    && *elem_idx == selected.elem_idx
+                    && order.order_id == selected.order_id
+            })
+            .and_then(|(_, _, order)| {
+                let strike = sword_strike_from_animation(order.order_type)?;
+                let target = order.antagonist.unwrap_or_else(|| {
+                    panic!(
+                        "selected melee order {:?}/{}/{} for {attacker_id:?} has no antagonist",
+                        selected.seq_id, selected.elem_idx, selected.order_id
+                    )
+                });
+                Some((strike, target, order.order_type))
+            })
+        else {
+            return SweepTickPhase::Dormant;
+        };
+        let profile_idx = self
+            .get_entity(attacker_id)
+            .map(|entity| get_hth_weapon_id_full(entity, &assets.profile_manager))
+            .unwrap_or_else(|| panic!("selected melee attacker {attacker_id:?} disappeared"));
+        let strike_kind = profile_idx
+            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+            .map(|profile| profile.thrusts[strike as usize].kind)
+            .unwrap_or(WeaponThrustKind::Straight);
+        if matches!(
+            strike_kind,
+            WeaponThrustKind::Straight | WeaponThrustKind::Assault
+        ) {
+            return SweepTickPhase::Dormant;
+        }
 
         // Collect strike results to avoid borrow conflicts
         struct StrikeHit {
@@ -762,186 +750,79 @@ impl EngineInner {
         let mut started = false;
         let mut sweep_phase;
 
-        // Phase 1: advance this attacker's timer and collect its hit.
+        // Phase 1: execute the selected order. Original derives strike and
+        // target from this order and applies the hit on the sprite's one-shot
+        // RHMOTION_DONE result.
         {
             let entity_id = attacker_id;
             let Some(entity) = self.world.entities.get_mut(attacker_id) else {
                 return SweepTickPhase::Dormant;
             };
-            // Read weapon profile ID before taking mutable actor borrow
-            let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
-            let Some(active_melee) = entity
-                .actor_data()
-                .map(|actor| actor.active_melee)
-                .filter(|melee| melee.is_active())
-            else {
-                return SweepTickPhase::Dormant;
-            };
-            let strike_kind = profile_idx
-                .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
-                .map(|profile| profile.thrusts[active_melee.strike as usize].kind)
-                .unwrap_or(WeaponThrustKind::Straight);
-            if matches!(
-                strike_kind,
-                WeaponThrustKind::Straight | WeaponThrustKind::Assault
-            ) {
-                return SweepTickPhase::Dormant;
-            }
-
-            if sprite_frozen {
-                return SweepTickPhase::Dormant;
-            }
-
-            // Drive the strike animation through the sprite (like bow_shot).
-            // This makes the character visually swing the sword.
             let direction = entity.element_data().direction() as u16;
             sweep_phase = SweepTickPhase::InProgress;
-            {
-                let actor = match entity.actor_data() {
-                    Some(a) => a,
-                    None => return SweepTickPhase::Dormant,
-                };
-                if !actor.active_melee.is_active() {
-                    return SweepTickPhase::Dormant;
-                }
-                let order_id = actor.active_melee.order_id;
-                let strike = actor.active_melee.strike;
-                let hold_true_sweep = actor.active_melee.hit_applied
-                    && actor
-                        .sweep_state
-                        .as_ref()
-                        .is_some_and(true_sweep_still_rotating);
-                if let Some(order_id) = order_id {
-                    if hold_true_sweep {
-                        tracing::trace!(
-                            "tick_melee_strikes: entity={} order_id={} strike={:?} holding true-circle sweep",
-                            entity_id.index(),
-                            order_id,
-                            strike
-                        );
-                    } else {
-                        let anim = strike_to_animation(strike);
-                        let elem = entity.element_data_mut();
-                        let sprite = &mut elem.sprite;
-                        let motion = sprite.perform_action(
-                            sim,
-                            Some(order_id),
-                            anim,
-                            direction,
-                            crate::sprite::FrameProgression::Default,
-                            false,
-                        );
-                        tracing::trace!(
-                            "tick_melee_strikes: entity={} order_id={} strike={:?} anim={:?} dir={} motion={:?}",
-                            entity_id.index(),
-                            order_id,
-                            strike,
-                            anim,
-                            direction,
-                            motion
-                        );
-                        started = matches!(motion, crate::sprite::MotionState::Start);
-                        sweep_phase = match motion {
-                            crate::sprite::MotionState::Start => SweepTickPhase::Start,
-                            crate::sprite::MotionState::InProgress
-                            | crate::sprite::MotionState::Done => SweepTickPhase::InProgress,
-                            crate::sprite::MotionState::Terminated
-                            | crate::sprite::MotionState::Aborted
-                            | crate::sprite::MotionState::Error => SweepTickPhase::Dormant,
-                        };
-                        // Mark sprite as driving hit timing on first
-                        // non-Error frame.  When sprite-driven, the
-                        // natural frames_remaining countdown is frozen —
-                        // hit timing comes from MotionState::Done (damage)
-                        // and cleanup from MotionState::Terminated (end
-                        // animation).
-                        if !matches!(motion, crate::sprite::MotionState::Error) {
-                            let actor = entity.actor_data_mut().unwrap();
-                            actor.active_melee.sprite_driving_hit = true;
-                        }
-                        // Done = the action-done frame.  Jump
-                        // frames_remaining to the hit threshold so
-                        // is_hit_frame fires.
-                        if matches!(motion, crate::sprite::MotionState::Done) {
-                            let actor = entity.actor_data_mut().unwrap();
-                            if !actor.active_melee.hit_applied {
-                                actor.active_melee.frames_remaining =
-                                    crate::movement::MELEE_STRIKE_DURATION
-                                        - crate::movement::MELEE_HIT_FRAME;
-                            }
-                        }
-                        // Terminated/Aborted = animation fully finished.
-                        // Trigger cleanup.
-                        if matches!(
-                            motion,
-                            crate::sprite::MotionState::Terminated
-                                | crate::sprite::MotionState::Aborted
-                        ) {
-                            let actor = entity.actor_data_mut().unwrap();
-                            if !actor.active_melee.hit_applied {
-                                // Edge case: Done was skipped (action_done
-                                // frame == last frame).  Trigger hit first.
-                                actor.active_melee.frames_remaining =
-                                    crate::movement::MELEE_STRIKE_DURATION
-                                        - crate::movement::MELEE_HIT_FRAME;
-                            } else {
-                                actor.active_melee.frames_remaining = 0;
-                            }
-                        }
+            let hold_true_sweep = entity
+                .actor_data()
+                .and_then(|actor| actor.sweep_state.as_ref())
+                .is_some_and(true_sweep_still_rotating)
+                && entity.element_data().sprite.last_processed_order_id == selected.order_id.get()
+                && entity
+                    .element_data()
+                    .sprite
+                    .frames_from_now_till_action_done()
+                    <= 0;
+            if hold_true_sweep {
+                tracing::trace!(
+                    "tick_melee_strikes: entity={} order_id={} strike={:?} holding true-circle sweep",
+                    entity_id.index(),
+                    selected.order_id,
+                    strike
+                );
+            } else {
+                let motion = entity.element_data_mut().sprite.perform_action(
+                    sim,
+                    Some(selected.order_id),
+                    animation,
+                    direction,
+                    crate::sprite::FrameProgression::Default,
+                    false,
+                );
+                tracing::trace!(
+                    "tick_melee_strikes: entity={} order_id={} strike={:?} anim={:?} dir={} motion={:?}",
+                    entity_id.index(),
+                    selected.order_id,
+                    strike,
+                    animation,
+                    direction,
+                    motion
+                );
+                started = matches!(motion, crate::sprite::MotionState::Start);
+                sweep_phase = match motion {
+                    crate::sprite::MotionState::Start => SweepTickPhase::Start,
+                    crate::sprite::MotionState::InProgress | crate::sprite::MotionState::Done => {
+                        SweepTickPhase::InProgress
                     }
+                    crate::sprite::MotionState::Terminated
+                    | crate::sprite::MotionState::Aborted
+                    | crate::sprite::MotionState::Error => SweepTickPhase::Dormant,
+                };
+                if matches!(motion, crate::sprite::MotionState::Done) {
+                    let attacker_id = entity_id;
+                    hits.push(StrikeHit {
+                        attacker_id,
+                        victim_id: target_id,
+                        strike,
+                        attacker_profile_idx: profile_idx,
+                    });
                 }
-            }
-
-            let actor = match entity.actor_data_mut() {
-                Some(a) => a,
-                None => return SweepTickPhase::Dormant,
-            };
-
-            // Read melee state before mutating
-            let melee = actor.active_melee;
-            let attacker_id = entity_id;
-
-            // Advance frame timer.  When sprite_driving_hit, the natural
-            // countdown is frozen — only the sprite handler above moves
-            // frames_remaining (Done → hit threshold, Terminated → 0).
-            if !melee.sprite_driving_hit {
-                actor.active_melee.frames_remaining = melee.frames_remaining.saturating_sub(1);
-            }
-
-            if melee.is_hit_frame() && !melee.hit_applied {
-                actor.active_melee.hit_applied = true;
-                let target = melee
-                    .target
-                    .expect("an active non-straight melee strike must retain its target");
-
-                hits.push(StrikeHit {
-                    attacker_id: attacker_id.into(),
-                    victim_id: target,
-                    strike: melee.strike,
-                    attacker_profile_idx: profile_idx,
-                });
-            }
-
-            if actor.active_melee.frames_remaining == 0 {
-                // If the sweep hasn't completed its full rotation
-                // yet, keep going instead of terminating.
-                let sweep_still_active = actor
-                    .sweep_state
-                    .as_ref()
-                    .is_some_and(true_sweep_still_rotating);
-                if sweep_still_active {
-                    // Extend by 1 frame — tick_sweep_for will advance
-                    // the angle and eventually reach final_angle.
-                    actor.active_melee.frames_remaining = 1;
-                } else {
-                    let seq_id = melee.sequence_id;
-                    let elem_idx = melee.element_index;
-                    actor.active_melee.clear();
+                if matches!(
+                    motion,
+                    crate::sprite::MotionState::Terminated | crate::sprite::MotionState::Aborted
+                ) {
                     completed.push(CompletedStrike {
-                        actor_id: attacker_id.into(),
-                        sequence_id: seq_id,
-                        element_index: elem_idx,
-                        strike: melee.strike,
+                        actor_id: attacker_id,
+                        sequence_id: Some(selected.seq_id),
+                        element_index: selected.elem_idx,
+                        strike,
                         profile_idx,
                     });
                 }
@@ -1131,20 +1012,22 @@ impl EngineInner {
     /// Execute call. If a strike is interrupted after its action point, a new
     /// sweep strike therefore advances the retained geometry using its own
     /// semantics.
-    fn rebind_retained_sweep_to_active_strike(
+    pub(super) fn rebind_retained_sweep_to_active_strike(
         &mut self,
         assets: &LevelAssets,
         attacker_id: EntityId,
     ) {
+        let Some(strike) = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(attacker_id)
+            .and_then(|(_, _, order)| sword_strike_from_animation(order.order_type))
+        else {
+            return;
+        };
         let Some(entity) = self.get_entity(attacker_id) else {
             return;
         };
-        let Some(active) = entity.actor_data().map(|actor| actor.active_melee) else {
-            return;
-        };
-        if !active.is_active() {
-            return;
-        }
         let Some(profile_idx) = get_hth_weapon_id_full(entity, &assets.profile_manager) else {
             return;
         };
@@ -1156,7 +1039,7 @@ impl EngineInner {
                     "retained sweep attacker {attacker_id:?} references missing weapon profile {profile_idx}"
                 )
             });
-        let thrust = &profile.thrusts[active.strike as usize];
+        let thrust = &profile.thrusts[strike as usize];
         if !matches!(
             thrust.kind,
             WeaponThrustKind::Lateral
@@ -1181,7 +1064,7 @@ impl EngineInner {
         {
             sweep.rotation_per_frame = signed_rotation;
             sweep.direction = thrust.direction;
-            sweep.strike = active.strike;
+            sweep.strike = strike;
             sweep.attacker_profile_idx = Some(profile_idx);
             sweep.strike_kind = thrust.kind;
         }

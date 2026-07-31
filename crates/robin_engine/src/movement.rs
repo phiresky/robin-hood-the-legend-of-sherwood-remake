@@ -164,117 +164,6 @@ impl ActiveShot {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  Active melee strike tracking
-// ═══════════════════════════════════════════════════════════════════
-
-/// Tracks an in-progress melee sword strike on an actor.
-///
-/// When a sword strike command is dispatched (e.g. `Command::SwordstrikeThrustA`),
-/// the engine sets `ActiveMelee` on the attacker with target and timing info.
-/// The per-frame `tick_melee_combat` checks the timer; at the hit frame it
-/// performs hit detection and damage application, then cleans up when the
-/// strike animation completes.
-///
-/// The system prefers sprite motion state (the "done" frame triggers
-/// damage) when available, falling back to a fixed frame timer otherwise.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct ActiveMelee {
-    /// Sequence element that initiated this strike (if any).
-    pub sequence_id: Option<SequenceId>,
-    pub element_index: usize,
-    /// Target entity being attacked.
-    pub target: Option<EntityId>,
-    /// Which sword strike type is being executed.
-    pub strike: crate::weapons::SwordStrike,
-    /// Frames remaining until the full animation completes.
-    /// Used as fallback timing when sprite motion state is not available.
-    pub frames_remaining: u16,
-    /// Whether hit detection has already been performed this strike.
-    pub hit_applied: bool,
-    /// Order ID for sprite animation tracking.
-    /// When `Some`, the tick checks sprite `MotionState::Done` instead
-    /// of the frame timer, matching the `ActiveShot` pattern used by
-    /// bow shots.  `None` until the strike animation has been
-    /// dispatched.
-    pub order_id: Option<std::num::NonZeroU32>,
-    /// True when the sprite animation system is actively driving hit timing.
-    /// When set, the fixed `MELEE_HIT_FRAME` timer is bypassed — hit detection
-    /// fires only when `MotionState::Done` is reported by the sprite. Falls
-    /// back to the fixed timer when false (e.g. sprite unavailable or
-    /// animation row missing).
-    pub sprite_driving_hit: bool,
-}
-
-/// Fallback frames from strike start to hit detection, used when sprite
-/// animation data is unavailable. When sprite IS driving the strike,
-/// hit timing comes from the sprite's `action_done_frame` instead.
-/// ~0.3s at 25fps.
-pub const MELEE_HIT_FRAME: u16 = 8;
-
-/// Total duration of a sword strike animation in frames.
-/// ~0.6s at 25fps.
-pub const MELEE_STRIKE_DURATION: u16 = 15;
-
-impl ActiveMelee {
-    pub fn none() -> Self {
-        Self::default()
-    }
-
-    pub fn new(
-        target: EntityId,
-        strike: crate::weapons::SwordStrike,
-        seq_id: Option<SequenceId>,
-        elem_idx: usize,
-    ) -> Self {
-        Self {
-            sequence_id: seq_id,
-            element_index: elem_idx,
-            target: Some(target),
-            strike,
-            frames_remaining: MELEE_STRIKE_DURATION,
-            hit_applied: false,
-            order_id: None,
-            sprite_driving_hit: false,
-        }
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.target.is_some() && self.frames_remaining > 0
-    }
-
-    pub fn clear(&mut self) {
-        *self = Self::default();
-    }
-
-    /// Returns true if this frame is the hit detection frame.
-    ///
-    /// Both sprite-driven and fixed-timer modes use the same threshold:
-    /// `frames_remaining <= (MELEE_STRIKE_DURATION - MELEE_HIT_FRAME)`.
-    ///
-    /// - **Fixed timer**: `frames_remaining` counts down naturally each
-    ///   frame, crossing the threshold at frame 8.
-    /// - **Sprite-driven**: `frames_remaining` stays at its initial value
-    ///   (no natural countdown). When the sprite reports `MotionState::Done`,
-    ///   `tick_melee_strikes` jumps `frames_remaining` to the threshold
-    ///   value, triggering hit detection. Later, `MotionState::Terminated`
-    ///   sets it to 0 for cleanup — a two-phase pattern where the "done"
-    ///   frame triggers damage and the "terminated" frame ends the animation.
-    pub fn is_hit_frame(&self) -> bool {
-        !self.hit_applied && self.frames_remaining <= (MELEE_STRIKE_DURATION - MELEE_HIT_FRAME)
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════
 //  Sweep strike state
 // ═══════════════════════════════════════════════════════════════════
 
@@ -431,9 +320,8 @@ impl AbilityKind {
 
 /// Tracks an in-progress ability animation on an actor.
 ///
-/// Similar to [`ActiveShot`] for bow shots and [`ActiveMelee`] for
-/// sword strikes.  Set by `abilities::begin_*` functions, consumed
-/// by owner-local `abilities::tick_ability`.
+/// Similar to [`ActiveShot`] for bow shots. Set by `abilities::begin_*`
+/// functions and consumed by owner-local `abilities::tick_ability`.
 #[derive(
     Debug, Clone, Default, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]

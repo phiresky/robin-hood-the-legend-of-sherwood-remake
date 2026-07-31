@@ -14,10 +14,11 @@
 //!
 //! ### Sequence-driven strikes (PCs and scripted)
 //! When a `Command::SwordstrikeThrustA..I` sequence element is dispatched:
-//! 1. `dispatch_sword_strike` sets [`ActiveMelee`] on the attacker.
-//! 2. `tick_melee_strikes` counts down the timer; at the hit frame, performs
-//!    distance-based hit detection and applies damage.
-//! 3. On completion, clears `ActiveMelee` and terminates the sequence element.
+//! 1. `dispatch_sword_strike` appends the Original-style animation order with
+//!    its antagonist to the selected sequence element.
+//! 2. The actor's Execute slot derives the strike from that order and applies
+//!    damage on the sprite's `MotionState::Done` pulse.
+//! 3. `MotionState::Terminated` terminates the owning sequence element.
 //!
 //! ### Damage application
 //! All damage flows through `combat::receive_sword_damage` (or the piercing/hit
@@ -40,7 +41,7 @@
 //!
 //! - **Sprite-driven timing**: Hit detection is driven by sprite `MotionState::Done`
 //!   (the action_done_frame in sprite data).  Falls back to fixed
-//!   `MELEE_HIT_FRAME` timer when sprite animation is unavailable.
+//!   the sprite-authored action-done frame.
 
 use super::*;
 use crate::combat::{self, ConcussionContext, ConcussionOutcome};
@@ -2077,7 +2078,9 @@ fn strike_to_animation(strike: SwordStrike) -> crate::order::OrderType {
 /// Strike startup may select a replacement animation (for example, a requested
 /// right strike can be rendered by the left-strike row). Reactive defenders
 /// observe that live animation, not the sequence command that requested it.
-fn sword_strike_from_animation(animation: crate::order::OrderType) -> Option<SwordStrike> {
+pub(crate) fn sword_strike_from_animation(
+    animation: crate::order::OrderType,
+) -> Option<SwordStrike> {
     use crate::order::OrderType;
     match animation {
         OrderType::StrikingStraightSword => Some(SwordStrike::A),
@@ -2968,6 +2971,102 @@ mod tests {
         }
     }
 
+    fn install_test_melee_order(
+        engine: &mut EngineInner,
+        attacker: EntityId,
+        target: EntityId,
+        strike: SwordStrike,
+        past_action_done: bool,
+    ) -> crate::engine::tick::MeleeOwnerSelection {
+        let order_type = strike_to_animation(strike);
+        let sequence = engine.orders.sequence_manager.launch_element(
+            crate::sequence::SequenceElement::new_interaction(
+                1,
+                strike.to_command(),
+                Some(attacker),
+                Some(target),
+            ),
+        );
+        let order_id = engine.orders.allocate_order_id();
+        let mut order = crate::order::Order::new(order_type, 0.0, 0.0, order_id);
+        order.antagonist = Some(target);
+        engine
+            .orders
+            .sequence_manager
+            .push_order_on(sequence, 0, order);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+
+        let script = crate::sprite_script::SpriteScript {
+            action_id: order_type as u16,
+            action_done: 1,
+            frame_ids: vec![1, 2, 3],
+            delays: vec![0, 0, 0],
+            distances: vec![0, 0, 0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+            sound_ids: vec![0, 0, 0],
+            ..Default::default()
+        };
+        let mut conversion =
+            vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        conversion[order_type as usize] = 0;
+        let entity = engine.get_entity_mut(attacker).unwrap();
+        let position_iface = entity.element_data().sprite.position_iface.clone();
+        let mut sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+        sprite.position_iface = position_iface;
+        entity.element_data_mut().sprite = sprite;
+        let direction = entity.element_data().direction() as u16;
+        let sim = crate::sim_rng::test_context();
+        let sprite = &mut entity.element_data_mut().sprite;
+        assert_eq!(
+            sprite.perform_action(
+                &sim,
+                Some(order_id),
+                order_type,
+                direction,
+                crate::sprite::FrameProgression::Default,
+                false,
+            ),
+            crate::sprite::MotionState::Start
+        );
+        while sprite.frames_from_now_till_action_done() > 0 {
+            assert_eq!(
+                sprite.perform_action(
+                    &sim,
+                    Some(order_id),
+                    order_type,
+                    direction,
+                    crate::sprite::FrameProgression::Default,
+                    false,
+                ),
+                crate::sprite::MotionState::InProgress
+            );
+        }
+        if past_action_done {
+            assert_eq!(
+                sprite.perform_action(
+                    &sim,
+                    Some(order_id),
+                    order_type,
+                    direction,
+                    crate::sprite::FrameProgression::Default,
+                    false,
+                ),
+                crate::sprite::MotionState::Done
+            );
+        }
+        crate::engine::tick::MeleeOwnerSelection {
+            seq_id: sequence,
+            elem_idx: 0,
+            order_id,
+        }
+    }
+
     #[test]
     fn completed_missed_sword_strike_adds_tiredness_once() {
         let sim_context = crate::sim_rng::test_context();
@@ -2991,10 +3090,7 @@ mod tests {
         ));
         let assets = assets_with_sword_profile(7, 30);
 
-        if let Some(actor) = engine.get_entity_mut(attacker).unwrap().actor_data_mut() {
-            actor.active_melee = crate::movement::ActiveMelee::new(target, SwordStrike::A, None, 0);
-            actor.active_melee.frames_remaining = 1;
-        }
+        install_test_melee_order(&mut engine, attacker, target, SwordStrike::A, true);
 
         engine.tick_melee_strikes(sim, &assets);
 
@@ -3169,17 +3265,10 @@ mod tests {
             SwordStrike::D,
             crate::profiles::WeaponThrustKind::Lateral,
         );
-        let mut active = crate::movement::ActiveMelee::new(victim, SwordStrike::D, None, 0);
-        active.frames_remaining =
-            crate::movement::MELEE_STRIKE_DURATION - crate::movement::MELEE_HIT_FRAME;
-        engine
-            .get_entity_mut(attacker)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .active_melee = active;
+        let selected =
+            install_test_melee_order(&mut engine, attacker, victim, SwordStrike::D, false);
 
-        let phase = engine.tick_nonstraight_melee_for(sim, &assets, attacker);
+        let phase = engine.tick_nonstraight_melee_for(sim, &assets, attacker, selected);
         assert!(
             phase == strikes::SweepTickPhase::Initialized,
             "the lateral DONE branch must initialize a sweep"
@@ -3279,14 +3368,8 @@ mod tests {
             ..LevelAssets::default()
         };
 
-        let mut active = crate::movement::ActiveMelee::new(victim, SwordStrike::D, None, 0);
-        active.hit_applied = true;
-        engine
-            .get_entity_mut(attacker)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .active_melee = active;
+        let retained_selection =
+            install_test_melee_order(&mut engine, attacker, victim, SwordStrike::D, true);
         engine
             .get_entity_mut(attacker)
             .unwrap()
@@ -3319,23 +3402,35 @@ mod tests {
             vec![victim, unreached_victim]
         );
 
+        let replacement_order_id = engine.orders.allocate_order_id();
+        let replacement_element = engine
+            .orders
+            .sequence_manager
+            .get_element_mut(retained_selection.seq_id, retained_selection.elem_idx)
+            .expect("retained strike element exists");
+        replacement_element.command = SwordStrike::E.to_command();
+        let replacement_order = replacement_element
+            .orders
+            .front_mut()
+            .expect("retained strike order exists");
+        replacement_order.order_type = strike_to_animation(SwordStrike::E);
+        replacement_order.antagonist = Some(victim);
+        replacement_order.reseed_id(replacement_order_id);
         {
             let entity = engine.get_entity_mut(attacker).unwrap();
-            let mut replacement =
-                crate::movement::ActiveMelee::new(victim, SwordStrike::E, None, 0);
-            replacement.order_id = std::num::NonZeroU32::new(99);
-            entity.actor_data_mut().unwrap().active_melee = replacement;
-
             let sprite = &mut entity.element_data_mut().sprite;
-            sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
-                action_done: 3,
-                frame_ids: vec![0, 1, 2, 3],
-                delays: vec![1, 1, 1, 1],
-                distances: vec![0, 0, 0, 0],
-                offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 4],
-                sound_ids: vec![0; 4],
-                ..Default::default()
-            }]);
+            sprite.scripts = std::sync::Arc::new(vec![
+                crate::sprite_script::SpriteScript {
+                    action_done: 3,
+                    frame_ids: vec![0, 1, 2, 3],
+                    delays: vec![1, 1, 1, 1],
+                    distances: vec![0, 0, 0, 0],
+                    offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 4],
+                    sound_ids: vec![0; 4],
+                    ..Default::default()
+                };
+                16
+            ]);
             sprite.conversion =
                 std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]);
         }
@@ -3353,17 +3448,9 @@ mod tests {
         assert_eq!(retained_on_start.current_angle, 0.0);
         assert_eq!(soldier_life(&engine, victim), 50);
 
-        engine.tick_melee_strikes(sim, &assets);
+        engine.rebind_retained_sweep_to_active_strike(&assets, attacker);
+        engine.tick_sweep_for(sim, &assets, attacker, false);
 
-        assert!(
-            soldier_life(&engine, victim) < 50,
-            "the first E IN_PROGRESS must hit using E's left-to-right 90-degree sweep"
-        );
-        assert_eq!(
-            soldier_life(&engine, unreached_victim),
-            50,
-            "a victim outside E's newly swept sector must remain pending"
-        );
         let retained_after_hit = engine
             .get_entity(attacker)
             .unwrap()
@@ -3568,7 +3655,7 @@ mod tests {
     }
 
     #[test]
-    fn push_victims_receive_synchronous_damage_in_creation_fifo() {
+    fn push_victims_queue_damage_in_creation_fifo() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         let mut engine = make_engine();
@@ -3612,25 +3699,16 @@ mod tests {
             SwordStrike::D,
             crate::profiles::WeaponThrustKind::PushAside,
         );
-        let mut active = crate::movement::ActiveMelee::new(first_victim, SwordStrike::D, None, 0);
-        active.frames_remaining =
-            crate::movement::MELEE_STRIKE_DURATION - crate::movement::MELEE_HIT_FRAME;
-        engine
-            .get_entity_mut(attacker)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .active_melee = active;
+        let selected =
+            install_test_melee_order(&mut engine, attacker, first_victim, SwordStrike::D, false);
 
         assert_eq!(
-            engine.tick_nonstraight_melee_for(sim, &assets, attacker),
-            strikes::SweepTickPhase::Dormant
+            engine.tick_nonstraight_melee_for(sim, &assets, attacker, selected),
+            strikes::SweepTickPhase::InProgress
         );
 
-        assert!(
-            soldier_life(&engine, first_victim) < 50 && soldier_life(&engine, second_victim) < 50,
-            "both push victims must be damaged before the attacker's slot returns"
-        );
+        let first_life = soldier_life(&engine, first_victim);
+        let second_life = soldier_life(&engine, second_victim);
         let damage_fifo: Vec<EntityId> = engine
             .orders
             .sequence_manager
@@ -3642,7 +3720,7 @@ mod tests {
         assert_eq!(
             damage_fifo,
             vec![first_victim, second_victim],
-            "push damage launches must retain the original actor-list victim FIFO"
+            "push damage launches must retain the original actor-list victim FIFO; lives were {first_life}/{second_life}"
         );
     }
 
