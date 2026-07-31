@@ -3766,6 +3766,16 @@ state was merely `Moving`, doubling the per-frame distance in Linux3 Profile
 authored movement orders. The replay matches through the former frame-54407
 boundary and reaches an independent soldier path divergence at frame 54445.
 
+### Idle corpse carry preserves the carried surface
+
+Original `WaitingWithCorpse` synchronizes the carried actor's animation and
+display order but does not copy the carrier's obstacle. Rust copied the full
+carrier surface every tick, so restoring a stationary Little John with no
+obstacle erased his carried civilian's independently serialized obstacle and
+225-unit elevation on the first frame. Idle corpse carry now retains that
+surface while the existing moving and shoulder-carry synchronization remains
+unchanged. Randomguy Profile 004 ExQuickSave now matches every recorded frame.
+
 ## Frozen full-corpus audit at `2a3e842df`
 
 The first no-unknown audit froze the debug parity runner built from commit
