@@ -3457,6 +3457,22 @@ zero members as well, preserving the Original's history-retirement side effect.
 SuN1Sh1nE Profile 004 Savegame 008 and nicouzouf Profile 001 Savegame 022 now
 match every recorded frame.
 
+### Restored in-progress Turns retain their serialized sprite goal
+
+A v48 save can contain an in-progress `TURN` sequence while the sprite still
+holds the destination of the interrupted movement. On the first frame after
+load, Original resumes that Turn directly. There is no outgoing movement
+condolence in the actor slot, and Turn execution does not clear the sprite's
+map goal, so the serialized destination remains observable throughout the
+rotation.
+
+Rust's runtime-only compensation for staged `FaceTo` callbacks cleared the map
+goal whenever a Turn order initialized without an explicit retained-goal
+property. That condition also caught restored in-progress elements, erasing
+authoritative loaded state. The cleanup is now limited to ordinary runtime
+Turns; legacy-restored elements preserve their adopted sprite goal. Windows
+SuN1Sh1nE Profile 004 Savegame 038 now matches every recorded frame.
+
 ### Small Linux profiles match end to end
 
 The complete `Savegame_linux` corpus currently consists of Profile 005

@@ -4121,6 +4121,12 @@ impl EngineInner {
                                 .is_some()
                         })
                 });
+                let turn_resumed_from_legacy_save = order_seq_elem.is_some_and(|(s, e)| {
+                    self.orders
+                        .sequence_manager
+                        .get_element(s, e)
+                        .is_some_and(|element| element.legacy_v48.is_some())
+                });
                 let requested_custom_animation = order_seq_elem.and_then(|(s, e)| {
                     let element = self.orders.sequence_manager.get_element(s, e)?;
                     if !matches!(
@@ -4319,6 +4325,7 @@ impl EngineInner {
                     if order_is_initialising
                         && matches!(cur_command, Some(Command::Turn | Command::TurnFast))
                         && !turn_retains_movement_goal
+                        && !turn_resumed_from_legacy_save
                     {
                         // FaceTo can be instructed re-entrantly after a
                         // just-launched GoNear has already written its map
@@ -4332,7 +4339,11 @@ impl EngineInner {
                         // deferred FaceTo carrying RetainedMovementGoal is
                         // different: the outgoing movement's card observed
                         // that Turn as selected, so Original preserves the
-                        // goal and Turn::Execute never clears it.
+                        // goal and Turn::Execute never clears it. A restored
+                        // in-progress Turn likewise has no outgoing movement
+                        // condolence in this actor slot: its serialized sprite
+                        // goal must remain observable while the loaded order
+                        // resumes.
                         entity
                             .position_iface_mut()
                             .set_map_goal(crate::coordinates::MapPoint::ZERO);
