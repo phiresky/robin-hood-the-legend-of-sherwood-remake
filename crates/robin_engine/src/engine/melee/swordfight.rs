@@ -66,7 +66,7 @@ impl EngineInner {
         entities: &mut crate::entities::Entities,
         entity_id: EntityId,
         opponent_id: EntityId,
-    ) {
+    ) -> bool {
         if let Some(entity) = entities.get_mut(entity_id)
             && let Some(human) = entity.human_data_mut()
             && let Some(pos) = human.opponents.iter().position(|&id| id == opponent_id)
@@ -76,7 +76,67 @@ impl EngineInner {
             if pos < human.opponent_jump_lines.len() {
                 human.opponent_jump_lines.remove(pos);
             }
+            return true;
         }
+        false
+    }
+
+    /// Remove one opponent with the authoritative side effects of C++
+    /// `RHElementActorHuman::DeleteOpponent`.
+    ///
+    /// In particular, deleting the final entry recursively reaches
+    /// `QuitSwordFight`, which synchronously sends `EVENT_QUIT_SWORDFIGHT` to
+    /// a living soldier.  Callers which merely edit the vectors hide that
+    /// callback and can leave an orphaned fighter executing its old combat
+    /// substate.
+    pub(super) fn delete_opponent(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        opponent_id: EntityId,
+    ) -> bool {
+        if !Self::remove_opponent(&mut self.world.entities, entity_id, opponent_id) {
+            return false;
+        }
+
+        self.recompute_relative_fighting_ability(entity_id, assets);
+        let principal = self
+            .get_entity(entity_id)
+            .and_then(Entity::human_data)
+            .and_then(|human| human.opponents.first().copied());
+
+        if let Some(principal_id) = principal {
+            let principal_is_swordfighting = self
+                .get_entity(principal_id)
+                .and_then(Entity::human_data)
+                .is_some_and(|human| !human.opponents.is_empty());
+            if principal_is_swordfighting {
+                self.take_smalltalk_initiative(entity_id);
+            }
+            return true;
+        }
+
+        let entity_is_dead = self.get_entity(entity_id).is_some_and(Entity::is_dead);
+        if entity_is_dead {
+            return true;
+        }
+
+        if let Some(entity) = self.world.entities.get_mut(entity_id)
+            && let Some(pc) = entity.pc_data_mut()
+        {
+            pc.melee_target = None;
+            pc.enable_all_actions_temp(false);
+        } else if matches!(self.world.entities.get(entity_id), Some(Entity::Soldier(_))) {
+            self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                sim,
+                entity_id,
+                assets,
+                crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
+            );
+        }
+
+        true
     }
 
     /// Re-evaluate every entry in `entity_id`'s opponent list and refresh
@@ -880,26 +940,32 @@ impl EngineInner {
             // Part 1: walk the opponent's existing opponent list.
             // If any of their opponents have >1 opponents themselves,
             // break those fights to make room for the new 1-on-1.
-            let opp_opponents: Vec<EntityId> = self
-                .world
-                .entities
-                .get(opponent)
-                .and_then(|e| e.human_data())
-                .map(|h| h.opponents.clone())
-                .unwrap_or_default();
-
-            for ally_id in &opp_opponents {
+            let mut ally_index = 0;
+            loop {
+                let Some(ally_id) = self
+                    .world
+                    .entities
+                    .get(opponent)
+                    .and_then(Entity::human_data)
+                    .and_then(|human| human.opponents.get(ally_index).copied())
+                else {
+                    break;
+                };
                 let ally_opp_count = self
                     .world
                     .entities
-                    .get(*ally_id)
+                    .get(ally_id)
                     .and_then(|e| e.human_data())
                     .map(|h| h.opponents.len())
                     .unwrap_or(0);
                 if ally_opp_count > 1 {
-                    Self::remove_opponent(&mut self.world.entities, *ally_id, opponent);
-                    Self::remove_opponent(&mut self.world.entities, opponent, *ally_id);
+                    self.delete_opponent(sim, assets, ally_id, opponent);
+                    self.delete_opponent(sim, assets, opponent, ally_id);
                 }
+                // Original indexes the live list while DeleteOpponent may
+                // shrink it, so a removed slot advances past the element
+                // shifted into its place.
+                ally_index += 1;
             }
 
             // Part 2: if both sides still have opponents, purge all
@@ -927,17 +993,23 @@ impl EngineInner {
                     opponent
                 };
 
-                let purge_opponents: Vec<EntityId> = self
-                    .world
-                    .entities
-                    .get(human_to_purge)
-                    .and_then(|e| e.human_data())
-                    .map(|h| h.opponents.clone())
-                    .unwrap_or_default();
-
-                for opp_id in &purge_opponents {
-                    Self::remove_opponent(&mut self.world.entities, *opp_id, human_to_purge);
-                    Self::remove_opponent(&mut self.world.entities, human_to_purge, *opp_id);
+                let mut purge_index = 0;
+                loop {
+                    let Some(opp_id) = self
+                        .world
+                        .entities
+                        .get(human_to_purge)
+                        .and_then(Entity::human_data)
+                        .and_then(|human| human.opponents.get(purge_index).copied())
+                    else {
+                        break;
+                    };
+                    self.delete_opponent(sim, assets, opp_id, human_to_purge);
+                    self.delete_opponent(sim, assets, human_to_purge, opp_id);
+                    // Match the mutable C++ list walk rather than draining a
+                    // snapshot: deletion shifts the next entry left while the
+                    // loop counter still advances.
+                    purge_index += 1;
                 }
             }
         }

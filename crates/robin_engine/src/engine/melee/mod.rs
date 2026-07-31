@@ -4216,6 +4216,79 @@ mod tests {
         assert_eq!(ai.current_substate, Substate::AttackingSwordfight);
     }
 
+    #[test]
+    fn deleting_final_opponent_synchronously_quits_soldier_ai() {
+        use crate::ai::{AiState, LogLineType, StimulusType, Substate};
+        use crate::profiles::{CharacterProfile, HtHWeaponProfile, ProfileManager, SoldierProfile};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let soldier = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let opponent = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+
+        if let Some(human) = engine.get_entity_mut(soldier).unwrap().human_data_mut() {
+            human.opponents = vec![opponent];
+            human.opponent_jump_lines = vec![None];
+        }
+        let Entity::Soldier(soldier_entity) = engine.get_entity_mut(soldier).unwrap() else {
+            unreachable!()
+        };
+        let ai = soldier_entity.npc.ai_brain.enemy_mut().unwrap();
+        ai.base.me = soldier.index();
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingSwordfightSpecialStrike;
+        ai.hth_weapon_id = 1;
+        let Entity::Soldier(opponent_entity) = engine.get_entity_mut(opponent).unwrap() else {
+            unreachable!()
+        };
+        let opponent_ai = opponent_entity.npc.ai_brain.enemy_mut().unwrap();
+        opponent_ai.base.me = opponent.index();
+        opponent_ai.hth_weapon_id = 1;
+
+        let mut profiles = ProfileManager::new();
+        profiles.hth_weapons.push(HtHWeaponProfile::default());
+        profiles.characters.push(CharacterProfile {
+            hth_weapon_id: 1,
+            ..CharacterProfile::default()
+        });
+        profiles.soldiers.push(SoldierProfile {
+            hth_weapon_id: 1,
+            hostile: true,
+            ..SoldierProfile::default()
+        });
+        let assets = LevelAssets {
+            profile_manager: std::sync::Arc::new(profiles),
+            ..LevelAssets::new()
+        };
+
+        assert!(engine.delete_opponent(&sim, &assets, soldier, opponent));
+
+        let ai = engine.get_entity(soldier).unwrap().ai_controller().unwrap();
+        assert_eq!(
+            ai.current_substate,
+            Substate::AttackingQuittingSwordfight,
+            "DeleteOpponent must synchronously deliver the final-opponent quit event"
+        );
+        assert!(ai.ai_log.iter().any(|entry| {
+            entry.line_type == LogLineType::Event
+                && entry.info == StimulusType::EventQuitSwordfight as u16
+        }));
+    }
+
     /// Bud-Spencer-style line of three: PC punches the first soldier,
     /// who is launched along +X into a second soldier directly in
     /// front, and a third soldier behind the second. The flight tick
