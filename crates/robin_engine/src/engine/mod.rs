@@ -1298,6 +1298,27 @@ impl EngineInner {
         }
     }
 
+    /// Register an owned element without running its `Instruct` boundary
+    /// inline.
+    ///
+    /// Actor `Execute` callbacks call `LaunchSequenceElement`, which only
+    /// appends to the Original sequence-manager queue. The actor may still
+    /// finish its current order before the manager instructs the registered
+    /// element. Most Rust call sites model re-entrant AI/script launches and
+    /// therefore use [`Self::launch_element_for_owner`]; actor-execute
+    /// callbacks that need the manager ordering use this narrower wrapper.
+    pub(crate) fn register_owned_element_deferred(
+        &mut self,
+        mut elem: crate::sequence::SequenceElement,
+    ) -> crate::sequence::SequenceId {
+        assert!(
+            elem.owner.is_some(),
+            "register_owned_element_deferred requires an actor owner"
+        );
+        self.resolve_element_priority(&mut elem);
+        self.orders.sequence_manager.launch_element(elem)
+    }
+
     /// Synchronous `Instruct`-equivalent for owned elements: resolve
     /// priority, launch via the sequence manager, stamp the actor's
     /// current posture / action state onto the element, then arbitrate

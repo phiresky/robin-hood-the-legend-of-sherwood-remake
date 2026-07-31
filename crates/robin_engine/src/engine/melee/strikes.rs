@@ -499,7 +499,7 @@ impl EngineInner {
             Some(entity_id),
             Some(opponent_id),
         );
-        self.launch_element(elem);
+        self.register_owned_element_deferred(elem);
         true
     }
 

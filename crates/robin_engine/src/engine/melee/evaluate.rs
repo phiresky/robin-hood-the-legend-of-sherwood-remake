@@ -482,7 +482,7 @@ impl EngineInner {
             speed_factor: 1.0,
             post_seek_sequence: None,
         };
-        self.launch_element(elem);
+        self.register_owned_element_deferred(elem);
     }
 
     /// Run the non-animation work in one human actor's WaitingSword Execute
@@ -854,7 +854,7 @@ impl EngineInner {
         } else {
             Command::SwordstrikeSmalltalkRight
         };
-        self.launch_element(crate::sequence::SequenceElement::new_interaction(
+        self.register_owned_element_deferred(crate::sequence::SequenceElement::new_interaction(
             1,
             command,
             Some(entity_id),

@@ -3353,12 +3353,6 @@ impl EngineInner {
                         result.order_type == crate::order::OrderType::WaitingSword
                     }) {
                         self.tick_waiting_sword_execute_for(sim, assets, entity_id);
-                        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
-                            .unwrap_or_else(|error| {
-                                panic!(
-                                    "actor {entity_id:?} WaitingSword Execute at legacy slot {slot} failed to drain synchronous sequence work: {error:?}"
-                                )
-                            });
                     }
 
                     // Original Actor::Hourglass modifies the just-produced

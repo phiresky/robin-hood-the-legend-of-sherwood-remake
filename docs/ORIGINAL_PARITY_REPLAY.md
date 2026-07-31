@@ -2061,6 +2061,30 @@ entry-latched order through the derived tail unless completion advanced
 within the same sequence element. The replay advances to an independent AI
 substate divergence at frame 13861.
 
+### Waiting-sword launches wait for the actor completion boundary
+
+`RHElementActorHuman::Execute` evaluates smalltalk hints and ordinary
+swordfight behavior while its current `WAIT_TIMER` order is still selected.
+`LaunchSequenceElement` only registers the resulting parry, smalltalk strike,
+or distance-adjustment move. The base actor hourglass then applies the
+zero-timer completion, and SequenceManager instructs the newly registered
+element in FIFO order. A prepared preference-priority strike can consequently
+interrupt that wait-priority smalltalk element and synchronously deliver its
+`EVENT_DONE` before the prepared strike is translated.
+
+Rust previously ran the complete owned-element `Instruct` path inline from the
+WaitingSword Execute callback. Against the still-selected normal-priority
+timer, wait-priority smalltalk was abandoned as `Impossible`; Original first
+accepted it after the timer completed and then interrupted it with the
+prepared strike. Linux3 Profile 003 Savegame 010 exposed both forms: a
+smalltalk strike at frame 18970 and a hinted parry at frame 19009 each return
+the enemy AI from special-strike substate 161 to ordinary swordfight substate
+160 through the interrupted element's `EVENT_DONE`. WaitingSword-created
+elements now use a deferred owned registration path, and their manager work is
+drained only after the actor completion stack settles. The full Savegame 010
+trace matches every recorded frame while Profile 001's prepared lateral strike
+still retains substate 161 when no such interrupted smalltalk element exists.
+
 ## Current Linux-v48 loaded-save result
 
 The schema-11 runner decodes and atomically installs the embedded Linux-v48
