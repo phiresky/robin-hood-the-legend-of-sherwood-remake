@@ -17,11 +17,10 @@ pub(super) fn make_test_soldier(posture: crate::element::Posture) -> Entity {
 
 const SPEECH_TIMING_PROFILE_ID: u32 = 0x1234_0000;
 
-fn build_mytalk_timing_test(duration_frames: Option<u32>) -> (EngineInner, EntityId, LevelAssets) {
+fn build_mytalk_timing_test() -> (EngineInner, EntityId, LevelAssets) {
     use crate::ai::{Remark, SpeechFlags};
     use crate::element::AiBrain;
     use crate::profiles::SoldierProfile;
-    use crate::sound::ExclamationGroup;
 
     let mut engine = EngineInner::new();
     engine.control.frame_counter = 100;
@@ -53,17 +52,6 @@ fn build_mytalk_timing_test(duration_frames: Option<u32>) -> (EngineInner, Entit
     std::sync::Arc::make_mut(&mut assets.profile_manager)
         .hth_weapons
         .push(Default::default());
-    if let Some(frames) = duration_frames {
-        std::sync::Arc::make_mut(&mut assets.exclamation_durations).insert(
-            (
-                ExclamationGroup::Civilian,
-                SPEECH_TIMING_PROFILE_ID,
-                Remark::Arrow as u16,
-            ),
-            frames,
-        );
-    }
-
     (engine, soldier_id, assets)
 }
 
@@ -78,9 +66,17 @@ fn mytalk_ai(engine: &EngineInner, soldier_id: EntityId) -> &crate::ai::AiContro
 fn mytalk_completion_obeys_exact_asset_duration_frame() {
     use crate::ai::{LogLineType, Remark, StimulusType};
 
-    let (mut engine, soldier_id, assets) = build_mytalk_timing_test(Some(3));
+    let (mut engine, soldier_id, assets) = build_mytalk_timing_test();
     let sim = crate::sim_rng::test_context();
     engine.drain_ai_owner_work_for(&sim, &assets, soldier_id);
+    assert_eq!(engine.feedback.sound_sim.pending_exclamations.len(), 1);
+    engine.queue_resolved_exclamations(vec![crate::sound::ResolvedExclamation {
+        actor_id: soldier_id.index(),
+        identifier: (SPEECH_TIMING_PROFILE_ID & 0xFFFF_0000) | u32::from(Remark::Arrow as u16),
+        exclamation_id: Remark::Arrow as u16,
+        duration_frames: 3,
+    }]);
+    engine.hourglass_phase_deferred_effects_start(&sim, &assets);
 
     assert_eq!(engine.feedback.sound_sim.playing_exclamations.len(), 1);
     assert_eq!(
@@ -111,27 +107,48 @@ fn mytalk_completion_obeys_exact_asset_duration_frame() {
 }
 
 #[test]
-fn missing_exclamation_duration_completes_mytalk_at_next_boundary() {
-    use crate::ai::{LogLineType, Remark, StimulusType};
+fn mytalk_uses_concrete_sound_manager_resolution_duration() {
+    use crate::ai::Remark;
 
-    let (mut engine, soldier_id, assets) = build_mytalk_timing_test(None);
+    let (mut engine, soldier_id, assets) = build_mytalk_timing_test();
     let sim = crate::sim_rng::test_context();
     engine.drain_ai_owner_work_for(&sim, &assets, soldier_id);
+    engine.queue_resolved_exclamations(vec![crate::sound::ResolvedExclamation {
+        actor_id: soldier_id.index(),
+        identifier: (SPEECH_TIMING_PROFILE_ID & 0xFFFF_0000) | u32::from(Remark::Arrow as u16),
+        exclamation_id: Remark::Arrow as u16,
+        duration_frames: 7,
+    }]);
+    engine.hourglass_phase_deferred_effects_start(&sim, &assets);
 
     assert_eq!(engine.feedback.sound_sim.playing_exclamations.len(), 1);
     assert_eq!(
-        engine.feedback.sound_sim.playing_exclamations[0].finish_frame, 100,
-        "missing metadata must not fabricate a 75-frame speech"
+        engine.feedback.sound_sim.playing_exclamations[0].finish_frame,
+        107
     );
+    assert!(engine.feedback.sound_sim.pending_exclamations.is_empty());
+}
+
+#[test]
+fn zero_duration_resolution_completes_mytalk_at_current_boundary() {
+    use crate::ai::{LogLineType, Remark, StimulusType};
+
+    let (mut engine, soldier_id, assets) = build_mytalk_timing_test();
+    let sim = crate::sim_rng::test_context();
+    engine.drain_ai_owner_work_for(&sim, &assets, soldier_id);
+    engine.queue_resolved_exclamations(vec![crate::sound::ResolvedExclamation {
+        actor_id: soldier_id.index(),
+        identifier: (SPEECH_TIMING_PROFILE_ID & 0xFFFF_0000) | u32::from(Remark::Arrow as u16),
+        exclamation_id: Remark::Arrow as u16,
+        duration_frames: 0,
+    }]);
     let ai = mytalk_ai(&engine, soldier_id);
     assert_eq!(ai.current_remark, Remark::Arrow);
 
-    engine.control.frame_counter = 101;
-    super::tick::drain_matured_exclamations(&mut engine.feedback.sound_sim, 101);
-    engine.settle_npc_speech_completions(&sim, &assets);
+    engine.hourglass_phase_deferred_effects_start(&sim, &assets);
 
     let ai = mytalk_ai(&engine, soldier_id);
-    assert_eq!(engine.control.frame_counter, 101);
+    assert_eq!(engine.control.frame_counter, 100);
     assert_eq!(ai.current_remark, Remark::TheSoundOfSilence);
     assert!(ai.outbox.reentrant.self_stimuli.is_empty());
     assert_eq!(
@@ -144,9 +161,16 @@ fn missing_exclamation_duration_completes_mytalk_at_next_boundary() {
 fn matured_mytalk_completion_precedes_deferred_hades_replacement() {
     use crate::ai::{LogLineType, Remark};
 
-    let (mut engine, soldier_id, assets) = build_mytalk_timing_test(Some(3));
+    let (mut engine, soldier_id, assets) = build_mytalk_timing_test();
     let sim = crate::sim_rng::test_context();
     engine.drain_ai_owner_work_for(&sim, &assets, soldier_id);
+    engine.queue_resolved_exclamations(vec![crate::sound::ResolvedExclamation {
+        actor_id: soldier_id.index(),
+        identifier: (SPEECH_TIMING_PROFILE_ID & 0xFFFF_0000) | u32::from(Remark::Arrow as u16),
+        exclamation_id: Remark::Arrow as u16,
+        duration_frames: 3,
+    }]);
+    engine.hourglass_phase_deferred_effects_start(&sim, &assets);
     engine.control.frame_counter = 103;
     engine.orders.pending_hades_kills.push(soldier_id);
 
@@ -163,6 +187,24 @@ fn matured_mytalk_completion_precedes_deferred_hades_replacement() {
     {
         assert!(finished < death_speech);
     }
+}
+
+#[test]
+fn stop_exclamation_cancels_unresolved_request_before_fifo_resolution() {
+    use crate::ai::Remark;
+
+    let (mut engine, soldier_id, assets) = build_mytalk_timing_test();
+    let sim = crate::sim_rng::test_context();
+    engine.drain_ai_owner_work_for(&sim, &assets, soldier_id);
+    assert_eq!(engine.feedback.sound_sim.pending_exclamations.len(), 1);
+
+    engine.cancel_exclamation_callbacks(soldier_id.index());
+    assert!(engine.feedback.sound_sim.pending_exclamations.is_empty());
+
+    engine.queue_resolved_exclamations(Vec::new());
+    engine.hourglass_phase_deferred_effects_start(&sim, &assets);
+    assert!(engine.feedback.sound_sim.playing_exclamations.is_empty());
+    assert_eq!(mytalk_ai(&engine, soldier_id).current_remark, Remark::Arrow);
 }
 
 #[derive(Clone, Copy)]

@@ -1572,7 +1572,52 @@ impl EngineInner {
         // PerformHourglass begins and must be the first mutation here.
         let cur_frame = self.control.frame_counter;
         drain_matured_exclamations(&mut self.feedback.sound_sim, cur_frame);
+        // Original invokes SoundIsFinished inline while walking the pending
+        // sound list. That callback may synchronously Think/Say and append a
+        // request which a later resolution in this same boundary consumes.
         self.settle_npc_speech_completions(sim, assets);
+        let resolutions = std::mem::take(&mut self.feedback.sound_sim.resolved_exclamations);
+        for resolution in resolutions {
+            let pending = self
+                .feedback
+                .sound_sim
+                .pending_exclamations
+                .first()
+                .cloned()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "sound manager resolved exclamation {} for actor {} with no pending request",
+                        resolution.exclamation_id, resolution.actor_id
+                    )
+                });
+            assert_eq!(
+                (pending.actor_id, pending.exclamation_id),
+                (resolution.actor_id, resolution.exclamation_id),
+                "sound-manager resolution order diverged; pending FIFO: {:?}",
+                self.feedback.sound_sim.pending_exclamations
+            );
+            assert_eq!(
+                (pending.profile_id & 0xFFFF_0000) | u32::from(pending.exclamation_id),
+                resolution.identifier,
+                "sound manager resolved a different speech profile than the pending request"
+            );
+            self.feedback.sound_sim.pending_exclamations.remove(0);
+            if resolution.duration_frames == 0 {
+                self.feedback
+                    .sound_sim
+                    .finished_exclamations
+                    .push((resolution.actor_id, u32::from(resolution.exclamation_id)));
+                self.settle_npc_speech_completions(sim, assets);
+            } else {
+                self.feedback.sound_sim.playing_exclamations.push(
+                    crate::sound::PlayingExclamation {
+                        actor_id: resolution.actor_id,
+                        exclamation_id: u32::from(resolution.exclamation_id),
+                        finish_frame: cur_frame + resolution.duration_frames,
+                    },
+                );
+            }
+        }
         // Drain deferred console-cheat / death reinforcement spawns and
         // scroll-reveal amulet spawns. Both used to live in
         // `Game::run_engine_tick` because they needed `&mut LevelAssets`

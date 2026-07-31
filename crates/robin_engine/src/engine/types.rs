@@ -869,9 +869,9 @@ pub struct LevelAssets {
     /// dynamic PC's serialized state is read.
     pub character_sprite_prototypes:
         std::collections::HashMap<crate::profiles::CharacterProfileIdx, crate::sprite::Sprite>,
-    /// Exclamation sample-length lookup table populated by the host
-    /// at level load. Engine code consults it when an NPC starts
-    /// speaking to schedule the deterministic MYTALK finish frame.
+    /// Diagnostic maximum exclamation length populated by the host at level
+    /// load. Logical completion uses the concrete sound-manager resolution,
+    /// never this upper bound.
     /// `Arc` so cloning `LevelAssets` is a refcount bump.
     pub exclamation_durations: ExclamationDurations,
     /// Sample-length lookup for sound sources (sample id → sim frames).

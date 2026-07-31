@@ -267,32 +267,6 @@ fn sync_mission_stats_to_campaign(
 /// `ResumeAll` dispatches to schedule a deterministic finish.
 pub type SourceDurations = std::sync::Arc<std::collections::BTreeMap<u32, u32>>;
 
-/// Return the decoded duration for an exclamation, or the original
-/// missing-sample completion value. `RHSound::GetSampleLengthMs` returns
-/// zero when `GetCacheEntryForSettings` cannot resolve/load the sample;
-/// the following sound hourglass then completes that pending sound
-/// immediately. Rust schedules that zero-length completion for the next
-/// simulation boundary so it remains rollback deterministic.
-pub(super) fn exclamation_duration_frames(
-    durations: &ExclamationDurations,
-    group: crate::sound::ExclamationGroup,
-    profile_id: u32,
-    exclamation_id: u16,
-) -> u32 {
-    durations
-        .get(&(group, profile_id, exclamation_id))
-        .copied()
-        .unwrap_or_else(|| {
-            tracing::warn!(
-                ?group,
-                profile_id,
-                exclamation_id,
-                "exclamation sample missing from duration table; scheduling zero-length completion"
-            );
-            0
-        })
-}
-
 /// A queued persistent background decal update for an FX entity whose
 /// patch just transitioned. `restore_only = true` removes the decal
 /// without adding the current frame.
@@ -328,6 +302,39 @@ pub(crate) fn entity_id_for_occupied_slot(index: u32, entity: &Entity) -> Entity
 }
 
 impl EngineInner {
+    /// Queue concrete speech sample resolutions produced by the logical sound
+    /// manager after the preceding engine frame.
+    #[doc(hidden)]
+    pub fn queue_resolved_exclamations(
+        &mut self,
+        resolutions: Vec<crate::sound::ResolvedExclamation>,
+    ) {
+        assert!(
+            self.feedback.sound_sim.resolved_exclamations.is_empty(),
+            "resolved exclamations were not consumed before the next sound boundary"
+        );
+        self.feedback.sound_sim.resolved_exclamations = resolutions;
+    }
+
+    /// Cancel every logical callback for an actor when Original's
+    /// `StopExclamation` removes its pending sound without calling
+    /// `SoundIsFinished`.
+    pub(super) fn cancel_exclamation_callbacks(&mut self, actor_id: u32) {
+        let sound = &mut self.feedback.sound_sim;
+        sound
+            .pending_exclamations
+            .retain(|pending| pending.actor_id != actor_id);
+        sound
+            .resolved_exclamations
+            .retain(|resolved| resolved.actor_id != actor_id);
+        sound
+            .playing_exclamations
+            .retain(|playing| playing.actor_id != actor_id);
+        sound
+            .finished_exclamations
+            .retain(|(finished_actor, _)| *finished_actor != actor_id);
+    }
+
     pub(crate) fn engine_locked(&self) -> bool {
         self.control.engine_locked()
     }

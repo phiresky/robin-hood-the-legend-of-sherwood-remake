@@ -4877,10 +4877,7 @@ impl EngineInner {
                     .push(super::SoundCommand::StopExclamation { actor_id: owner });
                 // StopExclamation removes the old pending/playing line without
                 // calling SoundIsFinished, so its MYTALK callback is discarded.
-                self.feedback
-                    .sound_sim
-                    .playing_exclamations
-                    .retain(|playing| playing.actor_id != owner.index());
+                self.cancel_exclamation_callbacks(owner.index());
             } else {
                 return self.reject_npc_speech_attempt(owner, flags, 4);
             }
@@ -5025,19 +5022,15 @@ impl EngineInner {
                     position,
                     actor_id: Some(owner),
                 });
-            let duration = super::exclamation_duration_frames(
-                &assets.exclamation_durations,
-                group,
-                speech_id,
-                exclamation_id,
-            );
             self.feedback
                 .sound_sim
-                .playing_exclamations
-                .push(crate::sound::PlayingExclamation {
+                .pending_exclamations
+                .push(crate::sound::PendingExclamation {
                     actor_id: owner.index(),
-                    exclamation_id: u32::from(exclamation_id),
-                    finish_frame: self.control.frame_counter + duration,
+                    group,
+                    profile_id: speech_id,
+                    exclamation_id,
+                    variant,
                 });
         }
 

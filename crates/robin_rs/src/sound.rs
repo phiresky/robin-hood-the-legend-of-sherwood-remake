@@ -25,6 +25,14 @@ const DIALOGUE_ATTENUATION: f32 = 0.3;
 pub const NUM_CHANNELS: u32 = 8;
 const EXCLAMATION_VARIANT_NONE: i32 = -1;
 
+#[derive(Debug, Clone, Copy)]
+pub struct ResolvedHostExclamation {
+    pub actor_id: u32,
+    pub identifier: u32,
+    pub exclamation_id: u16,
+    pub length_ms: u32,
+}
+
 /// Channel index sentinel: no channel assigned.
 const CHANNEL_NONE: i32 = -1;
 /// Channel index sentinel: sound should be played at next opportunity.
@@ -1307,9 +1315,9 @@ impl SoundManager {
         alert_status: AlertStatus,
         sources: &SoundSourceManager,
         pending_play_delayed_sources: &mut Vec<usize>,
-    ) {
+    ) -> Vec<ResolvedHostExclamation> {
         if !self.active {
-            return;
+            return Vec::new();
         }
         if !self.pending_sounds.is_empty() {
             tracing::trace!(
@@ -1317,13 +1325,9 @@ impl SoundManager {
                 "sound hourglass: processing pending"
             );
         }
-        // `engine.sound_sim.finished_exclamations` is now sim-side:
-        // the engine schedules each exclamation's MYTALK finish at
-        // emit time using `exclamation_durations`, then drains the
-        // matured ones into `finished_exclamations` at the top of
-        // every `perform_hourglass`. Audio-backend completion still
-        // fires for actual playback, but it doesn't write any sim
-        // state.
+        // Speech completion is simulation-side, but its schedule begins only
+        // after Pass 1 below resolves the concrete sample and reports its
+        // decoded duration to the engine. Mixer completion never mutates sim.
 
         // Play deferred jingle (queued from script commands)
         if let Some(jingle) = self.pending_jingle.take() {
@@ -1433,10 +1437,11 @@ impl SoundManager {
         }
 
         // ── Process pending sounds ──
-        self.process_pending_sounds(backend, loader, rng, sources);
+        let resolved_exclamations = self.process_pending_sounds(backend, loader, rng, sources);
 
         // ── Update cache TTLs ──
         self.sound_cache.update_cache_state();
+        resolved_exclamations
     }
 
     /// Process all pending sounds: expire finished ones, update params, play new.
@@ -1446,8 +1451,9 @@ impl SoundManager {
         loader: &SampleLoader,
         rng: &mut dyn FnMut(u32) -> u32,
         sources: &SoundSourceManager,
-    ) {
+    ) -> Vec<ResolvedHostExclamation> {
         let now = backend.get_ticks();
+        let mut resolved_exclamations = Vec::new();
 
         // ── Pass 1: initialize lengths and remove finished sounds ──
         let mut finished: Vec<PendingSoundInfo> = Vec::new();
@@ -1462,6 +1468,14 @@ impl SoundManager {
                 let length = entry.as_ref().map_or(0, |i| i.sample_length_ms);
                 self.pending_sounds[i].length_ms = length;
                 if settings.sound_type == SoundType::Exclamation {
+                    if let Some(actor_id) = self.pending_sounds[i].actor_id {
+                        resolved_exclamations.push(ResolvedHostExclamation {
+                            actor_id,
+                            identifier: settings.identifier,
+                            exclamation_id: settings.identifier as u16,
+                            length_ms: length,
+                        });
+                    }
                     self.pending_sounds[i].resolved_entry = entry;
                 }
             }
@@ -1577,11 +1591,8 @@ impl SoundManager {
             };
 
             let speech_variant = self.pending_sounds[i].speech_variant;
-            let entry_info = if settings.sound_type == SoundType::Exclamation {
-                self.pending_sounds[i].resolved_entry.clone()
-            } else {
-                self.get_entry_info(&settings, speech_variant, true, loader, rng, sources)
-            };
+            let entry_info =
+                self.get_entry_info(&settings, speech_variant, true, loader, rng, sources);
             let Some(info) = entry_info else {
                 if settings.sound_type == SoundType::Exclamation {
                     tracing::trace!(
@@ -1657,6 +1668,7 @@ impl SoundManager {
                 );
             }
         }
+        resolved_exclamations
     }
 
     // ── Private helpers ──────────────────────────────────────────────

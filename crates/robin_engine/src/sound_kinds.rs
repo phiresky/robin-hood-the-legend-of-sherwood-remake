@@ -31,6 +31,12 @@ pub struct SoundSimState {
     /// the audio backend's wall-clock playback completion is no longer
     /// what drives `finished_exclamations`.
     pub playing_exclamations: Vec<PlayingExclamation>,
+    /// Speech requests waiting for the following logical sound-manager
+    /// update, in Original pending-list order.
+    pub pending_exclamations: Vec<PendingExclamation>,
+    /// Concrete sample durations resolved at the preceding sound-manager
+    /// boundary and applied at the start of the next engine frame.
+    pub resolved_exclamations: Vec<ResolvedExclamation>,
     /// Single/Volatile/Delayed sound sources currently playing, with the (sim)
     /// frame on which the engine will apply their finish transition
     /// (`active = false` for Single, `sources.delete` for Volatile).
@@ -78,6 +84,23 @@ pub struct PlayingExclamation {
     pub actor_id: u32,
     pub exclamation_id: u32,
     pub finish_frame: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct PendingExclamation {
+    pub actor_id: u32,
+    pub group: ExclamationGroup,
+    pub profile_id: u32,
+    pub exclamation_id: u16,
+    pub variant: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct ResolvedExclamation {
+    pub actor_id: u32,
+    pub identifier: u32,
+    pub exclamation_id: u16,
+    pub duration_frames: u32,
 }
 
 /// A scheduled sound-source finish. `source_index` is the index into

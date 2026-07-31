@@ -555,6 +555,15 @@ impl Engine {
         self.inner.set_external_director_completion_replay(enabled);
     }
 
+    /// Queue concrete speech samples resolved by the between-frame logical
+    /// sound-manager update. They are consumed by the next engine tick.
+    pub fn queue_resolved_exclamations(
+        &mut self,
+        resolutions: Vec<crate::sound::ResolvedExclamation>,
+    ) {
+        self.inner.queue_resolved_exclamations(resolutions);
+    }
+
     /// Apply one recorded director completion at the pre-Hourglass boundary.
     ///
     /// This validates the currently latched sequence command, terminates it,

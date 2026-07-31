@@ -85,7 +85,7 @@ pub(super) fn tick_audio(
     for actor_id in stop_exclamations {
         host.audio.sound.stop_exclamation(actor_id, backend);
     }
-    host.audio.sound.hourglass(
+    let resolved_exclamations = host.audio.sound.hourglass(
         backend,
         sample_loader,
         &mut |n| sound_rng.u32(0..n),
@@ -93,6 +93,19 @@ pub(super) fn tick_audio(
         &manager.engine.sound_sim().sources,
         &mut pending_play_delayed_sources,
     );
+    if !resolved_exclamations.is_empty() {
+        manager.engine.queue_resolved_exclamations(
+            resolved_exclamations
+                .into_iter()
+                .map(|resolved| robin_engine::sound::ResolvedExclamation {
+                    actor_id: resolved.actor_id,
+                    identifier: resolved.identifier,
+                    exclamation_id: resolved.exclamation_id,
+                    duration_frames: resolved.length_ms.saturating_add(39) / 40,
+                })
+                .collect(),
+        );
+    }
     // The hourglass drains the queue; whatever it left behind
     // (nothing today, but defensive) goes back on host for next frame.
     host.audio.deferred.extend(

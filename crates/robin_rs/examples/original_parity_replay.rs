@@ -242,9 +242,9 @@ enum TraceStartState {
 }
 
 fn validate_trace_schema(schema: u32) {
-    assert!(
-        matches!(schema, 10 | 11),
-        "unsupported parity trace schema {schema}; complete resolved-input schema 10 or 11 is required"
+    assert_eq!(
+        schema, 12,
+        "unsupported parity trace schema {schema}; resolved-exclamation schema 12 is required"
     );
 }
 
@@ -254,34 +254,27 @@ fn decode_and_validate_initial_save(header: &TraceHeader) -> Option<Vec<u8>> {
         header.start_state,
         header.initial_save.as_ref(),
     ) {
-        // Schema 10 remains temporarily supported as an oracle while the v48
-        // RHSG body importer is developed. It reconstructs loaded saves from
-        // campaign state and therefore cannot guarantee exact mid-mission state.
-        (10, _, None) => None,
-        (10, _, Some(_)) => {
-            panic!("schema 10 must not contain the schema-11 initial_save envelope")
+        (12, TraceStartState::MissionStart, None) => None,
+        (12, TraceStartState::MissionStart, Some(_)) => {
+            panic!("schema-12 mission_start traces must not contain initial_save")
         }
-        (11, TraceStartState::MissionStart, None) => None,
-        (11, TraceStartState::MissionStart, Some(_)) => {
-            panic!("schema-11 mission_start traces must not contain initial_save")
+        (12, TraceStartState::LoadedSave, None) => {
+            panic!("schema-12 loaded_save traces require initial_save")
         }
-        (11, TraceStartState::LoadedSave, None) => {
-            panic!("schema-11 loaded_save traces require initial_save")
-        }
-        (11, TraceStartState::LoadedSave, Some(initial_save)) => {
+        (12, TraceStartState::LoadedSave, Some(initial_save)) => {
             let mission_index = header
                 .campaign
                 .current_mission_index
-                .expect("schema-11 loaded_save campaign has no current mission");
+                .expect("schema-12 loaded_save campaign has no current mission");
             let mission = header.campaign.missions.get(mission_index).unwrap_or_else(|| {
                 panic!(
-                    "schema-11 loaded_save current mission index {mission_index} is out of range"
+                    "schema-12 loaded_save current mission index {mission_index} is out of range"
                 )
             });
             Some(
                 initial_save
                     .decode_and_validate(mission.profile_id)
-                    .unwrap_or_else(|error| panic!("invalid schema-11 initial_save: {error}")),
+                    .unwrap_or_else(|error| panic!("invalid schema-12 initial_save: {error}")),
             )
         }
         (schema, _, _) => unreachable!("schema {schema} was validated before initial_save"),
@@ -295,7 +288,7 @@ fn validate_trace_start(start_state: TraceStartState, session_index: u32, initia
             "parity session {session_index} is marked mission_start but begins at frame {initial_frame}"
         ),
         // A loaded automatic mission-start save is reconstructible from the
-        // schema-10 campaign/config/RNG prefix and the ordinary mission
+        // recorded campaign/config/RNG prefix and the ordinary mission
         // loader. Do not reject loaded sessions solely because of their
         // provenance: the normal setup-draw and first-frame isomorphic state
         // comparisons below remain authoritative and fail loudly for a
@@ -1082,6 +1075,16 @@ struct TraceAi {
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TraceResolvedExclamation {
+    actor: TraceEntityId,
+    identifier: u32,
+    exclamation_id: u16,
+    selected_variant: i32,
+    selected_entry: Option<u32>,
+    duration_frames: u32,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceFrame {
     frame_before: u64,
     frame_after: u64,
@@ -1093,10 +1096,11 @@ struct TraceFrame {
     rng_draws: TraceRngBatch,
     motion_line_changes: Vec<TraceMotionLineChange>,
     path_events: Vec<TracePathEvent>,
+    resolved_exclamations: Vec<TraceResolvedExclamation>,
 }
 
-const TRACE_CACHE_VERSION: u32 = 4;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v4.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 5;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v5.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -1669,9 +1673,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             &mission_scb,
             &robin_engine::legacy_save::body::LegacySaveBodyLimits::default(),
         )
-        .unwrap_or_else(|error| panic!("decode schema-11 initial_save body: {error}"));
+        .unwrap_or_else(|error| panic!("decode schema-12 initial_save body: {error}"));
         eprintln!(
-            "decoded schema-11 Original save through byte {} ({} elements, {} dynamic)",
+            "decoded schema-12 Original save through byte {} ({} elements, {} dynamic)",
             save.end_offset,
             save.element_envelope.records.len(),
             save.element_envelope
@@ -1691,9 +1695,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 &assets,
                 &save,
             )
-            .unwrap_or_else(|error| panic!("adopt schema-11 initial_save body: {error}")),
+            .unwrap_or_else(|error| panic!("adopt schema-12 initial_save body: {error}")),
         );
-        eprintln!("atomically adopted schema-11 Original Linux-v48 save");
+        eprintln!("atomically adopted schema-12 Original Linux-v48 save");
     }
     if rewind_loaded_save_rng {
         let setup_draws = engine
@@ -1843,6 +1847,23 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 engine.apply_command(&mut display, &mut input, &assets, &command);
             }
         }
+        // Original's Sound Hourglass ran after the preceding engine frame.
+        // Apply its ordered, concrete Pass-1 speech resolutions now, before
+        // the next simulation body begins. Audio RNG remains diagnostic only.
+        let resolutions = frame
+            .resolved_exclamations
+            .drain(..)
+            .map(|resolved| {
+                let _selection_diagnostics = (resolved.selected_variant, resolved.selected_entry);
+                robin_engine::sound::ResolvedExclamation {
+                    actor_id: map.translate(resolved.actor).index(),
+                    identifier: resolved.identifier,
+                    exclamation_id: resolved.exclamation_id,
+                    duration_frames: resolved.duration_frames,
+                }
+            })
+            .collect();
+        engine.queue_resolved_exclamations(resolutions);
         let tick_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             engine.perform_hourglass_with_body_gate(
                 &mut display,
@@ -4143,9 +4164,8 @@ mod tests {
     }
 
     #[test]
-    fn transitional_schema_ten_and_current_schema_eleven_are_accepted() {
-        validate_trace_schema(10);
-        validate_trace_schema(11);
+    fn resolved_exclamation_schema_twelve_is_accepted() {
+        validate_trace_schema(12);
     }
 
     #[test]
@@ -4153,7 +4173,7 @@ mod tests {
         let save = valid_initial_save();
         let decoded = save
             .decode_and_validate(16_723)
-            .expect("valid schema-11 initial_save");
+            .expect("valid schema-12 initial_save");
         assert_eq!(&decoded[..4], b"RHSG");
         assert_eq!(u32::from_le_bytes(decoded[4..8].try_into().unwrap()), 48);
         assert_eq!(
@@ -4168,7 +4188,7 @@ mod tests {
         let save = valid_initial_save_with_profile(TraceSaveSourceProfile::WindowsI386GshrV48);
         let decoded = save
             .decode_and_validate(16_723)
-            .expect("valid Windows i386 schema-11 initial_save");
+            .expect("valid Windows i386 schema-12 initial_save");
         assert_eq!(&decoded[..4], b"GSHR");
     }
 
@@ -4254,9 +4274,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "schema 9; complete resolved-input schema 10 or 11 is required")]
-    fn schema_nine_is_rejected() {
-        validate_trace_schema(9);
+    #[should_panic(expected = "schema 11; resolved-exclamation schema 12 is required")]
+    fn schema_eleven_is_rejected() {
+        validate_trace_schema(11);
     }
 
     #[test]
@@ -4270,6 +4290,7 @@ mod tests {
             "elements": [],
             "motion_line_changes": [],
             "path_events": [],
+            "resolved_exclamations": [],
             "rng_draws": {
                 "first_index": 0,
                 "values": [],

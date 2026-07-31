@@ -94,10 +94,7 @@ impl EngineInner {
                         });
                     base.current_remark = crate::ai::Remark::TheSoundOfSilence;
                     base.current_remark_flags = 0;
-                    self.feedback
-                        .sound_sim
-                        .playing_exclamations
-                        .retain(|p| p.actor_id != entity_id.index());
+                    self.cancel_exclamation_callbacks(entity_id.index());
                 }
             }
             return;
@@ -323,19 +320,15 @@ impl EngineInner {
                 position,
                 actor_id: Some(pc_id),
             });
-        let duration = exclamation_duration_frames(
-            &assets.exclamation_durations,
-            ExclamationGroup::Pc,
-            profile_id,
-            expression,
-        );
         self.feedback
             .sound_sim
-            .playing_exclamations
-            .push(crate::sound::PlayingExclamation {
+            .pending_exclamations
+            .push(crate::sound::PendingExclamation {
                 actor_id: pc_id.index(),
-                exclamation_id: expression as u32,
-                finish_frame: self.control.frame_counter + duration,
+                group: ExclamationGroup::Pc,
+                profile_id,
+                exclamation_id: expression,
+                variant: forced_variant.map_or(-1, i32::from),
             });
 
         // Add to forbidden list + set anti-chorus timer

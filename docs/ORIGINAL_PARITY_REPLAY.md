@@ -8,14 +8,13 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
 
 ## Baseline and contract
 
-- Required Original trace schema for new captures: 11. Schema 10 remains
-  temporarily readable only as a historical mission-start oracle while the
-  native v48 checkpoint importer is being completed.
+- Required Original trace schema: 12. Older schemas are rejected because they
+  do not record concrete logical sound-manager speech resolutions.
 - Preferred replay start state: `mission_start` with a complete versioned
   campaign snapshot captured before engine initialization, including
   progression, mission state, gang/reservists/mission team, character status
   and inventory, persistent production state, relics, names, values, and
-  campaign pointers encoded as stable indices. Schema-11 `loaded_save`
+  campaign pointers encoded as stable indices. Schema-12 `loaded_save`
   sessions additionally embed the exact native v48 checkpoint and are admitted
   only through the strict legacy-save importer. Automatic mission-start saves
   can replay when their recorded campaign/config/RNG reconstructs the same
@@ -34,7 +33,11 @@ entity IDs may differ when the two worlds can be mapped isomorphically.
   Schema 9 adds that path oracle but can omit action selection/cancellation
   resolved inside a raw mouse message. Schema 10 records those authoritative
   nested resolved inputs, but not the loaded engine checkpoint. Schema 11 adds
-  the exact source save plus its producer ABI and integrity metadata.
+  the exact source save plus its producer ABI and integrity metadata, but does
+  not identify which pending speech samples the host sound manager resolved.
+  Schema 12 adds those ordered concrete resolutions with stable actor identity,
+  exclamation ID, selected entry/variant, and decoded duration in simulation
+  frames.
 - Inputs: resolved game commands, applied on their recorded simulation frames,
   plus resolved camera-director sequence completions produced between
   simulation frames and applied before the following frame's commands
@@ -3853,6 +3856,29 @@ The called-soldier path now preserves Original's default walking mode. Linux3
 Profile 001 Savegame 038 matches through the former frame-54445 boundary and
 reaches an independent officer-conversation progression divergence at frame
 54506.
+
+### Speech completion uses the concrete sound-manager resolution
+
+Original queues `Say` requests into `RHSound`; the following sound Hourglass
+selects a concrete speech entry, obtains its decoded length, and later invokes
+`SoundIsFinished` from the fixed 25 Hz parity clock. A random speech group can
+resolve to different lengths (or a zero-length gap), and forced variants do not
+consume an audio RNG draw. The previous Rust path scheduled the maximum length
+at `Say` time, while an attempted replay repair could not distinguish speech
+selection from unrelated FX draws at the shared cache callsite.
+
+Schema 12 records each ordered Pass-1 exclamation resolution with stable actor
+identity, full and low-word exclamation IDs, selected variant/entry, and the
+concrete decoded duration in frames. Ordinary play reports the same host
+boundary to the simulation while retaining Original's separate Pass-3 sample
+selection and audio RNG consumption. Rust drains matured callbacks before the
+boundary events, settles zero-length callbacks inline, preserves FIFO, and
+cancels unresolved requests on both `StopExclamation` paths. A fresh 250-frame
+Savegame 038 capture records four resolutions and replaces the former
+frame-54506 max-duration diagnosis; strict FIFO exposes an earlier latent
+conversation-order difference at frame 54501 (Rust has already queued soldier 186's exclamation 77
+ahead of Original soldier 172's exclamation 74). That next issue is AI
+conversation scheduling, not sound-duration reconstruction.
 
 ## Frozen full-corpus audit at `2a3e842df`
 

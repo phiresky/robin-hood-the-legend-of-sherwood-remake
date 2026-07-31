@@ -245,6 +245,8 @@ fn convert_serialized_sound(
         // Original Deactivate/Clear tears down all backend completion work.
         finished_exclamations: Vec::new(),
         playing_exclamations: Vec::new(),
+        pending_exclamations: Vec::new(),
+        resolved_exclamations: Vec::new(),
         playing_sources: Vec::new(),
         suspended_active_sources: Vec::new(),
     })
