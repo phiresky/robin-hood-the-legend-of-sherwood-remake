@@ -2250,19 +2250,22 @@ impl EnemyAi {
                             // at least Body.
                             let alerting = civ_report.report_type > my_old_report_type
                                 && civ_report.report_type >= ReportType::Body;
-                            self.base.antagonist = hint.who_tells_me;
-                            self.base.face_entity(hint.who_tells_me, ctx);
-                            self.base
-                                .launch_timer(combat::STANDARD_TALK_TIME as u32, ctx.frame);
                             if alerting {
-                                self.base.seek_position = civ_report.seek_position;
-                                self.base
-                                    .my_reconnaissance_report
-                                    .update(civ_report.report_type, civ_report.seek_position);
+                                // Original GetReportFromCivilian performs
+                                // SetState before Face/LaunchTimer. SetState
+                                // cancels the previous substate's timer, so
+                                // launching first would silently discard this
+                                // talk deadline.
                                 self.set_state(
                                     AiState::Seeking,
                                     Substate::SeekingGetAlertingReportFromCivilian,
                                 );
+                                self.base.antagonist = hint.who_tells_me;
+                                self.base.face_entity(hint.who_tells_me, ctx);
+                                self.base.seek_position = civ_report.seek_position;
+                                self.base
+                                    .my_reconnaissance_report
+                                    .update(civ_report.report_type, civ_report.seek_position);
                             } else {
                                 // Non-alerting branch — wait out the
                                 // talk timer in
@@ -2272,7 +2275,10 @@ impl EnemyAi {
                                     AiState::Seeking,
                                     Substate::SeekingGetReportFromCivilian,
                                 );
+                                self.base.face_entity(self.base.antagonist, ctx);
                             }
+                            self.base
+                                .launch_timer(combat::STANDARD_TALK_TIME as u32, ctx.frame);
                         }
                     }
                     _ => {}
@@ -2293,7 +2299,7 @@ impl EnemyAi {
                 // window.
                 if stimulus_type == StimulusType::EventTimer {
                     let seek_pos = self.base.seek_position;
-                    self.base.face_position(seek_pos);
+                    self.base.face_position_3d_with_ctx(seek_pos, ctx);
                     self.set_state(
                         AiState::Seeking,
                         Substate::SeekingGetAlertingReportFromCivilianLook,
