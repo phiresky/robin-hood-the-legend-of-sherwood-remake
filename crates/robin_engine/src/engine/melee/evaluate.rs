@@ -515,7 +515,68 @@ impl EngineInner {
         if self.evaluate_smalltalk_hint(entity_id) {
             return;
         }
+        self.trace_waiting_sword_evaluate_entry(entity_id);
         self.evaluate_swordfight_for(sim, assets, entity_id);
+    }
+
+    /// Emit the authoritative sequence selection at the exact boundary where
+    /// WaitingSword enters `EvaluateSwordfight`.
+    ///
+    /// The dedicated tracing target keeps this inert unless explicitly
+    /// enabled, for example with
+    /// `RUST_LOG=parity_waiting_sword=debug`. It is intentionally diagnostic
+    /// only: no replay schema or simulation state depends on these fields.
+    fn trace_waiting_sword_evaluate_entry(&self, entity_id: EntityId) {
+        if !tracing::enabled!(target: "parity_waiting_sword", tracing::Level::DEBUG) {
+            return;
+        }
+
+        let current = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(entity_id)
+            .map(|(seq_id, elem_idx, order)| {
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "WaitingSword parity diagnostic selected missing element ({seq_id:?}, {elem_idx})"
+                        )
+                    });
+                (
+                    seq_id,
+                    elem_idx,
+                    element.command,
+                    order.order_id,
+                    order.order_type,
+                )
+            });
+
+        match current {
+            Some((seq_id, elem_idx, command, order_id, order_type)) => {
+                tracing::debug!(
+                    target: "parity_waiting_sword",
+                    frame = self.control.frame_counter,
+                    owner = ?entity_id,
+                    sequence_id = ?seq_id,
+                    element_index = elem_idx,
+                    command = ?command,
+                    order_id = order_id.get(),
+                    order_type = ?order_type,
+                    "WaitingSword EvaluateSwordfight entry"
+                );
+            }
+            None => {
+                tracing::debug!(
+                    target: "parity_waiting_sword",
+                    frame = self.control.frame_counter,
+                    owner = ?entity_id,
+                    "WaitingSword EvaluateSwordfight entry has no current order"
+                );
+            }
+        }
     }
 
     /// Owner-local translation of RHElementActorHuman::EvaluateSwordfight.
