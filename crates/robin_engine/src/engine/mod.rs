@@ -2701,6 +2701,51 @@ impl EngineInner {
             .get_entity(owner)
             .map(|e| e.element_data().position_map())
             .unwrap_or_default();
+        if tracing::enabled!(target: "parity_owner_handoff", tracing::Level::TRACE) {
+            let selected = self
+                .orders
+                .sequence_manager
+                .current_element_for_actor(owner);
+            let selected_state = selected.and_then(|(seq_id, elem_idx)| {
+                self.orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .map(|element| {
+                        (
+                            element.command,
+                            element.state,
+                            element.priority,
+                            element
+                                .orders
+                                .front()
+                                .map(|order| (order.order_type, order.order_id)),
+                        )
+                    })
+            });
+            let (active_movement, goal) = self
+                .get_entity(owner)
+                .map(|entity| {
+                    let active_movement = entity.actor_data().map(|actor| {
+                        (
+                            actor.active_movement.sequence_id,
+                            actor.active_movement.element_index,
+                        )
+                    });
+                    (active_movement, entity.position_iface().map_goal())
+                })
+                .unwrap_or_default();
+            tracing::trace!(
+                target: "parity_owner_handoff",
+                frame = self.control.frame_counter,
+                ?owner,
+                ?stop_priority,
+                ?selected,
+                ?selected_state,
+                ?active_movement,
+                ?goal,
+                "stop_owner before movement and sequence stop"
+            );
+        }
         let pathfinder = &mut self.world.pathfinder;
         let next_order_id = &mut self.orders.next_order_id;
         let resolver = Self::priority_resolver(&self.world.entities);
@@ -3580,6 +3625,54 @@ impl EngineInner {
     /// `dispatch_arm_completion` (`engine/animation.rs`) and mutates
     /// the front order in place without popping.
     pub(crate) fn do_next_order(&mut self, seq_id: crate::sequence::SequenceId, elem_idx: usize) {
+        if tracing::enabled!(target: "parity_owner_handoff", tracing::Level::TRACE) {
+            let element_state = self
+                .orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .map(|element| {
+                    (
+                        element.owner,
+                        element.command,
+                        element.state,
+                        element
+                            .orders
+                            .front()
+                            .map(|order| (order.order_type, order.order_id)),
+                        element.orders.len(),
+                    )
+                });
+            let owner_state = element_state
+                .and_then(|(owner, _, _, _, _)| owner)
+                .map(|owner| {
+                    let selected = self
+                        .orders
+                        .sequence_manager
+                        .current_element_for_actor(owner);
+                    let (active_movement, goal) = self
+                        .get_entity(owner)
+                        .map(|entity| {
+                            let active_movement = entity.actor_data().map(|actor| {
+                                (
+                                    actor.active_movement.sequence_id,
+                                    actor.active_movement.element_index,
+                                )
+                            });
+                            (active_movement, entity.position_iface().map_goal())
+                        })
+                        .unwrap_or_default();
+                    (selected, active_movement, goal)
+                });
+            tracing::trace!(
+                target: "parity_owner_handoff",
+                frame = self.control.frame_counter,
+                ?seq_id,
+                elem_idx,
+                ?element_state,
+                ?owner_state,
+                "do_next_order before popping front order"
+            );
+        }
         // Pop the just-completed front order, capture context.
         let Some((owner, next_exists)) = self
             .orders
@@ -3621,6 +3714,35 @@ impl EngineInner {
         // current order, so perform that owner-side cleanup at the same
         // terminal boundary before the Rust sequence registry removes it.
         if let Some(owner) = owner {
+            if tracing::enabled!(target: "parity_owner_handoff", tracing::Level::TRACE) {
+                let selected = self
+                    .orders
+                    .sequence_manager
+                    .current_element_for_actor(owner);
+                let (active_movement, goal) = self
+                    .get_entity(owner)
+                    .map(|entity| {
+                        let active_movement = entity.actor_data().map(|actor| {
+                            (
+                                actor.active_movement.sequence_id,
+                                actor.active_movement.element_index,
+                            )
+                        });
+                        (active_movement, entity.position_iface().map_goal())
+                    })
+                    .unwrap_or_default();
+                tracing::trace!(
+                    target: "parity_owner_handoff",
+                    frame = self.control.frame_counter,
+                    ?seq_id,
+                    elem_idx,
+                    ?owner,
+                    ?selected,
+                    ?active_movement,
+                    ?goal,
+                    "do_next_order before exhausted-order goal clear"
+                );
+            }
             self.world
                 .entities
                 .get_mut(owner)
