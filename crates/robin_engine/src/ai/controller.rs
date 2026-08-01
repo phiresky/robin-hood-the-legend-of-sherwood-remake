@@ -4036,6 +4036,11 @@ impl AiController {
                     self.current_substate = Substate::FleeingHiding;
                     self.set_alert_status(AlertLevel::Yellow);
                     self.clear_emoticon();
+                    // Original calls RHElementActorNPC::BlinkEnemy(NULL)
+                    // unconditionally on entry to FleeingHiding. Clearing
+                    // both visibility latches makes a still-visible enemy a
+                    // fresh EVENT_VIEW on the next detection pass.
+                    self.outbox.actor.blink_all_enemies = true;
                     // Face panic center and wait.
                     self.face_position(Position {
                         x: self.panic_center_x,
@@ -4082,9 +4087,12 @@ impl AiController {
                     }
                     self.clear_emoticon();
                     self.set_alert_status(AlertLevel::Yellow);
-                    // BlinkEnemy() is wired via refresh_view when the
-                    // music alert status changes; nothing to do here
-                    // explicitly.
+                    // RHArtificialIntelligence's FleeingPanic completion
+                    // calls BlinkEnemy(NULL) even when the alert level did
+                    // not change. The resulting next-frame EVENT_VIEW can
+                    // immediately start another panic while the enemy stays
+                    // visible.
+                    self.outbox.actor.blink_all_enemies = true;
                     let hiding_time = crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME as u32
                         + crate::sim_rng::u32(
                             sim,

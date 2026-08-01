@@ -597,6 +597,29 @@ fn goto_route_turn_lookup_preserves_original_endpoint_direction_flip() {
     );
 }
 
+#[test]
+fn entering_fleeing_hiding_blinks_visible_enemies_for_redetection() {
+    for substate in [Substate::FleeingRunToDoor, Substate::FleeingPanic] {
+        let mut ai = AiController::new(1);
+        ai.current_state = AiState::Fleeing;
+        ai.current_substate = substate;
+        ai.directed_panic = true;
+        ai.lasting_panic_runs = 0;
+
+        ai.think_expected_event_common_stuff(
+            &crate::sim_rng::test_context(),
+            &Stimulus::new(StimulusType::EventReachPoint),
+            &AiContext::default(),
+        );
+
+        assert_eq!(ai.current_substate, Substate::FleeingHiding);
+        assert!(
+            ai.outbox.actor.blink_all_enemies,
+            "Original BlinkEnemy(NULL) is unconditional when {substate:?} enters hiding"
+        );
+    }
+}
+
 // ──────────────────────────────────────────────────────────
 // init_state — initial-action gate
 // ──────────────────────────────────────────────────────────
