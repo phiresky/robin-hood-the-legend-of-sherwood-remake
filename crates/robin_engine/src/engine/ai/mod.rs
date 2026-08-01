@@ -84,6 +84,16 @@ fn subjective_hear_volume(modified_volume: f32, distance: f32, deafness: u16) ->
     }
 }
 
+/// Project Original's live Enemy detectable list into the ordered handle list
+/// consumed by `RefreshArrowProtection`.
+fn seen_last_frame_detectable_handles(detectables: &[Detectable]) -> Vec<u32> {
+    detectables
+        .iter()
+        .filter(|detectable| detectable.seen_last_frame)
+        .filter_map(|detectable| detectable.element.map(EntityId::index))
+        .collect()
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct NpcSpeechSettlement {
     pub(super) invoke_finished_callback: bool,
@@ -345,6 +355,27 @@ mod parity_tests {
         assert_eq!(
             primary_target_lift_approach(&grid, &[], sector, 3),
             Some(None)
+        );
+    }
+
+    #[test]
+    fn seen_last_frame_enemy_projection_preserves_detectable_order() {
+        let detectable = |element, seen_last_frame| Detectable {
+            element,
+            detectable_type: DetectableType::Enemy,
+            seen_last_frame,
+            ..Detectable::default()
+        };
+        let detectables = vec![
+            detectable(Some(EntityId::Pc(PcId(12))), true),
+            detectable(Some(EntityId::Soldier(SoldierId(7))), false),
+            detectable(None, true),
+            detectable(Some(EntityId::Soldier(SoldierId(3))), true),
+        ];
+
+        assert_eq!(
+            seen_last_frame_detectable_handles(&detectables),
+            vec![12, 3]
         );
     }
 
@@ -1497,6 +1528,9 @@ impl EngineInner {
             .unwrap_or(false);
 
         let mut tick = AiPerTickData::stub();
+        let enemy_idx = DetectableType::Enemy as usize;
+        tick.seen_last_frame_enemies =
+            seen_last_frame_detectable_handles(&soldier.npc.detectable_lists[enemy_idx]);
         tick.primary_target_snapshot_handle = primary_target_handle;
         tick.profile_manager = Some(assets.profile_manager.clone());
         // `SeekArea` scans the live global NPC register at the call site.
