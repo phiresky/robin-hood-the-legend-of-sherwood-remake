@@ -236,6 +236,12 @@ impl EngineInner {
         if touched {
             let action_before = self.selected_order_action(entity);
             self.orders.sequence_manager.make_fast(entity);
+            if let Some(pathfinder_index) = self.pending_pathfinder_index(entity) {
+                self.orders
+                    .pending_path_requests
+                    .make_fast(entity, pathfinder_index);
+                return;
+            }
             self.make_active_door_pass_fast(entity);
             self.after_make_rewrite(sim, entity);
             self.synchronize_rewritten_selected_order(entity, action_before);
@@ -251,6 +257,12 @@ impl EngineInner {
         if self.sequence_manager_has_movement(entity) {
             let action_before = self.selected_order_action(entity);
             self.orders.sequence_manager.make_slow(entity);
+            if let Some(pathfinder_index) = self.pending_pathfinder_index(entity) {
+                self.orders
+                    .pending_path_requests
+                    .make_slow(entity, pathfinder_index);
+                return;
+            }
             self.after_make_rewrite(sim, entity);
             self.synchronize_rewritten_selected_order(entity, action_before);
         }
@@ -340,6 +352,12 @@ impl EngineInner {
             let action_before = self.selected_order_action(entity);
             self.orders.sequence_manager.make_upright(entity);
             if self.sequence_manager_has_movement(entity) {
+                if let Some(pathfinder_index) = self.pending_pathfinder_index(entity) {
+                    self.orders
+                        .pending_path_requests
+                        .make_upright(entity, pathfinder_index);
+                    return;
+                }
                 self.after_make_rewrite(sim, entity);
                 self.synchronize_rewritten_selected_order(entity, action_before);
                 return;
@@ -363,6 +381,12 @@ impl EngineInner {
         if self.sequence_manager_has_movement(entity) {
             let action_before = self.selected_order_action(entity);
             self.orders.sequence_manager.make_crouched(entity);
+            if let Some(pathfinder_index) = self.pending_pathfinder_index(entity) {
+                self.orders
+                    .pending_path_requests
+                    .make_crouched(entity, pathfinder_index);
+                return;
+            }
             self.after_make_rewrite(sim, entity);
             self.synchronize_rewritten_selected_order(entity, action_before);
         } else {
@@ -377,9 +401,8 @@ impl EngineInner {
     /// queued animation sequence remains well-formed, and re-apply
     /// the drunken-midpoint deviation at the new speed.
     ///
-    /// Path resolution is synchronous here, so there is no queued
-    /// async path request to rewrite — only the in-progress movement
-    /// element gets touched.
+    /// Pending `MoveWaiting` requests are handled by the caller through the
+    /// pathfinder request rewrite and never reach this materialized-path tail.
     fn after_make_rewrite(&mut self, sim: &crate::sim_rng::SimulationContext, entity: EntityId) {
         let (seq_id, elem_idx) = match self.find_active_movement_element(entity) {
             Some(pair) => pair,
@@ -1016,6 +1039,25 @@ impl EngineInner {
                 elem.data.is_movement()
                     && matches!(elem.state, SequenceState::InProgress | SequenceState::Todo)
             })
+    }
+
+    /// Return the actor's pathfinder index only while its selected movement
+    /// is waiting for path delivery. Original's posture-specific accessor is
+    /// currently compiled to return this same primary index for every posture.
+    fn pending_pathfinder_index(&self, entity: EntityId) -> Option<u16> {
+        let (seq_id, elem_idx) = self.find_active_movement_element(entity)?;
+        (self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .map(|element| element.command)
+            == Some(Command::MoveWaiting))
+        .then(|| {
+            self.get_entity(entity)
+                .unwrap_or_else(|| panic!("pending movement owner {entity:?} is missing"))
+                .position_iface()
+                .get_pathfinder_index()
+        })
     }
 
     /// Whether `entity` owns any active/pending movement element.

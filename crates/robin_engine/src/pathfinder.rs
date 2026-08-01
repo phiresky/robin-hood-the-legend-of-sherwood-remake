@@ -143,6 +143,90 @@ pub enum PathFinderSpeed {
     VerySlow = 3,
 }
 
+/// Behavior-relevant snapshot of one Original-compatible path request.
+///
+/// The parity recorder takes this snapshot both when `AddPathRequest` accepts
+/// the request and when `ProcessPathRequests` delivers its result. The two
+/// snapshots can legitimately differ because `MakeFast`, `MakeSlow`, and the
+/// posture rewrites mutate a request while it waits for delivery.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParityPathRequest {
+    pub actor: EntityId,
+    pub antagonist: Option<EntityId>,
+    pub layer: u16,
+    pub area: u16,
+    pub source: MapPoint,
+    pub goal: MapPoint,
+    pub half_diagonal_index: u16,
+    pub half_diagonal: MoveBoxHalfDiagonal,
+    pub animation: u32,
+    pub reverse: bool,
+    pub speed: u8,
+    pub tolerance: f32,
+    pub use_first_point: bool,
+}
+
+/// One ordered pathfinder boundary observed while parity capture is active.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ParityPathEvent {
+    Queued(ParityPathRequest),
+    Completed {
+        request: ParityPathRequest,
+        valid: bool,
+        waypoints: Vec<MapPoint>,
+    },
+}
+
+thread_local! {
+    static PARITY_PATH_CAPTURE: std::cell::RefCell<Option<Vec<ParityPathEvent>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Begin ordered path-request capture on the simulation thread.
+///
+/// Unlike visibility capture, this spans the complete boundary between two
+/// recorded frames: PostInitialize, resolved input, and sound callbacks can
+/// all synchronously enqueue movement before the next engine hourglass.
+pub fn begin_parity_path_capture() {
+    PARITY_PATH_CAPTURE.with(|capture| {
+        let mut capture = capture.borrow_mut();
+        assert!(
+            capture.is_none(),
+            "parity path capture was begun twice without being drained"
+        );
+        *capture = Some(Vec::new());
+    });
+}
+
+/// Finish path-request capture and return events in execution order.
+pub fn take_parity_path_capture() -> Vec<ParityPathEvent> {
+    PARITY_PATH_CAPTURE.with(|capture| {
+        capture
+            .borrow_mut()
+            .take()
+            .expect("parity path capture was drained without being started")
+    })
+}
+
+/// Whether parity path capture is active on this simulation thread.
+///
+/// Request snapshots contain several derived fields. Callers use this guard
+/// so normal gameplay pays only the thread-local check and does not construct
+/// or clone diagnostic state.
+pub(crate) fn parity_path_capture_is_active() -> bool {
+    PARITY_PATH_CAPTURE.with(|capture| capture.borrow().is_some())
+}
+
+pub(crate) fn record_parity_path_event(event: ParityPathEvent) {
+    PARITY_PATH_CAPTURE.with(|capture| {
+        let mut capture = capture.borrow_mut();
+        capture
+            .as_mut()
+            .expect("parity path event was constructed without active capture")
+            .push(event);
+    });
+}
+
 // Request scheduling lives on `EngineInner`, because requests carry
 // sequence-element IDs and complete at the engine's once-per-frame legacy
 // `ProcessPathRequests` point.  This type retains only the serializable A*
@@ -2655,5 +2739,46 @@ mod tests {
         let path = path.unwrap();
         // Direct path: just source and goal
         assert_eq!(path.len(), 1); // Only goal (source is at front after reverse, but direct path returns just goal)
+    }
+
+    #[test]
+    fn parity_path_capture_preserves_order_and_cancelled_completion() {
+        let request = ParityPathRequest {
+            actor: EntityId::Pc(crate::entity_id::PcId(7)),
+            antagonist: None,
+            layer: 2,
+            area: 17,
+            source: MapPoint::new(1.0, 2.0),
+            goal: MapPoint::new(3.0, 4.0),
+            half_diagonal_index: 1,
+            half_diagonal: MoveBoxHalfDiagonal::new(0.5, 0.5),
+            animation: 42,
+            reverse: false,
+            speed: PathFinderSpeed::Fast as u8,
+            tolerance: 10.0,
+            use_first_point: true,
+        };
+
+        begin_parity_path_capture();
+        assert!(parity_path_capture_is_active());
+        record_parity_path_event(ParityPathEvent::Queued(request.clone()));
+        record_parity_path_event(ParityPathEvent::Completed {
+            request: request.clone(),
+            valid: false,
+            waypoints: vec![request.goal],
+        });
+
+        assert_eq!(
+            take_parity_path_capture(),
+            vec![
+                ParityPathEvent::Queued(request.clone()),
+                ParityPathEvent::Completed {
+                    request: request.clone(),
+                    valid: false,
+                    waypoints: vec![request.goal],
+                },
+            ]
+        );
+        assert!(!parity_path_capture_is_active());
     }
 }

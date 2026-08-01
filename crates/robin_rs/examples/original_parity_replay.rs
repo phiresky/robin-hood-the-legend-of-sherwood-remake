@@ -1334,7 +1334,8 @@ struct RollingDumpFrame {
     selected_pcs: Vec<TraceEntityId>,
     rng_draws: TraceRngBatch,
     resolved_commands: serde_json::Value,
-    path_events: Vec<TracePathEvent>,
+    original_path_events: Vec<TracePathEvent>,
+    rust_path_events: Vec<robin_engine::pathfinder::ParityPathEvent>,
     rng_start: usize,
     expected_rng_end: usize,
     actual_rng_end: usize,
@@ -1949,6 +1950,12 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         );
     }
 
+    // Original retains path events across the full boundary between frame
+    // writes. PostInitialize, sound callbacks, and resolved input can enqueue
+    // movement before the next PerformHourglass, so this capture deliberately
+    // remains active outside the simulation body.
+    robin_engine::pathfinder::begin_parity_path_capture();
+
     let mut line_index = 0_usize;
     loop {
         let mut frame = match records.read_record() {
@@ -2098,6 +2105,10 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         }));
         let actual_visibility_queries =
             robin_engine::sight_obstacle::take_parity_visibility_capture();
+        let actual_path_events = robin_engine::pathfinder::take_parity_path_capture();
+        // Restart immediately: the post-frame comparison and one-shot
+        // PostInitialize below precede the next recorded frame boundary.
+        robin_engine::pathfinder::begin_parity_path_capture();
         let tick_effects = tick_result.unwrap_or_else(|payload| {
             eprintln!(
                 "Rust simulation panicked while replaying original frame {} -> {}",
@@ -2204,6 +2215,11 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             &frame.visibility_queries,
             &actual_visibility_queries,
         ));
+        differences.extend(compare_path_events(
+            &frame.path_events,
+            &actual_path_events,
+            map,
+        ));
         differences.extend(compare_frame(
             &engine,
             &assets,
@@ -2237,6 +2253,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 rng_end,
                 actual_rng_end,
                 &rust_rng_sites,
+                &actual_path_events,
                 &differences,
             );
         }
@@ -2251,7 +2268,8 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     rng_draws: frame.rng_draws.clone(),
                     resolved_commands: resolved_commands
                         .expect("automatic diagnostic frame captured its resolved commands"),
-                    path_events: frame.path_events.clone(),
+                    original_path_events: frame.path_events.clone(),
+                    rust_path_events: actual_path_events.clone(),
                     rng_start,
                     expected_rng_end: rng_end,
                     actual_rng_end,
@@ -2319,16 +2337,17 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             for difference in differences.iter().take(40) {
                 eprintln!("  {difference}");
             }
-            if !frame.path_events.is_empty() {
+            if !frame.path_events.is_empty() || !actual_path_events.is_empty() {
                 eprintln!(
                     "  Original path events this frame: {}",
                     serde_json::to_string(&frame.path_events)
                         .expect("serialize Original path-event diagnostics")
                 );
-                // TODO(schema-9 path parity): compare these with an ordered
-                // Rust path request/completion event stream once the engine
-                // exposes one. Engine state alone cannot recover queued and
-                // completed call boundaries without changing the engine.
+                eprintln!(
+                    "  Rust path events this frame: {}",
+                    serde_json::to_string(&actual_path_events)
+                        .expect("serialize Rust path-event diagnostics")
+                );
             }
             if automatic_dump_enabled {
                 write_automatic_rolling_dump(
@@ -2694,6 +2713,7 @@ fn write_engine_dump_frame(
     expected_rng_end: usize,
     actual_rng_end: usize,
     rust_rng_sites: &[robin_engine::sim_rng::RngSite],
+    rust_path_events: &[robin_engine::pathfinder::ParityPathEvent],
     differences: &[String],
 ) {
     let diagnostic_engine = engine.diagnostic_snapshot_without_original_rng_replay();
@@ -2723,6 +2743,7 @@ fn write_engine_dump_frame(
         &frame.selected_pcs,
         &frame.rng_draws,
         &frame.path_events,
+        rust_path_events,
         resolved_commands,
         rng_start,
         expected_rng_end,
@@ -2743,7 +2764,8 @@ fn write_engine_dump_snapshot_frame(
     frame_after: u64,
     selected_pcs: &[TraceEntityId],
     rng_draws: &TraceRngBatch,
-    path_events: &[TracePathEvent],
+    original_path_events: &[TracePathEvent],
+    rust_path_events: &[robin_engine::pathfinder::ParityPathEvent],
     resolved_commands: serde_json::Value,
     rng_start: usize,
     expected_rng_end: usize,
@@ -2793,7 +2815,8 @@ fn write_engine_dump_snapshot_frame(
             "resolved_commands": resolved_commands,
             "selected_pcs": selected_pcs,
         },
-        "original_path_events": path_events,
+        "original_path_events": original_path_events,
+        "rust_path_events": rust_path_events,
         "rng": {
             "cursor_before": rng_start,
             "expected_cursor_after": expected_rng_end,
@@ -2887,7 +2910,8 @@ fn write_automatic_rolling_dump(
             frame.frame_after,
             &frame.selected_pcs,
             &frame.rng_draws,
-            &frame.path_events,
+            &frame.original_path_events,
+            &frame.rust_path_events,
             frame.resolved_commands.clone(),
             frame.rng_start,
             frame.expected_rng_end,
@@ -4125,6 +4149,219 @@ fn compare_visibility_queries(
     differences
 }
 
+struct TracePathRequestRef<'a> {
+    actor: TraceEntityId,
+    antagonist: Option<TraceEntityId>,
+    layer: u16,
+    area: u16,
+    source: &'a TracePoint,
+    goal: &'a TracePoint,
+    half_diagonal_index: u16,
+    half_diagonal: &'a TracePoint,
+    animation: u32,
+    reverse: bool,
+    speed: u8,
+    tolerance: &'a TraceFloat,
+    use_first_point: bool,
+}
+
+impl TracePathEvent {
+    fn request(&self) -> TracePathRequestRef<'_> {
+        match self {
+            TracePathEvent::Queued {
+                actor,
+                antagonist,
+                layer,
+                area,
+                source,
+                goal,
+                half_diagonal_index,
+                half_diagonal,
+                animation,
+                reverse,
+                speed,
+                tolerance,
+                use_first_point,
+            }
+            | TracePathEvent::Completed {
+                actor,
+                antagonist,
+                layer,
+                area,
+                source,
+                goal,
+                half_diagonal_index,
+                half_diagonal,
+                animation,
+                reverse,
+                speed,
+                tolerance,
+                use_first_point,
+                ..
+            } => TracePathRequestRef {
+                actor: *actor,
+                antagonist: *antagonist,
+                layer: *layer,
+                area: *area,
+                source,
+                goal,
+                half_diagonal_index: *half_diagonal_index,
+                half_diagonal,
+                animation: *animation,
+                reverse: *reverse,
+                speed: *speed,
+                tolerance,
+                use_first_point: *use_first_point,
+            },
+        }
+    }
+}
+
+fn compare_path_events(
+    expected: &[TracePathEvent],
+    actual: &[robin_engine::pathfinder::ParityPathEvent],
+    entity_map: &EntityMap,
+) -> Vec<String> {
+    use robin_engine::pathfinder::ParityPathEvent;
+
+    let mut differences = Vec::new();
+    if expected.len() != actual.len() {
+        differences.push(format!(
+            "frame.path_events.length: original={} rust={}",
+            expected.len(),
+            actual.len()
+        ));
+    }
+    for (index, (expected, actual)) in expected.iter().zip(actual).enumerate() {
+        let expected_phase = match expected {
+            TracePathEvent::Queued { .. } => "queued",
+            TracePathEvent::Completed { .. } => "completed",
+        };
+        let (actual_phase, actual_request) = match actual {
+            ParityPathEvent::Queued(request) => ("queued", request),
+            ParityPathEvent::Completed { request, .. } => ("completed", request),
+        };
+        if expected_phase != actual_phase {
+            differences.push(format!(
+                "frame.path_events[{index}].phase: original={expected_phase} rust={actual_phase}"
+            ));
+        }
+
+        let expected_request = expected.request();
+        let prefix = format!("frame.path_events[{index}]");
+        macro_rules! compare_path_field {
+            ($field:expr, $expected:expr, $actual:expr) => {
+                if $expected != $actual {
+                    differences.push(format!(
+                        "{}.{field}: original={:?} rust={:?}",
+                        prefix,
+                        $expected,
+                        $actual,
+                        field = $field
+                    ));
+                }
+            };
+        }
+        compare_path_field!(
+            "actor",
+            entity_map.translate(expected_request.actor),
+            actual_request.actor
+        );
+        compare_path_field!(
+            "antagonist",
+            expected_request
+                .antagonist
+                .map(|entity| entity_map.translate(entity)),
+            actual_request.antagonist
+        );
+        compare_path_field!("layer", expected_request.layer, actual_request.layer);
+        compare_path_field!("area", expected_request.area, actual_request.area);
+        compare_path_field!(
+            "source.bits",
+            [
+                expected_request.source.x.bits,
+                expected_request.source.y.bits
+            ],
+            [
+                actual_request.source.x.to_bits(),
+                actual_request.source.y.to_bits()
+            ]
+        );
+        compare_path_field!(
+            "goal.bits",
+            [expected_request.goal.x.bits, expected_request.goal.y.bits],
+            [
+                actual_request.goal.x.to_bits(),
+                actual_request.goal.y.to_bits()
+            ]
+        );
+        compare_path_field!(
+            "half_diagonal_index",
+            expected_request.half_diagonal_index,
+            actual_request.half_diagonal_index
+        );
+        compare_path_field!(
+            "half_diagonal.bits",
+            [
+                expected_request.half_diagonal.x.bits,
+                expected_request.half_diagonal.y.bits
+            ],
+            [
+                actual_request.half_diagonal.x.to_bits(),
+                actual_request.half_diagonal.y.to_bits()
+            ]
+        );
+        compare_path_field!(
+            "animation",
+            expected_request.animation,
+            actual_request.animation
+        );
+        compare_path_field!("reverse", expected_request.reverse, actual_request.reverse);
+        compare_path_field!("speed", expected_request.speed, actual_request.speed);
+        compare_path_field!(
+            "tolerance.bits",
+            expected_request.tolerance.bits,
+            actual_request.tolerance.to_bits()
+        );
+        compare_path_field!(
+            "use_first_point",
+            expected_request.use_first_point,
+            actual_request.use_first_point
+        );
+
+        if let (
+            TracePathEvent::Completed {
+                valid: expected_valid,
+                waypoints: expected_waypoints,
+                ..
+            },
+            ParityPathEvent::Completed {
+                valid: actual_valid,
+                waypoints: actual_waypoints,
+                ..
+            },
+        ) = (expected, actual)
+        {
+            compare_path_field!("valid", *expected_valid, *actual_valid);
+            compare_path_field!(
+                "waypoints.length",
+                expected_waypoints.len(),
+                actual_waypoints.len()
+            );
+            for (waypoint, (expected, actual)) in
+                expected_waypoints.iter().zip(actual_waypoints).enumerate()
+            {
+                compare_path_field!(
+                    &format!("waypoints[{waypoint}].bits"),
+                    [expected.x.bits, expected.y.bits],
+                    [actual.x.to_bits(), actual.y.to_bits()]
+                );
+            }
+        }
+    }
+    differences
+}
+
 fn compare_frame(
     engine: &Engine,
     assets: &LevelAssets,
@@ -5250,6 +5487,79 @@ mod tests {
             }
             TracePathEvent::Queued { .. } => panic!("completed event parsed as queued"),
         }
+    }
+
+    #[test]
+    fn path_events_compare_ordered_request_bits_and_cancelled_validity() {
+        let expected: TracePathEvent = serde_json::from_value(serde_json::json!({
+            "phase": "completed",
+            "actor": {"kind": "soldier", "index": 3},
+            "antagonist": null,
+            "layer": 2,
+            "area": 17,
+            "source": {"x": {"bits": 1065353216}, "y": {"bits": 1073741824}},
+            "goal": {"x": {"bits": 1077936128}, "y": {"bits": 1082130432}},
+            "half_diagonal_index": 1,
+            "half_diagonal": {
+                "x": {"bits": 1056964608},
+                "y": {"bits": 1056964608}
+            },
+            "animation": 42,
+            "reverse": false,
+            "speed": 3,
+            "tolerance": {"bits": 1092616192},
+            "use_first_point": true,
+            "valid": false,
+            "waypoints": [
+                {"x": {"bits": 1077936128}, "y": {"bits": 1082130432}}
+            ]
+        }))
+        .expect("parse completed path event");
+        let original_actor = TraceEntityId {
+            kind: TraceEntityKind::Soldier,
+            index: 3,
+        };
+        let rust_actor = EntityId::Soldier(robin_engine::entity_id::SoldierId(30));
+        let map = EntityMap {
+            entities: BTreeMap::from([(original_actor, rust_actor)]),
+            entities_by_creation_order: BTreeMap::new(),
+            sectors: BTreeMap::new(),
+        };
+        let request = robin_engine::pathfinder::ParityPathRequest {
+            actor: rust_actor,
+            antagonist: None,
+            layer: 2,
+            area: 17,
+            source: MapPoint::new(f32::from_bits(1065353216), f32::from_bits(1073741824)),
+            goal: MapPoint::new(f32::from_bits(1077936128), f32::from_bits(1082130432)),
+            half_diagonal_index: 1,
+            half_diagonal: robin_engine::coordinates::MoveBoxHalfDiagonal::new(0.5, 0.5),
+            animation: 42,
+            reverse: false,
+            speed: 3,
+            tolerance: 10.0,
+            use_first_point: true,
+        };
+        let actual = robin_engine::pathfinder::ParityPathEvent::Completed {
+            request: request.clone(),
+            valid: false,
+            waypoints: vec![request.goal],
+        };
+        assert!(compare_path_events(&[expected.clone()], &[actual.clone()], &map).is_empty());
+
+        let mismatched = robin_engine::pathfinder::ParityPathEvent::Completed {
+            request,
+            valid: true,
+            waypoints: match actual {
+                robin_engine::pathfinder::ParityPathEvent::Completed { waypoints, .. } => waypoints,
+                _ => unreachable!(),
+            },
+        };
+        assert!(
+            compare_path_events(&[expected], &[mismatched], &map)
+                .iter()
+                .any(|difference| difference.contains(".valid:"))
+        );
     }
 
     #[test]

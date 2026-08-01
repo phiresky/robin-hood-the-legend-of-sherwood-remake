@@ -622,7 +622,7 @@ initial entity mapping and are not parity oracles.
 | Done | Global cross-layer fighter overview | Original `FillListWithAllNearFighters` scans the engine-wide camp fighter arrays, applies stretched-Y max-norm distance and `IsAbleToFight`, and has no logical-layer test. Friendly additions require active swordfight because self is inserted first; enemy additions do not. Rust rebuilt queued-Think tactical data from a stale detection list in one path and discarded every cross-layer fighter in the live path, hiding PC 126 from `ArcherIsToNearToEnemy`. | Both tactical snapshot paths now follow the global registry semantics without a layer gate, retain the Original friendly-swordfight condition, and rebuild hostile PCs independently of the prior Them list. Required primary targets missing from the resulting fighter view panic instead of silently selecting another tactic. Replay advances through frame 2,306. |
 | Done | Pre-door lift animation translation | PC 126 exited a stair lift at frame 2,307. Original calls `DetermineMovementAnimation` while the actor is still in the lift sector, rewrites the PassDoor element from `WalkingUpright` to `WalkingStairs`, and therefore keeps the stair row and its authored distances across both door segments. Rust selected the action from actor state alone, switched to upright walking outside, and moved exactly 80% as far. | Lift animation translation is now shared by ordinary movement and PassDoor construction, samples the actor's pre-callback current sector, preserves fast movement, and writes the translated action back through the linked movement element before installing orders. The later forced-crouch rewrite remains authoritative. Replay advances through frame 2,311. |
 | Done | Compound seek timer ownership | The entity-target seek armed its 25-tick refresh countdown before constructing a multi-element route. It aged to 16, remained frozen during PassDoor, and Original resumed the concrete `MOVE | SEEK` leg by decrementing 16 to 15 at frame 2,312. Rust generically rearmed every concrete child at path completion and exposed 24. | The outer `SEEK` translation now owns the initial target snapshot/countdown, explicit `RefreshSeek` owns every resample/rearm, and generated `MOVE | SEEK` children preserve both across door and path boundaries. This also prevents a later compound leg from silently shifting the target-movement reference point. Replay advances through frame 2,317. |
-| Implemented; capture required | Generic motion-grid and path-request oracle | Schema 8 showed different retreat routing but did not expose the exact request accepted by the Original or the live obstacle-line set. Static source/data analysis showed no difference for the request reconstructed from Rust, making a gameplay change unjustified. | Original schema 9 records every oriented motion line and initial active state, sparse activation changes, and ordered queued/completed path requests with all behavior-relevant inputs and output waypoints (`a33e7de2`). The Rust runner maps line identity isomorphically by geometry plus repulsive behavior, compares live activation every frame, requires schema 9, and includes Original path events in automatic surrounding-frame dumps (`88872ec42`). |
+| Done | Generic motion-grid and path-request oracle | Schema 8 showed different retreat routing but did not expose the exact request accepted by the Original or the live obstacle-line set. Static source/data analysis showed no difference for the request reconstructed from Rust, making a gameplay change unjustified. | Original schema 9 records every oriented motion line and initial active state, sparse activation changes, and ordered queued/completed path requests with all behavior-relevant inputs and output waypoints (`a33e7de2`). Rust maps line identity isomorphically, compares live activation, and now emits and exactly compares its own ordered path stream. Capture spans PostInitialize/input/sound as well as the simulation tick; dumps retain both streams. Cancelled heads remain queued until an explicit `valid=false` completion, and pending MakeFast/Slow/Upright/Crouched rewrites mutate the request like Original. |
 | Done | Source-adapted zero-gate routes | A cross-sector route may become topologically local after PassDoor source adaptation: the actor's live door state can already represent the requested source sector, leaving no gate shots but still requiring the final movement order. Rust treated an empty gate list as route failure and discarded that trailing move. | Door-route construction distinguishes a valid zero-gate route from an unreachable route and always emits its final direct movement. The rule follows the effective adapted source/goal topology and contains no replay or entity identity exception. |
 | Done | Started PassDoor replacement and cascade | Original's live pre-priority guard rejects a new `Move` while the current `PassDoor` has started, while an executing-but-not-started PassDoor postpones it. Ordinary `InterruptCurrent` state changes use the no-argument `SetState` default, `CASCADE_NEXT_LEVEL`; omitting that cascade changed which linked elements survived. | Priority resolution now implements the live started/executing distinction and ordinary interruption cascades to the next level. Focused tests cover both started rejection and executing postponement. |
 | Done | Transition boundary crossing | Transition-animation movement crosses elevation, patch, and sound lines through the same actor Hourglass crossing check as ordinary movement. The crossing uses the final post-arrival position; a transition step which overshoots and snaps must not report a boundary crossed only by the discarded overshoot. | Transition displacement now feeds the general elevation/patch/sound crossing dispatcher after arrival correction, using the same eligibility and final-position rules as ordinary actor motion. |
@@ -4339,12 +4339,36 @@ game logic. Exact ordered endpoints plus the result are the authoritative
 contract. The derived native trace cache is v10, and focused tests cover both
 complete JSON ingestion and ordered opaque-only capture.
 
-`path_events` are already fully typed and retained in surrounding-frame dumps,
-but Rust does not yet emit its own queued/completed event stream for equality
-comparison. That requires instrumentation at `PendingPathRequest` enqueue and
-synchronous completion while preserving the existing queue owner's in-flight
-work. It remains an explicit validator gap rather than being silently claimed
-as covered.
+### Ordered path requests are replay outputs
+
+Schema 12's `path_events` are now checked as an exact ordered output stream.
+Rust snapshots every accepted A* request immediately after extraction and
+queue insertion, and snapshots the raw A* result when the single-result
+`ProcessPathRequests` barrier delivers it. Actor and antagonist references are
+translated through the entity isomorphism; all numeric request fields,
+half-diagonal geometry, validity, and raw waypoint bits compare exactly.
+
+Capture stays active across the complete interval between recorded frame
+writes. This is intentionally broader than tick-only visibility capture:
+mission `PostInitialize`, sound callbacks, and resolved player commands can
+synchronously launch movement before the next engine hourglass. Automatic and
+manual dumps contain both `original_path_events` and `rust_path_events`.
+
+Original cancellation does not delete a matching queue head. It sets
+`mbIgnoreNextPath`, delivers the computed head with `valid=false`, and lets that
+stale result consume the call's one completion slot. Rust now retains and
+records the same invalid delivery rather than inferring cancellation from a
+missing movement element. Empty-path A* failures remain distinct: they are
+valid deliveries with zero waypoints and enter the 100-frame failed-request
+list.
+
+The audit also found that pending requests are mutable. Original
+`RHPathFinder::MakeFast`, `MakeSlow`, `MakeUpright`, and `MakeCrouched` rewrite
+the first matching request's animation and pathfinder index without
+post-processing its freezing order. Rust now applies those request-side
+rewrites and defers path post-processing until the result is delivered. Thus a
+queued and completed event for one request may legitimately differ, and the
+comparator checks each snapshot independently.
 
 ### Cached campaign PC sprites include alternate profiles
 

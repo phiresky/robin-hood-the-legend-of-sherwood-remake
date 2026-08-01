@@ -905,6 +905,35 @@ pub(crate) struct PendingPathRequest {
     pub(crate) is_fast: bool,
 }
 
+fn parity_path_request_state(
+    fast_grid: &crate::fast_find_grid::FastFindGrid,
+    request: &PendingPathRequest,
+) -> crate::pathfinder::ParityPathRequest {
+    let half_diagonal = fast_grid
+        .try_move_box_half_diagonal(usize::from(request.half_diagonal_idx))
+        .unwrap_or_else(|| {
+            panic!(
+                "path request for {:?} references missing half-diagonal index {}",
+                request.owner, request.half_diagonal_idx
+            )
+        });
+    crate::pathfinder::ParityPathRequest {
+        actor: request.owner,
+        antagonist: request.antagonist,
+        layer: request.layer,
+        area: request.sector,
+        source: request.source,
+        goal: request.dest,
+        half_diagonal_index: request.half_diagonal_idx,
+        half_diagonal,
+        animation: request.move_action as u32,
+        reverse: request.reverse,
+        speed: request.speed as u8,
+        tolerance: request.tolerance,
+        use_first_point: request.use_first_point,
+    }
+}
+
 #[derive(
     Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
@@ -926,6 +955,11 @@ struct ProcessedPathRequest {
 pub(crate) struct PendingPathRequestQueue {
     waiting: Vec<PendingPathRequest>,
     in_flight: Option<ProcessedPathRequest>,
+    /// Original `RHPathFinder::mbIgnoreNextPath`. Cancelling the logical list
+    /// head does not remove it; its eventual result remains observable but is
+    /// delivered with `valid=false` and consumes the call's one result slot.
+    #[serde(default)]
+    ignore_next_path: bool,
 }
 
 impl PendingPathRequestQueue {
@@ -936,6 +970,7 @@ impl PendingPathRequestQueue {
         Self {
             waiting,
             in_flight: None,
+            ignore_next_path: false,
         }
     }
 
@@ -970,8 +1005,10 @@ impl PendingPathRequestQueue {
         }
     }
 
-    fn take_completed(&mut self) -> Option<ProcessedPathRequest> {
-        self.in_flight.take()
+    fn take_completed(&mut self) -> Option<(ProcessedPathRequest, bool)> {
+        let processed = self.in_flight.take()?;
+        let valid = !std::mem::take(&mut self.ignore_next_path);
+        Some((processed, valid))
     }
 
     fn pop_to_start(&mut self) -> Option<PendingPathRequest> {
@@ -984,6 +1021,13 @@ impl PendingPathRequestQueue {
     }
 
     pub(super) fn retain_not_owned_by(&mut self, owner: EntityId) {
+        let removed_ignored_head = self.ignore_next_path
+            && self
+                .in_flight
+                .as_ref()
+                .map(|processed| processed.request.owner)
+                .or_else(|| self.waiting.first().map(|request| request.owner))
+                == Some(owner);
         self.waiting.retain(|request| request.owner != owner);
         if self
             .in_flight
@@ -992,6 +1036,9 @@ impl PendingPathRequestQueue {
         {
             self.in_flight = None;
         }
+        if removed_ignored_head {
+            self.ignore_next_path = false;
+        }
     }
 
     /// Mirror `RHPathFinder::CancelPathRequest`: cancelling the list head
@@ -999,23 +1046,171 @@ impl PendingPathRequestQueue {
     /// requests for the same actor are deleted immediately. The retained head
     /// still occupies one `ProcessPathRequests` result slot.
     pub(super) fn cancel_for_owner(&mut self, owner: EntityId) {
-        if self.in_flight.is_some() {
-            self.waiting.retain(|request| request.owner != owner);
+        let head_owner = self
+            .in_flight
+            .as_ref()
+            .map(|processed| processed.request.owner)
+            .or_else(|| self.waiting.first().map(|request| request.owner));
+        if head_owner == Some(owner) {
+            self.ignore_next_path = true;
+        }
+
+        // The Original scans from logical list index 1 and deletes only the
+        // first later request for this actor. With an in-flight head every
+        // waiting entry starts at logical index 1; otherwise waiting[0] is the
+        // retained head.
+        let first_waiting = usize::from(self.in_flight.is_none());
+        if let Some(relative) = self
+            .waiting
+            .get(first_waiting..)
+            .and_then(|waiting| waiting.iter().position(|request| request.owner == owner))
+        {
+            self.waiting.remove(first_waiting + relative);
+        }
+    }
+
+    fn first_for_owner_mut(&mut self, owner: EntityId) -> Option<&mut PendingPathRequest> {
+        if self
+            .in_flight
+            .as_ref()
+            .is_some_and(|processed| processed.request.owner == owner)
+        {
+            return self
+                .in_flight
+                .as_mut()
+                .map(|processed| &mut processed.request);
+        }
+        self.waiting
+            .iter_mut()
+            .find(|request| request.owner == owner)
+    }
+
+    /// Mirror `RHPathFinder::MakeFast` on the first request for this actor.
+    pub(super) fn make_fast(&mut self, owner: EntityId, pathfinder_index: u16) {
+        let Some(request) = self.first_for_owner_mut(owner) else {
             return;
-        }
-        let mut index = 1;
-        while index < self.waiting.len() {
-            if self.waiting[index].owner == owner {
-                self.waiting.remove(index);
-            } else {
-                index += 1;
+        };
+        request.move_action = match request.move_action {
+            OrderType::RunningWithSword
+            | OrderType::RunningUpright
+            | OrderType::ClimbingLadderUpFast
+            | OrderType::ClimbingLadderDownFast
+            | OrderType::ClimbingWallUpFast
+            | OrderType::ClimbingWallDownFast => request.move_action,
+            OrderType::WalkingUpright
+            | OrderType::WalkingCrouched
+            | OrderType::WalkingWithShield => {
+                request.half_diagonal_idx = pathfinder_index;
+                OrderType::RunningUpright
             }
-        }
+            OrderType::WalkingWithSword => {
+                request.half_diagonal_idx = pathfinder_index;
+                OrderType::RunningWithSword
+            }
+            OrderType::ClimbingLadderUp => {
+                request.half_diagonal_idx = pathfinder_index;
+                OrderType::ClimbingLadderUpFast
+            }
+            OrderType::ClimbingLadderDown => {
+                request.half_diagonal_idx = pathfinder_index;
+                OrderType::ClimbingLadderDownFast
+            }
+            OrderType::ClimbingWallUp => {
+                request.half_diagonal_idx = pathfinder_index;
+                OrderType::ClimbingWallUpFast
+            }
+            OrderType::ClimbingWallDown => {
+                request.half_diagonal_idx = pathfinder_index;
+                OrderType::ClimbingWallDownFast
+            }
+            action => panic!(
+                "RHPathFinder::MakeFast received unsupported pending action {action:?} for {owner:?}"
+            ),
+        };
+    }
+
+    /// Mirror `RHPathFinder::MakeSlow` on the first request for this actor.
+    pub(super) fn make_slow(&mut self, owner: EntityId, pathfinder_index: u16) {
+        let Some(request) = self.first_for_owner_mut(owner) else {
+            return;
+        };
+        request.move_action = match request.move_action {
+            OrderType::WalkingUpright
+            | OrderType::WalkingCrouched
+            | OrderType::ClimbingLadderUp
+            | OrderType::ClimbingLadderDown
+            | OrderType::ClimbingWallUp
+            | OrderType::ClimbingWallDown => request.move_action,
+            OrderType::RunningUpright => OrderType::WalkingUpright,
+            OrderType::RunningWithSword => OrderType::WalkingWithSword,
+            OrderType::ClimbingLadderUpFast => {
+                request.half_diagonal_idx = pathfinder_index;
+                OrderType::ClimbingLadderUp
+            }
+            OrderType::ClimbingLadderDownFast => {
+                request.half_diagonal_idx = pathfinder_index;
+                OrderType::ClimbingLadderDown
+            }
+            OrderType::ClimbingWallUpFast => {
+                request.half_diagonal_idx = pathfinder_index;
+                OrderType::ClimbingWallUp
+            }
+            OrderType::ClimbingWallDownFast => {
+                request.half_diagonal_idx = pathfinder_index;
+                OrderType::ClimbingWallDown
+            }
+            action => panic!(
+                "RHPathFinder::MakeSlow received unsupported pending action {action:?} for {owner:?}"
+            ),
+        };
+    }
+
+    /// Mirror `RHPathFinder::MakeUpright` on the first request for this actor.
+    pub(super) fn make_upright(&mut self, owner: EntityId, pathfinder_index: u16) {
+        let Some(request) = self.first_for_owner_mut(owner) else {
+            return;
+        };
+        request.move_action = match request.move_action {
+            OrderType::WalkingUpright
+            | OrderType::RunningUpright
+            | OrderType::ClimbingLadderUp
+            | OrderType::ClimbingLadderDown
+            | OrderType::ClimbingWallUp
+            | OrderType::ClimbingWallDown
+            | OrderType::ClimbingLadderUpFast
+            | OrderType::ClimbingLadderDownFast
+            | OrderType::ClimbingWallUpFast
+            | OrderType::ClimbingWallDownFast => request.move_action,
+            OrderType::WalkingCrouched => {
+                request.half_diagonal_idx = pathfinder_index;
+                OrderType::WalkingUpright
+            }
+            action => panic!(
+                "RHPathFinder::MakeUpright received unsupported pending action {action:?} for {owner:?}"
+            ),
+        };
+    }
+
+    /// Mirror `RHPathFinder::MakeCrouched` on the first request for this actor.
+    pub(super) fn make_crouched(&mut self, owner: EntityId, pathfinder_index: u16) {
+        let Some(request) = self.first_for_owner_mut(owner) else {
+            return;
+        };
+        request.move_action = match request.move_action {
+            OrderType::WalkingUpright | OrderType::RunningUpright => {
+                request.half_diagonal_idx = pathfinder_index;
+                OrderType::WalkingCrouched
+            }
+            action => panic!(
+                "RHPathFinder::MakeCrouched received unsupported pending action {action:?} for {owner:?}"
+            ),
+        };
     }
 
     pub(super) fn clear(&mut self) {
         self.waiting.clear();
         self.in_flight = None;
+        self.ignore_next_path = false;
     }
 }
 
@@ -1062,8 +1257,23 @@ impl<'a> MovementContext<'a> {
     /// Stale results are discarded exactly where the old root helper discarded
     /// them; no later request is completed at this barrier.
     pub(super) fn take_completed(&mut self) -> Option<CompletedPathWork> {
-        let processed = self.orders.pending_path_requests.take_completed()?;
+        let (processed, valid) = self.orders.pending_path_requests.take_completed()?;
         let request = processed.request;
+        if crate::pathfinder::parity_path_capture_is_active() {
+            crate::pathfinder::record_parity_path_event(
+                crate::pathfinder::ParityPathEvent::Completed {
+                    request: parity_path_request_state(&self.world.fast_grid, &request),
+                    valid,
+                    // Original records the raw path even when cancellation
+                    // makes the delivery invalid. A failed A* request has an
+                    // empty raw path but remains a valid delivery.
+                    waypoints: processed.waypoints.clone().unwrap_or_default(),
+                },
+            );
+        }
+        if !valid {
+            return None;
+        }
         let still_live = self
             .orders
             .sequence_manager
@@ -10359,7 +10569,14 @@ impl EngineInner {
                 // longer selected.
                 entity.position_iface_mut().set_map_goal(goal);
             }
+            let parity_request = crate::pathfinder::parity_path_capture_is_active()
+                .then(|| parity_path_request_state(&self.world.fast_grid, &request));
             self.orders.pending_path_requests.enqueue(request);
+            if let Some(request) = parity_request {
+                crate::pathfinder::record_parity_path_event(
+                    crate::pathfinder::ParityPathEvent::Queued(request),
+                );
+            }
             return MovePathOutcome::Pending;
         }
 
@@ -10933,9 +11150,10 @@ mod path_request_timing_tests {
     }
 
     fn advance_fake_frame(queue: &mut PendingPathRequestQueue) -> Option<EntityId> {
-        let completed = queue
-            .take_completed()
-            .map(|processed| processed.request.owner);
+        let completed = queue.take_completed().map(|(processed, valid)| {
+            assert!(valid, "ordinary fake-frame request became ignored");
+            processed.request.owner
+        });
         if let Some(request) = queue.pop_to_start() {
             queue.set_in_flight(request, Some(Vec::new()));
         }
@@ -10991,6 +11209,52 @@ mod path_request_timing_tests {
             vec![(2, pc_1), (3, npc_1), (4, pc_2), (5, npc_2)]
         );
         assert_eq!(advance_fake_frame(&mut queue), None, "frame 6 is empty");
+    }
+
+    #[test]
+    fn cancelled_head_is_delivered_invalid_and_occupies_its_result_slot() {
+        let cancelled = EntityId::Pc(PcId(3));
+        let successor = EntityId::Soldier(SoldierId(4));
+        let mut queue = PendingPathRequestQueue::default();
+        queue.enqueue(request(cancelled, crate::pathfinder::PathFinderSpeed::Fast));
+        queue.enqueue(request(
+            successor,
+            crate::pathfinder::PathFinderSpeed::Medium,
+        ));
+        let first = queue.pop_to_start().expect("cancelled head starts");
+        queue.set_in_flight(first, Some(vec![MapPoint::new(20.0, 20.0)]));
+
+        queue.cancel_for_owner(cancelled);
+        let (completed, valid) = queue
+            .take_completed()
+            .expect("cancelled head still completes");
+        assert_eq!(completed.request.owner, cancelled);
+        assert!(!valid);
+
+        let next = queue.pop_to_start().expect("successor remains queued");
+        assert_eq!(next.owner, successor);
+    }
+
+    #[test]
+    fn pending_make_rewrites_first_request_like_original_pathfinder() {
+        let owner = EntityId::Pc(PcId(3));
+        let mut queue = PendingPathRequestQueue::default();
+        queue.enqueue(request(owner, crate::pathfinder::PathFinderSpeed::Fast));
+
+        queue.make_fast(owner, 7);
+        assert_eq!(queue.waiting[0].move_action, OrderType::RunningUpright);
+        assert_eq!(queue.waiting[0].half_diagonal_idx, 7);
+
+        queue.make_slow(owner, 7);
+        assert_eq!(queue.waiting[0].move_action, OrderType::WalkingUpright);
+
+        queue.make_crouched(owner, 9);
+        assert_eq!(queue.waiting[0].move_action, OrderType::WalkingCrouched);
+        assert_eq!(queue.waiting[0].half_diagonal_idx, 9);
+
+        queue.make_upright(owner, 7);
+        assert_eq!(queue.waiting[0].move_action, OrderType::WalkingUpright);
+        assert_eq!(queue.waiting[0].half_diagonal_idx, 7);
     }
 
     #[test]
