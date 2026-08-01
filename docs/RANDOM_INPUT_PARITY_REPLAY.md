@@ -452,9 +452,9 @@ not the current engine's expected failure count.
 | R01 | Fix landed; rerun required | PC `actor.action_state`, commonly Original idle versus Rust `WalkingUpright` while both retain `MoveOk` | `516728654` preserves Waiting when an entity-target `PerformSeek` remains visibly in progress. All four assigned boundaries clear; one trace is exact and three reach independent later failures. The remaining 53 baseline entries require failure-only reruns before this group can be split or closed. |
 | R02 | Fix landed; cohort rerun required | `direction_goal`, frequently at frame 516 | `7db74f013` makes shared AI and owner-ordered `RefreshPatrol` snapshots expose an active PassDoor member at its committed gate side, and commits the exact endpoint before later owner slots can observe it. Linux2 Profile 002 Savegame 002 is exact through frame 726. The remaining baseline members require current failure-only reruns before this whole group can be attributed to that cause. |
 | R03 | Listen fix landed; timer rerun required | `actor.wait_time`, alone or beside action state | Original uses the single serialized `mulWaitTime` for Whistle and Listen. Rust now synchronizes its phase-local mirrors and, while Listening, ignores sprite completion until that counter reaches zero. The prior sweep's three unchanged timer pairs (`2 -> 14`, stale `25 -> 4294967269`, and `24 -> 25`) still require current-fix reruns; do not normalize any timer in the comparator. |
-| R04 | Audited; current cohort rerun required | `position_goal_map` | The fresh 700-trace frozen baseline contains nine strict first-field members. They split into two replacement-preserve boundaries, three stop-clear boundaries, three unresolved `MoveOk` waypoint/order-destination differences, and one direct attentive-transition initialization boundary. `7910b1c7d` likely covers replacement preservation, while later identity-aware condolence and direct-transition work may cover the clear/attentive members; none may be called closed until all nine are rerun on one current frozen release runner. The waypoint geometry remains unresolved. |
+| R04 | Audited; partial current validation | `position_goal_map` | The fresh 700-trace frozen baseline contains nine strict first-field members. The apparent three-way `MoveOk` group has separate producers. `fff5ecdcc` fixes Original's literal 40-unit `SwordstrikeDown` seek and its exact Savegame 007 frame-3056 boundary now clears, advancing to an independent Soldier 94 `ai.substate` mismatch at frame 3313. The remaining eight exact traces still require current validation or investigation. |
 | R05 | Unassigned | `actor.command` with posture/direction | Inspect wrapper versus concrete command lifetime and the action-change marker that commits posture. |
-| R06 | Audited; current cohort rerun required | `ai.substate` | The fresh 700-trace frozen baseline has ten strict first-field traces: two shadow-entry boundaries, four special-strike entry/exit boundaries, two shield-protection entries, and two heard-steps/group-ordering boundaries. Every divergent frame has no resolved command and an aligned simulation-RNG batch, so these are not input or RNG-cardinality failures. Later special-strike commits are likely relevant; shadow predetection/patrol dispatch, shield-entry predicates, and heard-steps delivery ordering remain unresolved. |
+| R06 | Audited; shield pair cleared | `ai.substate` | The fresh 700-trace frozen baseline has ten strict first-field traces. `34e4810d7` restores the live ordered `seen_last_frame` Enemy detectable projection for periodic `RefreshArrowProtection`; both shield-entry boundaries clear on the current release runner and advance to independent command mismatches. Shadow predetection/patrol dispatch, special-strike entry/exit, and heard-steps delivery ordering remain open. |
 | R07 | Unassigned | RNG cardinality/order | Treat the first missing or excess call as a downstream symptom until the responsible Original callsite and state gate are identified. Never consume a trace value merely to realign the stream. |
 | R08 | Unassigned | `position_map` | Requires exact movement increment, collision, transition, and command ownership comparison; no coordinate tolerance or replay-specific snap. |
 | R09 | Unassigned | Resolved speech has no pending Rust request | Separate genuinely absent gameplay `Say` calls from already-fixed synchronous speech boundaries before changing restoration or FIFO policy. |
@@ -615,6 +615,15 @@ These nine traces collapse into four source-backed families:
    This is an exact general source fix, pending a release-mode exact rerun to
    EOF (or its next independent boundary).
 
+   Current validation confirms the focused
+   `swordstrike_down_uses_original_literal_seek_distance` test passes and the
+   release comparator builds successfully. The exact Savegame 007 trace clears
+   its old frame-3056 `position_goal_map` boundary and advances to frame 3313,
+   where Soldier 94 has Original `ai.substate=1` versus Rust `2`. The old
+   SwordstrikeDown boundary is therefore closed; the trace remains open at that
+   independent frontier. The preserved log is
+   `output/parity-audits/r06-shield-swordstrike-current-head/linux3-profile003-save007-replay001.log`.
+
 4. **An attentive transition retains the completed movement goal (one
    trace).** Soldier 63 finishes `MoveOk` at exactly
    `(1183.040283, 743.690674)`, with both its current position and sprite goal
@@ -723,10 +732,24 @@ while investigating the following four behavior families:
    `StopAll`, raises the shield, and enters `AttackingProtectingWithShield`
    (`RHartificialmalignity.cpp:17057-17186`). Frozen Rust remains in
    `AttackingRunningToEnemy`. The difference must therefore precede the state
-   write: eligible-fighter snapshot contents, the seen-last-frame latch,
-   distance tests, friendly-archer count, or phalanx placement. Neither frame
-   contains the random ShieldAdvance draw. `5341bdb03` and later shield commits
-   are relevant but do not prove these exact members.
+   write. The exact missing input was the seen-last-frame latch: periodic
+   `The16thFrame` builds its context through
+   `build_npc_tick_data_without_forecasts`, whose generic tick-data builder
+   populated nearby fighters but left `seen_last_frame_enemies` empty. Both
+   frozen traces contain one ordered, latched, live bow threat beyond the
+   150-unit minimum. `34e4810d7` now projects the live Enemy detectable list in
+   Original order into every generic/off-detection tick context. The focused
+   `seen_last_frame_enemy_projection_preserves_detectable_order` test passes,
+   and the current release comparator builds successfully.
+
+   Both exact old boundaries clear on that runner. SuN1Sh1nE Profile 004
+   Savegame 001 replay 002 advances from frame 606 to frame 631, where PC 252's
+   command is Original `Wait` versus Rust `ShootBow`. Linux3 Profile 003
+   Savegame 054 replay 001 advances from frame 534 to frame 574, where Soldier
+   205's command is Original `LowerShield` versus Rust `Generic`. These are new
+   independent frontiers; neither trace is EOF-clean. Logs for both runs and
+   the companion SwordstrikeDown validation are preserved under
+   `output/parity-audits/r06-shield-swordstrike-current-head/`.
 
 4. **Heard-steps entry and synchronous group ordering (two traces, four state
    mismatches).** Both Savegame 018 recordings disagree for Soldiers 132 and
