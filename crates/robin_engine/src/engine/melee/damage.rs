@@ -1262,20 +1262,30 @@ impl EngineInner {
             // EVENT_QUIT_SWORDFIGHT callback still occurs (and is refused
             // while unconscious).
             self.quit_swordfight(sim, assets, victim_id);
-        } else if let Some(atk_id) = attacker_id {
+        } else {
             let still_conscious = self
                 .get_entity(victim_id)
                 .and_then(Entity::human_data)
                 .is_some_and(|human| !human.unconscious);
             if still_conscious {
+                // Original always notifies a conscious NPC of the hit. It
+                // attaches the hitter only when the origin is a human;
+                // missing and non-human origins use the context-free event.
+                let stimulus = match attacker_id.filter(|&id| {
+                    self.get_entity(id)
+                        .is_some_and(|attacker| attacker.kind().is_human())
+                }) {
+                    Some(atk_id) => crate::ai::Stimulus::with_human(
+                        crate::ai::StimulusType::EventGotHit,
+                        atk_id.index(),
+                    ),
+                    None => crate::ai::Stimulus::new(crate::ai::StimulusType::EventGotHit),
+                };
                 self.dispatch_synchronous_ai_think_preserving_detection_fifo(
                     sim,
                     victim_id,
                     assets,
-                    crate::ai::Stimulus::with_human(
-                        crate::ai::StimulusType::EventGotHit,
-                        atk_id.index(),
-                    ),
+                    stimulus,
                 );
             }
         }
