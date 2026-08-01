@@ -446,6 +446,9 @@ fn movement_execute_state_effect(
         (OT::TransitionCrouchingDown, MS::Done | MS::Terminated) => {
             Some((P::Crouched, AS::Waiting))
         }
+        (OT::TransitionWaitingCrouchedWalkingCrouched, MS::Done | MS::Terminated) => {
+            Some((P::Crouched, AS::Moving))
+        }
         (
             OT::TransitionWaitingUprightRunningUpright | OT::TransitionWalkingUprightRunningUpright,
             MS::Done | MS::Terminated,
@@ -464,6 +467,8 @@ fn movement_execute_state_effect(
         (OT::RunningUpright, MS::Start) => Some((P::Upright, AS::MovingFast)),
         (OT::WalkingWithSword, MS::Start) => Some((P::Upright, AS::MovingSword)),
         (OT::RunningWithSword, MS::Start) => Some((P::Upright, AS::MovingFastSword)),
+        (OT::WalkingWithCorpse, MS::Start) => Some((P::CarryingCorpse, AS::Moving)),
+        (OT::WalkingWithCorpse, MS::Terminated) => Some((P::CarryingCorpse, AS::Waiting)),
         (OT::ClimbingWallUp | OT::ClimbingWallDown, MS::Start) => Some((P::OnWall, AS::Moving)),
         (
             OT::TransitionWaitingUprightClimbingLadderUp
