@@ -2592,7 +2592,9 @@ impl EngineInner {
                 .is_some_and(|pc| pc.robin);
             if !pc_is_robin {
                 let speak = SequenceElement::new(1, Command::SpeakVipsAreForRobin, Some(pc_id));
-                self.launch_element(speak);
+                let mut sequence = Sequence::new();
+                sequence.append_element(speak);
+                self.launch_sequence(sequence);
                 return;
             }
         }
@@ -3027,7 +3029,9 @@ impl EngineInner {
         );
 
         if !same_sector {
-            self.launch_element(strike_elem);
+            let mut sequence = Sequence::new();
+            sequence.append_element(strike_elem);
+            self.launch_sequence(sequence);
             return;
         }
 
@@ -3045,7 +3049,9 @@ impl EngineInner {
                 ?strike_cmd,
                 "apply_sword_strike_with_seek: unsupported seek strike requested; launching direct strike"
             );
-            self.launch_element(strike_elem);
+            let mut sequence = Sequence::new();
+            sequence.append_element(strike_elem);
+            self.launch_sequence(sequence);
             return;
         };
 
@@ -3061,7 +3067,9 @@ impl EngineInner {
                 ?strike_cmd,
                 "apply_sword_strike_with_seek: actor has no hth weapon profile; launching direct strike"
             );
-            self.launch_element(strike_elem);
+            let mut sequence = Sequence::new();
+            sequence.append_element(strike_elem);
+            self.launch_sequence(sequence);
             return;
         };
 
