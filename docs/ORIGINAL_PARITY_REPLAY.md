@@ -4214,6 +4214,13 @@ round trips but gives it no invented runtime effect. This restores immediate
 replacement of a selected Hit by a new Hit/Seek and lets the replacement route
 consume its legitimate building-wait RNG draws in the recorded frame.
 
+The unreachable fallback was removed as well. Original's
+`RHSequence::SplitAndInsert` is an unfinished debug stub: it searches for the
+element, executes `assert(false)`, and leaves the proposed clone/truncate body
+commented out. Since `CanInterruptNow` cannot return false, neither that stub
+nor the alternate truncate-and-postpone branch can execute. Rust no longer
+maintains working gameplay semantics for either non-Original path.
+
 A clean baseline proves exact parity only for the state fields serialized by the
 recorder and the behaviors exercised by this session. When a divergence depends
 on unrecorded state, extend the neutral trace schema rather than guessing from a

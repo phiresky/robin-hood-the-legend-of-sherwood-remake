@@ -3745,86 +3745,6 @@ impl SequenceManager {
         true
     }
 
-    /// Keep only the current/front order on an element.
-    ///
-    /// Used by the Instruct arbitration path when a current element
-    /// cannot be interrupted immediately.  If the element has no
-    /// orders there is nothing useful to preserve, so leave it empty
-    /// and warn.
-    pub fn truncate_to_first_order(&mut self, seq_id: SequenceId, elem_idx: usize) {
-        let Some(elem) = self.get_element_mut(seq_id, elem_idx) else {
-            tracing::warn!(
-                ?seq_id,
-                elem_idx,
-                "truncate_to_first_order called for missing sequence element"
-            );
-            return;
-        };
-        if elem.orders.is_empty() {
-            tracing::warn!(
-                ?seq_id,
-                elem_idx,
-                "truncate_to_first_order called on element with no orders"
-            );
-            return;
-        }
-        elem.orders.truncate(1);
-        elem.num_transition_orders = elem.num_transition_orders.min(elem.orders.len());
-    }
-
-    /// Cross-sequence arbitration fallback:
-    ///
-    /// 1. current element keeps only its front order and continues;
-    /// 2. incoming foreign element runs after that front order;
-    /// 3. a cloned continuation of the current element runs after the
-    ///    foreign element.
-    ///
-    /// The intended chain is represented using `cross_postponed`.
-    pub fn split_and_insert(
-        &mut self,
-        own_seq: SequenceId,
-        own_idx: usize,
-        foreign_seq: SequenceId,
-        foreign_idx: usize,
-    ) {
-        let continuation_idx = {
-            let Some(seq) = self.sequences.get_mut(&own_seq) else {
-                tracing::warn!(
-                    ?own_seq,
-                    own_idx,
-                    "split_and_insert called for missing own sequence"
-                );
-                return;
-            };
-            let Some(own) = seq.elements.get(own_idx) else {
-                tracing::warn!(
-                    ?own_seq,
-                    own_idx,
-                    "split_and_insert called for missing own element"
-                );
-                return;
-            };
-            let mut continuation = own.clone();
-            continuation.state = SequenceState::Postponed;
-            continuation.postponed_element_index = None;
-            continuation.cross_postponed = None;
-            continuation.pop_current_order();
-            seq.elements.push(continuation);
-            seq.elements.len() - 1
-        };
-
-        self.truncate_to_first_order(own_seq, own_idx);
-
-        if let Some(own) = self.get_element_mut(own_seq, own_idx) {
-            own.cross_postponed = Some((foreign_seq, foreign_idx));
-        }
-        if let Some(foreign) = self.get_element_mut(foreign_seq, foreign_idx) {
-            foreign.cross_postponed = Some((own_seq, continuation_idx));
-            foreign.orders.clear();
-        }
-        self.postpone_element(foreign_seq, foreign_idx);
-    }
-
     /// Transfer a cross-sequence postponed successor from `src` onto
     /// `dst`, walking `dst`'s existing postponed chain to the tail if
     /// it already has one.
@@ -5634,63 +5554,6 @@ mod tests {
     }
 
     #[test]
-    fn split_and_insert_preserves_current_front_then_foreign_then_continuation() {
-        let mut mgr = SequenceManager::new();
-
-        let mut current = make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::Pc(crate::entity_id::PcId(0))),
-        );
-        current.priority = SequencePriority::Normal;
-        current
-            .orders
-            .push_back(Order::test_new(OrderType::WalkingUpright, 10.0, 0.0));
-        current
-            .orders
-            .push_back(Order::test_new(OrderType::WalkingUpright, 20.0, 0.0));
-        current.orders.front_mut().unwrap().lock_ai = true;
-        let current_seq = mgr.launch_element(current);
-        mgr.element_in_progress(current_seq, 0);
-
-        let mut foreign = make_simple_element(
-            1,
-            Command::Turn,
-            Some(EntityId::Pc(crate::entity_id::PcId(0))),
-        );
-        foreign.priority = SequencePriority::Preference;
-        let foreign_seq = mgr.launch_element(foreign);
-
-        assert!(
-            mgr.can_interrupt_now(current_seq, 0),
-            "legacy bLockAI is inert during CanInterruptNow"
-        );
-        mgr.split_and_insert(current_seq, 0, foreign_seq, 0);
-
-        let current = mgr.get_element(current_seq, 0).unwrap();
-        assert_eq!(current.orders.len(), 1);
-        assert_eq!(current.cross_postponed, Some((foreign_seq, 0)));
-
-        let foreign = mgr.get_element(foreign_seq, 0).unwrap();
-        assert_eq!(foreign.state, SequenceState::Postponed);
-        let continuation_ref = foreign
-            .cross_postponed
-            .expect("foreign should resume current continuation");
-        assert_eq!(continuation_ref.0, current_seq);
-
-        let continuation = mgr
-            .get_element(continuation_ref.0, continuation_ref.1)
-            .expect("continuation clone exists");
-        assert_eq!(continuation.state, SequenceState::Postponed);
-        assert_eq!(
-            continuation.orders.len(),
-            1,
-            "continuation resumes after the preserved front order"
-        );
-        assert_eq!(continuation.orders.front().unwrap().target_x, 20.0);
-    }
-
-    #[test]
     fn stop_owner_interrupts_actor_work_postponed_by_injury() {
         let mut mgr = SequenceManager::new();
         let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
@@ -5826,29 +5689,6 @@ mod tests {
             None
         );
         assert!(!mgr.queued_element_exists(owner, Command::ShootBow));
-    }
-
-    #[test]
-    fn truncate_to_first_order_discards_current_tail() {
-        let mut mgr = SequenceManager::new();
-        let mut elem = make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::Pc(crate::entity_id::PcId(0))),
-        );
-        elem.orders
-            .push_back(Order::test_new(OrderType::WalkingUpright, 10.0, 0.0));
-        elem.orders
-            .push_back(Order::test_new(OrderType::WalkingUpright, 20.0, 0.0));
-        elem.num_transition_orders = 2;
-        let seq_id = mgr.launch_element(elem);
-
-        mgr.truncate_to_first_order(seq_id, 0);
-
-        let elem = mgr.get_element(seq_id, 0).unwrap();
-        assert_eq!(elem.orders.len(), 1);
-        assert_eq!(elem.orders.front().unwrap().target_x, 10.0);
-        assert_eq!(elem.num_transition_orders, 1);
     }
 
     #[test]

@@ -2226,97 +2226,77 @@ impl EngineInner {
                 false
             }
             PriorityDecision::PostponeCurrent => {
-                if self
-                    .orders
-                    .sequence_manager
-                    .can_interrupt_now(cur_seq, cur_idx)
-                {
-                    // `current.Postpone(new)` — postpone current behind new.
-                    // Current is in-progress, so we first tear down its
-                    // active machinery before flipping it to Postponed.
-                    self.stop_owner_active_mechanics(owner);
-                    self.engine_postpone(new_seq, new_idx, cur_seq, cur_idx);
-                    true
-                } else {
-                    // Fallback: split-and-insert on the parent sequence.
-                    // Current's front order finishes first; the new
-                    // element runs next; a continuation of current is
-                    // resumed afterwards.
+                assert!(
                     self.orders
                         .sequence_manager
-                        .split_and_insert(cur_seq, cur_idx, new_seq, new_idx);
-                    false
-                }
+                        .can_interrupt_now(cur_seq, cur_idx),
+                    "Original CanInterruptNow is unconditional"
+                );
+                // `current.Postpone(new)` — postpone current behind new.
+                // Current is in-progress, so we first tear down its
+                // active machinery before flipping it to Postponed.
+                self.stop_owner_active_mechanics(owner);
+                self.engine_postpone(new_seq, new_idx, cur_seq, cur_idx);
+                true
             }
             PriorityDecision::InterruptCurrent => {
-                if self
-                    .orders
-                    .sequence_manager
-                    .can_interrupt_now(cur_seq, cur_idx)
+                assert!(
+                    self.orders
+                        .sequence_manager
+                        .can_interrupt_now(cur_seq, cur_idx),
+                    "Original CanInterruptNow is unconditional"
+                );
+                // In Original, Instruct installs the incoming Turn as
+                // `mpSequenceElement` before interrupting the outgoing
+                // movement. Its synchronous condolence therefore sees
+                // that it is no longer selected and leaves the sprite's
+                // movement goal intact. Rust clears active mechanics
+                // before the incoming element begins executing, so carry
+                // that selected-owner fact explicitly to the Turn.
+                if matches!(new_command, Command::Turn | Command::TurnFast)
+                    && self
+                        .orders
+                        .sequence_manager
+                        .get_element(cur_seq, cur_idx)
+                        .is_some_and(|element| element.data.is_movement())
                 {
-                    // In Original, Instruct installs the incoming Turn as
-                    // `mpSequenceElement` before interrupting the outgoing
-                    // movement. Its synchronous condolence therefore sees
-                    // that it is no longer selected and leaves the sprite's
-                    // movement goal intact. Rust clears active mechanics
-                    // before the incoming element begins executing, so carry
-                    // that selected-owner fact explicitly to the Turn.
-                    if matches!(new_command, Command::Turn | Command::TurnFast)
-                        && self
-                            .orders
+                    let retained_goal = self
+                        .world
+                        .entities
+                        .get(owner)
+                        .map(|entity| entity.position_iface().map_goal());
+                    if let (Some(goal), Some(element)) = (
+                        retained_goal,
+                        self.orders
                             .sequence_manager
-                            .get_element(cur_seq, cur_idx)
-                            .is_some_and(|element| element.data.is_movement())
+                            .get_element_mut(new_seq, new_idx),
+                    ) && element
+                        .get_property(crate::sequence::Field::RetainedMovementGoal)
+                        .is_none()
                     {
-                        let retained_goal = self
-                            .world
-                            .entities
-                            .get(owner)
-                            .map(|entity| entity.position_iface().map_goal());
-                        if let (Some(goal), Some(element)) = (
-                            retained_goal,
-                            self.orders
-                                .sequence_manager
-                                .get_element_mut(new_seq, new_idx),
-                        ) && element
-                            .get_property(crate::sequence::Field::RetainedMovementGoal)
-                            .is_none()
-                        {
-                            element.set_property(
-                                crate::sequence::Field::RetainedMovementGoal,
-                                crate::sequence::FieldValue::GeoPoint2D {
-                                    x: goal.x,
-                                    y: goal.y,
-                                },
-                            );
-                        }
-                    }
-                    // New takes over current's postponed chain, current
-                    // becomes Interrupted.
-                    self.orders
-                        .sequence_manager
-                        .take_over_postponed(new_seq, new_idx, cur_seq, cur_idx);
-                    self.stop_owner_active_mechanics(owner);
-                    self.orders
-                        .sequence_manager
-                        .element_interrupted_after_replacement_selected(
-                            cur_seq,
-                            cur_idx,
-                            crate::sequence::CascadeFlags::NEXT_LEVEL,
+                        element.set_property(
+                            crate::sequence::Field::RetainedMovementGoal,
+                            crate::sequence::FieldValue::GeoPoint2D {
+                                x: goal.x,
+                                y: goal.y,
+                            },
                         );
-                    true
-                } else {
-                    // Fallback: truncate current to its first order and
-                    // postpone the new element behind it.  The current
-                    // front order is allowed to finish, then the new
-                    // element resumes; the rest of current is
-                    // intentionally discarded.
-                    self.orders
-                        .sequence_manager
-                        .truncate_to_first_order(cur_seq, cur_idx);
-                    self.engine_postpone(cur_seq, cur_idx, new_seq, new_idx);
-                    false
+                    }
                 }
+                // New takes over current's postponed chain, current
+                // becomes Interrupted.
+                self.orders
+                    .sequence_manager
+                    .take_over_postponed(new_seq, new_idx, cur_seq, cur_idx);
+                self.stop_owner_active_mechanics(owner);
+                self.orders
+                    .sequence_manager
+                    .element_interrupted_after_replacement_selected(
+                        cur_seq,
+                        cur_idx,
+                        crate::sequence::CascadeFlags::NEXT_LEVEL,
+                    );
+                true
             }
         }
     }
