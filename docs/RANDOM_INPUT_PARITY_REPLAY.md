@@ -959,6 +959,49 @@ every recorded frame`. The authoritative artifact is
 This completes the entire 751-frame Savegame_linux3/Profile_001/Savegame_002
 replay after the watchdog, WaitTimer, and bow-classification fixes.
 
+#### Frozen 45-trace `Wait` / `RaiseBow` candidate cohort
+
+The fresh 700-trace baseline also has 45 strict first-command members with
+Original `Wait` and frozen Rust `RaiseBow`. Frame-record inspection ties all 45
+to resolved bow orientation: 44 contain `orient_action_at(action=bow)` on the
+first-divergent frame. The sole timing variant is
+`Savegame_nicouzouf/Profile_001/Savegame_033/replay-003-session-0001.jsonl.zst`:
+Select PC/Bow is at frame 747, resolved orientation at 748, and the queued
+`RaiseBow` first becomes visible at 749. Fourteen members require normal
+Original/Rust PC-ID isomorphism; this does not form a behavior exception.
+
+| Trace root | Exact replay members and first-divergent frames |
+|---|---|
+| `Savegame_SuN1Sh1nE/Profile_004` | `Savegame_001/replay-001` 212; `Savegame_011/replay-001` 116; `Savegame_016/replay-001` 173; `Savegame_019/replay-001` 667; `Savegame_021/replay-001` 149 |
+| `Savegame_linux2/Profile_002` | `QuickSave/replay-001` 2012; `Savegame_001/replay-001` 891; `Savegame_017/replay-001` 142; `Savegame_029/replay-001` 3984; `Savegame_031/replay-001` 11724; `Savegame_041/replay-001` 1996; `Savegame_042/replay-001` 6834; `Savegame_042/replay-002` 6847 |
+| `Savegame_linux3/Profile_001` | `Savegame_003/replay-001` 199; `Savegame_025/replay-001` 18509; `Savegame_028/replay-001` 10107; `Savegame_028/replay-002` 10120 |
+| `Savegame_linux3/Profile_003` | `ExQuickSave/replay-001` 74565; `Savegame_000/replay-001` 9305; `Savegame_005/replay-001` 54699; `Savegame_014/replay-001` 3807; `Savegame_015/replay-001` 7731; `Savegame_018/replay-001` 17320; `Savegame_035/replay-001` 22203; `Savegame_037/replay-001` 26616; `Savegame_038/replay-001` 29146; `Savegame_043/replay-001` 7643; `Savegame_050/replay-001` 2272; `Savegame_050/replay-002` 2285; `Savegame_052/replay-001` 4143; `Savegame_052/replay-002` 4156; `Savegame_071/replay-001` 4540; `Savegame_072/replay-001` 38869 |
+| `Savegame_nicouzouf/Profile_001` | `Savegame_002/replay-001` 181; `Savegame_022/replay-001` 129; `Savegame_022/replay-002` 175; `Savegame_026/replay-001` 632; `Savegame_033/replay-001` 644; `Savegame_033/replay-002` 115; `Savegame_033/replay-003` 749; `Savegame_035/replay-001` 107; `Savegame_037/replay-001` 255; `Savegame_071/replay-001` 163; `Savegame_075/replay-001` 99 |
+| `Savegame_randomguy/Profile_004` | `Savegame_002/replay-001` 16587 |
+
+At each causal orientation record the Original PC is in action state 4, plays
+animation 89 (`AIMING_WITH_BOW`), and has at least one arrow. Wrong action
+state, wrong animation, pending-shot gating, and empty quivers are therefore
+not cohort explanations. The resolved records contain target XYZ, but not the
+computed `RHBowTarget`, shoot mode, hand hotspot, bow range, or LOS result.
+Available geometry is only a diagnostic proxy: target-to-actor-base planar
+distance spans 252.843 to 1280.835 (mean 526.390), with 3 at most 300, 11 in
+`(300, 400]`, 21 in `(400, 600]`, and 10 above 600. Target Z minus actor base
+elevation is below for 10, equal for 19, and above for 16 (range -305 to
++219.925). These values must not be mislabeled as hand-to-target range-cone
+classification.
+
+The source signature makes `750224e6f` the shared candidate: before that
+commit, Rust launched `RaiseBow` from the placeholder `Long` mode without
+requiring `bow_status == Valid`; the deterministic Original contract returns
+before interpreting shoot type for every non-`VALID_TARGET` result. Only the
+separate frame-11860 exemplar above has a captured `OutOfRange` status and EOF
+validation, however. The frozen schema does not prove that status for these 45
+members. Consequently none is closed by source similarity or the focused test:
+rerun all 45 on one current frozen release runner and require exact EOF. Any
+survivor becomes a `Valid + Long` classifier/range/hotspot/LOS investigation,
+not command-lifecycle evidence and not justification for bypassing the guard.
+
 When another fix lands, add the commit, Original source boundary, focused test,
 all affected traces, and their new exact result or next independent frontier
 here. Do not silently delete old rows: mark them superseded by the fix so the
