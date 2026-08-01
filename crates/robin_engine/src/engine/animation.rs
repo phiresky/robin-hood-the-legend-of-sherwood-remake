@@ -3397,16 +3397,20 @@ fn dispatch_arm_completion(
                 });
             if !is_wait_timer {
                 let next_type = match anim_type {
-                    OT::WaitingUprightBored
-                        if crate::sim_rng::u32(
+                    OT::WaitingUprightBored => {
+                        tracing::debug!(
+                            target: "parity_rng_owner",
+                            owner = ?ctx.entity_id,
+                            site = ?crate::sim_rng::RngSite::BoredAnimationChoice,
+                            "authoritative RNG draw owner"
+                        );
+                        (crate::sim_rng::u32(
                             sim,
                             crate::sim_rng::RngSite::BoredAnimationChoice,
                             ..10,
-                        ) == 0 =>
-                    {
-                        Some(OT::WaitingUprightBoredRandom)
+                        ) == 0)
+                            .then_some(OT::WaitingUprightBoredRandom)
                     }
-                    OT::WaitingUprightBored => None,
                     OT::WaitingUprightBoredRandom => Some(OT::WaitingUprightBored),
                     _ => unreachable!(),
                 };

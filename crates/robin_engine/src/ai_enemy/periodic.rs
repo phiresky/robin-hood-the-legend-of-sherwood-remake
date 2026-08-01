@@ -59,12 +59,22 @@ impl EnemyAi {
         // idle animation.  1-in-12 per call (every 16 frames).
         if ctx.self_animation == crate::order::OrderType::WaitingUprightBored
             && self.base.current_state == AiState::Default
-            && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::VipIdleRemark, 0..12) == 0
         {
-            if self.get_rank() == ProfileRank::Officer {
-                self.base.say(Remark::OfficerComplains);
-            } else if self.is_vip {
-                self.base.say(Remark::VipSpeaksToHimself);
+            tracing::debug!(
+                target: "parity_rng_owner",
+                frame = ctx.frame,
+                owner = self.base.me,
+                site = ?crate::sim_rng::RngSite::VipIdleRemark,
+                rank = ?self.get_rank(),
+                vip = self.is_vip,
+                "authoritative RNG draw owner"
+            );
+            if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::VipIdleRemark, 0..12) == 0 {
+                if self.get_rank() == ProfileRank::Officer {
+                    self.base.say(Remark::OfficerComplains);
+                } else if self.is_vip {
+                    self.base.say(Remark::VipSpeaksToHimself);
+                }
             }
         }
 
