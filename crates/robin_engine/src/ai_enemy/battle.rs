@@ -352,6 +352,11 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
+        // Original `BattleDecisions` snapshots `mCurrentSubstate` into a
+        // stack-local `oldSubstate` before performing any decision work.
+        // Do not use `self.previous_substate` here: that is the unrelated,
+        // serialized `mPreviousSubstate` used by the Charly-reunion flow.
+        let old_substate = self.base.current_substate;
         tracing::trace!(
             me = self.base.me,
             state = ?self.base.current_state,
@@ -882,6 +887,7 @@ impl EnemyAi {
         self.execute_battle_decision(
             sim,
             decision,
+            old_substate,
             cover_shield_bearer,
             &decision_target_multiplicity,
             global,
@@ -901,6 +907,7 @@ impl EnemyAi {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         mut decision: Decision,
+        old_substate: Substate,
         cover_shield_bearer: HumanHandle,
         target_multiplicity: &std::collections::BTreeMap<HumanHandle, u32>,
         global: &mut AiGlobalState,
@@ -1393,8 +1400,8 @@ impl EnemyAi {
                     }
 
                     // Only on first battle decision entry.
-                    if self.previous_substate == Substate::AttackingReactiontime as i32
-                        || self.previous_substate == Substate::AttackingReactiontimeRunning as i32
+                    if old_substate == Substate::AttackingReactiontime
+                        || old_substate == Substate::AttackingReactiontimeRunning
                     {
                         if self.is_vip {
                             self.base.say(Remark::VipProudDontFight);
@@ -2717,6 +2724,74 @@ mod tests {
         // nearer friends are therefore insufficient; four are sufficient.
         assert!(!enough_nearer_friends_to_observe(3, 1, 45));
         assert!(enough_nearer_friends_to_observe(4, 1, 45));
+    }
+
+    fn proud_decision_speech(
+        entry_substate: Substate,
+        serialized_previous_substate: Substate,
+    ) -> Vec<Remark> {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(91);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = entry_substate;
+        ai.previous_substate = serialized_previous_substate as i32;
+        ai.forced_next_battle_decision = Decision::TooProudToAttack;
+        ai.list_them = vec![198];
+
+        let target_position = Position {
+            x: 150.0,
+            ..Position::default()
+        };
+        let mut target_view = pc_view();
+        target_view.position = target_position;
+        target_view.forecasted_destination = target_position;
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(198, target_view);
+        let ctx = AiContext {
+            camp: crate::element::Camp::Lacklandists,
+            entity_views: std::sync::Arc::new(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.enemy_sq_distances = vec![(198, 150 * 150)];
+        tick.nearby_fighters = vec![FighterSnapshot {
+            handle: 198,
+            position: target_position,
+            is_able_to_fight: true,
+            is_pc: true,
+            ..Default::default()
+        }];
+
+        ai.battle_decisions(&sim, &mut AiGlobalState::default(), &ctx, &tick, None);
+        ai.base
+            .outbox
+            .reentrant
+            .owner_work
+            .iter()
+            .filter_map(|work| match work {
+                crate::ai::AiOwnerWork::Speech(attempt) => Some(attempt.remark),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn proud_first_decision_uses_entry_substate_not_serialized_previous_substate() {
+        assert_eq!(
+            proud_decision_speech(Substate::AttackingReactiontime, Substate::DefaultOnPost,),
+            vec![Remark::ProudDontFight]
+        );
+    }
+
+    #[test]
+    fn proud_later_decision_ignores_stale_reactiontime_previous_substate() {
+        assert!(
+            proud_decision_speech(
+                Substate::AttackingTooProudToAttack,
+                Substate::AttackingReactiontime,
+            )
+            .is_empty()
+        );
     }
 
     #[test]

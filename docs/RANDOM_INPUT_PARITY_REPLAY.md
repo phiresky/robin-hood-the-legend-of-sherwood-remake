@@ -1331,6 +1331,25 @@ preserved frame-4603 investigation dump is
 the compact Original AI transition extract is
 `output/parity-diagnostics/random-combat-owner/frame4600-4604-original-ai.jsonl`.
 
+### Battle-decision entry snapshot — proud-soldier speech
+
+`Savegame_nicouzouf/Profile_001/Savegame_055/replay-002-session-0001`
+reached frame 480, then Original resolved ordinary-soldier exclamation 55
+(`REMARK_PROUD_DONT_FIGHT`) for soldier 51 at frame 481 while Rust had no
+pending speech request. Original `RHArtificialMalignity::BattleDecisions`
+captures the entry-time `mCurrentSubstate` in a stack-local `oldSubstate` and
+uses that value to decide whether this is the first battle decision. Rust had
+instead tested its serialized `previous_substate`, which corresponds to
+Original's unrelated `mPreviousSubstate` used by the Charly-reunion flow.
+
+Rust now snapshots `current_substate` on entry and threads that local value to
+the decision executor. Focused regressions poison the serialized previous
+field in both directions: an entry from `AttackingReactiontime` still queues
+`ProudDontFight`, while a later proud-observer entry does not queue it merely
+because the serialized field contains `AttackingReactiontime`. Full replay
+validation remains pending until the active production sweep releases the
+runner.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
