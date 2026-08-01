@@ -288,6 +288,27 @@ clear their former sound boundary with no skipped or reordered resolution: 1
 reaches exact EOF and 5 expose later independent direction, movement, command,
 or RNG boundaries.
 
+### Stalled-movement RNG subgroup
+
+Nine repeated RNG-cardinality failures appeared at frame 404 or 409 in the
+Linux3 Save022 and nicouzouf Save014/Save057 families.  The visible Original
+state change was a soldier returning from `DefaultGotoPost` to
+`DefaultOnPost`, followed by the expected `GetBoredTime()` draw; Rust emitted
+no draw.  The cause was upstream of RNG.  Original's 64-frame stuck recovery
+in both `RHArtificialMalignity::The16thFrame` and
+`RHArtificialBonhomie::The16thFrame` calls `GoTo` again with the stored
+destination and flags.  Rust instead manufactured a raw move order, bypassing
+`GoTo`'s destination-sector validation and synchronous already-on-point
+`EVENT_REACHPOINT` / `EVENT_DONE` re-entry.
+
+Commit `216617749` routes hostile and civilian retries through the normal
+`AiController::go_to` path and mirrors Original's non-null stored-sector test.
+The serial release rerun is preserved under
+`output/parity-audits/random-rng-stuck-retry/`.  All nine former RNG boundaries
+clear: two traces reach exact EOF and seven expose later independent command or
+AI-state boundaries.  No recorded draw is consumed merely to realign the
+stream.
+
 The long `60s-15x` snapshot contains 1,791 traces and is being swept with one
 runner process to keep memory bounded.  Its totals are provisional until all
 status files exist under `output/parity-audits/random-long-fresh/`.
