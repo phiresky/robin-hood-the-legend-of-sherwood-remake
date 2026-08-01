@@ -1825,9 +1825,8 @@ The separate AAARGH audit confirmed that it is not a Rust invention:
 `RHElementActorNPC::SayOuch` emits it directly after selecting the wounded or
 dying remark (`original-code/RHelementactornpc.cpp:6422-6469`). Only the
 unrelated brawl-warcry call is commented out. A focused regression requires a
-nearby guard's BONK reaction and empty stimulus outbox to be observable before
-the synchronous broadcast returns. Replay validation is pending the next
-frozen-runner sweep.
+nearby guard's BONK reaction to be observable before the synchronous broadcast
+returns. Replay validation is pending the next frozen-runner sweep.
 
 The first synchronous implementation still batched the operation in two
 passes: it queued `EVENT_HEAR` for every listener, then drained each listener's
