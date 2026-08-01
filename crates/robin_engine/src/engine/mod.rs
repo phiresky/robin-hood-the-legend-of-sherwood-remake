@@ -2267,11 +2267,13 @@ impl EngineInner {
                         .sequence_manager
                         .take_over_postponed(new_seq, new_idx, cur_seq, cur_idx);
                     self.stop_owner_active_mechanics(owner);
-                    self.orders.sequence_manager.element_interrupted(
-                        cur_seq,
-                        cur_idx,
-                        crate::sequence::CascadeFlags::NEXT_LEVEL,
-                    );
+                    self.orders
+                        .sequence_manager
+                        .element_interrupted_after_replacement_selected(
+                            cur_seq,
+                            cur_idx,
+                            crate::sequence::CascadeFlags::NEXT_LEVEL,
+                        );
                     true
                 } else {
                     // Fallback: truncate current to its first order and
