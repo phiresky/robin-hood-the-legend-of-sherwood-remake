@@ -344,10 +344,16 @@ claimed as consequences of this gate, are:
 - `Savegame_nicouzouf/Profile_001/Savegame_039/replay-001`
 - `Savegame_nicouzouf/Profile_001/Savegame_039/replay-002`
 
-This subgroup remains awaiting its serial release rerun; clearing the old RNG
-boundary is not yet recorded as an exact pass.  The other eleven combat-tagged
-RNG traces begin in strike/opponent lifecycle callsites and remain separate
-until their first excess or missing authoritative call is source-mapped.
+A current release rerun is preserved under
+`output/parity-audits/random-rng-combat/`.  The first two direct candidates
+both clear their former RNG boundary: Save024 replay 001 advances from frame 68
+to an independent `ShootBow -> Turn` command mismatch at frame 105, and replay
+002 advances from frame 76 to an independent direction-goal mismatch at frame
+78.  The third direct candidate and four adjacent short-draw traces remain
+queued for the serial runner, so this subgroup is not yet closed.  The other
+eleven combat-tagged RNG traces begin in strike/opponent lifecycle callsites
+and remain separate until their first excess or missing authoritative call is
+source-mapped.
 
 The long `60s-15x` snapshot contains 1,791 traces and is being swept with one
 runner process to keep memory bounded.  Its totals are provisional until all
