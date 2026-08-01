@@ -1140,20 +1140,39 @@ struct TraceElementAmmo {
     wasp_nests: u16,
 }
 
+fn deserialize_present_nullable_u16<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<u16>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<u16>::deserialize(deserializer).map(Some)
+}
+
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceAi {
     state: u32,
     substate: u32,
     script_locked: bool,
     locked: bool,
-    locks: u8,
-    was_busy: bool,
-    very_busy: bool,
-    macro_timer_running: bool,
-    macro_timer_ring: u32,
-    macro_cursor: Option<u16>,
-    macro_remaining: u16,
-    macro_in_progress: bool,
+    #[serde(default)]
+    locks: Option<u8>,
+    #[serde(default)]
+    was_busy: Option<bool>,
+    #[serde(default)]
+    very_busy: Option<bool>,
+    #[serde(default)]
+    macro_timer_running: Option<bool>,
+    #[serde(default)]
+    macro_timer_ring: Option<u32>,
+    /// Outer `None` means the additive diagnostic was not recorded; inner
+    /// `None` is the recorded null cursor for an inactive macro.
+    #[serde(default, deserialize_with = "deserialize_present_nullable_u16")]
+    macro_cursor: Option<Option<u16>>,
+    #[serde(default)]
+    macro_remaining: Option<u16>,
+    #[serde(default)]
+    macro_in_progress: Option<bool>,
     list_us: Vec<TraceEntityId>,
     list_them: Vec<TraceEntityId>,
 }
@@ -4548,41 +4567,51 @@ fn compare_frame(
                 expected_ai.locked,
                 actual_ai.ai_is_locked(),
             );
-            compare(
-                &mut differences,
-                id,
-                "ai.locks",
-                expected_ai.locks,
-                actual_ai.locks_flag_field.bits(),
-            );
-            compare(
-                &mut differences,
-                id,
-                "ai.was_busy",
-                expected_ai.was_busy,
-                actual_ai.was_busy,
-            );
-            compare(
-                &mut differences,
-                id,
-                "ai.very_busy",
-                expected_ai.very_busy,
-                engine.is_very_very_busy(id),
-            );
-            compare(
-                &mut differences,
-                id,
-                "ai.macro_timer_running",
-                expected_ai.macro_timer_running,
-                actual_ai.macro_timer_is_running,
-            );
-            compare(
-                &mut differences,
-                id,
-                "ai.macro_timer_ring",
-                expected_ai.macro_timer_ring,
-                actual_ai.when_does_macro_timer_ring,
-            );
+            if let Some(expected) = expected_ai.locks {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.locks",
+                    expected,
+                    actual_ai.locks_flag_field.bits(),
+                );
+            }
+            if let Some(expected) = expected_ai.was_busy {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.was_busy",
+                    expected,
+                    actual_ai.was_busy,
+                );
+            }
+            if let Some(expected) = expected_ai.very_busy {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.very_busy",
+                    expected,
+                    engine.is_very_very_busy(id),
+                );
+            }
+            if let Some(expected) = expected_ai.macro_timer_running {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.macro_timer_running",
+                    expected,
+                    actual_ai.macro_timer_is_running,
+                );
+            }
+            if let Some(expected) = expected_ai.macro_timer_ring {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.macro_timer_ring",
+                    expected,
+                    actual_ai.when_does_macro_timer_ring,
+                );
+            }
             let actual_macro_cursor = (actual_ai.patrol_path.is_some()
                 && !actual_ai.macro_command.is_empty())
             .then(|| {
@@ -4593,27 +4622,33 @@ fn compare_frame(
                     )
                 })
             });
-            compare(
-                &mut differences,
-                id,
-                "ai.macro_cursor",
-                expected_ai.macro_cursor,
-                actual_macro_cursor,
-            );
-            compare(
-                &mut differences,
-                id,
-                "ai.macro_remaining",
-                expected_ai.macro_remaining,
-                actual_ai.number_of_remaining_macro_bytes,
-            );
-            compare(
-                &mut differences,
-                id,
-                "ai.macro_in_progress",
-                expected_ai.macro_in_progress,
-                actual_ai.macro_in_progress,
-            );
+            if let Some(expected) = expected_ai.macro_cursor {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.macro_cursor",
+                    expected,
+                    actual_macro_cursor,
+                );
+            }
+            if let Some(expected) = expected_ai.macro_remaining {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.macro_remaining",
+                    expected,
+                    actual_ai.number_of_remaining_macro_bytes,
+                );
+            }
+            if let Some(expected) = expected_ai.macro_in_progress {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.macro_in_progress",
+                    expected,
+                    actual_ai.macro_in_progress,
+                );
+            }
             let expected_list_us: Vec<EntityId> = expected_ai
                 .list_us
                 .iter()
@@ -5339,7 +5374,7 @@ mod tests {
         assert_eq!(human.camp, "lacklandists");
         assert!(human.vip);
         let ai = element.ai.expect("AI state");
-        assert_eq!(ai.macro_cursor, Some(4));
+        assert_eq!(ai.macro_cursor, Some(Some(4)));
         assert_eq!(
             ai.list_them,
             [TraceEntityId {
@@ -5350,6 +5385,42 @@ mod tests {
         let detection = element.detection.expect("detection state");
         assert_eq!(detection.suspects, [1, 2, 3, 4, 5, 6]);
         assert_eq!(detection.detectables[0].last_visibility.value(), 100.0);
+    }
+
+    #[test]
+    fn additive_ai_diagnostics_are_optional_within_schema_twelve() {
+        let ai: TraceAi = serde_json::from_value(serde_json::json!({
+            "state": 3,
+            "substate": 17,
+            "script_locked": false,
+            "locked": true,
+            "list_us": [],
+            "list_them": []
+        }))
+        .expect("schema-12 AI state predating additive diagnostics remains readable");
+
+        assert_eq!(ai.state, 3);
+        assert_eq!(ai.substate, 17);
+        assert_eq!(ai.locks, None);
+        assert_eq!(ai.was_busy, None);
+        assert_eq!(ai.very_busy, None);
+        assert_eq!(ai.macro_timer_running, None);
+        assert_eq!(ai.macro_timer_ring, None);
+        assert_eq!(ai.macro_cursor, None);
+        assert_eq!(ai.macro_remaining, None);
+        assert_eq!(ai.macro_in_progress, None);
+
+        let recorded_null_cursor: TraceAi = serde_json::from_value(serde_json::json!({
+            "state": 3,
+            "substate": 17,
+            "script_locked": false,
+            "locked": true,
+            "macro_cursor": null,
+            "list_us": [],
+            "list_them": []
+        }))
+        .expect("recorded null macro cursor is distinct from a missing diagnostic");
+        assert_eq!(recorded_null_cursor.macro_cursor, Some(None));
     }
 
     #[test]
