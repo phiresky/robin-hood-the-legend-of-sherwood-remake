@@ -729,6 +729,39 @@ Original and 0 in Rust. The authoritative result is
 with status `1` in the sibling `.status` file. The old watchdog group is
 therefore closed; frame 11681 is now tracked as an R03 timer frontier.
 
+### `31f787917` + `6cd51b94e` — preserve the complete WaitTimer scalar lifecycle
+
+The frame-11681 timer frontier was the previously unresolved R03 `2 -> 14`
+family member. Original PC 126 counted `RHCOMMAND_WAIT_TIMER` from 44 to 14,
+then `SelectAction(Purse)` interrupted it into `RHCOMMAND_WAIT` while leaving
+`RHElementActor::mulWaitTime` at 14. Original initializes that one scalar in
+WaitTimer translation (`original-code/RHelementactor.cpp:3332-3337`) and
+decrements it only while the selected command remains WaitTimer
+(`original-code/RHelementactor.cpp:610-623`); interruption and ordinary Wait
+translation do not clear it.
+
+Rust splits the overloaded Original member into `wait_time` and
+`seek_refresh_wait`. WaitTimer translation wrote the timer only to the first
+and cleared the second. Once the command changed to Wait with dormant
+post-seek ownership still present, the isomorphic legacy view selected the
+cleared mirror and reported 0. Commit `31f787917` writes the timer to both
+representations and adds a focused interruption regression. Its first replay
+validation correctly exposed the other half of the lifecycle at frame 11401:
+after an earlier WaitTimer reached zero and handed off to PassDoor, the new
+mirror still held 18. Commit `6cd51b94e` therefore synchronizes every positive
+WaitTimer decrement and the terminating zero boundary as well. Focused tests
+cover initialization, decrement-to-zero, the extra zero frame, and
+interruption into Wait; completion/interruption themselves correctly perform
+no scalar write.
+
+The combined release validation clears both frame 11401 (`Original=0`, old
+Rust=`18`) and frame 11681 (`Original=14`, old Rust=`0`). It advances normally
+to a new independent boundary after frame 11860, where PC 126 is `Wait` in
+Original and `RaiseBow` in Rust. The authoritative validation is
+`output/parity-hang-diagnostics/linux3-save002-r001/waittimer-lifecycle-fix.log`
+with status `1` in its sibling `.status` file. R03's `2 -> 14` member is
+closed; frame 11860 belongs to the command-lifecycle/RaiseBow family.
+
 When another fix lands, add the commit, Original source boundary, focused test,
 all affected traces, and their new exact result or next independent frontier
 here. Do not silently delete old rows: mark them superseded by the fix so the
