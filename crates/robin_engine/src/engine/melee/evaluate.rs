@@ -1641,16 +1641,19 @@ impl EngineInner {
 
             match proposed {
                 Some(crate::combat::ProposedCombatAction::Parry) => {
-                    // Launch a ParrySword sequence element.  Routing
-                    // through the sequence manager preserves
-                    // queue-level interrupt / bookkeeping that
-                    // direct state mutation would skip.
+                    // Original ConsiderSwordAttack runs from the current
+                    // WaitingSword Execute callback. LaunchSequenceElement
+                    // only registers ParrySword here; its Instruct/priority
+                    // arbitration happens in SequenceManager::Hourglass after
+                    // every actor slot. In particular, an already-selected
+                    // smalltalk strike still enters Motion START (and may
+                    // choose a remark) before ParrySword replaces it.
                     let parry_elem = crate::sequence::SequenceElement::new(
                         1,
                         crate::element::Command::ParrySword,
                         Some(victim_id),
                     );
-                    self.launch_element(parry_elem);
+                    self.register_owned_element_deferred(parry_elem);
                 }
                 Some(crate::combat::ProposedCombatAction::Strike(counter_strike)) => {
                     // PC counter-strike: launch the strike sequence
