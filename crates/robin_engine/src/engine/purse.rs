@@ -281,7 +281,9 @@ impl EngineInner {
         };
 
         // PLING noise so nearby NPCs hear the impact.
-        self.broadcast_noise(
+        self.broadcast_noise_synchronously(
+            sim,
+            assets,
             crate::ai::NoiseType::Pling,
             crate::coordinates::MapPoint::new(source_pos.x, source_pos.y),
             layer,

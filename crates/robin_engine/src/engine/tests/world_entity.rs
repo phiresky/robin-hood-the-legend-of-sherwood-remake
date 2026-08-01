@@ -1476,6 +1476,56 @@ pub(super) fn make_test_ai_soldier(camp: crate::element::Camp) -> Entity {
 }
 
 #[test]
+fn synchronous_one_shot_noise_is_handled_before_broadcast_returns() {
+    use crate::ai::{AiState, NoiseType, Substate};
+    use crate::coordinates::{MapPoint, WorldPoint3D};
+    use crate::element::Camp;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .soldiers
+        .push(crate::profiles::SoldierProfile::default());
+
+    let mut listener = make_test_ai_soldier(Camp::Lacklandists);
+    let Entity::Soldier(soldier) = &mut listener else {
+        unreachable!("make_test_ai_soldier returned non-soldier")
+    };
+    soldier.element.active = true;
+    soldier
+        .element
+        .set_position(WorldPoint3D::new(10.0, 10.0, 0.0));
+    soldier.element.set_position_map(MapPoint::new(10.0, 10.0));
+    let listener_id = engine.add_entity(listener);
+    engine
+        .get_entity_mut(listener_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("test listener has enemy AI")
+        .base
+        .me = listener_id.index();
+
+    engine.broadcast_noise_synchronously(
+        &sim,
+        &assets,
+        NoiseType::Bonk,
+        MapPoint::new(20.0, 10.0),
+        0,
+        crate::parameters_ai::NOISE_VOLUME_BONK as u16,
+        0,
+        None,
+    );
+
+    let listener = engine
+        .get_entity(listener_id)
+        .and_then(Entity::enemy_ai)
+        .expect("test listener survives synchronous noise");
+    assert!(listener.base.outbox.detection.stimuli.is_empty());
+    assert_eq!(listener.base.current_state, AiState::Wondering);
+    assert_eq!(listener.base.current_substate, Substate::WonderingWatching);
+}
+
+#[test]
 fn soldier_death_detaches_guard_and_archery_before_forcing_quiet_music() {
     use crate::ai::{
         AiState, AlertLevel, ArcheryReservationRelease, GuardedPcEffect, PointArchery,

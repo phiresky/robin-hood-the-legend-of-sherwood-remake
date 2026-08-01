@@ -5809,7 +5809,9 @@ impl EngineInner {
                 base.say(remark);
             }
             self.drain_ai_owner_work_for(sim, assets, speaker);
-            self.broadcast_noise(
+            self.broadcast_noise_synchronously(
+                sim,
+                assets,
                 crate::ai::NoiseType::Heeelp,
                 origin,
                 layer,

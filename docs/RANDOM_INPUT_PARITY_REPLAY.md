@@ -1809,6 +1809,26 @@ animation could run. `EnterHelpingClimb` now relies on the source-backed
 Execute-time validity check and retains the authored Tree exit prefix. The
 focused lifecycle test exercises this exact two-animation command chain.
 
+Replay 015 first diverges at frame 544 when Little John's completed whistle
+should make four nearby soldiers react. Original soldiers 58, 60, 61, and 66
+have already entered their whistle-hearing states on that recorded frame;
+Rust queued `EVENT_HEAR` after the NPC phase and did not expose the reactions
+until the following frame. Original `RHElementActorNPC::Noise` is a synchronous
+function: it walks listeners in creation order and calls `Think(EVENT_HEAR)`
+before returning to the emitting object's Hourglass.
+
+The mismatch applied to every one-shot noise emitter, not just this replay's
+whistle. All source-proven emitters now use the existing synchronous delivery
+boundary: purse `PLING`, net `BONK`, projectile `ZONK`/`PLOUF`, whistle
+`PFIIIT`, under-net `HEEELP`, NPC `SayOuch` `AAARGH`, and scripted noises.
+The separate AAARGH audit confirmed that it is not a Rust invention:
+`RHElementActorNPC::SayOuch` emits it directly after selecting the wounded or
+dying remark (`original-code/RHelementactornpc.cpp:6422-6469`). Only the
+unrelated brawl-warcry call is commented out. A focused regression requires a
+nearby guard's BONK reaction and empty stimulus outbox to be observable before
+the synchronous broadcast returns. Replay validation is pending the next
+frozen-runner sweep.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

@@ -561,7 +561,7 @@ impl EngineInner {
         }
         if just_landed {
             self.apply_projectile_landing_resolution(assets, net_id);
-            self.snap_net_to_landing_obstacle(assets, net_id);
+            self.snap_net_to_landing_obstacle(sim, assets, net_id);
             self.register_net_repulsive_points(net_id);
         }
 
@@ -628,7 +628,12 @@ impl EngineInner {
     /// When the net lands on bare ground (no obstacle at the landing
     /// 2D point) the elevation is also reset to a tiny positive
     /// epsilon to avoid Z-fighting — that's the `0.001` offset below.
-    fn snap_net_to_landing_obstacle(&mut self, assets: &LevelAssets, net_id: EntityId) {
+    fn snap_net_to_landing_obstacle(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        net_id: EntityId,
+    ) {
         let (landing_xy, layer) = match self.get_entity(net_id) {
             Some(Entity::Net(n)) => (
                 (n.element.position().x, n.element.position().y),
@@ -685,7 +690,9 @@ impl EngineInner {
         // landed net.
         let origin = MapPoint::new(landing_xy.0, landing_xy.1);
         let layer_u16 = if layer == INVALID_LAYER { 0 } else { layer };
-        self.broadcast_noise(
+        self.broadcast_noise_synchronously(
+            sim,
+            assets,
             crate::ai::NoiseType::Bonk,
             origin,
             layer_u16,
@@ -1851,7 +1858,8 @@ mod tests {
         ));
 
         // Fire the landing path so the net is actually on the ground.
-        engine.snap_net_to_landing_obstacle(&assets, net_id);
+        let sim = crate::sim_rng::test_context();
+        engine.snap_net_to_landing_obstacle(&sim, &assets, net_id);
 
         // Launch Take(antagonist=net) targeting the PC.
         let elem = SequenceElement::new_interaction(1, Command::Take, Some(pc_id), Some(net_id));

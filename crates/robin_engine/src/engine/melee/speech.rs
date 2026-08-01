@@ -198,7 +198,9 @@ impl EngineInner {
                 )
             })
             .unwrap_or((0, 0));
-        self.broadcast_noise(
+        self.broadcast_noise_synchronously(
+            sim,
+            assets,
             crate::ai::NoiseType::Aaargh,
             position,
             layer,

@@ -2370,7 +2370,7 @@ impl EngineInner {
             // with no victim/shield/target.  Add the plouf titbit,
             // broadcast the PLOUF noise, and play impact sound ID 470.
             if result.despawn && result.hit_target.is_none() {
-                self.maybe_splash_on_landing(assets, result.arrow);
+                self.maybe_splash_on_landing(sim, assets, result.arrow);
             }
 
             if result.despawn {
@@ -2741,7 +2741,12 @@ impl EngineInner {
     /// If the arrow's landing position is inside a water or hole zone,
     /// spawn the splash titbit, broadcast a PLOUF noise, and play the
     /// plouf impact sound (FX 470).
-    fn maybe_splash_on_landing(&mut self, assets: &LevelAssets, arrow: EntityId) {
+    fn maybe_splash_on_landing(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        arrow: EntityId,
+    ) {
         let proj_entity = match self.get_entity(arrow) {
             Some(e) => e,
             None => return,
@@ -2796,7 +2801,9 @@ impl EngineInner {
                 // nearby NPCs hear the thud.  Apples/stones use their
                 // own FX sound instead and don't emit the noise.
                 if matches!(object_type, crate::element::ObjectType::Arrow) {
-                    self.broadcast_noise(
+                    self.broadcast_noise_synchronously(
+                        sim,
+                        assets,
                         crate::ai::NoiseType::Zonk,
                         position_map,
                         layer,
@@ -2854,7 +2861,9 @@ impl EngineInner {
 
         // Broadcast PLOUF noise so nearby NPCs react. Volume from
         // `parameters_ai::NOISE_VOLUME_PLOUF` (300).
-        self.broadcast_noise(
+        self.broadcast_noise_synchronously(
+            sim,
+            assets,
             crate::ai::NoiseType::Plouf,
             position_map,
             layer,
@@ -3883,7 +3892,9 @@ impl EngineInner {
                             )
                         })
                         .unwrap_or((0, 0));
-                    self.broadcast_noise(
+                    self.broadcast_noise_synchronously(
+                        sim,
+                        assets,
                         crate::ai::NoiseType::Pfiiit,
                         crate::coordinates::MapPoint::new(position.x, position.y),
                         layer,
