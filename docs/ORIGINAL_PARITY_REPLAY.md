@@ -4246,6 +4246,25 @@ not to a particular command, save, or replay. A focused regression constructs
 an in-progress Eat element with a walking-to-waiting transition prefix and
 verifies that the latch targets the later Eating order's exact identity.
 
+### Parity compares the complete sprite cursor
+
+Schema-12 frame records already contain `sprite_row`, `sprite_frame`, and
+`sprite_frame_count`, but the Rust replay model previously deserialized and
+compared only the counter. A report labelled `sprite_frame_count-only` could
+therefore conceal a different animation row or frame; for example, Linux3
+Profile 003 Savegame 022 replay 010 changes the Original sprite from row 240,
+frame 2 to row 64, frame 0 at the first reported counter boundary. Row and
+frame are gameplay-relevant for action-done timing, frame scripts, movement,
+and directional behavior, so omitting them cannot establish full parity.
+
+The replay validator now deserializes and compares all three cursor fields
+exactly for every non-FX element. This does not change the recording schema:
+the information was already present. The native derived-trace cache is bumped
+to v8 because its bincode element layout now includes the two additional
+fields, preventing an older v7 cache from being interpreted with the expanded
+model. Focused JSON coverage verifies that row, frame, and the `0xffff`
+initialization counter survive trace ingestion.
+
 A clean baseline proves exact parity only for the state fields serialized by the
 recorder and the behaviors exercised by this session. When a divergence depends
 on unrecorded state, extend the neutral trace schema rather than guessing from a

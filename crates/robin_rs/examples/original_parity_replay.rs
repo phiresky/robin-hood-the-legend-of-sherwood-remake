@@ -1074,6 +1074,8 @@ struct TraceElement {
     sector: u16,
     direction: i16,
     direction_goal: i16,
+    sprite_row: u16,
+    sprite_frame: u16,
     #[serde(default)]
     sprite_frame_count: Option<u16>,
     #[serde(default)]
@@ -1177,8 +1179,8 @@ struct TraceFrame {
     resolved_exclamations: Vec<TraceResolvedExclamation>,
 }
 
-const TRACE_CACHE_VERSION: u32 = 7;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v7.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 8;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v8.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4034,6 +4036,20 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
             expected.direction_goal,
             i16::from(pi.get_direction_goal().as_u8()),
         );
+        compare(
+            &mut differences,
+            id,
+            "sprite_row",
+            expected.sprite_row,
+            element.sprite.current_row,
+        );
+        compare(
+            &mut differences,
+            id,
+            "sprite_frame",
+            expected.sprite_frame,
+            element.sprite.current_frame,
+        );
         if let Some(expected_frame_count) = expected.sprite_frame_count {
             compare(
                 &mut differences,
@@ -4681,6 +4697,33 @@ mod tests {
         assert_eq!(command_from_stable_name("raise_bow"), Command::RaiseBow);
         assert_eq!(command_from_stable_name("jump"), Command::JumpCmd);
         assert_eq!(command_from_stable_name("roll"), Command::Jump);
+    }
+
+    #[test]
+    fn trace_element_retains_the_complete_sprite_cursor() {
+        let element: TraceElement = serde_json::from_value(serde_json::json!({
+            "entity_id": {"kind": "pc", "index": 58},
+            "creation_order": 89,
+            "active": true,
+            "blipped": false,
+            "unreachable": false,
+            "posture": 1,
+            "position_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "position_goal_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "elevation": {"bits": 0},
+            "layer": 0,
+            "sector": 0,
+            "direction": 0,
+            "direction_goal": 0,
+            "sprite_row": 64,
+            "sprite_frame": 3,
+            "sprite_frame_count": 65535
+        }))
+        .expect("parse an authoritative trace sprite cursor");
+
+        assert_eq!(element.sprite_row, 64);
+        assert_eq!(element.sprite_frame, 3);
+        assert_eq!(element.sprite_frame_count, Some(u16::MAX));
     }
 
     #[test]
