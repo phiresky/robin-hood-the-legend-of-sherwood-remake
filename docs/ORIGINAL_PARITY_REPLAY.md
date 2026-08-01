@@ -4101,6 +4101,16 @@ views, then resume the VM; yield after `PATROL_DIRECTION`, deliver and drain
 the member calls in patrol order, then resume again. This is deliberately not
 worked around with an extra timer or replay-specific ordering rule.
 
+### Invalid patrol assignments retain the Original's partial mutation
+
+`AssignNewPatrolPath(index)` calls `BreakMacro` and sets
+`mbHasPatrolPath = true` before checking whether the authored index is greater
+than the hiking-path count. On rejection it returns without reinitializing the
+path, leaving the flag set over the retained path state. Rust previously
+validated first and skipped the flag write. The decoder remains strict about
+structural corruption, but the runtime helper now preserves this shipped
+engine error-path ordering for any authored or scripted invalid index.
+
 A clean baseline proves exact parity only for the state fields serialized by the
 recorder and the behaviors exercised by this session. When a divergence depends
 on unrecorded state, extend the neutral trace schema rather than guessing from a

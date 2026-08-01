@@ -160,6 +160,34 @@ fn civilian_macro_run_sanitizes_flags_after_nested_path_completion() {
 }
 
 #[test]
+fn invalid_patrol_assignment_preserves_original_partial_mutation() {
+    use crate::ai::macro_patrol::{PathId, PatrolAssignment};
+
+    let mut ai = AiController::new(17);
+    ai.has_patrol_path = false;
+    ai.macro_in_progress = true;
+    ai.macro_timer_is_running = true;
+
+    let assigned = ai.assign_new_patrol_path(
+        PatrolAssignment::Index(PathId::new(3).unwrap()),
+        Position::default(),
+        0,
+        &[crate::level_data::RawHikingPath {
+            waypoints: Vec::new(),
+        }],
+    );
+
+    assert!(!assigned);
+    assert!(
+        ai.has_patrol_path,
+        "Original sets mbHasPatrolPath before rejecting the index"
+    );
+    assert!(ai.path_id.is_none());
+    assert!(!ai.macro_in_progress);
+    assert!(!ai.macro_timer_is_running);
+}
+
+#[test]
 fn ai_log_stimulus_strings_match_original_names_and_fallback() {
     assert_eq!(
         StimulusType::log_string_from_u16(StimulusType::EventView as u16),

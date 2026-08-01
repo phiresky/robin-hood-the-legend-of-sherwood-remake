@@ -1410,8 +1410,9 @@ impl AiController {
     ///   right anchor.
     /// - Reset `likes_to_sit_around` (per variant), `special_action`,
     ///   `is_stay_at_home` flags.
-    /// - Bounds-check index variant against hiking path count; out of
-    ///   range returns `false` without touching state.
+    /// - The index variant sets `has_patrol_path` before the Original's
+    ///   off-by-one bounds check. An out-of-range assignment therefore
+    ///   returns `false` with that flag set while retaining the prior path.
     /// - When `!script_locked && current_state == Default`, fire a
     ///   self `EventReturnToDuty` so the NPC walks to the new path /
     ///   post on the next tick.
@@ -1445,6 +1446,10 @@ impl AiController {
             }
             PatrolAssignment::Index(pid) => {
                 let idx = pid.get() as usize;
+                // Original writes mbHasPatrolPath before validating the
+                // authored index. Preserve that odd partial mutation on the
+                // error path; mPath itself is not reinitialized there.
+                self.has_patrol_path = true;
                 // Strictly greater, so `idx == count` is tolerated
                 // (matches the off-by-one in the original engine).
                 if idx > hiking_paths.len() {
@@ -1456,7 +1461,6 @@ impl AiController {
                     );
                     return false;
                 }
-                self.has_patrol_path = true;
                 self.path_id = Some(pid);
                 self.patrol_path = PatrolPath::new(pid, hiking_paths);
                 self.likes_to_sit_around = false;
