@@ -479,6 +479,28 @@ impl TraceRngBatch {
             .filter(|domain| **domain == TraceRngDomain::Simulation)
             .count()
     }
+
+    fn gameplay_callsite_offsets(&self) -> Vec<u32> {
+        assert_eq!(self.values.len(), self.callsite_offsets.len());
+        if self.values.is_empty() {
+            assert!(
+                self.domains.is_empty(),
+                "empty RNG batch unexpectedly contains draw domains"
+            );
+            return Vec::new();
+        }
+        assert_eq!(
+            self.values.len(),
+            self.domains.len(),
+            "RNG domain stream has a different length than its values"
+        );
+        self.callsite_offsets
+            .iter()
+            .copied()
+            .zip(self.domains.iter().copied())
+            .filter_map(|(offset, domain)| (domain == TraceRngDomain::Simulation).then_some(offset))
+            .collect()
+    }
 }
 
 #[derive(
@@ -2138,9 +2160,10 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 );
             }
             panic!(
-                "Rust consumed RNG draws {:?} at sites {rust_rng_sites:?} during original frame {}; original ended at draw {rng_end}",
+                "Rust consumed RNG draws {:?} at sites {rust_rng_sites:?} during original frame {}; original ended at draw {rng_end}; Original simulation callsite offsets for the frame: {:?}",
                 rng_start..actual_rng_end,
-                frame.frame_before
+                frame.frame_before,
+                frame.rng_draws.gameplay_callsite_offsets(),
             );
         }
         if !differences.is_empty() {
@@ -4649,6 +4672,7 @@ mod tests {
             domains: vec![TraceRngDomain::Simulation, TraceRngDomain::Audio],
         };
         assert_eq!(batch.gameplay_draw_count(), 1);
+        assert_eq!(batch.gameplay_callsite_offsets(), vec![3_305_465]);
     }
 
     #[test]

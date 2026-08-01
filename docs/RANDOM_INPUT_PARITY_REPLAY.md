@@ -1404,6 +1404,111 @@ focused accepted-instruction regression asserts both the resulting wait state
 and an empty owner-work queue at that direct-call boundary. Full replay
 validation remains pending until the production runner is available.
 
+### Fresh 739-trace current-HEAD baseline and R07 inventory
+
+The serial release sweep frozen at `fd248c2ff` completed all 739 inputs in its
+manifest: 225 exact EOF, 423 ordinary state divergences, 71 RNG-order exits,
+8 speech/sound-manager exits, 12 other invariant panics, and zero timeouts.
+The manifest includes 717 complete recordings and 22 explicitly incomplete
+recordings; three of the latter account for truncated-JSON invariant exits.
+Raw statuses, logs, the mutually exclusive per-trace classification, and the
+release-runner fingerprint are preserved under
+`output/parity-audits/random-short-current-head-20260801/`.
+
+The 71 R07 exits group by the first Rust draw site as follows:
+
+| First Rust site | Count |
+|---|---:|
+| `VipIdleRemark` | 12 |
+| `AiRandomValueRectangle` | 11 |
+| `BoredAnimationChoice` | 10 |
+| `RuntimeBuildingExitWait` | 7 |
+| `SeekPointSelection` | 6 |
+| `MacroRand` | 6 |
+| `DrunkCombatFreeze` | 6 |
+| No Rust draw in the Original frame | 6 |
+| `ScriptRand` | 3 |
+| `DefaultPostLook` | 3 |
+| `AiPanic` | 1 |
+
+Symbolizing the Original return-address stream resolves 46 boundaries without
+rerunning them. The largest exact pairs are Original
+`RHArtificialMalignity::The16thFrame` versus Rust `VipIdleRemark` (8),
+`RHArtificialMalignity::SeekArea` versus `SeekPointSelection` (5),
+`RHArtificialIntelligence::StopAll` versus `AiRandomValueRectangle` (5),
+`RHScript::AttachScrollToNPC` versus `ScriptRand` (3), and
+`RHArtificialMalignity::ReconsiderSwordfight` versus `DrunkCombatFreeze` (2).
+The first, second, fourth, and fifth pairs name the same logical source draw on
+both sides. Their cardinality mismatch is therefore evidence of a differing
+owner/state gate or owner ordering, not a reason to add or discard a random
+draw. The eight-member periodic bored-remark family is the first owner-level
+diagnostic target. None of the commits after the frozen build and before this
+inventory directly changes that periodic callsite.
+
+Future RNG cursor assertions now include the Original frame's simulation-only
+callsite offsets alongside Rust's `RngSite` sequence. This makes the exact
+Original/Rust boundary available in the ordinary log without decompressing a
+multi-gigabyte single-frame JSONL recording. Owner-specific replay diagnostics
+remain necessary before changing any matching source callsite.
+
+### Frozen 739-trace ordinary-state regroup (`fd248c2ff`)
+
+The completed current-head audit in
+`output/parity-audits/random-short-current-head-20260801/` contains 739
+results: 225 exact EOF, 423 ordinary state divergences, 71 RNG boundaries, 8
+speech boundaries, and 12 panics. The 423 ordinary failures group by first
+logical field as follows:
+
+| First logical field | Count |
+|---|---:|
+| `actor.command` | 186 |
+| `actor.action_state` | 73 |
+| `sprite_frame_count` | 36 |
+| `direction` | 20 |
+| `direction_goal` | 17 |
+| `actor.wait_time` | 17 |
+| `position_map.x` | 16 |
+| `position_goal_map.x` | 16 |
+| `posture` | 9 |
+| `layer` | 9 |
+| `ai.substate` | 6 |
+| `ai.state` | 6 |
+| `life_points` | 4 |
+| `blipped` | 4 |
+| `elevation` | 3 |
+| `active` | 1 |
+| **Total** | **423** |
+
+The largest repeated exact command signatures are 16 PC
+`EnterHelpingClimb -> Wait`, 15 Soldier `MoveWaiting -> MoveOk`, 13 Soldier
+`EnterAttentiveMode -> Wait`, 13 PC `Wait -> EnterHelpingClimb`, 10 Soldier
+`Wait -> Turn`, 10 PC `ParrySword -> SwordstrikeThrustD`, 9 Soldier
+`ShootBow -> Turn`, and 7 PC `ParrySword -> SwordstrikeThrustA`. These are
+first-visible signatures rather than assertions that each pair has one cause.
+In particular, the two helping-climb directions occur on different launch and
+completion boundaries after the earlier 49-member lifetime fix.
+
+This audit is frozen at `fd248c2ff`. Later commits must be credited before
+using these numbers as live work totals: `96cd51790` fixes proud-soldier speech,
+`d392354a5` fixes group-move authorization and its missing hero speech,
+`3acf2093f` adds NPC lock/macro diagnostics, `db4d3a18f` fixes lift endpoint
+selection, and `b78d182f3` closes caller-local group-instruction work inline.
+Only a new release sweep can provide authoritative post-fix counts.
+
+The 15 `MoveWaiting -> MoveOk` members reduce to five save situations repeated
+three times. In the representative nicouzouf Profile 001 Save 024 frame-107
+boundary, Original synchronously queues paths for soldiers 80, 82, and 84,
+while Rust exposes `MoveOk`; the trace records all three exact sources, final
+goals, and half diagonals. Source comparison found a general dispatch mismatch:
+Original `RHElementActor::InstructOwner(RHCOMMAND_MOVE)` bypasses A* only for
+`RHMOVE_MAP`, `RHMOVE_STRAIGHT`, or a successful `IsReachableThick` test.
+Rust additionally treated `RHMOVE_LINE` and pass-door state as unconditional
+direct movement. Line-goal metadata controls `PostProcessPathToLine`; it does
+not authorize skipping `AddPathRequest`. The Rust predicate now mirrors the
+Original condition, with a focused regression proving that a blocked
+`MoveFlags::LINE` movement still enters pathfinding. Validation is pending the
+next sole-slot release run.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
