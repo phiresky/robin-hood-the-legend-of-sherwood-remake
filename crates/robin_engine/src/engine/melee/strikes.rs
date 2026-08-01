@@ -2367,6 +2367,7 @@ impl EngineInner {
     #[cfg(test)]
     pub(crate) fn tick_concussion_healing(&mut self, assets: &LevelAssets) {
         let mut pending_fit_again: Vec<EntityId> = Vec::new();
+        let is_sherwood = self.is_sherwood(&assets.profile_manager);
         // Standup / BeingStunnedSword chains discovered during the
         // entity-iter loop are launched after the loop ends to avoid
         // borrowing `self.world.entities` and `self` simultaneously.
@@ -2398,7 +2399,7 @@ impl EngineInner {
 
             let ctx = concussion_ctx_full(
                 entity,
-                self.world.weather.is_forest_level,
+                is_sherwood,
                 Some(&self.mission_domain.campaign),
                 self.control.sim_config.difficulty,
             );
@@ -2506,6 +2507,7 @@ impl EngineInner {
         assets: &LevelAssets,
     ) {
         let mut recover = None;
+        let is_sherwood = self.is_sherwood(&assets.profile_manager);
         let naturally_woke = {
             let entity = self.world.entities.get_mut(owner).unwrap_or_else(|| {
                 panic!(
@@ -2532,7 +2534,7 @@ impl EngineInner {
                 let life_points = get_life_points(entity);
                 let ctx = concussion_ctx_full(
                     entity,
-                    self.world.weather.is_forest_level,
+                    is_sherwood,
                     Some(&self.mission_domain.campaign),
                     self.control.sim_config.difficulty,
                 );

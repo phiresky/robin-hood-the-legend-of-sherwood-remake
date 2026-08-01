@@ -347,7 +347,7 @@ impl EngineInner {
 
         let ctx = concussion_ctx_full(
             victim,
-            self.world.weather.is_forest_level,
+            self.is_sherwood(&assets.profile_manager),
             Some(&self.mission_domain.campaign),
             self.control.sim_config.difficulty,
         );
@@ -942,7 +942,7 @@ impl EngineInner {
         };
         let ctx = concussion_ctx_full(
             victim,
-            self.world.weather.is_forest_level,
+            self.is_sherwood(&assets.profile_manager),
             Some(&self.mission_domain.campaign),
             self.control.sim_config.difficulty,
         );
@@ -1066,7 +1066,7 @@ impl EngineInner {
         };
         let ctx = concussion_ctx_full(
             victim,
-            self.world.weather.is_forest_level,
+            self.is_sherwood(&assets.profile_manager),
             Some(&self.mission_domain.campaign),
             self.control.sim_config.difficulty,
         );
@@ -1204,7 +1204,7 @@ impl EngineInner {
         };
         let ctx = concussion_ctx_full(
             victim,
-            self.world.weather.is_forest_level,
+            self.is_sherwood(&assets.profile_manager),
             Some(&self.mission_domain.campaign),
             self.control.sim_config.difficulty,
         );

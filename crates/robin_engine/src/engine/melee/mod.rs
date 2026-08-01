@@ -474,13 +474,14 @@ impl EngineInner {
     pub(crate) fn concussion_ctx_for<I: Into<EntityId>>(
         &self,
         sim: &crate::sim_rng::SimulationContext,
+        profiles: &crate::profiles::ProfileManager,
         id: I,
     ) -> Option<ConcussionContext> {
         let id = id.into();
         self.get_entity(id).map(|entity| {
             concussion_ctx_full(
                 entity,
-                self.world.weather.is_forest_level,
+                self.is_sherwood(profiles),
                 Some(&self.mission_domain.campaign),
                 sim.config().difficulty,
             )
@@ -517,7 +518,7 @@ impl EngineInner {
         use crate::combat::ConcussionOutcome;
 
         let entity_id = entity_id.into();
-        let Some(mut ctx) = self.concussion_ctx_for(sim, entity_id) else {
+        let Some(mut ctx) = self.concussion_ctx_for(sim, &assets.profile_manager, entity_id) else {
             tracing::warn!(?entity_id, "optional concussion target does not exist");
             return ConcussionOutcome::NoChange;
         };
@@ -556,7 +557,7 @@ impl EngineInner {
                 .expect("validated scripted concussion target lost HumanData");
             concussion_ctx_full(
                 entity,
-                self.world.weather.is_forest_level,
+                self.is_sherwood(&assets.profile_manager),
                 Some(&self.mission_domain.campaign),
                 sim.config().difficulty,
             )
@@ -956,7 +957,7 @@ impl EngineInner {
 /// `campaign`.
 pub(crate) fn concussion_ctx_full(
     entity: &Entity,
-    is_forest_level: bool,
+    is_sherwood: bool,
     campaign: Option<&crate::campaign::Campaign>,
     difficulty: crate::player_profile::DifficultyLevel,
 ) -> ConcussionContext {
@@ -989,9 +990,9 @@ pub(crate) fn concussion_ctx_full(
                 .unwrap_or(false),
             _ => false,
         },
-        // PCs in Sherwood Forest get knockdown protection (concussion
-        // always max instead of kill).
-        is_sherwood_pc: is_forest_level && entity.kind().is_pc(),
+        // RHGame::IsSherwood is the current campaign mission's location,
+        // not the proto level's broader `forest_level` rendering/AI flag.
+        is_sherwood_pc: is_sherwood && entity.kind().is_pc(),
         is_in_coma,
         // `force_value` is a per-call parameter, not entity state.
         // Default to false; cheats / scripts that need force-wake set
@@ -4573,6 +4574,9 @@ mod tests {
         const PC_WAKE_UP: u16 = 555;
 
         let mut engine = make_engine();
+        // Forest of Barnsdale/Charnwood/Ashby missions use the forest proto
+        // flag too, but only the Sherwood HQ mission grants PC immunity.
+        engine.world.weather.is_forest_level = true;
 
         // PC with profile_index 0 — `make_pc` defaults to that.
         let pc_id = engine.add_entity(make_pc(
