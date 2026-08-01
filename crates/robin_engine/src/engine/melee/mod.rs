@@ -2994,6 +2994,24 @@ mod tests {
     fn civilian_health_counts_toward_round_strike_and_warcry() {
         let mut engine = make_engine();
         let (attacker, _) = make_enemy_strike_pair(&mut engine, true);
+        {
+            let sprite = &mut engine
+                .get_entity_mut(attacker)
+                .unwrap()
+                .element_data_mut()
+                .sprite;
+            sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+                action_done: 0,
+                frame_ids: vec![0],
+                delays: vec![1],
+                distances: vec![0],
+                offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+                sound_ids: vec![0],
+                ..Default::default()
+            }]);
+            sprite.conversion =
+                std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]);
+        }
         engine.add_entity(make_civilian(WorldPoint3D {
             x: 15.0,
             y: 100.0,
