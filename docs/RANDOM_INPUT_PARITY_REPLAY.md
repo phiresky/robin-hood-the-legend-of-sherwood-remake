@@ -644,6 +644,44 @@ correct identities:
 - Cyrdach Savegame 000 replay 002 maps Original creation order 161 and matches
   every recorded frame.
 
+### `f9bd4bfe4` — consume eager registration when postponing
+
+The fresh 700-trace sweep's sole watchdog member was
+`Savegame_linux3/Profile_001/Savegame_002/replay-001-session-0001.jsonl.zst`.
+Focused stage probes narrowed its apparent frame-11465 `SelectAction(Purse)`
+hang to the synchronous `UnequipBow` launch. The complete diagnostics are
+preserved under
+`output/parity-hang-diagnostics/linux3-save002-r001/`: `command-stage.log`
+first isolated command application, `stop-recursion.log` proved both Stop
+passes returned, and `launch-arbitration.log` captured the recursive edge and
+stack overflow.
+
+The invalid postponed self-link was created at runtime, not by Linux save
+adoption. At frame 11415, synchronous launch correctly postponed the new
+`EquipBow` element `(7896, 0)` behind non-interruptable `PassDoor` `(7883,
+3)`, but Rust left the new element's eager manager registration queued. The
+Sequences phase instructed the same waiter a second time, saw it already in
+the blocker's postponed slot, and recursively postponed `(7896, 0)` behind
+itself. A later `UnequipBow` launch followed that cycle until stack overflow.
+
+Original cannot produce that second instruction: `RHSequenceManager::Hourglass`
+removes the element from `mlistSequenceElementsToGo` before `Go`/`Instruct`
+(`original-code/RHsequencemanager.cpp:938-951`), and
+`RHSequenceElement::Postpone` runs inside that boundary
+(`original-code/RHsequenceelement.cpp:636-694`). Rust now consumes any eager
+deferred or synchronous registration when an element becomes `Postponed`, and
+`engine_postpone` asserts the impossible blocker-equals-waiter invariant. The
+focused queue regression and the existing injury/postponement regressions
+pass.
+
+A normal release-mode 120-second validation no longer hangs or reaches the
+watchdog. It advances through frame 11465 and stops normally at the next
+independent divergence after frame 11681: PC 126 `actor.wait_time` is 14 in
+Original and 0 in Rust. The authoritative result is
+`output/parity-hang-diagnostics/linux3-save002-r001/postpone-registration-fix.log`
+with status `1` in the sibling `.status` file. The old watchdog group is
+therefore closed; frame 11681 is now tracked as an R03 timer frontier.
+
 When another fix lands, add the commit, Original source boundary, focused test,
 all affected traces, and their new exact result or next independent frontier
 here. Do not silently delete old rows: mark them superseded by the fix so the
