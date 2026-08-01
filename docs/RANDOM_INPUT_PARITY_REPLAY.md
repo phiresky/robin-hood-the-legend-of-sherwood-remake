@@ -76,6 +76,91 @@ timing group, and the comparator `other` group.  Direction/position, RNG,
 speech, unsupported resolved commands, and the watchdog trace remain explicit
 follow-up groups rather than being silently folded into those assignments.
 
+### Fresh command-lifecycle subgroup ledger
+
+Of the 598 failures, 192 have `actor.command` as their first reported logical
+field. The strict first-field cohort groups by its first Original/Rust command
+pair as follows:
+
+| Original command | Rust command | Count |
+|---|---|---:|
+| `EnterHelpingClimb` | `Wait` | 49 |
+| `Wait` | `RaiseBow` | 45 |
+| `EnterBeggar` | `Wait` | 37 |
+| `MoveWaiting` | `MoveOk` | 17 |
+| `Wait` | `Turn` | 6 |
+| `Wait` | `ShootBow` | 4 |
+| `EquipBow` | `Wait` | 4 |
+| `ShootBow` | `Turn` | 3 |
+| `ParrySword` | `SwordstrikeThrustA` | 3 |
+| `MoveOk` | `HitCmd` | 3 |
+| `EnterBeggar` | `MoveOk` | 3 |
+| `RaiseShield` | `MoveOk` | 2 |
+| `QuitSwordfight` | `MoveOk` | 2 |
+| `EnterHelpingClimb` | `MoveOk` | 2 |
+| Twelve one-off command pairs | mixed | 12 |
+| **Total** |  | **192** |
+
+The largest concrete cause is the posture-command lifetime shared by the
+`EnterHelpingClimb -> Wait` and `EnterBeggar -> Wait` groups. Original
+`RHElementActor::Instruct` first generates a `Bored -> Waiting` transition;
+the PC translator then appends the requested stance animation. The stance
+body validates only after that prefix has established Waiting, remains the
+selected command through the animation, and applies posture/action/tool-state
+effects at `MOTION_DONE`. Rust instead revalidated the body against the
+still-visible Bored state and marked it Impossible; its successful path also
+snapped posture immediately and terminated the element. The general repair
+retains the complete prefix/body lifetime for enter/leave beggar and
+helping-climb commands and moves their authoritative state effects to the
+animation-DONE boundary. No trace IDs, frames, coordinates, or recorded values
+participate in the behavior.
+
+The frozen release runner under
+`.codex-tmp/random-command-release-20260801/` reran all 49 strict
+`EnterHelpingClimb -> Wait` members serially. Every member cleared its
+assigned boundary: 7 reached exact EOF and 42 advanced to a later independent
+field or RNG frontier. As a cross-command check, Linux2 Profile 002 Save 034
+replay 003 (`EnterBeggar -> Wait`) now reaches exact EOF as well. The remaining
+36 strict beggar members still need a failure-only sweep before that adjacent
+group is closed as a count.
+
+### Fresh action-state and wait-time subgroup ledger
+
+The 132 traces whose first logical field is `actor.action_state` split by the
+exact Original/Rust transition as follows:
+
+| Original | Rust | Count |
+|---:|---:|---:|
+| 1 (`Bored`) | 0 (`Waiting`) | 70 |
+| 2 (`Moving`) | 0 (`Waiting`) | 28 |
+| 7 (`WaitingSword`) | 8 (`MovingSword`) | 10 |
+| 8 (`MovingSword`) | 9 (`MovingFastSword`) | 8 |
+| 0 (`Waiting`) | 2 (`Moving`) | 6 |
+| 3 (`MovingFast`) | 0 (`Waiting`) | 5 |
+| 8 (`MovingSword`) | 2 (`Moving`) | 4 |
+| 0 (`Waiting`) | 8 (`MovingSword`) | 1 |
+
+The dominant `Bored/Moving -> Waiting` family contains 88 Whistle, Eat,
+EnterListen, or Heal launches: 59 Whistle, 21 Eat, 7 EnterListen, and 1 Heal.
+Original `RHElementActorPC::Translate` only appends the corresponding orders;
+it neither calls `Stop()` nor changes the actor's logical action state. Rust's
+ability launch helpers did both, erasing the pre-command state and path.
+Original also uses the one serialized `RHElementActor::mulWaitTime` for both
+Whistle and Listen, while Rust had updated only private phase/render mirrors.
+
+The source-backed launch fix preserves the path/action state and synchronizes
+the authoritative wait counter. A one-worker release sweep of all 88 affected
+launch traces is preserved under
+`output/parity-audits/random-action-wait-fix1/`. All 88 advance beyond their
+old first boundary: 21 now reach exact EOF, 60 reach a later state/command
+boundary, and 7 reach a later RNG-cardinality boundary. Whistle also clears
+its subsequent countdown boundary. Eat advances to an independent
+command-lifetime mismatch. EnterListen exposes a later one-frame termination
+lag after the listening loop, where Original decrements `mulWaitTime` once
+more before the exit transition than Rust. The remaining later frontiers stay
+open in their corresponding command, movement, and RNG groups; they are not
+failures of the launch fix.
+
 ### Fresh `other` subgroup ledger
 
 All 75 failures whose only first logical field is `other` have an exact
@@ -87,15 +172,21 @@ in this bucket.  The mutually exclusive cardinality split is:
 | O01 | 72 | Original selected one PC and Rust retained a different single PC |
 | O02 | 3 | Original selected one PC and Rust retained two PCs |
 
-O01's first proven shared cause is inactive indoor-PC selection.  Original
+O01 and O02's shared cause was inactive indoor-PC selection.  Original
 `RHElementActorPC::IsSelectable` checks the PC position interface's stored
 `GetSector()->IsBuilding()` value.  Rust instead performed a fresh fast-grid
 point query.  At coordinates covered by overlapping sectors, that query can
 return a non-building sector and reject the resolved `SelectPc`, leaving the
 old selection intact.  Rust now uses the entity's stored sector, matching the
-Original predicate.  O01 and O02 remain open until all 75 traces reach exact
-EOF with a frozen release runner; advancing one selection boundary may expose
-a later independent divergence.
+Original predicate.
+
+The one-worker release rerun is preserved under
+`output/parity-audits/random-short-other-after-selection/`.  All 75 traces
+cleared their former selected-PC boundary with no recurrence: 17 reached exact
+EOF and 58 advanced to later independent divergences.  O01 and O02 are
+therefore closed as first-boundary groups; the 58 later frontiers belong to
+their new command, movement/direction, timer, RNG, speech, or invariant groups
+rather than remaining counted as selection failures.
 
 The long `60s-15x` snapshot contains 1,791 traces and is being swept with one
 runner process to keep memory bounded.  Its totals are provisional until all
@@ -167,7 +258,7 @@ not the current engine's expected failure count.
 |---|---|---|---|
 | R01 | Fix landed; rerun required | PC `actor.action_state`, commonly Original idle versus Rust `WalkingUpright` while both retain `MoveOk` | `516728654` preserves Waiting when an entity-target `PerformSeek` remains visibly in progress. All four assigned boundaries clear; one trace is exact and three reach independent later failures. The remaining 53 baseline entries require failure-only reruns before this group can be split or closed. |
 | R02 | In progress | `direction_goal`, frequently at frame 516 | Silent Linux2 Save002 proved that Original patrol snapshots expose an active PassDoor member at its committed gate side, while Rust observed its interpolated sprite position and queued a stale patrol target. Door-snapped shared-AI views and exact endpoint completion are under validation; random members still require their own failure-only reruns before this whole group is attributed to that cause. |
-| R03 | Unassigned | `actor.wait_time`, alone or beside action state | Compare the owning command and timer launch/termination frame. Do not normalize the timer in the comparator. |
+| R03 | In progress | `actor.wait_time`, alone or beside action state | Original uses the single serialized `mulWaitTime` for Whistle and Listen. Rust now synchronizes its phase-local mirrors with that field. Whistle representative traces clear; EnterListen exposes a separate one-frame listening-order termination lag. Standalone wait failures still require grouping. Do not normalize the timer in the comparator. |
 | R04 | Unassigned | `position_goal_map` | Audit whether the outgoing selected command is detached, postponed, or retained. Existing Halt and raising-sword fixes are relevant but not assumed sufficient. |
 | R05 | Unassigned | `actor.command` with posture/direction | Inspect wrapper versus concrete command lifetime and the action-change marker that commits posture. |
 | R06 | Unassigned | `ai.substate` at frame 282 | Compare synchronous command side effects and owner-local AI callback ordering. |
@@ -176,7 +267,7 @@ not the current engine's expected failure count.
 | R09 | Unassigned | Resolved speech has no pending Rust request | Separate genuinely absent gameplay `Say` calls from already-fixed synchronous speech boundaries before changing restoration or FIFO policy. |
 | R10 | Unassigned | Resolved speech disagrees with pending FIFO | Compare actor, exclamation, forced/random variant, and the synchronous callback that queued it. Never skip an event to realign the stream. |
 | R11 | Fix landed; rerun required | Runtime entity creation/mapping | `516728654` exposed two bow arrows whose Rust identities were one early. Save adoption reused beam-me PCs without consuming the provisional construction orders that Original's dynamic load path consumes. The fix restores those invisible counter increments; both exposed arrows now map at their Original identities. |
-| R12 | Fix under validation | Comparator `other`, layer/sector, or unclassified panic | The fresh sweep's 75 `other`-only failures are all `selected_pcs`: O01=72 one-to-one wrong selection and O02=3 one-to-two. O01 exposed Rust point-querying the building under an inactive PC where Original uses its stored sector; the source-backed stored-sector fix requires a complete 75-trace rerun. Layer/sector identity remains a separate isomorphic comparison concern. |
+| R12 | Selection subgroup fixed | Comparator `other`, layer/sector, or unclassified panic | The fresh sweep's 75 `other`-only failures were all `selected_pcs`: O01=72 one-to-one wrong selection and O02=3 one-to-two. The stored-sector fix eliminated all 75 first boundaries; 17 traces now reach exact EOF and 58 expose later independent groups. Layer/sector identity remains a separate isomorphic comparison concern. |
 
 ## First-divergence ledger
 
