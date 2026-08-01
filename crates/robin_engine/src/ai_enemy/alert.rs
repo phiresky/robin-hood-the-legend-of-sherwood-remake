@@ -19,6 +19,15 @@ pub(crate) enum CommandSoldiersStart {
     Rejected,
 }
 
+/// Direction used by Original's officer attack-point sequence:
+/// `PositionToPoint3D(target) - officer.GetPosition()`.
+fn attack_point_direction(ctx: &AiContext, target: Position) -> u16 {
+    let target_world = ctx.position_to_point_3d(target);
+    let dx = target_world.x - ctx.position.x;
+    let dy = target_world.y - (ctx.position.y + ctx.elevation);
+    vec_to_sector(dx, dy)
+}
+
 impl EnemyAi {
     /// CanPutSoldiersInThisDirection. Lays out `num_soldiers`
     /// gather slots in a line formation radiating from `pt_officer` in
@@ -315,10 +324,7 @@ impl EnemyAi {
             // below.  Reconstruct world Y for the facing vector; otherwise an
             // officer standing above or below the target points several
             // sectors too far north/south.
-            let target_world = ctx.position_to_point_3d(center);
-            let me_to_target_world_x = target_world.x - my_pos.x;
-            let me_to_target_world_y = target_world.y - (my_pos.y + ctx.elevation);
-            let target_dir = vec_to_sector(me_to_target_world_x, me_to_target_world_y);
+            let target_dir = attack_point_direction(ctx, center);
 
             let owner = self.base.owner_entity_id;
             let mut seq = Sequence::new();
@@ -1535,5 +1541,42 @@ impl EnemyAi {
             ctx,
         );
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attack_point_direction_uses_world_y() {
+        let ctx = AiContext {
+            position: Position {
+                x: 0.0,
+                y: 0.0,
+                sector: None,
+                level: 0,
+            },
+            elevation: 100.0,
+            ..AiContext::default()
+        };
+        let target = Position {
+            x: 100.0,
+            y: 100.0,
+            sector: None,
+            level: 0,
+        };
+
+        // Both ground points have world Y = 100, so the target is due east.
+        // Classifying their projected-map delta would incorrectly include a
+        // +100 Y component.
+        assert_eq!(
+            attack_point_direction(&ctx, target),
+            vec_to_sector(100.0, 0.0)
+        );
+        assert_ne!(
+            attack_point_direction(&ctx, target),
+            vec_to_sector(100.0, 100.0)
+        );
     }
 }

@@ -533,6 +533,28 @@ statuses are complete: 17 clear their former boundary (4 exact EOF and 13
 later independent divergences), while 15 remain unchanged and therefore form
 separate movement, command, timer, elevation, and turning families.
 
+### `8e541e882` — face officer attack points in world coordinates
+
+Original `RHArtificialMalignity::CommandSoldiersToAttack` computes the
+officer's `POINT` direction from `PositionToPoint3D(mposSeekPosition)` minus
+the officer's world-space `GetPosition()`. Rust had instead classified the
+raw projected-map delta, so elevation was interpreted as a north/south target
+offset. The attack-point sequence now resolves both sides in world XY while
+retaining projected-map coordinates for Original's separate 150-unit MaxNorm
+gate.
+
+Both repeated Soldier 139 boundaries clear in a release build:
+
+- Linux3 Profile 003 Continue replay 001 advances from frame 13619 to an
+  independent multi-archer `ShootBow` versus `Turn` family at frame 13684.
+- Linux3 Profile 003 Savegame 025 replay 001 advances from frame 13587 to the
+  same independent family at frame 13647.
+
+The old direction/direction-goal mismatch is absent in both traces. A focused
+regression covers an elevated officer and target sharing the same world Y;
+the officer must point due east rather than classify their projected-map Y
+difference.
+
 ### `516728654` — preserve Waiting for entity-target PC seeks
 
 Original `WalkingUpright::Execute` observes an entity-target `PerformSeek` as
