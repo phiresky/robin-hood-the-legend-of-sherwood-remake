@@ -1172,11 +1172,11 @@ impl AiController {
 
     /// Issue a lower-shield order.
     pub fn lower_shield(&mut self) {
-        use crate::order::OrderType;
-        self.outbox
-            .actor
-            .orders
-            .push(AiOrderIntent::new(OrderType::LoweringShield, 0.0, 0.0));
+        // Original launches an RHCOMMAND_LOWER_SHIELD sequence element, not
+        // a bare animation order. Preserve that command identity so the
+        // engine's preemption drain routes through dispatch_lower_shield and
+        // the eventual condolence card reports EventDone for LowerShield.
+        self.outbox.actor.lower_shield = true;
     }
 
     /// Base-class virtual hook for `default_bored_standard_procedure` —
@@ -4469,5 +4469,18 @@ mod tests {
                 z: 160.0,
             })
         ));
+    }
+
+    #[test]
+    fn lower_shield_requests_the_explicit_command() {
+        let mut ai = AiController::new(17);
+
+        ai.lower_shield();
+
+        assert!(ai.outbox.actor.lower_shield);
+        assert!(
+            ai.outbox.actor.orders.is_empty(),
+            "LowerShield must not be flattened into a Generic animation order"
+        );
     }
 }

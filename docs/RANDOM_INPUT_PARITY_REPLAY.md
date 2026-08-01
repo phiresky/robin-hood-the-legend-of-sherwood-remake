@@ -773,6 +773,29 @@ while investigating the following four behavior families:
    the companion SwordstrikeDown validation are preserved under
    `output/parity-audits/r06-shield-swordstrike-current-head/`.
 
+   The two later frontiers have separate causes. At SuN frame 630, Original's
+   `EquipBow` reaches `RHMOTION_DONE`; frames 631 and 632 expose `Wait`, and the
+   queued shot starts only at frame 633. `RHElementActorHuman::Instruct` stores
+   a rejected shot in `mlpsequenceShootList` before Actor `Instruct` translates
+   it, while `ProcessShootList` retries from the Human `Hourglass` prelude only
+   after the sprite's last animation becomes `AimingWithBow` or
+   `AimingWithBowUp` (`RHelementactorhuman.cpp:297,3030-3045,13005-13015`). Rust
+   currently represents that list as an already-instructed cross-postponed
+   element and resumes it synchronously when `EquipBow` terminates. The live
+   shoot-list lifecycle therefore remains **open**: use `HumanData::pending_shoots`
+   as the real FIFO and retry instruction from the existing Human prelude,
+   rather than resuming a postponed successor.
+
+   Linux3 frame 574 is command provenance rather than shield animation timing.
+   The exact Original RNG branch directly launches an
+   `RHCOMMAND_LOWER_SHIELD` element (`RHartificialmalignity.cpp:4520-4532`).
+   Rust's AI helper instead queued a bare `LoweringShield` order, which the
+   generic order drain wrapped in `Command::Generic`. `AiController::lower_shield`
+   now sets the existing explicit lower-shield outbox flag, so the engine's
+   preemption drain launches `Command::LowerShield` and uses the established
+   shield dispatcher. A focused outbox regression locks the command-preserving
+   route. This source-exact fix still requires an exact current-run validation.
+
 4. **Heard-steps entry and synchronous group ordering (two traces, four state
    mismatches).** Both Savegame 018 recordings disagree for Soldiers 132 and
    133 simultaneously; Soldiers 134 through 139 also acquire Original direction
