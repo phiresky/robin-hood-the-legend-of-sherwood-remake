@@ -1523,13 +1523,37 @@ impl EngineInner {
             door.point_out
         };
         let point = crate::coordinates::MapPoint::new(point.x, point.y);
+        let position = if direct {
+            // RHElementActor::PassDoor's direct branch changes topology but
+            // does not call ComputePositionAll. The preceding door-rail
+            // movement therefore owns Z; snapping map XY must not project it
+            // through the currently installed plane a second time.
+            let elevation = self
+                .get_entity(entity_id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "completed direct PassDoor for {entity_id:?} lost its owner before endpoint commit"
+                    )
+                })
+                .element_data()
+                .position()
+                .z;
+            let ground = crate::coordinates::GroundPoint::from_map_and_z(point, elevation);
+            super::special_motion::SpecialMovePosition::World(
+                crate::coordinates::WorldPoint3D::new(ground.x, ground.y, elevation),
+            )
+        } else {
+            // The non-direct C++ branch does call ComputePositionAll, after
+            // installing the outside projection plane on building exits.
+            super::special_motion::SpecialMovePosition::Map(point)
+        };
         self.finalize_special_move_position(
             assets,
             entity_id,
-            super::special_motion::SpecialMovePosition::Map(point),
+            position,
             None,
             None,
-            Some(point),
+            (!direct).then_some(point),
             "completed door pass",
         );
     }
@@ -2318,6 +2342,60 @@ mod tests {
             entity.element_data().sector(),
             crate::position_interface::SectorHandle::new(62),
             "projection lookup is not the explicit PassingDoor topology swap"
+        );
+    }
+
+    #[test]
+    fn direct_door_completion_preserves_rail_elevation_without_plane_reprojection() {
+        let mut engine = EngineInner::new();
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(default_door());
+        let owner = engine.add_entity(make_pc(7));
+
+        let before_map = MapPoint::new(29.0, 30.0);
+        let elevation = 93.3318_f32;
+        let ground = crate::coordinates::GroundPoint::from_map_and_z(before_map, elevation);
+        {
+            let entity = engine.world.entities.get_mut(owner).unwrap();
+            entity
+                .element_data_mut()
+                .set_position(crate::coordinates::WorldPoint3D::new(
+                    ground.x, ground.y, elevation,
+                ));
+            entity.position_iface_mut().set_obstacle(
+                None,
+                Some(crate::position_interface::PlaneZCoeffs {
+                    az: 0.0,
+                    bz: 0.0,
+                    dz: 90.00101,
+                }),
+            );
+        }
+
+        engine.commit_completed_door_pass_position(
+            &LevelAssets::new(),
+            owner,
+            crate::gate::DoorIndex(0),
+            true,
+        );
+
+        let entity = engine.world.entities.get(owner).unwrap();
+        assert_eq!(
+            entity.element_data().position_map(),
+            MapPoint::new(30.0, 30.0)
+        );
+        assert_eq!(
+            entity.element_data().position().z.to_bits(),
+            elevation.to_bits(),
+            "the direct branch must preserve the door-rail Z instead of resolving the plane"
+        );
+        assert_eq!(
+            entity.element_data().position().to_map(),
+            entity.element_data().position_map(),
+            "the endpoint snap must keep map and world coordinates coherent"
         );
     }
 
