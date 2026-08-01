@@ -1878,6 +1878,17 @@ Replay validation is pending the next frozen-runner sweep.
 
 ## Schema-12 comparator coverage audit
 
+### Dormant increment vectors
+
+Original release builds serialize/dump `mvIncrementMap` even while its
+`COMPUTED_INCREMENT_MAP` validity bit is clear; the ordinary gameplay getter
+asserts only in debug builds. The comparator previously called Rust's equally
+asserting gameplay getter and therefore panicked on valid dormant state before
+performing any comparison. Parity capture and comparison now use explicit raw
+read-only accessors. Schema-12 recordings compare the raw vector, while new
+recordings also carry and compare `increment_map_valid`; gameplay code retains
+the asserting getter.
+
 The schema-12 reader now treats the trace envelope as an executable contract,
 not merely a convenient source of fields. Header records validate their type,
 25 Hz simulation rate, global libc draw-stream identity, and ordered opaque

@@ -1118,6 +1118,8 @@ struct TraceElement {
     elevation: TraceFloat,
     old_elevation: TraceFloat,
     increment_map: TracePoint,
+    #[serde(default)]
+    increment_map_valid: Option<bool>,
     movement_map: TracePoint,
     layer: u16,
     layer_goal: u16,
@@ -4634,7 +4636,7 @@ fn compare_frame(
             expected.old_elevation,
             pi.old_elevation(),
         );
-        let increment_map = pi.get_increment_map();
+        let increment_map = pi.raw_increment_map();
         compare_point(
             &mut differences,
             id,
@@ -4642,6 +4644,15 @@ fn compare_frame(
             expected.increment_map,
             MapPoint::new(increment_map.x, increment_map.y),
         );
+        if let Some(expected_increment_map_valid) = expected.increment_map_valid {
+            compare(
+                &mut differences,
+                id,
+                "increment_map_valid",
+                expected_increment_map_valid,
+                pi.is_increment_map_computed(),
+            );
+        }
         let movement_map = element.position_map() - pi.old_map_position();
         compare_point(
             &mut differences,
