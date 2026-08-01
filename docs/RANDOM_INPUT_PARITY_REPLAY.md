@@ -452,9 +452,9 @@ not the current engine's expected failure count.
 | R01 | Fix landed; rerun required | PC `actor.action_state`, commonly Original idle versus Rust `WalkingUpright` while both retain `MoveOk` | `516728654` preserves Waiting when an entity-target `PerformSeek` remains visibly in progress. All four assigned boundaries clear; one trace is exact and three reach independent later failures. The remaining 53 baseline entries require failure-only reruns before this group can be split or closed. |
 | R02 | Fix landed; cohort rerun required | `direction_goal`, frequently at frame 516 | `7db74f013` makes shared AI and owner-ordered `RefreshPatrol` snapshots expose an active PassDoor member at its committed gate side, and commits the exact endpoint before later owner slots can observe it. Linux2 Profile 002 Savegame 002 is exact through frame 726. The remaining baseline members require current failure-only reruns before this whole group can be attributed to that cause. |
 | R03 | Listen fix landed; timer rerun required | `actor.wait_time`, alone or beside action state | Original uses the single serialized `mulWaitTime` for Whistle and Listen. Rust now synchronizes its phase-local mirrors and, while Listening, ignores sprite completion until that counter reaches zero. The prior sweep's three unchanged timer pairs (`2 -> 14`, stale `25 -> 4294967269`, and `24 -> 25`) still require current-fix reruns; do not normalize any timer in the comparator. |
-| R04 | Audited; partial current validation | `position_goal_map` | The fresh 700-trace frozen baseline contains nine strict first-field members. The apparent three-way `MoveOk` group has separate producers. `fff5ecdcc` fixes Original's literal 40-unit `SwordstrikeDown` seek and its exact Savegame 007 frame-3056 boundary now clears, advancing to an independent Soldier 94 `ai.substate` mismatch at frame 3313. The remaining eight exact traces still require current validation or investigation. |
+| R04 | Audited; partial current validation | `position_goal_map` | The fresh 700-trace frozen baseline contains nine strict first-field members. The apparent three-way `MoveOk` group has separate producers. `fff5ecdcc` fixes Original's literal 40-unit `SwordstrikeDown` seek and its exact Savegame 007 frame-3056 boundary now clears, advancing to an independent Soldier 94 `ai.substate` mismatch at frame 3313. A six-trace current release rerun adds one exact EOF, three advances to independent later boundaries, and two unchanged boundaries; details and logs are recorded below. |
 | R05 | Unassigned | `actor.command` with posture/direction | Inspect wrapper versus concrete command lifetime and the action-change marker that commits posture. |
-| R06 | Audited; shield pair cleared | `ai.substate` | The fresh 700-trace frozen baseline has ten strict first-field traces. `34e4810d7` restores the live ordered `seen_last_frame` Enemy detectable projection for periodic `RefreshArrowProtection`; both shield-entry boundaries clear on the current release runner and advance to independent command mismatches. Shadow predetection/patrol dispatch, special-strike entry/exit, and heard-steps delivery ordering remain open. |
+| R06 | Audited; shield and shadow pairs cleared | `ai.substate` | The fresh 700-trace frozen baseline has ten strict first-field traces. `34e4810d7` restores the live ordered `seen_last_frame` Enemy detectable projection for periodic `RefreshArrowProtection`; both shield-entry boundaries clear on the current release runner and advance to independent command mismatches. `aaebc38c9` removes two non-Original per-tick detectable reconciliation loops; both Nescafe shadow boundaries clear from frame 282 to independent frame-507 RNG cardinality failures. Special-strike entry/exit and heard-steps delivery ordering remain open. |
 | R07 | Unassigned | RNG cardinality/order | Treat the first missing or excess call as a downstream symptom until the responsible Original callsite and state gate are identified. Never consume a trace value merely to realign the stream. |
 | R08 | Unassigned | `position_map` | Requires exact movement increment, collision, transition, and command ownership comparison; no coordinate tolerance or replay-specific snap. |
 | R09 | Unassigned | Resolved speech has no pending Rust request | Separate genuinely absent gameplay `Say` calls from already-fixed synchronous speech boundaries before changing restoration or FIFO policy. |
@@ -654,6 +654,23 @@ trace, either exact EOF or its next independent first boundary. Do not merge
 the three waypoint values with stop/condolence fixes merely because the first
 compared field is the same.
 
+#### R04 six-trace current release validation
+
+The current release runner was applied sequentially to six source-backed R04
+candidates. Logs are preserved under
+`output/parity-audits/r04-current-head/`. One trace reaches exact EOF, three
+clear their frozen R04 boundary and stop at a later independent boundary, and
+two remain unchanged:
+
+| Trace | Current result | Disposition |
+|---|---|---|
+| `Savegame_Cyrdach/Profile_156/Savegame_010/replay-001` | Frame 536: PC 107 goal Original `(0, 0)`, Rust `(536.9613, 447.9872)` | **Unchanged** |
+| `Savegame_linux3/Profile_002/QuickSave/replay-001` | Old frame 19932 clears; frame 19968 PC 126 command Original `Wait`, Rust `ShootBow` | Advanced |
+| `Savegame_randomguy/Profile_004/Savegame_008/replay-002` | Old frame 137 clears; frame 671 PC 105 direction Original `1`, Rust `2` | Advanced |
+| `Savegame_SuN1Sh1nE/Profile_004/Savegame_004/replay-003` | Old frame 15812 clears; frame 16062 Soldier 203 position X Original `8.944593`, Rust `8.944144` | Advanced |
+| `Savegame_SuN1Sh1nE/Profile_004/Savegame_009/replay-003` | Every recorded frame matches | **Exact EOF** |
+| `Savegame_nicouzouf/Profile_001/Savegame_055/replay-002` | Frame 374: Soldier 63 goal Original `(1183.0403, 743.6907)`, Rust `(0, 0)` | **Unchanged** |
+
 ### R06 complete frozen-baseline inventory
 
 Exactly ten traces in the fresh 700-trace sweep report `ai.substate` as their
@@ -684,33 +701,38 @@ The callsite offsets resolve, depending on the Original build, to ordinary
 batches has a missing or excess draw. Preserve the global draw stream as-is
 while investigating the following four behavior families:
 
-1. **Shadow entry: predetection or patrol dispatch (two traces).** Decoding the
-   frozen comparator cache corrects the earlier timer-expiry diagnosis:
-   Original Soldier 210 is already `DefaultOnPost` before frame 278 and remains
-   there through frame 282, while frozen Rust newly enters
-   `DefaultLookingShadow` at frame 282. Original `HandlePredetection` tests
-   `(uwSharpness > 0) && (suspects[type] >= threshold)` against the accumulator
-   from before the current scan, updates the per-detectable shadow latch, and
-   queues `EVENT_SEES_SHADOW` only on a rising edge
-   (`RHelementactornpc.cpp:1531-1550, 2007-2076`). Both engines then offer that
-   event to whole-patrol dispatch before running the local shadow standard
-   procedure (`RHartificialmalignity.cpp:6249-6254, 20017-20103`). The first
-   boundary is therefore either a Rust-only predetection edge or a difference
-   in patrol chief/member topology, 360-degree detection, or dispatch result;
-   the later shadow timer and `max_visibility` handler cannot explain the first
-   state transition.
+1. **Shadow entry: extra Rust detectable membership (two traces, fixed).**
+   Targeted predetection and delivery traces first ruled out the former timer,
+   patrol, latch-restoration, threshold, and cadence theories. Soldier 210's
+   Rust-only shadow edge came from PC 342: sharpness began at frame 275 and the
+   pre-scan suspect reached the threshold at frame 282. The authoritative
+   Original frame dump gives the decisive membership proof. At frames 270-278,
+   Soldier 210 has exactly 111 Enemy detectables, all Soldiers 97-255, and no PC
+   detectable; consequently Original never issues a visibility query for
+   Soldier 210 to PC 342. Rust had synthesized PC 342 by frame 1.
 
-   The current trace schema cannot distinguish those cases. At frames 279-282,
-   record for Soldier 210 every scanned detectable's type and logical target,
-   integer sharpness, suspect accumulator before the scan, `seen_now`,
-   `seen_last_frame`, `shadow_seen_last_frame` before and after the update,
-   `last_visibility`, and whether `EVENT_SEES_SHADOW` was queued. At delivery,
-   record receiver identity, `to_whole_patrol`, pre-event state/substate,
-   patrol chief and ordered member identities, each relevant 360-degree
-   detection result, and the final patrol-dispatch result. Also retain the
-   aggregate suspect array, maximal suspect, and maximal visibility so the
-   diagnostic remains useful if the first differing predicate moves. This path
-   draws no RNG.
+   Original `RefreshDetection` only iterates the existing serialized list;
+   initialization and explicit `AddDetectable` paths own membership changes.
+   Rust instead had two global reconciliation loops in `detection.rs`: the
+   acoustic pass appended every missing PC and the optical pass appended every
+   missing eligible PC/soldier on every tick. Commit `aaebc38c9` removes both
+   loops, preserving loaded-save and explicit runtime membership exactly. The
+   focused `detection_tick_preserves_authoritative_enemy_membership` regression
+   opens both acoustic and optical phases and proves an absent PC stays absent;
+   that test and the release parity-runner build pass.
+
+   Both frame-282 shadow boundaries now clear. Profile 001 advances to frame
+   507, where Rust consumes draws 3624-3632 while Original ends at 3630; the
+   extra-call cluster is two `RuntimeBuildingExitWait` calls followed by
+   `VipIdleRemark`/`BoredAnimationChoice` and further idle remarks. Profile 003
+   likewise advances to frame 507, where Rust consumes draws 3686-3694 while
+   Original ends at 3692, ending with the analogous idle cluster and an
+   `AiRandomValueRectangle` call. These are independent R07 frontiers, not a
+   reason to restore the non-Original membership reconciliation. Preserved
+   rerun logs are under
+   `output/parity-audits/r06-after-detectable-membership/`; the large targeted
+   diagnostics that established the source proof remain under
+   `output/parity-audits/r06-shadow-diagnostics/`.
 
 2. **Special-strike state entry and exit (four traces).** The three ExQuickSave
    traces show a missed or late entry into `AttackingSwordfightSpecialStrike`;
