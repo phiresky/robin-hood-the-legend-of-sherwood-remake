@@ -3157,15 +3157,16 @@ impl Entity {
         ))
     }
 
-    /// Ground/world-XY position: `(world.x, world.y)`.
+    /// Original `RHElement::GetPositionGround()` equivalent.
+    ///
+    /// The C++ method returns the X/Y components of the stored 3D position;
+    /// it does not reconstruct them from `PositionMap` and the current plane.
+    /// That distinction is observable when the two positions are deliberately
+    /// independent and also avoids a second plane evaluation changing a
+    /// direction-sector boundary.
     pub fn ground_position(&self) -> GroundPoint {
-        let map = self.element_data().position_map();
-        let z = self
-            .position_iface()
-            .get_plane()
-            .map(|plane| plane.compute_z(map.x, map.y))
-            .unwrap_or(0.0);
-        GroundPoint::from_map_and_z(map, z)
+        let position = self.element_data().position();
+        GroundPoint::new(position.x, position.y)
     }
 
     /// Get the NPC's base AI controller, if this is an NPC with AI.
@@ -4692,6 +4693,23 @@ mod tests {
             target.sprite_visual_map_position(),
             MapPoint::new(120.0, 50.0)
         );
+    }
+
+    #[test]
+    fn ground_position_uses_stored_world_xy_not_projected_map_position() {
+        let mut element = ElementData {
+            kind: ElementKind::Target,
+            ..ElementData::default()
+        };
+        element.set_position(WorldPoint3D::new(120.0, 80.0, 30.0));
+        element.set_position_map_preserving_3d(MapPoint::new(10.0, 20.0));
+        let target = Entity::Target(ElementTarget {
+            element,
+            fx: FxData::default(),
+            target: TargetData::default(),
+        });
+
+        assert_eq!(target.ground_position(), GroundPoint::new(120.0, 80.0));
     }
 
     #[test]

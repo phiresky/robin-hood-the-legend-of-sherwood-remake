@@ -1610,6 +1610,19 @@ outside. At Leicester frame 402 the same error reverses the classification for
 Civilian 74. Listen now uses a shared world-position distance primitive, with
 both threshold directions covered by exact captured geometry.
 
+The four `life_points` first boundaries are likewise one command family. They
+are not projectile impacts: at each boundary Original processes
+`ReceiveSwordDamage` and subtracts health while Rust retains the prior health.
+The exact members are nicouzouf Save 047 replay 001 frame 264 (15 damage),
+nicouzouf Save 008 replay 003 frame 594 (5), nicouzouf Save 020 replay 003
+frame 464 (5), and linux3 Save 005 replay 003 frame 54,804 (5). The sword
+protection calculation obtains the defender-to-attacker sector through
+`GetPositionGround`. Original returns the stored 3D position's X/Y directly,
+whereas Rust reconstructed Y by evaluating the current plane from the map
+position again. Rust now preserves the Original stored-coordinate semantics;
+the frozen members remain candidates for the next follow-up validation rather
+than being declared fixed without a replay run.
+
 The largest repeated exact command signatures are 16 PC
 `EnterHelpingClimb -> Wait`, 15 Soldier `MoveWaiting -> MoveOk`, 13 Soldier
 `EnterAttentiveMode -> Wait`, 13 PC `Wait -> EnterHelpingClimb`, 10 Soldier
