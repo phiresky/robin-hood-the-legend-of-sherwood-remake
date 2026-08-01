@@ -221,6 +221,22 @@ therefore closed as first-boundary groups; the 58 later frontiers belong to
 their new command, movement/direction, timer, RNG, speech, or invariant groups
 rather than remaining counted as selection failures.
 
+### Resolved-command schema subgroup
+
+The fresh runner initially rejected 15 traces before simulation comparison: 9
+contained `drop_ale_at` and 6 contained `shield_select_protected`.  These were
+not unknown gameplay operations; both already had authoritative
+`PlayerCommand` implementations.  The parity trace decoder now translates the
+recorded actor, target/protectee, and running flag into those existing commands.
+The variants were appended to `TraceCommand` so existing native bincode cache
+discriminants remain stable.
+
+The serial release rerun is preserved under
+`output/parity-audits/random-short-resolved-command-after-schema/`.  All 15
+traces decode and advance beyond their former parse boundary: 3 reach exact EOF
+and 12 expose later independent state, RNG, or speech boundaries.  No command
+is skipped or substituted to obtain alignment.
+
 The long `60s-15x` snapshot contains 1,791 traces and is being swept with one
 runner process to keep memory bounded.  Its totals are provisional until all
 status files exist under `output/parity-audits/random-long-fresh/`.

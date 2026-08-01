@@ -679,6 +679,18 @@ enum TraceCommand {
     },
     CrouchDown,
     StandUp,
+    // Keep newly supported variants at the end: the native parity cache uses
+    // bincode's enum discriminants, so appending preserves existing cache
+    // compatibility.
+    DropAleAt {
+        actor: TraceEntityId,
+        target: TracePoint,
+        running: bool,
+    },
+    ShieldSelectProtected {
+        actor: TraceEntityId,
+        protected_pc: TraceEntityId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
@@ -973,6 +985,22 @@ impl TraceCommand {
             },
             Self::CrouchDown => PlayerCommand::CrouchDown,
             Self::StandUp => PlayerCommand::StandUp,
+            Self::DropAleAt {
+                actor,
+                target,
+                running,
+            } => PlayerCommand::DropAleAt {
+                actor: entity_map.translate(actor),
+                target_pos: target.into(),
+                running,
+            },
+            Self::ShieldSelectProtected {
+                actor,
+                protected_pc,
+            } => PlayerCommand::ShieldSelectProtected {
+                actor: entity_map.translate(actor),
+                protected_pc: entity_map.translate(protected_pc),
+            },
         })
     }
 }
