@@ -1728,14 +1728,14 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     }
                 ))
                 .count(),
-            save.body.tail.pathfinder.requests.len(),
-            save.body.failed_path_requests.requests.len(),
+            save.tail.pathfinder.requests.len(),
+            save.failed_path_requests.requests.len(),
         );
         if std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some() {
-            for (index, request) in save.body.tail.pathfinder.requests.iter().enumerate() {
+            for (index, request) in save.tail.pathfinder.requests.iter().enumerate() {
                 eprintln!("parity stage: saved pending path {index}: {request:?}");
             }
-            for (index, request) in save.body.failed_path_requests.requests.iter().enumerate() {
+            for (index, request) in save.failed_path_requests.requests.iter().enumerate() {
                 eprintln!("parity stage: saved failed path {index}: {request:?}");
             }
         }
