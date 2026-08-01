@@ -3138,9 +3138,13 @@ impl EngineInner {
                                     | crate::sequence::SequenceAction::ExecuteImmediateOwner {
                                         owner,
                                         ..
-                                    } if *owner == entity_id
+                                } if *owner == entity_id
                             )
                         });
+                    let preexisting_deferred_owner_instruction = self
+                        .orders
+                        .sequence_manager
+                        .element_is_about_to_be_launched(entity_id, Command::Null);
 
                     // RHElementActor::Hourglass consumes one queued base
                     // position update before it inspects the current
@@ -3155,7 +3159,22 @@ impl EngineInner {
                     // then installs Wait whenever its order is empty. Active
                     // controls world presence/rendering, not sequence time.
                     self.ensure_wait_element(entity_id);
-                    if preexisting_owner_instruction {
+                    if preexisting_deferred_owner_instruction {
+                        // A normal-priority element registered earlier in
+                        // this element pass lives in the manager's deferred
+                        // FIFO. The synthetic Wait registers through the
+                        // synchronous WAIT Go path, so leaving it there would
+                        // leapfrog that earlier owner instruction. Move only
+                        // the newly-created action to the tail of the deferred
+                        // FIFO; unrelated owners retain their exact positions.
+                        let newly_registered_wait = self
+                            .orders
+                            .sequence_manager
+                            .take_pending_synchronous_actions();
+                        self.orders
+                            .sequence_manager
+                            .append_actions_to_deferred_fifo(newly_registered_wait);
+                    } else if preexisting_owner_instruction {
                         // `RHElementActor::Wait` only appends its element to
                         // SequenceManager's FIFO. If an earlier owner already
                         // registered work for this actor, neither that work
@@ -6412,28 +6431,21 @@ mod bow_command_body_parity_tests {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
         let owner = engine.add_entity(make_aiming_pc(ActionState::WaitingSword));
-        let parry_sequence = engine
-            .orders
-            .sequence_manager
-            .launch_element(SequenceElement::new(1, Command::ParrySword, Some(owner)));
-
-        // Model the manager action that was registered before this actor's
-        // Hourglass slot. The actor coordinator temporarily detaches these
-        // actions while it runs the slot so nested callbacks cannot steal
-        // unrelated manager work.
-        let preexisting = engine.orders.sequence_manager.hourglass();
+        let parry_sequence = engine.launch_element_for_owner(SequenceElement::new(
+            1,
+            Command::ParrySword,
+            Some(owner),
+        ));
         assert_eq!(
-            preexisting,
-            vec![SequenceAction::InstructOwner {
-                owner,
-                sequence_id: parry_sequence,
-                element_index: 0,
-            }]
+            engine
+                .orders
+                .sequence_manager
+                .get_element(parry_sequence, 0)
+                .expect("ParrySword remains queued for manager dispatch")
+                .priority,
+            crate::sequence::SequencePriority::Preference,
+            "the exact launch path registers NotYetSet work before resolving its semantic priority"
         );
-        engine
-            .orders
-            .sequence_manager
-            .restore_pending_synchronous_actions(preexisting);
 
         engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
 
@@ -6445,10 +6457,15 @@ mod bow_command_body_parity_tests {
                 .is_none(),
             "the actor slot must not eagerly execute its synthetic Wait while an earlier owner instruction is pending"
         );
-        let pending = engine
-            .orders
-            .sequence_manager
-            .take_pending_synchronous_actions();
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .take_pending_synchronous_actions()
+                .is_empty(),
+            "the synthetic Wait must leave the synchronous queue when an older deferred owner instruction exists"
+        );
+        let pending = engine.orders.sequence_manager.hourglass();
         assert_eq!(pending.len(), 2);
         let pending_ids = pending
             .iter()

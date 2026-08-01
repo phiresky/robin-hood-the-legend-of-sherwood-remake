@@ -3201,6 +3201,34 @@ impl SequenceManager {
         self.pending_synchronous_actions.extend(continuation);
     }
 
+    /// Append owner/engine instruction actions to the deferred manager FIFO.
+    ///
+    /// This is used when a synchronous `Go()` registration was created while
+    /// an older instruction for the same owner was already waiting in
+    /// `elements_to_go`. Keeping the newer action in the synchronous queue
+    /// would let it jump ahead of that older registration; appending its
+    /// element identity here preserves registration order without moving any
+    /// unrelated manager entries.
+    pub fn append_actions_to_deferred_fifo(&mut self, actions: Vec<SequenceAction>) {
+        for action in actions {
+            let target = match action {
+                SequenceAction::InstructOwner {
+                    sequence_id,
+                    element_index,
+                    ..
+                }
+                | SequenceAction::EngineCommand {
+                    sequence_id,
+                    element_index,
+                } => (sequence_id, element_index),
+                immediate => panic!(
+                    "cannot defer immediate sequence action behind manager FIFO: {immediate:?}"
+                ),
+            };
+            self.elements_to_go.push_back(target);
+        }
+    }
+
     /// `true` iff there is at least one immediate-dispatch action awaiting
     /// drain, ignoring direct WAIT `Go()` actions in the same stream.
     pub fn has_pending_immediate_actions(&self) -> bool {
