@@ -1172,9 +1172,30 @@ Rust hand point is `(1301, 1535.001, 555.00104)`. Thus `dx=186`, `dy=25.6737`,
 `dz=93.67366`, the 3D distance is approximately `209.833`, and the
 projectile-aspect-scaled XY distance is approximately `189.108`. The hand is
 `93.674` below the target, so Rust uses the cylinder arm; `189.108 < 400`
-makes its range result valid. The final `Long` may come from the normal-range
-threshold or the later blocked-LOS upgrade; the current trace does not
-distinguish those two inputs.
+makes its range result valid.
+
+A bounded entity dump and direct asset audit resolve the remaining branch.
+Original PC 179 maps to Rust PC 183 and has bit-identical map position
+`(1301.8938, 1005.2984)`, elevation `530.00104`, direction 10, upright
+posture, action state 4, and animation 89. `RobinTown.rhs` row 1674 is the
+direction-10 row for action 89 and stores hotspot `(150, 150)`, equal to the
+profile center. Both engines therefore floor `map - center` to sprite
+top-left `(1151, 855)` and compute the same range hand given above; this is
+not a hotspot or world-transform divergence. Character profile 1 stores
+one-based shooting-weapon id 1, which selects bow profile 0 with normal range
+250, long/max range 400, and long shots enabled. The `209.833` 3D distance is
+therefore within the normal threshold, so Original `RHBow::GetShootType` and
+Rust `get_shoot_mode_for_distance` both initially select `Normal`.
+
+For the ensuing LOS query, raw `RobinTown.rhs` row 1706 is action 93
+(`ShootingWithBow`) at direction 10 and stores hotspot `(122, 164)`. Both
+`ComputeBowPoint` implementations consequently use ray origin
+`(1273, 1549.00104, 570.00104)` and destination
+`(1487, 1560.6747, 649.6747)` after the target's `+1` Z adjustment. The PC is
+upright, so the leaning-out override cannot produce `Long`. Rust's final
+`Long` can only be its subsequent blocked-LOS upgrade. Original staying in
+`Wait` proves that Original's FastFindGrid judged this same ray clear while
+Rust `is_reachable_3d` judged it blocked.
 
 This is a real classifier/geometry frontier. Current Original
 `RHElementActorHuman::CanShootWithBowAt` computes its hand point, applies the
@@ -1185,12 +1206,15 @@ upgrade it for blocked LOS (`original-code/RHelementactorhuman.cpp:7047-7144`;
 the ordinary bow-aim values (`original-code/RHelementactorhuman.cpp:6924-6963`).
 Rust follows those boundaries in `engine/input.rs:1635-1736` and
 `engine/input.rs:2710-2786`. Because the recorded Original command stays
-`Wait`, Original did not observe the same valid-long classification. Schema 12
-does not record Original's hand point, range status, pre-LOS mode, or LOS
-result, so it cannot yet distinguish an Original/Rust hotspot difference,
-normal-vs-long distance classification, or obstacle-query difference. Do not
-special-case this replay or remove the valid-status guard; capture those
-generic classifier inputs on the Original side before changing behavior.
+`Wait`, Original did not observe the same final valid-long classification. The
+remaining frontier is specifically the obstacle query, not the hand point,
+range test, or shoot-type threshold. The targeted log enabled only
+`robin_engine::engine::input=trace`; it therefore does not contain the sibling
+`robin_engine::sight_obstacle` trace event with blocker index/id. Schema 12
+also omits the Original candidate list and blocking reason. Identify that
+single Rust blocker and compare its geometry and active membership with
+Original FastFindGrid before changing behavior. Do not special-case this
+replay or remove the valid-status guard.
 
 When another fix lands, add the commit, Original source boundary, focused test,
 all affected traces, and their new exact result or next independent frontier
