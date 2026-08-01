@@ -3837,8 +3837,17 @@ impl EntityMap {
         }
     }
 
-    /// Extend the mission-start bijection for entities created while replaying
-    /// the mission, using the same exact Original construction identity.
+    /// Extend the mission-start bijection for persistent entities created while
+    /// replaying the mission.
+    ///
+    /// Runtime creation orders are not exact cross-engine identities. Original
+    /// cursor previews construct stack-local `RHElement` projectiles (for
+    /// example the temporary arrow in `RHEngine::IsValidTrajectory`), consuming
+    /// global construction orders without ever adding those objects to the
+    /// world. Rust computes the same presentation preview without constructing
+    /// an entity. Match newly persistent entities isomorphically by concrete
+    /// kind and relative construction rank; their raw order may consequently
+    /// differ by presentation-only gaps.
     fn extend_runtime_entities(&mut self, engine: &Engine, frame: &TraceFrame) {
         self.refresh_trace_indices(frame);
         let originals: Vec<_> = frame
@@ -3887,36 +3896,46 @@ impl EntityMap {
             );
         }
 
+        let mut originals_by_kind: BTreeMap<EntityIdKind, Vec<_>> = BTreeMap::new();
         for original in originals {
-            let expected_kind = EntityIdKind::from(original.entity_id.kind);
-            let &(rust_id, actual_kind) = rust_by_creation_order
-                .get(&original.creation_order)
-                .unwrap_or_else(|| {
-                    let nearby = nearest_runtime_identity_candidates(
-                        original.creation_order,
-                        &rust_by_creation_order,
-                    );
-                    panic!(
-                        "runtime Original {:?} creation order {} ({expected_kind:?}) is absent \
-                         from Rust; nearest unmapped Rust identities are {nearby:?}; all \
-                         unmapped Original identities are {original_identities:?}",
-                        original.entity_id, original.creation_order,
-                    )
-                });
+            originals_by_kind
+                .entry(EntityIdKind::from(original.entity_id.kind))
+                .or_default()
+                .push(original);
+        }
+        let mut rust_by_kind: BTreeMap<EntityIdKind, Vec<_>> = BTreeMap::new();
+        for (&creation_order, &(rust_id, kind)) in &rust_by_creation_order {
+            rust_by_kind
+                .entry(kind)
+                .or_default()
+                .push((creation_order, rust_id));
+        }
+        assert_eq!(
+            originals_by_kind.keys().collect::<Vec<_>>(),
+            rust_by_kind.keys().collect::<Vec<_>>(),
+            "runtime entity tables gained different unmapped kinds: Original={original_identities:?}; Rust={rust_by_creation_order:?}"
+        );
+
+        for (kind, mut originals) in originals_by_kind {
+            originals.sort_by_key(|original| original.creation_order);
+            let rust = rust_by_kind
+                .remove(&kind)
+                .expect("runtime kind sets were checked above");
             assert_eq!(
-                actual_kind, expected_kind,
-                "runtime Original {:?} creation order {} has kind {:?}, but Rust {rust_id:?} \
-                 has kind {actual_kind:?}",
-                original.entity_id, original.creation_order, expected_kind,
+                originals.len(),
+                rust.len(),
+                "runtime entity tables gained different numbers of {kind:?} entities: Original={original_identities:?}; Rust={rust_by_creation_order:?}"
             );
-            self.entities.insert(original.entity_id, rust_id);
-            assert!(
-                self.entities_by_creation_order
-                    .insert(original.creation_order, rust_id)
-                    .is_none(),
-                "Original creation order {} was mapped twice",
-                original.creation_order
-            );
+            for (original, (_, rust_id)) in originals.into_iter().zip(rust) {
+                self.entities.insert(original.entity_id, rust_id);
+                assert!(
+                    self.entities_by_creation_order
+                        .insert(original.creation_order, rust_id)
+                        .is_none(),
+                    "Original creation order {} was mapped twice",
+                    original.creation_order
+                );
+            }
         }
     }
 
@@ -3930,20 +3949,6 @@ impl EntityMap {
     fn sectors_equivalent(&self, original: u16, rust: u16) -> bool {
         original == rust || self.sectors.get(&original) == Some(&rust)
     }
-}
-
-fn nearest_runtime_identity_candidates(
-    expected_creation_order: u32,
-    rust_by_creation_order: &BTreeMap<u32, (EntityId, EntityIdKind)>,
-) -> Vec<(EntityId, u32, EntityIdKind)> {
-    let mut candidates: Vec<_> = rust_by_creation_order
-        .iter()
-        .map(|(&creation_order, &(id, kind))| (id, creation_order, kind))
-        .collect();
-    candidates
-        .sort_by_key(|(_, creation_order, _)| creation_order.abs_diff(expected_creation_order));
-    candidates.truncate(8);
-    candidates
 }
 
 impl From<TraceEntityKind> for EntityIdKind {

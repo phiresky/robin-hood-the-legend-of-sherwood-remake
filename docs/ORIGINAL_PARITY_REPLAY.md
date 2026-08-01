@@ -4398,3 +4398,22 @@ on unrecorded state, extend the neutral trace schema rather than guessing from a
 downstream symptom. New recordings should keep the same resolved-command,
 mission-start, synchronous-path, global-RNG-stream contract unless this document
 explicitly introduces and motivates another profile.
+
+### Runtime entity identity ignores presentation-only constructor gaps
+
+Original's global `gulCreationCounter` is consumed by every `RHElement`
+constructor, including objects that never enter the engine entity array. The
+bow cursor preview is one concrete case: `RHEngine::IsValidTrajectory` creates a
+stack-local `RHElementArrow`, computes and copies its arc, and destroys it. Rust
+computes that host-side preview directly and therefore has no corresponding
+entity construction. A real projectile created afterward can consequently have
+a different raw creation order even though the two persistent worlds are
+isomorphic.
+
+Mission-start/save-load mapping still uses exact serialized creation order,
+where it identifies a fixed table containing many same-kind entities. Runtime
+extensions instead group newly persistent entities by concrete kind and pair
+each group by relative construction rank. They still require identical total
+and per-kind cardinality, so a missing or extra gameplay entity remains an
+immediate invariant failure; only gaps consumed by presentation-only temporary
+objects cease to masquerade as gameplay divergences.
