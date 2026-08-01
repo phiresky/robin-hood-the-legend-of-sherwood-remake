@@ -1847,6 +1847,60 @@ an exact full-3D source/listener position before its range or deafness work.
 That equality guard is important for attributable cries: a wounded or trapped
 actor must not receive its own `AAARGH`/`HEEELP` broadcast.
 
+## Schema-12 comparator coverage audit
+
+The schema-12 reader now treats the trace envelope as an executable contract,
+not merely a convenient source of fields. Header records validate their type,
+25 Hz simulation rate, global libc draw-stream identity, and ordered opaque
+visibility-query contract. Unknown top-level header, RNG-prefix, frame, RNG
+batch, and terminator fields are rejected so future recorder additions cannot
+silently disappear in Serde.
+
+Every RNG batch now consumes and validates all four parallel streams: raw
+values, Original callsite offsets, main-thread markers, and stable domains.
+Their lengths must agree. A simulation-domain draw recorded off the main
+thread is rejected because scheduler-dependent insertion into a supposedly
+global deterministic stream cannot be reproduced safely. Audio-domain draws
+remain in global-index continuity checks but are intentionally excluded from
+the simulation stream; concrete resolved speech events carry the logical
+audio outcome instead.
+
+A clean `rng_suffix` is mandatory for an exact result. Its `frame_count` must
+equal the number of frame records, and `final_frame` must equal both the
+initial frame plus that count and Rust's final simulation frame. Abrupt EOF is
+represented explicitly in the native cache and now fails instead of being
+synthesized into a successful terminator. This changed the native cache to
+version 11.
+
+Coverage boundaries verified by the audit:
+
+- Every campaign snapshot field is deserialized, range/profile validated, and
+  restored into the Rust campaign before mission or save reconstruction.
+- Entity cardinality and kind are bijective through creation-order identity;
+  every non-FX logical field emitted by `ElementState`, including actor,
+  human, PC ammunition, AI/macro, and detection state, is compared.
+- FX animation remains intentionally excluded as presentation state. FX still
+  participates in entity identity/cardinality, preventing missing or extra
+  persistent effects from being silently accepted.
+- Selected-PC order, game code, simulation-body gate, dynamic motion-line
+  state, ordered path requests/completions, ordered opaque visibility calls,
+  resolved input, wall-clock director completions, and resolved speech are all
+  replayed or compared at their recorded boundary.
+- Visibility cache keys, cache offsets, candidate counts, textual reasons,
+  and blocker geometry are recorder-side explanations. The logical operation
+  observes only ordered endpoints and the boolean result, which are compared
+  bit-for-bit/result-for-result. Comparing cache allocation details would
+  incorrectly require implementation identity rather than game parity.
+- Original numeric command/action ordinals and float display values are
+  redundant diagnostics. Stable command/action names and IEEE float bit
+  payloads are authoritative; numeric allocation differences are not parity
+  failures.
+- Schema 12 does not emit per-frame campaign mutations, full sequence queues,
+  or a serialized whole-engine global snapshot. Their observable consequences
+  are covered through the emitted logical entity, command, RNG, path,
+  visibility, speech, and line-state boundaries. Direct comparison of those
+  internals would require additive recorder fields and fresh recordings.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

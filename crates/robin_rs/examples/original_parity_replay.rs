@@ -43,7 +43,10 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
 struct TraceHeader {
+    #[serde(rename = "type")]
+    record_type: String,
     mission: String,
     proto_level: String,
     rng_seed: u64,
@@ -51,7 +54,12 @@ struct TraceHeader {
     session_index: u32,
     start_state: TraceStartState,
     initial_frame: u64,
+    simulation_hz: u32,
     synchronous_pathfinding: bool,
+    rng_stream: String,
+    visibility_queries: String,
+    #[serde(default)]
+    random_input_seed: Option<u32>,
     sim_config: TraceSimConfig,
     campaign: TraceCampaign,
     motion_grid: TraceMotionGrid,
@@ -245,6 +253,26 @@ fn validate_trace_schema(schema: u32) {
     assert_eq!(
         schema, 12,
         "unsupported parity trace schema {schema}; resolved-exclamation schema 12 is required"
+    );
+}
+
+fn validate_trace_header(header: &TraceHeader) {
+    validate_trace_schema(header.schema);
+    assert_eq!(
+        header.record_type, "header",
+        "invalid parity header record type"
+    );
+    assert_eq!(
+        header.simulation_hz, 25,
+        "schema-12 parity replay requires the Original's 25 Hz simulation"
+    );
+    assert_eq!(
+        header.rng_stream, "libc_rand_raw_global_draw_order",
+        "unsupported parity RNG stream"
+    );
+    assert_eq!(
+        header.visibility_queries, "opaque_is_reachable",
+        "unsupported parity visibility-query contract"
     );
 }
 
@@ -452,28 +480,51 @@ enum TracePathEvent {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
 struct TraceRngBatch {
     first_index: usize,
     values: Vec<u32>,
     callsite_offsets: Vec<u32>,
+    main_thread: Vec<bool>,
     domains: Vec<TraceRngDomain>,
 }
 
 impl TraceRngBatch {
-    fn gameplay_draw_count(&self) -> usize {
-        assert_eq!(self.values.len(), self.callsite_offsets.len());
-        if self.values.is_empty() {
-            assert!(
-                self.domains.is_empty(),
-                "empty RNG batch unexpectedly contains draw domains"
-            );
-            return 0;
-        }
+    fn validate(&self) {
+        let draw_count = self.values.len();
         assert_eq!(
-            self.values.len(),
+            draw_count,
+            self.callsite_offsets.len(),
+            "RNG callsite stream has a different length than its values"
+        );
+        assert_eq!(
+            draw_count,
+            self.main_thread.len(),
+            "RNG thread-origin stream has a different length than its values"
+        );
+        assert_eq!(
+            draw_count,
             self.domains.len(),
             "RNG domain stream has a different length than its values"
         );
+        for (index, (domain, main_thread)) in self
+            .domains
+            .iter()
+            .copied()
+            .zip(self.main_thread.iter().copied())
+            .enumerate()
+        {
+            assert!(
+                domain != TraceRngDomain::Simulation || main_thread,
+                "simulation RNG draw {} (global index {}) occurred off the main thread; its global order is not deterministically replayable",
+                index,
+                self.first_index + index,
+            );
+        }
+    }
+
+    fn gameplay_draw_count(&self) -> usize {
+        self.validate();
         self.domains
             .iter()
             .filter(|domain| **domain == TraceRngDomain::Simulation)
@@ -481,19 +532,7 @@ impl TraceRngBatch {
     }
 
     fn gameplay_callsite_offsets(&self) -> Vec<u32> {
-        assert_eq!(self.values.len(), self.callsite_offsets.len());
-        if self.values.is_empty() {
-            assert!(
-                self.domains.is_empty(),
-                "empty RNG batch unexpectedly contains draw domains"
-            );
-            return Vec::new();
-        }
-        assert_eq!(
-            self.values.len(),
-            self.domains.len(),
-            "RNG domain stream has a different length than its values"
-        );
+        self.validate();
         self.callsite_offsets
             .iter()
             .copied()
@@ -513,6 +552,7 @@ enum TraceRngDomain {
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
 struct TraceRngPrefix {
     #[allow(dead_code)]
     r#type: String,
@@ -520,11 +560,13 @@ struct TraceRngPrefix {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct TraceRngOnly {
-    #[serde(default)]
-    draws: Option<TraceRngBatch>,
-    #[serde(default)]
-    rng_draws: Option<TraceRngBatch>,
+    #[serde(rename = "type")]
+    record_type: String,
+    draws: TraceRngBatch,
+    final_frame: u64,
+    frame_count: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1262,7 +1304,10 @@ struct TraceResolvedExclamation {
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
 struct TraceFrame {
+    #[serde(rename = "type")]
+    record_type: String,
     frame_before: u64,
     frame_after: u64,
     game_code: i32,
@@ -1278,8 +1323,8 @@ struct TraceFrame {
     resolved_exclamations: Vec<TraceResolvedExclamation>,
 }
 
-const TRACE_CACHE_VERSION: u32 = 10;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v10.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 11;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v11.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -1299,7 +1344,11 @@ struct BinaryTraceHeader {
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 enum BinaryTraceRecord {
     Frame(TraceFrame),
-    End { rng_suffix: Option<TraceRngBatch> },
+    End {
+        rng_suffix: Option<TraceRngBatch>,
+        final_frame: Option<u64>,
+        frame_count: Option<u64>,
+    },
 }
 
 struct BinaryTraceReader {
@@ -1718,7 +1767,7 @@ async fn capture_full_frame_zero_screenshot(
 
     let cache_path = ensure_binary_trace_cache(&trace_path);
     let header = read_binary_trace_header(&cache_path).trace;
-    validate_trace_schema(header.schema);
+    validate_trace_header(&header);
     let initial_save = decode_and_validate_initial_save(&header);
 
     let (_launcher_campaign, profiles, application_context) = robin_rs::main_entry::rust_init()
@@ -1782,7 +1831,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     });
     let cached_header = read_binary_trace_header(&cache_path);
     let header = cached_header.trace;
-    validate_trace_schema(header.schema);
+    validate_trace_header(&header);
     validate_trace_start(
         header.start_state,
         header.session_index,
@@ -1957,11 +2006,15 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     robin_engine::pathfinder::begin_parity_path_capture();
 
     let mut line_index = 0_usize;
-    loop {
+    let terminator = loop {
         let mut frame = match records.read_record() {
             BinaryTraceRecord::Frame(frame) => frame,
-            BinaryTraceRecord::End { .. } => break,
+            end @ BinaryTraceRecord::End { .. } => break end,
         };
+        assert_eq!(
+            frame.record_type, "frame",
+            "invalid parity frame record type"
+        );
         if debug_stage_timing {
             eprintln!(
                 "parity stage: loaded original frame {} -> {}",
@@ -2396,6 +2449,39 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 }));
             }
         }
+    };
+
+    match terminator {
+        BinaryTraceRecord::End {
+            rng_suffix: Some(_),
+            final_frame: Some(final_frame),
+            frame_count: Some(frame_count),
+        } => {
+            assert_eq!(
+                frame_count,
+                u64::try_from(line_index).expect("parity frame count exceeds u64"),
+                "parity terminator frame_count disagrees with the frame stream"
+            );
+            assert_eq!(
+                final_frame,
+                header.initial_frame + frame_count,
+                "parity terminator final_frame disagrees with its initial frame and frame count"
+            );
+            assert_eq!(
+                engine.frame_counter(),
+                final_frame,
+                "Rust final frame disagrees with the clean parity terminator"
+            );
+        }
+        BinaryTraceRecord::End {
+            rng_suffix: None,
+            final_frame: None,
+            frame_count: None,
+        } => panic!("parity trace ended without a clean rng_suffix terminator"),
+        BinaryTraceRecord::End { .. } => {
+            panic!("parity trace cache contains a partially populated terminator")
+        }
+        BinaryTraceRecord::Frame(_) => unreachable!("replay loop exits only on a terminator"),
     }
 
     if let Some(step) = active_http_step.take() {
@@ -2549,7 +2635,14 @@ fn frame_zero_screenshot_path(output_dir: &Path, trace_path: &Path) -> PathBuf {
 
 fn parse_trace_frame(line: &str, line_number: usize) -> Option<TraceFrame> {
     match serde_json::from_str(line) {
-        Ok(frame) => Some(frame),
+        Ok(frame) => {
+            let frame: TraceFrame = frame;
+            assert_eq!(
+                frame.record_type, "frame",
+                "invalid parity frame record type on line {line_number}"
+            );
+            Some(frame)
+        }
         Err(frame_error) => {
             let marker: TraceRecordMarker = serde_json::from_str(line).unwrap_or_else(|_| {
                 panic!("parse trace frame on line {line_number}: {frame_error}")
@@ -3081,6 +3174,7 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
             .expect("read parity trace header"),
     )
     .expect("parse parity trace header");
+    validate_trace_header(&trace);
     let rng_prefix: TraceRngPrefix = serde_json::from_str(
         &lines
             .next()
@@ -3088,6 +3182,11 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
             .expect("read parity RNG prefix"),
     )
     .expect("parse parity RNG prefix");
+    assert_eq!(
+        rng_prefix.r#type, "rng_prefix",
+        "invalid RNG prefix record type"
+    );
+    rng_prefix.draws.validate();
     let header = BinaryTraceHeader {
         version: TRACE_CACHE_VERSION,
         source_fingerprint: fingerprint,
@@ -3134,10 +3233,26 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
                 let suffix: TraceRngOnly = serde_json::from_str(&line).unwrap_or_else(|error| {
                     panic!("parse RNG suffix on trace line {line_number}: {error}")
                 });
+                assert_eq!(
+                    suffix.record_type, "rng_suffix",
+                    "invalid parity terminator record type on line {line_number}"
+                );
+                suffix.draws.validate();
+                assert_eq!(
+                    suffix.frame_count, frame_count,
+                    "parity terminator frame_count disagrees with the JSONL frame stream"
+                );
+                assert_eq!(
+                    suffix.final_frame,
+                    header.trace.initial_frame + frame_count,
+                    "parity terminator final_frame disagrees with its initial frame and frame count"
+                );
                 write_binary_record(
                     &mut encoder,
                     &BinaryTraceRecord::End {
-                        rng_suffix: suffix.draws.or(suffix.rng_draws),
+                        rng_suffix: Some(suffix.draws),
+                        final_frame: Some(suffix.final_frame),
+                        frame_count: Some(suffix.frame_count),
                     },
                     "parity trace cache terminator",
                 );
@@ -3148,7 +3263,11 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
         if !wrote_end {
             write_binary_record(
                 &mut encoder,
-                &BinaryTraceRecord::End { rng_suffix: None },
+                &BinaryTraceRecord::End {
+                    rng_suffix: None,
+                    final_frame: None,
+                    frame_count: None,
+                },
                 "parity trace cache terminator",
             );
         }
@@ -3287,7 +3406,7 @@ fn read_all_rng_draws(cache_path: &std::path::Path) -> Vec<u32> {
             BinaryTraceRecord::Frame(frame) => {
                 append_simulation_rng_draws(&mut result, &mut original_index, &frame.rng_draws);
             }
-            BinaryTraceRecord::End { rng_suffix } => {
+            BinaryTraceRecord::End { rng_suffix, .. } => {
                 if let Some(batch) = rng_suffix {
                     append_simulation_rng_draws(&mut result, &mut original_index, &batch);
                 }
@@ -3309,20 +3428,8 @@ fn append_simulation_rng_draws(
     batch: &TraceRngBatch,
 ) {
     assert_eq!(batch.first_index, *original_index, "RNG stream has a gap");
-    assert_eq!(batch.values.len(), batch.callsite_offsets.len());
+    batch.validate();
     *original_index += batch.values.len();
-    if batch.values.is_empty() {
-        assert!(
-            batch.domains.is_empty(),
-            "empty RNG batch unexpectedly contains draw domains"
-        );
-        return;
-    }
-    assert_eq!(
-        batch.values.len(),
-        batch.domains.len(),
-        "RNG domain stream has a different length than its values"
-    );
     result.extend(
         batch
             .values
@@ -5422,6 +5529,7 @@ mod tests {
     #[test]
     fn simulation_body_marker_is_mandatory() {
         let frame_without_marker = serde_json::json!({
+            "type": "frame",
             "frame_before": 0,
             "frame_after": 1,
             "game_code": 0,
@@ -5437,6 +5545,7 @@ mod tests {
                 "first_index": 0,
                 "values": [],
                 "callsite_offsets": [],
+                "main_thread": [],
                 "domains": []
             }
         });
@@ -5578,10 +5687,45 @@ mod tests {
             first_index: 0,
             values: vec![1, 2],
             callsite_offsets: vec![3_305_465, 123],
+            main_thread: vec![true, false],
             domains: vec![TraceRngDomain::Simulation, TraceRngDomain::Audio],
         };
         assert_eq!(batch.gameplay_draw_count(), 1);
         assert_eq!(batch.gameplay_callsite_offsets(), vec![3_305_465]);
+    }
+
+    #[test]
+    #[should_panic(expected = "occurred off the main thread")]
+    fn simulation_rng_draws_from_worker_threads_are_rejected() {
+        TraceRngBatch {
+            first_index: 41,
+            values: vec![7],
+            callsite_offsets: vec![123],
+            main_thread: vec![false],
+            domains: vec![TraceRngDomain::Simulation],
+        }
+        .validate();
+    }
+
+    #[test]
+    fn clean_terminator_retains_completion_metadata() {
+        let suffix: TraceRngOnly = serde_json::from_value(serde_json::json!({
+            "type": "rng_suffix",
+            "draws": {
+                "first_index": 9,
+                "values": [],
+                "callsite_offsets": [],
+                "main_thread": [],
+                "domains": []
+            },
+            "final_frame": 112,
+            "frame_count": 12
+        }))
+        .expect("parse clean schema-12 terminator");
+        assert_eq!(suffix.record_type, "rng_suffix");
+        assert_eq!(suffix.final_frame, 112);
+        assert_eq!(suffix.frame_count, 12);
+        suffix.draws.validate();
     }
 
     #[test]
