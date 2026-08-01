@@ -161,7 +161,7 @@ fn civilian_macro_run_sanitizes_flags_after_nested_path_completion() {
 
 #[test]
 fn invalid_patrol_assignment_preserves_original_partial_mutation() {
-    use crate::ai::macro_patrol::{PathId, PatrolAssignment};
+    use crate::ai::{PathId, PatrolAssignment};
 
     let mut ai = AiController::new(17);
     ai.has_patrol_path = false;

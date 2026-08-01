@@ -3,6 +3,61 @@ use super::*;
 // AiContext — per-frame entity state passed into think()
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn seek_point(x: f32) -> SeekPoint {
+        SeekPoint {
+            position: Position {
+                x,
+                ..Position::default()
+            },
+            frame_when_full_interest: 0,
+            directions: Vec::new(),
+            last_calculated_interest: 100,
+            locked: false,
+            id: 0,
+        }
+    }
+
+    #[test]
+    fn near_seek_candidates_use_truncated_uword_distances() {
+        let sim = crate::sim_rng::test_context();
+        let mut global = AiGlobalState::default();
+        global.seek_points.push(seek_point(9.1));
+        let mut target = Position::default();
+        let me = Position {
+            x: 31.9,
+            ..Position::default()
+        };
+
+        // FLOAT comparison would accept 9.1 < 31.9 * 0.3 (9.57).
+        // Original narrows both sides first, so 9 < 9 is false.
+        assert!(!global.set_pos_on_near_seek_point(&sim, me, &mut target, 0.3, 0));
+
+        global.seek_points[0].position.x = 8.9;
+        assert!(global.set_pos_on_near_seek_point(&sim, me, &mut target, 0.3, 0));
+        assert_eq!(target.x, 8.9);
+    }
+
+    #[test]
+    fn near_seek_layer_penalty_wraps_as_uword() {
+        let sim = crate::sim_rng::test_context();
+        let mut global = AiGlobalState::default();
+        let mut point = seek_point(65_500.0);
+        point.position.level = 1;
+        global.seek_points.push(point);
+        let mut target = Position::default();
+
+        // (UWORD)65500 + 100 wraps to 64 and is below the limit.
+        assert!(
+            global.set_pos_on_near_seek_point(&sim, Position::default(), &mut target, 0.0, 65,)
+        );
+        assert_eq!(target.x, 65_500.0);
+    }
+}
+
 /// Per-frame entity state passed into `think()` by the engine.
 /// Replaces the stale-prone `cached_*` fields on `AiBase` for data that
 /// changes every frame (position, direction, posture, etc.).
@@ -995,15 +1050,18 @@ impl AiGlobalState {
     ) -> bool {
         let base_dx = (me_pos.x - pos.x).abs();
         let base_dy = (me_pos.y - pos.y).abs();
-        let distance_limit = base_dx.max(base_dy) * distance_factor + abs_distance as f32;
+        // Original narrows the computed FLOAT limit to UWORD before it
+        // examines candidates. This truncation is observable for ordinary
+        // fractional actor positions, not merely at overflow boundaries.
+        let distance_limit = (base_dx.max(base_dy) * distance_factor + abs_distance as f32) as u16;
 
         let mut candidates: Vec<usize> = Vec::new();
         for (idx, sp) in self.seek_points.iter().enumerate() {
             let dx = (sp.position.x - pos.x).abs();
             let dy = (sp.position.y - pos.y).abs();
-            let mut distance = dx.max(dy);
+            let mut distance = dx.max(dy) as u16;
             if sp.position.level != pos.level {
-                distance += 100.0;
+                distance = distance.wrapping_add(100);
             }
             if distance < distance_limit {
                 candidates.push(idx);

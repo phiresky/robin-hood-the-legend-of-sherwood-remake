@@ -4163,6 +4163,17 @@ strictly smaller score, so a candidate scoring exactly `0xffff` is not
 selected. Rust now preserves those rules, with coverage for both the sentinel
 and penalty overflow.
 
+### Nearby seek-point membership uses narrowed distances
+
+Original `SetPosOnNearSeekPoint` converts the computed distance limit and
+each candidate's MaxNorm distance from floating point to `UWORD` before the
+strict comparison. It then adds the cross-layer penalty as wrapping 16-bit
+arithmetic. Rust previously compared the floating-point values directly, so
+ordinary fractional actor positions could change the candidate list and thus
+the modulus applied to the global RNG draw. Rust now preserves the truncation
+and wrapping rules; focused coverage checks both fractional membership and
+layer-penalty overflow.
+
 A clean baseline proves exact parity only for the state fields serialized by the
 recorder and the behaviors exercised by this session. When a divergence depends
 on unrecorded state, extend the neutral trace schema rather than guessing from a
