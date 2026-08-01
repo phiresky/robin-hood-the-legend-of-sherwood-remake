@@ -496,10 +496,16 @@ impl EngineInner {
             pc.element.sprite.position_iface.turn();
             if pc.actor.listen_wait_time == 0 {
                 // First frame in the CountingDown phase — arm the
-                // countdown.
+                // countdown. Original stores this in the actor's single
+                // serialized `mulWaitTime`; the phase-local field is only a
+                // Rust control-flow mirror and must remain synchronized.
                 pc.actor.listen_wait_time = TIME_LISTEN_WAIT;
+                pc.actor.wait_time = TIME_LISTEN_WAIT;
             }
             pc.actor.listen_wait_time -= 1;
+            if pc.actor.wait_time != 0 {
+                pc.actor.wait_time -= 1;
+            }
             if pc.actor.listen_wait_time != 0 {
                 return false;
             }

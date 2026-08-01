@@ -960,8 +960,8 @@ pub fn begin_heal(
         target: Some(target_id),
         order_id: Some(order_id),
     };
-    actor.clear_path();
-    actor.action_state = ActionState::Waiting;
+    // `RHElementActorPC::Translate(RHCOMMAND_HEAL)` queues the healing order
+    // without stopping the actor or rewriting its logical action state.
 
     // Queue the canonical Healing order; owner-local ability dispatch swaps to
     // `OrderType::Eating` when the target is the healer itself.
@@ -1019,10 +1019,13 @@ pub fn begin_whistle(
         target: None,
         order_id: Some(order_id),
     };
-    actor.clear_path();
-    actor.action_state = ActionState::Waiting;
-    // Set the wait-time at ability launch: owner-local dispatch decrements
-    // it on every frame including the first.
+    // Original `RHElementActorPC::Translate(RHCOMMAND_WHISTLE)` only queues
+    // the whistling order.  In particular, it does not call `Stop()` or
+    // overwrite the actor's logical action state: a PC that was bored or
+    // moving keeps that state until the animation reaches its terminal
+    // `SetStates` boundary.  `mulWaitTime` is the actor's single serialized
+    // countdown, so keep the renderer-only mirror synchronized with it.
+    actor.wait_time = TIME_LISTEN_WAIT;
     actor.whistle_wait_time = TIME_LISTEN_WAIT;
 
     let mut order = Order::new(OrderType::Whistling, 0.0, 0.0, order_id);
@@ -1076,8 +1079,9 @@ pub fn begin_eat(
         target: None,
         order_id: Some(order_id),
     };
-    actor.clear_path();
-    actor.action_state = ActionState::Waiting;
+    // `RHElementActorPC::Translate(RHCOMMAND_EAT)` only appends the eating
+    // order.  The current path and action state remain authoritative until
+    // `RHANIMATION_EATING` terminates and calls `SetStates`.
 
     let mut order = Order::new(OrderType::Eating, 0.0, 0.0, order_id);
     order.compute_direction = false;
@@ -1316,12 +1320,11 @@ pub fn begin_listen(
         target: None,
         order_id: Some(order_id),
     };
-    actor.clear_path();
-    // Stay in Waiting during the entry transition so the idle-pose
-    // driver doesn't fight the transition animation with a looping
-    // LISTENING pose.  `tick_ability` will flip to
-    // `ActionState::Listening` on transition `Done`.
-    actor.action_state = ActionState::Waiting;
+    // Original `Translate(RHCOMMAND_ENTER_LISTEN)` preserves the current
+    // path/action state while queuing all three orders and writes the shared
+    // serialized `mulWaitTime` immediately.  The transition animation owns
+    // the sprite independently of that logical state.
+    actor.wait_time = TIME_LISTEN_WAIT;
     actor.listen_phase = ListenPhase::EnterTransition;
     actor.listen_wait_time = 0;
 
@@ -2319,6 +2322,9 @@ pub fn tick_ability(
         let actor = entity.actor_data_mut().unwrap();
         if actor.whistle_wait_time != 0 {
             actor.whistle_wait_time -= 1;
+        }
+        if actor.wait_time != 0 {
+            actor.wait_time -= 1;
         }
     }
 
