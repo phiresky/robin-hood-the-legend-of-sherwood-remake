@@ -2544,6 +2544,22 @@ fn write_engine_dump_frame(
     differences: &[String],
 ) {
     let diagnostic_engine = engine.diagnostic_snapshot_without_original_rng_replay();
+    let original_entities = options
+        .entities
+        .iter()
+        .map(|entity_id| {
+            frame
+                .elements
+                .iter()
+                .find(|element| element.entity_id == *entity_id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "manual parity dump requested missing Original entity {entity_id:?} at frame {}",
+                        frame.frame_after
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
     write_engine_dump_snapshot_frame(
         writer,
         options,
@@ -2560,6 +2576,7 @@ fn write_engine_dump_frame(
         actual_rng_end,
         rust_rng_sites,
         differences,
+        Some(&original_entities),
     );
 }
 
@@ -2580,6 +2597,7 @@ fn write_engine_dump_snapshot_frame(
     actual_rng_end: usize,
     rust_rng_sites: &[robin_engine::sim_rng::RngSite],
     differences: &[String],
+    original_entities: Option<&[&TraceElement]>,
 ) {
     let mapped_entities = options
         .entities
@@ -2613,31 +2631,33 @@ fn write_engine_dump_snapshot_frame(
             }
         }
     }
-    write_jsonl_record(
-        writer,
-        &serde_json::json!({
-            "schema": "robin-parity-engine-dump.v1",
-            "type": "frame",
-            "frame_before": frame_before,
-            "frame_after": frame_after,
-            "input": {
-                "resolved_commands": resolved_commands,
-                "selected_pcs": selected_pcs,
-            },
-            "original_path_events": path_events,
-            "rng": {
-                "cursor_before": rng_start,
-                "expected_cursor_after": expected_rng_end,
-                "actual_cursor_after": actual_rng_end,
-                "rust_sites": rust_rng_sites,
-                "original_frame_draws": rng_draws,
-                "engine_original_replay_stream_omitted": true,
-            },
-            "entity_mapping": mapped_entities,
-            "parity_differences": differences,
-            "engine": engine_value,
-        }),
-    );
+    let mut record = serde_json::json!({
+        "schema": "robin-parity-engine-dump.v1",
+        "type": "frame",
+        "frame_before": frame_before,
+        "frame_after": frame_after,
+        "input": {
+            "resolved_commands": resolved_commands,
+            "selected_pcs": selected_pcs,
+        },
+        "original_path_events": path_events,
+        "rng": {
+            "cursor_before": rng_start,
+            "expected_cursor_after": expected_rng_end,
+            "actual_cursor_after": actual_rng_end,
+            "rust_sites": rust_rng_sites,
+            "original_frame_draws": rng_draws,
+            "engine_original_replay_stream_omitted": true,
+        },
+        "entity_mapping": mapped_entities,
+        "parity_differences": differences,
+        "engine": engine_value,
+    });
+    if let Some(original_entities) = original_entities {
+        record["original_entities"] = serde_json::to_value(original_entities)
+            .expect("serialize selected Original parity dump entities");
+    }
+    write_jsonl_record(writer, &record);
 }
 
 fn push_rolling_window<T>(frames: &mut VecDeque<T>, frame: T) {
@@ -2721,6 +2741,7 @@ fn write_automatic_rolling_dump(
             frame.actual_rng_end,
             &frame.rust_rng_sites,
             &frame.differences,
+            None,
         );
     }
     writer.flush().expect("flush automatic parity dump");
