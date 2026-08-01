@@ -404,7 +404,12 @@ impl EngineInner {
                         z: target_pos.z,
                     },
                 );
-                self.launch_element(elem);
+                // Purse/wasp/net ground-target handlers call
+                // LaunchSequenceElement in the Original. Keep their owner
+                // instruction at the post-entity manager boundary.
+                let mut seq = Sequence::new();
+                seq.append_element(elem);
+                self.launch_sequence(seq);
             }
             LaunchSelfAbility { actor, command } => {
                 let elem = SequenceElement::new(1, *command, Some(*actor));
@@ -555,7 +560,11 @@ impl EngineInner {
                 let mut elem = SequenceElement::new_generic(1, Command::DropAmmo, Some(*pc_id));
                 elem.set_property(Field::ActionId, FieldValue::Integer(*action_id));
                 elem.set_property(Field::Amount, FieldValue::Integer(*amount));
-                self.launch_element(elem);
+                // MSG_DROP_*_AMMO uses LaunchSequenceElement, not a direct
+                // actor Instruct call.
+                let mut seq = Sequence::new();
+                seq.append_element(elem);
+                self.launch_sequence(seq);
             }
             DropAleAt {
                 actor,
