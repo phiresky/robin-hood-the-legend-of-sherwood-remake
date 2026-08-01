@@ -1359,6 +1359,91 @@ fn deferred_face_to_does_not_overwrite_a_newer_live_movement_goal() {
 }
 
 #[test]
+fn positional_face_to_captures_direction_before_deferred_manager_instruction() {
+    use crate::coordinates::MapPoint;
+    use crate::element::{Command, Posture};
+    use crate::order::AiOrderIntent;
+    use crate::sequence::{Field, FieldValue, SequenceState};
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    let mut display = HostDisplayState::default();
+    let mut engine = EngineInner::new();
+    let mut soldier = make_test_soldier(Posture::Upright);
+    let Entity::Soldier(soldier_data) = &mut soldier else {
+        unreachable!("make_test_soldier returned a non-soldier")
+    };
+    soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+    soldier
+        .element_data_mut()
+        .set_position_map(MapPoint::new(100.0, 100.0));
+    let owner = engine.add_entity(soldier);
+    let target = MapPoint::new(200.0, 100.0);
+    let expected_direction =
+        crate::position_interface::vector_to_sector_0_to_15_iso(target.x - 100.0, target.y - 100.0);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .outbox
+        .actor
+        .orders
+        .push(AiOrderIntent::face_toward(target.x, target.y));
+
+    engine.launch_pending_orders_for_npc_mode(owner, false);
+
+    let turn_sequence = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .find(|sequence| {
+            sequence.elements.first().is_some_and(|element| {
+                element.owner == Some(owner) && element.command == Command::Turn
+            })
+        })
+        .expect("positional FaceTo registered a deferred Turn");
+    let turn = &turn_sequence.elements[0];
+    assert_eq!(turn.state, SequenceState::Todo);
+    assert!(turn.orders.is_empty());
+    assert!(matches!(
+        turn.get_property(Field::Direction),
+        Some(FieldValue::Integer(direction)) if *direction == expected_direction as u32
+    ));
+    assert!(turn.get_property(Field::CameraPoint).is_none());
+    let turn_sequence_id = turn_sequence.id;
+
+    // If manager-time instruction incorrectly re-resolves the point, this
+    // position would reverse the requested direction.
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .set_position_map(MapPoint::new(300.0, 100.0));
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+    assert_eq!(
+        u8::from(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .position_iface()
+                .get_direction_goal()
+        ),
+        expected_direction as u8
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(turn_sequence_id, 0)
+            .unwrap()
+            .state,
+        SequenceState::InProgress
+    );
+}
+
+#[test]
 fn face_to_waits_for_manager_regardless_of_owner_drain_mode() {
     use crate::coordinates::MapPoint;
     use crate::element::{ActionState, Command, Posture};

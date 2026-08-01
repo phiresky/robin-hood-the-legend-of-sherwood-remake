@@ -9158,6 +9158,20 @@ impl EngineInner {
                     } else {
                         crate::element::Command::Turn
                     };
+                    // FaceTo(point/vector) resolves its sector before it
+                    // enters FaceTo(UWORD), which then Halts and registers
+                    // TURN. Preserve that authored sector across both Halt
+                    // and the deferred manager boundary instead of
+                    // recomputing it from a potentially newer actor position.
+                    let direction = intent.explicit_direction.or_else(|| {
+                        self.world.entities.get(entity_id).map(|entity| {
+                            let position = entity.element_data().position_map();
+                            crate::position_interface::vector_to_sector_0_to_15_iso(
+                                intent.target_x - position.x,
+                                intent.target_y - position.y,
+                            )
+                        })
+                    });
                     // A SetState callback can synchronously register an
                     // attentive-mode transition, then a re-entrant
                     // EventReachPoint can register FaceTo before the manager
@@ -9212,15 +9226,6 @@ impl EngineInner {
                                 .position_iface_mut()
                                 .set_map_goal(crate::coordinates::MapPoint::ZERO);
                         }
-                        let direction = intent.explicit_direction.or_else(|| {
-                            self.world.entities.get(entity_id).map(|entity| {
-                                let position = entity.element_data().position_map();
-                                crate::position_interface::vector_to_sector_0_to_15_iso(
-                                    intent.target_x - position.x,
-                                    intent.target_y - position.y,
-                                )
-                            })
-                        });
                         self.launch_turn_sequence_deferred_no_transitions(
                             entity_id,
                             turn_command,
@@ -9241,7 +9246,7 @@ impl EngineInner {
                         self.launch_turn_sequence_deferred_no_transitions(
                             entity_id,
                             turn_command,
-                            intent.explicit_direction,
+                            direction,
                             intent.target_x,
                             intent.target_y,
                             None,
