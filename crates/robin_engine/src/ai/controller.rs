@@ -1345,13 +1345,17 @@ impl AiController {
         my_pos: Position,
         my_sector: Option<crate::position_interface::SectorHandle>,
     ) -> Option<usize> {
-        let mut best: Option<(usize, u32)> = None;
+        // Original initializes a UWORD minimum to `oo` and only accepts a
+        // strict improvement. A computed distance of 0xffff consequently
+        // does not select a candidate.
+        let mut best_index = None;
+        let mut minimum_distance = u16::MAX;
         for (idx, sp) in seek_points.iter().enumerate() {
             let dx = sp.position.x - my_pos.x;
             let dy = sp.position.y - my_pos.y;
-            let mut distance = dx.abs().max(dy.abs()) as u32;
+            let mut distance = dx.abs().max(dy.abs()) as u16;
             if sp.position.sector != my_sector {
-                distance = distance.saturating_add(1000);
+                distance = distance.wrapping_add(1000);
             }
             if self.directed_panic {
                 // Big penalty for fleeing toward the panic source:
@@ -1361,14 +1365,15 @@ impl AiController {
                 let cx = self.panic_center_x - my_pos.x;
                 let cy = self.panic_center_y - my_pos.y;
                 if dx * cx + dy * cy > 0.0 {
-                    distance = distance.saturating_add(5000);
+                    distance = distance.wrapping_add(5000);
                 }
             }
-            if best.map(|(_, d)| distance < d).unwrap_or(true) {
-                best = Some((idx, distance));
+            if distance < minimum_distance {
+                best_index = Some(idx);
+                minimum_distance = distance;
             }
         }
-        best.map(|(idx, _)| idx)
+        best_index
     }
 
     // -- Macro rand --
@@ -4448,6 +4453,40 @@ mod tests {
     fn friend_check_look_count_narrows_instead_of_saturating() {
         assert_eq!(friend_check_look_count(254, 1), 255);
         assert_eq!(friend_check_look_count(255, 1), 0);
+    }
+
+    #[test]
+    fn fleeing_seek_distance_uses_original_uword_wrap_and_sentinel() {
+        let point = |x, sector| SeekPoint {
+            position: Position {
+                x,
+                sector,
+                ..Position::default()
+            },
+            frame_when_full_interest: 0,
+            directions: Vec::new(),
+            last_calculated_interest: 100,
+            locked: false,
+            id: 0,
+        };
+        let ai = AiController::new(17);
+
+        // `uwMinDistance` begins at 0xffff and the comparison is strict.
+        assert_eq!(
+            ai.nearest_seek_point_to_flee(&[point(65_535.0, None)], Position::default(), None,),
+            None
+        );
+
+        // The +1000 sector penalty is UWORD arithmetic: 65000 + 1000
+        // wraps to 464, making the far cross-sector point win here.
+        assert_eq!(
+            ai.nearest_seek_point_to_flee(
+                &[point(65_000.0, SectorHandle::new(1)), point(1_000.0, None),],
+                Position::default(),
+                None,
+            ),
+            Some(0)
+        );
     }
 
     #[test]
