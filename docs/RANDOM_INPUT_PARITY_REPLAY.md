@@ -1131,6 +1131,67 @@ rerun all 45 on one current frozen release runner and require exact EOF. Any
 survivor becomes a `Valid + Long` classifier/range/hotspot/LOS investigation,
 not command-lifecycle evidence and not justification for bypassing the guard.
 
+#### Current release validation of the frozen cohort
+
+The complete 45-member cohort was rerun serially with the release runner built
+from `aaebc38c9` (including `750224e6f`). The immutable input snapshot, one log
+and one numeric status per member are preserved under
+`output/parity-audits/r05-wait-raise-bow-current-head/`. The result is:
+
+- 1 unchanged at its old `Wait` / `RaiseBow` boundary;
+- 12 cleared to exact EOF;
+- 31 cleared that boundary and reached a later state or RNG frontier;
+- 1 cleared the boundary and then hit a runner invariant failure; and
+- 0 timeouts.
+
+The twelve exact members are SuN1Sh1nE Profile 004 Savegames 019 and 021;
+linux2 Profile 002 QuickSave and Savegame 041; linux3 Profile 001 Savegames
+003 and 025; linux3 Profile 003 Savegame 035; nicouzouf Profile 001 Savegame
+026 and all three listed Savegame 033 replays; and randomguy Profile 004
+Savegame 002. Raw process statuses are twelve `0`, twenty-nine `1`, and four
+`101`. Three `101` exits are authoritative later RNG-order frontiers and are
+therefore included in the 31 cleared-to-later count: linux2 Profile 002
+Savegame 001 at frame 1411, nicouzouf Profile 001 Savegame 002 at frame 659,
+and nicouzouf Profile 001 Savegame 075 at frame 293. The actual runner failure
+is linux3 Profile 003 Savegame 052 replay 001 at the frame 4769-to-4770 step:
+the sound manager resolved exclamation 14 for actor 136 without a pending
+request. Treating all nonzero statuses as equivalent would incorrectly report
+four failures rather than one.
+
+The sole unchanged member is
+`Savegame_linux3/Profile_003/Savegame_038/replay-001-session-0001.jsonl.zst`.
+At frame 29146 Original remains `Wait` and Rust launches `RaiseBow`, exactly as
+in the frozen baseline. A targeted `robin_engine::engine::input=trace` rerun is
+preserved as
+`output/parity-audits/r05-wait-raise-bow-current-head/linux3-profile003-save038-replay001-resolved-bow-trace.log`
+with status `1` in the sibling status file. Rust PC 183 is in
+`AimingWithBow`, its current order is `AimingWithBow` (Original animation 89),
+and the resolved result is `bow_status=Valid`, `shoot_mode=Long`,
+`command=Some(RaiseBow)`. The target is `(1487, 1560.6747, 648.6747)` and the
+Rust hand point is `(1301, 1535.001, 555.00104)`. Thus `dx=186`, `dy=25.6737`,
+`dz=93.67366`, the 3D distance is approximately `209.833`, and the
+projectile-aspect-scaled XY distance is approximately `189.108`. The hand is
+`93.674` below the target, so Rust uses the cylinder arm; `189.108 < 400`
+makes its range result valid. The final `Long` may come from the normal-range
+threshold or the later blocked-LOS upgrade; the current trace does not
+distinguish those two inputs.
+
+This is a real classifier/geometry frontier. Current Original
+`RHElementActorHuman::CanShootWithBowAt` computes its hand point, applies the
+same cylinder/cone range test, chooses shoot type from the 3D norm, and may
+upgrade it for blocked LOS (`original-code/RHelementactorhuman.cpp:7047-7144`;
+`original-code/RHBow.cpp:335-344`). Its `AimWithBowAt` then necessarily queues
+`RaiseBow` for a valid long result while action state and animation are both
+the ordinary bow-aim values (`original-code/RHelementactorhuman.cpp:6924-6963`).
+Rust follows those boundaries in `engine/input.rs:1635-1736` and
+`engine/input.rs:2710-2786`. Because the recorded Original command stays
+`Wait`, Original did not observe the same valid-long classification. Schema 12
+does not record Original's hand point, range status, pre-LOS mode, or LOS
+result, so it cannot yet distinguish an Original/Rust hotspot difference,
+normal-vs-long distance classification, or obstacle-query difference. Do not
+special-case this replay or remove the valid-status guard; capture those
+generic classifier inputs on the Original side before changing behavior.
+
 When another fix lands, add the commit, Original source boundary, focused test,
 all affected traces, and their new exact result or next independent frontier
 here. Do not silently delete old rows: mark them superseded by the fix so the

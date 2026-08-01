@@ -4320,6 +4320,28 @@ impl EngineInner {
                     far_side_is_building: false,
                 },
             );
+            tracing::debug!(
+                target: "parity_rng_owner",
+                frame = self.control.frame_counter,
+                owner = ?entity_id,
+                caller = "do_launch_ai_move",
+                source_x = source.x,
+                source_y = source.y,
+                source_layer,
+                source_sector = u16::from(source_sector),
+                goal_x = dest.x,
+                goal_y = dest.y,
+                goal_layer,
+                goal_sector = u16::from(goal_sector),
+                action = ?action,
+                move_flags = move_flags.bits(),
+                tolerance = intent.tolerance,
+                speed_factor = intent.speed_factor,
+                quit_swordfight = intent.quit_swordfight_before_move,
+                door_goal = ?door_goal,
+                gate_path = ?gate_path,
+                "about to build cross-sector AI GoTo sequence"
+            );
             return self.build_gate_movement_sequence(
                 sim,
                 entity_id,
