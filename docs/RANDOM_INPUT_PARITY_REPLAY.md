@@ -161,6 +161,28 @@ more before the exit transition than Rust. The remaining later frontiers stay
 open in their corresponding command, movement, and RNG groups; they are not
 failures of the launch fix.
 
+The same release runner also covered the five `MovingFast -> Waiting` ability
+launches and all 38 traces that reported `actor.wait_time` without an
+action-state mismatch. All five ability launches advance to later boundaries.
+Of the 38 wait-only traces, 35 advance (11 to exact EOF, 23 to a later compared
+field, and 1 to a later RNG boundary). Three remain unchanged and are separate
+timer families: `2 -> 14`, an unrelated stale `25 -> 4294967269`, and the
+known one-frame `24 -> 25` termination lag. Thus the shared ability-counter
+repair eliminates 128 old first boundaries across the action/wait cohorts; it
+does not claim those three independent timer mismatches.
+
+The next action-state family was all 10 `WaitingSword -> MovingSword`
+mismatches on the first `ReceiveSwordDamage` / `BeingHitSword` frame. Original
+implements `BEING_HIT_SWORD`, `EXTRACTING_ARROW_SWORD`, and
+`BEING_STUNNED_SWORD` in `RHElementActorHuman::Execute`; their `MOTION_START`
+branch applies Upright plus WaitingSword to PCs and soldiers. Rust had put
+those transitions in a soldier-only side-effect dispatcher, so PCs retained
+their pre-hit MovingSword state. Commit `358af9a7d` moves the shared human
+transitions to the universal active-animation path. All 10 release reruns
+advance beyond the old boundary (6 to later compared fields and 4 to later RNG
+boundaries); results are under
+`output/parity-audits/random-action-wait-fix2/`.
+
 ### Fresh `other` subgroup ledger
 
 All 75 failures whose only first logical field is `other` have an exact
@@ -258,7 +280,7 @@ not the current engine's expected failure count.
 |---|---|---|---|
 | R01 | Fix landed; rerun required | PC `actor.action_state`, commonly Original idle versus Rust `WalkingUpright` while both retain `MoveOk` | `516728654` preserves Waiting when an entity-target `PerformSeek` remains visibly in progress. All four assigned boundaries clear; one trace is exact and three reach independent later failures. The remaining 53 baseline entries require failure-only reruns before this group can be split or closed. |
 | R02 | In progress | `direction_goal`, frequently at frame 516 | Silent Linux2 Save002 proved that Original patrol snapshots expose an active PassDoor member at its committed gate side, while Rust observed its interpolated sprite position and queued a stale patrol target. Door-snapped shared-AI views and exact endpoint completion are under validation; random members still require their own failure-only reruns before this whole group is attributed to that cause. |
-| R03 | In progress | `actor.wait_time`, alone or beside action state | Original uses the single serialized `mulWaitTime` for Whistle and Listen. Rust now synchronizes its phase-local mirrors with that field. Whistle representative traces clear; EnterListen exposes a separate one-frame listening-order termination lag. Standalone wait failures still require grouping. Do not normalize the timer in the comparator. |
+| R03 | In progress | `actor.wait_time`, alone or beside action state | Original uses the single serialized `mulWaitTime` for Whistle and Listen. Rust now synchronizes its phase-local mirrors with that field. Of 38 wait-only traces, 35 advance and 11 reach exact EOF; the three unchanged timer pairs are `2 -> 14`, stale `25 -> 4294967269`, and the one-frame `24 -> 25` termination lag. Do not normalize the timer in the comparator. |
 | R04 | Unassigned | `position_goal_map` | Audit whether the outgoing selected command is detached, postponed, or retained. Existing Halt and raising-sword fixes are relevant but not assumed sufficient. |
 | R05 | Unassigned | `actor.command` with posture/direction | Inspect wrapper versus concrete command lifetime and the action-change marker that commits posture. |
 | R06 | Unassigned | `ai.substate` at frame 282 | Compare synchronous command side effects and owner-local AI callback ordering. |
