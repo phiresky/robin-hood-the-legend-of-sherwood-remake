@@ -1140,6 +1140,11 @@ impl EngineInner {
         };
         if remaining == 0 {
             self.disable_pc_action(assets, actor_id, action);
+        } else {
+            // `SetAmmoAmount` also re-enables a non-empty slot. This matters
+            // for a restored or temporarily reconciled status whose widget
+            // mask was stale when the eating animation completed.
+            self.enable_pc_action(assets, actor_id, action);
         }
     }
 

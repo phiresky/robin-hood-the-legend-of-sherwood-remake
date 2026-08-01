@@ -3532,24 +3532,30 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
 }
 
 #[test]
-fn last_ration_disables_eat_or_guzzle_without_out_of_ammo_speech() {
+fn ration_set_path_updates_eat_or_guzzle_slot_without_out_of_ammo_speech() {
     use crate::campaign::PcDescription;
     use crate::profiles::{Action, CharacterProfile, CharacterProfileIdx};
 
-    for action in [Action::Eat, Action::Guzzle] {
+    for (action, starting_ammo) in [
+        (Action::Eat, 1),
+        (Action::Guzzle, 1),
+        (Action::Eat, 2),
+        (Action::Guzzle, 2),
+    ] {
         let mut engine = EngineInner::new();
         let mut pc = make_test_pc(crate::element::Posture::Upright);
         let pc_data = pc.pc_data_mut().unwrap();
         pc_data.profile_index = CharacterProfileIdx(0);
         pc_data.current_action = action;
         pc_data.saved_action = action;
+        pc_data.disabled_actions[0] = true;
         let pc_id = engine.add_entity(pc);
 
         let mut desc = PcDescription {
             character_profile_idx: Some(CharacterProfileIdx(0)),
             ..Default::default()
         };
-        desc.status.set_ammo(action, 1);
+        desc.status.set_ammo(action, starting_ammo);
         engine.mission_domain.campaign.characters.push(desc);
 
         let mut assets = LevelAssets::new();
@@ -3572,12 +3578,18 @@ fn last_ration_disables_eat_or_guzzle_without_out_of_ammo_speech() {
             engine.mission_domain.campaign.characters[0]
                 .status
                 .get_ammo(action),
-            0
+            starting_ammo - 1
         );
         let pc = engine.get_entity(pc_id).unwrap().pc_data().unwrap();
-        assert_eq!(pc.current_action, Action::NoAction);
-        assert_eq!(pc.saved_action, Action::NoAction);
-        assert!(pc.disabled_actions[0]);
+        if starting_ammo == 1 {
+            assert_eq!(pc.current_action, Action::NoAction);
+            assert_eq!(pc.saved_action, Action::NoAction);
+            assert!(pc.disabled_actions[0]);
+        } else {
+            assert_eq!(pc.current_action, action);
+            assert_eq!(pc.saved_action, action);
+            assert!(!pc.disabled_actions[0]);
+        }
         assert!(engine.feedback.sound_sim.pending_exclamations.is_empty());
     }
 }
