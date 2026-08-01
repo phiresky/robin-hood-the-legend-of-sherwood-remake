@@ -4294,8 +4294,15 @@ Creation order itself remains exact because it is the stable Original identity
 used to construct that mapping. Surface IDs and class IDs are authored content
 identities and therefore compare directly. Missing profiles, target handles,
 or a one-sided AI/detection payload fail loudly rather than fabricating a
-default. The native trace cache is v9 because these additions change its
-bincode layout, and focused ingestion coverage contains each payload family.
+default. The native trace cache was v9 for these additions and advances to v10
+for the visibility-query stream below; focused ingestion coverage contains
+each payload family.
+
+Runtime identity failures now report both sides of the construction boundary:
+all newly recorded Original IDs/orders/kinds and the nearest still-unmapped
+Rust creation orders/kinds. This remains a diagnostic only—the mapper still
+requires exact creation-order identity—but exposes whether a missing dynamic
+entity is genuinely absent or was constructed under a nearby shifted order.
 
 The logical validator has two explicit exclusions. Original itself omits
 mobile/chariot masters because Rust stores them outside the ordinary entity
@@ -4304,6 +4311,40 @@ animation is renderer-only presentation state and is retained in the JSONL for
 a renderer-parity pass but skipped by the logical gameplay comparator. FX
 targets are a distinct `Target` kind and remain included because targeting and
 combat consume their state.
+
+### Ordered opaque visibility calls are replay outputs
+
+Schema 12 records every `RHFastFindGrid::IsReachable` call whose requested
+filter is exactly `SIGHTOBSTACLE_OPAQUE`, but the Rust replay model previously
+discarded the entire `visibility_queries` array. Matching later detection
+state is not a substitute: a missing, reordered, or bit-different query can
+consume stale detection state differently on the next cadence boundary.
+
+Parity replay now enables an allocation-free-when-disabled observer around
+each simulation tick. The shared Rust `is_reachable_3d` entry point records
+opaque calls in execution order, including bit-exact origin and destination
+coordinates and the boolean result. The comparator requires the exact call
+count, order, endpoint bits, and result for every frame. Other sight filters
+are deliberately excluded because Original's recorder excludes them too.
+Ground-crossing early returns are captured at the same logical boundary.
+
+The full Original obstacle payload is still deserialized and retained for
+diagnostic dumps, but four recorder-only implementation details are not part
+of logical equality: `cache_hit`, key/offset, candidate count, and the
+reason/blocking-obstacle explanation. The Original parity build removed the
+lossy result cache, so cache hits are always false and its key/bucket are dead
+diagnostics. Candidate count depends on the spatial acceleration structure;
+reason and first blocker explain a boolean result but are never consumed by
+game logic. Exact ordered endpoints plus the result are the authoritative
+contract. The derived native trace cache is v10, and focused tests cover both
+complete JSON ingestion and ordered opaque-only capture.
+
+`path_events` are already fully typed and retained in surrounding-frame dumps,
+but Rust does not yet emit its own queued/completed event stream for equality
+comparison. That requires instrumentation at `PendingPathRequest` enqueue and
+synchronous completion while preserving the existing queue owner's in-flight
+work. It remains an explicit validator gap rather than being silently claimed
+as covered.
 
 ### Cached campaign PC sprites include alternate profiles
 

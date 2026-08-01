@@ -1182,6 +1182,57 @@ struct TraceDetectable {
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TraceVisibilityQuery {
+    origin: TracePoint3,
+    destination: TracePoint3,
+    result: bool,
+    cache_hit: bool,
+    cache_key: u64,
+    cache_offset: u64,
+    candidate_count: u16,
+    reason: String,
+    blocking_obstacle: Option<TraceSightObstacle>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TraceSightObstacle {
+    id: u32,
+    index: i64,
+    type_mask: i32,
+    types: TraceSightObstacleTypes,
+    active: bool,
+    on_ground: bool,
+    layer: u16,
+    sector: u16,
+    box_ground: TraceSightObstacleBox,
+    points: Vec<TraceSightObstaclePoint>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TraceSightObstacleTypes {
+    solid: bool,
+    opaque: bool,
+    projection_area: bool,
+    mouse: bool,
+    shield: bool,
+    show_shadow_polygon: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TraceSightObstacleBox {
+    min: TracePoint,
+    max: TracePoint,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TraceSightObstaclePoint {
+    x: TraceFloat,
+    y: TraceFloat,
+    z_top: TraceFloat,
+    z_bottom: TraceFloat,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceResolvedExclamation {
     actor: TraceEntityId,
     identifier: u32,
@@ -1201,14 +1252,15 @@ struct TraceFrame {
     director_completions: Vec<robin_engine::engine::DirectorCompletion>,
     selected_pcs: Vec<TraceEntityId>,
     elements: Vec<TraceElement>,
+    visibility_queries: Vec<TraceVisibilityQuery>,
     rng_draws: TraceRngBatch,
     motion_line_changes: Vec<TraceMotionLineChange>,
     path_events: Vec<TracePathEvent>,
     resolved_exclamations: Vec<TraceResolvedExclamation>,
 }
 
-const TRACE_CACHE_VERSION: u32 = 9;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v9.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 10;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v10.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -2016,6 +2068,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 frame.frame_before, frame.frame_after
             );
         }
+        robin_engine::sight_obstacle::begin_parity_visibility_capture();
         let tick_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             engine.perform_hourglass_with_body_gate(
                 &mut display,
@@ -2024,6 +2077,8 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 frame.simulation_body_ran,
             )
         }));
+        let actual_visibility_queries =
+            robin_engine::sight_obstacle::take_parity_visibility_capture();
         let tick_effects = tick_result.unwrap_or_else(|payload| {
             eprintln!(
                 "Rust simulation panicked while replaying original frame {} -> {}",
@@ -2126,6 +2181,10 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         map.validate_building_sector_mapping(&engine, &frame);
         let mut differences =
             motion_line_parity.apply_changes_and_compare(&engine, &frame.motion_line_changes);
+        differences.extend(compare_visibility_queries(
+            &frame.visibility_queries,
+            &actual_visibility_queries,
+        ));
         differences.extend(compare_frame(
             &engine,
             &assets,
@@ -3807,20 +3866,41 @@ impl EntityMap {
                 );
             }
         }
-        assert_eq!(
-            originals.len(),
-            rust_by_creation_order.len(),
-            "runtime entity tables gained different numbers of unmapped entities"
-        );
+        let original_identities: Vec<_> = originals
+            .iter()
+            .map(|element| {
+                (
+                    element.entity_id,
+                    element.creation_order,
+                    EntityIdKind::from(element.entity_id.kind),
+                )
+            })
+            .collect();
+        if originals.len() != rust_by_creation_order.len() {
+            let rust_identities: Vec<_> = rust_by_creation_order
+                .iter()
+                .map(|(&creation_order, &(id, kind))| (id, creation_order, kind))
+                .collect();
+            panic!(
+                "runtime entity tables gained different numbers of unmapped entities: \
+                 Original={original_identities:?}; Rust={rust_identities:?}"
+            );
+        }
 
         for original in originals {
             let expected_kind = EntityIdKind::from(original.entity_id.kind);
             let &(rust_id, actual_kind) = rust_by_creation_order
                 .get(&original.creation_order)
                 .unwrap_or_else(|| {
+                    let nearby = nearest_runtime_identity_candidates(
+                        original.creation_order,
+                        &rust_by_creation_order,
+                    );
                     panic!(
-                        "runtime Original {:?} creation order {} is absent from Rust",
-                        original.entity_id, original.creation_order
+                        "runtime Original {:?} creation order {} ({expected_kind:?}) is absent \
+                         from Rust; nearest unmapped Rust identities are {nearby:?}; all \
+                         unmapped Original identities are {original_identities:?}",
+                        original.entity_id, original.creation_order,
                     )
                 });
             assert_eq!(
@@ -3850,6 +3930,20 @@ impl EntityMap {
     fn sectors_equivalent(&self, original: u16, rust: u16) -> bool {
         original == rust || self.sectors.get(&original) == Some(&rust)
     }
+}
+
+fn nearest_runtime_identity_candidates(
+    expected_creation_order: u32,
+    rust_by_creation_order: &BTreeMap<u32, (EntityId, EntityIdKind)>,
+) -> Vec<(EntityId, u32, EntityIdKind)> {
+    let mut candidates: Vec<_> = rust_by_creation_order
+        .iter()
+        .map(|(&creation_order, &(id, kind))| (id, creation_order, kind))
+        .collect();
+    candidates
+        .sort_by_key(|(_, creation_order, _)| creation_order.abs_diff(expected_creation_order));
+    candidates.truncate(8);
+    candidates
 }
 
 impl From<TraceEntityKind> for EntityIdKind {
@@ -3944,6 +4038,51 @@ fn print_startup_actors(label: &str, engine: &Engine, frame: &TraceFrame, entity
             actual.element_data().sector(),
         );
     }
+}
+
+fn compare_visibility_queries(
+    expected: &[TraceVisibilityQuery],
+    actual: &[robin_engine::sight_obstacle::ParityVisibilityQuery],
+) -> Vec<String> {
+    let mut differences = Vec::new();
+    if expected.len() != actual.len() {
+        differences.push(format!(
+            "frame.visibility_queries.length: original={} rust={}",
+            expected.len(),
+            actual.len()
+        ));
+    }
+    for (index, (expected, actual)) in expected.iter().zip(actual).enumerate() {
+        let actual_origin = actual.origin.map(f32::to_bits);
+        let actual_destination = actual.destination.map(f32::to_bits);
+        let expected_origin = [
+            expected.origin.x.bits,
+            expected.origin.y.bits,
+            expected.origin.z.bits,
+        ];
+        let expected_destination = [
+            expected.destination.x.bits,
+            expected.destination.y.bits,
+            expected.destination.z.bits,
+        ];
+        if expected_origin != actual_origin {
+            differences.push(format!(
+                "frame.visibility_queries[{index}].origin: original_bits={expected_origin:?} rust_bits={actual_origin:?}"
+            ));
+        }
+        if expected_destination != actual_destination {
+            differences.push(format!(
+                "frame.visibility_queries[{index}].destination: original_bits={expected_destination:?} rust_bits={actual_destination:?}"
+            ));
+        }
+        if expected.result != actual.result {
+            differences.push(format!(
+                "frame.visibility_queries[{index}].result: original={} rust={}",
+                expected.result, actual.result
+            ));
+        }
+    }
+    differences
 }
 
 fn compare_frame(
@@ -4997,6 +5136,7 @@ mod tests {
             "director_completions": [],
             "selected_pcs": [],
             "elements": [],
+            "visibility_queries": [],
             "motion_line_changes": [],
             "path_events": [],
             "resolved_exclamations": [],
@@ -5009,7 +5149,7 @@ mod tests {
         });
 
         let error = serde_json::from_value::<TraceFrame>(frame_without_marker)
-            .expect_err("schema 8 frames must report whether the simulation body ran");
+            .expect_err("schema 12 frames must report whether the simulation body ran");
         assert!(error.to_string().contains("simulation_body_ran"));
     }
 
@@ -5189,6 +5329,91 @@ mod tests {
         let detection = element.detection.expect("detection state");
         assert_eq!(detection.suspects, [1, 2, 3, 4, 5, 6]);
         assert_eq!(detection.detectables[0].last_visibility.value(), 100.0);
+    }
+
+    #[test]
+    fn visibility_query_retains_authoritative_call_and_diagnostics() {
+        let query: TraceVisibilityQuery = serde_json::from_value(serde_json::json!({
+            "origin": {"x": {"bits": 1}, "y": {"bits": 2}, "z": {"bits": 3}},
+            "destination": {"x": {"bits": 4}, "y": {"bits": 5}, "z": {"bits": 6}},
+            "result": false,
+            "cache_hit": false,
+            "cache_key": 123456,
+            "cache_offset": 1456,
+            "candidate_count": 1,
+            "reason": "wall",
+            "blocking_obstacle": {
+                "id": 8,
+                "index": 7,
+                "type_mask": 3,
+                "types": {
+                    "solid": true,
+                    "opaque": true,
+                    "projection_area": false,
+                    "mouse": false,
+                    "shield": false,
+                    "show_shadow_polygon": false
+                },
+                "active": true,
+                "on_ground": true,
+                "layer": 65535,
+                "sector": 65535,
+                "box_ground": {
+                    "min": {"x": {"bits": 0}, "y": {"bits": 0}},
+                    "max": {"x": {"bits": 1065353216}, "y": {"bits": 1065353216}}
+                },
+                "points": [{
+                    "x": {"bits": 0},
+                    "y": {"bits": 0},
+                    "z_top": {"bits": 1065353216},
+                    "z_bottom": {"bits": 0}
+                }]
+            }
+        }))
+        .expect("parse complete visibility query");
+
+        assert_eq!(query.origin.x.bits, 1);
+        assert_eq!(query.reason, "wall");
+        let actual = robin_engine::sight_obstacle::ParityVisibilityQuery {
+            origin: [f32::from_bits(1), f32::from_bits(2), f32::from_bits(3)],
+            destination: [f32::from_bits(4), f32::from_bits(5), f32::from_bits(6)],
+            result: false,
+        };
+        assert!(compare_visibility_queries(std::slice::from_ref(&query), &[actual]).is_empty());
+        let mismatched = robin_engine::sight_obstacle::ParityVisibilityQuery {
+            result: true,
+            ..actual
+        };
+        assert!(
+            compare_visibility_queries(std::slice::from_ref(&query), &[mismatched])
+                .iter()
+                .any(|difference| difference.contains(".result:"))
+        );
+        let obstacle = query.blocking_obstacle.expect("blocking obstacle");
+        assert_eq!(obstacle.index, 7);
+        assert!(obstacle.types.opaque);
+        assert_eq!(obstacle.points.len(), 1);
+    }
+
+    #[test]
+    fn runtime_identity_diagnostics_prioritize_nearby_creation_orders() {
+        let projectile = EntityId::new(131, EntityIdKind::Projectile);
+        let fx = EntityId::new(132, EntityIdKind::Fx);
+        let distant = EntityId::new(133, EntityIdKind::Bonus);
+        let candidates = BTreeMap::from([
+            (90, (distant, EntityIdKind::Bonus)),
+            (170, (projectile, EntityIdKind::Projectile)),
+            (180, (fx, EntityIdKind::Fx)),
+        ]);
+
+        assert_eq!(
+            nearest_runtime_identity_candidates(172, &candidates),
+            [
+                (projectile, 170, EntityIdKind::Projectile),
+                (fx, 180, EntityIdKind::Fx),
+                (distant, 90, EntityIdKind::Bonus),
+            ]
+        );
     }
 
     #[test]

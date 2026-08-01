@@ -221,6 +221,66 @@ pub const SIGHTOBSTACLE_MOUSE: u32 = 8;
 pub const SIGHTOBSTACLE_SHIELD: u32 = 16;
 pub const SIGHTOBSTACLE_SHOW_SHADOW_POLYGON: u32 = 32;
 
+/// One authoritative opaque reachability call observed while replay parity
+/// capture is active. The game uses only the ordered endpoints and boolean
+/// result; obstacle/cache diagnostics remain recorder-side explanation.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ParityVisibilityQuery {
+    pub origin: [f32; 3],
+    pub destination: [f32; 3],
+    pub result: bool,
+}
+
+thread_local! {
+    static PARITY_VISIBILITY_CAPTURE: std::cell::RefCell<Option<Vec<ParityVisibilityQuery>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Begin ordered visibility-call capture on the simulation thread.
+///
+/// This is deliberately opt-in so ordinary gameplay does not allocate or
+/// synchronize on every line-of-sight query.
+pub fn begin_parity_visibility_capture() {
+    PARITY_VISIBILITY_CAPTURE.with(|capture| {
+        let mut capture = capture.borrow_mut();
+        assert!(
+            capture.is_none(),
+            "parity visibility capture was begun twice without being drained"
+        );
+        *capture = Some(Vec::new());
+    });
+}
+
+/// Finish visibility-call capture and return calls in execution order.
+pub fn take_parity_visibility_capture() -> Vec<ParityVisibilityQuery> {
+    PARITY_VISIBILITY_CAPTURE.with(|capture| {
+        capture
+            .borrow_mut()
+            .take()
+            .expect("parity visibility capture was drained without being started")
+    })
+}
+
+fn record_parity_visibility_query(
+    origin: [f32; 3],
+    destination: [f32; 3],
+    type_mask: u32,
+    result: bool,
+) {
+    if type_mask != SIGHTOBSTACLE_OPAQUE {
+        return;
+    }
+    PARITY_VISIBILITY_CAPTURE.with(|capture| {
+        if let Some(queries) = capture.borrow_mut().as_mut() {
+            queries.push(ParityVisibilityQuery {
+                origin,
+                destination,
+                result,
+            });
+        }
+    });
+}
+
 // ---- ObstaclePoint ----
 
 /// A vertex of the obstacle with ground (x, y) and height range (z_bottom..z_top).
@@ -1003,6 +1063,7 @@ pub fn is_reachable_3d(
 ) -> bool {
     // Reject rays that cross through the ground.
     if (origin[2] > 0.0 && destination[2] < 0.0) || (origin[2] < 0.0 && destination[2] > 0.0) {
+        record_parity_visibility_query(origin, destination, type_mask, false);
         return false;
     }
 
@@ -1022,10 +1083,12 @@ pub fn is_reachable_3d(
                 type_mask,
                 "3D sight ray blocked"
             );
+            record_parity_visibility_query(origin, destination, type_mask, false);
             return false;
         }
     }
 
+    record_parity_visibility_query(origin, destination, type_mask, true);
     true
 }
 
@@ -1932,5 +1995,45 @@ mod tests {
             None,
         );
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn parity_capture_records_only_ordered_opaque_queries() {
+        let obstacles = ObstacleList::from_slice_all_active(&[]);
+        begin_parity_visibility_capture();
+        assert!(is_reachable_3d(
+            obstacles,
+            [1.0, 2.0, 3.0],
+            [4.0, 5.0, 6.0],
+            SIGHTOBSTACLE_OPAQUE,
+        ));
+        assert!(is_reachable_3d(
+            obstacles,
+            [7.0, 8.0, 9.0],
+            [10.0, 11.0, 12.0],
+            SIGHTOBSTACLE_SOLID,
+        ));
+        assert!(!is_reachable_3d(
+            obstacles,
+            [13.0, 14.0, 1.0],
+            [15.0, 16.0, -1.0],
+            SIGHTOBSTACLE_OPAQUE,
+        ));
+
+        assert_eq!(
+            take_parity_visibility_capture(),
+            [
+                ParityVisibilityQuery {
+                    origin: [1.0, 2.0, 3.0],
+                    destination: [4.0, 5.0, 6.0],
+                    result: true,
+                },
+                ParityVisibilityQuery {
+                    origin: [13.0, 14.0, 1.0],
+                    destination: [15.0, 16.0, -1.0],
+                    result: false,
+                },
+            ]
+        );
     }
 }
