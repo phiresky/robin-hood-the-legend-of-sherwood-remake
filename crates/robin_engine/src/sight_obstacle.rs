@@ -421,6 +421,14 @@ impl SightObstacle {
         self.obstacle_type & SIGHTOBSTACLE_SOLID != 0
     }
 
+    /// C++ `RHSightObstacle::IsOfType`: every bit requested by `required`
+    /// must be present. This is deliberately not an any-of test. In
+    /// particular, `SOLID | OPAQUE` excludes solid-only shadow geometry.
+    #[inline]
+    pub fn is_of_type(&self, required: u32) -> bool {
+        self.obstacle_type & required == required
+    }
+
     #[inline]
     pub fn is_opaque(&self) -> bool {
         self.obstacle_type & SIGHTOBSTACLE_OPAQUE != 0
@@ -1002,7 +1010,7 @@ pub fn is_reachable_3d(
         if !obstacles.is_active(__idx as usize) {
             continue;
         }
-        if obs.obstacle_type & type_mask == 0 {
+        if !obs.is_of_type(type_mask) {
             continue;
         }
         if obs.is_blocking_ray_3d(origin, destination) {
@@ -1076,7 +1084,7 @@ pub fn is_reachable_impact_3d(
         if !obstacles.is_active(idx) {
             continue;
         }
-        if obs.obstacle_type & type_filter == 0 {
+        if !obs.is_of_type(type_filter) {
             continue;
         }
         if let Some(t) = obs.blocking_ray_3d_ratio(origin_arr, dest_arr)
@@ -1165,7 +1173,7 @@ pub fn is_reachable_impact_fall_3d(
     let mut max_top_z: f32 = 0.0;
     let mut hit_idx: Option<u32> = None;
     for (idx, obs) in obstacles.iter_indexed().map(|(i, o)| (i as usize, o)) {
-        if !obstacles.is_active(idx) || obs.obstacle_type & type_filter == 0 {
+        if !obstacles.is_active(idx) || !obs.is_of_type(type_filter) {
             continue;
         }
         if !obs.box_ground.contains_point(p2d) || !obs.contains_point(p2d) {
@@ -1250,7 +1258,7 @@ pub fn is_reachable_impact_up_3d(
     let mut min_bot_z: f32 = f32::INFINITY;
     let mut hit_idx: Option<u32> = None;
     for (idx, obs) in obstacles.iter_indexed().map(|(i, o)| (i as usize, o)) {
-        if !obstacles.is_active(idx) || obs.obstacle_type & type_filter == 0 {
+        if !obstacles.is_active(idx) || !obs.is_of_type(type_filter) {
             continue;
         }
         if !obs.box_ground.contains_point(p2d) || !obs.contains_point(p2d) {
@@ -1603,6 +1611,36 @@ mod tests {
             [-5.0, 5.0, 10.0],
             [15.0, 5.0, 10.0],
             SIGHTOBSTACLE_SOLID | SIGHTOBSTACLE_OPAQUE
+        ));
+    }
+
+    #[test]
+    fn combined_type_filter_requires_every_requested_bit() {
+        // H05_Lin_EC obstacle 245 has this exact relevant type shape: it is
+        // solid shadow geometry but is not opaque. Original
+        // RHSightObstacle::IsOfType(SOLID | OPAQUE) excludes it.
+        let mut solid_only = make_flat_obstacle();
+        solid_only.obstacle_type =
+            SIGHTOBSTACLE_SOLID | SIGHTOBSTACLE_MOUSE | SIGHTOBSTACLE_SHOW_SHADOW_POLYGON;
+        assert!(solid_only.is_of_type(SIGHTOBSTACLE_SOLID));
+        assert!(!solid_only.is_of_type(SIGHTOBSTACLE_SOLID | SIGHTOBSTACLE_OPAQUE));
+
+        let obstacles = [solid_only];
+        let list = ObstacleList::from_slice_all_active(&obstacles);
+        let origin = [-5.0, 5.0, 2.5];
+        let destination = [15.0, 5.0, 2.5];
+
+        assert!(is_reachable_3d(
+            list,
+            origin,
+            destination,
+            SIGHTOBSTACLE_SOLID | SIGHTOBSTACLE_OPAQUE,
+        ));
+        assert!(!is_reachable_3d(
+            list,
+            origin,
+            destination,
+            SIGHTOBSTACLE_SOLID,
         ));
     }
 
