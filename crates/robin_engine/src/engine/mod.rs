@@ -1933,21 +1933,17 @@ impl EngineInner {
         }
     }
 
-    /// Launch a prebuilt sequence after resolving each element's
-    /// priority. Wrapper for `sequence_manager.launch_sequence`.
+    /// Register a prebuilt sequence for the manager hourglass.
+    ///
+    /// Original `RHSequenceManager::LaunchSequence` does not call
+    /// `DeterminePriority`; owned elements resolve it later at their ordered
+    /// `Instruct` boundary. Keeping `NotYetSet` here also preserves dynamic
+    /// Wait priority when the owner dies or becomes unconscious between
+    /// registration and dispatch.
     pub(crate) fn launch_sequence(
         &mut self,
-        mut seq: crate::sequence::Sequence,
+        seq: crate::sequence::Sequence,
     ) -> crate::sequence::SequenceId {
-        // Resolve priorities for every element up-front so subsequent
-        // stop/decide checks don't have to re-run the resolver.
-        let resolver = Self::priority_resolver(&self.world.entities);
-        for elem in seq.elements.iter_mut() {
-            if elem.priority == crate::sequence::SequencePriority::NotYetSet {
-                elem.priority = resolver(elem);
-            }
-        }
-        drop(resolver);
         self.orders.sequence_manager.launch_sequence(seq)
     }
 
