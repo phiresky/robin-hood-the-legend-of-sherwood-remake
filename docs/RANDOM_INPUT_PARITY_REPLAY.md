@@ -1503,7 +1503,12 @@ The 15 `MoveWaiting -> MoveOk` members reduce to five save situations repeated
 three times. In the representative nicouzouf Profile 001 Save 024 frame-107
 boundary, Original synchronously queues paths for soldiers 80, 82, and 84,
 while Rust exposes `MoveOk`; the trace records all three exact sources, final
-goals, and half diagonals. Source comparison found a general dispatch mismatch:
+goals, and half diagonals. Six members from Saves 053 and 059 expose coupled
+`direction_goal`, `position_goal_map`, and `position_map` differences when the
+Original path request completes invalid while Rust's premature direct order has
+already displaced the soldier; those are consequences of this same first
+command boundary, not separate geometry bugs. Source comparison found a general
+dispatch mismatch:
 Original `RHElementActor::InstructOwner(RHCOMMAND_MOVE)` bypasses A* only for
 `RHMOVE_MAP`, `RHMOVE_STRAIGHT`, or a successful `IsReachableThick` test.
 Rust additionally treated `RHMOVE_LINE` and pass-door state as unconditional
