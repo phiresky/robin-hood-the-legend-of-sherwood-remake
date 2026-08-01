@@ -1896,12 +1896,64 @@ mod tests {
             drop.data,
             SequenceElementData::Damage {
                 origin: Some(origin),
+                projectile: None,
                 damage: 0,
                 concussion: 0,
                 sword_strike: None,
                 sword_profile_idx: None,
                 is_harder_hit: false,
             } if origin == victim_id
+        ));
+    }
+
+    #[test]
+    fn projectile_damage_waits_for_sequence_manager_dispatch() {
+        let mut engine = EngineInner::new();
+        let shooter = engine.add_entity(make_pc(Posture::Upright));
+        let mut victim = make_pc(Posture::Upright);
+        let Entity::Pc(victim_pc) = &mut victim else {
+            unreachable!()
+        };
+        victim_pc.pc.life_points = 100;
+        let victim = engine.add_entity(victim);
+
+        engine.queue_projectile_damage(
+            victim,
+            shooter,
+            crate::element::Command::ReceiveArrowDamage,
+            40,
+            40,
+            Some(shooter),
+        );
+
+        assert_eq!(
+            engine
+                .get_entity(victim)
+                .and_then(|entity| entity.pc_data())
+                .map(|pc| pc.life_points),
+            Some(100),
+            "projectile collision must not apply damage before SequenceManager::Hourglass"
+        );
+        let damage = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .find(|element| {
+                element.owner == Some(victim)
+                    && element.command == crate::element::Command::ReceiveArrowDamage
+            })
+            .expect("queued arrow damage element");
+        assert_eq!(damage.state, SequenceState::Todo);
+        assert!(matches!(
+            damage.data,
+            SequenceElementData::Damage {
+                origin: Some(origin),
+                projectile: Some(projectile),
+                damage: 40,
+                concussion: 40,
+                ..
+            } if origin == shooter && projectile == shooter
         ));
     }
 }
@@ -1928,7 +1980,7 @@ impl EngineInner {
     ///
     /// Awards `BOW_KILL_EXPERIENCE_POINTS` to the shooter's Bow skill
     /// via the campaign's `PcStatus`.
-    fn award_bow_kill_xp(&mut self, shooter_id: EntityId) {
+    pub(super) fn award_bow_kill_xp(&mut self, shooter_id: EntityId) {
         let profile_idx = self.get_entity(shooter_id).and_then(|e| match e {
             Entity::Pc(pc) => Some(pc.pc.profile_index),
             _ => None,
@@ -2185,21 +2237,6 @@ impl EngineInner {
                         }
 
                         let damage = result.damage;
-                        let Some(arrow_flight_direction) =
-                            self.get_entity(result.arrow).and_then(|entity| {
-                                let Entity::Projectile(projectile) = entity else {
-                                    return None;
-                                };
-                                Some(projectile.projectile.flight_direction as i16)
-                            })
-                        else {
-                            tracing::warn!(
-                                arrow = ?result.arrow,
-                                victim = ?victim,
-                                "arrow hit missing projectile direction; skipping damage"
-                            );
-                            continue;
-                        };
                         // Civilian-with-attached-scroll immunity
                         // (scroll-reveal beggar).  Consume the arrow but
                         // don't apply damage.
@@ -2211,22 +2248,19 @@ impl EngineInner {
                             );
                             continue;
                         }
-                        let died = self.launch_projectile_damage_now(
-                            sim,
-                            assets,
+                        self.queue_projectile_damage(
                             victim,
                             shooter,
                             Command::ReceiveArrowDamage,
                             damage,
                             damage,
-                            Some(arrow_flight_direction),
+                            Some(result.arrow),
                         );
                         tracing::debug!(
                             arrow = ?result.arrow,
                             victim = ?victim,
                             damage,
-                            died,
-                            "Arrow hit"
+                            "Arrow damage queued"
                         );
 
                         // After launching the damage sequence, if the
@@ -2248,7 +2282,7 @@ impl EngineInner {
                                 .get_entity(result.arrow)
                                 .and_then(projectile_trajectory_origin);
                             if let Some(origin) = trajectory_origin {
-                                self.dispatch_event_get_arrow(victim, origin);
+                                self.dispatch_event_get_arrow(sim, assets, victim, origin);
                             } else {
                                 tracing::warn!(
                                     arrow = ?result.arrow,
@@ -2256,10 +2290,6 @@ impl EngineInner {
                                     "arrow hit NPC missing trajectory origin; skipping EventGetArrow"
                                 );
                             }
-                        }
-
-                        if died {
-                            self.award_bow_kill_xp(shooter);
                         }
                     }
                 }
@@ -2427,9 +2457,7 @@ impl EngineInner {
                 );
                 return;
             }
-            self.launch_projectile_damage_now(
-                sim,
-                assets,
+            self.queue_projectile_damage(
                 victim,
                 _shooter,
                 Command::ReceiveStoneDamage,
@@ -2623,7 +2651,13 @@ impl EngineInner {
     /// Dispatch an EventGetArrow stimulus at the arrow's trajectory
     /// origin — wakes the struck NPC and seeds the search toward the
     /// shot origin.
-    fn dispatch_event_get_arrow(&mut self, victim: EntityId, origin: crate::coordinates::MapPoint) {
+    fn dispatch_event_get_arrow(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        victim: EntityId,
+        origin: crate::coordinates::MapPoint,
+    ) {
         let Some(layer) = self.get_entity(victim).map(|e| e.element_data().layer()) else {
             tracing::warn!(
                 ?victim,
@@ -2637,8 +2671,16 @@ impl EngineInner {
             sector: None,
             level: layer,
         };
-        self.dispatch_ai_stimulus(
+        // RHElementArrow::HitHuman calls the NPC's Think directly after
+        // LaunchSequenceElement and before returning to the projectile
+        // Hourglass.  Merely appending this to the deferred detection FIFO
+        // makes the outcome depend on whether the NPC's creation-order slot
+        // is before or after the projectile.  Run the one Think inline while
+        // retaining older deferred stimuli ahead of work emitted here.
+        self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+            sim,
             victim,
+            assets,
             crate::ai::Stimulus::with_position(crate::ai::StimulusType::EventGetArrow, pos),
         );
     }

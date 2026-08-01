@@ -1453,6 +1453,27 @@ reports done after trace start. The mapping assertion alone cannot distinguish
 same frame"; capture the unmatched Rust creation orders and active-shot state
 before changing creation-order mapping.
 
+#### Projectile impact ordering
+
+Source audit of the live arrow boundary found a separate general ordering
+error after collision. Original `RHElementArrow::HitHuman` first registers a
+`ReceiveArrowDamage` element, then calls the victim NPC's `EVENT_GET_ARROW`
+`Think` inline, and only later does `RHSequenceManager::Hourglass` instruct the
+damage element. Rust had applied arrow and stone damage immediately from the
+projectile pass and merely queued `EVENT_GET_ARROW`, reversing both boundaries
+and making the AI result depend on entity creation order.
+
+Projectile damage is now registered for the sequence-manager phase. Arrow
+impacts run the one `EVENT_GET_ARROW` Think synchronously while preserving any
+older deferred detection stimuli, and the damage element retains the arrow
+identity until dispatch so the victim turns from the arrow's flight direction
+at Original's post-translation boundary. The deferred handler no longer
+rechecks arrow-hurtable posture: Original performs that test only in
+`HitHuman`, before the intervening Think is allowed to change AI/posture. Bow
+kill XP is likewise tested after damage translation using Original's
+post-damage `IsDead()` condition, rather than only on a live-to-dead edge.
+Validation is pending the next sole-slot release run.
+
 The 71 R07 exits group by the first Rust draw site as follows:
 
 | First Rust site | Count |
@@ -1555,6 +1576,17 @@ not authorize skipping `AddPathRequest`. The Rust predicate now mirrors the
 Original condition, with a focused regression proving that a blocked
 `MoveFlags::LINE` movement still enters pathfinding. Validation is pending the
 next sole-slot release run.
+
+The frozen direction groups also exposed a source-level discrepancy shared by
+all four shield commands.  Original `RAISE_SHIELD`,
+`RAISE_SHIELD_INSTANTLY`, `LOWER_SHIELD`, and `PARRY_SHIELD` construct their
+orders with `bComputeDirection = false`
+(`original-code/RHelementactorhuman.cpp:2018-2054`).  Rust retained the generic
+order default, allowing selection of a shield animation to derive a new facing
+goal from its zero-valued destination after `Focus` had already chosen the
+authoritative shield direction.  Shield orders now preserve that facing.  A
+focused regression covers all four translated order types; attribution of
+individual frozen traces awaits the next sole-slot release sweep.
 
 ## Maintenance checklist
 

@@ -910,15 +910,14 @@ impl<'a> ShieldCommandContext<'a> {
         order_type: crate::order::OrderType,
     ) {
         let id = crate::order::alloc_order_id(self.next_order_id);
-        // TODO(parity): all four original shield translators set
-        // `bComputeDirection = false` (`RHelementactorhuman.cpp:2018-2054`).
-        // Preserve the pre-split Rust `push_new_order` default here until the
-        // animation-facing consequences can be checked independently.
-        self.sequence_manager.push_order_on(
-            seq_id,
-            elem_idx,
-            crate::order::Order::new(order_type, 0.0, 0.0, id),
-        );
+        // All four Original shield translators explicitly disable direction
+        // recomputation (`RHelementactorhuman.cpp:2018-2054`).  These are
+        // posture-local animations: facing is controlled by Focus/the shield
+        // danger point before translation, and selecting the new order must
+        // not derive a fresh goal from its zero-valued destination.
+        let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
+        order.compute_direction = false;
+        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
     }
 }
 
@@ -945,35 +944,48 @@ impl EngineInner {
         };
         let command = elem.command;
 
-        let (origin, damage, concussion, sword_strike, sword_profile_idx, is_harder_hit) =
-            match &elem.data {
-                SequenceElementData::Damage {
-                    origin,
-                    damage,
-                    concussion,
-                    sword_strike,
-                    sword_profile_idx,
-                    is_harder_hit,
-                } => (
-                    *origin,
-                    *damage,
-                    *concussion,
-                    *sword_strike,
-                    *sword_profile_idx,
-                    *is_harder_hit,
-                ),
-                _ => {
-                    tracing::warn!(
-                        ?victim_id,
-                        ?command,
-                        "dispatch_receive_damage: element is not Damage"
-                    );
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(seq_id, elem_idx);
-                    return;
-                }
-            };
+        let (
+            origin,
+            projectile,
+            damage,
+            concussion,
+            sword_strike,
+            sword_profile_idx,
+            is_harder_hit,
+        ) = match &elem.data {
+            SequenceElementData::Damage {
+                origin,
+                projectile,
+                damage,
+                concussion,
+                sword_strike,
+                sword_profile_idx,
+                is_harder_hit,
+            } => (
+                *origin,
+                projectile.or_else(|| {
+                    elem.legacy_v48
+                        .as_ref()
+                        .and_then(|legacy| legacy.damage_arrow)
+                }),
+                *damage,
+                *concussion,
+                *sword_strike,
+                *sword_profile_idx,
+                *is_harder_hit,
+            ),
+            _ => {
+                tracing::warn!(
+                    ?victim_id,
+                    ?command,
+                    "dispatch_receive_damage: element is not Damage"
+                );
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
+                return;
+            }
+        };
 
         // Apply damage based on command type.  Per-command `apply_*`
         // functions are responsible for applying the civilian-with-
@@ -1023,25 +1035,18 @@ impl EngineInner {
                 );
             }
             Command::ReceiveArrowDamage | Command::ReceiveStoneDamage => {
-                // Spy and Tree postures grant arrow invulnerability.
-                if command == Command::ReceiveArrowDamage {
-                    let posture = self
-                        .world
-                        .entities
-                        .get(victim_id)
-                        .map(|e| e.element_data().posture)
-                        .unwrap_or(Posture::Upright);
-                    if !posture.is_hurtable_by_arrow() {
-                        tracing::debug!(
-                            ?victim_id,
-                            ?posture,
-                            "arrow blocked: target in stealth posture"
-                        );
-                        self.orders
-                            .sequence_manager
-                            .element_terminated(seq_id, elem_idx);
-                        return;
-                    }
+                // `HitHuman` checks arrow hurtability before it registers
+                // this element. Do not repeat that check here: the
+                // intervening EventGetArrow callback is allowed to change
+                // the victim's AI state before damage executes.
+                let victim_active = self
+                    .get_entity(victim_id)
+                    .is_some_and(|victim| victim.element_data().active);
+                if !victim_active {
+                    self.orders
+                        .sequence_manager
+                        .element_terminated(seq_id, elem_idx);
+                    return;
                 }
                 self.apply_piercing_damage(
                     sim,
@@ -1052,6 +1057,38 @@ impl EngineInner {
                     command == Command::ReceiveArrowDamage,
                     (seq_id, elem_idx),
                 );
+
+                if command == Command::ReceiveArrowDamage {
+                    // Original performs these after ReceivePiercingDamage /
+                    // TranslateArrowDamage, while executing the deferred
+                    // damage element. The projectile remains retained as a
+                    // tombstone, exactly like the Original element pointer.
+                    if self
+                        .get_entity(victim_id)
+                        .is_some_and(|victim| get_life_points(victim) <= 0)
+                    {
+                        let shooter = origin.expect("arrow damage element has no shooter");
+                        self.award_bow_kill_xp(shooter);
+                    }
+                    if let Some(projectile_id) = projectile {
+                        let direction = match self.get_entity(projectile_id) {
+                            Some(crate::element::Entity::Projectile(projectile)) => {
+                                projectile.projectile.flight_direction as i16
+                            }
+                            Some(other) => panic!(
+                                "arrow damage projectile {projectile_id:?} is {:?}",
+                                other.kind()
+                            ),
+                            None => panic!(
+                                "arrow damage projectile {projectile_id:?} disappeared before dispatch"
+                            ),
+                        };
+                        self.get_entity_mut(victim_id)
+                            .expect("arrow damage victim disappeared after damage")
+                            .element_data_mut()
+                            .set_direction_instantly(direction ^ 8);
+                    }
+                }
             }
             Command::ReceiveHitDamage => {
                 self.apply_hit_damage(
@@ -1166,5 +1203,46 @@ mod swordfight_preparation_tests {
             element.get_property(Field::SwordfightPrepared),
             Some(FieldValue::Bool(true))
         ));
+    }
+}
+
+#[cfg(test)]
+mod shield_order_tests {
+    use super::ShieldCommandContext;
+    use crate::entities::Entities;
+    use crate::order::OrderType;
+    use crate::sequence::{Sequence, SequenceElement, SequenceManager};
+    use crate::{element::Command, sequence::SequenceState};
+
+    #[test]
+    fn translated_shield_orders_never_recompute_facing() {
+        for order_type in [
+            OrderType::RaisingShield,
+            OrderType::WaitingShield,
+            OrderType::LoweringShield,
+            OrderType::ParryingShield,
+        ] {
+            let mut sequence_manager = SequenceManager::new();
+            let mut sequence = Sequence::new();
+            sequence.append_element(SequenceElement::new_generic(1, Command::Wait, None));
+            let sequence_id = sequence_manager.launch_sequence(sequence);
+            let mut entities = Entities::new();
+            let mut next_order_id = 1;
+
+            ShieldCommandContext {
+                entities: &mut entities,
+                sequence_manager: &mut sequence_manager,
+                next_order_id: &mut next_order_id,
+            }
+            .push_order(sequence_id, 0, order_type);
+
+            let element = sequence_manager
+                .get_element(sequence_id, 0)
+                .expect("shield test sequence element");
+            assert_eq!(element.state, SequenceState::Todo);
+            assert_eq!(element.orders.len(), 1);
+            assert_eq!(element.orders[0].order_type, order_type);
+            assert!(!element.orders[0].compute_direction);
+        }
     }
 }

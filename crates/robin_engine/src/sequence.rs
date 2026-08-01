@@ -693,6 +693,14 @@ pub enum SequenceElementData {
     Damage {
         /// Origin of the damage (attacker entity).
         origin: Option<EntityId>,
+        /// Projectile whose deferred impact this element represents.
+        ///
+        /// Original arrow damage keeps the `RHElementArrow*` until the
+        /// sequence-manager phase so the victim's final facing can be read
+        /// after damage translation. Runtime projectiles remain as
+        /// tombstones long enough for this reference to stay valid.
+        #[serde(default)]
+        projectile: Option<EntityId>,
         /// Raw damage value (for generic/arrow/stone).
         damage: u16,
         /// Concussion value (for generic/hit).
@@ -730,6 +738,7 @@ impl SequenceElementData {
     ) -> Self {
         Self::Damage {
             origin: Some(origin),
+            projectile: None,
             damage: 0,
             concussion: 0,
             sword_strike: Some(sword_strike),
@@ -742,6 +751,7 @@ impl SequenceElementData {
     pub fn new_damage(origin: Option<EntityId>, damage: u16, concussion: u16) -> Self {
         Self::Damage {
             origin,
+            projectile: None,
             damage,
             concussion,
             sword_strike: None,

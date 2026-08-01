@@ -1807,43 +1807,30 @@ impl EngineInner {
         self.dispatch_receive_damage(sim, assets, victim_id, seq_id, elem_idx);
     }
 
-    /// Launch and synchronously dispatch a projectile damage sequence.
+    /// Register a projectile damage sequence for the sequence-manager phase.
     ///
-    /// This mirrors the original `RHElementArrow::HitHuman` /
-    /// `RHElementStone::HitHuman` flow: collision creates a
-    /// `Receive*Damage` sequence element, and that element applies HP
-    /// damage, death side effects, and hit/death animations.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn launch_projectile_damage_now(
+    /// Original `RHElementArrow::HitHuman` and `RHElementStone::HitHuman`
+    /// call `LaunchSequenceElement` from the projectile's entity-Hourglass
+    /// slot. That only appends the damage element to
+    /// `mlistSequenceElementsToGo`; `RHSequenceManager::Hourglass` instructs
+    /// it after every entity has run. In particular, an arrow dispatches the
+    /// victim's `EVENT_GET_ARROW` between registration and damage.
+    pub(crate) fn queue_projectile_damage(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
         victim_id: EntityId,
         shooter_id: EntityId,
         command: crate::element::Command,
         damage: u16,
         concussion: u16,
-        flight_direction: Option<i16>,
-    ) -> bool {
+        projectile_id: Option<EntityId>,
+    ) {
         debug_assert!(matches!(
             command,
             crate::element::Command::ReceiveArrowDamage
                 | crate::element::Command::ReceiveStoneDamage
         ));
-        let was_alive = self
-            .get_entity(victim_id)
-            .map(|e| get_life_points(e) > 0)
-            .unwrap_or(false);
 
-        if let Some(direction) = flight_direction
-            && let Some(victim) = self.world.entities.get_mut(victim_id)
-        {
-            victim
-                .element_data_mut()
-                .set_direction_instantly(direction ^ 8);
-        }
-
-        let elem = crate::sequence::SequenceElement::new_damage(
+        let mut elem = crate::sequence::SequenceElement::new_damage(
             1,
             command,
             Some(victim_id),
@@ -1851,17 +1838,11 @@ impl EngineInner {
             damage,
             concussion,
         );
-        let seq_id = self.launch_element(elem);
-        let elem_idx = 0;
-        if !self.arbitrate_instruct(seq_id, elem_idx) {
-            return false;
-        }
-        self.dispatch_receive_damage(sim, assets, victim_id, seq_id, elem_idx);
-        was_alive
-            && self
-                .get_entity(victim_id)
-                .map(|e| get_life_points(e) <= 0)
-                .unwrap_or(false)
+        let crate::sequence::SequenceElementData::Damage { projectile, .. } = &mut elem.data else {
+            unreachable!("new_damage must create damage element data");
+        };
+        *projectile = projectile_id;
+        self.register_owned_element_deferred(elem);
     }
 
     /// Internal entry point for `handle_death` that accepts the active

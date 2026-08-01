@@ -646,6 +646,10 @@ fn convert_element(
             (
                 SequenceElementData::Damage {
                     origin: resolve_entity("damage.origin", damage.origin, entities)?,
+                    // Keep this in the legacy sidecar below as well: old
+                    // adopted elements preserve the exact decoded payload,
+                    // while live runtime elements use this typed field.
+                    projectile: None,
                     damage: damage.damage,
                     concussion: damage.concussion,
                     sword_strike,
