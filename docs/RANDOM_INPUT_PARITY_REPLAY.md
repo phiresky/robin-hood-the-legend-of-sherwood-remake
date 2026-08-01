@@ -1068,6 +1068,52 @@ all affected traces, and their new exact result or next independent frontier
 here. Do not silently delete old rows: mark them superseded by the fix so the
 historical coverage remains visible.
 
+### `bfe56ad36` + `88420a6e1` + `b60af1491` + `3e3d28eeb` — deferred parry and panic redetection
+
+`Savegame_linux3/Profile_001/Savegame_008/replay-001-session-0001` first
+failed at frame 4149 with Rust consuming four transient WaitingSword combat
+draws after the five legitimate draws in Original. PC 173 in Original maps to
+PC 172 in Rust. A ParrySword registered during the actor pass was still waiting
+for SequenceManager, but Rust eagerly interrupted the PC's current smalltalk
+strike, installed a synthetic Wait, and executed that Wait before manager
+dispatch. `bfe56ad36` and `88420a6e1` preserve owner instruction FIFO across
+the synchronous and deferred manager queues; the focused
+`lazy_wait_does_not_leapfrog_preexisting_owner_instruction` regression checks
+that deferred ParrySword dispatches before a later synthetic Wait.
+
+The remaining fifth Original draw at callsite `0x1ebc58` was
+`DoActionAndEventuallyPlayRemark` for the already-selected smalltalk strike.
+Original `RHElementActorPC::ConsiderSwordAttack` calls
+`LaunchSequenceElement`, so ParrySword priority arbitration waits for
+`RHSequenceManager::Hourglass` after the actor loop. `b60af1491` routes this
+actor-Execute launch through `register_owned_element_deferred`; the current
+strike now reaches Motion START and performs its authoritative remark draw
+before ParrySword replaces it. No replay-specific draw or state override was
+added.
+
+That advanced the trace to frame 4603. Original consumed twelve panic draws
+(`0x11cf3c`/`0x11cf69` five times, then `0x11ce17` and `0x11c3a2`) for civilian
+38 on every frame beginning at 4602, while Rust performed the batch only once.
+Original's successful RunToHide/RunToDoor arrival and exhausted FleeingPanic
+arms both call `RHElementActorNPC::BlinkEnemy(NULL)` unconditionally when
+entering `FleeingHiding`. This clears `seen_now` and `seen_last_frame`, so an
+enemy that remains visible rises as a new `EVENT_VIEW` on the following
+detection pass and can immediately restart panic. Rust incorrectly assumed an
+alert-status refresh supplied that side effect. `3e3d28eeb` queues the existing
+`blink_all_enemies` effect in both source arms; the focused
+`entering_fleeing_hiding_blinks_visible_enemies_for_redetection` regression
+covers both transitions.
+
+The current release runner now matches every recorded frame through EOF. The
+exact current-HEAD runner output is preserved at
+`output/parity-diagnostics/random-combat-owner/linux3-save008-r001-current-head-eof.log`.
+It exited successfully and ends with
+`parity trace matched every recorded frame`. The
+preserved frame-4603 investigation dump is
+`output/parity-diagnostics/random-combat-owner/linux3-save008-r001-frame4604-panic.jsonl`;
+the compact Original AI transition extract is
+`output/parity-diagnostics/random-combat-owner/frame4600-4604-original-ai.jsonl`.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
