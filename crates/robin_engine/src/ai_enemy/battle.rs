@@ -352,6 +352,48 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
+        // BattleDecisions does not use FillListWithAllNearFighters. Original
+        // scans the complete same-camp fighter registry and gates each entry
+        // with the owner's IsDetecting360Degrees (whose radius is profile /
+        // posture dependent and may exceed the 500-unit swordfight radius).
+        // Rebuild the decision-only aggregate fields from that complete camp
+        // snapshot, leaving `nearby_fighters` radius semantics untouched for
+        // combat-position and swordfight callers.
+        let mut battle_tick = tick.clone();
+        battle_tick.friends_lower_company = 0;
+        battle_tick.soldiers_lower_pride = false;
+        battle_tick.friends_nearer_to_enemy = 0;
+        battle_tick.us_battle_points = 100 + self.soldier_profile_pride as u32;
+        battle_tick.has_officer_nearby = false;
+        battle_tick.simple_soldiers_near = false;
+
+        self.base.list_us.clear();
+        self.base.list_us.push(self.base.me);
+        for friend in &battle_tick.camp_soldiers {
+            if !friend.is_able_to_fight
+                || !friend.is_detected_360_by_owner
+                || !matches!(
+                    friend.ai_state,
+                    AiState::Default | AiState::Wondering | AiState::Seeking | AiState::Attacking
+                )
+            {
+                continue;
+            }
+            self.base.list_us.push(friend.handle);
+            if self.company_number > friend.company_number
+                && (self.base.current_substate == Substate::AttackingReactiontime
+                    || friend.ai_state == AiState::Attacking)
+            {
+                battle_tick.friends_lower_company =
+                    battle_tick.friends_lower_company.saturating_add(1);
+            }
+            battle_tick.soldiers_lower_pride |= self.soldier_profile_pride > friend.pride;
+            battle_tick.us_battle_points += 100 + friend.pride as u32;
+            battle_tick.simple_soldiers_near |= friend.rank == ProfileRank::Soldier;
+            battle_tick.has_officer_nearby |= friend.rank == ProfileRank::Officer;
+        }
+        let tick = &battle_tick;
+
         // Original `BattleDecisions` snapshots `mCurrentSubstate` into a
         // stack-local `oldSubstate` before performing any decision work.
         // Do not use `self.previous_substate` here: that is the unrelated,
@@ -367,29 +409,6 @@ impl EnemyAi {
         // re-focus on a freshly chosen primary target later (via
         // `pending_focus`) if it picks Fight / Shoot / etc.
         self.base.outbox.actor.set_unfocus();
-
-        // Rebuild list_us from the global same-camp fighter registry on
-        // entry. Do the same from the engine snapshot so deferred
-        // EVENT_VIEW and timer paths cannot reuse a stale us-list.
-        self.base.list_us.clear();
-        self.base.list_us.push(self.base.me);
-        for friend in &tick.nearby_fighters {
-            if !friend.is_friendly
-                || friend.handle == self.base.me
-                || !friend.is_able_to_fight
-                || !friend.is_detected_360_by_owner
-            {
-                continue;
-            }
-            if friend.is_pc
-                || matches!(
-                    friend.ai_state,
-                    AiState::Default | AiState::Wondering | AiState::Seeking | AiState::Attacking
-                )
-            {
-                self.base.list_us.push(friend.handle);
-            }
-        }
 
         // BattleDecisions consumes the persistent Them list. Original only
         // rebuilds that list at explicit perception/state-machine call sites
@@ -434,6 +453,47 @@ impl EnemyAi {
             Some(&decision_target_multiplicity),
         );
 
+        // Continue the same Original friend loop after primary-target
+        // selection: attacking friends already committed to a swordfight
+        // always count as nearer; other attacking friends count when their
+        // position is closer to our chosen target than ours is.
+        let mut friends_nearer_to_enemy = 0_u16;
+        if let Some(target) = ctx.entity_view(self.base.primary_target) {
+            let my_dx = ctx.position.x - target.position.x;
+            let my_dy = (ctx.position.y - target.position.y)
+                * crate::position_interface::INVERSE_ASPECT_RATIO;
+            let my_target_sq = my_dx * my_dx + my_dy * my_dy;
+            for friend in &tick.camp_soldiers {
+                if !self.base.list_us.contains(&friend.handle) {
+                    continue;
+                }
+                let same_frame_target = global
+                    .same_frame_target_claims
+                    .iter()
+                    .rev()
+                    .find_map(|&(attacker, target)| {
+                        (attacker == friend.handle && target != 0).then_some(target)
+                    });
+                if friend.ai_state != AiState::Attacking && same_frame_target.is_none() {
+                    continue;
+                }
+                let friend_target = same_frame_target.unwrap_or(friend.primary_target);
+                if friend_target == 0 {
+                    continue;
+                }
+                if super::util::is_any_swordfight_substate(friend.ai_substate as u32) {
+                    friends_nearer_to_enemy = friends_nearer_to_enemy.saturating_add(1);
+                    continue;
+                }
+                let dx = friend.position.x - target.position.x;
+                let dy = (friend.position.y - target.position.y)
+                    * crate::position_interface::INVERSE_ASPECT_RATIO;
+                if dx * dx + dy * dy < my_target_sq {
+                    friends_nearer_to_enemy = friends_nearer_to_enemy.saturating_add(1);
+                }
+            }
+        }
+
         // Walk same-camp soldiers in STATE_ATTACKING and inject their
         // primary target into list_them so we hunt where they are
         // fighting. Skip self, missing primary_target, and anything
@@ -455,21 +515,18 @@ impl EnemyAi {
                 // Overlay a claim recorded by AttackEnemy in this same
                 // creation-ordered pass, but only after the friend passed
                 // the Original's nearby/IsDetecting360Degrees gate above.
-                let same_frame_target = global
-                    .same_frame_target_claims
-                    .iter()
-                    .rev()
-                    .find_map(|&(attacker, target)| {
-                        (attacker == cs.handle && target != 0).then_some(target)
-                    });
+                let same_frame_target =
+                    global
+                        .same_frame_target_claims
+                        .iter()
+                        .rev()
+                        .find_map(|&(attacker, target)| {
+                            (attacker == cs.handle && target != 0).then_some(target)
+                        });
                 if cs.ai_state != AiState::Attacking && same_frame_target.is_none() {
                     continue;
                 }
-                let target = same_frame_target.unwrap_or_else(|| {
-                    self.find_fighter(cs.handle as HumanHandle, tick)
-                        .map(|f| f.primary_target)
-                        .unwrap_or(0)
-                });
+                let target = same_frame_target.unwrap_or_else(|| cs.primary_target);
                 if target == 0 || target == me {
                     continue;
                 }
@@ -816,7 +873,7 @@ impl EnemyAi {
                 } else if ctx.camp == crate::element::Camp::Lacklandists
                     && !soldiers_with_lower_pride
                     && enough_nearer_friends_to_observe(
-                        tick.friends_nearer_to_enemy,
+                        friends_nearer_to_enemy,
                         num_enemies_i_can_see,
                         self.get_courage(),
                     )
@@ -890,7 +947,7 @@ impl EnemyAi {
             ?decision,
             primary_target = self.base.primary_target,
             num_enemies_i_can_see,
-            friends_nearer_to_enemy = tick.friends_nearer_to_enemy,
+            friends_nearer_to_enemy,
             soldiers_lower_pride = tick.soldiers_lower_pride,
             friends_lower_company = tick.friends_lower_company,
             "battle_decisions: chose decision"

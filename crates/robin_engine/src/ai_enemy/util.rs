@@ -177,6 +177,17 @@ pub struct CampSoldierInfo {
     pub ai_state: AiState,
     pub ai_substate: Substate,
     pub is_able_to_fight: bool,
+    /// Snapshot of the ticking owner detecting this soldier through
+    /// `IsDetecting360Degrees`. BattleDecisions scans the complete camp
+    /// fighter registry and applies the owner's real view radius; it is not
+    /// limited to the 500-unit swordfight-consideration neighborhood.
+    pub is_detected_360_by_owner: bool,
+    /// Live primary target used when BattleDecisions merges an attacking
+    /// friend's target into its persistent Them list.
+    pub primary_target: HumanHandle,
+    /// Soldier-profile pride used by BattleDecisions' side-strength and
+    /// too-proud-to-attack calculations.
+    pub pride: u16,
     /// Narrower than `is_able_to_fight`: sleeping / attacking /
     /// menacing / fleeing soldiers cannot be pulled into officer
     /// coordination, while default, wondering, and specific

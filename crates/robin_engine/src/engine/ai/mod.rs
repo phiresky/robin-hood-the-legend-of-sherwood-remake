@@ -2065,6 +2065,31 @@ impl EngineInner {
                 }
                 None => false,
             };
+            let is_detected_360_by_owner = match me_brawler {
+                Some(me) => {
+                    let me_position = me.element.position_map();
+                    crate::ai_enemy::soldier_detects_target_360(
+                        crate::ai::Position {
+                            x: me_position.x,
+                            y: me_position.y,
+                            sector: me.element.sector(),
+                            level: me.element.layer(),
+                        },
+                        me.element.position().z,
+                        me.soldier.rider,
+                        me.npc.view_radius,
+                        self.entity_data_inside_building(&me.element),
+                        cs_position,
+                        s.element.position().z,
+                        s.element.posture,
+                        s.soldier.rider,
+                        s.element.direction(),
+                        in_building,
+                        obstacles,
+                    )
+                }
+                None => false,
+            };
             camp_soldiers.push(crate::ai_enemy::CampSoldierInfo {
                 handle: other_id.index(),
                 position: cs_position,
@@ -2073,6 +2098,9 @@ impl EngineInner {
                 ai_state: s.npc.ai_state(),
                 ai_substate: s.npc.ai_substate(),
                 is_able_to_fight: able_to_fight,
+                is_detected_360_by_owner,
+                primary_target: enemy_ai.base.primary_target,
+                pride: enemy_ai.soldier_profile_pride,
                 is_able_to_help: crate::ai_enemy::soldier_is_able_to_help_state(
                     alive_and_conscious,
                     s.npc.ai_state(),

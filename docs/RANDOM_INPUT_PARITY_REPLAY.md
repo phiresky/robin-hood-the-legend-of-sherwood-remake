@@ -1779,6 +1779,25 @@ cardinality. The frozen runner was built from source head `e42c169614` with
 SHA-256 `c3e3691c93b9ea3eb6e14e803a7f3b5718e7a84b11532c1850da7dd0da19e8c8`;
 the exact per-trace classifications remain in `final-classification.tsv`.
 
+### Profile 003 Savegame 046: BattleDecisions friend radius
+
+Replay 001 first diverges at frame 734 when Soldier 52 rebuilds `list_us`.
+Original includes Soldier 65, about 511 projected map units away, while Rust
+omits it and consequently computes a different battle context. This is not an
+ID-mapping difference: Original `RHArtificialMalignity::BattleDecisions`
+walks every fighter in the same-camp registry and applies
+`mpMe->IsDetecting360Degrees(pHuman)`, which uses the owner's live view
+radius. Rust incorrectly sourced this scan from `nearby_fighters`, whose
+fixed 500-unit max-norm cutoff belongs to
+`FillListWithAllNearFighters`/swordfight consideration.
+
+The decision scan now uses the complete `camp_soldiers` snapshot, augmented
+with owner-to-friend 360-degree visibility, primary target, and profile pride.
+It rebuilds `list_us` and all BattleDecisions side aggregates from that same
+admitted set. The 500-unit `nearby_fighters` semantics remain unchanged for
+the combat-position callers that actually correspond to the Original's near-
+fighter helper. Replay validation is pending the next frozen-runner sweep.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
