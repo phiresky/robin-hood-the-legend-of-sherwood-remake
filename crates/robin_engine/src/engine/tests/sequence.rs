@@ -1195,7 +1195,7 @@ fn pc_shoot_bow_waits_through_load_and_wait_then_retries_only_while_aiming() {
     assert_eq!(held.state, SequenceState::Todo);
     assert_eq!(held.priority, SequencePriority::NotYetSet);
     assert_eq!(held.posture_after_transition, Posture::Undefined);
-    assert_eq!(held.action_state_after_transition, ActionState::Undefined);
+    assert_eq!(held.action_state_after_transition, ActionState::Waiting);
     assert!(held.orders.is_empty());
     assert_eq!(held.cross_postponed, None);
     assert_eq!(
