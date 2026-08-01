@@ -1402,6 +1402,19 @@ impl EngineInner {
             return seq_id;
         }
 
+        // RHElementActorHuman::Instruct retains repeated PC bow shots before
+        // delegating to Actor::Instruct. Keep the registered element wholly
+        // untouched: priority resolution, transition stamps, generated
+        // orders, and ordinary arbitration all belong to the later retry.
+        if self.pc_should_hold_shoot_bow(owner, elem.command) {
+            let seq_id = self.orders.sequence_manager.launch_element(elem);
+            self.orders
+                .sequence_manager
+                .hold_deferred_element(seq_id, 0);
+            self.queue_pc_shoot_bow(owner, crate::sequence::SequenceElementRef::new(seq_id, 0));
+            return seq_id;
+        }
+
         if parity_debug_stage_timing {
             eprintln!(
                 "parity launch: before resolve priority owner={owner:?} command={:?}",
@@ -2131,41 +2144,6 @@ impl EngineInner {
                     }
                 }
                 _ => {}
-            }
-        }
-
-        // PC-shoot-bow queue: when a PC receives a SHOOT_BOW while
-        // already mid-bow-animation (shooting, loading, raising,
-        // equipping), postpone the new element behind the current so
-        // it fires after — implementing the AddSequenceToShootList
-        // semantics with the postpone-chain primitive.
-        if new_command == Command::ShootBow
-            && let Some(entity) = self.get_entity(owner)
-            && entity.is_pc()
-            && let Some((cur_seq, cur_idx, current_order)) =
-                self.orders.sequence_manager.current_order_for_actor(owner)
-        {
-            use crate::order::OrderType;
-            // C++ checks `mpSprite->GetLastAnimation()`. The live front
-            // order is the authoritative animation driver here; `old_action`
-            // is only refreshed by the script action-change path and can lag
-            // or stay at Waiting for ordinary PCs.
-            let in_bow_anim = matches!(
-                current_order.order_type,
-                OrderType::ShootingWithBow
-                    | OrderType::ShootingWithBowUp
-                    | OrderType::ShootingWithBowAnonymous
-                    | OrderType::ShootingWithBowUpAnonymous
-                    | OrderType::TransitionLoadingBow
-                    | OrderType::TransitionLoadingBowAnonymous
-                    | OrderType::TransitionRaisingBow
-                    | OrderType::TransitionRaisingBowAnonymous
-                    | OrderType::TransitionEquipBow
-                    | OrderType::TransitionEquipBowAnonymous
-            );
-            if in_bow_anim && (cur_seq, cur_idx) != (new_seq, new_idx) {
-                self.engine_postpone(cur_seq, cur_idx, new_seq, new_idx);
-                return false;
             }
         }
 
@@ -3216,16 +3194,74 @@ impl EngineInner {
     /// drain the shoot-list (queue non-empty) or cancel the Bow action
     /// (queue empty).
     pub fn pc_has_pending_shoot_bow(&self, pc_id: EntityId) -> bool {
-        self.orders
-            .sequence_manager
-            .queued_element_exists(pc_id, crate::element::Command::ShootBow)
+        self.get_entity(pc_id)
+            .and_then(|entity| entity.human_data())
+            .is_some_and(|human| !human.pending_shoots.is_empty())
+            || self
+                .orders
+                .sequence_manager
+                .queued_element_exists(pc_id, crate::element::Command::ShootBow)
     }
 
-    /// Owner-local `ProcessShootList` boundary. Rust represents the legacy
-    /// list as an already-instructed cross-postponed ShootBow element, so the
-    /// sequence manager resumes it synchronously when the current bow element
-    /// permits it; no second instruction or queue mutation is required here.
-    pub(crate) fn process_shoot_list_for(&mut self, owner: EntityId) {
+    pub(in crate::engine) fn pc_should_hold_shoot_bow(
+        &self,
+        owner: EntityId,
+        command: crate::element::Command,
+    ) -> bool {
+        use crate::order::OrderType;
+        command == crate::element::Command::ShootBow
+            && self.get_entity(owner).is_some_and(|entity| entity.is_pc())
+            && self.get_entity(owner).is_some_and(|entity| {
+                matches!(
+                    entity.sprite().last_action,
+                    OrderType::ShootingWithBow
+                        | OrderType::ShootingWithBowUp
+                        | OrderType::TransitionLoadingBow
+                        | OrderType::TransitionRaisingBow
+                        | OrderType::TransitionEquipBow
+                )
+            })
+    }
+
+    pub(in crate::engine) fn queue_pc_shoot_bow(
+        &mut self,
+        owner: EntityId,
+        element_ref: crate::sequence::SequenceElementRef,
+    ) {
+        let human = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(|entity| entity.human_data_mut())
+            .unwrap_or_else(|| panic!("shoot-list owner {} is not human", owner.index()));
+        if !human.pending_shoots.contains(&element_ref) {
+            human.pending_shoots.push(element_ref);
+        }
+    }
+
+    /// Drop the retained Human::Instruct shoot FIFO without altering the
+    /// sequence elements themselves, matching C++ `ClearShootList`.
+    pub(in crate::engine) fn clear_pc_shoot_list(&mut self, owner: EntityId) -> bool {
+        let human = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(|entity| entity.human_data_mut())
+            .unwrap_or_else(|| panic!("shoot-list owner {} is not human", owner.index()));
+        let had_entries = !human.pending_shoots.is_empty();
+        human.pending_shoots.clear();
+        had_entries
+    }
+
+    /// Original `RHElementActorHuman::ProcessShootList`: retry the oldest
+    /// retained element synchronously, and remove it only when Instruct
+    /// accepts it. The sprite animation gate is deliberately exact.
+    pub(crate) fn process_shoot_list_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
         let entity = self.world.entities.get(owner).unwrap_or_else(|| {
             panic!(
                 "shoot-list owner {} disappeared from its legacy slot",
@@ -3237,6 +3273,30 @@ impl EngineInner {
             "shoot-list owner {} is not human",
             owner.index()
         );
+        use crate::order::OrderType;
+        if !matches!(
+            entity.sprite().last_action,
+            OrderType::AimingWithBow | OrderType::AimingWithBowUp
+        ) {
+            return;
+        }
+        let Some(element_ref) = entity
+            .human_data()
+            .and_then(|human| human.pending_shoots.first().copied())
+        else {
+            return;
+        };
+        let accepted = self.instruct_held_shoot_bow(sim, assets, owner, element_ref);
+        if accepted {
+            let human = self
+                .world
+                .entities
+                .get_mut(owner)
+                .and_then(|entity| entity.human_data_mut())
+                .expect("validated human shoot-list owner disappeared");
+            assert_eq!(human.pending_shoots.first(), Some(&element_ref));
+            human.pending_shoots.remove(0);
+        }
     }
 
     /// Background animation entity ids.

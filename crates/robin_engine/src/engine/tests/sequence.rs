@@ -1167,49 +1167,108 @@ fn done_propagation_requires_the_current_order_identity() {
 }
 
 #[test]
-fn pc_shoot_bow_queues_behind_live_bow_animation_order() {
-    use crate::element::{Command, Posture};
-    use crate::order::{Order, OrderType};
+fn pc_shoot_bow_waits_through_load_and_wait_then_retries_only_while_aiming() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::order::OrderType;
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
     let pc = engine.add_entity(make_test_pc(Posture::Upright));
-    let target = engine.add_entity(make_test_soldier(Posture::Upright));
-
-    let mut current =
-        SequenceElement::new_interaction(1, Command::ShootBow, Some(pc), Some(target));
-    current.priority = SequencePriority::Preference;
-    current
-        .orders
-        .push_back(Order::test_new(OrderType::ShootingWithBow, 0.0, 0.0));
-    let current_seq = engine.orders.sequence_manager.launch_element(current);
-    engine
-        .orders
-        .sequence_manager
-        .element_in_progress(current_seq, 0);
     engine
         .get_entity_mut(pc)
         .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .old_action = OrderType::WaitingUpright;
+        .element_data_mut()
+        .sprite
+        .last_action = OrderType::TransitionLoadingBow;
 
-    let incoming = SequenceElement::new_interaction(1, Command::ShootBow, Some(pc), Some(target));
+    // A missing antagonist makes the eventual Translate deterministic and
+    // side-effect free; this regression is about Human::Instruct admission,
+    // not projectile construction.
+    let incoming = SequenceElement::new_interaction(1, Command::ShootBow, Some(pc), None);
     let incoming_seq = engine.launch_element_for_owner(incoming);
 
-    let current = engine
-        .orders
-        .sequence_manager
-        .get_element(current_seq, 0)
-        .unwrap();
-    assert_eq!(current.cross_postponed, Some((incoming_seq, 0)));
-
-    let incoming = engine
+    let held = engine
         .orders
         .sequence_manager
         .get_element(incoming_seq, 0)
         .unwrap();
-    assert_eq!(incoming.state, SequenceState::Postponed);
+    assert_eq!(held.state, SequenceState::Todo);
+    assert_eq!(held.priority, SequencePriority::NotYetSet);
+    assert_eq!(held.posture_after_transition, Posture::Undefined);
+    assert_eq!(held.action_state_after_transition, ActionState::Undefined);
+    assert!(held.orders.is_empty());
+    assert_eq!(held.cross_postponed, None);
+    assert_eq!(
+        engine
+            .get_entity(pc)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .pending_shoots,
+        [crate::sequence::SequenceElementRef::new(incoming_seq, 0)]
+    );
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::default();
+
+    // Loading has reported DONE, but the sprite still names the completed
+    // loading animation. The following Wait frame is not sufficient either.
+    engine.process_shoot_list_for(&sim, &assets, pc);
+    engine
+        .get_entity_mut(pc)
+        .unwrap()
+        .element_data_mut()
+        .sprite
+        .last_action = OrderType::WaitingUpright;
+    engine.process_shoot_list_for(&sim, &assets, pc);
+    assert_eq!(
+        engine
+            .get_entity(pc)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .pending_shoots
+            .len(),
+        1
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(incoming_seq, 0)
+            .unwrap()
+            .priority,
+        SequencePriority::NotYetSet
+    );
+
+    // Only the bow-aiming idle admits the retained element. Instruct then
+    // reaches Translate and consumes the FIFO entry (the deliberately absent
+    // target makes this particular element Impossible).
+    engine
+        .get_entity_mut(pc)
+        .unwrap()
+        .element_data_mut()
+        .sprite
+        .last_action = OrderType::AimingWithBow;
+    engine.process_shoot_list_for(&sim, &assets, pc);
+    assert!(
+        engine
+            .get_entity(pc)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .pending_shoots
+            .is_empty()
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(incoming_seq, 0)
+            .unwrap()
+            .state,
+        SequenceState::Impossible
+    );
 }
 
 #[test]

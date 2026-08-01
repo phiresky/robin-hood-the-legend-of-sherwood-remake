@@ -3388,6 +3388,32 @@ impl SequenceManager {
         }))
     }
 
+    /// Detach one exact live element from the ordinary manager FIFO without
+    /// changing any of its instruction-time state.
+    ///
+    /// `RHElementActorHuman::Instruct` uses this shape for repeated PC bow
+    /// shots: the sequence element has already been registered and reached
+    /// the human, but is retained in `mShootList` before Actor::Instruct can
+    /// resolve priority, stamp transition state, or translate the command.
+    pub(crate) fn hold_deferred_element(&mut self, sequence_id: SequenceId, element_index: usize) {
+        let element = self
+            .get_element(sequence_id, element_index)
+            .unwrap_or_else(|| panic!("missing held element {sequence_id:?}/{element_index}"));
+        assert_eq!(
+            element.state,
+            SequenceState::Todo,
+            "held element {sequence_id:?}/{element_index} must still be Todo"
+        );
+        let position = self
+            .elements_to_go
+            .iter()
+            .position(|handle| *handle == (sequence_id, element_index))
+            .unwrap_or_else(|| {
+                panic!("held element {sequence_id:?}/{element_index} is absent from elements_to_go")
+            });
+        self.elements_to_go.remove(position);
+    }
+
     /// Remove and return this owner's deferred actions through an exact
     /// target, preserving their relative manager-FIFO order.
     ///

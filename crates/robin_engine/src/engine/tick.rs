@@ -3763,7 +3763,7 @@ impl EngineInner {
                     #[cfg(test)]
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanPrelude(owner));
                     engine.tick_concussion_healing_for(sim, owner, assets);
-                    engine.process_shoot_list_for(owner);
+                    engine.process_shoot_list_for(sim, assets, owner);
                 }
             },
             |engine, owner, movement, melee, bow, ability, selected_beggar| {

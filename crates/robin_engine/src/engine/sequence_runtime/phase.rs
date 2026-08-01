@@ -1,6 +1,138 @@
 use super::*;
 
 impl EngineInner {
+    /// Retry the front of a PC's legacy shoot list through the same
+    /// Actor::Instruct admission stages used by the manager dispatcher.
+    /// Returns the boolean result that `ProcessShootList` uses to decide
+    /// whether to remove the retained pointer.
+    pub(in crate::engine) fn instruct_held_shoot_bow(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        element_ref: crate::sequence::SequenceElementRef,
+    ) -> bool {
+        use crate::sequence::{SequencePriority, SequenceState};
+
+        let seq_id = element_ref.sequence_id;
+        let elem_idx = element_ref.element_index;
+        let Some(element) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
+            panic!("shoot-list element {seq_id:?}/{elem_idx} disappeared");
+        };
+        assert_eq!(element.owner, Some(owner));
+        assert_eq!(element.command, Command::ShootBow);
+        if !matches!(
+            element.state,
+            SequenceState::Todo | SequenceState::Postponed
+        ) {
+            panic!(
+                "shoot-list element {seq_id:?}/{elem_idx} has invalid state {:?}",
+                element.state
+            );
+        }
+
+        if element.priority == SequencePriority::NotYetSet {
+            let priority = {
+                let resolver = Self::priority_resolver(&self.world.entities);
+                resolver(element)
+            };
+            self.orders
+                .sequence_manager
+                .get_element_mut(seq_id, elem_idx)
+                .expect("held shoot element vanished during priority resolution")
+                .priority = priority;
+        }
+
+        self.stamp_element_transition_state(owner, seq_id, elem_idx);
+        if self.non_interruptable_guard(owner, seq_id, elem_idx) {
+            self.dispatch_condolations(sim, assets);
+            return false;
+        }
+        if !self.generate_transition(owner, seq_id, elem_idx) {
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
+            self.dispatch_condolations(sim, assets);
+            return false;
+        }
+        if !self.arbitrate_instruct(seq_id, elem_idx) {
+            self.dispatch_condolations(sim, assets);
+            return false;
+        }
+
+        self.orders
+            .sequence_manager
+            .begin_instruct_callback(owner, seq_id, elem_idx);
+        self.dispatch_condolations(sim, assets);
+        self.orders
+            .sequence_manager
+            .end_instruct_callback(owner, seq_id, elem_idx);
+
+        let target = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .and_then(|element| match &element.data {
+                crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,
+                _ => None,
+            });
+        let Some(target) = target else {
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
+            return true;
+        };
+        let ammo_count = self.get_bow_ammo_count(owner);
+        if ammo_count == 0 {
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
+            return true;
+        }
+
+        let (bow_target, shoot_mode) = self.can_shoot_with_bow_at(assets, owner, target);
+        if bow_target != super::input::BowTarget::Valid {
+            let has_transition_orders = self
+                .orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .is_some_and(|element| !element.orders.is_empty());
+            if has_transition_orders {
+                self.orders
+                    .sequence_manager
+                    .element_in_progress(seq_id, elem_idx);
+            } else {
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
+            }
+            return true;
+        }
+
+        match bow_shot::begin_bow_shot(
+            &mut self.world.entities,
+            &mut self.orders.sequence_manager,
+            owner,
+            target,
+            seq_id,
+            elem_idx,
+            false,
+            ammo_count,
+            Some(shoot_mode),
+            &mut self.orders.next_order_id,
+        ) {
+            BeginShotResult::Started => self
+                .orders
+                .sequence_manager
+                .element_in_progress(seq_id, elem_idx),
+            BeginShotResult::Impossible => self
+                .orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx),
+        }
+        true
+    }
+
     /// Translate one Move/Seek at the exact `RHSequenceManager::Hourglass`
     /// FIFO position where its `Go()` action was emitted.
     pub(in crate::engine) fn dispatch_ordered_move_seek_instruct(
@@ -315,6 +447,25 @@ impl EngineInner {
                     sequence_id: seq_id,
                     element_index: elem_idx,
                 } => {
+                    // Human::Instruct owns this guard, before
+                    // Actor::Instruct resolves priority, stamps transition
+                    // state, generates orders, or arbitrates. The action has
+                    // already been detached from the manager FIFO by this
+                    // phase, so retaining the exact ref is sufficient.
+                    let command = self
+                        .orders
+                        .sequence_manager
+                        .get_element(seq_id, elem_idx)
+                        .map(|element| element.command);
+                    if command.is_some_and(|command| self.pc_should_hold_shoot_bow(owner, command))
+                    {
+                        self.queue_pc_shoot_bow(
+                            owner,
+                            crate::sequence::SequenceElementRef::new(seq_id, elem_idx),
+                        );
+                        continue;
+                    }
+
                     // Every RHElementActor::Instruct call begins by asking
                     // the owner to DeterminePriority when the serialized
                     // element still carries NOT_YET_SET. Prebuilt and loaded

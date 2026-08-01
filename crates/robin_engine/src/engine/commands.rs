@@ -528,8 +528,10 @@ impl EngineInner {
                 input.right_mouse_down = false;
             }
             ClearShootList { pc_id } => {
-                // Drop the queued shoot list — pending
-                // `Command::ShootBow` elements in `elements_to_go`.
+                // Clear Human::Instruct's retained pointer FIFO. Keep the
+                // broader pending-element cleanup for pre-Instruct work that
+                // has not reached that FIFO yet.
+                self.clear_pc_shoot_list(*pc_id);
                 let resolver = Self::priority_resolver(&self.world.entities);
                 self.orders.sequence_manager.stop_pending_elements_matching(
                     *pc_id,

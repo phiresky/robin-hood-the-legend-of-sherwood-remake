@@ -637,9 +637,9 @@ impl EngineInner {
         }
 
         // C++ `EnterSwordFight` calls `ClearShootList()` before the
-        // validity gates. In Rust, repeated PC bow clicks are represented
-        // as pending/postponed `ShootBow` sequence elements.
+        // validity gates.
         {
+            self.clear_pc_shoot_list(initiator);
             let resolver = Self::priority_resolver(&self.world.entities);
             self.orders.sequence_manager.stop_pending_elements_matching(
                 initiator,
