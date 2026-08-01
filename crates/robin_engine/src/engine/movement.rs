@@ -31,6 +31,68 @@ enum LiftAnimContext {
     },
 }
 
+#[cfg(test)]
+mod group_move_authorization_tests {
+    use super::*;
+    use crate::coordinates::MoveBox;
+    use crate::sector::SectorType;
+
+    #[test]
+    fn ordinary_formation_uses_live_actor_box_not_generic_upright_box() {
+        let bbox = group_move_candidate_box(
+            MapBBox::from_coords(90.0, 90.0, 110.0, 110.0),
+            MoveBox::from_coords(-2.0, -2.0, 2.0, 2.0),
+            MapPoint::new(100.0, 100.0),
+            MapPoint::new(200.0, 220.0),
+            false,
+        );
+        assert_eq!((bbox.x_min(), bbox.y_min()), (190.0, 210.0));
+        assert_eq!((bbox.x_max(), bbox.y_max()), (210.0, 230.0));
+    }
+
+    #[test]
+    fn ordinary_formation_preserves_live_box_offset_from_actor_position() {
+        let bbox = group_move_candidate_box(
+            MapBBox::from_coords(94.0, 97.0, 109.0, 112.0),
+            MoveBox::from_coords(-20.0, -20.0, 20.0, 20.0),
+            MapPoint::new(100.0, 100.0),
+            MapPoint::new(300.0, 400.0),
+            false,
+        );
+        assert_eq!((bbox.x_min(), bbox.y_min()), (294.0, 397.0));
+        assert_eq!((bbox.x_max(), bbox.y_max()), (309.0, 412.0));
+    }
+
+    #[test]
+    fn lift_formation_uses_upright_zero_centered_box() {
+        let bbox = group_move_candidate_box(
+            MapBBox::from_coords(90.0, 90.0, 110.0, 110.0),
+            MoveBox::from_coords(-3.0, -4.0, 5.0, 6.0),
+            MapPoint::new(100.0, 100.0),
+            MapPoint::new(300.0, 400.0),
+            true,
+        );
+        assert_eq!((bbox.x_min(), bbox.y_min()), (297.0, 396.0));
+        assert_eq!((bbox.x_max(), bbox.y_max()), (305.0, 406.0));
+    }
+
+    #[test]
+    fn replay_goal_sector_kind_retains_lift_door_and_jump_flags() {
+        assert_eq!(
+            group_move_sector_kinds(SectorType::LIFT),
+            (true, false, false)
+        );
+        assert_eq!(
+            group_move_sector_kinds(SectorType::DOOR),
+            (false, true, false)
+        );
+        assert_eq!(
+            group_move_sector_kinds(SectorType::JUMP),
+            (false, false, true)
+        );
+    }
+}
+
 /// Apply the lift-sector portion of Original
 /// `RHElementActor::DetermineMovementAnimation`.
 ///
@@ -1180,6 +1242,36 @@ const CIRCULAR_DISPATCH_RADIUS: f32 = 60.0;
 /// circular dispatch.
 const GROUP_LIMIT_MAX: f32 = 180.0;
 
+/// Rebuild Original's per-actor formation box at a candidate destination.
+///
+/// Ordinary sectors translate the live `GetMoveBoxMap()` by the displacement
+/// from the actor to the candidate. Lift sectors instead ask for
+/// `GetMoveBox(RHPOSTURE_UPRIGHT)` and translate that zero-centred box to the
+/// candidate. Original's current `GetMoveBox(posture)` implementation returns
+/// the primary move box for every posture, but keeping the two source forms
+/// distinct preserves the actual call boundary and saved live-box state.
+fn group_move_candidate_box(
+    live_move_box_map: MapBBox,
+    upright_move_box: crate::coordinates::MoveBox,
+    actor_position: MapPoint,
+    candidate: MapPoint,
+    is_lift: bool,
+) -> MapBBox {
+    if is_lift {
+        upright_move_box.translated(candidate)
+    } else {
+        live_move_box_map.translated(candidate - actor_position)
+    }
+}
+
+fn group_move_sector_kinds(sector_type: crate::sector::SectorType) -> (bool, bool, bool) {
+    (
+        sector_type.is_lift(),
+        sector_type.is_door(),
+        sector_type.is_jump(),
+    )
+}
+
 fn force_sword_movement_for_sequence(seq: &mut crate::sequence::Sequence) {
     for elem in &mut seq.elements {
         if let crate::sequence::SequenceElementData::Movement { flags, .. } = &mut elem.data {
@@ -2091,6 +2183,38 @@ impl EngineInner {
         }
     }
 
+    /// Source-exact `PerformGroupMove` formation-slot authorization for one
+    /// selected actor. Unlike the generic click snap, this must use the
+    /// actor's live move box rather than pathfinder half-diagonal table entry
+    /// zero; different PCs and adopted saves can carry different boxes.
+    fn authorize_group_move_destination(
+        &self,
+        actor: EntityId,
+        candidate: MapPoint,
+        reference: MapPoint,
+        layer: u16,
+        is_lift: bool,
+    ) -> Option<MapPoint> {
+        let entity = self.get_entity(actor)?;
+        let position = entity.position_iface();
+        let mut bbox = group_move_candidate_box(
+            *position.get_move_box_map(),
+            *position.get_move_box(),
+            entity.element_data().position_map(),
+            candidate,
+            is_lift,
+        );
+        if self
+            .world
+            .fast_grid
+            .find_authorized_position_toward(&mut bbox, reference, layer)
+        {
+            Some(bbox.center())
+        } else {
+            None
+        }
+    }
+
     /// Issue movement orders for a group of selected PCs around a single
     /// click point.
     ///
@@ -2187,31 +2311,50 @@ impl EngineInner {
             effective_click,
             effective_layer,
             is_valid,
+            is_lift_click,
             is_door_click,
             is_jump_click,
             clicked_jump_sector_idx,
             jump_underlying_sector,
             clicked_door_index,
         ) = if let Some((override_sector, override_layer)) = goal_override {
-            // Explicit host-selected sector path: route to
-            // `(override_sector, override_layer)` unconditionally.  The
-            // waypoint becomes the destination without snapping; per-PC
-            // routing below still calls `snap_click_to_walkable` at
-            // `effective_layer` to find a valid landing position.  The
-            // host only sends motion-sector overrides, so door / jump
-            // shortcuts stay false.  `is_valid = true` keeps the
-            // simple-move branch reachable when the PC is already in the
-            // selected sector.
+            // The recording carries the authoritative selected sector, not
+            // merely a motion-area destination. Resolve its kind exactly as
+            // the live cursor path does: Original PerformGroupMove reads
+            // IsLift/IsDoor from mpSelectedSector after recording the command.
+            let override_index = self
+                .world
+                .fast_grid
+                .level
+                .sector_number_map
+                .get(&override_sector)
+                .copied();
+            let override_grid_sector =
+                override_index.and_then(|index| self.world.fast_grid.level.sectors.get(index));
+            let (is_lift, is_door, is_jump) = override_grid_sector
+                .map(|sector| group_move_sector_kinds(sector.sector_type))
+                .unwrap_or((false, false, false));
+            let jump_underlying_sector = override_grid_sector
+                .filter(|sector| is_jump)
+                .and_then(|sector| sector.underlying_sector)
+                .and_then(|index| self.world.fast_grid.level.sectors.get(usize::from(index)))
+                .map(|sector| (sector.sector_number, sector.layer));
             (
                 Some(override_sector),
                 click_point,
                 override_layer,
                 true,
-                false,
-                false,
-                None,
-                None,
-                None,
+                is_lift,
+                is_door,
+                is_jump,
+                if is_jump {
+                    override_index
+                        .and_then(|index| crate::fast_find_grid::SectorIndex::new(index as u32))
+                } else {
+                    None
+                },
+                jump_underlying_sector,
+                override_grid_sector.and_then(|sector| sector.door_index),
             )
         } else {
             let hit = self
@@ -2228,14 +2371,12 @@ impl EngineInner {
             // door sector and the gate-A* path routes through the
             // door's entry point (the door sector itself is not a
             // motion area).
-            let is_door_click_sector = hit
+            let selected_sector_kinds = hit
                 .sector_idx
                 .and_then(|i| self.world.fast_grid.level.sectors.get(usize::from(i)))
-                .is_some_and(|s| s.sector_type.is_door());
-            let is_jump_click = hit
-                .sector_idx
-                .and_then(|i| self.world.fast_grid.level.sectors.get(usize::from(i)))
-                .is_some_and(|s| s.sector_type.is_jump());
+                .map(|sector| group_move_sector_kinds(sector.sector_type))
+                .unwrap_or((false, false, false));
+            let (is_lift_click, is_door_click_sector, is_jump_click) = selected_sector_kinds;
             let jump_underlying_sector = hit
                 .sector_idx
                 .and_then(|i| self.world.fast_grid.level.sectors.get(usize::from(i)))
@@ -2274,6 +2415,7 @@ impl EngineInner {
                 effective_click,
                 effective_layer,
                 is_valid,
+                is_lift_click,
                 is_door_click,
                 is_jump_click,
                 if is_jump_click { hit.sector_idx } else { None },
@@ -2303,21 +2445,7 @@ impl EngineInner {
             if max_sq_dist <= GROUP_LIMIT_MAX * GROUP_LIMIT_MAX {
                 mercenary_formation_destinations(&pc_positions, effective_click)
             } else {
-                // Snap each circular candidate to a walkable position
-                // before the assignment algorithm.  Skip the snap on
-                // door clicks so the raw formation slot feeds into the
-                // cross-sector gate-A* path below.
-                let raw = circular_dispatch_destinations(&pc_positions, effective_click);
-                if is_door_click {
-                    raw
-                } else {
-                    raw.into_iter()
-                        .map(|c| {
-                            self.snap_click_to_walkable(c, effective_click, effective_layer, 0)
-                                .unwrap_or(c)
-                        })
-                        .collect()
-                }
+                circular_dispatch_destinations(&pc_positions, effective_click)
             }
         };
 
@@ -2335,9 +2463,13 @@ impl EngineInner {
                 // apply that same move-box authorization here; the coarse
                 // nearest-walkable fallback is not equivalent near a jump
                 // landing boundary.
-                let Some(resolved_jump_dest) =
-                    self.snap_click_to_walkable(*dest, effective_click, pc_effective_layer, 0)
-                else {
+                let Some(resolved_jump_dest) = self.authorize_group_move_destination(
+                    *pc_id,
+                    *dest,
+                    effective_click,
+                    pc_effective_layer,
+                    is_lift_click,
+                ) else {
                     self.hero_speaking(
                         assets,
                         *pc_id,
@@ -2491,7 +2623,13 @@ impl EngineInner {
                 let snap_res = if is_door_click {
                     Some(*dest)
                 } else {
-                    self.snap_click_to_walkable(*dest, effective_click, pc_effective_layer, 0)
+                    self.authorize_group_move_destination(
+                        *pc_id,
+                        *dest,
+                        effective_click,
+                        pc_effective_layer,
+                        is_lift_click,
+                    )
                 };
                 let snapped = match snap_res {
                     Some(pt) => pt,
@@ -2614,9 +2752,13 @@ impl EngineInner {
             let resolved_dest = if is_door_click {
                 *dest
             } else {
-                let Some(resolved) =
-                    self.snap_click_to_walkable(*dest, effective_click, pc_effective_layer, 0)
-                else {
+                let Some(resolved) = self.authorize_group_move_destination(
+                    *pc_id,
+                    *dest,
+                    effective_click,
+                    pc_effective_layer,
+                    is_lift_click,
+                ) else {
                     self.hero_speaking(
                         assets,
                         *pc_id,

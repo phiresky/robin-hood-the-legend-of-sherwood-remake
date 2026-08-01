@@ -1350,6 +1350,27 @@ because the serialized field contains `AttackingReactiontime`. Full replay
 validation remains pending until the active production sweep releases the
 runner.
 
+### Group-move formation authorization — actor-exact move boxes
+
+`Savegame_linux3/Profile_003/Savegame_052/replay-001-session-0001`
+reached frame 4769, where a selected PC 136 group move targeted sector 429 on
+layer 6. Original rejected the formation slot and resolved PC expression 14
+(`HERO_UNABLE_TO_DO_SOMETHING`) on frame 4770; Rust had no pending request.
+Original `RHEngine::PerformGroupMove` authorizes the translated live
+`GetMoveBoxMap()` for ordinary sectors, or `GetMoveBox(RHPOSTURE_UPRIGHT)` for
+an actual lift. Rust instead constructed every box from pathfinder
+half-diagonal table entry zero, which can accept a slot that the selected
+actor's box rejects.
+
+Group moves now rebuild the candidate box from each selected actor's live
+position interface before `FindAuthorizedPosition`. Replay goal overrides
+also resolve their authoritative sector back to its lift, door, or jump kind
+instead of assuming every recorded goal is an ordinary motion sector. Focused
+regressions distinguish live-map boxes from generic boxes, retain off-centre
+saved box state, cover the lift-only upright source, and preserve all three
+recorded sector kinds. Full replay validation remains pending until the active
+production sweep releases the runner.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
