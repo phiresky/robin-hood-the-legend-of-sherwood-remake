@@ -452,7 +452,7 @@ not the current engine's expected failure count.
 | R01 | Fix landed; rerun required | PC `actor.action_state`, commonly Original idle versus Rust `WalkingUpright` while both retain `MoveOk` | `516728654` preserves Waiting when an entity-target `PerformSeek` remains visibly in progress. All four assigned boundaries clear; one trace is exact and three reach independent later failures. The remaining 53 baseline entries require failure-only reruns before this group can be split or closed. |
 | R02 | Fix landed; cohort rerun required | `direction_goal`, frequently at frame 516 | `7db74f013` makes shared AI and owner-ordered `RefreshPatrol` snapshots expose an active PassDoor member at its committed gate side, and commits the exact endpoint before later owner slots can observe it. Linux2 Profile 002 Savegame 002 is exact through frame 726. The remaining baseline members require current failure-only reruns before this whole group can be attributed to that cause. |
 | R03 | Listen fix landed; timer rerun required | `actor.wait_time`, alone or beside action state | Original uses the single serialized `mulWaitTime` for Whistle and Listen. Rust now synchronizes its phase-local mirrors and, while Listening, ignores sprite completion until that counter reaches zero. The prior sweep's three unchanged timer pairs (`2 -> 14`, stale `25 -> 4294967269`, and `24 -> 25`) still require current-fix reruns; do not normalize any timer in the comparator. |
-| R04 | Unassigned | `position_goal_map` | Audit whether the outgoing selected command is detached, postponed, or retained. Existing Halt and raising-sword fixes are relevant but not assumed sufficient. |
+| R04 | Audited; current cohort rerun required | `position_goal_map` | The fresh 700-trace frozen baseline contains nine strict first-field members. They split into two replacement-preserve boundaries, three stop-clear boundaries, three unresolved `MoveOk` waypoint/order-destination differences, and one direct attentive-transition initialization boundary. `7910b1c7d` likely covers replacement preservation, while later identity-aware condolence and direct-transition work may cover the clear/attentive members; none may be called closed until all nine are rerun on one current frozen release runner. The waypoint geometry remains unresolved. |
 | R05 | Unassigned | `actor.command` with posture/direction | Inspect wrapper versus concrete command lifetime and the action-change marker that commits posture. |
 | R06 | Unassigned | `ai.substate` at frame 282 | Compare synchronous command side effects and owner-local AI callback ordering. |
 | R07 | Unassigned | RNG cardinality/order | Treat the first missing or excess call as a downstream symptom until the responsible Original callsite and state gate are identified. Never consume a trace value merely to realign the stream. |
@@ -514,6 +514,83 @@ matching audit log filenames.
 | `Nescafe__Profile_003__Savegame_000__replay-001` | 369 | `actor.action_state` |
 | `Nescafe__Profile_003__Savegame_001__replay-001` | 375 | `actor.action_state` |
 | `Nescafe__Profile_003__Savegame_004__replay-003` | 225 | `actor.wait_time` |
+
+### R04 complete frozen-baseline inventory
+
+The fresh 700-trace sweep has exactly nine traces whose first reported logical
+field is `position_goal_map.x`. The following values and classifications are
+evidence from that frozen runner, not claims about current `main`. Every member
+must receive a current release-mode rerun. A trace is closed only if it reaches
+exact EOF; clearing this boundary but finding a later mismatch moves it to the
+new family instead.
+
+| Family | Trace | Frame | Entity | Original goal | Frozen Rust goal | Resolved command boundary |
+|---|---|---:|---|---|---|---|
+| Stop clears outgoing goal | `Savegame_Cyrdach/Profile_156/Savegame_010/replay-001-session-0001.jsonl.zst` | 536 | `Pc(PcId(107))`, Original raw PC 57 | `(0, 0)` | `(536.9613, 447.9872)` | Select PC 57; select Shield |
+| Replacement preserves outgoing goal | `Savegame_SuN1Sh1nE/Profile_004/Savegame_004/replay-003-session-0001.jsonl.zst` | 15812 | `Pc(PcId(345))` | `(1785, 1047)` | `(0, 0)` | Select PC 345; select Guzzle; launch Eat; cancel action |
+| Replacement preserves outgoing goal | `Savegame_SuN1Sh1nE/Profile_004/Savegame_009/replay-003-session-0001.jsonl.zst` | 22383 | `Pc(PcId(345))` | `(1466, 551)` | `(0, 0)` | Select PC 345; select Guzzle; launch Eat; cancel action |
+| Active `MoveOk` waypoint | `Savegame_linux3/Profile_001/Savegame_001/replay-002-session-0001.jsonl.zst` | 2704 | `Pc(PcId(126))` | `(1549.6039, 281.21027)` | `(1532.9346, 270.1589)` | None |
+| Active `MoveOk` waypoint | `Savegame_linux3/Profile_001/Savegame_031/replay-001-session-0001.jsonl.zst` | 480 | `Pc(PcId(125))`, Original raw PC 75 | `(1373.1996, 661.0308)` | `(1373.169, 659.03107)` | None |
+| Stop clears outgoing goal | `Savegame_linux3/Profile_002/QuickSave/replay-001-session-0001.jsonl.zst` | 19932 | `Pc(PcId(126))` | `(0, 0)` | `(2689, 993)` | Select PC 126; select Bow; shoot Soldier 80 |
+| Active `MoveOk` waypoint | `Savegame_linux3/Profile_003/Savegame_007/replay-001-session-0001.jsonl.zst` | 3056 | `Pc(PcId(192))` | `(2105.0537, 1620.7255)` | `(2114.4731, 1617.3673)` | None |
+| Attentive transition initialization | `Savegame_nicouzouf/Profile_001/Savegame_055/replay-002-session-0001.jsonl.zst` | 374 | `Soldier(SoldierId(63))` | `(1183.0403, 743.6907)` | `(0, 0)` | None |
+| Stop clears outgoing goal | `Savegame_randomguy/Profile_004/Savegame_008/replay-002-session-0001.jsonl.zst` | 137 | `Pc(PcId(101))`, Original raw PC 51 | `(0, 0)` | `(1592.3058, 636.51764)` | Select PC 51; select Bow |
+
+These nine traces collapse into four source-backed families:
+
+1. **Replacement preserves the outgoing goal (two traces).** Both SuN1Sh1nE
+   traces replace an active movement with `Eat`. Original changes to command
+   `Eat` while retaining the old nonzero goal; the frozen Rust runner cleared
+   it. `RHElementActor::Instruct` selects the replacement before interrupting
+   the outgoing element, so the outgoing `SendCondolationCard` no longer owns
+   goal cleanup. Commit `7910b1c7d` implements this general ordering and is the
+   likely fix for both members. They still require exact current reruns; the
+   existing Whistle-family validation is supporting evidence, not a substitute.
+
+2. **A stop clears the still-selected outgoing goal (three traces).** The
+   Cyrdach Shield selection and both Bow selections interrupt a live or
+   just-completed movement. The frozen Rust runner retains the prior goal while
+   Original exposes zero. Bow selection calls `Stop` in
+   `RHengine.cpp:12991-13065` and `RHengine.cpp:14456-14475`;
+   `RHElementActor::Stop` and `RHSequenceElementMovement::StopMovement` lead to
+   the selected element's synchronous condolence, and
+   `RHElementActor::SendCondolationCard` clears the sprite goal only when that
+   element is still selected (`RHelementactor.cpp:6102-6201` and
+   `RHSequenceElementMovement.cpp:442-495`). Rust's later identity-aware
+   condolence and halt work may already cover these boundaries, but no existing
+   validation proves these exact three traces. Rerun all three on current code.
+
+3. **The active `MoveOk` order has a different destination (three traces).** In
+   linux3 Savegame 001 and Savegame 007, the prior goal equals the prior current
+   position and the divergent frame installs a new internal waypoint. In
+   Savegame 031, a stopped actor begins an internal `MoveOk`; the targets differ
+   by about `0.03` in X and `2.0` in Y. There is no resolved input command at
+   any boundary, and Savegame 001 has no path event in frames 2702-2704.
+   Original `RHSprite::PerformMotion` copies the current
+   `RHOrder::pointDestination2D` into `position_goal_map` when a new order ID is
+   observed (`RHsprite.cpp:1393-1480`). The disagreement therefore already
+   exists in waypoint construction, path post-processing, target snapping, or
+   order replacement; it is not a goal-cache cleanup bug. Commit `0294404c7`
+   can reseed a stale Rust goal from the Rust order, but cannot make a differing
+   Rust order destination equal Original. This geometry/order-production
+   family remains unresolved and must be investigated from the producing
+   movement order backward.
+
+4. **Zero-destination attentive transition initialization (one trace).** The
+   Soldier 63 trace begins `EnterAttentiveMode` animation 141. Original creates
+   a transition order with a zero destination
+   (`RHelementactorsoldier.cpp:330-353`) and executes it through
+   `PerformMotion(TILL_LAST_FRAME)`. New-order initialization replaces an exact
+   zero destination with the actor's current map position before installing the
+   sprite goal (`RHsprite.cpp:1445-1457`). Frozen Rust left the goal zero.
+   Subsequent direct-transition initialization and stale-goal work may already
+   cover this rule, but the exact trace must be rerun before assigning it to a
+   landed fix.
+
+The current rerun should preserve these four labels while reporting, for each
+trace, either exact EOF or its next independent first boundary. Do not merge
+the three waypoint values with stop/condolence fixes merely because the first
+compared field is the same.
 
 ## Fix ledger
 
