@@ -126,6 +126,22 @@ fn sees_blip_in_range(
     }
 }
 
+/// Exact distance half of `RHElementActorPC::ListenTo`.
+///
+/// Original subtracts the elements' full `GetPosition()` world points and
+/// only then applies the isometric Y stretch. Projected map Y omits the
+/// elevation contribution to world Y and can therefore move elevated targets
+/// across the strict 750-unit Listen boundary in either direction.
+fn listen_distance_squared(
+    listener: crate::coordinates::WorldPoint3D,
+    target: crate::coordinates::WorldPoint3D,
+) -> f32 {
+    let dx = target.x - listener.x;
+    let dy = (target.y - listener.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+    let dz = target.z - listener.z;
+    dx * dx + dy * dy + dz * dz
+}
+
 struct SoldierSightContext {
     eye: MapPoint,
     eye_z: f32,
@@ -474,8 +490,7 @@ impl EngineInner {
         // will flip it back to `Waiting`.
         #[derive(Clone, Copy)]
         struct FiringListener {
-            position: MapPoint,
-            position_z: f32,
+            position: crate::coordinates::WorldPoint3D,
             pc_id: EntityId,
             seq_id: crate::sequence::SequenceId,
             elem_idx: usize,
@@ -513,8 +528,7 @@ impl EngineInner {
             // exit transition next.
             let fl = FiringListener {
                 pc_id,
-                position: pc.element.position_map(),
-                position_z: pc.element.position().z,
+                position: pc.element.position(),
                 seq_id: pc
                     .actor
                     .active_ability
@@ -542,12 +556,9 @@ impl EngineInner {
                     continue;
                 };
                 let elem = entity.element_data();
-                let pos = elem.position_map();
-                let dx = pos.x - listener.position.x;
-                let dy =
-                    (pos.y - listener.position.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-                let dz = elem.position().z - listener.position_z;
-                if dx * dx + dy * dy + dz * dz >= DISTANCE_LISTEN * DISTANCE_LISTEN {
+                if listen_distance_squared(listener.position, elem.position())
+                    >= DISTANCE_LISTEN * DISTANCE_LISTEN
+                {
                     continue;
                 }
                 let reveal = elem.blipped

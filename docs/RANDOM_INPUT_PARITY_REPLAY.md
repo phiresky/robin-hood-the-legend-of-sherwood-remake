@@ -1598,6 +1598,18 @@ logical field as follows:
 | `active` | 1 |
 | **Total** | **423** |
 
+The four `blipped` first boundaries are one Listen-distance cohort. Each occurs
+exactly when a PC's 25-frame Listen countdown reaches zero: two traces leave
+one or two elevated NPCs blipped in Rust after Original reveals them, while
+two reveal elevated Civilian 74 only in Rust. Original `ListenTo` subtracts
+full `GetPosition()` world points and then stretches relative Y by
+`INVERSE_ASPECT_RATIO`; Rust subtracted projected map Y while retaining the Z
+difference. At Derby frame 988 the correct world calculation puts Soldier 71
+inside the strict 750-unit sphere while the projected calculation puts it
+outside. At Leicester frame 402 the same error reverses the classification for
+Civilian 74. Listen now uses a shared world-position distance primitive, with
+both threshold directions covered by exact captured geometry.
+
 The largest repeated exact command signatures are 16 PC
 `EnterHelpingClimb -> Wait`, 15 Soldier `MoveWaiting -> MoveOk`, 13 Soldier
 `EnterAttentiveMode -> Wait`, 13 PC `Wait -> EnterHelpingClimb`, 10 Soldier
