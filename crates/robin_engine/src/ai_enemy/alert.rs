@@ -307,7 +307,18 @@ impl EnemyAi {
 
             let me_to_target_x = center.x - my_pos.x;
             let me_to_target_y = center.y - my_pos.y;
-            let target_dir = vec_to_sector(me_to_target_x, me_to_target_y);
+
+            // Original computes the pointing direction from
+            // `PositionToPoint3D(mposSeekPosition) - mpMe->GetPosition()`.
+            // `center` and `my_pos` are projected map positions, so their raw
+            // Y delta is only suitable for the nearby-enemy MaxNorm gate
+            // below.  Reconstruct world Y for the facing vector; otherwise an
+            // officer standing above or below the target points several
+            // sectors too far north/south.
+            let target_world = ctx.position_to_point_3d(center);
+            let me_to_target_world_x = target_world.x - my_pos.x;
+            let me_to_target_world_y = target_world.y - (my_pos.y + ctx.elevation);
+            let target_dir = vec_to_sector(me_to_target_world_x, me_to_target_world_y);
 
             let owner = self.base.owner_entity_id;
             let mut seq = Sequence::new();
