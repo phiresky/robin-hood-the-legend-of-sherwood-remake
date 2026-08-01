@@ -1671,12 +1671,22 @@ impl StealthCommandContext<'_> {
             .unwrap_or((live_posture, live_action_state));
         let is_swordfighting = action_state.is_sword();
 
-        if !crate::stealth::can_execute_stealth_command(
-            command,
-            posture,
-            action_state,
-            is_swordfighting,
-        ) {
+        // PC::Translate(ENTER_HELPING_CLIMB) unconditionally appends its
+        // body order after GenerateTransition. In particular, Original's
+        // Tree -> Upright prefix deliberately leaves the element's saved
+        // posture-after-transition as Tree, even though the prefix animation
+        // makes the actor upright before the body executes. Re-applying the
+        // body's live-posture precondition here therefore rejects a valid
+        // authored transition. CheckSequenceElementValidity remains the
+        // authoritative Execute-time gate, as in Original.
+        if command != Command::EnterHelpingClimb
+            && !crate::stealth::can_execute_stealth_command(
+                command,
+                posture,
+                action_state,
+                is_swordfighting,
+            )
+        {
             tracing::debug!(
                 ?owner,
                 ?command,

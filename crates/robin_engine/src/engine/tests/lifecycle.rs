@@ -4444,7 +4444,7 @@ fn fade_to_black_host_countdown_advances_once_per_presented_frame() {
 }
 
 #[test]
-fn enter_helping_climb_sequence_retains_transition_until_animation_done() {
+fn enter_helping_climb_from_tree_retains_exit_prefix_until_animation_done() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
     let mut assets = LevelAssets::new();
@@ -4463,7 +4463,7 @@ fn enter_helping_climb_sequence_retains_transition_until_animation_done() {
     let pc_id = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
         element: crate::element::ElementData {
             kind: crate::element::ElementKind::ActorPc,
-            posture: crate::element::Posture::Upright,
+            posture: crate::element::Posture::Tree,
             ..Default::default()
         },
         actor: crate::element::ActorData {
@@ -4493,7 +4493,7 @@ fn enter_helping_climb_sequence_retains_transition_until_animation_done() {
     let pc = engine.get_entity(pc_id).expect("pc still exists");
     assert_eq!(
         pc.element_data().posture,
-        crate::element::Posture::Upright,
+        crate::element::Posture::Tree,
         "Translate must not apply the DONE-side posture early"
     );
     assert_eq!(
@@ -4514,7 +4514,7 @@ fn enter_helping_climb_sequence_retains_transition_until_animation_done() {
     assert_eq!(element.state, crate::sequence::SequenceState::InProgress);
     assert_eq!(
         element.current_order().map(|order| order.order_type),
-        Some(crate::order::OrderType::TransitionWaitingUprightHelpingClimbing)
+        Some(crate::order::OrderType::TransitionWaitingHiddenWaitingUpright)
     );
 }
 

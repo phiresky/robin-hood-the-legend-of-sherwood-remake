@@ -1798,6 +1798,17 @@ admitted set. The 500-unit `nearby_fighters` semantics remain unchanged for
 the combat-position callers that actually correspond to the Original's near-
 fighter helper. Replay validation is pending the next frozen-runner sweep.
 
+Replay 012 of the same save first diverges at frame 617 after Little John,
+while hidden in a tree, receives `EnterHelpingClimb`. Original
+`MakePostureTransition` appends the hidden-to-upright prefix but deliberately
+does not rewrite the sequence element's saved post-transition posture; its
+`Translate(ENTER_HELPING_CLIMB)` then appends the helping-climb body
+unconditionally. Rust added a second translation-time posture gate, observed
+the retained `Tree` marker, and rejected the whole element before either
+animation could run. `EnterHelpingClimb` now relies on the source-backed
+Execute-time validity check and retains the authored Tree exit prefix. The
+focused lifecycle test exercises this exact two-animation command chain.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
