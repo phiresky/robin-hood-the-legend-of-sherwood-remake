@@ -4412,8 +4412,8 @@ isomorphic.
 
 Mission-start/save-load mapping still uses exact serialized creation order,
 where it identifies a fixed table containing many same-kind entities. Runtime
-extensions instead group newly persistent entities by concrete kind and pair
-each group by relative construction rank. They still require identical total
-and per-kind cardinality, so a missing or extra gameplay entity remains an
-immediate invariant failure; only gaps consumed by presentation-only temporary
-objects cease to masquerade as gameplay divergences.
+extensions instead pair newly persistent entities by their global construction
+rank and require the concrete kind at every paired rank to agree. This catches
+missing/extra gameplay entities and cross-kind persistent reordering while only
+discarding the raw numeric gaps consumed by presentation-only temporary
+objects.

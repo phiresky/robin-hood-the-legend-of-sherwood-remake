@@ -3845,9 +3845,9 @@ impl EntityMap {
     /// example the temporary arrow in `RHEngine::IsValidTrajectory`), consuming
     /// global construction orders without ever adding those objects to the
     /// world. Rust computes the same presentation preview without constructing
-    /// an entity. Match newly persistent entities isomorphically by concrete
-    /// kind and relative construction rank; their raw order may consequently
-    /// differ by presentation-only gaps.
+    /// an entity. Match newly persistent entities isomorphically by global
+    /// persistent construction rank and require the concrete kind at every
+    /// rank to agree; raw order numbers may differ by presentation-only gaps.
     fn extend_runtime_entities(&mut self, engine: &Engine, frame: &TraceFrame) {
         self.refresh_trace_indices(frame);
         let originals: Vec<_> = frame
@@ -3885,57 +3885,38 @@ impl EntityMap {
                 )
             })
             .collect();
-        if originals.len() != rust_by_creation_order.len() {
-            let rust_identities: Vec<_> = rust_by_creation_order
-                .iter()
-                .map(|(&creation_order, &(id, kind))| (id, creation_order, kind))
-                .collect();
+        let rust_identities: Vec<_> = rust_by_creation_order
+            .iter()
+            .map(|(&creation_order, &(id, kind))| (id, creation_order, kind))
+            .collect();
+        let pairs = pair_runtime_identities_by_persistent_rank(
+            original_identities.clone(),
+            rust_identities.clone(),
+        )
+        .unwrap_or_else(|detail| {
             panic!(
-                "runtime entity tables gained different numbers of unmapped entities: \
+                "runtime persistent entity identity mismatch: {detail}; \
                  Original={original_identities:?}; Rust={rust_identities:?}"
-            );
-        }
+            )
+        });
 
-        let mut originals_by_kind: BTreeMap<EntityIdKind, Vec<_>> = BTreeMap::new();
-        for original in originals {
-            originals_by_kind
-                .entry(EntityIdKind::from(original.entity_id.kind))
-                .or_default()
-                .push(original);
-        }
-        let mut rust_by_kind: BTreeMap<EntityIdKind, Vec<_>> = BTreeMap::new();
-        for (&creation_order, &(rust_id, kind)) in &rust_by_creation_order {
-            rust_by_kind
-                .entry(kind)
-                .or_default()
-                .push((creation_order, rust_id));
-        }
-        assert_eq!(
-            originals_by_kind.keys().collect::<Vec<_>>(),
-            rust_by_kind.keys().collect::<Vec<_>>(),
-            "runtime entity tables gained different unmapped kinds: Original={original_identities:?}; Rust={rust_by_creation_order:?}"
-        );
-
-        for (kind, mut originals) in originals_by_kind {
-            originals.sort_by_key(|original| original.creation_order);
-            let rust = rust_by_kind
-                .remove(&kind)
-                .expect("runtime kind sets were checked above");
-            assert_eq!(
-                originals.len(),
-                rust.len(),
-                "runtime entity tables gained different numbers of {kind:?} entities: Original={original_identities:?}; Rust={rust_by_creation_order:?}"
+        let originals_by_id: BTreeMap<_, _> = originals
+            .into_iter()
+            .map(|original| (original.entity_id, original))
+            .collect();
+        for (original_id, original_creation_order, rust_id) in pairs {
+            let original = originals_by_id
+                .get(&original_id)
+                .expect("runtime identity pairing returned an unknown Original entity");
+            debug_assert_eq!(original.creation_order, original_creation_order);
+            self.entities.insert(original.entity_id, rust_id);
+            assert!(
+                self.entities_by_creation_order
+                    .insert(original.creation_order, rust_id)
+                    .is_none(),
+                "Original creation order {} was mapped twice",
+                original.creation_order
             );
-            for (original, (_, rust_id)) in originals.into_iter().zip(rust) {
-                self.entities.insert(original.entity_id, rust_id);
-                assert!(
-                    self.entities_by_creation_order
-                        .insert(original.creation_order, rust_id)
-                        .is_none(),
-                    "Original creation order {} was mapped twice",
-                    original.creation_order
-                );
-            }
         }
     }
 
@@ -3949,6 +3930,41 @@ impl EntityMap {
     fn sectors_equivalent(&self, original: u16, rust: u16) -> bool {
         original == rust || self.sectors.get(&original) == Some(&rust)
     }
+}
+
+fn pair_runtime_identities_by_persistent_rank(
+    mut originals: Vec<(TraceEntityId, u32, EntityIdKind)>,
+    mut rust: Vec<(EntityId, u32, EntityIdKind)>,
+) -> Result<Vec<(TraceEntityId, u32, EntityId)>, String> {
+    originals.sort_by_key(|(_, creation_order, _)| *creation_order);
+    rust.sort_by_key(|(_, creation_order, _)| *creation_order);
+    if originals.len() != rust.len() {
+        return Err(format!(
+            "different persistent cardinality (Original {}, Rust {})",
+            originals.len(),
+            rust.len()
+        ));
+    }
+
+    originals
+        .into_iter()
+        .zip(rust)
+        .enumerate()
+        .map(
+            |(
+                rank,
+                ((original_id, original_order, original_kind), (rust_id, rust_order, rust_kind)),
+            )| {
+                if original_kind != rust_kind {
+                    return Err(format!(
+                        "persistent creation rank {rank} has Original {original_kind:?} order \
+                         {original_order}, but Rust {rust_kind:?} order {rust_order}"
+                    ));
+                }
+                Ok((original_id, original_order, rust_id))
+            },
+        )
+        .collect()
 }
 
 impl From<TraceEntityKind> for EntityIdKind {
@@ -5527,6 +5543,53 @@ mod tests {
         map.refresh_trace_index(shifted_trace_id, 158);
 
         assert_eq!(map.translate(shifted_trace_id), rust_id);
+    }
+
+    #[test]
+    fn runtime_identity_ignores_only_numeric_gaps_not_persistent_reordering() {
+        let original_projectile = TraceEntityId {
+            kind: TraceEntityKind::Projectile,
+            index: 131,
+        };
+        let original_bonus = TraceEntityId {
+            kind: TraceEntityKind::Bonus,
+            index: 132,
+        };
+        let rust_projectile = EntityId::Projectile(robin_engine::entity_id::ProjectileId(40));
+        let rust_bonus = EntityId::Bonus(robin_engine::entity_id::BonusId(12));
+        let originals = vec![
+            (original_projectile, 172, EntityIdKind::Projectile),
+            (original_bonus, 174, EntityIdKind::Bonus),
+        ];
+
+        let shifted = pair_runtime_identities_by_persistent_rank(
+            originals.clone(),
+            vec![
+                (rust_projectile, 170, EntityIdKind::Projectile),
+                (rust_bonus, 171, EntityIdKind::Bonus),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            shifted,
+            vec![
+                (original_projectile, 172, rust_projectile),
+                (original_bonus, 174, rust_bonus),
+            ]
+        );
+
+        let reordered = pair_runtime_identities_by_persistent_rank(
+            originals,
+            vec![
+                (rust_bonus, 170, EntityIdKind::Bonus),
+                (rust_projectile, 171, EntityIdKind::Projectile),
+            ],
+        );
+        assert!(
+            reordered
+                .unwrap_err()
+                .contains("persistent creation rank 0")
+        );
     }
 
     #[test]
