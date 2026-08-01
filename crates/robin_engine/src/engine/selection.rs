@@ -599,12 +599,7 @@ impl EngineInner {
         let should_stop_group = !record_qa
             && !matches!(
                 action,
-                Action::Hit
-                    | Action::HitHard
-                    | Action::Strangle
-                    | Action::NoAction
-                    | Action::Heal
-                    | Action::Resuscitate
+                Action::Hit | Action::HitHard | Action::Strangle | Action::NoAction | Action::Heal
             );
         if should_stop_group {
             for id in self.players.seats[seat].selection.clone() {

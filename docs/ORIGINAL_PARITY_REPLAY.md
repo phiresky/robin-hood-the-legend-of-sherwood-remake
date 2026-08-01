@@ -4291,6 +4291,12 @@ to `AimingWithBowDown`, which could inject an extra high-priority cleanup
 sequence when cancelling bow mode at a window. The Rust selection path now
 uses the same two-state condition as the Original.
 
+The adjacent "stop in place" exception list is also literal: Original exempts
+Hit, HitHard, Strangle, NoAction, and Heal. `Resuscitate` is a separate action
+and is not exempt, so selecting it must perform the ordinary Normal-priority
+stop before the contextual action is dispatched. Rust no longer treats it as
+an alias of Heal at this selection boundary.
+
 A clean baseline proves exact parity only for the state fields serialized by the
 recorder and the behaviors exercised by this session. When a divergence depends
 on unrecorded state, extend the neutral trace schema rather than guessing from a
