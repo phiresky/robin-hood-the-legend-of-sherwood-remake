@@ -155,11 +155,10 @@ launch traces is preserved under
 old first boundary: 21 now reach exact EOF, 60 reach a later state/command
 boundary, and 7 reach a later RNG-cardinality boundary. Whistle also clears
 its subsequent countdown boundary. Eat advances to an independent
-command-lifetime mismatch. EnterListen exposes a later one-frame termination
-lag after the listening loop, where Original decrements `mulWaitTime` once
-more before the exit transition than Rust. The remaining later frontiers stay
-open in their corresponding command, movement, and RNG groups; they are not
-failures of the launch fix.
+command-lifetime mismatch. EnterListen exposed a later countdown divergence;
+the source-backed resolution is recorded below. The remaining later frontiers
+stay open in their corresponding command, movement, and RNG groups; they are
+not failures of the launch fix.
 
 The same release runner also covered the five `MovingFast -> Waiting` ability
 launches and all 38 traces that reported `actor.wait_time` without an
@@ -170,6 +169,21 @@ timer families: `2 -> 14`, an unrelated stale `25 -> 4294967269`, and the
 known one-frame `24 -> 25` termination lag. Thus the shared ability-counter
 repair eliminates 128 old first boundaries across the action/wait cohorts; it
 does not claim those three independent timer mismatches.
+
+The fresh current-HEAD rerun then exposed the actual EnterListen countdown
+failure in two representatives (`21 -> 22`). Original
+`RHANIMATION_LISTENING` decrements `mulWaitTime`, ignores the listening
+sprite's `DONE`/`TERMINATED` result, and keeps returning `IN_PROGRESS` until
+the timer reaches zero. Rust first ran that countdown arm and then also ran
+the generic ability animation arm in the same owner slot. The short looping
+sprite consequently exhausted after three countdown ticks and advanced to
+the exit transition with 22 frames still remaining. The owner envelope now
+treats the countdown/detection arm as the complete Listen Execute arm and
+does not run generic ability completion while `ListenPhase::CountingDown`.
+A one-frame-sprite regression proves that repeated owner ticks retain the
+Listening order while the authoritative timer advances `24, 23, 22, 21`.
+The preserved representative engine dump is
+`output/parity-diagnostics/random-listen-countdown/rust-950-967.jsonl`.
 
 The next action-state family was all 10 `WaitingSword -> MovingSword`
 mismatches on the first `ReceiveSwordDamage` / `BeingHitSword` frame. Original
@@ -317,7 +331,7 @@ not the current engine's expected failure count.
 |---|---|---|---|
 | R01 | Fix landed; rerun required | PC `actor.action_state`, commonly Original idle versus Rust `WalkingUpright` while both retain `MoveOk` | `516728654` preserves Waiting when an entity-target `PerformSeek` remains visibly in progress. All four assigned boundaries clear; one trace is exact and three reach independent later failures. The remaining 53 baseline entries require failure-only reruns before this group can be split or closed. |
 | R02 | In progress | `direction_goal`, frequently at frame 516 | Silent Linux2 Save002 proved that Original patrol snapshots expose an active PassDoor member at its committed gate side, while Rust observed its interpolated sprite position and queued a stale patrol target. Door-snapped shared-AI views and exact endpoint completion are under validation; random members still require their own failure-only reruns before this whole group is attributed to that cause. |
-| R03 | In progress | `actor.wait_time`, alone or beside action state | Original uses the single serialized `mulWaitTime` for Whistle and Listen. Rust now synchronizes its phase-local mirrors with that field. Of 38 wait-only traces, 35 advance and 11 reach exact EOF; the three unchanged timer pairs are `2 -> 14`, stale `25 -> 4294967269`, and the one-frame `24 -> 25` termination lag. Do not normalize the timer in the comparator. |
+| R03 | Listen fix landed; timer rerun required | `actor.wait_time`, alone or beside action state | Original uses the single serialized `mulWaitTime` for Whistle and Listen. Rust now synchronizes its phase-local mirrors and, while Listening, ignores sprite completion until that counter reaches zero. The prior sweep's three unchanged timer pairs (`2 -> 14`, stale `25 -> 4294967269`, and `24 -> 25`) still require current-fix reruns; do not normalize any timer in the comparator. |
 | R04 | Unassigned | `position_goal_map` | Audit whether the outgoing selected command is detached, postponed, or retained. Existing Halt and raising-sword fixes are relevant but not assumed sufficient. |
 | R05 | Unassigned | `actor.command` with posture/direction | Inspect wrapper versus concrete command lifetime and the action-change marker that commits posture. |
 | R06 | Unassigned | `ai.substate` at frame 282 | Compare synchronous command side effects and owner-local AI callback ordering. |
@@ -382,6 +396,24 @@ matching audit log filenames.
 | `Nescafe__Profile_003__Savegame_004__replay-003` | 225 | `actor.wait_time` |
 
 ## Fix ledger
+
+### `f52e92a53` — face throwable targets in world ground coordinates
+
+Original `RHEngine::PerformOrientation` builds the apple, stone, net,
+wasp-nest, and purse facing vector as resolved target world XY minus the
+actor's `GetPositionGround()` world XY.  Rust had subtracted the actor's
+projected map position instead.  Because map Y is world Y minus elevation,
+every elevated thrower was aiming at an artificial vertical offset.
+
+Resolved throwable orientation now uses the actor's world position before the
+existing isometric sector classification.  The focused regression places an
+elevated actor and target at the same world Y, which must face east.  The
+assigned Linux3 Profile 001 Savegame 041 replay 002 boundary clears from frame
+37294 and advances to an independent RNG-cardinality boundary at frame 37345.
+A one-worker release rerun of the complete 32-trace geometry frontier is
+preserved under
+`output/parity-audits/random-short-geometry-after-world-ground/`; publish its
+exact/advanced/unchanged totals only after all 32 status files exist.
 
 ### `516728654` — preserve Waiting for entity-target PC seeks
 
