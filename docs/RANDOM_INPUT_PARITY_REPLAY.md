@@ -556,9 +556,18 @@ These nine traces collapse into four source-backed families:
    the selected element's synchronous condolence, and
    `RHElementActor::SendCondolationCard` clears the sprite goal only when that
    element is still selected (`RHelementactor.cpp:6102-6201` and
-   `RHSequenceElementMovement.cpp:442-495`). Rust's later identity-aware
-   condolence and halt work may already cover these boundaries, but no existing
-   validation proves these exact three traces. Rerun all three on current code.
+   `RHSequenceElementMovement.cpp:442-495`). The matching Rust path is resolved
+   action selection in `engine/selection.rs`, `EngineInner::stop_owner`, exact
+   current-element interruption in `engine/sequence.rs`, and identity-aware
+   goal cleanup in `engine/soldier_helpers.rs::send_condolation_card` using the
+   terminal card's captured `was_selected` state. Commits `2f251e446`,
+   `4cafa337a`, and `9f25e53e1` landed and generalized that cleanup, while
+   `a627bf0d8` aligned `Actor::Stop` traversal with Original's authoritative
+   current element. This is one general source-backed fix candidate for all
+   three traces, not trace-specific handling. It was already present when this
+   frozen inventory was written, however, so source proof does not close the
+   cohort: all three exact traces remain **rerun required** on one current
+   release runner and close only at EOF.
 
 3. **The active `MoveOk` order has a different destination (three traces).** In
    linux3 Savegame 001 and Savegame 007, the prior goal equals the prior current
