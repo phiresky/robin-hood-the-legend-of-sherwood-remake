@@ -1063,17 +1063,27 @@ fn command_from_stable_name(name: &str) -> Command {
 struct TraceElement {
     entity_id: TraceEntityId,
     creation_order: u32,
+    class_id: u16,
+    kind: TraceEntityKind,
     active: bool,
     blipped: bool,
     unreachable: bool,
+    surface_id: u32,
     posture: u32,
     position_map: TracePoint,
+    old_position_map: TracePoint,
     position_goal_map: TracePoint,
     elevation: TraceFloat,
+    old_elevation: TraceFloat,
+    increment_map: TracePoint,
+    movement_map: TracePoint,
     layer: u16,
+    layer_goal: u16,
     sector: u16,
     direction: i16,
     direction_goal: i16,
+    moving: bool,
+    moving_map: bool,
     sprite_row: u16,
     sprite_frame: u16,
     #[serde(default)]
@@ -1086,6 +1096,8 @@ struct TraceElement {
     pc: Option<TraceElementPc>,
     #[serde(default)]
     ai: Option<TraceAi>,
+    #[serde(default)]
+    detection: Option<TraceDetection>,
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1102,8 +1114,12 @@ struct TraceActor {
 struct TraceHuman {
     life_points: i16,
     dead: bool,
-    #[serde(default)]
-    opponents: Option<Vec<TraceEntityId>>,
+    unconscious: bool,
+    camp: String,
+    original_camp: i32,
+    vip: bool,
+    civilian: bool,
+    opponents: Vec<TraceEntityId>,
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1128,30 +1144,41 @@ struct TraceElementAmmo {
 struct TraceAi {
     state: u32,
     substate: u32,
-    #[serde(default)]
-    script_locked: Option<bool>,
-    #[serde(default)]
-    locked: Option<bool>,
-    #[serde(default)]
-    locks: Option<u8>,
-    #[serde(default)]
-    was_busy: Option<bool>,
-    #[serde(default)]
-    very_busy: Option<bool>,
-    #[serde(default)]
-    macro_timer_running: Option<bool>,
-    #[serde(default)]
-    macro_timer_ring: Option<u32>,
-    #[serde(default)]
+    script_locked: bool,
+    locked: bool,
+    locks: u8,
+    was_busy: bool,
+    very_busy: bool,
+    macro_timer_running: bool,
+    macro_timer_ring: u32,
     macro_cursor: Option<u16>,
-    #[serde(default)]
-    macro_remaining: Option<u16>,
-    #[serde(default)]
-    macro_in_progress: Option<bool>,
-    #[serde(default)]
-    list_us: Option<Vec<TraceEntityId>>,
-    #[serde(default)]
-    list_them: Option<Vec<TraceEntityId>>,
+    macro_remaining: u16,
+    macro_in_progress: bool,
+    list_us: Vec<TraceEntityId>,
+    list_them: Vec<TraceEntityId>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TraceDetection {
+    suspects: Vec<u16>,
+    maximal_suspect: u16,
+    maximal_visibility: u32,
+    view_status: u8,
+    alert_status: u32,
+    detectables: Vec<TraceDetectable>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+struct TraceDetectable {
+    #[serde(rename = "type")]
+    detectable_type: u32,
+    target: TraceEntityId,
+    seen_now: bool,
+    seen_last_frame: bool,
+    heard_last_frame: bool,
+    shadow_seen_now: bool,
+    shadow_seen_last_frame: bool,
+    last_visibility: TraceFloat,
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1168,6 +1195,7 @@ struct TraceResolvedExclamation {
 struct TraceFrame {
     frame_before: u64,
     frame_after: u64,
+    game_code: i32,
     simulation_body_ran: bool,
     commands: Vec<TraceCommand>,
     director_completions: Vec<robin_engine::engine::DirectorCompletion>,
@@ -1179,8 +1207,8 @@ struct TraceFrame {
     resolved_exclamations: Vec<TraceResolvedExclamation>,
 }
 
-const TRACE_CACHE_VERSION: u32 = 8;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v8.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 9;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v9.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -1996,13 +2024,13 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 frame.simulation_body_ran,
             )
         }));
-        if let Err(payload) = tick_result {
+        let tick_effects = tick_result.unwrap_or_else(|payload| {
             eprintln!(
                 "Rust simulation panicked while replaying original frame {} -> {}",
                 frame.frame_before, frame.frame_after
             );
             std::panic::resume_unwind(payload);
-        }
+        });
         if debug_stage_timing {
             eprintln!("parity stage: completed Rust frame {}", frame.frame_after);
         }
@@ -2098,7 +2126,13 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         map.validate_building_sector_mapping(&engine, &frame);
         let mut differences =
             motion_line_parity.apply_changes_and_compare(&engine, &frame.motion_line_changes);
-        differences.extend(compare_frame(&engine, &frame, map));
+        differences.extend(compare_frame(
+            &engine,
+            &assets,
+            &frame,
+            tick_effects.code as i32,
+            map,
+        ));
         if debug_stage_timing {
             eprintln!(
                 "parity stage: compared Rust frame {} ({} differences)",
@@ -3198,10 +3232,18 @@ fn append_simulation_rng_draws(
 }
 
 fn difference_field(difference: &str) -> &str {
-    difference
+    let entity_field = difference
         .split_once(").")
         .and_then(|(_, tail)| tail.split_once(':'))
-        .map_or("other", |(field, _)| field)
+        .map(|(field, _)| field);
+    entity_field
+        .or_else(|| {
+            difference
+                .strip_prefix("frame.")
+                .and_then(|tail| tail.split_once(':'))
+                .map(|(field, _)| field)
+        })
+        .unwrap_or("other")
 }
 
 fn restore_campaign(
@@ -3904,8 +3946,20 @@ fn print_startup_actors(label: &str, engine: &Engine, frame: &TraceFrame, entity
     }
 }
 
-fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) -> Vec<String> {
+fn compare_frame(
+    engine: &Engine,
+    assets: &LevelAssets,
+    frame: &TraceFrame,
+    actual_game_code: i32,
+    entity_map: &EntityMap,
+) -> Vec<String> {
     let mut differences = Vec::new();
+    if frame.game_code != actual_game_code {
+        differences.push(format!(
+            "frame.game_code: original={} rust={actual_game_code}",
+            frame.game_code
+        ));
+    }
     let selected: Vec<EntityId> = frame
         .selected_pcs
         .iter()
@@ -3920,8 +3974,7 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
     }
 
     // Actor state is generally the most actionable parity signal. Report it
-    // before the (much larger) background-FX table without excluding any
-    // entity from the exact comparison.
+    // before the (much larger) background-FX table.
     let mut elements: Vec<_> = frame.elements.iter().collect();
     elements.sort_by_key(|element| {
         let priority = match element.entity_id.kind {
@@ -3945,6 +3998,40 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
             continue;
         };
         let element = actual.element_data();
+        assert_eq!(
+            expected.ai.is_some(),
+            expected.detection.is_some(),
+            "Original NPC trace state must contain both ai and detection payloads for {:?}",
+            expected.entity_id
+        );
+        compare(
+            &mut differences,
+            id,
+            "creation_order",
+            expected.creation_order,
+            engine.original_creation_order(id),
+        );
+        compare(
+            &mut differences,
+            id,
+            "class_id",
+            expected.class_id,
+            element.class_id,
+        );
+        compare(
+            &mut differences,
+            id,
+            "kind",
+            expected.kind,
+            trace_kind_for_entity(actual),
+        );
+        compare(
+            &mut differences,
+            id,
+            "entity_id.kind",
+            expected.entity_id.kind,
+            expected.kind,
+        );
         compare(
             &mut differences,
             id,
@@ -3958,6 +4045,13 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
             "blipped",
             expected.blipped,
             element.blipped,
+        );
+        compare(
+            &mut differences,
+            id,
+            "surface_id",
+            expected.surface_id,
+            element.sprite_id,
         );
         if expected.actor.is_some() {
             compare(
@@ -3988,6 +4082,13 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
             element.position_map(),
         );
         let pi = &element.sprite.position_iface;
+        compare_point(
+            &mut differences,
+            id,
+            "old_position_map",
+            expected.old_position_map,
+            pi.old_map_position(),
+        );
         compare_point_with_absolute_tolerance(
             &mut differences,
             id,
@@ -4003,6 +4104,29 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
             expected.elevation,
             pi.get_elevation(),
         );
+        compare_float(
+            &mut differences,
+            id,
+            "old_elevation",
+            expected.old_elevation,
+            pi.old_elevation(),
+        );
+        let increment_map = pi.get_increment_map();
+        compare_point(
+            &mut differences,
+            id,
+            "increment_map",
+            expected.increment_map,
+            MapPoint::new(increment_map.x, increment_map.y),
+        );
+        let movement_map = element.position_map() - pi.old_map_position();
+        compare_point(
+            &mut differences,
+            id,
+            "movement_map",
+            expected.movement_map,
+            MapPoint::new(movement_map.x, movement_map.y),
+        );
         let actual_sector = element.sector().map_or(u16::MAX, |sector| sector.get());
         let mapped_building_sector = expected.sector != actual_sector
             && entity_map.sectors_equivalent(expected.sector, actual_sector);
@@ -4012,6 +4136,13 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
             "layer",
             expected.layer,
             element.layer(),
+        );
+        compare(
+            &mut differences,
+            id,
+            "layer_goal",
+            expected.layer_goal,
+            pi.layer_goal().get(),
         );
         if !mapped_building_sector {
             compare(
@@ -4035,6 +4166,20 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
             "direction_goal",
             expected.direction_goal,
             i16::from(pi.get_direction_goal().as_u8()),
+        );
+        compare(
+            &mut differences,
+            id,
+            "moving",
+            expected.moving,
+            pi.is_moving(),
+        );
+        compare(
+            &mut differences,
+            id,
+            "moving_map",
+            expected.moving_map,
+            pi.is_moving_map(),
         );
         compare(
             &mut differences,
@@ -4086,12 +4231,30 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
             compare(
                 &mut differences,
                 id,
+                "actor.animation",
+                expected_actor.animation,
+                engine
+                    .actor_order_type(id)
+                    .unwrap_or(robin_engine::order::OrderType::NonanimationEnd)
+                    as u32,
+            );
+            compare(
+                &mut differences,
+                id,
+                "actor.motion_state",
+                expected_actor.motion_state,
+                actual_actor.continuation.motion_state as u32,
+            );
+            compare(
+                &mut differences,
+                id,
                 "actor.command",
                 command_from_stable_name(&expected_actor.command_name),
                 engine.actor_command(id),
             );
         }
         if let Some(expected_human) = &expected.human {
+            let actual_camp = actual.camp();
             let actual_life = match actual {
                 Entity::Pc(pc) => pc.pc.life_points,
                 Entity::Soldier(soldier) => soldier.npc.life_points,
@@ -4112,25 +4275,62 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
                 expected_human.dead,
                 actual.is_dead(),
             );
-            if let Some(expected_opponents) = &expected_human.opponents {
-                let expected_opponents: Vec<EntityId> = expected_opponents
-                    .iter()
-                    .copied()
-                    .map(|opponent| entity_map.translate(opponent))
-                    .collect();
-                let actual_opponents = actual
+            compare(
+                &mut differences,
+                id,
+                "unconscious",
+                expected_human.unconscious,
+                actual
                     .human_data()
-                    .unwrap_or_else(|| panic!("trace reports human opponents for non-human {id:?}"))
-                    .opponents
-                    .clone();
-                compare(
-                    &mut differences,
-                    id,
-                    "human.opponents",
-                    expected_opponents,
-                    actual_opponents,
-                );
-            }
+                    .unwrap_or_else(|| panic!("trace reports human state for non-human {id:?}"))
+                    .unconscious,
+            );
+            compare(
+                &mut differences,
+                id,
+                "human.camp",
+                expected_human.camp.as_str(),
+                camp_name(actual_camp),
+            );
+            compare(
+                &mut differences,
+                id,
+                "human.original_camp",
+                expected_human.original_camp,
+                camp_ordinal(actual_camp),
+            );
+            compare(
+                &mut differences,
+                id,
+                "human.vip",
+                expected_human.vip,
+                entity_is_vip(actual, assets),
+            );
+            compare(
+                &mut differences,
+                id,
+                "human.civilian",
+                expected_human.civilian,
+                actual.is_civilian(),
+            );
+            let expected_opponents: Vec<EntityId> = expected_human
+                .opponents
+                .iter()
+                .copied()
+                .map(|opponent| entity_map.translate(opponent))
+                .collect();
+            let actual_opponents = actual
+                .human_data()
+                .unwrap_or_else(|| panic!("trace reports human opponents for non-human {id:?}"))
+                .opponents
+                .clone();
+            compare(
+                &mut differences,
+                id,
+                "human.opponents",
+                expected_opponents,
+                actual_opponents,
+            );
         }
         if let Some(expected_pc) = &expected.pc {
             use robin_engine::profiles::Action;
@@ -4174,147 +4374,258 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
                 expected_ai.substate,
                 actual_ai.current_substate as u32,
             );
-            if let Some(expected_script_locked) = expected_ai.script_locked {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.script_locked",
-                    expected_script_locked,
-                    actual_ai.ai_is_script_locked(),
-                );
-            }
-            if let Some(expected_locked) = expected_ai.locked {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.locked",
-                    expected_locked,
-                    actual_ai.ai_is_locked(),
-                );
-            }
-            if let Some(expected_locks) = expected_ai.locks {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.locks",
-                    expected_locks,
-                    actual_ai.locks_flag_field.bits(),
-                );
-            }
-            if let Some(expected_was_busy) = expected_ai.was_busy {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.was_busy",
-                    expected_was_busy,
-                    actual_ai.was_busy,
-                );
-            }
-            if let Some(expected_very_busy) = expected_ai.very_busy {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.very_busy",
-                    expected_very_busy,
-                    engine.is_very_very_busy(id),
-                );
-            }
-            if let Some(expected_running) = expected_ai.macro_timer_running {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.macro_timer_running",
-                    expected_running,
-                    actual_ai.macro_timer_is_running,
-                );
-            }
-            if let Some(expected_ring) = expected_ai.macro_timer_ring {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.macro_timer_ring",
-                    expected_ring,
-                    actual_ai.when_does_macro_timer_ring,
-                );
-            }
-            if let Some(expected_cursor) = expected_ai.macro_cursor {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.macro_cursor",
-                    usize::from(expected_cursor),
-                    actual_ai.macro_command_offset,
-                );
-            }
-            if let Some(expected_remaining) = expected_ai.macro_remaining {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.macro_remaining",
-                    expected_remaining,
-                    actual_ai.number_of_remaining_macro_bytes,
-                );
-            }
-            if let Some(expected_in_progress) = expected_ai.macro_in_progress {
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.macro_in_progress",
-                    expected_in_progress,
-                    actual_ai.macro_in_progress,
-                );
-            }
-            if let Some(expected_list_us) = &expected_ai.list_us {
-                let expected_list_us: Vec<EntityId> = expected_list_us
-                    .iter()
-                    .copied()
-                    .map(|human| entity_map.translate(human))
-                    .collect();
-                let actual_list_us: Vec<EntityId> = actual_ai
-                    .list_us
-                    .iter()
-                    .map(|&handle| {
-                        engine.entity_id_for_index(handle).unwrap_or_else(|| {
-                            panic!("AI list_us handle {handle} refers to a vacant entity slot")
-                        })
+            compare(
+                &mut differences,
+                id,
+                "ai.script_locked",
+                expected_ai.script_locked,
+                actual_ai.ai_is_script_locked(),
+            );
+            compare(
+                &mut differences,
+                id,
+                "ai.locked",
+                expected_ai.locked,
+                actual_ai.ai_is_locked(),
+            );
+            compare(
+                &mut differences,
+                id,
+                "ai.locks",
+                expected_ai.locks,
+                actual_ai.locks_flag_field.bits(),
+            );
+            compare(
+                &mut differences,
+                id,
+                "ai.was_busy",
+                expected_ai.was_busy,
+                actual_ai.was_busy,
+            );
+            compare(
+                &mut differences,
+                id,
+                "ai.very_busy",
+                expected_ai.very_busy,
+                engine.is_very_very_busy(id),
+            );
+            compare(
+                &mut differences,
+                id,
+                "ai.macro_timer_running",
+                expected_ai.macro_timer_running,
+                actual_ai.macro_timer_is_running,
+            );
+            compare(
+                &mut differences,
+                id,
+                "ai.macro_timer_ring",
+                expected_ai.macro_timer_ring,
+                actual_ai.when_does_macro_timer_ring,
+            );
+            let actual_macro_cursor = (actual_ai.patrol_path.is_some()
+                && !actual_ai.macro_command.is_empty())
+            .then(|| {
+                u16::try_from(actual_ai.macro_command_offset).unwrap_or_else(|_| {
+                    panic!(
+                        "NPC {id:?} macro cursor {} exceeds Original's UWORD domain",
+                        actual_ai.macro_command_offset
+                    )
+                })
+            });
+            compare(
+                &mut differences,
+                id,
+                "ai.macro_cursor",
+                expected_ai.macro_cursor,
+                actual_macro_cursor,
+            );
+            compare(
+                &mut differences,
+                id,
+                "ai.macro_remaining",
+                expected_ai.macro_remaining,
+                actual_ai.number_of_remaining_macro_bytes,
+            );
+            compare(
+                &mut differences,
+                id,
+                "ai.macro_in_progress",
+                expected_ai.macro_in_progress,
+                actual_ai.macro_in_progress,
+            );
+            let expected_list_us: Vec<EntityId> = expected_ai
+                .list_us
+                .iter()
+                .copied()
+                .map(|human| entity_map.translate(human))
+                .collect();
+            let actual_list_us: Vec<EntityId> = actual_ai
+                .list_us
+                .iter()
+                .map(|&handle| {
+                    engine.entity_id_for_index(handle).unwrap_or_else(|| {
+                        panic!("AI list_us handle {handle} refers to a vacant entity slot")
                     })
-                    .collect();
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.list_us",
-                    expected_list_us,
-                    actual_list_us,
-                );
-            }
-            if let Some(expected_list_them) = &expected_ai.list_them {
-                let expected_list_them: Vec<EntityId> = expected_list_them
-                    .iter()
-                    .copied()
-                    .map(|human| entity_map.translate(human))
-                    .collect();
-                let actual_list_them: Vec<EntityId> = actual
-                    .enemy_ai()
-                    .map(|enemy| {
-                        enemy
-                            .list_them
-                            .iter()
-                            .map(|&handle| {
-                                engine.entity_id_for_index(handle).unwrap_or_else(|| {
-                                    panic!(
-                                        "AI list_them handle {handle} refers to a vacant entity slot"
-                                    )
-                                })
+                })
+                .collect();
+            compare(
+                &mut differences,
+                id,
+                "ai.list_us",
+                expected_list_us,
+                actual_list_us,
+            );
+            let expected_list_them: Vec<EntityId> = expected_ai
+                .list_them
+                .iter()
+                .copied()
+                .map(|human| entity_map.translate(human))
+                .collect();
+            let actual_list_them: Vec<EntityId> = actual
+                .enemy_ai()
+                .map(|enemy| {
+                    enemy
+                        .list_them
+                        .iter()
+                        .map(|&handle| {
+                            engine.entity_id_for_index(handle).unwrap_or_else(|| {
+                                panic!(
+                                    "AI list_them handle {handle} refers to a vacant entity slot"
+                                )
                             })
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            compare(
+                &mut differences,
+                id,
+                "ai.list_them",
+                expected_list_them,
+                actual_list_them,
+            );
+        }
+        if let Some(expected_detection) = &expected.detection {
+            let npc = actual
+                .npc_data()
+                .unwrap_or_else(|| panic!("trace reports detection state for non-NPC {id:?}"));
+            let controller = actual
+                .ai_controller()
+                .unwrap_or_else(|| panic!("trace reports detection state for AI-less NPC {id:?}"));
+            compare(
+                &mut differences,
+                id,
+                "detection.suspects",
+                expected_detection.suspects.as_slice(),
+                npc.detection_suspects.as_slice(),
+            );
+            compare(
+                &mut differences,
+                id,
+                "detection.maximal_suspect",
+                expected_detection.maximal_suspect,
+                npc.maximal_detection_suspect,
+            );
+            compare(
+                &mut differences,
+                id,
+                "detection.maximal_visibility",
+                expected_detection.maximal_visibility,
+                controller.max_visibility,
+            );
+            compare(
+                &mut differences,
+                id,
+                "detection.view_status",
+                expected_detection.view_status,
+                npc.eye_status as u8,
+            );
+            compare(
+                &mut differences,
+                id,
+                "detection.alert_status",
+                expected_detection.alert_status,
+                controller.view_alert_status as u32,
+            );
+
+            let actual_detectables = npc
+                .detectable_lists
+                .iter()
+                .flat_map(|list| list.iter())
+                .collect::<Vec<_>>();
+            compare(
+                &mut differences,
+                id,
+                "detection.detectables.length",
+                expected_detection.detectables.len(),
+                actual_detectables.len(),
+            );
+            for (detectable_index, (expected_detectable, actual_detectable)) in expected_detection
+                .detectables
+                .iter()
+                .zip(actual_detectables)
+                .enumerate()
+            {
+                let field =
+                    |name: &str| format!("detection.detectables[{detectable_index}].{name}");
                 compare(
                     &mut differences,
                     id,
-                    "ai.list_them",
-                    expected_list_them,
-                    actual_list_them,
+                    &field("type"),
+                    expected_detectable.detectable_type,
+                    detectable_type_ordinal(actual_detectable.detectable_type),
+                );
+                compare(
+                    &mut differences,
+                    id,
+                    &field("target"),
+                    entity_map.translate(expected_detectable.target),
+                    actual_detectable.element.unwrap_or_else(|| {
+                        panic!("NPC {id:?} detectable {detectable_index} has no target element")
+                    }),
+                );
+                compare(
+                    &mut differences,
+                    id,
+                    &field("seen_now"),
+                    expected_detectable.seen_now,
+                    actual_detectable.seen_now,
+                );
+                compare(
+                    &mut differences,
+                    id,
+                    &field("seen_last_frame"),
+                    expected_detectable.seen_last_frame,
+                    actual_detectable.seen_last_frame,
+                );
+                compare(
+                    &mut differences,
+                    id,
+                    &field("heard_last_frame"),
+                    expected_detectable.heard_last_frame,
+                    actual_detectable.heard_last_frame,
+                );
+                compare(
+                    &mut differences,
+                    id,
+                    &field("shadow_seen_now"),
+                    expected_detectable.shadow_seen_now,
+                    actual_detectable.shadow_seen_now,
+                );
+                compare(
+                    &mut differences,
+                    id,
+                    &field("shadow_seen_last_frame"),
+                    expected_detectable.shadow_seen_last_frame,
+                    actual_detectable.shadow_seen_last_frame,
+                );
+                compare_float(
+                    &mut differences,
+                    id,
+                    &field("last_visibility"),
+                    expected_detectable.last_visibility,
+                    actual_detectable.last_visibility,
                 );
             }
         }
@@ -4333,6 +4644,81 @@ fn compare<T: std::fmt::Debug + PartialEq>(
         differences.push(format!(
             "{id:?}.{field}: original={expected:?} rust={actual:?}"
         ));
+    }
+}
+
+fn trace_kind_for_entity(entity: &Entity) -> TraceEntityKind {
+    match entity {
+        Entity::Pc(_) => TraceEntityKind::Pc,
+        Entity::Soldier(_) => TraceEntityKind::Soldier,
+        Entity::Civilian(_) => TraceEntityKind::Civilian,
+        Entity::Fx(_) => TraceEntityKind::Fx,
+        Entity::Target(_) => TraceEntityKind::Target,
+        Entity::Bonus(_) => TraceEntityKind::Bonus,
+        Entity::Scroll(_) => TraceEntityKind::Scroll,
+        Entity::Projectile(_) => TraceEntityKind::Projectile,
+        Entity::Net(_) => TraceEntityKind::Net,
+    }
+}
+
+fn camp_name(camp: robin_engine::element::Camp) -> &'static str {
+    match camp {
+        robin_engine::element::Camp::Royalists => "royalists",
+        robin_engine::element::Camp::Lacklandists => "lacklandists",
+        robin_engine::element::Camp::Error => "error",
+    }
+}
+
+fn camp_ordinal(camp: robin_engine::element::Camp) -> i32 {
+    match camp {
+        robin_engine::element::Camp::Royalists => 0,
+        robin_engine::element::Camp::Lacklandists => 1,
+        robin_engine::element::Camp::Error => 2,
+    }
+}
+
+fn entity_is_vip(entity: &Entity, assets: &LevelAssets) -> bool {
+    match entity {
+        Entity::Pc(pc) => {
+            assets
+                .profile_manager
+                .get_character(pc.pc.profile_index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "parity VIP lookup is missing PC character profile {:?}",
+                        pc.pc.profile_index
+                    )
+                })
+                .vip
+        }
+        Entity::Soldier(soldier) => {
+            assets
+                .profile_manager
+                .get_soldier(soldier.soldier.soldier_profile_index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "parity VIP lookup is missing soldier profile {:?}",
+                        soldier.soldier.soldier_profile_index
+                    )
+                })
+                .vip
+        }
+        Entity::Civilian(civilian) => {
+            civilian.civilian.cached_civilian_type == robin_engine::profiles::CivilianType::Vip
+        }
+        _ => panic!("parity VIP lookup called for non-human entity"),
+    }
+}
+
+fn detectable_type_ordinal(detectable_type: robin_engine::element::DetectableType) -> u32 {
+    match detectable_type {
+        robin_engine::element::DetectableType::Enemy => 0,
+        robin_engine::element::DetectableType::Body => 1,
+        robin_engine::element::DetectableType::Object => 2,
+        robin_engine::element::DetectableType::Friend => 3,
+        robin_engine::element::DetectableType::MissedFriend => 4,
+        robin_engine::element::DetectableType::Beggar => 5,
+        robin_engine::element::DetectableType::None => 6,
     }
 }
 
@@ -4606,6 +4992,7 @@ mod tests {
         let frame_without_marker = serde_json::json!({
             "frame_before": 0,
             "frame_after": 1,
+            "game_code": 0,
             "commands": [],
             "director_completions": [],
             "selected_pcs": [],
@@ -4700,30 +5087,108 @@ mod tests {
     }
 
     #[test]
-    fn trace_element_retains_the_complete_sprite_cursor() {
+    fn trace_element_retains_all_recorded_authoritative_state() {
         let element: TraceElement = serde_json::from_value(serde_json::json!({
-            "entity_id": {"kind": "pc", "index": 58},
+            "entity_id": {"kind": "soldier", "index": 58},
             "creation_order": 89,
+            "class_id": 1,
+            "kind": "soldier",
             "active": true,
             "blipped": false,
             "unreachable": false,
+            "surface_id": 1226,
             "posture": 1,
             "position_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "old_position_map": {"x": {"bits": 0}, "y": {"bits": 0}},
             "position_goal_map": {"x": {"bits": 0}, "y": {"bits": 0}},
             "elevation": {"bits": 0},
+            "old_elevation": {"bits": 0},
+            "increment_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "movement_map": {"x": {"bits": 0}, "y": {"bits": 0}},
             "layer": 0,
+            "layer_goal": 0,
             "sector": 0,
             "direction": 0,
             "direction_goal": 0,
+            "moving": false,
+            "moving_map": false,
             "sprite_row": 64,
             "sprite_frame": 3,
-            "sprite_frame_count": 65535
+            "sprite_frame_count": 65535,
+            "actor": {
+                "action_state": 0,
+                "animation": 254,
+                "command": 117,
+                "command_name": "whistle",
+                "motion_state": 2,
+                "wait_time": 25
+            },
+            "human": {
+                "life_points": 60,
+                "dead": false,
+                "unconscious": false,
+                "camp": "lacklandists",
+                "original_camp": 1,
+                "vip": true,
+                "civilian": false,
+                "opponents": [{"kind": "pc", "index": 2}]
+            },
+            "ai": {
+                "state": 3,
+                "substate": 17,
+                "script_locked": false,
+                "locked": true,
+                "locks": 1,
+                "was_busy": true,
+                "very_busy": false,
+                "macro_timer_running": true,
+                "macro_timer_ring": 987,
+                "macro_cursor": 4,
+                "macro_remaining": 2,
+                "macro_in_progress": true,
+                "list_us": [{"kind": "soldier", "index": 58}],
+                "list_them": [{"kind": "pc", "index": 2}]
+            },
+            "detection": {
+                "suspects": [1, 2, 3, 4, 5, 6],
+                "maximal_suspect": 6,
+                "maximal_visibility": 200,
+                "view_status": 1,
+                "alert_status": 2,
+                "detectables": [{
+                    "type": 0,
+                    "target": {"kind": "pc", "index": 2},
+                    "seen_now": true,
+                    "seen_last_frame": false,
+                    "heard_last_frame": true,
+                    "shadow_seen_now": false,
+                    "shadow_seen_last_frame": true,
+                    "last_visibility": {"bits": 1120403456}
+                }]
+            }
         }))
-        .expect("parse an authoritative trace sprite cursor");
+        .expect("parse authoritative recorded element state");
 
+        assert_eq!(element.surface_id, 1226);
+        assert_eq!(element.layer_goal, 0);
         assert_eq!(element.sprite_row, 64);
         assert_eq!(element.sprite_frame, 3);
         assert_eq!(element.sprite_frame_count, Some(u16::MAX));
+        let human = element.human.expect("human state");
+        assert_eq!(human.camp, "lacklandists");
+        assert!(human.vip);
+        let ai = element.ai.expect("AI state");
+        assert_eq!(ai.macro_cursor, Some(4));
+        assert_eq!(
+            ai.list_them,
+            [TraceEntityId {
+                kind: TraceEntityKind::Pc,
+                index: 2,
+            }]
+        );
+        let detection = element.detection.expect("detection state");
+        assert_eq!(detection.suspects, [1, 2, 3, 4, 5, 6]);
+        assert_eq!(detection.detectables[0].last_visibility.value(), 100.0);
     }
 
     #[test]

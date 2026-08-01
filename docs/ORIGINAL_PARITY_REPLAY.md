@@ -4259,11 +4259,51 @@ and directional behavior, so omitting them cannot establish full parity.
 
 The replay validator now deserializes and compares all three cursor fields
 exactly for every non-FX element. This does not change the recording schema:
-the information was already present. The native derived-trace cache is bumped
-to v8 because its bincode element layout now includes the two additional
-fields, preventing an older v7 cache from being interpreted with the expanded
-model. Focused JSON coverage verifies that row, frame, and the `0xffff`
-initialization counter survive trace ingestion.
+the information was already present. The native derived-trace cache was first
+bumped to v8 for these fields and is now v9 after the complete authoritative
+element payload was admitted below. Focused JSON coverage verifies that row,
+frame, and the `0xffff` initialization counter survive trace ingestion.
+
+### Parity consumes the complete authoritative element payload
+
+An audit against `RHParity::ElementState` found that the schema-12 recorder
+already emitted substantially more logical state than the Rust trace model
+deserialized. Such fields were silently discarded by Serde, so a replay could
+be reported as passing despite disagreeing on the previous position, cached
+movement, destination layer, actor motion result, AI locks, detection memory,
+or camp state.
+
+The trace model and comparator now retain and compare every recorded logical
+base-element field: creation order, class and kind, active/blipped/unreachable
+flags, surface identity, current/old/goal map positions, current/old elevation,
+cached increment and movement, sector and current/goal layer, posture,
+current/goal direction, both movement predicates, and the complete sprite
+cursor. Actor payloads additionally compare action state, motion result,
+animation/order, semantic command, and wait time. Human payloads compare life,
+death/unconscious state, current camp and its numeric representation, VIP and
+civilian classification, and the ordered opponent list. PC ammunition was
+already complete. NPC payloads now require and compare the full AI lock/timer/
+macro/battle-list state and the complete ordered detection state, including
+all six suspect counters and every detectable's mapped target, history flags,
+type, and bit-exact cached visibility. Frame return `game_code` is also now an
+authoritative comparison.
+
+Entity references inside opponent, battle, and detection lists pass through
+the existing creation-order isomorphism; raw table indices are never compared.
+Creation order itself remains exact because it is the stable Original identity
+used to construct that mapping. Surface IDs and class IDs are authored content
+identities and therefore compare directly. Missing profiles, target handles,
+or a one-sided AI/detection payload fail loudly rather than fabricating a
+default. The native trace cache is v9 because these additions change its
+bincode layout, and focused ingestion coverage contains each payload family.
+
+The logical validator has two explicit exclusions. Original itself omits
+mobile/chariot masters because Rust stores them outside the ordinary entity
+arena; their ordinary masked child entities remain recorded. Base `FX`
+animation is renderer-only presentation state and is retained in the JSONL for
+a renderer-parity pass but skipped by the logical gameplay comparator. FX
+targets are a distinct `Target` kind and remain included because targeting and
+combat consume their state.
 
 ### Cached campaign PC sprites include alternate profiles
 

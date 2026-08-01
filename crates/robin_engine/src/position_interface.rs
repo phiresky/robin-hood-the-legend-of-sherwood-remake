@@ -1048,12 +1048,21 @@ impl PositionInterface {
         self.old_position_map
     }
     #[inline]
+    pub fn old_elevation(&self) -> f32 {
+        self.old_position.z
+    }
+    #[inline]
     pub fn set_old_position(&mut self, pt: WorldPoint3D) {
         self.old_position = pt;
     }
     #[inline]
     pub fn set_old_map_position(&mut self, pt: MapPoint) {
         self.old_position_map = pt;
+    }
+
+    #[inline]
+    pub fn layer_goal(&self) -> Layer {
+        self.layer_goal
     }
 
     #[inline]
