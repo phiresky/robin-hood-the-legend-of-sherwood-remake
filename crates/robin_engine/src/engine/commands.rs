@@ -408,7 +408,14 @@ impl EngineInner {
             }
             LaunchSelfAbility { actor, command } => {
                 let elem = SequenceElement::new(1, *command, Some(*actor));
-                self.launch_element(elem);
+                // The corresponding Original input handlers use
+                // LaunchSequenceElement. Registration is immediate, but the
+                // owner's Instruct boundary belongs to the manager pass after
+                // this frame's entity loop; do not interrupt its current
+                // order before that final Execute tick.
+                let mut seq = Sequence::new();
+                seq.append_element(elem);
+                self.launch_sequence(seq);
             }
             LaunchScrollRead {
                 actor,
