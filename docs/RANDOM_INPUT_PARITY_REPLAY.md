@@ -1154,14 +1154,15 @@ not command-lifecycle evidence and not justification for bypassing the guard.
 
 #### Current release validation of the frozen cohort
 
-The complete 45-member cohort was rerun serially with the release runner built
+The complete 45-member cohort was first rerun serially with the release runner built
 from `aaebc38c9` (including `750224e6f`). The immutable input snapshot, one log
 and one numeric status per member are preserved under
-`output/parity-audits/r05-wait-raise-bow-current-head/`. The result is:
+`output/parity-audits/r05-wait-raise-bow-current-head/`. After the obstacle-mask
+fix and its targeted survivor validation, all 45 old `Wait` / `RaiseBow`
+boundaries are cleared. The current result is:
 
-- 1 unchanged at its old `Wait` / `RaiseBow` boundary;
 - 12 cleared to exact EOF;
-- 31 cleared that boundary and reached a later state or RNG frontier;
+- 32 cleared that boundary and reached a later state or RNG frontier;
 - 1 cleared the boundary and then hit a runner invariant failure; and
 - 0 timeouts.
 
@@ -1170,8 +1171,9 @@ linux2 Profile 002 QuickSave and Savegame 041; linux3 Profile 001 Savegames
 003 and 025; linux3 Profile 003 Savegame 035; nicouzouf Profile 001 Savegame
 026 and all three listed Savegame 033 replays; and randomguy Profile 004
 Savegame 002. Raw process statuses are twelve `0`, twenty-nine `1`, and four
-`101`. Three `101` exits are authoritative later RNG-order frontiers and are
-therefore included in the 31 cleared-to-later count: linux2 Profile 002
+`101`. These are the raw statuses from the initial complete sweep before the
+sole survivor fix. Three `101` exits are authoritative later RNG-order
+frontiers and are therefore included in the cleared-to-later count: linux2 Profile 002
 Savegame 001 at frame 1411, nicouzouf Profile 001 Savegame 002 at frame 659,
 and nicouzouf Profile 001 Savegame 075 at frame 293. The actual runner failure
 is linux3 Profile 003 Savegame 052 replay 001 at the frame 4769-to-4770 step:
@@ -1179,7 +1181,7 @@ the sound manager resolved exclamation 14 for actor 136 without a pending
 request. Treating all nonzero statuses as equivalent would incorrectly report
 four failures rather than one.
 
-The sole unchanged member is
+The initially sole unchanged member was
 `Savegame_linux3/Profile_003/Savegame_038/replay-001-session-0001.jsonl.zst`.
 At frame 29146 Original remains `Wait` and Rust launches `RaiseBow`, exactly as
 in the frozen baseline. A targeted `robin_engine::engine::input=trace` rerun is
@@ -1252,6 +1254,15 @@ any-bit semantics. The focused
 obstacle 245's solid-only shadow flags and verifies that it blocks a SOLID
 query but not a combined SOLID-and-OPAQUE query. This is not a replay-specific
 exception and does not weaken the valid-target guard.
+
+The focused regression passes, and the current-HEAD release comparator builds
+successfully. Its targeted Savegame 038 validation clears frame 29146 and
+advances normally to a new independent state frontier after frame 29352:
+PC 180 `actor.wait_time` is 25 in Original and `4294967243` in Rust. The exact
+status-1 validation is
+`output/parity-audits/r05-wait-raise-bow-current-head/linux3-profile003-save038-replay001-after-all-bits-fix.log`
+with its sibling status file. This moves the last old-boundary member into the
+32 cleared-to-later group and closes the frozen 45-member bow cohort at 45/45.
 
 When another fix lands, add the commit, Original source boundary, focused test,
 all affected traces, and their new exact result or next independent frontier
