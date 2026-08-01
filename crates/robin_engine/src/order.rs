@@ -540,7 +540,10 @@ pub struct Order {
     pub deferred_movement_state_start: bool,
     /// Tolerance for reaching the destination.
     pub tolerance: f32,
-    /// Lock the AI while this order is being executed.
+    /// Legacy serialized `RHOrder::bLockAI` value. Original initializes this
+    /// to false, copies/serializes it, and never assigns or reads it during
+    /// gameplay. Preserve loaded values for save round trips, but do not use
+    /// it for sequence arbitration.
     pub lock_ai: bool,
     /// Play the animation in reverse.
     pub reverse: bool,
@@ -703,6 +706,8 @@ pub struct AiOrderIntent {
     /// unset and derives the sector from `target_x/y` instead.
     pub explicit_direction: Option<i16>,
     pub tolerance: f32,
+    /// Inert legacy `RHOrder::bLockAI` value carried through order intents for
+    /// save-state preservation. Authored runtime intents leave this false.
     pub lock_ai: bool,
     pub reverse: bool,
     pub done: bool,

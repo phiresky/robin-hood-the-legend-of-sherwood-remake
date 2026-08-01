@@ -1661,7 +1661,7 @@ pub fn begin_bow_shot(
     let mut order = Order::new(shoot_ot, tx, ty, order_id);
     order.target_actor = Some(target_id.index());
     order.compute_direction = false;
-    order.lock_ai = true;
+
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
     // Push reload or unequip order after the shot.

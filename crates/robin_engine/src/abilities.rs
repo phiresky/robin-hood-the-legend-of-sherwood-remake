@@ -454,7 +454,7 @@ pub fn begin_carry(
     );
     order.target_actor = Some(target_id.index());
     order.compute_direction = false;
-    order.lock_ai = true;
+
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
     // Face the target — match the `_iso` aspect convention used by
@@ -557,7 +557,7 @@ pub fn begin_drop(
         order_id,
     );
     order.compute_direction = false;
-    order.lock_ai = true;
+
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
     BeginResult::Started
@@ -713,7 +713,7 @@ pub fn begin_climb_on_shoulders(
     );
     order.target_actor = Some(helper_id.index());
     order.compute_direction = false;
-    order.lock_ai = true;
+
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
     // Pair the helper: posture → CarryingOnShoulders, latch
@@ -810,7 +810,7 @@ pub fn begin_climb_down_from_shoulders(
     let mut order = Order::new(OrderType::ClimbingDownFromShoulders, 0.0, 0.0, order_id);
     order.target_actor = Some(carrier_id.index());
     order.compute_direction = false;
-    order.lock_ai = true;
+
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
     BeginResult::Started
@@ -885,7 +885,7 @@ pub fn begin_tie(
     let mut order = Order::new(OrderType::Tying, target_pos.x, target_pos.y, order_id);
     order.target_actor = Some(target_id.index());
     order.compute_direction = false;
-    order.lock_ai = true;
+
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
     BeginResult::Started
@@ -968,7 +968,7 @@ pub fn begin_heal(
     let mut order = Order::new(OrderType::Healing, target_pos.x, target_pos.y, order_id);
     order.target_actor = Some(target_id.index());
     order.compute_direction = false;
-    order.lock_ai = true;
+
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
     BeginResult::Started
@@ -1030,7 +1030,7 @@ pub fn begin_whistle(
 
     let mut order = Order::new(OrderType::Whistling, 0.0, 0.0, order_id);
     order.compute_direction = false;
-    order.lock_ai = true;
+
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
     BeginResult::Started
@@ -1085,7 +1085,7 @@ pub fn begin_eat(
 
     let mut order = Order::new(OrderType::Eating, 0.0, 0.0, order_id);
     order.compute_direction = false;
-    order.lock_ai = true;
+
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
     BeginResult::Started
@@ -1159,7 +1159,7 @@ pub fn begin_hit(
     let mut order = Order::new(OrderType::Hitting, target_pos.x, target_pos.y, order_id);
     order.target_actor = Some(target_id.index());
     order.compute_direction = false;
-    order.lock_ai = true;
+
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
     BeginResult::Started
@@ -1240,7 +1240,7 @@ pub fn begin_strangle(
     let mut order = Order::new(OrderType::Strangling, target_pos.x, target_pos.y, order_id);
     order.target_actor = Some(target_id.index());
     order.compute_direction = false;
-    order.lock_ai = true;
+
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
     BeginResult::Started
@@ -1335,7 +1335,7 @@ pub fn begin_listen(
         order_id,
     );
     order.compute_direction = false;
-    order.lock_ai = true;
+
     sequence_manager.push_order_on(seq_id, elem_idx, order);
     for order_type in [
         OrderType::Listening,
@@ -1343,7 +1343,7 @@ pub fn begin_listen(
     ] {
         let mut order = Order::new(order_type, 0.0, 0.0, alloc_order_id(order_id_counter));
         order.compute_direction = false;
-        order.lock_ai = true;
+
         sequence_manager.push_order_on(seq_id, elem_idx, order);
     }
 
@@ -1402,7 +1402,7 @@ pub fn begin_throw_net(
 
     let mut order = Order::new(OrderType::ThrowingNet, target_pos.x, target_pos.y, order_id);
     order.compute_direction = false;
-    order.lock_ai = true;
+
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
     // Face the target position.
@@ -1521,7 +1521,7 @@ fn begin_throw_at_entity(
 
     let mut order = Order::new(order_type, target_pos.x, target_pos.y, order_id);
     order.compute_direction = false;
-    order.lock_ai = true;
+
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
     let actor_pos = actor_entity.element_data().position_map();
@@ -1588,7 +1588,7 @@ pub fn begin_throw_wasp_nest(
         order_id,
     );
     order.compute_direction = false;
-    order.lock_ai = true;
+
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
     // Face the target position.
@@ -1656,7 +1656,7 @@ pub fn begin_throw_purse(
         order_id,
     );
     order.compute_direction = false;
-    order.lock_ai = true;
+
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
     // Face the target position.
@@ -1750,7 +1750,7 @@ pub fn begin_pay(
     let mut order = Order::new(OrderType::Paying, pc_pos.x, pc_pos.y, order_id);
     order.target_actor = Some(beggar_id.index());
     order.compute_direction = false;
-    order.lock_ai = true;
+
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
     // Face opposite to beggar.
