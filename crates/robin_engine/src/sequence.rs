@@ -3469,6 +3469,33 @@ impl SequenceManager {
         self.process_effects(seq_id, effects);
     }
 
+    /// Interrupt an element after its actor has already selected an incoming
+    /// replacement.
+    ///
+    /// Original `RHElementActor::Instruct` writes
+    /// `mpSequenceElement = pNewSequenceElement` before it interrupts the old
+    /// element.  Consequently the old element's synchronous
+    /// `SendCondolationCard` observes that it is no longer selected.  Rust's
+    /// incoming element is still `Todo` at this borrow-safe boundary, so the
+    /// actor-in-progress index alone would incorrectly mark the old card as
+    /// selected.
+    pub fn element_interrupted_after_replacement_selected(
+        &mut self,
+        seq_id: SequenceId,
+        elem_idx: usize,
+        flags: CascadeFlags,
+    ) {
+        let pending_before = self.pending_condolations.len();
+        self.element_interrupted(seq_id, elem_idx, flags);
+        let dispatch = self
+            .pending_condolations
+            .get_mut(pending_before)
+            .expect("replacement interruption must queue its condolence card");
+        assert_eq!(dispatch.card.seq_id, seq_id);
+        assert_eq!(usize::from(dispatch.card.elem_idx), elem_idx);
+        dispatch.card.was_selected = false;
+    }
+
     /// Hard-interrupt every `InProgress` or `Postponed` sequence
     /// element owned by `actor`, except those in `exempt_seq`.
     ///
@@ -4301,6 +4328,44 @@ impl SequenceManager {
         false
     }
 
+    /// Check the two pending-command forms used by Original's actor AI:
+    /// an element registered to launch, or an element postponed directly
+    /// behind the actor's current element.
+    ///
+    /// This deliberately does not scan every postponed element owned by the
+    /// actor. Original asks `GetSequenceElement()->GetPostponedSequenceElement()`
+    /// here, so only the current element's immediate successor qualifies.
+    pub fn element_is_about_to_be_launched_or_postponed_by_current(
+        &self,
+        owner: EntityId,
+        command: Command,
+    ) -> bool {
+        if self.element_is_about_to_be_launched(owner, command) {
+            return true;
+        }
+
+        let Some((seq_id, elem_idx)) = self.current_element_for_actor(owner) else {
+            return false;
+        };
+        let Some(current) = self.get_element(seq_id, elem_idx) else {
+            debug_assert!(false, "current actor element is missing from its sequence");
+            return false;
+        };
+
+        let intra_sequence_matches = current
+            .postponed_element_index
+            .and_then(|postponed_idx| self.get_element(seq_id, postponed_idx))
+            .is_some_and(|postponed| postponed.command == command);
+        let cross_sequence_matches = current
+            .cross_postponed
+            .and_then(|(postponed_seq, postponed_idx)| {
+                self.get_element(postponed_seq, postponed_idx)
+            })
+            .is_some_and(|postponed| postponed.command == command);
+
+        intra_sequence_matches || cross_sequence_matches
+    }
+
     /// Apply MakeFast to all active/pending movement elements owned by
     /// `entity`. Sets the FAST flag, upgrades the element's action from
     /// walking to running, and rewrites any queued orders whose action
@@ -4801,6 +4866,24 @@ mod tests {
                 mgr.finish_pending_condolation(dispatch);
             }
         }
+    }
+
+    #[test]
+    fn replacement_interruption_marks_outgoing_card_unselected() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(7));
+        let mut manager = SequenceManager::new();
+        let outgoing = manager.launch_element(SequenceElement::new(1, Command::Move, Some(owner)));
+        manager.element_in_progress(outgoing, 0);
+
+        manager.element_interrupted_after_replacement_selected(
+            outgoing,
+            0,
+            CascadeFlags::NEXT_LEVEL,
+        );
+
+        let pending = manager.drain_pending_condolations();
+        assert_eq!(pending.len(), 1);
+        assert!(!pending[0].card.was_selected);
     }
 
     #[test]
@@ -5935,6 +6018,47 @@ mod tests {
         assert!(!mgr.element_is_about_to_be_launched(
             EntityId::Pc(crate::entity_id::PcId(0)),
             Command::Turn
+        ));
+    }
+
+    #[test]
+    fn pending_command_query_follows_only_current_elements_postponed_successor() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(0));
+        let mut mgr = SequenceManager::new();
+
+        let mut current_seq = Sequence::new();
+        current_seq.append_element(make_simple_element(1, Command::Move, Some(owner)));
+        let current_seq_id = mgr.launch_sequence(current_seq);
+        mgr.element_in_progress(current_seq_id, 0);
+        mgr.elements_to_go
+            .retain(|&(seq_id, elem_idx)| (seq_id, elem_idx) != (current_seq_id, 0));
+
+        let mut postponed_seq = Sequence::new();
+        postponed_seq.append_element(make_simple_element(
+            1,
+            Command::EnterSwordfight,
+            Some(owner),
+        ));
+        let postponed_seq_id = mgr.launch_sequence(postponed_seq);
+        mgr.elements_to_go
+            .retain(|&(seq_id, elem_idx)| (seq_id, elem_idx) != (postponed_seq_id, 0));
+        mgr.postpone_element(postponed_seq_id, 0);
+
+        // A postponed command elsewhere is not what Original's
+        // current-element postponed pointer asks about.
+        assert!(
+            !mgr.element_is_about_to_be_launched_or_postponed_by_current(
+                owner,
+                Command::EnterSwordfight
+            )
+        );
+
+        mgr.get_element_mut(current_seq_id, 0)
+            .unwrap()
+            .cross_postponed = Some((postponed_seq_id, 0));
+        assert!(mgr.element_is_about_to_be_launched_or_postponed_by_current(
+            owner,
+            Command::EnterSwordfight
         ));
     }
 

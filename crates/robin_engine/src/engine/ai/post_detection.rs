@@ -370,7 +370,10 @@ impl EngineInner {
             ctx.enter_swordfight_pending = self
                 .orders
                 .sequence_manager
-                .element_is_about_to_be_launched(npc_id, crate::element::Command::EnterSwordfight);
+                .element_is_about_to_be_launched_or_postponed_by_current(
+                    npc_id,
+                    crate::element::Command::EnterSwordfight,
+                );
             // Clear `timer_is_running` before dispatching
             // `Think(EVENT_TIMER)`.
             let ai = entity.ai_controller_mut().unwrap_or_else(|| {

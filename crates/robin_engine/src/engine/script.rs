@@ -2874,7 +2874,10 @@ impl EngineInner {
         live_ctx.enter_swordfight_pending = self
             .orders
             .sequence_manager
-            .element_is_about_to_be_launched(entity_id, crate::element::Command::EnterSwordfight);
+            .element_is_about_to_be_launched_or_postponed_by_current(
+                entity_id,
+                crate::element::Command::EnterSwordfight,
+            );
         // Hoist the canonical door slice before grabbing the mutable
         // entity borrow — the friendly AI's `alert_soldier` needs it for the
         // `ALERTFLAG_CHECK_DOOR_PATH` retry.

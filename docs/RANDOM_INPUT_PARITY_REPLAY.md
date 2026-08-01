@@ -460,8 +460,10 @@ assigned Linux3 Profile 001 Savegame 041 replay 002 boundary clears from frame
 37294 and advances to an independent RNG-cardinality boundary at frame 37345.
 A one-worker release rerun of the complete 32-trace geometry frontier is
 preserved under
-`output/parity-audits/random-short-geometry-after-world-ground/`; publish its
-exact/advanced/unchanged totals only after all 32 status files exist.
+`output/parity-audits/random-short-geometry-after-world-ground/`.  All 32
+statuses are complete: 17 clear their former boundary (4 exact EOF and 13
+later independent divergences), while 15 remain unchanged and therefore form
+separate movement, command, timer, elevation, and turning families.
 
 ### `516728654` — preserve Waiting for entity-target PC seeks
 
