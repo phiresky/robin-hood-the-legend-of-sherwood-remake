@@ -4081,6 +4081,37 @@ mod tests {
     use crate::element::Posture;
 
     #[test]
+    fn listen_distance_uses_world_y_before_isometric_stretch() {
+        use crate::coordinates::WorldPoint3D;
+        use crate::position_interface::INVERSE_ASPECT_RATIO;
+
+        const LIMIT_SQUARED: f32 = 750.0 * 750.0;
+
+        // Derby frame 988: the listener is on the ground and Soldier 71 is
+        // elevated. Original includes elevation in world Y before stretching
+        // it, leaving the soldier just inside Listen range. The old projected
+        // map calculation incorrectly leaves it outside.
+        let listener = WorldPoint3D::new(1061.0, 2717.0, 0.0);
+        let soldier = WorldPoint3D::new(1079.0, 2300.001_007, 150.001_007);
+        assert!(listen_distance_squared(listener, soldier) < LIMIT_SQUARED);
+        let projected_dy = (2150.0 - 2717.0) * INVERSE_ASPECT_RATIO;
+        let old_projected_square =
+            18.0_f32.powi(2) + projected_dy.powi(2) + 150.001_007_f32.powi(2);
+        assert!(old_projected_square >= LIMIT_SQUARED);
+
+        // Leicester frame 402 exercises the opposite sign: map-only Y places
+        // Civilian 74 inside the sphere, but positive elevation increases
+        // world Y separation and Original correctly keeps it blipped.
+        let listener = WorldPoint3D::new(1130.0, 248.0, 0.0);
+        let civilian = WorldPoint3D::new(738.0, 740.001_007, 140.001_007);
+        assert!(listen_distance_squared(listener, civilian) >= LIMIT_SQUARED);
+        let projected_dy = (600.0 - 248.0) * INVERSE_ASPECT_RATIO;
+        let old_projected_square =
+            392.0_f32.powi(2) + projected_dy.powi(2) + 140.001_007_f32.powi(2);
+        assert!(old_projected_square < LIMIT_SQUARED);
+    }
+
+    #[test]
     fn visibility_eye_projection_keeps_eye_height_out_of_map_y() {
         let eye = crate::coordinates::WorldPoint3D::new(100.0, 260.0, 75.0);
         let projected = visibility_eye_xy(eye, 30.0);
