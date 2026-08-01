@@ -2776,7 +2776,7 @@ impl EngineInner {
     /// door-pass sequence, so the engine holds `AILOCK_BUSY` for the
     /// duration via the per-tick edge detector in
     /// [`Self::tick_npc_busy_edge_detect_for_npc`].
-    pub(crate) fn is_very_very_busy(&self, owner: EntityId) -> bool {
+    pub fn is_very_very_busy(&self, owner: EntityId) -> bool {
         use crate::element::Posture;
         let Some(entity) = self.get_entity(owner) else {
             return false;

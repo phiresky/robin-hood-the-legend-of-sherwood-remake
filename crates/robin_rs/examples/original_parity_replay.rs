@@ -1109,6 +1109,22 @@ struct TraceAi {
     #[serde(default)]
     locked: Option<bool>,
     #[serde(default)]
+    locks: Option<u8>,
+    #[serde(default)]
+    was_busy: Option<bool>,
+    #[serde(default)]
+    very_busy: Option<bool>,
+    #[serde(default)]
+    macro_timer_running: Option<bool>,
+    #[serde(default)]
+    macro_timer_ring: Option<u32>,
+    #[serde(default)]
+    macro_cursor: Option<u16>,
+    #[serde(default)]
+    macro_remaining: Option<u16>,
+    #[serde(default)]
+    macro_in_progress: Option<bool>,
+    #[serde(default)]
     list_us: Option<Vec<TraceEntityId>>,
     #[serde(default)]
     list_them: Option<Vec<TraceEntityId>>,
@@ -4135,6 +4151,78 @@ fn compare_frame(engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) ->
                     "ai.locked",
                     expected_locked,
                     actual_ai.ai_is_locked(),
+                );
+            }
+            if let Some(expected_locks) = expected_ai.locks {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.locks",
+                    expected_locks,
+                    actual_ai.locks_flag_field.bits(),
+                );
+            }
+            if let Some(expected_was_busy) = expected_ai.was_busy {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.was_busy",
+                    expected_was_busy,
+                    actual_ai.was_busy,
+                );
+            }
+            if let Some(expected_very_busy) = expected_ai.very_busy {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.very_busy",
+                    expected_very_busy,
+                    engine.is_very_very_busy(id),
+                );
+            }
+            if let Some(expected_running) = expected_ai.macro_timer_running {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.macro_timer_running",
+                    expected_running,
+                    actual_ai.macro_timer_is_running,
+                );
+            }
+            if let Some(expected_ring) = expected_ai.macro_timer_ring {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.macro_timer_ring",
+                    expected_ring,
+                    actual_ai.when_does_macro_timer_ring,
+                );
+            }
+            if let Some(expected_cursor) = expected_ai.macro_cursor {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.macro_cursor",
+                    usize::from(expected_cursor),
+                    actual_ai.macro_command_offset,
+                );
+            }
+            if let Some(expected_remaining) = expected_ai.macro_remaining {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.macro_remaining",
+                    expected_remaining,
+                    actual_ai.number_of_remaining_macro_bytes,
+                );
+            }
+            if let Some(expected_in_progress) = expected_ai.macro_in_progress {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.macro_in_progress",
+                    expected_in_progress,
+                    actual_ai.macro_in_progress,
                 );
             }
             if let Some(expected_list_us) = &expected_ai.list_us {
