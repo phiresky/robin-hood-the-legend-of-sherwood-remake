@@ -311,9 +311,11 @@ stream.
 
 ### Postponed swordfight-entry RNG subgroup
 
-Seven combat traces share an excess `ReconsiderSwordfight` signature: one or
-more additional pairs of `DrunkCombatFreeze` draws, sometimes followed by
-`CombatReposition` and sword-strike proposal draws.  Original
+Seven combat traces share a `ReconsiderSwordfight` signature built from
+`DrunkCombatFreeze`, sometimes followed by `CombatReposition` and sword-strike
+proposal draws.  Three contain true additional reconsideration blocks; four
+instead stop one to three draws before Original and therefore require a
+separate downstream lifecycle diagnosis.  Original
 `RHArtificialMalignity::ReconsiderSwordfight` returns before those draws when
 either an `ENTER_SWORDFIGHT` element is registered to launch or the actor's
 current sequence element has an immediate postponed `ENTER_SWORDFIGHT`
@@ -328,12 +330,16 @@ normal Think boundary and timer-driven post-detection boundary now use it.  A
 focused sequence-manager test proves that an unrelated postponed command does
 not satisfy the predicate and the current element's linked successor does.
 
-The assigned traces are:
+The direct excess-entry candidates are:
 
 - `Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-001`
 - `Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-002`
-- `Savegame_linux/Profile_005/Restart/replay-001`
 - `Savegame_linux3/Profile_001/Continue/replay-002`
+
+The adjacent short-draw traces retained in the same rerun manifest, but not
+claimed as consequences of this gate, are:
+
+- `Savegame_linux/Profile_005/Restart/replay-001`
 - `Savegame_linux3/Profile_003/Savegame_031/replay-001`
 - `Savegame_nicouzouf/Profile_001/Savegame_039/replay-001`
 - `Savegame_nicouzouf/Profile_001/Savegame_039/replay-002`
