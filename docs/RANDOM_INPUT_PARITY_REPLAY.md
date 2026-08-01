@@ -1428,7 +1428,7 @@ rewritten or skipped:
 | `nicouzouf/Profile_001/Savegame_047/replay-002`, 639 -> 640 | Soldier 63, `PROUD_DONT_FIGHT` (55) | Same proud-entry mechanism: `AttackingReactiontime` (raw 153) enters the proud observer state (raw 195) while `LeaveAttentiveMode` starts. Covered by `96cd51790`. |
 | `linux3/Profile_001/Savegame_010/replay-002`, 32531 -> 32532 | Soldier 119, `PROUD_DONT_FIGHT` (55) | Same expression family; retain in the proud-entry validation cohort until the post-fix sweep confirms it. |
 | `linux3/Profile_003/Savegame_052/replay-001`, 4769 -> 4770 | PC 136, `HERO_UNABLE_TO_DO_SOMETHING` (14) | Landed in `d392354a5`: authorize a group slot with that actor's live move box. |
-| `SuN1Sh1nE/Profile_004/Savegame_026/replay-001`, 799 -> 800 | PC 282, `HERO_UNABLE_TO_DO_SOMETHING` (14) | Distinct owner/sequence boundary. PC 282 is an anonymous archer; Original accepts `EquipBow` and releases another callback through `Stop(Preference)` in the same input turn. Do not reject the bow command to manufacture the bark. |
+| `SuN1Sh1nE/Profile_004/Savegame_026/replay-001`, 799 -> 800 | PC 282, `HERO_UNABLE_TO_DO_SOMETHING` (14) | Landed in `61d7b570c`: PC 282 is an anonymous archer, and Original accepts `EquipBow`; the unable bark comes from the older Move that reaches `Actor::Instruct` at the manager boundary, where anonymous archers reject movement. Registering the action-bar `EquipBow` through `LaunchSequenceElement` preserves that older callback. Eagerly instructing EquipBow during input had arbitrated it away. |
 | `nicouzouf/Profile_001/Savegame_065/replay-001`, 368 -> 369 | Soldier 45, `WOUNDED` (29) | Live projectile/damage boundary. Arrow creation order 133 flies on frames 364--366, applies 100 damage and installs `ReceiveArrowDamage` on 367, then Original's `SayOuch` resolves on 368. Rust had no pending request; diagnose projectile collision/damage delivery before changing speech filtering. |
 | `linux3/Profile_001/Savegame_009/replay-003`, 13169 -> 13170 | Civilian 37, remark 4 | Landed in `d0220fb7c`: translated Rust PC 172 is Original PC 173, whose one-ration Eat at frame 13048 must use Original's silent `SetAmmoAmount` path rather than generic ability-decrement speech. |
 | `SuN1Sh1nE/Profile_004/Savegame_002/replay-003`, 35715 -> 35716 | Soldier 217, `REMARK_WARCRY` (9) | Landed in `e196cf36a`: this is a special-strike boundary, not a PC-expression boundary. Original's `EstimateDamageOfSwordStrike` reads live health for nearby civilian 63 as well as PC 344, so both count as victims and round thrust H is viable. Rust's four proposal collectors assigned civilians zero health, lost their damage/victim contribution, rejected H, and therefore omitted its warcry. All collectors now use the canonical human life-point accessor. |
@@ -1687,15 +1687,17 @@ geometry.  Focused regressions cover both identity transport and the
 solid-over-projection membership rule; the nine replay boundaries await the
 next sole-slot release sweep.
 
-The frozen `active` group has one trace: after Arrow 122 stops, Original is
-inactive on the following recorded frame while Rust remains active.  Recording
-occurs after `PerformHourglass` but before display refresh in Original.  Thus
-the impact/exhaustion frame is recorded active, then `RHElementArrow::Refresh`
-sees the empty trajectory plus stationary sprite and deactivates it before the
-next simulation frame.  Rust incorrectly modeled that as another full active
-simulation frame followed by a second retirement latch.  A stopped ordinary
-arrow now becomes inactive in its next owner slot, while retaining its entity
-tombstone; the focused lifecycle regression encodes both boundaries.
+The frozen `active` group initially had one trace around Arrow 122 retirement.
+Recording occurs after `PerformHourglass` but before display refresh in
+Original.  The terminal Hourglass frame must therefore remain active, while
+`RHElementArrow::Refresh` sees the empty trajectory plus stationary sprite and
+retires it before the following recorded frame.  A first attempt removed the
+Rust scheduling latch, but a broad follow-up sweep exposed twelve regressions:
+the stopped-flight branch is already reached in the terminal owner slot, so
+immediate retirement incorrectly changed that frame's snapshot.  The latch is
+required to bridge the unmodeled post-record Refresh phase: its first visit
+preserves the terminal active frame and its second retires the retained entity
+slot.  The focused lifecycle regression now encodes both boundaries.
 
 ## Maintenance checklist
 
