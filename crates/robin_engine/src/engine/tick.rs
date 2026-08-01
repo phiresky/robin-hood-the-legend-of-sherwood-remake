@@ -3751,15 +3751,26 @@ impl EngineInner {
                     engine.tick_bow_shot_for(sim, assets, owner, order_id);
                 }
                 if ability.is_some() {
-                    let is_listen = engine
+                    let listen_phase = engine
                         .get_entity(owner)
                         .and_then(Entity::actor_data)
-                        .is_some_and(|actor| {
-                            actor.active_ability.kind == Some(crate::movement::AbilityKind::Listen)
-                        });
-                    let listen_advanced = is_listen
+                        .filter(|actor| {
+                            actor.active_ability.kind
+                                == Some(crate::movement::AbilityKind::Listen)
+                        })
+                        .map(|actor| actor.listen_phase);
+                    let listen_counting = listen_phase
+                        == Some(crate::element::ListenPhase::CountingDown);
+                    let listen_advanced = listen_phase.is_some()
                         && engine.tick_enemy_ai_blip_detection_for_owner(sim, assets, owner);
-                    if !listen_advanced {
+                    // Original's RHANIMATION_LISTENING Execute arm ignores
+                    // the sprite's DONE/TERMINATED states and remains in
+                    // progress until mulWaitTime reaches zero. The detection
+                    // owner arm above is the complete Execute implementation
+                    // while CountingDown; running generic tick_ability as
+                    // well would let the short looping sprite terminate the
+                    // order and enter the exit transition early.
+                    if !listen_counting && !listen_advanced {
                         engine.tick_ability_for(sim, display, assets, owner);
                     }
                 }

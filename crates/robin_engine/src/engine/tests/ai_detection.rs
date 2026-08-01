@@ -226,6 +226,60 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
     };
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
+    // RHANIMATION_LISTENING deliberately ignores the sprite's completion
+    // state until the 25-frame timer expires. Use a one-frame row here so a
+    // generic ability tick would expose an early DoNextOrder immediately.
+    let mut conversion =
+        vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+    conversion[OrderType::Listening as usize] = 0;
+    engine
+        .get_entity_mut(listener)
+        .unwrap()
+        .element_data_mut()
+        .sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+            action_id: OrderType::Listening as u16,
+            action_done: 0,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1],
+            delays: vec![0],
+            distances: vec![0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        }]),
+        std::sync::Arc::new(conversion),
+    );
+    let mut owner_driven = engine.clone();
+    let mut owner_display = HostDisplayState::default();
+    let mut owner_dev = DevState::default();
+    for expected_wait in [24, 23, 22, 21] {
+        owner_driven.perform_hourglass(&mut owner_display, &assets, &mut owner_dev);
+        let owner_actor = owner_driven
+            .get_entity(listener)
+            .unwrap()
+            .actor_data()
+            .unwrap();
+        assert_eq!(owner_actor.listen_wait_time, expected_wait);
+        assert_eq!(
+            owner_actor.listen_phase,
+            crate::element::ListenPhase::CountingDown,
+            "Listening sprite completion must not advance the exit transition"
+        );
+        assert_eq!(
+            owner_driven
+                .orders
+                .sequence_manager
+                .get_element(seq, 0)
+                .unwrap()
+                .current_order()
+                .unwrap()
+                .order_type,
+            OrderType::Listening
+        );
+    }
+
     for (case, frozen_all, execution_frozen, fried, expected) in [
         ("FrozenAll", true, false, false, 24),
         ("execution_frozen", false, true, false, 0),
