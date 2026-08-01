@@ -1474,6 +1474,22 @@ kill XP is likewise tested after damage translation using Original's
 post-damage `IsDead()` condition, rather than only on a live-to-dead edge.
 Validation is pending the next sole-slot release run.
 
+#### Last-ration speech boundary
+
+The stale PC 172 `HERO_OUT_OF_AMMO` request in linux3 Profile 001 Save 009
+replay 003 is the translated identity of Original PC 173's one-ration Eat at
+frame 13048. Original completes that action with
+`SetAmmoAmount(RHACTION_EAT/GUZZLE, remaining)`, not
+`DecreaseAmmoAmount`: the empty action slot is disabled, but no
+`HERO_OUT_OF_AMMO` request is produced. Rust had routed Eat through the generic
+ability-decrement helper and left its extra request at the FIFO head until the
+civilian remark resolved 121 frames later.
+
+Rust now has a source-specific ration-consumption path which disables the Eat
+or Guzzle slot without speech, including Original's preference for the Guzzle
+slot when the PC has that action. A unit regression covers both profiles.
+Validation is pending the next sole-slot release run.
+
 The 71 R07 exits group by the first Rust draw site as follows:
 
 | First Rust site | Count |
@@ -1602,6 +1618,16 @@ and exact ordinary-solid impacts cannot fall back to overlapping projection
 geometry.  Focused regressions cover both identity transport and the
 solid-over-projection membership rule; the nine replay boundaries await the
 next sole-slot release sweep.
+
+The frozen `active` group has one trace: after Arrow 122 stops, Original is
+inactive on the following recorded frame while Rust remains active.  Recording
+occurs after `PerformHourglass` but before display refresh in Original.  Thus
+the impact/exhaustion frame is recorded active, then `RHElementArrow::Refresh`
+sees the empty trajectory plus stationary sprite and deactivates it before the
+next simulation frame.  Rust incorrectly modeled that as another full active
+simulation frame followed by a second retirement latch.  A stopped ordinary
+arrow now becomes inactive in its next owner slot, while retaining its entity
+tombstone; the focused lifecycle regression encodes both boundaries.
 
 ## Maintenance checklist
 

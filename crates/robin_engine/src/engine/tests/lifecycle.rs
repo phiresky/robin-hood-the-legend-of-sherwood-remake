@@ -773,7 +773,7 @@ fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
 }
 
 #[test]
-fn grounded_arrow_retires_after_one_stationary_frame_and_keeps_its_slot() {
+fn grounded_arrow_is_inactive_by_its_next_owner_slot_and_keeps_its_slot() {
     use crate::element::{
         Animation, ElementData, ElementKind, ElementProjectile, ObjectData, ObjectType,
         ProjectileData,
@@ -803,11 +803,7 @@ fn grounded_arrow_retires_after_one_stationary_frame_and_keeps_its_slot() {
     let Entity::Projectile(projectile) = engine.get_entity(arrow).unwrap() else {
         unreachable!()
     };
-    assert!(projectile.element.active);
-    assert!(projectile.projectile.retirement_pending);
-
-    engine.tick_projectile_or_net_hourglass(&sim, &assets, arrow);
-    assert!(!engine.get_entity(arrow).unwrap().is_active());
+    assert!(!projectile.element.active);
 
     engine.tick_projectile_or_net_hourglass(&sim, &assets, arrow);
     assert!(
@@ -3533,6 +3529,57 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
             .order_type,
         OrderType::WaitingUpright
     );
+}
+
+#[test]
+fn last_ration_disables_eat_or_guzzle_without_out_of_ammo_speech() {
+    use crate::campaign::PcDescription;
+    use crate::profiles::{Action, CharacterProfile, CharacterProfileIdx};
+
+    for action in [Action::Eat, Action::Guzzle] {
+        let mut engine = EngineInner::new();
+        let mut pc = make_test_pc(crate::element::Posture::Upright);
+        let pc_data = pc.pc_data_mut().unwrap();
+        pc_data.profile_index = CharacterProfileIdx(0);
+        pc_data.current_action = action;
+        pc_data.saved_action = action;
+        let pc_id = engine.add_entity(pc);
+
+        let mut desc = PcDescription {
+            character_profile_idx: Some(CharacterProfileIdx(0)),
+            ..Default::default()
+        };
+        desc.status.set_ammo(action, 1);
+        engine.mission_domain.campaign.characters.push(desc);
+
+        let mut assets = LevelAssets::new();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .characters
+            .push(CharacterProfile {
+                actions: [
+                    action,
+                    Action::NoAction,
+                    Action::NoAction,
+                    Action::NoAction,
+                    Action::NoAction,
+                ],
+                ..Default::default()
+            });
+
+        engine.consume_ration_without_speech(&assets, pc_id, action);
+
+        assert_eq!(
+            engine.mission_domain.campaign.characters[0]
+                .status
+                .get_ammo(action),
+            0
+        );
+        let pc = engine.get_entity(pc_id).unwrap().pc_data().unwrap();
+        assert_eq!(pc.current_action, Action::NoAction);
+        assert_eq!(pc.saved_action, Action::NoAction);
+        assert!(pc.disabled_actions[0]);
+        assert!(engine.feedback.sound_sim.pending_exclamations.is_empty());
+    }
 }
 
 #[test]

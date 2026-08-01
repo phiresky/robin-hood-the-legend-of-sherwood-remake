@@ -1100,6 +1100,49 @@ impl EngineInner {
         }
     }
 
+    /// Consume one Stoeckel ration through Original's `SetAmmoAmount` path.
+    ///
+    /// Eating is deliberately different from every `DecreaseAmmoAmount`
+    /// ability: `RHElementActorPC::RHANIMATION_EATING` computes the remaining
+    /// count and calls `SetAmmoAmount(RHACTION_EAT/GUZZLE, remaining)`.  That
+    /// disables an emptied action slot but does not say `HERO_OUT_OF_AMMO`.
+    pub(super) fn consume_ration_without_speech(
+        &mut self,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        action: crate::profiles::Action,
+    ) {
+        debug_assert!(matches!(
+            action,
+            crate::profiles::Action::Eat | crate::profiles::Action::Guzzle
+        ));
+        let status_idx = match self.get_entity(actor_id) {
+            Some(Entity::Pc(pc)) => self.pc_description_index_for_pc_data(&pc.pc),
+            _ => None,
+        };
+        let status_idx = status_idx
+            .unwrap_or_else(|| panic!("ration consumer {actor_id:?} has no campaign status"));
+        let remaining = {
+            let pc_desc = self
+                .mission_domain
+                .campaign
+                .characters
+                .get_mut(status_idx)
+                .unwrap_or_else(|| {
+                    panic!("ration consumer {actor_id:?} campaign index {status_idx} is missing")
+                });
+            let removed = pc_desc.status.decrease_ammo(action, 1);
+            assert_eq!(
+                removed, 1,
+                "ration consumer {actor_id:?} completed Eat without available ammo"
+            );
+            pc_desc.status.get_ammo(action)
+        };
+        if remaining == 0 {
+            self.disable_pc_action(assets, actor_id, action);
+        }
+    }
+
     /// Spawn an apple / stone projectile at the end of the throw
     /// animation.  Take the thrower's hand point and the victim's eyes
     /// point (or FX-target centre), compute a ballistic trajectory, and
@@ -3792,15 +3835,17 @@ impl EngineInner {
                                 .map(|p| p.has_action(crate::profiles::Action::Guzzle))
                                 .unwrap_or(false);
                             let heal_amount: i16 = if has_guzzle { 80 } else { 40 };
-                            // Decrement ammo counter.  Use
-                            // `decrement_ability_ammo` so the
-                            // out-of-ammo speech / disable side effect
-                            // is consistent with other ammo paths.
-                            self.decrement_ability_ammo(
-                                assets,
-                                actor_id,
-                                crate::profiles::Action::Eat,
-                            );
+                            // Original uses SetAmmoAmount here rather than
+                            // DecreaseAmmoAmount. That distinction suppresses
+                            // HERO_OUT_OF_AMMO for the last ration. Gluttons
+                            // also address their Guzzle action slot even
+                            // though Eat and Guzzle share one counter.
+                            let ration_action = if has_guzzle {
+                                crate::profiles::Action::Guzzle
+                            } else {
+                                crate::profiles::Action::Eat
+                            };
+                            self.consume_ration_without_speech(assets, actor_id, ration_action);
                             // Apply heal capped at LIFEPOINTS_PC.
                             if let Some(target) = self.get_entity_mut(actor_id)
                                 && let Some(pc) = target.pc_data_mut()
