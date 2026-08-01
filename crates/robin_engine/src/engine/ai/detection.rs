@@ -56,7 +56,6 @@ struct EnemyOpticalTarget {
     /// The projection obstacle this NPC target is currently standing
     /// on.  Used by the per-target `compute_view_radius` re-call.
     obstacle_idx: Option<crate::position_interface::ObstacleHandle>,
-    camp: Camp,
     is_pc: bool,
     is_soldier: bool,
     dead: bool,
@@ -852,7 +851,7 @@ impl EngineInner {
         // Read NPC state. The state gate is sampled once before the enemy-list
         // loop, as in the original outer
         // `if (mCurrentState != STATE_ATTACKING)`.
-        let (position_map, position_world, current_state, expects_pc_detectables) = {
+        let (position_map, position_world, current_state) = {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
@@ -867,17 +866,12 @@ impl EngineInner {
             {
                 return;
             }
-            // Every NPC runs the acoustic pass — it lives on the
-            // base NPC class.  `expects_pc_detectables` captures
-            // the camp-level predicate "does this NPC's enemy
-            // list include PCs?"  Royalists iterate the pass but
-            // skip PCs they don't track (their inner loop
-            // iterates detectable_lists and finds none).
-            let expects_pc_detectables = match entity {
-                Entity::Civilian(_) => true,
-                Entity::Soldier(s) => s.soldier.cached_camp == Camp::Lacklandists,
-                _ => return,
-            };
+            // Every NPC runs the acoustic pass — it lives on the base NPC
+            // class. Which PCs it considers is determined exclusively by its
+            // authoritative DETECTABLE_ENEMY list below.
+            if !matches!(entity, Entity::Civilian(_) | Entity::Soldier(_)) {
+                return;
+            }
             if entity.is_dead() || entity.element_data().posture == Posture::Tied {
                 return;
             }
@@ -891,7 +885,6 @@ impl EngineInner {
                 entity.element_data().position_map(),
                 entity.element_data().position(),
                 npc.ai_state(),
-                expects_pc_detectables,
             )
         };
         // Attacking NPCs are already locked onto their target
@@ -925,34 +918,6 @@ impl EngineInner {
                 return;
             };
             let enemy_idx = DetectableType::Enemy as usize;
-
-            // Lazy-populate: civilians + Lacklandist soldiers were
-            // initialised with the level's initial PC roster, but
-            // late-spawned PCs (reinforcements via bootstrap script)
-            // arrive after InitOneAI.  The runtime `AddDetectable`
-            // path only adds PCs to NPCs whose `AddDetectable` class
-            // filter passes — Royalist soldiers do NOT track PCs
-            // (they only track Lacklandist enemies), so we skip the
-            // populate for them.
-            if expects_pc_detectables {
-                for pc in &world.pcs {
-                    if !npc.detectable_lists[enemy_idx]
-                        .iter()
-                        .any(|d| d.element == Some(pc.id))
-                    {
-                        npc.detectable_lists[enemy_idx].push(Detectable {
-                            element: Some(pc.id),
-                            detectable_type: DetectableType::Enemy,
-                            seen_last_frame: false,
-                            heard_last_frame: false,
-                            seen_now: false,
-                            shadow_seen_now: false,
-                            shadow_seen_last_frame: false,
-                            last_visibility: 0.0,
-                        });
-                    }
-                }
-            }
 
             let deafness = npc.get_deafness(universal_frame, cover_volume);
             // `RefreshDetection` walks this NPC's DETECTABLE_ENEMY list, not
@@ -1652,37 +1617,6 @@ impl EngineInner {
             let enemy_idx = DetectableType::Enemy as usize;
             let detectables: &mut Vec<Detectable> = &mut npc.detectable_lists[enemy_idx];
 
-            let viewer_is_soldier = matches!(npc_id, EntityId::Soldier(_));
-            let target_is_allowed = |target: &EnemyOpticalTarget| {
-                crate::ai_detectable_filter::should_add_enemy_detectable(
-                    viewer.camp,
-                    viewer_is_soldier,
-                    target.is_pc,
-                    target.is_soldier,
-                    target.camp,
-                )
-            };
-
-            // Mission bootstrap can register humans after InitOneAI. Append
-            // missing eligible entries in global creation order, exactly as
-            // AddDetectable(..., ENEMY) would append them.
-            for target in enemy_targets
-                .iter()
-                .filter(|target| !target.dead && target_is_allowed(target))
-            {
-                if !detectables.iter().any(|d| d.element == Some(target.id)) {
-                    detectables.push(Detectable {
-                        element: Some(target.id),
-                        detectable_type: DetectableType::Enemy,
-                        ..Default::default()
-                    });
-                    tracing::trace!(
-                        npc = ?npc_id,
-                        target = ?target.id,
-                        "late Enemy detectable appended"
-                    );
-                }
-            }
             // Original CleanUpDetectables removes dead enemies only. The
             // AddDetectable policy governs new entries, but an existing entry
             // can outlive a later camp/role change and remains authoritative.
@@ -3172,7 +3106,6 @@ impl EngineInner {
                         unconscious: pc.human.unconscious,
                         passing_door: pc.actor.active_door_pass.is_some(),
                         obstacle_idx: pc.element.obstacle_index(),
-                        camp: Camp::Royalists,
                         is_pc: true,
                         is_soldier: false,
                         dead,
@@ -3224,7 +3157,6 @@ impl EngineInner {
                         unconscious: soldier.human.unconscious,
                         passing_door: soldier.actor.active_door_pass.is_some(),
                         obstacle_idx: soldier.element.obstacle_index(),
-                        camp: soldier.soldier.cached_camp,
                         is_pc: false,
                         is_soldier: true,
                         dead,

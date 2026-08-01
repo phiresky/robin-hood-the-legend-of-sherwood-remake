@@ -2962,6 +2962,56 @@ fn npc_hearing_thinks_before_same_slot_optical_detection() {
 }
 
 #[test]
+fn detection_tick_preserves_authoritative_enemy_membership() {
+    use crate::element::{Camp, DetectableType, Entity};
+
+    let mut engine = EngineInner::new();
+    let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+
+    let Entity::Soldier(observer) = engine
+        .get_entity_mut(observer_id)
+        .expect("membership observer exists")
+    else {
+        panic!("membership observer changed kind")
+    };
+    observer.element.active = true;
+    observer.npc.life_points = 100;
+
+    let Entity::Pc(pc) = engine.get_entity_mut(pc_id).expect("untracked PC exists") else {
+        panic!("untracked target changed kind")
+    };
+    pc.element.active = true;
+    pc.pc.life_points = 100;
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let Entity::Soldier(observer) = engine
+        .get_entity_mut(observer_id)
+        .expect("membership observer exists after fixture")
+    else {
+        panic!("membership observer changed kind after fixture")
+    };
+    observer.npc.detectable_lists[DetectableType::Enemy as usize].clear();
+
+    // Slot zero has Original creation order 31. Frame two opens the modulo-3
+    // acoustic gate as well as running the optical pass, so this one tick
+    // exercises both places that formerly reconciled every missing PC.
+    engine.control.frame_counter = 2;
+    crate::sim_rng::with_seed(0xA013_0EAE, |sim| engine.tick_enemy_ai(sim, &assets));
+
+    let observer = engine
+        .get_entity(observer_id)
+        .and_then(Entity::npc_data)
+        .expect("membership observer remains an NPC");
+    assert!(
+        observer.detectable_lists[DetectableType::Enemy as usize].is_empty(),
+        "RefreshDetection must only iterate serialized/explicitly-added detectables; it must not synthesize a missing PC"
+    );
+}
+
+#[test]
 fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
     use crate::ai::{AiLockFlags, AiState, StimulusInfo, StimulusType, Substate};
     use crate::ai_enemy::task_priority;
