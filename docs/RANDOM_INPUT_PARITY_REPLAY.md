@@ -182,6 +182,9 @@ treats the countdown/detection arm as the complete Listen Execute arm and
 does not run generic ability completion while `ListenPhase::CountingDown`.
 A one-frame-sprite regression proves that repeated owner ticks retain the
 Listening order while the authoritative timer advances `24, 23, 22, 21`.
+Both current release representatives clear their old countdown boundary and
+advance 21 frames, from 967 to an independent blip-state boundary at 988 and
+from 381 to an independent blip-state boundary at 402.
 The preserved representative engine dump is
 `output/parity-diagnostics/random-listen-countdown/rust-950-967.jsonl`.
 
@@ -260,6 +263,30 @@ The serial release rerun is preserved under
 traces decode and advance beyond their former parse boundary: 3 reach exact EOF
 and 12 expose later independent state, RNG, or speech boundaries.  No command
 is skipped or substituted to obtain alignment.
+
+### Resolved-speech FIFO subgroup
+
+The initial short-corpus sweep stopped six traces at the authoritative sound
+FIFO assertion.  Five were the same synchronous ordering case: Original
+`RHArtificialMalignity::NearbyCiviliansPanic()` completes each eligible
+civilian's `Think(EVENT_PANIC)` (and any resulting `Say`) before the initiating
+soldier continues to its following `Say(REMARK_STARTS_COMBAT)`.  Keeping that
+callback in the AI owner's ordered work FIFO restores the Original civilian,
+then soldier sound order instead of batching the civilian reaction afterward.
+
+The sixth trace exposed a separate omission rather than a FIFO policy issue.
+Original `RHElementActorHuman::TranslateHitDamage()` synchronously calls
+`SayOuch()` before appending its falling-hit order.  `SPEECH_EMERGENCY` thereby
+removes a `StartsCombat` exclamation queued earlier in the same engine frame,
+before the sound hourglass resolves the replacement `Wounded` sample.  Rust's
+hit-damage path now performs the same call for the default posture arm while
+retaining Original's silent already-down/flying posture cases.
+
+The serial release rerun is preserved under
+`output/parity-audits/random-short-speech-fifo-after-hit-ouch/`.  All 6 traces
+clear their former sound boundary with no skipped or reordered resolution: 1
+reaches exact EOF and 5 expose later independent direction, movement, command,
+or RNG boundaries.
 
 The long `60s-15x` snapshot contains 1,791 traces and is being swept with one
 runner process to keep memory bounded.  Its totals are provisional until all
