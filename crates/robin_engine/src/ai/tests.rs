@@ -104,6 +104,62 @@ fn break_macro_preserves_serialized_cursor_and_remaining_bytes() {
 }
 
 #[test]
+fn civilian_macro_run_sanitizes_flags_after_nested_path_completion() {
+    use crate::ai::macro_patrol::{MacroOpcode, PathId, PatrolPath};
+    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+
+    let paths = vec![RawHikingPath {
+        waypoints: vec![
+            RawWaypoint {
+                x: 0,
+                y: 0,
+                sector: 1,
+                level: 0,
+                command: WaypointCommand::None,
+            },
+            RawWaypoint {
+                x: 20,
+                y: 0,
+                sector: 1,
+                level: 0,
+                command: WaypointCommand::None,
+            },
+        ],
+    }];
+    let mut ai = AiController::new(17);
+    ai.current_state = AiState::Default;
+    ai.current_substate = Substate::DefaultInMacro;
+    ai.patrol_path = PatrolPath::new(PathId::new(0).unwrap(), &paths);
+    ai.default_path_walking_flags = GotoFlags::BACK;
+    ai.macro_command = vec![MacroOpcode::Run as u8];
+    ai.number_of_remaining_macro_bytes = 1;
+    let ctx = AiContext {
+        position: Position {
+            x: 0.0,
+            y: 0.0,
+            sector: SectorHandle::new(1),
+            level: 0,
+        },
+        hiking_paths: std::sync::Arc::new(paths),
+        self_is_soldier: false,
+        ..AiContext::default()
+    };
+
+    ai.execute_next_macro_command(&crate::sim_rng::test_context(), &ctx);
+
+    assert!(ai.last_goto_flags.contains(GotoFlags::RUN));
+    assert!(
+        ai.last_goto_flags.contains(GotoFlags::BACK),
+        "Original GoTo snapshots the raw flags before masking them for a civilian"
+    );
+    assert_eq!(ai.default_path_walking_flags, GotoFlags::RUN);
+    let order = ai.take_pending_orders().pop().expect("nested patrol GoTo");
+    let emitted_flags = GotoFlags::from_bits_retain(order.move_flags);
+    assert!(emitted_flags.contains(GotoFlags::RUN));
+    assert!(!emitted_flags.contains(GotoFlags::BACK));
+}
+
+#[test]
 fn ai_log_stimulus_strings_match_original_names_and_fallback() {
     assert_eq!(
         StimulusType::log_string_from_u16(StimulusType::EventView as u16),

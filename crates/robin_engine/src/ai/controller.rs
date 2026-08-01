@@ -1878,10 +1878,13 @@ impl AiController {
     /// Execute waypoint-macro opcodes until one blocks (wait-for-DONE,
     /// wait-for-timer) or the macro ends.
     ///
-    /// Several opcodes (`REVERSE_PATH`, `RUN`, `WALK`, `PATROL_*`, ...)
+    /// Several opcodes (`REVERSE_PATH`, `PATROL_*`, ...)
     /// would tail-call back into the VM to consume the next byte. We
-    /// flatten that into an explicit `'vm: loop` so the stack doesn't
+    /// flatten those into an explicit `'vm: loop` so the stack doesn't
     /// grow with macro length, and so `&mut self` aliasing is trivial.
+    /// `RUN` and `WALK` retain their recursive boundary because the Original
+    /// sanitizes forbidden civilian flags only after the nested command has
+    /// completed; that ordering is observable through `last_goto_flags`.
     pub fn execute_next_macro_command(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -2070,9 +2073,11 @@ impl AiController {
 
                     MacroOpcode::Run => {
                         self.default_path_walking_flags |= GotoFlags::RUN;
-                        // Sanitise forbidden-civilian flags after the
-                        // flag flip — only CMD_RUN/CMD_WALK touch these
-                        // flags.
+                        // Original recurses before sanitising civilian flags.
+                        // The nested path-completion GoTo therefore snapshots
+                        // the raw flags into `last_goto_flags`, even though
+                        // GoTo masks them before issuing the movement.
+                        self.execute_next_macro_command(sim, ctx);
                         if !ctx.self_is_soldier
                             && self
                                 .default_path_walking_flags
@@ -2084,12 +2089,13 @@ impl AiController {
                             );
                             self.default_path_walking_flags -= GotoFlags::FORBIDDEN_CIVILIANS;
                         }
-                        continue 'vm;
+                        return;
                     }
 
                     MacroOpcode::Walk => {
                         self.default_path_walking_flags -= GotoFlags::RUN;
-                        // Same civilian sanitation as CMD_RUN.
+                        // Same post-recursion sanitation boundary as CMD_RUN.
+                        self.execute_next_macro_command(sim, ctx);
                         if !ctx.self_is_soldier
                             && self
                                 .default_path_walking_flags
@@ -2101,7 +2107,7 @@ impl AiController {
                             );
                             self.default_path_walking_flags -= GotoFlags::FORBIDDEN_CIVILIANS;
                         }
-                        continue 'vm;
+                        return;
                     }
 
                     MacroOpcode::LookLeft => {

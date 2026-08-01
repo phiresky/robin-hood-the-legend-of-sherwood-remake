@@ -4066,6 +4066,17 @@ under both debug and release builds.
 
 ## Coverage limits
 
+### Civilian macro flag cleanup follows the recursive command boundary
+
+Original `CMD_RUN` and `CMD_WALK` recurse into the next macro command before
+masking combat-only movement flags from a civilian's persistent patrol flags.
+That ordering matters when the nested command finishes the macro and calls
+`GoTo`: `muwLastGotoFlags` snapshots the raw flags first, while the movement
+itself and the persistent flags are sanitized afterward. Rust's flattened VM
+previously sanitized before the nested path completion. The two opcodes now
+retain the Original recursive boundary; focused coverage checks both the raw
+last-command snapshot and the masked emitted movement.
+
 A clean baseline proves exact parity only for the state fields serialized by the
 recorder and the behaviors exercised by this session. When a divergence depends
 on unrecorded state, extend the neutral trace schema rather than guessing from a
