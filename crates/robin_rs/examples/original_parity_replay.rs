@@ -1787,6 +1787,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     let mut first_by_field = BTreeMap::<String, (u64, String)>::new();
     let mut gameplay_rng_index = prefix_end;
     let mut active_http_step = None;
+    let debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
     let automatic_dump_enabled = dump.is_none() && !scan_all && !no_auto_dump;
     let mut rolling_dump = VecDeque::<RollingDumpFrame>::new();
 
@@ -1805,6 +1806,12 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             BinaryTraceRecord::Frame(frame) => frame,
             BinaryTraceRecord::End { .. } => break,
         };
+        if debug_stage_timing {
+            eprintln!(
+                "parity stage: loaded original frame {} -> {}",
+                frame.frame_before, frame.frame_after
+            );
+        }
         assert_eq!(frame.frame_before, header.initial_frame + line_index as u64);
         assert_eq!(frame.frame_after, frame.frame_before + 1);
         line_index += 1;
@@ -1852,6 +1859,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         // distinguish load-time differences from first-hourglass mutations.
         let map = entity_map.get_or_insert_with(|| EntityMap::build(&engine, &assets, &frame));
         map.refresh_trace_indices(&frame);
+        if debug_stage_timing {
+            eprintln!("parity stage: mapped original frame {}", frame.frame_before);
+        }
         if frame.frame_before == 0 && std::env::var_os("PARITY_DEBUG_NPC_ORDER").is_some() {
             let reverse: BTreeMap<_, _> = map
                 .entities
@@ -1904,6 +1914,12 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             })
             .collect();
         engine.queue_resolved_exclamations(resolutions);
+        if debug_stage_timing {
+            eprintln!(
+                "parity stage: entering Rust frame {} -> {}",
+                frame.frame_before, frame.frame_after
+            );
+        }
         let tick_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             engine.perform_hourglass_with_body_gate(
                 &mut display,
@@ -1919,7 +1935,16 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             );
             std::panic::resume_unwind(payload);
         }
+        if debug_stage_timing {
+            eprintln!("parity stage: completed Rust frame {}", frame.frame_after);
+        }
         map.extend_runtime_entities(&engine, &frame);
+        if debug_stage_timing {
+            eprintln!(
+                "parity stage: extended runtime identity through frame {}",
+                frame.frame_after
+            );
+        }
         if let Some(visual) = &mut visual
             && !visual.render(&engine)
         {
@@ -2006,6 +2031,13 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         let mut differences =
             motion_line_parity.apply_changes_and_compare(&engine, &frame.motion_line_changes);
         differences.extend(compare_frame(&engine, &frame, map));
+        if debug_stage_timing {
+            eprintln!(
+                "parity stage: compared Rust frame {} ({} differences)",
+                frame.frame_after,
+                differences.len()
+            );
+        }
         let rust_rng_sites = engine
             .original_rng_replay_sites(rng_start..actual_rng_end)
             .expect("original RNG site history unexpectedly disabled");
