@@ -1609,16 +1609,22 @@ impl EngineInner {
                             }
                             crate::element::Posture::SimulatingBeggar => {
                                 let elem = SequenceElement::new(1, Command::LeaveBeggar, Some(pc));
-                                self.launch_element(elem);
+                                let mut sequence = Sequence::new();
+                                sequence.append_element(elem);
+                                self.launch_sequence(sequence);
                             }
                             crate::element::Posture::Spy
                             | crate::element::Posture::AnonymousArcher => {
                                 let elem = SequenceElement::new(1, Command::LeaveSpy, Some(pc));
-                                self.launch_element(elem);
+                                let mut sequence = Sequence::new();
+                                sequence.append_element(elem);
+                                self.launch_sequence(sequence);
                             }
                             crate::element::Posture::Tree => {
                                 let elem = SequenceElement::new(1, Command::LeaveTree, Some(pc));
-                                self.launch_element(elem);
+                                let mut sequence = Sequence::new();
+                                sequence.append_element(elem);
+                                self.launch_sequence(sequence);
                             }
                             _ => {}
                         }
@@ -1649,8 +1655,8 @@ impl EngineInner {
         //     element to launch into the actor's queue post-replay.
         let mut recovery = crate::sequence::Sequence::default();
         self.append_posture_recovery(pc, &mut recovery);
-        for element in recovery.elements {
-            self.launch_element(element);
+        if !recovery.elements.is_empty() {
+            self.launch_sequence(recovery);
         }
 
         // Post-seek continuation is now ported via
@@ -3349,15 +3355,21 @@ impl EngineInner {
                 }
                 crate::element::Posture::SimulatingBeggar => {
                     let elem = SequenceElement::new(1, Command::LeaveBeggar, Some(pc_id));
-                    self.launch_element(elem);
+                    let mut sequence = Sequence::new();
+                    sequence.append_element(elem);
+                    self.launch_sequence(sequence);
                 }
                 crate::element::Posture::Spy | crate::element::Posture::AnonymousArcher => {
                     let elem = SequenceElement::new(1, Command::LeaveSpy, Some(pc_id));
-                    self.launch_element(elem);
+                    let mut sequence = Sequence::new();
+                    sequence.append_element(elem);
+                    self.launch_sequence(sequence);
                 }
                 crate::element::Posture::Tree => {
                     let elem = SequenceElement::new(1, Command::LeaveTree, Some(pc_id));
-                    self.launch_element(elem);
+                    let mut sequence = Sequence::new();
+                    sequence.append_element(elem);
+                    self.launch_sequence(sequence);
                 }
                 _ => continue,
             };
