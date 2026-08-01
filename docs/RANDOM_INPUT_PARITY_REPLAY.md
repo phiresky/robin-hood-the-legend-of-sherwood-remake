@@ -1550,6 +1550,14 @@ armed before its later Hourglass polling phase can fire in that frame, while a
 timer rearmed from inside the polling phase is not polled again until the next
 frame.
 
+`BreakMacro` now also preserves the dormant macro byte stream, cursor, and
+remaining-byte count. Original only clears `mbMacroInProgress`, kills the
+macro timer, and clears Charly (`RHartificialintelligence.cpp:938-943`); its
+serializer still writes the cursor and remaining count afterward. Rust had
+eagerly erased all three fields. That cleanup changed save/reload state and
+would make the newly recorded macro diagnostics diverge even when behavior was
+otherwise identical.
+
 The seven `RuntimeBuildingExitWait`-leading traces are one H12 owner cohort:
 civilian 85 enters the building on replay frame 187, finishes the door pass
 and enters `DefaultInMacro` on frame 208, and Original remains inactive in its

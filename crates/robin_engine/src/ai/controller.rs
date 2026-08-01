@@ -1206,10 +1206,10 @@ impl AiController {
 
     pub fn break_macro(&mut self) {
         self.macro_in_progress = false;
-        self.number_of_remaining_macro_bytes = 0;
-        self.macro_command.clear();
-        self.macro_command_offset = 0;
         self.macro_timer_is_running = false;
+        // Original deliberately leaves the macro byte cursor and remaining
+        // count untouched. They are serialized even after BreakMacro and can
+        // therefore be observed by a later save/reload.
         // `BreakMacro` clears `DETECTABLE_MISSED_FRIEND` and zeros
         // `sorrow_level` as side effects — route through
         // `set_checkpoint_charly` so the detectable queue + sorrow

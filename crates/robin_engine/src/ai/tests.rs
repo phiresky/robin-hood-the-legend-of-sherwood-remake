@@ -86,6 +86,24 @@ fn ai_timers_preserve_zero_frame_and_ulong_wrapping_deadlines() {
 }
 
 #[test]
+fn break_macro_preserves_serialized_cursor_and_remaining_bytes() {
+    let mut ai = AiController::new(17);
+    ai.macro_command = vec![10, 20, 30, 40, 50];
+    ai.macro_command_offset = 3;
+    ai.number_of_remaining_macro_bytes = 2;
+    ai.macro_in_progress = true;
+    ai.macro_timer_is_running = true;
+
+    ai.break_macro();
+
+    assert!(!ai.macro_in_progress);
+    assert!(!ai.macro_timer_is_running);
+    assert_eq!(ai.macro_command, [10, 20, 30, 40, 50]);
+    assert_eq!(ai.macro_command_offset, 3);
+    assert_eq!(ai.number_of_remaining_macro_bytes, 2);
+}
+
+#[test]
 fn ai_log_stimulus_strings_match_original_names_and_fallback() {
     assert_eq!(
         StimulusType::log_string_from_u16(StimulusType::EventView as u16),
