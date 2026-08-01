@@ -636,6 +636,35 @@ pub fn compute_trajectory_ballistic(
     flat_shot: bool,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
 ) -> Vec<TrajectoryPoint> {
+    compute_trajectory_ballistic_with_terminal_obstacle(
+        start,
+        initial_velocity,
+        mass,
+        flat_shot,
+        obstacle_check,
+    )
+    .0
+}
+
+/// Build an arrow trajectory and retain the exact obstacle hit by its
+/// terminal segment.
+///
+/// Original `RHElementProjectile::ComputeTrajectory` keeps the
+/// `RHSightObstacle*` returned by `IsReachableImpact` and uses that exact
+/// object when assigning prospective landing layer/sector membership.  The
+/// plain trajectory API intentionally exposes only waypoints; arrow spawning
+/// uses this companion API so an overlapping projection polygon cannot replace
+/// a non-projection impact obstacle during the later membership lookup.
+pub fn compute_trajectory_ballistic_with_terminal_obstacle(
+    start: WorldPoint3D,
+    initial_velocity: WorldVec3D,
+    mass: f32,
+    flat_shot: bool,
+    obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
+) -> (
+    Vec<TrajectoryPoint>,
+    Option<crate::position_interface::ObstacleHandle>,
+) {
     compute_trajectory_ballistic_impl(
         start,
         initial_velocity,
@@ -668,6 +697,7 @@ pub fn compute_trajectory_ballistic_bounce(
         obstacle_check,
         Some(bounce_factors),
     )
+    .0
 }
 
 /// Impact classifications used by trajectory bounce dispatch.
@@ -887,7 +917,10 @@ fn compute_trajectory_ballistic_impl(
     _flat_shot: bool,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
     bounce: Option<(f32, f32)>,
-) -> Vec<TrajectoryPoint> {
+) -> (
+    Vec<TrajectoryPoint>,
+    Option<crate::position_interface::ObstacleHandle>,
+) {
     /// Top-impact termination speed threshold (`||v|| < 5`).
     /// Only applies when the previous iteration hit an obstacle's top
     /// plane; ground bounces use the gravity-chained termination
@@ -897,6 +930,7 @@ fn compute_trajectory_ballistic_impl(
 
     let fg = GRAVITY * mass;
     let mut trajectory = Vec::new();
+    let mut terminal_obstacle = None;
     let mut velocity = initial_velocity;
     let mut position = start;
 
@@ -1080,6 +1114,10 @@ fn compute_trajectory_ballistic_impl(
                 last_impact = Some(info);
                 continue;
             }
+            terminal_obstacle = r
+                .obstacle_index
+                .and_then(|index| u16::try_from(index).ok())
+                .and_then(crate::position_interface::ObstacleHandle::new);
             break;
         }
 
@@ -1137,7 +1175,7 @@ fn compute_trajectory_ballistic_impl(
         }
     }
 
-    trajectory
+    (trajectory, terminal_obstacle)
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -6415,6 +6453,51 @@ mod tests {
     //  hit-a-shield (deflect + fall), miss-and-fall, and the wasp-nest
     //  throw impact path.
     // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn arrow_trajectory_retains_exact_terminal_obstacle_identity() {
+        let obstacle = compute_shield_obstacle(
+            MapPoint::new(0.0, 0.0),
+            0.0,
+            4,
+            &ShieldParams {
+                pre_offset: 0.0,
+                width: 100.0,
+                depth: 5.0,
+                height: 100.0,
+                z_offset: 0.0,
+            },
+        );
+        let obstacles = [obstacle];
+        let grid = crate::fast_find_grid::FastFindGrid::default();
+        let check = TrajectoryObstacleCheck {
+            fast_find_grid: &grid,
+            layer: 0,
+            sight_obstacles:
+                crate::sight_obstacle::ObstacleList::from_slice_all_active(&obstacles),
+            water_zones: None,
+        };
+
+        let (trajectory, terminal_obstacle) =
+            compute_trajectory_ballistic_with_terminal_obstacle(
+                WorldPoint3D {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 25.0,
+                },
+                WorldVec3D {
+                    x: 10.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                MASS_ARROW_FLAT,
+                false,
+                Some(&check),
+            );
+
+        assert!(!trajectory.is_empty());
+        assert_eq!(terminal_obstacle.map(u16::from), Some(0));
+    }
 
     /// A projectile that passes close to a target on the ground (not
     /// airborne) still misses when the target's posture is one of the

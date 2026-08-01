@@ -562,18 +562,19 @@ impl EngineInner {
                 sight_obstacles: obstacle_list,
                 water_zones: Some(&assets.water_zones),
             };
-            let trajectory = bow_shot::compute_trajectory_ballistic(
-                bow_point,
-                velocity,
-                mass,
-                flat_shot,
-                // Magic-bullet short-circuit: skip the obstacle check entirely.
-                if magic_bullet {
-                    None
-                } else {
-                    Some(&obstacle_check)
-                },
-            );
+            let (trajectory, terminal_obstacle) =
+                bow_shot::compute_trajectory_ballistic_with_terminal_obstacle(
+                    bow_point,
+                    velocity,
+                    mass,
+                    flat_shot,
+                    // Magic-bullet short-circuit: skip the obstacle check entirely.
+                    if magic_bullet {
+                        None
+                    } else {
+                        Some(&obstacle_check)
+                    },
+                );
             let trajectory_end = trajectory.last().map(|tp| tp.position);
             // ComputeTrajectory resolves and stores the eventual impact
             // membership before the projectile's explicit pre-add
@@ -582,7 +583,11 @@ impl EngineInner {
             let initial_landing_resolution = trajectory_end.map(|end| {
                 self.world
                     .fast_grid
-                    .resolve_projectile_landing(end.to_map(), obstacle_list)
+                    .resolve_projectile_landing_with_obstacle(
+                        end.to_map(),
+                        terminal_obstacle,
+                        obstacle_list,
+                    )
             });
             tracing::debug!(
                 shooter = ?result.shooter,

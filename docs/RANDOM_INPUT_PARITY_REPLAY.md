@@ -1588,6 +1588,21 @@ authoritative shield direction.  Shield orders now preserve that facing.  A
 focused regression covers all four translated order types; attribution of
 individual frozen traces awaits the next sole-slot release sweep.
 
+All nine frozen `layer` first-boundary traces are one repeated projectile
+signature: newly created Projectile 283 is detached in Original
+(`layer=sector=0xFFFF`) but Rust assigns prospective landing layer 2, sector
+89.  This is not an isomorphism issue.  Original `ComputeTrajectory` retains
+the exact `RHSightObstacle*` returned by its 3D impact query; after assigning
+that obstacle it immediately leaves layer/sector detached when the obstacle is
+not a projection area.  Rust retained only the final waypoint and later
+rescanned its projected footprint, allowing an overlapping projection area to
+replace the actual solid impact obstacle.  Arrow trajectory construction now
+carries the terminal obstacle identity into landing-membership resolution,
+and exact ordinary-solid impacts cannot fall back to overlapping projection
+geometry.  Focused regressions cover both identity transport and the
+solid-over-projection membership rule; the nine replay boundaries await the
+next sole-slot release sweep.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

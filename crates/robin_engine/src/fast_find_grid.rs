@@ -1753,6 +1753,35 @@ impl FastFindGrid {
         let mut obstacle_plane = None;
         let mut layer = 0;
 
+        // ComputeTrajectory retains the exact obstacle returned by the 3D
+        // impact query. Original assigns that pointer before checking whether
+        // it is a projection area and returns immediately for any ordinary
+        // solid obstacle. Do not replace such an impact with an unrelated
+        // overlapping projection polygon selected from the landing footprint.
+        if let Some(handle) = exact_obstacle_index {
+            let index = usize::from(u16::from(handle));
+            let obstacle = sight_obstacles.get(index).unwrap_or_else(|| {
+                panic!("projectile terminal obstacle {index} is absent from its source list")
+            });
+            assert!(
+                sight_obstacles.is_active(index),
+                "projectile terminal obstacle {index} became inactive before landing resolution"
+            );
+            if !obstacle.is_projection_area() {
+                return ProjectileLandingResolution {
+                    obstacle_index: Some(handle),
+                    obstacle_plane: Some(
+                        crate::position_interface::PlaneZCoeffs::from_plane_points(
+                            &obstacle.top_plane_points,
+                        ),
+                    ),
+                    layer: 0,
+                    sector: None,
+                    blocked_by_motion_obstacle: true,
+                };
+            }
+        }
+
         let mut projection_iter: Box<
             dyn Iterator<Item = (u32, &crate::sight_obstacle::SightObstacle)> + '_,
         > = if let Some(handle) = exact_obstacle_index {
@@ -1770,7 +1799,8 @@ impl FastFindGrid {
         for (idx, obstacle) in projection_iter.by_ref() {
             if !sight_obstacles.is_active(idx as usize)
                 || !obstacle.is_projection_area()
-                || !obstacle.contains_point_projection(landing_map)
+                || (exact_obstacle_index.is_none()
+                    && !obstacle.contains_point_projection(landing_map))
             {
                 continue;
             }
@@ -4016,6 +4046,50 @@ mod tests {
         assert_eq!(resolution.obstacle_index.map(u16::from), Some(1));
         assert_eq!(resolution.layer, 2);
         assert_eq!(resolution.sector.map(u16::from), Some(22));
+    }
+
+    #[test]
+    fn projectile_landing_exact_solid_does_not_fall_back_to_overlapping_projection() {
+        use crate::position_interface::ObstacleHandle;
+        use crate::sector::SectorType;
+        use crate::sight_obstacle::SIGHTOBSTACLE_SOLID;
+
+        let mut grid = make_empty_grid(3);
+        grid.add_sector(
+            square_sector(
+                MapPoint::new(0.0, 0.0),
+                MapPoint::new(128.0, 128.0),
+                SectorType::MOTION | SectorType::AREA,
+                2,
+                22,
+            ),
+            2,
+        );
+        let mut solid = square_projection_obstacle(
+            MapPoint::new(0.0, 0.0),
+            MapPoint::new(128.0, 128.0),
+            0,
+            0,
+        );
+        solid.obstacle_type = SIGHTOBSTACLE_SOLID;
+        let projection = square_projection_obstacle(
+            MapPoint::new(0.0, 0.0),
+            MapPoint::new(128.0, 128.0),
+            2,
+            22,
+        );
+        let obstacles = [solid, projection];
+
+        let resolution = grid.resolve_projectile_landing_with_obstacle(
+            MapPoint::new(64.0, 54.0),
+            ObstacleHandle::new(0),
+            crate::sight_obstacle::ObstacleList::from_slice_all_active(&obstacles),
+        );
+
+        assert_eq!(resolution.obstacle_index.map(u16::from), Some(0));
+        assert_eq!(resolution.layer, 0);
+        assert_eq!(resolution.sector, None);
+        assert!(resolution.blocked_by_motion_obstacle);
     }
 
     #[test]
