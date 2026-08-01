@@ -1366,11 +1366,18 @@ impl EngineInner {
         &mut self,
         mut elem: crate::sequence::SequenceElement,
     ) -> crate::sequence::SequenceId {
+        let parity_debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
         debug_assert!(
             elem.owner.is_some(),
             "launch_element_for_owner requires elem.owner"
         );
         let mut owner = elem.owner.expect("owner present");
+        if parity_debug_stage_timing {
+            eprintln!(
+                "parity launch: launch_element_for_owner enter owner={owner:?} command={:?}",
+                elem.command
+            );
+        }
 
         // PC on a carrier's shoulders, receiving a Move-to-jump command,
         // delegates the move to the carrier (with the TO_JUMP + SEEK
@@ -1395,34 +1402,83 @@ impl EngineInner {
             return seq_id;
         }
 
+        if parity_debug_stage_timing {
+            eprintln!(
+                "parity launch: before resolve priority owner={owner:?} command={:?}",
+                elem.command
+            );
+        }
         self.resolve_element_priority(&mut elem);
+        if parity_debug_stage_timing {
+            eprintln!(
+                "parity launch: after resolve priority owner={owner:?} command={:?} priority={:?}",
+                elem.command, elem.priority
+            );
+        }
         let seq_id = self.orders.sequence_manager.launch_element(elem);
         let elem_idx = 0;
+        if parity_debug_stage_timing {
+            eprintln!("parity launch: registered owner={owner:?} seq={seq_id:?} idx={elem_idx}");
+        }
 
         // Stamp posture / action-state as the after-transition defaults
         // before any priority or transition logic runs.  See
         // `stamp_element_transition_state` for the rationale.
+        if parity_debug_stage_timing {
+            eprintln!("parity launch: before stamp owner={owner:?} seq={seq_id:?}");
+        }
         self.stamp_element_transition_state(owner, seq_id, elem_idx);
+        if parity_debug_stage_timing {
+            eprintln!("parity launch: after stamp owner={owner:?} seq={seq_id:?}");
+        }
 
         // NonInterruptable current short-circuit: postpone new (or mark
         // IMPOSSIBLE for PASS_DOOR+MOVE) without running
         // GenerateTransition.
+        if parity_debug_stage_timing {
+            eprintln!(
+                "parity launch: before non_interruptable_guard owner={owner:?} seq={seq_id:?}"
+            );
+        }
         if self.non_interruptable_guard(owner, seq_id, elem_idx) {
+            if parity_debug_stage_timing {
+                eprintln!(
+                    "parity launch: non_interruptable_guard accepted owner={owner:?} seq={seq_id:?}"
+                );
+            }
             return seq_id;
+        }
+        if parity_debug_stage_timing {
+            eprintln!(
+                "parity launch: after non_interruptable_guard owner={owner:?} seq={seq_id:?}"
+            );
         }
 
         // Auto-insert the exit / posture / enter transition sub-orders
         // before the command's own Translate runs.  Returning false
         // means no valid transition exists — set the element Impossible
         // and skip arbitration.
+        if parity_debug_stage_timing {
+            eprintln!("parity launch: before generate_transition owner={owner:?} seq={seq_id:?}");
+        }
         if !self.generate_transition(owner, seq_id, elem_idx) {
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
             return seq_id;
         }
+        if parity_debug_stage_timing {
+            eprintln!("parity launch: after generate_transition owner={owner:?} seq={seq_id:?}");
+            eprintln!("parity launch: before arbitrate owner={owner:?} seq={seq_id:?}");
+        }
 
         self.arbitrate_instruct(seq_id, elem_idx);
+        if parity_debug_stage_timing {
+            eprintln!("parity launch: after arbitrate owner={owner:?} seq={seq_id:?}");
+            eprintln!(
+                "parity launch: launch_element_for_owner exit owner={owner:?} seq={seq_id:?}"
+            );
+        }
         seq_id
     }
 
@@ -2364,7 +2420,26 @@ impl EngineInner {
         waiter_seq: crate::sequence::SequenceId,
         waiter_idx: usize,
     ) {
+        self.engine_postpone_with_debug_depth(blocker_seq, blocker_idx, waiter_seq, waiter_idx, 0);
+    }
+
+    fn engine_postpone_with_debug_depth(
+        &mut self,
+        blocker_seq: crate::sequence::SequenceId,
+        blocker_idx: usize,
+        waiter_seq: crate::sequence::SequenceId,
+        waiter_idx: usize,
+        depth: usize,
+    ) {
         use crate::sequence::PriorityDecision;
+
+        let parity_debug_stage_timing =
+            std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some() && depth <= 64;
+        if parity_debug_stage_timing {
+            eprintln!(
+                "parity launch: engine_postpone enter depth={depth} blocker=({blocker_seq:?},{blocker_idx}) waiter=({waiter_seq:?},{waiter_idx})"
+            );
+        }
 
         // If blocker already has a postponed successor, arbitrate
         // between that existing successor and the new waiter.
@@ -2374,6 +2449,11 @@ impl EngineInner {
             .get_element(blocker_seq, blocker_idx)
             .and_then(|e| e.cross_postponed);
         if let Some((existing_seq, existing_idx)) = existing_postponed {
+            if parity_debug_stage_timing {
+                eprintln!(
+                    "parity launch: engine_postpone existing depth={depth} blocker=({blocker_seq:?},{blocker_idx}) existing=({existing_seq:?},{existing_idx})"
+                );
+            }
             let existing_priority = self
                 .orders
                 .sequence_manager
@@ -2405,7 +2485,13 @@ impl EngineInner {
                 }
                 PriorityDecision::Postpone => {
                     // waiter queues behind existing — recurse.
-                    self.engine_postpone(existing_seq, existing_idx, waiter_seq, waiter_idx);
+                    self.engine_postpone_with_debug_depth(
+                        existing_seq,
+                        existing_idx,
+                        waiter_seq,
+                        waiter_idx,
+                        depth + 1,
+                    );
                     return;
                 }
                 PriorityDecision::PostponeCurrent => {
@@ -2421,7 +2507,13 @@ impl EngineInner {
                     {
                         b.cross_postponed = None;
                     }
-                    self.engine_postpone(waiter_seq, waiter_idx, existing_seq, existing_idx);
+                    self.engine_postpone_with_debug_depth(
+                        waiter_seq,
+                        waiter_idx,
+                        existing_seq,
+                        existing_idx,
+                        depth + 1,
+                    );
                     // Fall through to install waiter in blocker's slot.
                 }
                 PriorityDecision::InterruptCurrent => {
@@ -2535,6 +2627,11 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .postpone_element(waiter_seq, waiter_idx);
+        if parity_debug_stage_timing {
+            eprintln!(
+                "parity launch: engine_postpone exit depth={depth} blocker=({blocker_seq:?},{blocker_idx}) waiter=({waiter_seq:?},{waiter_idx})"
+            );
+        }
     }
 
     /// Cancel any active pathfinder request / active-movement / active-
