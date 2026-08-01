@@ -76,6 +76,27 @@ timing group, and the comparator `other` group.  Direction/position, RNG,
 speech, unsupported resolved commands, and the watchdog trace remain explicit
 follow-up groups rather than being silently folded into those assignments.
 
+### Fresh `other` subgroup ledger
+
+All 75 failures whose only first logical field is `other` have an exact
+`selected_pcs` mismatch; there are no miscellaneous comparator messages hidden
+in this bucket.  The mutually exclusive cardinality split is:
+
+| Subgroup | Count | Exact first boundary |
+|---|---:|---|
+| O01 | 72 | Original selected one PC and Rust retained a different single PC |
+| O02 | 3 | Original selected one PC and Rust retained two PCs |
+
+O01's first proven shared cause is inactive indoor-PC selection.  Original
+`RHElementActorPC::IsSelectable` checks the PC position interface's stored
+`GetSector()->IsBuilding()` value.  Rust instead performed a fresh fast-grid
+point query.  At coordinates covered by overlapping sectors, that query can
+return a non-building sector and reject the resolved `SelectPc`, leaving the
+old selection intact.  Rust now uses the entity's stored sector, matching the
+Original predicate.  O01 and O02 remain open until all 75 traces reach exact
+EOF with a frozen release runner; advancing one selection boundary may expose
+a later independent divergence.
+
 The long `60s-15x` snapshot contains 1,791 traces and is being swept with one
 runner process to keep memory bounded.  Its totals are provisional until all
 status files exist under `output/parity-audits/random-long-fresh/`.
@@ -155,7 +176,7 @@ not the current engine's expected failure count.
 | R09 | Unassigned | Resolved speech has no pending Rust request | Separate genuinely absent gameplay `Say` calls from already-fixed synchronous speech boundaries before changing restoration or FIFO policy. |
 | R10 | Unassigned | Resolved speech disagrees with pending FIFO | Compare actor, exclamation, forced/random variant, and the synchronous callback that queued it. Never skip an event to realign the stream. |
 | R11 | Fix landed; rerun required | Runtime entity creation/mapping | `516728654` exposed two bow arrows whose Rust identities were one early. Save adoption reused beam-me PCs without consuming the provisional construction orders that Original's dynamic load path consumes. The fix restores those invisible counter increments; both exposed arrows now map at their Original identities. |
-| R12 | Unassigned | Comparator `other`, layer/sector, or unclassified panic | Expand the diagnostic before assigning a cause. Layer/sector identity must remain isomorphic, not raw-index equal. |
+| R12 | Fix under validation | Comparator `other`, layer/sector, or unclassified panic | The fresh sweep's 75 `other`-only failures are all `selected_pcs`: O01=72 one-to-one wrong selection and O02=3 one-to-two. O01 exposed Rust point-querying the building under an inactive PC where Original uses its stored sector; the source-backed stored-sector fix requires a complete 75-trace rerun. Layer/sector identity remains a separate isomorphic comparison concern. |
 
 ## First-divergence ledger
 

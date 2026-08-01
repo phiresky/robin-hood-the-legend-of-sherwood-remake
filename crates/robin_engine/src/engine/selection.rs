@@ -55,26 +55,12 @@ impl EngineInner {
             return false;
         }
 
-        // A PC inside a building sector remains selectable even when flagged
-        // inactive.
-        let in_building = if pc.element.active {
-            false
-        } else {
-            let pos = pc.element.position_map();
-            let layer = pc.element.layer();
-            let pt = crate::coordinates::MapPoint::new(pos.x, pos.y);
-            let hit = self.world.fast_grid.get_sector(pt, pt, layer);
-            matches!(
-                hit,
-                crate::fast_find_grid::SectorHit::Found { sector_idx, .. }
-                    if self
-                        .world.fast_grid
-                        .level
-                        .sectors
-                        .get(usize::from(sector_idx))
-                        .is_some_and(|s| s.sector_type.is_building())
-            )
-        };
+        // Original RHElementActorPC::IsSelectable asks the PC's current
+        // position-interface sector directly.  A point query is not
+        // equivalent when building sectors overlap another sector at the
+        // same map coordinate, which can make an inactive indoor PC appear
+        // unselectable.
+        let in_building = self.entity_building_sector(pc.element.sector()).is_some();
         if !(pc.element.active || in_building) {
             return false;
         }
