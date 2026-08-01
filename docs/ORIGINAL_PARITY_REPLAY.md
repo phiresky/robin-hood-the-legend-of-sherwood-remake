@@ -4344,6 +4344,13 @@ only the mouse-drag mode flags, not that list. Rust had conflated the two and
 discarded the other selected PCs; it now preserves the group and fans the
 action out like Original.
 
+`ManageInputPreActionBow` likewise gates only on the three settled bow-aiming
+action states. Original does not scan the current animation or pending manager
+queue for an earlier EquipBow. A repeated pre-action message before EquipBow
+starts therefore goes through `Stop(PREFERENCE)` and launches another element,
+leaving priority/postponement to order it. Rust's extra de-duplication changed
+that input-visible sequence graph and has been removed.
+
 A clean baseline proves exact parity only for the state fields serialized by the
 recorder and the behaviors exercised by this session. When a divergence depends
 on unrecorded state, extend the neutral trace schema rather than guessing from a
