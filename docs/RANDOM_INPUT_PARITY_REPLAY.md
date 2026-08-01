@@ -450,7 +450,7 @@ not the current engine's expected failure count.
 | ID | Status | First visible family | Working interpretation / next proof |
 |---|---|---|---|
 | R01 | Fix landed; rerun required | PC `actor.action_state`, commonly Original idle versus Rust `WalkingUpright` while both retain `MoveOk` | `516728654` preserves Waiting when an entity-target `PerformSeek` remains visibly in progress. All four assigned boundaries clear; one trace is exact and three reach independent later failures. The remaining 53 baseline entries require failure-only reruns before this group can be split or closed. |
-| R02 | In progress | `direction_goal`, frequently at frame 516 | Silent Linux2 Save002 proved that Original patrol snapshots expose an active PassDoor member at its committed gate side, while Rust observed its interpolated sprite position and queued a stale patrol target. Door-snapped shared-AI views and exact endpoint completion are under validation; random members still require their own failure-only reruns before this whole group is attributed to that cause. |
+| R02 | Fix landed; cohort rerun required | `direction_goal`, frequently at frame 516 | `7db74f013` makes shared AI and owner-ordered `RefreshPatrol` snapshots expose an active PassDoor member at its committed gate side, and commits the exact endpoint before later owner slots can observe it. Linux2 Profile 002 Savegame 002 is exact through frame 726. The remaining baseline members require current failure-only reruns before this whole group can be attributed to that cause. |
 | R03 | Listen fix landed; timer rerun required | `actor.wait_time`, alone or beside action state | Original uses the single serialized `mulWaitTime` for Whistle and Listen. Rust now synchronizes its phase-local mirrors and, while Listening, ignores sprite completion until that counter reaches zero. The prior sweep's three unchanged timer pairs (`2 -> 14`, stale `25 -> 4294967269`, and `24 -> 25`) still require current-fix reruns; do not normalize any timer in the comparator. |
 | R04 | Unassigned | `position_goal_map` | Audit whether the outgoing selected command is detached, postponed, or retained. Existing Halt and raising-sword fixes are relevant but not assumed sufficient. |
 | R05 | Unassigned | `actor.command` with posture/direction | Inspect wrapper versus concrete command lifetime and the action-change marker that commits posture. |
@@ -516,6 +516,30 @@ matching audit log filenames.
 | `Nescafe__Profile_003__Savegame_004__replay-003` | 225 | `actor.wait_time` |
 
 ## Fix ledger
+
+### `7db74f013` — use committed door-side positions in AI
+
+Original `RHArtificialIntelligence::Position(actor)` returns the movement
+element's complete gate-side `RHposition` while its selected command is
+`PASS_DOOR`: `GetDirection()` chooses `PositionIn` or `PositionOut`, including
+the associated sector and layer. `RefreshPatrol` uses that helper for every
+member-distance comparison, so it must not observe the sprite's interpolating
+door-rail coordinate.
+
+Rust's shared AI views now apply the same full door-side override throughout
+the active translated PassDoor chain. Owner-slot projection preserves that
+override, AI self contexts and patrol snapshots consume it, and both ordinary
+and transition-resume completion paths commit the exact final endpoint before
+a later actor slot can observe the member. This is consistent with Original
+zero-tolerance motion completion, which snaps the sprite to its position goal
+before terminating the order.
+
+Linux2 Profile 002 Savegame 002 clears the obsolete patrol-coordinate boundary
+and matches every recorded frame through frame 726. A current source audit
+found the implementation complete and source-correct; no further behavior
+change is justified without a new first boundary. The remaining R02 baseline
+members still require failure-only reruns on current `main` to determine which
+share this cause and to split any independent later direction-goal families.
 
 ### `7910b1c7d` — preserve movement goals across replacement interruption
 
