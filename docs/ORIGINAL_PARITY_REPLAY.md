@@ -4101,6 +4101,33 @@ views, then resume the VM; yield after `PATROL_DIRECTION`, deliver and drain
 the member calls in patrol order, then resume again. This is deliberately not
 worked around with an extra timer or replay-specific ordering rule.
 
+### Pending: patrol-path macro assignments need typed return-to-duty barriers
+
+Original `AssignNewPatrolPath` begins with `BreakMacro` and, for an accepted
+assignment, synchronously calls `Think(EVENT_RETURN_TO_DUTY)` when the AI is
+not script-locked and its current state is `Default`. Consequently
+`CMD_STAY_HERE` does not merely mutate the path and arrange work for a later
+tick: its complete virtual `Think` boundary, including the concrete soldier or
+civilian `ReturnToDuty` implementation and any recursively generated movement
+events, closes before the opcode returns. Rust currently records a deferred
+self stimulus in the controller outbox and returns from the macro VM first.
+
+`CMD_CHANGE_WAY` has an additional shipped oddity. After
+`AssignNewPatrolPath(index)` returns, Original explicitly calls `BreakMacro`
+again and then calls the virtual `ReturnToDuty` unconditionally. On the normal
+unlocked/default path this means the assignment's synchronous
+`EVENT_RETURN_TO_DUTY` handling is followed by a second direct
+`ReturnToDuty`; when script-locked or outside `Default`, the direct call still
+happens even though the assignment did not dispatch the event. Rust currently
+performs only the assignment and omits that second typed call entirely.
+
+The general repair belongs in the same engine continuation mechanism as the
+patrol-opcode fix: suspend the macro VM at these owner boundaries, drain the
+real subtype-specific `Think`/`ReturnToDuty` work (and all synchronous child
+effects) in Original order, then finish the opcode. Collapsing the calls into
+`return_to_duty_common_stuff`, adding a timer, or special-casing a replay would
+lose soldier/civilian virtual behavior and would not be equivalent.
+
 ### Invalid patrol assignments retain the Original's partial mutation
 
 `AssignNewPatrolPath(index)` calls `BreakMacro` and sets
