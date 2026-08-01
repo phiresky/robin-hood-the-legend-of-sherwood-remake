@@ -1530,6 +1530,28 @@ Original/Rust boundary available in the ordinary log without decompressing a
 multi-gigabyte single-frame JSONL recording. Owner-specific replay diagnostics
 remain necessary before changing any matching source callsite.
 
+One independent macro-lifecycle discrepancy found during this audit is now
+fixed. Both out-of-bytes branches of Original `ExecuteNextMacroCommand` call
+`KillTimer(true)`, whose boolean selects the **macro** timer
+(`RHartificialintelligence.cpp:844-887`, `RHelementactornpc.cpp:3931-3940`).
+Rust had instead cleared `timer_is_running`, killing an unrelated normal AI
+timer and potentially leaving a macro deadline armed. Macro completion now
+clears only `macro_timer_is_running`; the focused regression preserves the
+normal timer and its deadline. This is source-backed lifecycle parity, not a
+claim that it resolves one of the still-unrerun RNG frontiers.
+
+The seven `RuntimeBuildingExitWait`-leading traces are one H12 owner cohort:
+civilian 85 enters the building on replay frame 187, finishes the door pass
+and enters `DefaultInMacro` on frame 208, and Original remains inactive in its
+WAIT/`DefaultInMacro` state beyond frame 528. Rust resumes the macro at frame
+508, builds the route out, and consumes the two building-exit wait draws.
+Original does call inactive elements' `Hourglass`, so skipping inactive AI is
+not a valid fix. The old recordings expose only AI state/substate, leaving an
+AI/script-lock deadline extension indistinguishable from a macro-timer value
+difference. Do not patch this cohort until a recording with the optional raw
+lock, `was_busy`, macro timer, cursor, and remaining-byte diagnostics reaches
+the same boundary.
+
 ### Frozen 739-trace ordinary-state regroup (`fd248c2ff`)
 
 The completed current-head audit in

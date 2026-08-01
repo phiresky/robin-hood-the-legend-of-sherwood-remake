@@ -2244,7 +2244,9 @@ impl AiController {
                         // Already here → synthesize a REACH_POINT event so
                         // the stimulus queue picks up the next waypoint.
                         self.macro_in_progress = false;
-                        self.timer_is_running = false;
+                        // Original `KillTimer(true)` kills the macro timer.
+                        // Do not touch the independent normal AI timer here.
+                        self.macro_timer_is_running = false;
                         self.current_substate = Substate::DefaultEnroute;
                         self.fire_self_stimulus(StimulusType::EventReachPoint);
                     }
@@ -2277,7 +2279,10 @@ impl AiController {
                         self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
                     }
                     self.macro_in_progress = false;
-                    self.timer_is_running = false;
+                    // Original `KillTimer(true)` kills the macro timer.
+                    // A concurrently armed normal AI timer survives patrol
+                    // macro completion.
+                    self.macro_timer_is_running = false;
                 }
                 return;
             }

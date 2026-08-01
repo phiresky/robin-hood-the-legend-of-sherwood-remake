@@ -30,6 +30,44 @@ fn substate_groups() {
 }
 
 #[test]
+fn finishing_patrol_macro_kills_only_the_macro_timer() {
+    let sim = crate::sim_rng::test_context();
+    let mut ai = AiController::new(17);
+    ai.current_state = AiState::Default;
+    ai.current_substate = Substate::DefaultInMacro;
+    ai.patrol_path = Some(PatrolPath {
+        hiking_path_index: PathId::new(0).expect("zero is a valid hiking-path index"),
+        current_waypoint_index: 0,
+        last_waypoint_index: 0,
+        forward: true,
+        size: 1,
+        history: Vec::new(),
+    });
+    ai.number_of_remaining_macro_bytes = 0;
+    ai.macro_started_in_this_frame = false;
+    ai.macro_in_progress = true;
+    ai.timer_is_running = true;
+    ai.when_does_timer_ring = 900;
+    ai.macro_timer_is_running = true;
+    ai.when_does_macro_timer_ring = 700;
+
+    ai.execute_next_macro_command(&sim, &AiContext::default());
+
+    assert!(
+        ai.timer_is_running,
+        "Original KillTimer(true) preserves the normal timer"
+    );
+    assert_eq!(ai.when_does_timer_ring, 900);
+    assert!(!ai.macro_timer_is_running);
+    assert_eq!(ai.when_does_macro_timer_ring, 700);
+    assert_eq!(ai.current_substate, Substate::DefaultEnroute);
+    assert_eq!(
+        ai.outbox.reentrant.self_stimuli,
+        [StimulusType::EventReachPoint]
+    );
+}
+
+#[test]
 fn ai_log_stimulus_strings_match_original_names_and_fallback() {
     assert_eq!(
         StimulusType::log_string_from_u16(StimulusType::EventView as u16),
