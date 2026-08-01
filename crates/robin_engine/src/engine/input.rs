@@ -2699,7 +2699,6 @@ impl EngineInner {
         use crate::element::{ActionState, Command};
         use crate::order::OrderType;
         use crate::position_interface::vector_to_sector_0_to_15_iso;
-        use crate::weapons::ShootMode;
 
         let ground_pt = GroundPoint {
             x: target_3d.x,
@@ -2771,16 +2770,17 @@ impl EngineInner {
 
         let (bow_status, shoot_mode) =
             self.can_shoot_with_bow_at_point(assets, pc_id, target_3d, false);
+        let command = bow_aim_height_command(action_state, bow_status, shoot_mode, current_anim);
         tracing::trace!(
             ?pc_id,
             ?action_state,
             ?current_anim,
             ?bow_status,
             ?shoot_mode,
+            ?command,
             ?target_3d,
             "resolved bow aim"
         );
-        let command = bow_aim_height_command(action_state, bow_status, shoot_mode, current_anim);
         if let Some(cmd) = command {
             let elem = crate::sequence::SequenceElement::new(1, cmd, Some(pc_id));
             self.launch_element(elem);
