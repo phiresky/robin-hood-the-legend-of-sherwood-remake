@@ -2643,12 +2643,26 @@ impl EngineInner {
         }
 
         // Classical seek + enter
-        let seek_tolerance = self
+        let pc_profile_index = self
             .get_entity(pc_id)
-            .and_then(|e| crate::engine::melee::get_hth_weapon_id_full(e, &assets.profile_manager))
+            .and_then(|entity| entity.pc_data())
+            .map(|pc| pc.profile_index);
+        let hth_weapon_id = self.get_entity(pc_id).and_then(|entity| {
+            crate::engine::melee::get_hth_weapon_id_full(entity, &assets.profile_manager)
+        });
+        let seek_tolerance = hth_weapon_id
             .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
             .map(|p| p.distance[crate::weapons::WeaponDistance::Default as usize] as f32)
             .unwrap_or(40.0);
+        tracing::trace!(
+            actor = ?pc_id,
+            target = ?target_id,
+            ?pc_profile_index,
+            ?hth_weapon_id,
+            ?action_style,
+            seek_distance = seek_tolerance,
+            "creating classical swordfight entity seek"
+        );
 
         // Cross-sector routing: when the target is separated from the
         // PC by one or more gates, a plain `Command::Seek` never
@@ -3791,6 +3805,9 @@ pub(crate) fn interaction_distance(cmd: Command) -> f32 {
         Command::HitCmd => 30.0,
         Command::ThrowApple | Command::ThrowStone => 0.0, // ranged
         Command::RaiseShield => 35.0,
+        // Original SwordstrikeDown passes the literal `40` to
+        // AddInteractionWithSeek (RHelementactornpc.cpp).
+        Command::SwordstrikeDown => 40.0,
         // `Command::Take` is normally handled by `take_seek_tolerance`;
         // this arm is a defensive fallback (Ale-radius 5 + 15 = 20)
         // for call paths that resolve Take without an entity in hand.
@@ -4574,6 +4591,11 @@ mod tests {
         engine.apply_interaction_with_seek(sim, pc_id, target_id, Command::SearchCmd, false);
 
         assert_eq!(first_seek_tolerance(&engine), 19.0);
+    }
+
+    #[test]
+    fn swordstrike_down_uses_original_literal_seek_distance() {
+        assert_eq!(interaction_distance(Command::SwordstrikeDown), 40.0);
     }
 
     #[test]

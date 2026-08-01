@@ -579,21 +579,41 @@ These nine traces collapse into four source-backed families:
    cohort: all three exact traces remain **rerun required** on one current
    release runner and close only at EOF.
 
-3. **The active `MoveOk` order has a different destination (three traces).** In
-   linux3 Savegame 001 and Savegame 007, the prior goal equals the prior current
-   position and the divergent frame installs a new internal waypoint. In
-   Savegame 031, a stopped actor begins an internal `MoveOk`; the targets differ
-   by about `0.03` in X and `2.0` in Y. There is no resolved input command at
-   any boundary, and Savegame 001 has no path event in frames 2702-2704.
-   Original `RHSprite::PerformMotion` copies the current
-   `RHOrder::pointDestination2D` into `position_goal_map` when a new order ID is
-   observed (`RHsprite.cpp:1393-1480`). The disagreement therefore already
-   exists in waypoint construction, path post-processing, target snapping, or
-   order replacement; it is not a goal-cache cleanup bug. Commit `0294404c7`
-   can reseed a stale Rust goal from the Rust order, but cannot make a differing
-   Rust order destination equal Original. This geometry/order-production
-   family remains unresolved and must be investigated from the producing
-   movement order backward.
+3. **The three apparent active-`MoveOk` waypoints have three distinct
+   producers.** None is a pathfinder waypoint. In linux3 Savegame 001 frame
+   2704, classical `EnterSwordfight` refreshes a direct entity-target seek.
+   Relative to the same target snapshot, Original installs a point exactly 50
+   units away while the frozen Rust runner installs one exactly 30 units away.
+   Original gets this distance from the selected PC's constructor-owned
+   `mpSword->GetRange(DEFAULT)` (`RHelementactorsoldier.cpp:2011-2018`); current
+   Rust resolves the PC character profile's HtH weapon default distance in
+   `engine/commands.rs`. Both Robin profiles in the current profile data resolve
+   to 50, so the frozen 30 cannot be attributed to current nominal data. The
+   creation site now emits an opt-in trace containing PC profile index, raw HtH
+   weapon ID, movement animation, and resolved seek distance. A current exact
+   rerun must establish whether this landed profile/save work already clears the
+   trace. If not, add the same values plus chase-speed classification and
+   effective tolerance at each `RefreshSeek`; the parity schema currently has
+   no seek-parameter event.
+
+   In Savegame 031 frame 480, a stopped PC begins the generated
+   `TransitionWaitingUprightWalkingUpright` start order. Original's destination
+   is exactly 4 units from the pre-start position and frozen Rust's is exactly
+   6 units away. Original and Rust `InsertTransitionStart` geometry agree; the
+   differing input is `RHSprite::GetDistanceForAnimation` versus Rust
+   `Sprite::distance_for_animation`. A rerun or diagnostic must capture the
+   active sprite profile/cache key, mapped row, row `sum_distance`, and the
+   pre/post transition order list to identify why Original maps this actor's
+   transition to 4 while frozen Rust maps it to 6.
+
+   In Savegame 007 frame 3056, `SwordstrikeDown` creates another direct entity
+   seek. Both goals lie on the same target ray, exactly 40 units away in
+   Original and 30 in frozen Rust. Original passes literal 40 to
+   `AddInteractionWithSeek` (`RHelementactornpc.cpp:4261` onward), while Rust's
+   generic interaction fallback returned 30. Rust now maps
+   `Command::SwordstrikeDown` explicitly to 40 with a focused regression test.
+   This is an exact general source fix, pending a release-mode exact rerun to
+   EOF (or its next independent boundary).
 
 4. **An attentive transition retains the completed movement goal (one
    trace).** Soldier 63 finishes `MoveOk` at exactly
