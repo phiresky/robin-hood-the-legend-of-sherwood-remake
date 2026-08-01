@@ -2233,6 +2233,12 @@ pub struct ProjectileData {
     /// is falling to the ground.  Falling arrows skip shield and victim
     /// collision checks.
     pub falling: bool,
+    /// Deferred arrow-refresh retirement. Original records parity after
+    /// `Hourglass` but before `RHElementArrow::Refresh`; this latch preserves
+    /// the terminal active snapshot and retires the stopped arrow when its
+    /// next owner slot models that refresh boundary.
+    #[serde(default)]
+    pub retirement_pending: bool,
     /// Sector (0..15) used by a falling arrow's visual rotation.  Cycled
     /// each tick while falling; the sprite-row driver that consumes this
     /// is part of the unported per-frame arrow refresh pass, so the field
@@ -2267,6 +2273,7 @@ impl Default for ProjectileData {
             trajectory_frame_count: 0,
             damage: 0,
             falling: false,
+            retirement_pending: false,
             falling_direction: 0,
             purse: PurseData::default(),
             wasp: WaspData::default(),

@@ -776,6 +776,9 @@ fn apply_projectile(runtime: &mut ProjectileData, saved: PlannedProjectile) {
     runtime.shooter = saved.shooter;
     runtime.trajectory = saved.trajectory;
     runtime.velocity_increment = saved.velocity_increment;
+    // This is a Rust scheduling latch, not serialized Original state. A
+    // restored projectile has not yet crossed a Rust owner-slot boundary.
+    runtime.retirement_pending = false;
 }
 
 fn preflight_object(

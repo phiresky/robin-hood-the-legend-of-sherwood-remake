@@ -3992,16 +3992,18 @@ impl EngineInner {
                             else {
                                 panic!("arrow owner changed concrete entity kind");
                             };
-                            // Original records the frame before its display
-                            // Refresh pass. The impact/exhaustion frame is
-                            // therefore still active in the parity snapshot,
-                            // then RHElementArrow::Refresh observes an empty
-                            // trajectory and stationary sprite and deactivates
-                            // it before the next simulation frame. This owner
-                            // slot is that next frame; no second retirement
-                            // latch is visible here.
+                            // This branch is reached in the same owner slot in
+                            // which Hourglass observes terminal flight state.
+                            // Original records that frame before
+                            // RHElementArrow::Refresh, so keep the arrow active
+                            // once. Its next owner slot models the completed
+                            // refresh boundary and retires the retained slot.
                             projectile.element.sprite.position_iface.new_move();
-                            projectile.element.active = false;
+                            if projectile.projectile.retirement_pending {
+                                projectile.element.active = false;
+                            } else {
+                                projectile.projectile.retirement_pending = true;
+                            }
                         }
                     }
                     base_active
