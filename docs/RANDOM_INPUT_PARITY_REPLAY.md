@@ -183,6 +183,17 @@ advance beyond the old boundary (6 to later compared fields and 4 to later RNG
 boundaries); results are under
 `output/parity-audits/random-action-wait-fix2/`.
 
+All eight `MovingSword -> MovingFastSword` mismatches occurred when
+`make_pc_fast` rewrote an already-running directional sword move. Original
+mutates the selected `RHOrder` in place, and `FaceOpponent` maps both logical
+walking/running sword tokens to the same concrete directional animation; only
+the `PerformMotion` method becomes fast. Rust reseeded the order ID, causing a
+false sprite `START` and an immediate MovingFastSword state change. Commit
+`20a106adc` preserves the live order identity for this exact sword-speed token
+pair. All eight release reruns advance beyond their former action-state,
+direction, and position boundary; their later results are under
+`output/parity-audits/random-action-wait-fix3/`.
+
 ### Fresh `other` subgroup ledger
 
 All 75 failures whose only first logical field is `other` have an exact
