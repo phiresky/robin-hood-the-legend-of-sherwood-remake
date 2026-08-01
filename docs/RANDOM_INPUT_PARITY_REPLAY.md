@@ -1415,6 +1415,44 @@ Raw statuses, logs, the mutually exclusive per-trace classification, and the
 release-runner fingerprint are preserved under
 `output/parity-audits/random-short-current-head-20260801/`.
 
+#### Frozen speech and invariant inventory
+
+The eight frozen speech exits are not one sound-manager problem. Source and
+trace inspection divides them as follows; "landed" means a general source fix
+exists after the frozen `fd248c2ff` runner, not that this old result was
+rewritten or skipped:
+
+| Frozen trace boundary | Original speech | Classification after source audit |
+|---|---|---|
+| `nicouzouf/Profile_001/Savegame_055/replay-002`, 480 -> 481 | Soldier 51, `PROUD_DONT_FIGHT` (55) | Landed in `96cd51790`: use the entry-time battle-decision substate. |
+| `nicouzouf/Profile_001/Savegame_047/replay-002`, 639 -> 640 | Soldier 63, `PROUD_DONT_FIGHT` (55) | Same proud-entry mechanism: `AttackingReactiontime` (raw 153) enters the proud observer state (raw 195) while `LeaveAttentiveMode` starts. Covered by `96cd51790`. |
+| `linux3/Profile_001/Savegame_010/replay-002`, 32531 -> 32532 | Soldier 119, `PROUD_DONT_FIGHT` (55) | Same expression family; retain in the proud-entry validation cohort until the post-fix sweep confirms it. |
+| `linux3/Profile_003/Savegame_052/replay-001`, 4769 -> 4770 | PC 136, `HERO_UNABLE_TO_DO_SOMETHING` (14) | Landed in `d392354a5`: authorize a group slot with that actor's live move box. |
+| `SuN1Sh1nE/Profile_004/Savegame_026/replay-001`, 799 -> 800 | PC 282, `HERO_UNABLE_TO_DO_SOMETHING` (14) | Distinct owner/sequence boundary. PC 282 is an anonymous archer; Original accepts `EquipBow` and releases another callback through `Stop(Preference)` in the same input turn. Do not reject the bow command to manufacture the bark. |
+| `nicouzouf/Profile_001/Savegame_065/replay-001`, 368 -> 369 | Soldier 45, `WOUNDED` (29) | Live projectile/damage boundary. Arrow creation order 133 flies on frames 364--366, applies 100 damage and installs `ReceiveArrowDamage` on 367, then Original's `SayOuch` resolves on 368. Rust had no pending request; diagnose projectile collision/damage delivery before changing speech filtering. |
+| `linux3/Profile_001/Savegame_009/replay-003`, 13169 -> 13170 | Civilian 37, remark 4 | Rust has an earlier stale PC 172 `HERO_OUT_OF_AMMO` (24) ahead of the correct civilian request. The only nearby PC input selects Heal at frame 12905 and cancels it at 12966; Original records ten plants and no accepted heal interaction. Find the Rust-only producer or loaded continuation; never discard the FIFO head to realign it. |
+| `SuN1Sh1nE/Profile_004/Savegame_002/replay-003`, 35715 -> 35716 | PC 217, `HERO_SOLDIERS_FIRING_AT` (9) | Unresolved PC speech producer. The single-frame trace requires a roughly 2 GiB zstd window, so use the native parity cache or an instrumented replay instead of repeatedly expanding the JSONL. |
+
+The twelve frozen invariant panics likewise contain only nine engine
+boundaries. Three files are physically truncated JSONL tails and must remain
+input-integrity failures: Nescafe Profile 001 restart-attempt 4716 replay 002
+(line 356), Profile 002 continue-attempt 4966 replay 002 (line 330), and
+Profile 003 restart-attempt 5236 replay 002 (line 350). Three lift panics are
+one malformed-metadata cohort for sector 77 and are fixed generally by
+`db4d3a18f`. The linux3 Profile 001 Save 016 replay 002 owner-work leak is
+fixed generally by `b78d182f3`.
+
+The remaining five invariant exits are live bow-release mappings, not
+load-time projectile restoration: SuN1Sh1nE Profile 004 Save 011 replay 001
+(Original projectile order 231), linux3 Profile 002 QuickSave replay 001
+(171), linux3 Profile 003 Save 024 replay 001 (213), linux3 Profile 003 Save
+052 replay 003 (325), and nicouzouf Profile 001 Save 045 replay 001 (143).
+In every case the Original projectile appears when a PC's `ShootBow` order
+reports done after trace start. The mapping assertion alone cannot distinguish
+"Rust did not spawn" from "Rust spawned and retired a different entity in the
+same frame"; capture the unmatched Rust creation orders and active-shot state
+before changing creation-order mapping.
+
 The 71 R07 exits group by the first Rust draw site as follows:
 
 | First Rust site | Count |
