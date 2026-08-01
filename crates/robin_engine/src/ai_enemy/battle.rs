@@ -1286,7 +1286,8 @@ impl EnemyAi {
                     let my_sector_num: Option<u16> = ctx.position.sector.map(u16::from);
                     let my_layer = ctx.position.level;
                     let nearest_door_pos = {
-                        let mut best: Option<(crate::ai::Position, u32)> = None;
+                        let mut best = None;
+                        let mut minimum_distance = u16::MAX;
                         for door in global.door_seek_infos.iter() {
                             if !matches!(door.door_type, crate::gate::DoorType::Building) {
                                 continue;
@@ -1309,18 +1310,35 @@ impl EnemyAi {
                             }
                             let dx = (door.point_out.x - ctx.position.x).abs();
                             let dy = (door.point_out.y - ctx.position.y).abs();
-                            let mut distance = dx.max(dy) as u32;
-                            if Some(door.sector_out) != my_sector_num {
-                                distance = distance.saturating_add(500);
-                            }
-                            if door.layer_out != my_layer {
-                                distance = distance.saturating_add(300);
-                            }
-                            if best.map(|(_, d)| distance < d).unwrap_or(true) {
-                                best = Some((door.position_in, distance));
+                            let distance = crate::ai::legacy_nearest_door_distance(
+                                dx,
+                                dy,
+                                Some(door.sector_out) != my_sector_num,
+                                door.layer_out != my_layer,
+                            );
+                            if distance < minimum_distance {
+                                // GetNearestDoor rejects a Lacklandist's
+                                // otherwise-best candidate when its interior
+                                // already contains any PC. A rejected house
+                                // does not update the running minimum.
+                                let dangerous_house = ctx.camp
+                                    == crate::element::Camp::Lacklandists
+                                    && global
+                                        .houses
+                                        .iter()
+                                        .find(|h| h.sector_index == door.sector_in as u32)
+                                        .is_some_and(|h| {
+                                            h.occupant_ids.iter().any(|id| {
+                                                matches!(id, crate::element::EntityId::Pc(_))
+                                            })
+                                        });
+                                if !dangerous_house {
+                                    best = Some(door.position_in);
+                                    minimum_distance = distance;
+                                }
                             }
                         }
-                        best.map(|(p, _)| p)
+                        best
                     };
 
                     if let Some(door_pos) = nearest_door_pos {

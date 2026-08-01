@@ -1054,7 +1054,8 @@ impl EngineInner {
             if self.scripts.mission.is_none() {
                 return;
             }
-            let mut best: Option<(u32, f32)> = None;
+            let mut best_idx = None;
+            let mut minimum_distance = u16::MAX;
             for &di in door_indices {
                 let Some(door) = self.script_domains.interactables.doors.get(di as usize) else {
                     continue;
@@ -1062,14 +1063,18 @@ impl EngineInner {
                 if door.is_locked_pc() || door.is_locked_npc_villain() {
                     continue;
                 }
-                let dist = (door.point_in.x - first_pos.x)
-                    .abs()
-                    .max((door.point_in.y - first_pos.y).abs());
-                if best.map(|(_, d)| dist < d).unwrap_or(true) {
-                    best = Some((di, dist));
+                let distance = crate::ai::legacy_nearest_door_distance(
+                    door.point_in.x - first_pos.x,
+                    door.point_in.y - first_pos.y,
+                    false,
+                    false,
+                );
+                if distance < minimum_distance {
+                    best_idx = Some(di);
+                    minimum_distance = distance;
                 }
             }
-            let Some((best_idx, _)) = best else {
+            let Some(best_idx) = best_idx else {
                 return;
             };
             let Some(door) = self

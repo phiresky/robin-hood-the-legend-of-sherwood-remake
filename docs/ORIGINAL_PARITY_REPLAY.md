@@ -4174,6 +4174,22 @@ the modulus applied to the global RNG draw. Rust now preserves the truncation
 and wrapping rules; focused coverage checks both fractional membership and
 layer-penalty overflow.
 
+### Door selection preserves UWORD scoring and the infinite sentinel
+
+Original `GetNearestDoor` narrows MaxNorm to `UWORD`, applies `+500` for a
+sector change and `+300` for a layer change with 16-bit wrapping arithmetic,
+and compares strictly against an initial `0xffff` minimum. Rust's panic and
+arrow-reserve door searches had widened this to saturating `u32`, while the
+indoor battle staging search compared raw floats and accepted its first
+candidate unconditionally. The clean arrow-reserve and battle-staging paths
+now share the legacy score helper and strict sentinel rule. The remaining
+panic-door copy in `engine/ai/mod.rs` is intentionally pending while that
+shared file has unrelated in-flight edits.
+
+The arrow-reserve path also now enforces the Original's Lacklandist-only
+dangerous-house check: an otherwise-best door is rejected when its interior
+occupant list contains a PC, without advancing the running minimum.
+
 A clean baseline proves exact parity only for the state fields serialized by the
 recorder and the behaviors exercised by this session. When a divergence depends
 on unrecorded state, extend the neutral trace schema rather than guessing from a

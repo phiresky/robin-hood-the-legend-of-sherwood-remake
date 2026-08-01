@@ -21,6 +21,22 @@ fn required_profile_manager_returns_the_supplied_level_profiles() {
 }
 
 #[test]
+fn nearest_door_distance_uses_original_uword_maluses() {
+    assert_eq!(
+        super::legacy_nearest_door_distance(100.9, 90.0, false, false),
+        100
+    );
+    assert_eq!(
+        super::legacy_nearest_door_distance(65_000.0, 0.0, true, true),
+        264
+    );
+    assert_eq!(
+        super::legacy_nearest_door_distance(65_535.0, 0.0, false, false),
+        u16::MAX,
+    );
+}
+
+#[test]
 fn substate_groups() {
     assert!(Substate::SeekingSeekpoint.is_seek_area());
     assert!(!Substate::DefaultOnPost.is_seek_area());
