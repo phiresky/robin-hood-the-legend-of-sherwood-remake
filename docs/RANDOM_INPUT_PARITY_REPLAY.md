@@ -485,6 +485,28 @@ matching audit log filenames.
 
 ## Fix ledger
 
+### `7910b1c7d` — preserve movement goals across replacement interruption
+
+Original `RHElementActor::Instruct` installs the incoming element as
+`mpSequenceElement` before setting the outgoing element to Interrupted.  The
+outgoing synchronous `SendCondolationCard` therefore observes that it is no
+longer selected and must not clear the sprite movement goal.  Rust formerly
+derived `was_selected` from its in-progress index while the replacement was
+still `Todo`, incorrectly giving the outgoing card ownership of that cleanup.
+
+Replacement arbitration now marks that exact interruption boundary as
+unselected.  The focused condolence regression passes, and both assigned
+Whistle-during-movement traces clear their position-goal boundary:
+
+- Linux2 Profile 002 Savegame 033 replay 001 advances from frame 23127 to an
+  independent Whistle action-state mismatch at frame 23130.
+- Linux3 Profile 001 Savegame 036 replay 001 advances from frame 33192 to the
+  same later family at frame 33195.
+
+An earlier hypothesis that the goal was erased by final movement-transition
+completion was rejected by a release replay and reverted before commit.  The
+actual clear occurred at the earlier replacement-interruption condolence.
+
 ### `f52e92a53` — face throwable targets in world ground coordinates
 
 Original `RHEngine::PerformOrientation` builds the apple, stone, net,
