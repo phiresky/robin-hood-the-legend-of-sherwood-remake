@@ -4052,9 +4052,11 @@ impl EngineInner {
                     panic!("WAIT_TIMER post-Execute owner {owner:?} is not an actor")
                 });
             if actor.wait_time == 0 {
+                actor.seek_refresh_wait = 0;
                 execute_result.motion = crate::sprite::MotionState::Terminated;
             } else {
                 actor.wait_time -= 1;
+                actor.seek_refresh_wait = actor.wait_time;
             }
             return;
         }

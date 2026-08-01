@@ -3060,6 +3060,17 @@ fn wait_timer_nonzero_preserves_original_extra_zero_frame() {
     );
     assert_eq!(
         engine
+            .world
+            .entities
+            .get(actor)
+            .and_then(|entity| entity.actor_data())
+            .expect("timer actor remains typed")
+            .seek_refresh_wait,
+        0,
+        "WAIT_TIMER countdown updates every Rust mirror of Original's shared mulWaitTime"
+    );
+    assert_eq!(
+        engine
             .orders
             .sequence_manager
             .get_element(timer_sequence, 0)
