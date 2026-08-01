@@ -1748,6 +1748,20 @@ that were downstream of general sequence-dispatch differences:
 Both changes preserve the global RNG stream by restoring the Original work
 that owns each draw; neither inserts, skips, or substitutes replay values.
 
+Four Linux3 Profile 002 Savegame 000 traces first diverged when Rust inserted
+PC 126 into 20--30 soldiers' persistent `list_them` arrays simultaneously,
+while every corresponding Original list remained empty. The trigger was the
+Rust-only `same_frame_target_claims` bridge in the global detection snapshot:
+one earlier soldier's target was copied to every able same-camp controller,
+even across distance and occlusion. Original performs this insertion only
+inside `BattleDecisions`, while walking friends which already passed
+`IsAbleToFight` and `IsDetecting360Degrees`. Rust's battle implementation now
+keeps that gate authoritative: the global snapshot no longer mutates
+`list_them`, and an earlier-slot target claim is overlaid inside
+`BattleDecisions` only for a friend admitted to that call's rebuilt `list_us`.
+This preserves live creation-order visibility without broadcasting targets to
+the whole camp.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
