@@ -1903,7 +1903,13 @@ impl EngineInner {
             Command::ShootBow | Command::ShootBowOnce | Command::ThrowApple | Command::ThrowStone
         ) {
             let elem = SequenceElement::new_interaction(1, command, Some(actor), Some(target));
-            self.launch_element(elem);
+            // Original's input handlers call LaunchSequenceElement here.
+            // That only registers the element for SequenceManager::Hourglass,
+            // after the entity loop, so an order already owned by the PC gets
+            // one final Execute tick before this interaction is instructed.
+            let mut seq = Sequence::new();
+            seq.append_element(elem);
+            self.launch_sequence(seq);
             return;
         }
 
@@ -2119,7 +2125,14 @@ impl EngineInner {
             seq.append_element(seek);
             self.launch_sequence(seq);
         } else {
-            self.launch_element(interaction);
+            // AddInteractionWithSeek builds and launches an RHSequence even
+            // when no seek is necessary. Launching the owned element through
+            // the eager single-element wrapper would arbitrate immediately,
+            // before this frame's actor slot; the Original does not instruct
+            // it until SequenceManager::Hourglass at the end of the frame.
+            let mut seq = Sequence::new();
+            seq.append_element(interaction);
+            self.launch_sequence(seq);
         }
     }
 
