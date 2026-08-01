@@ -2041,17 +2041,30 @@ impl EngineInner {
         let bank_signature = assets.bank_signature;
         // Snapshot the profiles we need so we can drop the campaign
         // borrow before mutating assets.
-        let profiles: Vec<(crate::profiles::CharacterProfileIdx, String, String)> = campaign
+        let profiles: Vec<(
+            crate::profiles::CharacterProfileIdx,
+            String,
+            String,
+            Option<String>,
+        )> = campaign
             .characters
             .iter()
             .filter_map(|desc| {
                 let cpi = desc.character_profile_idx?;
                 let profile = assets.profile_manager.get_character(cpi)?;
-                Some((cpi, profile.filename.clone(), profile.profile_name.clone()))
+                let alternate_profile = (profile.valid_alternative_profile
+                    && !profile.alternative_profile_name.is_empty())
+                .then(|| profile.alternative_profile_name.clone());
+                Some((
+                    cpi,
+                    profile.filename.clone(),
+                    profile.profile_name.clone(),
+                    alternate_profile,
+                ))
             })
             .collect();
         assets.character_sprite_prototypes.clear();
-        for (profile_index, filename, profile_name) in profiles {
+        for (profile_index, filename, profile_name, alternate_profile) in profiles {
             let mut sprite = crate::sprite::Sprite::default();
             if let Err(e) = sprite.load_frame_info(
                 assets.sprite_scriptor_mut(),
@@ -2064,6 +2077,30 @@ impl EngineInner {
             ) {
                 tracing::warn!(
                     "Failed to preload campaign character sprite '{filename}' / '{profile_name}': {e}",
+                );
+                continue;
+            }
+            // RHElementActorPC's constructor loads the alternative track
+            // whenever the character profile declares one. Dynamic PCs and
+            // save-only PCs are cloned from this cache rather than passing
+            // through the ordinary beam-me constructor, so their prototype
+            // must carry the same second track as well. Otherwise adopting a
+            // serialized `mbAlternateProfile=true` selects an empty Rust
+            // slot and silently falls back to the primary animations.
+            if let Some(alternate_profile) = alternate_profile
+                && let Err(e) = sprite.load_alternate_profile(
+                    assets.sprite_scriptor_mut(),
+                    crate::sprite_script::FrameKind::Character,
+                    "Data/Characters",
+                    &filename,
+                    &alternate_profile,
+                    bank_signature,
+                    None,
+                )
+            {
+                tracing::warn!(
+                    "Failed to preload alternate campaign character sprite \
+                     '{filename}' / '{alternate_profile}': {e}",
                 );
                 continue;
             }

@@ -4265,6 +4265,23 @@ fields, preventing an older v7 cache from being interpreted with the expanded
 model. Focused JSON coverage verifies that row, frame, and the `0xffff`
 initialization counter survive trace ingestion.
 
+### Cached campaign PC sprites include alternate profiles
+
+Original constructs every PC by loading its primary character sprite and,
+when `bValidAlternativeProfile` is set, its named alternate profile as a
+second animation track (`original-code/RHelementactorpc.cpp:416-421`). Rust's
+ordinary beam-me constructor did the same, but the cached prototype path used
+for dynamically restored or spawned campaign PCs loaded only the primary
+track. A v48 save could then restore `mbAlternateProfile=true` onto a sprite
+with no alternate data; Rust's sprite accessor silently fell back to the
+primary scripts and produced different animation rows, durations, and movement
+distances.
+
+Campaign sprite prototypes now preload the same declared alternate track as
+the Original PC constructor. The fix applies to every dynamic/save-only PC and
+does not special-case a mission or replay. This is a source-backed prevention
+fix; attribution of a recorded first boundary awaits a current release sweep.
+
 A clean baseline proves exact parity only for the state fields serialized by the
 recorder and the behaviors exercised by this session. When a divergence depends
 on unrecorded state, extend the neutral trace schema rather than guessing from a
