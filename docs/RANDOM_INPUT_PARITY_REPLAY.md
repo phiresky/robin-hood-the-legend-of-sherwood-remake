@@ -527,13 +527,28 @@ derived `was_selected` from its in-progress index while the replacement was
 still `Todo`, incorrectly giving the outgoing card ownership of that cleanup.
 
 Replacement arbitration now marks that exact interruption boundary as
-unselected.  The focused condolence regression passes, and both assigned
-Whistle-during-movement traces clear their position-goal boundary:
+unselected. The focused condolence regression passes. A current release build
+validates the complete eight-trace Whistle-during-movement family: all eight
+clear their `position_goal_map` mismatch. Six advance three frames to an
+independent Whistle transition action-state mismatch, while two retain only an
+independent wait-counter mismatch on the old frame:
 
 - Linux2 Profile 002 Savegame 033 replay 001 advances from frame 23127 to an
-  independent Whistle action-state mismatch at frame 23130.
+  action-state mismatch at frame 23130.
+- Linux2 Profile 002 Savegame 035 replay 001 retains frame 38243, now with only
+  `actor.wait_time` mismatching.
+- Linux2 Profile 002 Savegame 036 replay 001 advances from frame 53554 to an
+  action-state mismatch at frame 53557.
+- Linux2 Profile 002 Savegame 037 replay 001 advances from frame 58716 to an
+  action-state mismatch at frame 58719.
+- Linux3 Profile 001 Savegame 023 replay 001 advances from frame 54231 to an
+  action-state mismatch at frame 54234.
+- Linux3 Profile 001 Savegame 034 replay 002 advances from frame 29210 to an
+  action-state mismatch at frame 29213.
+- Linux3 Profile 001 Savegame 035 replay 002 retains frame 50147, now with only
+  `actor.wait_time` mismatching.
 - Linux3 Profile 001 Savegame 036 replay 001 advances from frame 33192 to the
-  same later family at frame 33195.
+  action-state mismatch at frame 33195.
 
 An earlier hypothesis that the goal was erased by final movement-transition
 completion was rejected by a release replay and reverted before commit.  The
