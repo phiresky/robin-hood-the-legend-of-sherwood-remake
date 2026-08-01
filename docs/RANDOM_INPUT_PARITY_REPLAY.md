@@ -1388,6 +1388,22 @@ low-tagged doors covers the shipped malformed metadata. Full replay
 validation remains pending until the active production sweep releases the
 runner.
 
+### Group-instruction continuation — close caller-local state work inline
+
+`linux3/Profile_001/Savegame_016/replay-002` reached frame 7667, where officer
+79's final accepted `CALL_INSTRUCTION` continuation changed
+`SeekingOfficerInstructGroupPointing` to
+`SeekingOfficerWaitForInstructedGroup`. Rust applied the pure AI fields but
+left the corresponding owner-local `SetState` callback queued past the
+officer's Hourglass slot.
+
+Original resumes the officer's stack immediately after the instructed
+soldier's `Think` returns. The result continuation now closes its caller-local
+state/speech/timer work before processing the next result-bearing call. A
+focused accepted-instruction regression asserts both the resulting wait state
+and an empty owner-work queue at that direct-call boundary. Full replay
+validation remains pending until the production runner is available.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

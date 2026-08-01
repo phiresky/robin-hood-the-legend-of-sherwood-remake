@@ -2503,6 +2503,56 @@ fn review2_call_instruction_uses_refusal_to_prune_group_synchronously() {
 }
 
 #[test]
+fn review2_accepted_group_instruction_closes_officer_state_callback() {
+    use crate::ai::{AiState, Stimulus, StimulusType, Substate};
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
+    {
+        let officer = engine
+            .get_entity_mut(officer_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("review2 officer has EnemyAi");
+        officer.set_state(
+            AiState::Seeking,
+            Substate::SeekingOfficerInstructGroupPointing,
+        );
+        officer.alerted_us = vec![soldier_id.index()];
+    }
+    engine
+        .get_entity_mut(soldier_id)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("review2 instructed soldier has EnemyAi")
+        .set_state(
+            AiState::Seeking,
+            Substate::SeekingGroupGetInstructedByOfficer,
+        );
+
+    let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
+    engine.dispatch_think_with_drain(
+        &sim,
+        officer_id,
+        &Stimulus::new(StimulusType::EventDone),
+        &ctx,
+        &tick,
+        &assets,
+    );
+
+    let officer = engine
+        .get_entity(officer_id)
+        .and_then(Entity::enemy_ai)
+        .expect("review2 officer retains EnemyAi");
+    assert_eq!(
+        officer.base.current_substate,
+        Substate::SeekingOfficerWaitForInstructedGroup
+    );
+    assert!(
+        officer.base.outbox.reentrant.owner_work.is_empty(),
+        "the continuation's SetState callback escaped the direct Think boundary"
+    );
+}
+
+#[test]
 fn review2_alert_soldiers_uses_state_refusal_and_does_not_consider_report() {
     use crate::ai::{AiState, CrossNpcAction, Position, ReportType, Substate};
 

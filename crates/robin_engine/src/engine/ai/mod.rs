@@ -10096,7 +10096,12 @@ impl EngineInner {
                     }
                     crate::ai::CrossNpcAction::RequestThinkResult { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
-                        self.process_synchronous_think_results_for(sim, source_id, assets)
+                        self.process_synchronous_think_results_for(
+                            sim,
+                            source_id,
+                            assets,
+                            defer_turn_instruction,
+                        )
                     }
                     crate::ai::CrossNpcAction::ReportBackToOfficer { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
@@ -10448,6 +10453,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         source_id: crate::element::EntityId,
         assets: &LevelAssets,
+        defer_turn_instruction: bool,
     ) {
         let requests = self
             .world
@@ -10587,6 +10593,19 @@ impl EngineInner {
                     &source_ctx,
                     &source_tick,
                 );
+
+            // The continuation is the caller's C++ stack frame resuming
+            // immediately after `target->Think(...)` returned. SetState,
+            // Say, and timer work emitted there must therefore close before
+            // the next queued group member is called (and certainly before
+            // this source owner's Hourglass slot returns).
+            self.drain_ai_owner_work_for_mode(
+                sim,
+                assets,
+                source_id,
+                true,
+                defer_turn_instruction,
+            );
         }
     }
 
