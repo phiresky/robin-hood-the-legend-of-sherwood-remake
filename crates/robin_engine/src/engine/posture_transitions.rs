@@ -167,6 +167,24 @@ impl EngineInner {
         if action_before == Some(action_after) {
             return;
         }
+        // `FaceOpponent` deliberately maps both logical sword tokens to the
+        // same concrete forward/backward/strafe animations; only the motion
+        // method changes between walk and fast. Original mutates the live
+        // order in place, so RHSprite sees the same unique ID and does not
+        // report a fresh START. Reseeding here incorrectly changed
+        // MovingSword to MovingFastSword on the MakeFast input frame.
+        if matches!(
+            (action_before, action_after),
+            (
+                Some(OrderType::WalkingWithSword),
+                OrderType::RunningWithSword
+            ) | (
+                Some(OrderType::RunningWithSword),
+                OrderType::WalkingWithSword
+            )
+        ) {
+            return;
+        }
 
         let new_order_id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
         let order = self
