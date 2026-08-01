@@ -1730,6 +1730,14 @@ impl EngineInner {
             let mut best_target: Option<(EntityId, MapPoint, u32)> = None;
             let mut max_sharpness: u32 = 0;
             let viewer_in_building = viewer_building_sector.is_some();
+            // Sharpness depends only on the observer's posture. Keep this in
+            // the scan scope so the predetection diagnostic below reports the
+            // exact same conversion used for every detectable.
+            let view_speed = if npc_posture == Posture::LeaningOut {
+                ai_vision::LOOK_DOWN_BASE_VIEW_SPEED
+            } else {
+                ai_vision::BASE_VIEW_SPEED
+            };
 
             for det in detectables.iter_mut() {
                 let target_id = det
@@ -1976,11 +1984,6 @@ impl EngineInner {
 
                 // Sharpness depends on posture.  Leaning out uses
                 // 10x faster detection (200 vs 20).
-                let view_speed = if npc_posture == Posture::LeaningOut {
-                    ai_vision::LOOK_DOWN_BASE_VIEW_SPEED
-                } else {
-                    ai_vision::BASE_VIEW_SPEED
-                };
                 let sharpness = (view_speed as f32 * visibility) as u32;
                 let is_visible = sharpness > 0;
                 tracing::trace!(
