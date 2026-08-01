@@ -103,6 +103,17 @@ fn raising_sword_direction(owner: &Entity, opponent: &Entity) -> i16 {
     crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy)
 }
 
+/// Beggar animation arms whose original PC `Execute` handler calls `Turn()`
+/// before advancing the sprite action.
+fn pc_beggar_execute_calls_turn(anim: OrderType) -> bool {
+    matches!(
+        anim,
+        OrderType::TransitionWaitingUprightSimulatingBeggar
+            | OrderType::TransitionSimulatingBeggarWaitingUpright
+            | OrderType::SimulatingBeggar
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,6 +121,18 @@ mod tests {
         ActorCivilian, ActorPc, ActorSoldier, ElementData, ElementFx, ElementKind, Entity, FxData,
     };
     use crate::engine::EngineInner;
+
+    #[test]
+    fn pc_beggar_execute_turns_during_both_transitions_and_idle() {
+        assert!(pc_beggar_execute_calls_turn(
+            OrderType::TransitionWaitingUprightSimulatingBeggar
+        ));
+        assert!(pc_beggar_execute_calls_turn(
+            OrderType::TransitionSimulatingBeggarWaitingUpright
+        ));
+        assert!(pc_beggar_execute_calls_turn(OrderType::SimulatingBeggar));
+        assert!(!pc_beggar_execute_calls_turn(OrderType::Whistling));
+    }
 
     fn weak_soldier_at_action_done(tiredness: u16) -> Entity {
         let mut entity = Entity::Soldier(ActorSoldier {
@@ -4500,10 +4523,11 @@ impl EngineInner {
                         //   EXTRACTING_ARROW_SWORD, RAISING_SHIELD,
                         //   ROLLING, TAKING_NET,
                         //   TAKING, DRINKING_ALE,
-                        //   TRANSITION_CARRYING_CORPSE_WAITING_UPRIGHT.
+                        //   TRANSITION_CARRYING_CORPSE_WAITING_UPRIGHT,
+                        //   and the PC beggar transition/idle family.
                         // Step the rotation here, then sync `element.direction`
                         // to match before the sprite picks the row to play.
-                        let needs_turn = matches!(
+                        let needs_turn = (matches!(
                             anim_type,
                             OrderType::TransitionRaisingSword
                                 | OrderType::TransitionLoweringSword
@@ -4566,7 +4590,8 @@ impl EngineInner {
                                 | OrderType::Pointing
                                 | OrderType::Searching
                         ) && (anim_type != OrderType::TransitionRaisingSword
-                            || antagonist.is_some());
+                            || antagonist.is_some()))
+                            || (entity.is_pc() && pc_beggar_execute_calls_turn(anim_type));
                         // Capture `Turn()`'s return for the GETTING_FREE_FROM_WASP
                         // still-turning substitution: while still
                         // turning, play TURNING_ALERTED and return
