@@ -596,6 +596,29 @@ regression covers an elevated officer and target sharing the same world Y;
 the officer must point due east rather than classify their projected-map Y
 difference.
 
+### `caeaa0b3b` — turn throughout PC beggar animations
+
+Original `RHElementActorPC::Execute` calls `Turn()` before advancing the
+sprite action in all three beggar animation arms: the transition into the
+disguise, `SIMULATING_BEGGAR` itself, and the transition back to upright.
+Rust omitted that family from its per-animation turn dispatch. Consequently,
+an Apple orientation issued while leaving the disguise advanced only once in
+Rust, while Original advanced once in `PerformOrientation` and once more when
+executing `TRANSITION_SIMULATING_BEGGAR_WAITING_UPRIGHT` in the same tick.
+
+The complete source-backed three-arm family is now included for PCs and has a
+focused classification regression. A combined release runner validates both
+assigned repetitions through exact EOF:
+
+- Linux3 Profile 001 Savegame 046 replay 001 clears its old frame-59372 PC 344
+  direction mismatch and matches every recorded frame.
+- Linux3 Profile 001 Savegame 047 replay 001 clears its old frame-83142 PC 344
+  direction mismatch and matches every recorded frame.
+
+The nearby Linux3 Profile 001 Savegame 043 replay 002 PC 343 boundary is an
+independent `EnterHelpingClimb` transition-turn case already repaired by
+`18af339fd`; it is not part of the beggar family.
+
 ### `516728654` — preserve Waiting for entity-target PC seeks
 
 Original `WalkingUpright::Execute` observes an entity-target `PerformSeek` as
