@@ -1903,8 +1903,26 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 });
         }
         for command in frame.commands.drain(..) {
+            if debug_stage_timing {
+                eprintln!(
+                    "parity stage: converting command before frame {}: {command:?}",
+                    frame.frame_after
+                );
+            }
             if let Some(command) = command.into_player_command(map, &engine) {
+                if debug_stage_timing {
+                    eprintln!(
+                        "parity stage: applying command before frame {}: {command:?}",
+                        frame.frame_after
+                    );
+                }
                 engine.apply_command(&mut display, &mut input, &assets, &command);
+                if debug_stage_timing {
+                    eprintln!(
+                        "parity stage: applied command before frame {}: {command:?}",
+                        frame.frame_after
+                    );
+                }
             }
         }
         // Original's Sound Hourglass ran after the preceding engine frame.
