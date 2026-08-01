@@ -3126,10 +3126,21 @@ impl EngineInner {
                     // initialization and completion callbacks below may drain
                     // only work they synchronously create; they must not steal
                     // a global/later-owner continuation.
-                    let preexisting_sequence_work = self
+                    let mut preexisting_sequence_work = self
                         .orders
                         .sequence_manager
                         .take_pending_synchronous_actions();
+                    let preexisting_owner_instruction =
+                        preexisting_sequence_work.iter().any(|action| {
+                            matches!(
+                                action,
+                                crate::sequence::SequenceAction::InstructOwner { owner, .. }
+                                    | crate::sequence::SequenceAction::ExecuteImmediateOwner {
+                                        owner,
+                                        ..
+                                    } if *owner == entity_id
+                            )
+                        });
 
                     // RHElementActor::Hourglass consumes one queued base
                     // position update before it inspects the current
@@ -3144,12 +3155,33 @@ impl EngineInner {
                     // then installs Wait whenever its order is empty. Active
                     // controls world presence/rendering, not sequence time.
                     self.ensure_wait_element(entity_id);
-                    self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
-                        .unwrap_or_else(|error| {
-                            panic!(
-                                "actor {entity_id:?} Wait initialization at legacy slot {slot} failed to drain its synchronous sequence work: {error:?}"
-                            )
-                        });
+                    if preexisting_owner_instruction {
+                        // `RHElementActor::Wait` only appends its element to
+                        // SequenceManager's FIFO. If an earlier owner already
+                        // registered work for this actor, neither that work
+                        // nor the lazy Wait may be instructed from inside the
+                        // actor slot: the later manager Hourglass processes
+                        // the earlier registration first, followed by Wait.
+                        //
+                        // Draining only the freshly-created Wait here lets it
+                        // leapfrog the detached earlier instruction and can
+                        // execute a transient WaitingSword arm (including
+                        // authoritative RNG) before that earlier command
+                        // replaces it. Preserve both portions for the manager
+                        // in their Original registration order instead.
+                        let newly_registered_wait = self
+                            .orders
+                            .sequence_manager
+                            .take_pending_synchronous_actions();
+                        preexisting_sequence_work.extend(newly_registered_wait);
+                    } else {
+                        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+                            .unwrap_or_else(|error| {
+                                panic!(
+                                    "actor {entity_id:?} Wait initialization at legacy slot {slot} failed to drain its synchronous sequence work: {error:?}"
+                                )
+                            });
+                    }
                     #[cfg(test)]
                     observe_actor_animation_boundary(ActorAnimationBoundaryPhase::WaitReady(
                         entity_id,
@@ -6370,6 +6402,74 @@ mod bow_command_body_parity_tests {
                 .expect("wait timer remains inspectable")
                 .state,
             SequenceState::Terminated
+        );
+    }
+
+    #[test]
+    fn lazy_wait_does_not_leapfrog_preexisting_owner_instruction() {
+        use crate::sequence::SequenceAction;
+
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let owner = engine.add_entity(make_aiming_pc(ActionState::WaitingSword));
+        let parry_sequence = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, Command::ParrySword, Some(owner)));
+
+        // Model the manager action that was registered before this actor's
+        // Hourglass slot. The actor coordinator temporarily detaches these
+        // actions while it runs the slot so nested callbacks cannot steal
+        // unrelated manager work.
+        let preexisting = engine.orders.sequence_manager.hourglass();
+        assert_eq!(
+            preexisting,
+            vec![SequenceAction::InstructOwner {
+                owner,
+                sequence_id: parry_sequence,
+                element_index: 0,
+            }]
+        );
+        engine
+            .orders
+            .sequence_manager
+            .restore_pending_synchronous_actions(preexisting);
+
+        engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .current_order_for_actor(owner)
+                .is_none(),
+            "the actor slot must not eagerly execute its synthetic Wait while an earlier owner instruction is pending"
+        );
+        let pending = engine
+            .orders
+            .sequence_manager
+            .take_pending_synchronous_actions();
+        assert_eq!(pending.len(), 2);
+        let pending_ids = pending
+            .iter()
+            .map(|action| match action {
+                SequenceAction::InstructOwner {
+                    owner: action_owner,
+                    sequence_id,
+                    element_index: 0,
+                } if *action_owner == owner => *sequence_id,
+                other => panic!("unexpected pending action after actor slot: {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(pending_ids[0], parry_sequence);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(pending_ids[1], 0)
+                .expect("synthetic Wait remains registered behind ParrySword")
+                .command,
+            Command::Wait
         );
     }
 
