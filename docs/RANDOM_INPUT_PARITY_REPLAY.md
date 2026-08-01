@@ -1371,6 +1371,23 @@ saved box state, cover the lift-only upright source, and preserve all three
 recorded sector kinds. Full replay validation remains pending until the active
 production sweep releases the runner.
 
+### Lift-target approach — geometry selects the high and low endpoints
+
+Three frozen-sweep traces (`linux2/Profile_002/Savegame_023/replay-001` and
+`linux3/Profile_002/ExQuickSave/replay-002`/`replay-003`) stopped while an
+enemy reconsidered a target standing in lift sector 77. Both shipped endpoint
+records for that lift are tagged `DOOR_LIFT_LOW`, so Rust's invented lookup by
+door-type tag could not find a high endpoint.
+
+Original `RHSectorLift::InitializeFromProtoStream` instead selects
+`mpHighestDoor` and `mpLowestDoor` by minimum/maximum `PointOut.Y`; its
+high-door type assertion is explicitly commented out. Enemy approach now
+uses that same geometric selection and retains the chosen door's point-out,
+outside sector, and outside layer. A regression with two deliberately
+low-tagged doors covers the shipped malformed metadata. Full replay
+validation remains pending until the active production sweep releases the
+runner.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

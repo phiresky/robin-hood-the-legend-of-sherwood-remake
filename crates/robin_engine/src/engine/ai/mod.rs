@@ -245,29 +245,34 @@ fn primary_target_lift_approach(
         return Some(None);
     }
 
-    let high = doors
+    // `RHSectorLift::InitializeFromProtoStream` does not trust the door-type
+    // tags here. It retains the doors with the smallest/largest PointOut.Y;
+    // the high-door type assertion is deliberately commented out in the
+    // Original. This matters for shipped sector 77, whose two endpoints are
+    // both tagged `DOOR_LIFT_LOW` even though their geometry is unambiguous.
+    let mut endpoints = doors
         .iter()
-        .find(|door| {
-            door.sector_in == sector_number
-                && matches!(
-                    door.door_type,
-                    crate::gate::DoorType::LiftHigh | crate::gate::DoorType::LiftHighCrenel
-                )
-        })
-        .unwrap_or_else(|| {
-            panic!("non-stairs lift sector {sector_number} has no authored high entry door")
-        });
+        .filter(|door| door.sector_in == sector_number);
+    let first = endpoints.next().unwrap_or_else(|| {
+        panic!("non-stairs lift sector {sector_number} has no authored entry doors")
+    });
+    let (mut high, mut low) = (first, first);
+    for door in endpoints {
+        if door.point_out.y < high.point_out.y {
+            high = door;
+        }
+        if door.point_out.y > low.point_out.y {
+            low = door;
+        }
+    }
+    assert!(
+        !std::ptr::eq(high, low),
+        "non-stairs lift sector {sector_number} has only one authored entry door"
+    );
     let selected = if high.layer_out == attacker_layer {
         high
     } else {
-        doors
-            .iter()
-            .find(|door| {
-                door.sector_in == sector_number && door.door_type == crate::gate::DoorType::LiftLow
-            })
-            .unwrap_or_else(|| {
-                panic!("non-stairs lift sector {sector_number} has no authored low entry door")
-            })
+        low
     };
 
     Some(Some(crate::ai::Position {
@@ -349,6 +354,24 @@ mod parity_tests {
     }
 
     #[test]
+    fn lift_approach_uses_point_out_geometry_when_both_doors_are_tagged_low() {
+        let grid = lift_grid(crate::sector::LiftType::Ladder);
+        let sector = crate::position_interface::SectorHandle::new(42).unwrap();
+        let mut doors = lift_doors();
+        doors[1].door_type = crate::gate::DoorType::LiftLow;
+
+        let high = primary_target_lift_approach(&grid, &doors, sector, 3)
+            .expect("target is in a lift")
+            .expect("ladder has an approach entry");
+        assert_eq!((high.x, high.y, high.level), (30.0, 40.0, 3));
+
+        let low = primary_target_lift_approach(&grid, &doors, sector, 1)
+            .expect("target is in a lift")
+            .expect("ladder has an approach entry");
+        assert_eq!((low.x, low.y, low.level), (10.0, 20.0, 1));
+    }
+
+    #[test]
     fn stairs_are_still_lifts_but_have_no_entry_detour() {
         let grid = lift_grid(crate::sector::LiftType::Stairs);
         let sector = crate::position_interface::SectorHandle::new(42).unwrap();
@@ -380,7 +403,7 @@ mod parity_tests {
     }
 
     #[test]
-    #[should_panic(expected = "has no authored high entry door")]
+    #[should_panic(expected = "has no authored entry doors")]
     fn non_stairs_lift_does_not_fake_a_missing_entry() {
         let grid = lift_grid(crate::sector::LiftType::Ladder);
         let sector = crate::position_interface::SectorHandle::new(42).unwrap();
