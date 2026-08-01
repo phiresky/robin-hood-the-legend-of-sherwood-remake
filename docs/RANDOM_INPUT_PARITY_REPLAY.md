@@ -1227,15 +1227,31 @@ upgrade it for blocked LOS (`original-code/RHelementactorhuman.cpp:7047-7144`;
 the ordinary bow-aim values (`original-code/RHelementactorhuman.cpp:6924-6963`).
 Rust follows those boundaries in `engine/input.rs:1635-1736` and
 `engine/input.rs:2710-2786`. Because the recorded Original command stays
-`Wait`, Original did not observe the same final valid-long classification. The
-remaining frontier is specifically the obstacle query, not the hand point,
-range test, or shoot-type threshold. The targeted log enabled only
-`robin_engine::engine::input=trace`; it therefore does not contain the sibling
-`robin_engine::sight_obstacle` trace event with blocker index/id. Schema 12
-also omits the Original candidate list and blocking reason. Identify that
-single Rust blocker and compare its geometry and active membership with
-Original FastFindGrid before changing behavior. Do not special-case this
-replay or remove the valid-status guard.
+`Wait`, Original did not observe the same final valid-long classification. A
+second targeted run enabled both input and sight-obstacle traces and identified
+the Rust blocker as static obstacle index/id 245; its exact artifact is
+`output/parity-audits/r05-wait-raise-bow-current-head/linux3-profile003-save038-replay001-bow-and-sight-trace.log`.
+The engine's 466-entry active vector has obstacle 245 enabled. It is an
+on-ground quadrilateral spanning approximately X `1468.48..1591.68`, Y
+`1509.56..1562.70`, and Z `0..731`, and its type value is 41:
+`SOLID | MOUSE | SHOW_SHADOW_POLYGON`, notably without `OPAQUE`. The preserved
+level asset is
+`output/parity-audits/r05-wait-raise-bow-current-head/linux3-profile003-save038-f29146-level-assets.json`.
+
+This exposed the exact general bug. Original
+`RHSightObstacle::IsOfType(type)` implements `(mType & type) == type`
+(`original-code/RHsightobstacle.h:104`), and every FastFindGrid obstacle
+candidate helper calls it. Therefore the bow's combined `SOLID | OPAQUE`
+request excludes solid-only obstacle 245. Rust instead skipped only when the
+intersection was zero, treating the mask as any-of and admitting obstacle 245.
+Commit `ece711a29` adds the shared all-requested-bits predicate and uses it in
+boolean 3D reachability, nearest 3D impact, vertical fall, and vertical rise.
+Explicit single-property `is_solid` and `is_opaque` queries retain their
+any-bit semantics. The focused
+`combined_type_filter_requires_every_requested_bit` regression reproduces
+obstacle 245's solid-only shadow flags and verifies that it blocks a SOLID
+query but not a combined SOLID-and-OPAQUE query. This is not a replay-specific
+exception and does not weaken the valid-target guard.
 
 When another fix lands, add the commit, Original source boundary, focused test,
 all affected traces, and their new exact result or next independent frontier
