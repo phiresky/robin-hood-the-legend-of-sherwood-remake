@@ -1540,6 +1540,16 @@ clears only `macro_timer_is_running`; the focused regression preserves the
 normal timer and its deadline. This is source-backed lifecycle parity, not a
 claim that it resolves one of the still-unrerun RNG frontiers.
 
+The same source audit removed another invented timer semantic. Original
+`RHElementActorNPC::LaunchTimer` stores `universal_frame + frames` verbatim for
+both timer kinds; zero is not clamped (`RHelementactornpc.cpp:3906-3921`).
+Rust had changed zero-frame deadlines to one frame. Both timer launch helpers
+now preserve zero and use `u32` wrapping addition to match Original `ULONG`.
+Whether a zero timer fires immediately still follows call position: a timer
+armed before its later Hourglass polling phase can fire in that frame, while a
+timer rearmed from inside the polling phase is not polled again until the next
+frame.
+
 The seven `RuntimeBuildingExitWait`-leading traces are one H12 owner cohort:
 civilian 85 enters the building on replay frame 187, finishes the door pass
 and enters `DefaultInMacro` on frame 208, and Original remains inactive in its

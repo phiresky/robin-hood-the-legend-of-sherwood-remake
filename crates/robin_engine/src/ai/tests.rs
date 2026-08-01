@@ -68,6 +68,24 @@ fn finishing_patrol_macro_kills_only_the_macro_timer() {
 }
 
 #[test]
+fn ai_timers_preserve_zero_frame_and_ulong_wrapping_deadlines() {
+    let mut ai = AiController::new(17);
+    ai.current_substate = Substate::DefaultInMacro;
+
+    ai.launch_timer(0, 123);
+    assert_eq!(ai.when_does_timer_ring, 123);
+    assert_eq!(ai.substate_at_last_timer_launch, Substate::DefaultInMacro);
+
+    ai.launch_macro_timer(0, 456);
+    assert_eq!(ai.when_does_macro_timer_ring, 456);
+
+    ai.launch_timer(5, u32::MAX - 2);
+    ai.launch_macro_timer(7, u32::MAX - 3);
+    assert_eq!(ai.when_does_timer_ring, 2);
+    assert_eq!(ai.when_does_macro_timer_ring, 3);
+}
+
+#[test]
 fn ai_log_stimulus_strings_match_original_names_and_fallback() {
     assert_eq!(
         StimulusType::log_string_from_u16(StimulusType::EventView as u16),

@@ -549,11 +549,10 @@ impl AiController {
 
     /// Arm the stimulus timer to fire `frames` ticks from now.
     pub fn launch_timer(&mut self, frames: u32, current_frame: u32) {
-        // Clamp `frames == 0` to 1 so the timer never rings the same
-        // frame it was armed.
-        let frames = frames.max(1);
         self.timer_is_running = true;
-        self.when_does_timer_ring = current_frame + frames;
+        // Original stores the raw ULONG sum. In particular, a zero-frame
+        // timer is immediately due when a later phase polls it this frame.
+        self.when_does_timer_ring = current_frame.wrapping_add(frames);
         self.substate_at_last_timer_launch = self.current_substate;
     }
 
@@ -1390,11 +1389,11 @@ impl AiController {
     /// AI hourglass calls [`Self::execute_next_macro_command`] directly
     /// (bypassing the Think state machine).
     pub fn launch_macro_timer(&mut self, frames: u32, current_frame: u32) {
-        // Clamp `frames == 0` to 1 so a macro timer never rings the
-        // same frame it was armed.
-        let frames = frames.max(1);
         self.macro_timer_is_running = true;
-        self.when_does_macro_timer_ring = current_frame + frames;
+        // Match the raw ULONG deadline written by NPC::LaunchTimer. A
+        // zero-frame macro wait can be consumed by a later macro-timer phase
+        // in this same owner Hourglass call.
+        self.when_does_macro_timer_ring = current_frame.wrapping_add(frames);
     }
 
     // -- Patrol macro helpers --
