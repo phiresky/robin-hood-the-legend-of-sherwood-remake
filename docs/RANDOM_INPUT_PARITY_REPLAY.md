@@ -839,6 +839,31 @@ Original and `RaiseBow` in Rust. The authoritative validation is
 with status `1` in its sibling `.status` file. R03's `2 -> 14` member is
 closed; frame 11860 belongs to the command-lifecycle/RaiseBow family.
 
+### `3c83560e` (Original) + `750224e6f` (Rust) — reject invalid bow-height classifications
+
+The frame-11860 `Wait`/`RaiseBow` boundary was not sequence scheduling or an
+LOS-obstacle mismatch. PC 126 was genuinely playing animation 89
+(`RHANIMATION_AIMING_WITH_BOW`), but the recorded target lay outside the bow
+range cone. Original `CanShootWithBowAt` returns `OUT_OF_RANGE` before assigning
+its `ShootType` out-parameter (`original-code/RHelementactorhuman.cpp:7041-7111`).
+`AimWithBowAt` ignored that return value and switched on the uninitialized local
+(`original-code/RHelementactorhuman.cpp:6924-6957`). In this recording the
+undefined value happened not to request a height transition, while Rust treated
+its placeholder `Long` mode as authoritative and launched `RaiseBow`.
+
+Original commit `3c83560e` makes the API boundary deterministic by returning
+from `AimWithBowAt` unless classification produced `VALID_TARGET`. Rust commit
+`750224e6f` applies the same contract before launching `RaiseBow` or `LowerBow`.
+The focused Rust regression
+`engine::input::tests::out_of_range_bow_aim_does_not_change_bow_height` passes
+and retains the valid-long transition case.
+
+The release validation clears frame 11860 and reaches EOF: `parity trace matched
+every recorded frame`. The authoritative artifact is
+`output/parity-hang-diagnostics/linux3-save002-r001/bow-command-origin-trace-v2.log`.
+This completes the entire 751-frame Savegame_linux3/Profile_001/Savegame_002
+replay after the watchdog, WaitTimer, and bow-classification fixes.
+
 When another fix lands, add the commit, Original source boundary, focused test,
 all affected traces, and their new exact result or next independent frontier
 here. Do not silently delete old rows: mark them superseded by the fix so the
