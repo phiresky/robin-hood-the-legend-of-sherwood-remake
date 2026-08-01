@@ -3579,8 +3579,6 @@ fn ration_set_path_updates_eat_or_guzzle_slot_without_out_of_ammo_speech() {
                     action,
                     Action::NoAction,
                     Action::NoAction,
-                    Action::NoAction,
-                    Action::NoAction,
                 ],
                 ..Default::default()
             });
