@@ -1667,11 +1667,6 @@ fn apply_soldier_execute_side_effects(
             set_states(entity, Posture::Upright, ActionState::Moving);
         }
 
-        // Sword combat-injury arms set sword waiting state on START.
-        (OT::BeingHitSword | OT::ExtractingArrowSword | OT::BeingStunnedSword, MS::Start) => {
-            set_states(entity, Posture::Upright, ActionState::WaitingSword);
-        }
-
         // BEING_UNCONSCIOUS_*: START sets the settled lying state.
         // The dispatch arm itself keeps the order alive only while
         // `human.unconscious` is still true.
@@ -2130,6 +2125,22 @@ fn apply_active_animation_start_state_side_effect(
     }
 
     match (anim_type, motion) {
+        // These cases are implemented by RHElementActorHuman::Execute, not
+        // the soldier override, so PCs must receive the same START state.
+        // Keeping them in the soldier-only side-effect dispatcher left a PC
+        // in MovingSword for the first BEING_HIT_SWORD frame.
+        (
+            OrderType::BeingHitSword
+            | OrderType::ExtractingArrowSword
+            | OrderType::BeingStunnedSword,
+            MotionState::Start,
+        ) => {
+            entity.set_posture(Posture::Upright);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::WaitingSword;
+            }
+            return;
+        }
         (OrderType::Taking | OrderType::TakingCrouched, MotionState::Terminated)
             if entity.is_pc() =>
         {
