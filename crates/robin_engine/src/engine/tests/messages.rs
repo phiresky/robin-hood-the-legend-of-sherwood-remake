@@ -237,6 +237,128 @@ fn selected_nonmovement_condolation_clears_the_sprite_goal() {
 }
 
 #[test]
+fn delayed_selected_movement_card_clears_goal_after_wait_is_selected() {
+    use crate::coordinates::MapPoint;
+    use crate::element::{Command, Posture};
+    use crate::movement::ActiveMovement;
+    use crate::order::OrderType;
+    use crate::sequence::{CascadeFlags, SequenceElement, SequencePriority};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let goal = MapPoint::new(536.9613, 447.9872);
+
+    let movement =
+        SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::WalkingUpright);
+    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(movement_sequence, 0);
+    {
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity.actor_data_mut().unwrap().active_movement =
+            ActiveMovement::new(movement_sequence, 0);
+        entity.position_iface_mut().set_map_goal(goal);
+    }
+
+    // SetState snapshots that this was the selected element, but Rust queues
+    // the condolence instead of invoking it recursively. A later actor slot
+    // can install Wait before the queue is drained.
+    engine.orders.sequence_manager.element_interrupted(
+        movement_sequence,
+        0,
+        CascadeFlags::NEXT_LEVEL,
+    );
+    let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
+    wait.priority = SequencePriority::Wait;
+    let wait_sequence = engine.orders.sequence_manager.launch_element(wait);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(wait_sequence, 0);
+
+    engine.dispatch_condolations(&sim, &LevelAssets::new());
+
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .position_iface()
+            .map_goal(),
+        MapPoint::ZERO,
+        "terminal-time selected identity must survive delayed card dispatch"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner),
+        Some((wait_sequence, 0)),
+        "delayed cleanup must not detach the newly selected Wait"
+    );
+}
+
+#[test]
+fn attentive_postpone_current_preserves_rewritten_movement_goal() {
+    use crate::coordinates::MapPoint;
+    use crate::element::{Command, Posture};
+    use crate::movement::ActiveMovement;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let goal = MapPoint::new(1183.0403, 743.6907);
+
+    let mut movement =
+        SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::WalkingUpright);
+    movement.priority = SequencePriority::Normal;
+    movement.orders.push_back(Order::new(
+        OrderType::WalkingUpright,
+        goal.x,
+        goal.y,
+        engine.orders.allocate_order_id(),
+    ));
+    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(movement_sequence, 0);
+    {
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity.actor_data_mut().unwrap().active_movement =
+            ActiveMovement::new(movement_sequence, 0);
+        entity.position_iface_mut().set_map_goal(goal);
+    }
+
+    // Actor::Stop(Preference) rewrites Walking to the stopping transition but
+    // deliberately keeps the selected movement alive. The stronger attentive
+    // command then POSTPONE_CURRENTs it without a condolence card.
+    engine.stop_owner(owner, SequencePriority::Preference);
+    engine.set_soldier_attentive_mode(owner, true, false);
+
+    let movement = engine
+        .orders
+        .sequence_manager
+        .get_element(movement_sequence, 0)
+        .expect("postponed movement remains registered");
+    assert_eq!(movement.state, SequenceState::Postponed);
+    assert_eq!(movement.command, Command::Move);
+    assert!(movement.orders.is_empty());
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .position_iface()
+            .map_goal(),
+        goal,
+        "POSTPONE_CURRENT has no selected-element condolence and retains the movement goal"
+    );
+}
+
+#[test]
 fn completed_immediate_sibling_does_not_clear_selected_movement_goal() {
     use crate::coordinates::MapPoint;
     use crate::element::{Command, Posture};

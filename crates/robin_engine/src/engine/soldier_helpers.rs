@@ -171,41 +171,7 @@ impl EngineInner {
             Command::LeaveAttentiveMode
         };
 
-        let interrupts_retained_movement_exit = self
-            .world
-            .entities
-            .get(entity_id)
-            .and_then(Entity::actor_data)
-            .and_then(|actor| {
-                actor
-                    .active_movement
-                    .sequence_id
-                    .map(|sequence| (sequence, actor.active_movement.element_index))
-            })
-            .and_then(|(sequence, element)| {
-                self.orders.sequence_manager.get_element(sequence, element)
-            })
-            .and_then(|element| element.orders.front())
-            .is_some_and(|order| {
-                matches!(
-                    order.order_type,
-                    OrderType::TransitionWalkingUprightWaitingUpright
-                        | OrderType::TransitionRunningUprightWaitingUpright
-                        | OrderType::TransitionWalkingCrouchedWaitingCrouched
-                )
-            });
         self.launch_element(SequenceElement::new(1, command, Some(entity_id)));
-        if interrupts_retained_movement_exit
-            && let Some(entity) = self.world.entities.get_mut(entity_id)
-        {
-            // Launching attentive mode against an already-running
-            // transition-to-waiting interrupts that selected movement
-            // outright. Actor::SendCondolationCard clears its goal before
-            // the attentive element becomes authoritative.
-            entity
-                .position_iface_mut()
-                .set_map_goal(crate::coordinates::MapPoint::ZERO);
-        }
 
         if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(entity_id)
             && let Some(enemy) = s.npc.ai_brain.enemy_mut()
@@ -593,9 +559,14 @@ impl EngineInner {
             .orders
             .sequence_manager
             .current_element_for_actor(owner);
-        let card_element = (seq_id, usize::from(elem_idx));
-        let detaches_selected_order =
-            was_selected && selected_element.is_none_or(|selected| selected == card_element);
+        // `was_selected` is captured at SetState, the exact Original
+        // SendCondolationCard boundary. Rust dispatches the card later, after
+        // a Wait or recursive successor may already be selected, so checking
+        // selection again here would reinterpret history and strand the old
+        // movement goal. Replacement arbitration explicitly records
+        // `was_selected = false` when Original installs the incoming element
+        // before interrupting the outgoing one.
+        let detaches_selected_order = was_selected;
         let mut cleared_selected_goal = false;
         if let Some(entity) = self.world.entities.get_mut(owner) {
             let active_movement_matches = entity.actor_data().is_some_and(|actor| {
