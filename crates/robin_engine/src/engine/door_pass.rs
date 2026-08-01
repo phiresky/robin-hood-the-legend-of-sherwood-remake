@@ -2360,11 +2360,6 @@ mod tests {
         let ground = crate::coordinates::GroundPoint::from_map_and_z(before_map, elevation);
         {
             let entity = engine.world.entities.get_mut(owner).unwrap();
-            entity
-                .element_data_mut()
-                .set_position(crate::coordinates::WorldPoint3D::new(
-                    ground.x, ground.y, elevation,
-                ));
             entity.position_iface_mut().set_obstacle(
                 None,
                 Some(crate::position_interface::PlaneZCoeffs {
@@ -2373,6 +2368,13 @@ mod tests {
                     dz: 90.00101,
                 }),
             );
+            // The obstacle is already installed before the door-rail
+            // movement writes its authoritative 3D endpoint.
+            entity
+                .element_data_mut()
+                .set_position(crate::coordinates::WorldPoint3D::new(
+                    ground.x, ground.y, elevation,
+                ));
         }
 
         engine.commit_completed_door_pass_position(
