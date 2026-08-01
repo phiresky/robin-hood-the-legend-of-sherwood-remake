@@ -268,6 +268,33 @@ mod tests {
     }
 
     #[test]
+    fn helping_climb_done_applies_posture_and_toolbar_action() {
+        let mut pc = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        });
+
+        apply_active_animation_start_state_side_effect(
+            &mut pc,
+            OrderType::TransitionWaitingUprightHelpingClimbing,
+            MotionState::Done,
+        );
+
+        assert_eq!(pc.element_data().posture, Posture::HelpingToClimb);
+        assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
+        assert_eq!(
+            pc.pc_data().unwrap().current_action,
+            crate::profiles::Action::HelpToClimb
+        );
+    }
+
+    #[test]
     fn generic_crouch_transitions_apply_state_at_done_and_terminated() {
         for motion in [MotionState::Done, MotionState::Terminated] {
             let mut pc = Entity::Pc(ActorPc {
@@ -1532,6 +1559,9 @@ pub(super) struct ExecuteSideOutcomes {
     /// PCs leaving cape/tree disguise remove their Hidden titbit when
     /// the transition reaches DONE.
     pub hidden_titbit_removals: Vec<EntityId>,
+    /// PC beggar transitions whose DONE edge toggles nearby ground-coin
+    /// eligibility. `true` enters the disguise; `false` leaves it.
+    pub beggar_coin_flags: Vec<(EntityId, bool)>,
     /// PCs whose crouch posture transition reached DONE or TERMINATED.
     /// Original forwards the unparameterized stature-change notification
     /// from both terminal switch arms.
@@ -2187,6 +2217,46 @@ fn apply_active_animation_start_state_side_effect(
             entity.set_posture(Posture::Crouched);
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::Waiting;
+            }
+            return;
+        }
+        (OrderType::TransitionWaitingUprightHelpingClimbing, MotionState::Done) => {
+            entity.set_posture(Posture::HelpingToClimb);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            if let Some(pc) = entity.pc_data_mut() {
+                pc.current_action = crate::profiles::Action::HelpToClimb;
+            }
+            return;
+        }
+        (OrderType::TransitionHelpingClimbingWaitingUpright, MotionState::Done) => {
+            entity.set_posture(Posture::Upright);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            if let Some(pc) = entity.pc_data_mut() {
+                pc.current_action = crate::profiles::Action::NoAction;
+            }
+            return;
+        }
+        (OrderType::TransitionWaitingUprightSimulatingBeggar, MotionState::Done) => {
+            entity.set_posture(Posture::SimulatingBeggar);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            if let Some(pc) = entity.pc_data_mut() {
+                pc.current_action = crate::profiles::Action::Beggar;
+            }
+            return;
+        }
+        (OrderType::TransitionSimulatingBeggarWaitingUpright, MotionState::Done) => {
+            entity.set_posture(Posture::Upright);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            if let Some(pc) = entity.pc_data_mut() {
+                pc.current_action = crate::profiles::Action::NoAction;
             }
             return;
         }
@@ -4730,6 +4800,23 @@ impl EngineInner {
                             anim_type,
                             motion_state,
                         );
+                        if entity.is_pc() && motion_state == MotionState::Done {
+                            match anim_type {
+                                OrderType::TransitionWaitingUprightSimulatingBeggar => {
+                                    completion_outcomes
+                                        .execute_sides
+                                        .beggar_coin_flags
+                                        .push((entity_id, true));
+                                }
+                                OrderType::TransitionSimulatingBeggarWaitingUpright => {
+                                    completion_outcomes
+                                        .execute_sides
+                                        .beggar_coin_flags
+                                        .push((entity_id, false));
+                                }
+                                _ => {}
+                            }
+                        }
                         if entity.is_pc()
                             && matches!(
                                 anim_type,

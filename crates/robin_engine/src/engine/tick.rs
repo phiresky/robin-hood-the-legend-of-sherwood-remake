@@ -893,9 +893,9 @@ macro_rules! actor_execute_arm_catalog {
             (Pc, Searching, GenericAnimation),
             (Pc, SearchingCrouched, GenericAnimation),
             (Pc, Healing, Ability),
-            (Pc, TransitionWaitingUprightHelpingClimbing, Movement),
-            (Pc, TransitionHelpingClimbingWaitingUpright, Movement),
-            (Pc, WaitingHelpingClimbing, Movement),
+            (Pc, TransitionWaitingUprightHelpingClimbing, GenericAnimation),
+            (Pc, TransitionHelpingClimbingWaitingUpright, GenericAnimation),
+            (Pc, WaitingHelpingClimbing, GenericAnimation),
             (Pc, WaitingCarryingOnShoulders, GenericAnimation),
             (Pc, WaitingOnShoulders, GenericAnimation),
             (Pc, ClimbingUpOnShoulders, Ability),
@@ -5316,6 +5316,19 @@ impl EngineInner {
                 crate::titbit::TitbitKind::Hidden,
                 crate::titbit::ElementHandle(entity_id.index()),
             );
+        }
+
+        for (pc_id, enabled) in sides.beggar_coin_flags {
+            super::beggar::set_flags_of_near_coins_on_ground(
+                &mut self.world.entities,
+                pc_id,
+                enabled,
+            );
+            // TODO(parity): Entering beggar mode also calls
+            // AddBeggarForAllIntelligentSeekingSoldiers. Model that ordered
+            // AI-list mutation once its Original container semantics are
+            // represented; coin eligibility and actor state are already
+            // applied at the authoritative animation-DONE boundary here.
         }
 
         for (actor_id, target_id, strike) in sides.smalltalk_strikes {

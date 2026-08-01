@@ -1642,11 +1642,28 @@ impl StealthCommandContext<'_> {
             self.sequence_manager.element_terminated(seq_id, elem_idx);
             return OwnerActionBarrier::Reach;
         };
-        let posture = entity.element_data().posture;
-        let action_state = entity
+        let live_posture = entity.element_data().posture;
+        let live_action_state = entity
             .actor_data()
             .map(|actor| actor.action_state)
             .unwrap_or(ActionState::Waiting);
+        // Translate runs after GenerateTransition has already appended the
+        // exit-action/posture prefix.  The command body's initialization
+        // therefore validates against the state at the end of that prefix,
+        // not the actor's still-visible state.  This distinction is
+        // observable when a posture command interrupts a Bored animation:
+        // Original first plays BORED->WAITING, then initializes the command
+        // transition on a Waiting actor.
+        let (posture, action_state) = self
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .map(|element| {
+                (
+                    element.posture_after_transition,
+                    element.action_state_after_transition,
+                )
+            })
+            .unwrap_or((live_posture, live_action_state));
         let is_swordfighting = action_state.is_sword();
 
         if !crate::stealth::can_execute_stealth_command(
@@ -1670,6 +1687,27 @@ impl StealthCommandContext<'_> {
             self.sequence_manager.element_terminated(seq_id, elem_idx);
             return OwnerActionBarrier::Reach;
         };
+
+        // These PC commands are animation bodies in Original, following any
+        // transition prefix produced above.  Their posture/action and toolbar
+        // side effects happen only when the body animation reaches DONE; the
+        // sequence element remains selected until TERMINATED.  Keeping that
+        // lifetime is also what makes GetCommand expose ENTER_* while an old
+        // Bored-to-Waiting prefix is still playing.
+        if matches!(
+            command,
+            Command::EnterBeggar
+                | Command::LeaveBeggar
+                | Command::EnterHelpingClimb
+                | Command::LeaveHelpingClimb
+        ) {
+            let id = crate::order::alloc_order_id(self.next_order_id);
+            let mut order = crate::order::Order::new(transition.animation, 0.0, 0.0, id);
+            order.compute_direction = false;
+            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            return OwnerActionBarrier::Reach;
+        }
 
         // PC::Translate only appends the crouch transition order. The actor's
         // posture changes from PerformMotion(DONE), not while Instruct is
@@ -1704,7 +1742,7 @@ impl StealthCommandContext<'_> {
             None
         };
 
-        let old_posture = posture;
+        let old_posture = live_posture;
         let entity = self
             .entities
             .get_mut(owner)

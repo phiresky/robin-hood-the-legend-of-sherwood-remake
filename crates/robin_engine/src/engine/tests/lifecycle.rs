@@ -4312,7 +4312,7 @@ fn fade_to_black_host_countdown_advances_once_per_presented_frame() {
 }
 
 #[test]
-fn enter_helping_climb_sequence_dispatches_stealth_transition() {
+fn enter_helping_climb_sequence_retains_transition_until_animation_done() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
     let mut assets = LevelAssets::new();
@@ -4361,11 +4361,28 @@ fn enter_helping_climb_sequence_dispatches_stealth_transition() {
     let pc = engine.get_entity(pc_id).expect("pc still exists");
     assert_eq!(
         pc.element_data().posture,
-        crate::element::Posture::HelpingToClimb
+        crate::element::Posture::Upright,
+        "Translate must not apply the DONE-side posture early"
     );
     assert_eq!(
         pc.actor_data().unwrap().action_state,
         crate::element::ActionState::Waiting
+    );
+    let (sequence_id, element_index) = engine
+        .orders
+        .sequence_manager
+        .current_element_for_actor(pc_id)
+        .expect("helping-climb command remains selected while its animation runs");
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence_id, element_index)
+        .expect("selected helping-climb element still exists");
+    assert_eq!(element.command, crate::element::Command::EnterHelpingClimb);
+    assert_eq!(element.state, crate::sequence::SequenceState::InProgress);
+    assert_eq!(
+        element.current_order().map(|order| order.order_type),
+        Some(crate::order::OrderType::TransitionWaitingUprightHelpingClimbing)
     );
 }
 
