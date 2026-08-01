@@ -4282,6 +4282,15 @@ the Original PC constructor. The fix applies to every dynamic/save-only PC and
 does not special-case a mission or replay. This is a source-backed prevention
 fix; attribution of a recorded first boundary awaits a current release sweep.
 
+### Cancelling bow mode only auto-unequips the Original states
+
+Original `RHEngine::UnSelectAction` launches the explicit `UNEQUIP_BOW`
+cleanup command only while the PC is aiming normally or aiming upward. It does
+not do so for the separate leaning-out/down state. Rust had broadened the test
+to `AimingWithBowDown`, which could inject an extra high-priority cleanup
+sequence when cancelling bow mode at a window. The Rust selection path now
+uses the same two-state condition as the Original.
+
 A clean baseline proves exact parity only for the state fields serialized by the
 recorder and the behaviors exercised by this session. When a divergence depends
 on unrecorded state, extend the neutral trace schema rather than guessing from a

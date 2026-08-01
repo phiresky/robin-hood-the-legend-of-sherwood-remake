@@ -840,8 +840,7 @@ impl EngineInner {
             match old_action {
                 Action::Bow
                     if action_state == ActionState::AimingWithBow
-                        || action_state == ActionState::AimingWithBowUp
-                        || action_state == ActionState::AimingWithBowDown =>
+                        || action_state == ActionState::AimingWithBowUp =>
                 {
                     // `Preference` priority interrupts anything weaker
                     // (Normal / Wait / None), then launches `UnequipBow`.
