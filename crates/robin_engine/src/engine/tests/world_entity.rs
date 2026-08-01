@@ -1477,7 +1477,7 @@ pub(super) fn make_test_ai_soldier(camp: crate::element::Camp) -> Entity {
 
 #[test]
 fn synchronous_one_shot_noise_is_handled_before_broadcast_returns() {
-    use crate::ai::{AiState, NoiseType, Substate};
+    use crate::ai::{AiState, NoiseType, Stimulus, StimulusType, Substate};
     use crate::coordinates::{MapPoint, WorldPoint3D};
     use crate::element::Camp;
 
@@ -1504,6 +1504,14 @@ fn synchronous_one_shot_noise_is_handled_before_broadcast_returns() {
         .expect("test listener has enemy AI")
         .base
         .me = listener_id.index();
+    engine
+        .get_entity_mut(listener_id)
+        .and_then(Entity::ai_controller_mut)
+        .expect("test listener has base AI")
+        .outbox
+        .detection
+        .stimuli
+        .push(Stimulus::new(StimulusType::EventTimer));
 
     engine.broadcast_noise_synchronously(
         &sim,
@@ -1520,9 +1528,97 @@ fn synchronous_one_shot_noise_is_handled_before_broadcast_returns() {
         .get_entity(listener_id)
         .and_then(Entity::enemy_ai)
         .expect("test listener survives synchronous noise");
-    assert!(listener.base.outbox.detection.stimuli.is_empty());
+    assert_eq!(
+        listener
+            .base
+            .outbox
+            .detection
+            .stimuli
+            .iter()
+            .map(|stimulus| stimulus.stimulus_type)
+            .collect::<Vec<_>>(),
+        vec![StimulusType::EventTimer],
+        "direct EVENT_HEAR must not consume an unrelated deferred FIFO"
+    );
     assert_eq!(listener.base.current_state, AiState::Wondering);
     assert_eq!(listener.base.current_substate, Substate::WonderingWatching);
+}
+
+#[test]
+fn one_shot_noise_listener_walk_uses_restored_original_creation_order() {
+    use crate::element::Camp;
+
+    let mut engine = EngineInner::new();
+    let first = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let second = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let first_order = engine.world.original_creation_order(first);
+    let second_order = engine.world.original_creation_order(second);
+    engine.world.install_original_creation_orders(
+        std::collections::BTreeMap::from([(first, second_order), (second, first_order)]),
+        second_order + 1,
+    );
+
+    assert_eq!(engine.one_shot_noise_listener_ids(), vec![second, first]);
+}
+
+#[test]
+fn one_shot_hearing_defers_listener_state_filtering_but_rejects_its_source_point() {
+    use crate::ai::NoiseType;
+    use crate::coordinates::{MapPoint, WorldPoint3D};
+    use crate::element::Camp;
+
+    let mut engine = EngineInner::new();
+    engine.control.frame_counter = 5;
+    let mut listener = make_test_ai_soldier(Camp::Lacklandists);
+    let Entity::Soldier(soldier) = &mut listener else {
+        unreachable!("make_test_ai_soldier returned non-soldier")
+    };
+    soldier.element.active = false;
+    soldier.human.unconscious = true;
+    soldier
+        .element
+        .set_position(WorldPoint3D::new(10.0, 10.0, 0.0));
+    soldier.element.set_position_map(MapPoint::new(10.0, 10.0));
+    let listener_id = engine.add_entity(listener);
+
+    let audible = engine.one_shot_noise(
+        NoiseType::Bonk,
+        MapPoint::new(20.0, 10.0),
+        0,
+        crate::parameters_ai::NOISE_VOLUME_BONK as u16,
+        0,
+        None,
+    );
+    assert!(
+        engine
+            .subjective_one_shot_noise_for(listener_id, audible)
+            .is_some(),
+        "inactive/unconscious state belongs to StartThink, after GetHearVolume"
+    );
+    assert_eq!(
+        engine
+            .get_entity(listener_id)
+            .and_then(Entity::npc_data)
+            .expect("listener keeps NPC state")
+            .old_cover_noise_deafness_frame_counter,
+        5,
+        "GetHearVolume must refresh deafness before StartThink refuses the event"
+    );
+
+    let same_point = engine.one_shot_noise(
+        NoiseType::Aaargh,
+        MapPoint::new(10.0, 10.0),
+        0,
+        crate::parameters_ai::NOISE_VOLUME_AAARGH as u16,
+        0,
+        Some(listener_id),
+    );
+    assert!(
+        engine
+            .subjective_one_shot_noise_for(listener_id, same_point)
+            .is_none(),
+        "the actor at the exact full-3D source point must not hear its own cry"
+    );
 }
 
 #[test]

@@ -8994,6 +8994,133 @@ impl EngineInner {
 
     // ─── One-shot noise broadcast ──────────────────────────────────
 
+    fn one_shot_noise_listener_ids(&self) -> Vec<EntityId> {
+        let mut npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        // `RHEngine::GetNPC(i)` follows the Original registration array.
+        // Rust's typed arena order is not authoritative after save adoption,
+        // where static entities may be reused under restored creation ranks.
+        npc_ids.sort_by_key(|&npc_id| self.world.original_creation_order(npc_id));
+        npc_ids
+    }
+
+    fn one_shot_noise(
+        &self,
+        noise_type: crate::ai::NoiseType,
+        origin: crate::coordinates::MapPoint,
+        origin_layer: u16,
+        volume: u16,
+        elevation: u16,
+        source_entity: Option<EntityId>,
+    ) -> crate::ai::Noise {
+        use crate::ai::{Noise, NoiseType, Position};
+
+        let element_id = match noise_type {
+            NoiseType::TapTapTap | NoiseType::ZingZing | NoiseType::Aaargh | NoiseType::Heeelp => {
+                source_entity.map(|id| id.index() as u16).unwrap_or(0)
+            }
+            _ => 0,
+        };
+
+        Noise {
+            origin: Position {
+                x: origin.x,
+                y: origin.y,
+                sector: None,
+                level: origin_layer,
+            },
+            noise_type,
+            volume,
+            elevation,
+            element_id,
+        }
+    }
+
+    /// Compute one listener's live subjective copy of a one-shot noise.
+    ///
+    /// This deliberately mutates deafness at the listener slot. Original
+    /// `Noise` calls `GetHearVolume` immediately before that listener's
+    /// synchronous `Think`, so earlier listeners may alter world state before
+    /// this method is called for the next registration-array entry.
+    fn subjective_one_shot_noise_for(
+        &mut self,
+        npc_id: EntityId,
+        noise: crate::ai::Noise,
+    ) -> Option<crate::ai::Noise> {
+        const HEARING_FACTOR: f32 = 1.0;
+
+        let (npc_pos, npc_elev) = {
+            let entity = self.world.entities.get(npc_id)?;
+            let include = match entity {
+                Entity::Civilian(_) => true,
+                Entity::Soldier(s) => {
+                    s.soldier.cached_camp == crate::element_kinds::Camp::Lacklandists
+                }
+                _ => false,
+            };
+            if !include {
+                return None;
+            }
+
+            // Do not pre-filter inactive or unconscious NPCs. Original runs
+            // GetHearVolume for every registered civilian/Lacklandist and
+            // leaves refusal to StartThink, after the deafness read.
+            let elem = entity.element_data();
+            (elem.position_map(), elem.position().z)
+        };
+
+        let source_elev = noise.elevation as f32;
+        let modified_volume = noise.volume as f32 * HEARING_FACTOR;
+        let dx = npc_pos.x - noise.origin.x;
+        let dy_world = npc_pos.y + npc_elev - noise.origin.y - source_elev;
+        let dz = npc_elev - source_elev;
+
+        // Original compares the full 3D points before range and deafness
+        // work. A wounded or trapped source therefore cannot hear its own
+        // AAARGH/HEEELP broadcast.
+        if dx == 0.0 && dy_world == 0.0 && dz == 0.0 {
+            return None;
+        }
+
+        let dy_stretched = dy_world * crate::position_interface::INVERSE_ASPECT_RATIO;
+        if dx.abs().max(dy_stretched.abs()).max(dz.abs()) > modified_volume {
+            return None;
+        }
+
+        let cover_volume = self
+            .feedback
+            .sound_sim
+            .sources
+            .max_noise_covering_volume_for_3d(npc_pos.x, npc_pos.y, npc_elev);
+        let frame = self.control.frame_counter;
+        let deafness = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::npc_data_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "one-shot noise listener {} lost its required NPC state",
+                    npc_id.index()
+                )
+            })
+            .get_deafness(frame, cover_volume);
+
+        let distance = (dx * dx + dy_stretched * dy_stretched + dz * dz).sqrt();
+        let subjective = subjective_hear_volume(modified_volume, distance, deafness);
+        (subjective != 0).then_some(crate::ai::Noise {
+            volume: subjective,
+            ..noise
+        })
+    }
+
+    fn display_one_shot_noise(&mut self, noise: crate::ai::Noise) {
+        // Original AddNoiseToDisplay runs only after every listener's Think.
+        self.feedback
+            .pending_side_effects
+            .displayed_noises
+            .push(noise);
+    }
+
     /// Broadcast a one-shot noise event to all nearby NPCs.
     ///
     /// Called by projectile impacts, trap activations, scripted bridges,
@@ -9011,161 +9138,41 @@ impl EngineInner {
         elevation: u16,
         source_entity: Option<EntityId>,
     ) {
-        use crate::ai::{Noise, NoiseType, Position, Stimulus, StimulusType};
+        use crate::ai::{Stimulus, StimulusType};
 
-        let noise_pos = Position {
-            x: origin.x,
-            y: origin.y,
-            sector: None,
-            level: origin_layer,
-        };
-
-        // Only stamp the source's creation order on TAPTAPTAP /
-        // ZINGZING / AAARGH / HEEELP — the four "attributable" cries;
-        // other types (BONK, ZONK, PFIIIT, PLING, NOISE_LOGS,
-        // NOISE_DRAWBRIDGE, PLOUF) leave the field unset.  EntityId
-        // stands in for `creation_order`.
-        let element_id = match noise_type {
-            NoiseType::TapTapTap | NoiseType::ZingZing | NoiseType::Aaargh | NoiseType::Heeelp => {
-                source_entity.map(|id| id.index() as u16).unwrap_or(0)
-            }
-            _ => 0,
-        };
-
-        // Queue the full-volume noise for the `noise_display` debug
-        // overlay.  Host drains `SideEffects::displayed_noises` after
-        // the tick, respecting the cheat flag.  The reference
-        // `RHEngine::AddNoiseToDisplay` copies the full `RHnoise`, so
-        // the displayed and per-NPC subjective copies both preserve
-        // the attributable `element_id`.
-        self.feedback
-            .pending_side_effects
-            .displayed_noises
-            .push(Noise {
-                origin: noise_pos,
-                noise_type,
-                volume,
-                elevation,
-                element_id,
-            });
-
-        // `hearing_factor` is a class-level static, default 1.0, with
-        // no setter wired in shipped gameplay.  Apply the same
-        // constant to every listener.
-        const HEARING_FACTOR: f32 = 1.0;
-
-        let frame = self.control.frame_counter;
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
-
-        // `get_hear_volume` shifts the origin Y by elevation and
-        // keeps elevation as Z, so an elevated noise source
-        // (drawbridge, arrow on a roof) is perceptually farther from
-        // a ground-level listener.  Listener Z is read from
-        // `elem.position().z` below and folded into the `dz` term.
-        let elev_f = elevation as f32;
-
-        for npc_id in npc_ids {
-            // First pass: gather everything we need from the entity that
-            // is independent of `self.feedback.sound_sim`.  Drop the borrow
-            // before computing `cover_volume` so the
-            // `&self.feedback.sound_sim` access below is non-overlapping.
-            let (npc_pos, npc_elev) = {
-                let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                    continue;
-                };
-
-                // Only civilians and Lacklandist soldiers listen.
-                let include = match entity {
-                    Entity::Civilian(_) => true,
-                    Entity::Soldier(s) => {
-                        s.soldier.cached_camp == crate::element_kinds::Camp::Lacklandists
-                    }
-                    _ => continue,
-                };
-                if !include {
-                    continue;
-                }
-
-                let elem = entity.element_data();
-                if !elem.active {
-                    continue;
-                }
-                let unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
-                if unconscious {
-                    continue;
-                }
-                (elem.position_map(), elem.position().z)
-            };
-
-            // `noise()` does NOT filter by layer; every in-camp NPC
-            // is passed through `get_hear_volume`, which uses pure 3D
-            // distance.
-
-            // `get_hear_volume` formula.
-            let modified_volume = volume as f32 * HEARING_FACTOR;
-            let dx = npc_pos.x - origin.x;
-            // `GetPosition()` and the constructed noise origin are both
-            // world-space points `(map_x, map_y + z, z)`.  Compare their
-            // full Y coordinates before applying the isometric stretch.
-            // Using the listener's map Y directly makes vertically offset
-            // listeners spuriously too far from one-shot noises.
-            let dy_stretched = (npc_pos.y + npc_elev - origin.y - elev_f)
-                * crate::position_interface::INVERSE_ASPECT_RATIO;
-            // `distance = position - origin` with `origin.z =
-            // elevation`, so dz = listener.z - source.elevation.
-            let dz = npc_elev - elev_f;
-            if dx.abs().max(dy_stretched.abs()).max(dz.abs()) > modified_volume {
-                continue;
-            }
-
-            // Fold the max covering volume from active sound sources
-            // at the NPC's position into the deafness write-back.
-            let cover_volume = self
-                .feedback
-                .sound_sim
-                .sources
-                .max_noise_covering_volume_for_3d(npc_pos.x, npc_pos.y, npc_elev);
-
-            // Re-borrow the entity for the deafness read + stimulus
-            // push.  `noise()` has no state pre-filter: every in-camp
-            // NPC in hearing range is passed to `think(stimulus)` and
-            // the state machine decides.
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
+        let noise = self.one_shot_noise(
+            noise_type,
+            origin,
+            origin_layer,
+            volume,
+            elevation,
+            source_entity,
+        );
+        for npc_id in self.one_shot_noise_listener_ids() {
+            let Some(subjective_noise) = self.subjective_one_shot_noise_for(npc_id, noise) else {
                 continue;
             };
-            let deafness = {
-                let Some(npc) = entity.npc_data_mut() else {
-                    continue;
-                };
-                npc.get_deafness(frame, cover_volume)
-            };
-
-            let distance = (dx * dx + dy_stretched * dy_stretched + dz * dz).sqrt();
-            let subjective = subjective_hear_volume(modified_volume, distance, deafness);
-            if subjective == 0 {
-                continue;
-            }
-
-            // Queue EventHear for the post-AI `pending_stimuli` drain so
-            // `FilterAIEvent` can run with entities available (the script
-            // session leases entity storage, which conflicts with any entity
-            // mut borrow we might hold here).
-            let noise = Noise {
-                origin: noise_pos,
-                noise_type,
-                volume: subjective,
-                elevation,
-                element_id,
-            };
-            let stimulus = Stimulus::with_noise(StimulusType::EventHear, noise);
-            if let Some(ai) = entity.ai_controller_mut() {
-                ai.outbox.detection.stimuli.push(stimulus);
-            }
+            let stimulus = Stimulus::with_noise(StimulusType::EventHear, subjective_noise);
+            self.world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "one-shot noise listener {} lost its required AI controller",
+                        npc_id.index()
+                    )
+                })
+                .outbox
+                .detection
+                .stimuli
+                .push(stimulus);
         }
+        self.display_one_shot_noise(noise);
     }
 
-    /// Broadcast a one-shot noise and synchronously run every listener's
-    /// queued `EVENT_HEAR`, in NPC creation order.
+    /// Broadcast a one-shot noise and synchronously run each listener's new
+    /// `EVENT_HEAR`, in Original NPC registration order.
     ///
     /// Original `RHElementActorNPC::Noise` calls `Think` inside the broadcast
     /// loop. Script natives and other in-frame callbacks therefore observe
@@ -9183,7 +9190,9 @@ impl EngineInner {
         elevation: u16,
         source_entity: Option<EntityId>,
     ) {
-        self.broadcast_noise(
+        use crate::ai::{Stimulus, StimulusType};
+
+        let noise = self.one_shot_noise(
             noise_type,
             origin,
             origin_layer,
@@ -9192,10 +9201,45 @@ impl EngineInner {
             source_entity,
         );
 
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
-        for npc_id in npc_ids {
-            self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None, None);
+        for npc_id in self.one_shot_noise_listener_ids() {
+            let Some(subjective_noise) = self.subjective_one_shot_noise_for(npc_id, noise) else {
+                continue;
+            };
+            let stimulus = Stimulus::with_noise(StimulusType::EventHear, subjective_noise);
+
+            // Listener N sees every mutation produced by listener N-1. Only
+            // the new EVENT_HEAR is dispatched: Original calls Think directly
+            // and does not consume unrelated deferred stimuli here.
+            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let ctx = {
+                let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
+                    panic!(
+                        "one-shot noise listener {} disappeared before synchronous Think",
+                        npc_id.index()
+                    )
+                });
+                let building_sector = self.entity_building_sector(entity.element_data().sector());
+                build_ai_context_from_entity(
+                    entity,
+                    self.control.frame_counter,
+                    building_sector,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
+                    self.ai.standard_view_polygon_radius,
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
+                    &self.world.fast_grid,
+                    &assets.hiking_paths,
+                    &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
+                )
+            };
+            let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+            self.dispatch_think_with_drain_mode(
+                sim, npc_id, &stimulus, &ctx, &tick_data, assets, false, false,
+            );
         }
+        self.display_one_shot_noise(noise);
     }
 
     // ── Cross-NPC action processing (phalanx coordination) ──────────

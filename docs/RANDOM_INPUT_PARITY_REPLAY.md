@@ -1829,6 +1829,24 @@ nearby guard's BONK reaction and empty stimulus outbox to be observable before
 the synchronous broadcast returns. Replay validation is pending the next
 frozen-runner sweep.
 
+The first synchronous implementation still batched the operation in two
+passes: it queued `EVENT_HEAR` for every listener, then drained each listener's
+complete pending stimulus FIFO. Original `RHElementActorNPC::Noise` instead
+walks the NPC registration array once and calls each listener's `Think`
+immediately after that listener's live `GetHearVolume`. Listener N therefore
+closes all recursive work before listener N+1's position, deafness, context,
+and AI state are read. Rust now follows restored Original creation order,
+dispatches only the newly constructed `EVENT_HEAR`, and leaves unrelated
+deferred stimuli queued. `AddNoiseToDisplay` likewise runs after the complete
+listener walk, matching the source boundary.
+
+The same audit removed two non-Original recipient prefilters. Inactive and
+unconscious registered NPCs still run `GetHearVolume`; `StartThink` decides
+whether their event is refused only afterwards. Conversely, Original rejects
+an exact full-3D source/listener position before its range or deafness work.
+That equality guard is important for attributable cries: a wounded or trapped
+actor must not receive its own `AAARGH`/`HEEELP` broadcast.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
