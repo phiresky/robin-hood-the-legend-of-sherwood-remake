@@ -53,6 +53,35 @@ fn bow_ground_y(point: crate::coordinates::WorldPoint3D) -> f32 {
     point.y
 }
 
+fn bow_aim_height_command(
+    action_state: crate::element::ActionState,
+    target_status: BowTarget,
+    shoot_mode: crate::weapons::ShootMode,
+    current_animation: Option<crate::order::OrderType>,
+) -> Option<crate::element::Command> {
+    use crate::element::{ActionState, Command};
+    use crate::order::OrderType;
+    use crate::weapons::ShootMode;
+
+    // C++ `CanShootWithBowAt` does not assign its ShootType out-parameter
+    // when it returns OUT_OF_RANGE (and cannot provide an authoritative mode
+    // for INVALID_TARGET either).  AimWithBowAt must therefore leave the bow
+    // height unchanged unless the target classification is valid.
+    if target_status != BowTarget::Valid {
+        return None;
+    }
+
+    match (action_state, shoot_mode, current_animation) {
+        (ActionState::AimingWithBow, ShootMode::Long, Some(OrderType::AimingWithBow)) => {
+            Some(Command::RaiseBow)
+        }
+        (ActionState::AimingWithBowUp, ShootMode::Normal, Some(OrderType::AimingWithBowUp)) => {
+            Some(Command::LowerBow)
+        }
+        _ => None,
+    }
+}
+
 /// Output of `compute_trajectory_preview*`. Host applies this to its
 /// own `valid_trajectory` / `trajectory_preview_*` fields after the
 /// readonly computation returns. See `Host` in `robin_rs::game` for
@@ -2751,15 +2780,7 @@ impl EngineInner {
             ?target_3d,
             "resolved bow aim"
         );
-        let command = match (action_state, shoot_mode, current_anim) {
-            (ActionState::AimingWithBow, ShootMode::Long, Some(OrderType::AimingWithBow)) => {
-                Some(Command::RaiseBow)
-            }
-            (ActionState::AimingWithBowUp, ShootMode::Normal, Some(OrderType::AimingWithBowUp)) => {
-                Some(Command::LowerBow)
-            }
-            _ => None,
-        };
+        let command = bow_aim_height_command(action_state, bow_status, shoot_mode, current_anim);
         if let Some(cmd) = command {
             let elem = crate::sequence::SequenceElement::new(1, cmd, Some(pc_id));
             self.launch_element(elem);
@@ -2932,5 +2953,35 @@ impl EngineInner {
             Action::Beggar => self.turn_pc_beggar(pc_id, mouse_map),
             other => panic!("unsupported resolved orientation action {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::element::{ActionState, Command};
+    use crate::order::OrderType;
+    use crate::weapons::ShootMode;
+
+    #[test]
+    fn out_of_range_bow_aim_does_not_change_bow_height() {
+        assert_eq!(
+            bow_aim_height_command(
+                ActionState::AimingWithBow,
+                BowTarget::OutOfRange,
+                ShootMode::Long,
+                Some(OrderType::AimingWithBow),
+            ),
+            None
+        );
+        assert_eq!(
+            bow_aim_height_command(
+                ActionState::AimingWithBow,
+                BowTarget::Valid,
+                ShootMode::Long,
+                Some(OrderType::AimingWithBow),
+            ),
+            Some(Command::RaiseBow)
+        );
     }
 }
