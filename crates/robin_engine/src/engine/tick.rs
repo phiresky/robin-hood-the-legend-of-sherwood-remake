@@ -3992,12 +3992,16 @@ impl EngineInner {
                             else {
                                 panic!("arrow owner changed concrete entity kind");
                             };
+                            // Original records the frame before its display
+                            // Refresh pass. The impact/exhaustion frame is
+                            // therefore still active in the parity snapshot,
+                            // then RHElementArrow::Refresh observes an empty
+                            // trajectory and stationary sprite and deactivates
+                            // it before the next simulation frame. This owner
+                            // slot is that next frame; no second retirement
+                            // latch is visible here.
                             projectile.element.sprite.position_iface.new_move();
-                            if projectile.projectile.retirement_pending {
-                                projectile.element.active = false;
-                            } else {
-                                projectile.projectile.retirement_pending = true;
-                            }
+                            projectile.element.active = false;
                         }
                     }
                     base_active

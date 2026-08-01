@@ -776,7 +776,6 @@ fn apply_projectile(runtime: &mut ProjectileData, saved: PlannedProjectile) {
     runtime.shooter = saved.shooter;
     runtime.trajectory = saved.trajectory;
     runtime.velocity_increment = saved.velocity_increment;
-    runtime.retirement_pending = false;
 }
 
 fn preflight_object(
