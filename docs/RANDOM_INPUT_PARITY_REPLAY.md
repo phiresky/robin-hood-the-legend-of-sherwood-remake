@@ -539,13 +539,23 @@ new family instead.
 These nine traces collapse into four source-backed families:
 
 1. **Replacement preserves the outgoing goal (two traces).** Both SuN1Sh1nE
-   traces replace an active movement with `Eat`. Original changes to command
-   `Eat` while retaining the old nonzero goal; the frozen Rust runner cleared
-   it. `RHElementActor::Instruct` selects the replacement before interrupting
-   the outgoing element, so the outgoing `SendCondolationCard` no longer owns
-   goal cleanup. Commit `7910b1c7d` implements this general ordering and is the
-   likely fix for both members. They still require exact current reruns; the
-   existing Whistle-family validation is supporting evidence, not a substitute.
+   traces have the same resolved command batch: select PC 345, select Guzzle,
+   launch command 105 `Eat`, then cancel the UI action. Original changes from
+   active `MoveOk` to `Eat` on that frame while retaining `(1785, 1047)` and
+   `(1466, 551)` respectively; only `Eat`'s selected terminal card clears the
+   goal on the following frame. `RHElementActor::Instruct` assigns
+   `mpSequenceElement = pNewSequenceElement` before interrupting the outgoing
+   element (`RHelementactor.cpp:830-950`), so its synchronous
+   `SendCondolationCard` fails the selected-pointer identity check and cannot
+   clear the goal (`RHelementactor.cpp:6162-6201`). Rust routes
+   `LaunchSelfAbility(Eat)` through `InterruptCurrent`, exposes the incoming
+   element during the synchronous callback, and commit `7910b1c7d` explicitly
+   marks the outgoing card unselected. The call and helper remain unchanged on
+   current HEAD; later Stop traversal and postponed-registration changes do not
+   alter this replacement boundary. This is one exact general source-backed
+   candidate for both traces, but they still require current exact reruns and
+   EOF. The validated Whistle replacement family is supporting evidence, not a
+   substitute.
 
 2. **A stop clears the still-selected outgoing goal (three traces).** The
    Cyrdach Shield selection and both Bow selections interrupt a live or
