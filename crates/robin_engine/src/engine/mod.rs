@@ -2433,6 +2433,12 @@ impl EngineInner {
     ) {
         use crate::sequence::PriorityDecision;
 
+        assert_ne!(
+            (blocker_seq, blocker_idx),
+            (waiter_seq, waiter_idx),
+            "engine_postpone cannot postpone a sequence element behind itself"
+        );
+
         let parity_debug_stage_timing =
             std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some() && depth <= 64;
         if parity_debug_stage_timing {

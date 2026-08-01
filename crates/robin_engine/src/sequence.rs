@@ -3640,6 +3640,26 @@ impl SequenceManager {
         let effects =
             seq.set_element_state(elem_idx, SequenceState::Postponed, CascadeFlags::empty());
         self.process_effects(seq_id, effects);
+
+        // Original calls Postpone from inside the element's Instruct/Go
+        // boundary, after SequenceManager::Hourglass has already removed
+        // that element from its launch FIFO. Rust also arbitrates owned
+        // launches synchronously, while their initial manager registration
+        // is still queued. Consume that registration here: otherwise the
+        // manager instructs the same postponed element again next frame and
+        // can attach it behind itself, creating a recursive self-cycle.
+        let target = (seq_id, elem_idx);
+        self.elements_to_go.retain(|entry| *entry != target);
+        self.pending_synchronous_actions.retain(|action| {
+            !matches!(
+                action,
+                SequenceAction::InstructOwner {
+                    sequence_id,
+                    element_index,
+                    ..
+                } if (*sequence_id, *element_index) == target
+            )
+        });
     }
 
     /// Whether the front order on the given element can be interrupted
@@ -5684,6 +5704,25 @@ mod tests {
             mgr.get_element(stale_seq, 0).unwrap().state,
             SequenceState::Postponed,
             "unlinked postponed ownership is not an Original traversal root"
+        );
+    }
+
+    #[test]
+    fn postpone_element_consumes_its_existing_manager_registration() {
+        let mut mgr = SequenceManager::new();
+        let owner = EntityId::Pc(crate::entity_id::PcId(3));
+        let sequence_id =
+            mgr.launch_element(make_simple_element(1, Command::EquipBow, Some(owner)));
+
+        mgr.postpone_element(sequence_id, 0);
+
+        assert!(
+            mgr.hourglass().is_empty(),
+            "Postpone runs after Original's manager pop and must consume Rust's eager registration"
+        );
+        assert_eq!(
+            mgr.get_element(sequence_id, 0).unwrap().state,
+            SequenceState::Postponed
         );
     }
 
