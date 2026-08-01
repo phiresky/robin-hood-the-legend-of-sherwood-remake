@@ -1296,6 +1296,27 @@ impl EngineInner {
             return;
         }
 
+        // Original `RHElementActorHuman::TranslateHitDamage` calls
+        // `SayOuch()` synchronously before it appends the FALLING_HIT order.
+        // This is particularly important when the hit interrupts speech
+        // queued earlier in the same engine frame: SPEECH_EMERGENCY removes
+        // that pending exclamation before Sound::Hourglass resolves the
+        // replacement.  The already-down/flying postures terminate the
+        // damage element without entering this default arm and stay silent.
+        if !matches!(
+            victim_posture,
+            Posture::Lying
+                | Posture::StuckUnderNet
+                | Posture::Flying
+                | Posture::Carried
+                | Posture::OnShoulders
+                | Posture::Tied
+                | Posture::Dead
+                | Posture::DeadBack
+        ) {
+            self.say_ouch(sim, assets, victim_id, None);
+        }
+
         // CarryingCorpse arm — drop the corpse instantly (the
         // carrier then falls through to the base-class hit-damage
         // path which dispatches the regular hit-fall animation
