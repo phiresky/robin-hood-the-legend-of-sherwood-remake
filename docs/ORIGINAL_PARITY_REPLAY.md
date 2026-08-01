@@ -4138,6 +4138,21 @@ validated first and skipped the flag write. The decoder remains strict about
 structural corruption, but the runtime helper now preserves this shipped
 engine error-path ordering for any authored or scripted invalid index.
 
+### Friend-check fields preserve legacy integer narrowing
+
+Relative `CheckForSync` indices are encoded around 1000. Original computes
+`current + ((SWORD)encoded - 1000)` and then narrows the result to `UWORD`, so
+a relative waypoint before zero wraps modulo 65,536. Rust previously clamped
+negative results to zero. Both the pure synchronization branch and the later
+wait setup now use the Original mixed-signedness conversion.
+
+The authored wait duration similarly becomes
+`mubNumberOfLooks = frames / interval + 1`: the integer result narrows to an
+8-bit field rather than saturating at 255. Rust now retains that conversion
+and no longer invents a one-look fallback for the zero/division error case.
+Focused tests cover ordinary relative offsets, underflow, signed 16-bit input,
+and the 8-bit look-count boundary.
+
 A clean baseline proves exact parity only for the state fields serialized by the
 recorder and the behaviors exercised by this session. When a divergence depends
 on unrecorded state, extend the neutral trace schema rather than guessing from a

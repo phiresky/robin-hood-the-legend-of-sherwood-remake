@@ -1071,11 +1071,7 @@ impl EngineInner {
                 let sector = crate::position_interface::vector_to_sector_0_to_15(vdx, vdy) as u8;
                 let def_wid = get_hth_weapon_id_full(e, &assets.profile_manager);
                 let def_prof = def_wid.and_then(|id| assets.profile_manager.get_hth_weapon(id));
-                let lp = match e {
-                    Entity::Pc(pc) => pc.pc.life_points,
-                    Entity::Soldier(s) => s.npc.life_points,
-                    _ => 0,
-                };
+                let lp = get_life_points(e);
                 let is_walking_with_sword = e
                     .actor_data()
                     .map(|a| a.action_state == ActionState::MovingSword)
@@ -1578,11 +1574,7 @@ impl EngineInner {
                         crate::position_interface::vector_to_sector_0_to_15(vdx, vdy) as u8;
                     let def_wid = get_hth_weapon_id_full(e, &assets.profile_manager);
                     let def_prof = def_wid.and_then(|id| assets.profile_manager.get_hth_weapon(id));
-                    let lp = match e {
-                        Entity::Pc(pc) => pc.pc.life_points,
-                        Entity::Soldier(s) => s.npc.life_points,
-                        _ => 0,
-                    };
+                    let lp = get_life_points(e);
                     let is_walking_with_sword = e
                         .actor_data()
                         .map(|a| a.action_state == ActionState::MovingSword)
@@ -1852,11 +1844,7 @@ impl EngineInner {
                     _ => None,
                 };
                 let def_prof = def_wid.and_then(|id| assets.profile_manager.get_hth_weapon(id));
-                let lp = match e {
-                    Entity::Pc(pc) => pc.pc.life_points,
-                    Entity::Soldier(s) => s.npc.life_points,
-                    _ => 0,
-                };
+                let lp = get_life_points(e);
                 let is_walking_with_sword = e
                     .actor_data()
                     .map(|a| a.action_state == ActionState::MovingSword)

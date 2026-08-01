@@ -2360,8 +2360,8 @@ mod tests {
     use super::*;
     use crate::coordinates::WorldPoint3D;
     use crate::element::{
-        ActiveFlight, ActorData, ActorPc, ActorSoldier, ElementData, ElementKind, HumanData,
-        NpcData, PcData, SoldierData,
+        ActiveFlight, ActorCivilian, ActorData, ActorPc, ActorSoldier, CivilianData, ElementData,
+        ElementKind, HumanData, NpcData, PcData, SoldierData,
     };
 
     fn make_engine() -> EngineInner {
@@ -2421,6 +2421,32 @@ mod tests {
             pc: PcData {
                 life_points: 50,
                 ..PcData::default()
+            },
+        })
+    }
+
+    fn make_civilian(pos: WorldPoint3D) -> Entity {
+        let mut element = ElementData {
+            kind: ElementKind::ActorCivilian,
+            active: true,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        };
+        element.set_position(pos);
+        element.set_position_map(crate::coordinates::MapPoint::from_world_xyz(
+            pos.x, pos.y, pos.z,
+        ));
+        Entity::Civilian(ActorCivilian {
+            element,
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData {
+                life_points: 100,
+                ..NpcData::default()
+            },
+            civilian: CivilianData {
+                cached_camp: crate::element::Camp::Royalists,
+                ..CivilianData::default()
             },
         })
     }
@@ -2962,6 +2988,48 @@ mod tests {
             profile_manager: std::sync::Arc::new(profile_manager),
             ..LevelAssets::default()
         }
+    }
+
+    #[test]
+    fn civilian_health_counts_toward_round_strike_and_warcry() {
+        let mut engine = make_engine();
+        let (attacker, _) = make_enemy_strike_pair(&mut engine, true);
+        engine.add_entity(make_civilian(WorldPoint3D {
+            x: 15.0,
+            y: 100.0,
+            z: 0.0,
+        }));
+
+        let mut assets = assets_with_nonstraight_profile(
+            SwordStrike::H,
+            crate::profiles::WeaponThrustKind::TrueCircle,
+        );
+        std::sync::Arc::make_mut(&mut assets.profile_manager).soldiers[0].fighting = 100;
+        engine.control.rng = SimulationRng::with_original_replay(vec![0]);
+
+        engine.with_simulation_context(|engine, sim| {
+            engine.consume_pending_enemy_sword_attack_for(sim, &assets, attacker);
+        });
+
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(attacker, |command| {
+                    command == Command::SwordstrikeThrustH
+                }),
+            "the PC and civilian are two live round-strike victims"
+        );
+        assert_eq!(
+            engine
+                .get_entity(attacker)
+                .and_then(Entity::enemy_ai)
+                .expect("fixture attacker keeps Enemy AI")
+                .base
+                .current_remark,
+            crate::ai::Remark::Warcry,
+            "Original says REMARK_WARCRY when selecting thrust H"
+        );
     }
 
     fn soldier_life(engine: &EngineInner, soldier_id: EntityId) -> i16 {

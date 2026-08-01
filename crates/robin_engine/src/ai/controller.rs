@@ -1,5 +1,19 @@
 use super::*;
 
+/// Reproduce the Original's mixed signed/unsigned waypoint expression:
+/// `current + ((SWORD)encoded - 1000)`, narrowed to `UWORD`.
+fn resolve_synchronize_index(current: u16, encoded: u16) -> u16 {
+    if encoded > 500 {
+        (current as i32 + encoded as i16 as i32 - 1000) as u16
+    } else {
+        encoded
+    }
+}
+
+fn friend_check_look_count(frames: u16, interval: u16) -> u8 {
+    (frames / interval + 1) as u8
+}
+
 /// The per-NPC AI controller state. Enemy and friendly AI extend this
 /// with additional fields.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
@@ -2453,15 +2467,7 @@ impl AiController {
 
         // (c) Pure synchronization branch.
         if frames == 0 && index != u16::MAX {
-            let synchronize_index = if index > 500 {
-                // Relative index: my current waypoint + (index - 1000).
-                // The original math is unsigned wrap-friendly; we use
-                // i32 arithmetic and clamp the cast.
-                let rel = (index as i32) - 1000;
-                ((my_current_wp_index as i32) + rel).max(0) as u16
-            } else {
-                index
-            };
+            let synchronize_index = resolve_synchronize_index(my_current_wp_index, index);
             self.synchronize_charly = target;
             self.synchronize_index = synchronize_index;
             self.set_checkpoint_charly(0);
@@ -2596,19 +2602,18 @@ impl AiController {
             self.synchronize_index = u16::MAX;
         } else {
             self.synchronize_charly = target;
-            self.synchronize_index = if index > 500 {
-                let rel = (index as i32) - 1000;
-                ((my_current_wp_index as i32) + rel).max(0) as u16
-            } else {
-                index
-            };
+            self.synchronize_index = resolve_synchronize_index(my_current_wp_index, index);
         }
 
         // (f) Begin to wait.
         let interval = crate::parameters_ai::AI_CHECKFOR_TIME_INTERVAL.max(1) as u16;
-        self.number_of_looks = ((frames / interval) + 1).min(u8::MAX as u16) as u8;
-        let looks_for_div = self.number_of_looks.max(1) as u16;
-        self.delta_sorrow_level = 1000 / looks_for_div;
+        // Original evaluates the expression as an integer and narrows it to
+        // UBYTE. Preserve that modulo-256 conversion rather than saturating.
+        // A zero result is invalid authored data in both engines: Original's
+        // immediately following division by zero fails rather than inventing
+        // a one-look fallback.
+        self.number_of_looks = friend_check_look_count(frames, interval);
+        self.delta_sorrow_level = 1000 / self.number_of_looks as u16;
         self.current_substate = Substate::DefaultLookingSidewardsForCharly;
         self.outbox.actor.look_sidewards = Some(
             if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::CheckForLookDirection, 0..2) != 0 {
@@ -4430,6 +4435,20 @@ impl ConsiderationAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relative_synchronize_indices_narrow_like_original_uword() {
+        assert_eq!(resolve_synchronize_index(7, 500), 500);
+        assert_eq!(resolve_synchronize_index(3, 1002), 5);
+        assert_eq!(resolve_synchronize_index(1, 998), u16::MAX);
+        assert_eq!(resolve_synchronize_index(0, u16::MAX), 64_535);
+    }
+
+    #[test]
+    fn friend_check_look_count_narrows_instead_of_saturating() {
+        assert_eq!(friend_check_look_count(254, 1), 255);
+        assert_eq!(friend_check_look_count(255, 1), 0);
+    }
 
     #[test]
     fn direct_cross_npc_say_is_drained_synchronously() {
