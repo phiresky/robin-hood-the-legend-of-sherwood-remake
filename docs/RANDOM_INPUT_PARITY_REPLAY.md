@@ -362,6 +362,25 @@ also reproduce their original strike/opponent-lifecycle RNG boundary.  Those
 source-mapped.  The status split is two ordinary comparison exits and sixteen
 RNG assertion exits; none are interrupted or watchdog results.
 
+The 15 unchanged boundaries split by cardinality into 11 Rust-overdraw and 4
+Rust-underdraw traces.  Ten overdraw traces reach the post-proposal
+`EvaluateSwordfight` tail and contain `MeleeStepBack`; six of those continue to
+`SmalltalkStrikeSide`.  Original performs those operations only after its
+swordfight, opponent, animation, initiative, range, and proposal gates
+(`original-code/RHelementactorhuman.cpp:8268-8456`), so this family is now
+localized to an earlier control-flow/ownership disagreement rather than the
+RNG implementation itself.  The ten tail members are Linux2 Save029;
+nicouzouf Save069; Linux3 Profile 003 Save012; randomguy Restart; Linux3
+Profile 001 Save008 replays 001 and 002 and Save010 replay 002; and SuN
+Save032, Save034, and Save036.  Linux2 Save002 is the separate `+1` mixed
+idle/smalltalk frame.
+
+The four underdraw traces are Linux Profile 005 Restart (`-1`), Linux3 Profile
+003 Save031 (`-1`), and nicouzouf Save039 replays 001 (`-3`) and 002 (`-1`).
+They remain a distinct missing-call family: the postponed-entry early return
+cannot explain them, and no synthetic draw will be added to align their
+streams.
+
 The long `60s-15x` snapshot contains 1,791 traces and is being swept with one
 runner process to keep memory bounded.  Its totals are provisional until all
 status files exist under `output/parity-audits/random-long-fresh/`.
