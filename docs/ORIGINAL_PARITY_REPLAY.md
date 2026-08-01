@@ -4077,6 +4077,30 @@ previously sanitized before the nested path completion. The two opcodes now
 retain the Original recursive boundary; focused coverage checks both the raw
 last-command snapshot and the masked emitted movement.
 
+### Pending: patrol macro opcodes need synchronous engine continuations
+
+Original `CMD_PATROL_START` clears the stopped flag, optionally says the
+officer remark, calls `InitializePatrol()` synchronously, and only then
+recurses into the next macro opcode. Rust currently clears the live patrol,
+sets `needs_patrol_reinit`, and immediately continues the VM; the formation is
+not rebuilt until a later patrol-coordination tick. A following
+`CMD_PATROL_DIRECTION` consequently broadcasts to an empty patrol instead of
+the freshly admitted and distance-sorted members.
+
+`CMD_PATROL_DIRECTION` has the same boundary problem on its own. Original
+iterates the live patrol and calls each member's
+`GetInstructedPatrolDirection` before `ExecuteNextMacroCommand` returns to the
+next opcode. Rust queues `direction_broadcast` but continues consuming macro
+bytes, while the engine drains the broadcast only after the VM returns. The
+existing engine comment promises the Original ordering, but the controller
+does not actually yield there.
+
+The general fix should add explicit engine-facing macro continuation barriers:
+yield after `PATROL_START`, rebuild the patrol from the current owner-boundary
+views, then resume the VM; yield after `PATROL_DIRECTION`, deliver and drain
+the member calls in patrol order, then resume again. This is deliberately not
+worked around with an extra timer or replay-specific ordering rule.
+
 A clean baseline proves exact parity only for the state fields serialized by the
 recorder and the behaviors exercised by this session. When a divergence depends
 on unrecorded state, extend the neutral trace schema rather than guessing from a
