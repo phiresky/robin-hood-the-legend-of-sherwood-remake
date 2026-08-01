@@ -2588,6 +2588,12 @@ impl EngineInner {
         owner: EntityId,
         stop_priority: crate::sequence::SequencePriority,
     ) {
+        let parity_debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
+        if parity_debug_stage_timing {
+            eprintln!(
+                "parity stop: engine stop_owner enter owner={owner:?} priority={stop_priority:?}"
+            );
+        }
         let owner_pos = self
             .get_entity(owner)
             .map(|e| e.element_data().position_map())
@@ -2595,6 +2601,9 @@ impl EngineInner {
         let pathfinder = &mut self.world.pathfinder;
         let next_order_id = &mut self.orders.next_order_id;
         let resolver = Self::priority_resolver(&self.world.entities);
+        if parity_debug_stage_timing {
+            eprintln!("parity stop: before stop_movement_for_owner owner={owner:?}");
+        }
         self.orders.sequence_manager.stop_movement_for_owner(
             owner,
             owner_pos,
@@ -2605,6 +2614,9 @@ impl EngineInner {
                 pathfinder.cancel_requests_for(id);
             },
         );
+        if parity_debug_stage_timing {
+            eprintln!("parity stop: after stop_movement_for_owner owner={owner:?}");
+        }
         // `MaybeCancelPathRequest` pairs path-request cancellation with
         // failed-path-retry removal whenever a movement element
         // transitions out of MOVE_WAITING.  Mirror that here so a
@@ -2616,9 +2628,18 @@ impl EngineInner {
             .failed_path_requests
             .retain(|r| r.owner != owner);
         self.orders.pending_path_requests.cancel_for_owner(owner);
+        if parity_debug_stage_timing {
+            eprintln!("parity stop: before sequence stop_owner owner={owner:?}");
+        }
         self.orders
             .sequence_manager
             .stop_owner(owner, stop_priority, &resolver);
+        if parity_debug_stage_timing {
+            eprintln!("parity stop: after sequence stop_owner owner={owner:?}");
+            eprintln!(
+                "parity stop: engine stop_owner exit owner={owner:?} priority={stop_priority:?}"
+            );
+        }
     }
 
     /// Returns `true` when the actor's posture is one of

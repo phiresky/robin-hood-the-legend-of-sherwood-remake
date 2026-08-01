@@ -520,6 +520,12 @@ impl EngineInner {
         pc_id: EntityId,
         action: Action,
     ) {
+        let parity_debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
+        if parity_debug_stage_timing {
+            eprintln!(
+                "parity action: set_pc_action enter pc={pc_id:?} action={action:?} seat={seat}"
+            );
+        }
         if !self.players.seats[seat].selection.contains(&pc_id) {
             // "Not-selected" branch — only set the current action on the
             // single PC, no cleanup of the outgoing action. Don't call
@@ -564,7 +570,17 @@ impl EngineInner {
                 .map(|pc| pc.current_action)
                 .unwrap_or(Action::NoAction);
             if old_action != action && !record_qa {
+                if parity_debug_stage_timing {
+                    eprintln!(
+                        "parity action: before unselect_action pc={id:?} old={old_action:?} new={action:?}"
+                    );
+                }
                 self.unselect_action(id);
+                if parity_debug_stage_timing {
+                    eprintln!(
+                        "parity action: after unselect_action pc={id:?} old={old_action:?} new={action:?}"
+                    );
+                }
             }
             if let Some(entity) = self.get_entity_mut(id)
                 && let Some(pc) = entity.pc_data_mut()
@@ -609,7 +625,17 @@ impl EngineInner {
                 }
                 // `Normal` priority interrupts weaker-priority activity
                 // but leaves Preference / Script / Injury / etc. running.
+                if parity_debug_stage_timing {
+                    eprintln!(
+                        "parity action: before group stop_owner pc={id:?} priority=Normal action={action:?}"
+                    );
+                }
                 self.stop_owner(id, SequencePriority::Normal);
+                if parity_debug_stage_timing {
+                    eprintln!(
+                        "parity action: after group stop_owner pc={id:?} priority=Normal action={action:?}"
+                    );
+                }
             }
         }
 
@@ -643,6 +669,9 @@ impl EngineInner {
         // — otherwise a quick action-button tap would immediately fire the
         // action on the nearest target via the double-click repeat path.
         input.ignore_mouse_event(false, false, true);
+        if parity_debug_stage_timing {
+            eprintln!("parity action: set_pc_action exit pc={pc_id:?} action={action:?}");
+        }
     }
 
     /// Compute the [`Stature`] state for the up/down arrow widgets.
@@ -816,9 +845,29 @@ impl EngineInner {
                     // (Normal / Wait / None), then launches `UnequipBow`.
                     // Stronger priorities (Script, Injury, KO,
                     // NonInterruptable) are protected.
+                    let parity_debug_stage_timing =
+                        std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
+                    if parity_debug_stage_timing {
+                        eprintln!(
+                            "parity action: before bow cleanup stop_owner pc={pc_id:?} priority=Preference"
+                        );
+                    }
                     self.stop_owner(pc_id, crate::sequence::SequencePriority::Preference);
+                    if parity_debug_stage_timing {
+                        eprintln!(
+                            "parity action: after bow cleanup stop_owner pc={pc_id:?} priority=Preference"
+                        );
+                        eprintln!(
+                            "parity action: before bow cleanup launch UnequipBow pc={pc_id:?}"
+                        );
+                    }
                     let elem = SequenceElement::new(1, Command::UnequipBow, Some(pc_id));
                     self.launch_element(elem);
+                    if parity_debug_stage_timing {
+                        eprintln!(
+                            "parity action: after bow cleanup launch UnequipBow pc={pc_id:?}"
+                        );
+                    }
                     tracing::debug!(?pc_id, "UnSelectAction: unequipping bow");
                 }
                 Action::HelpToClimb

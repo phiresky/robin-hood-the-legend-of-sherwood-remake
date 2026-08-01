@@ -2032,6 +2032,25 @@ impl Sequence {
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
     ) -> Vec<StateChangeEffects> {
+        self.stop_element_with_debug_depth(elem_idx, stop_priority, resolver, 0)
+    }
+
+    fn stop_element_with_debug_depth(
+        &mut self,
+        elem_idx: usize,
+        stop_priority: SequencePriority,
+        resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
+        depth: usize,
+    ) -> Vec<StateChangeEffects> {
+        let parity_debug_stage_timing =
+            std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some() && depth <= 64;
+        if parity_debug_stage_timing {
+            let elem = &self.elements[elem_idx];
+            eprintln!(
+                "parity stop: stop_element enter depth={depth} idx={elem_idx} command={:?} state={:?} priority={:?} postponed={:?}",
+                elem.command, elem.state, elem.priority, elem.postponed_element_index
+            );
+        }
         let mut all_effects: Vec<StateChangeEffects> = Vec::new();
 
         let elem = &mut self.elements[elem_idx];
@@ -2071,8 +2090,23 @@ impl Sequence {
             // Can't stop this element, but try the next one.
             let next_idx = elem_idx + 1;
             if next_idx < self.elements.len() {
-                let sub = self.stop_element(next_idx, stop_priority, resolver);
+                if parity_debug_stage_timing {
+                    eprintln!(
+                        "parity stop: stop_element before next depth={depth} from={elem_idx} to={next_idx}"
+                    );
+                }
+                let sub = self.stop_element_with_debug_depth(
+                    next_idx,
+                    stop_priority,
+                    resolver,
+                    depth + 1,
+                );
                 all_effects.extend(sub);
+                if parity_debug_stage_timing {
+                    eprintln!(
+                        "parity stop: stop_element after next depth={depth} from={elem_idx} to={next_idx}"
+                    );
+                }
                 // We use positional adjacency, so there's no pointer to
                 // clear after a recursive stop succeeds — the cascade
                 // bookkeeping in `set_element_state` already handles
@@ -2084,8 +2118,23 @@ impl Sequence {
         // if/else above. Without this, a postponed sibling attached to
         // an Interrupted parent stays alive indefinitely.
         if let Some(postponed_idx) = self.elements[elem_idx].postponed_element_index {
-            let sub = self.stop_element(postponed_idx, stop_priority, resolver);
+            if parity_debug_stage_timing {
+                eprintln!(
+                    "parity stop: stop_element before postponed depth={depth} from={elem_idx} to={postponed_idx}"
+                );
+            }
+            let sub = self.stop_element_with_debug_depth(
+                postponed_idx,
+                stop_priority,
+                resolver,
+                depth + 1,
+            );
             all_effects.extend(sub);
+            if parity_debug_stage_timing {
+                eprintln!(
+                    "parity stop: stop_element after postponed depth={depth} from={elem_idx} to={postponed_idx}"
+                );
+            }
             // Null the postponed link when the recursive stop left it
             // INTERRUPTED so a subsequent `start_postponed` cascade
             // doesn't try to wake an already-interrupted element.
@@ -2094,6 +2143,9 @@ impl Sequence {
             }
         }
 
+        if parity_debug_stage_timing {
+            eprintln!("parity stop: stop_element exit depth={depth} idx={elem_idx}");
+        }
         all_effects
     }
 }
@@ -4014,6 +4066,7 @@ impl SequenceManager {
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
     ) {
+        let parity_debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
         // Original `RHElementActor::Stop` starts from exactly
         // `mpSequenceElement`. Scanning every InProgress/Postponed element is
         // observably different after loading: stale non-selected branches can
@@ -4025,6 +4078,11 @@ impl SequenceManager {
                 !(elem.command == Command::Wait && elem.priority == SequencePriority::Wait)
             })
         {
+            if parity_debug_stage_timing {
+                eprintln!(
+                    "parity stop: manager stop_owner current owner={owner:?} priority={stop_priority:?} current={current:?}"
+                );
+            }
             targets.push(current);
 
             // A cross-sequence postponed link represents Original's direct
@@ -4038,13 +4096,29 @@ impl SequenceManager {
                 targets.push(cross);
             }
         }
+        if parity_debug_stage_timing && targets.is_empty() {
+            eprintln!(
+                "parity stop: manager stop_owner no current target owner={owner:?} priority={stop_priority:?}"
+            );
+        }
         let mut stopped = Vec::new();
         for (seq_id, elem_idx) in targets {
+            if parity_debug_stage_timing {
+                eprintln!(
+                    "parity stop: manager before stop_element owner={owner:?} seq={seq_id:?} idx={elem_idx}"
+                );
+            }
             let effects_vec = self
                 .sequences
                 .get_mut(&seq_id)
                 .map(|seq| seq.stop_element(elem_idx, stop_priority, resolver))
                 .unwrap_or_default();
+            if parity_debug_stage_timing {
+                eprintln!(
+                    "parity stop: manager after stop_element owner={owner:?} seq={seq_id:?} idx={elem_idx} effects={} ",
+                    effects_vec.len()
+                );
+            }
             for effects in effects_vec {
                 self.process_effects(seq_id, effects);
             }
@@ -4078,7 +4152,13 @@ impl SequenceManager {
         }
 
         // Also stop not-yet-launched elements for this owner.
+        if parity_debug_stage_timing {
+            eprintln!("parity stop: manager before stop_pending_elements owner={owner:?}");
+        }
         self.stop_pending_elements(owner, stop_priority, resolver);
+        if parity_debug_stage_timing {
+            eprintln!("parity stop: manager after stop_pending_elements owner={owner:?}");
+        }
     }
 
     /// Drop blocker links whose postponed target was stopped either directly
