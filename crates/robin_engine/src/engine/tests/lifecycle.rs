@@ -1269,6 +1269,11 @@ fn deferred_face_to_generates_live_exit_transition_and_keeps_resolved_direction(
         .unwrap();
     assert_eq!(deferred.state, SequenceState::Todo);
     assert_eq!(deferred.command, crate::element::Command::TurnFast);
+    assert_eq!(
+        deferred.priority,
+        crate::sequence::SequencePriority::NotYetSet,
+        "FaceTo priority belongs to the later Actor::Instruct boundary"
+    );
     assert_eq!(deferred.posture_after_transition, Posture::Undefined);
     assert!(
         deferred.orders.is_empty(),
@@ -1354,7 +1359,7 @@ fn deferred_face_to_does_not_overwrite_a_newer_live_movement_goal() {
 }
 
 #[test]
-fn deferred_standalone_face_to_waits_for_manager_while_walking() {
+fn face_to_waits_for_manager_regardless_of_owner_drain_mode() {
     use crate::coordinates::MapPoint;
     use crate::element::{ActionState, Command, Posture};
     use crate::movement::ActiveMovement;
@@ -1413,7 +1418,7 @@ fn deferred_standalone_face_to_waits_for_manager_while_walking() {
         .orders
         .push(AiOrderIntent::face_direction(9));
 
-    engine.launch_pending_orders_for_npc_mode(owner, true);
+    engine.launch_pending_orders_for_npc_mode(owner, false);
 
     let turn_sequence = engine
         .orders

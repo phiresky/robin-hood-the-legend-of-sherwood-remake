@@ -9034,7 +9034,7 @@ impl EngineInner {
     pub(super) fn launch_pending_orders_for_npc_mode_after_halt(
         &mut self,
         entity_id: EntityId,
-        defer_turn_instruction: bool,
+        _defer_turn_instruction: bool,
         halt_already_applied: bool,
     ) {
         // `StopAll` halts the actor inline before subsequent work,
@@ -9076,25 +9076,6 @@ impl EngineInner {
             };
             ai.take_pending_orders()
         };
-        // CoordinatePatrol may emit a Move and a Turn together; that compound
-        // owner boundary was already synchronous and its relative arbitration
-        // must remain intact. Every standalone FaceTo in a deferred owner
-        // boundary remains registered until SequenceManager::Hourglass,
-        // regardless of the actor's walking speed/state. Restricting this to
-        // MovingFast let ordinary walking actors execute the newly exposed
-        // exit transition one owner slot too early.
-        let defer_standalone_turn = defer_turn_instruction
-            && !intents.iter().any(|intent| {
-                matches!(
-                    intent.order_type,
-                    OrderType::WalkingUpright
-                        | OrderType::RunningUpright
-                        | OrderType::WalkingCrouched
-                        | OrderType::WalkingAlerted
-                        | OrderType::RiderCharging
-                )
-            });
-
         for intent in intents {
             match intent.order_type {
                 OrderType::WalkingUpright
@@ -9184,30 +9165,6 @@ impl EngineInner {
                     // postpones the Turn without translating it, so its
                     // direction goal remains untouched until the attentive
                     // transition finishes.
-                    let attentive_transition_blocks_turn = self
-                        .orders
-                        .sequence_manager
-                        .current_element_for_actor(entity_id)
-                        .and_then(|(seq, idx)| self.orders.sequence_manager.get_element(seq, idx))
-                        .is_some_and(|element| {
-                            matches!(
-                                element.command,
-                                crate::element::Command::EnterAttentiveMode
-                                    | crate::element::Command::LeaveAttentiveMode
-                                    | crate::element::Command::LeaveAttentiveModeOfficer
-                            )
-                        })
-                        || [
-                            crate::element::Command::EnterAttentiveMode,
-                            crate::element::Command::LeaveAttentiveMode,
-                            crate::element::Command::LeaveAttentiveModeOfficer,
-                        ]
-                        .into_iter()
-                        .any(|command| {
-                            self.orders
-                                .sequence_manager
-                                .element_is_about_to_be_launched(entity_id, command)
-                        });
                     let current_movement = self
                         .orders
                         .sequence_manager
@@ -9264,111 +9221,31 @@ impl EngineInner {
                                 )
                             })
                         });
-                        if defer_standalone_turn
-                            || intent.defer_instruction
-                            || attentive_transition_blocks_turn
-                        {
-                            self.launch_turn_sequence_deferred_no_transitions(
-                                entity_id,
-                                turn_command,
-                                direction,
-                                intent.target_x,
-                                intent.target_y,
-                                retained_goal,
-                            );
-                        } else {
-                            let mut intent = intent;
-                            intent.defer_initial_turn_step = self.control.frame_counter == 0;
-                            let order = intent.stamp(self.orders.allocate_order_id());
-                            let (_, instructed) = self
-                                .launch_single_order_sequence_stamped_ex_configured(
-                                    entity_id,
-                                    turn_command,
-                                    order,
-                                    true,
-                                    |element| {
-                                        if let Some(direction) = direction {
-                                            element.set_property(
-                                                crate::sequence::Field::Direction,
-                                                crate::sequence::FieldValue::Integer(
-                                                    direction as u32,
-                                                ),
-                                            );
-                                        }
-                                    },
-                                );
-                            if instructed
-                                && let (Some(direction), Some(entity)) =
-                                    (direction, self.world.entities.get_mut(entity_id))
-                            {
-                                entity.element_data_mut().set_direction_goal(direction);
-                            }
-                        }
+                        self.launch_turn_sequence_deferred_no_transitions(
+                            entity_id,
+                            turn_command,
+                            direction,
+                            intent.target_x,
+                            intent.target_y,
+                            retained_goal,
+                        );
                         if let (Some(goal), Some(entity)) =
                             (retained_goal, self.world.entities.get_mut(entity_id))
                         {
                             entity.position_iface_mut().set_map_goal(goal);
                         }
                     } else {
-                        let mut intent = intent;
-                        intent.defer_initial_turn_step = self.control.frame_counter == 0;
                         if !intent.no_halt {
                             self.halt_actor(entity_id);
                         }
-                        if defer_standalone_turn
-                            || intent.defer_instruction
-                            || attentive_transition_blocks_turn
-                        {
-                            self.launch_turn_sequence_deferred_no_transitions(
-                                entity_id,
-                                turn_command,
-                                intent.explicit_direction,
-                                intent.target_x,
-                                intent.target_y,
-                                None,
-                            );
-                        } else {
-                            // Original Face resolves positional targets during
-                            // FaceTo and synchronous Turn instruction writes
-                            // the direction goal before LaunchSequence
-                            // returns. This owner-local drain can run after
-                            // the global turn phase, so install both authored
-                            // and positional goals here rather than waiting
-                            // for next frame's command dispatch.
-                            let direction = intent.explicit_direction.or_else(|| {
-                                self.world.entities.get(entity_id).map(|entity| {
-                                    let position = entity.element_data().position_map();
-                                    crate::position_interface::vector_to_sector_0_to_15_iso(
-                                        intent.target_x - position.x,
-                                        intent.target_y - position.y,
-                                    )
-                                })
-                            });
-                            let order = intent.stamp(self.orders.allocate_order_id());
-                            let (_, instructed) = self
-                                .launch_single_order_sequence_stamped_ex_configured(
-                                    entity_id,
-                                    turn_command,
-                                    order,
-                                    true,
-                                    |element| {
-                                        if let Some(direction) = direction {
-                                            element.set_property(
-                                                crate::sequence::Field::Direction,
-                                                crate::sequence::FieldValue::Integer(
-                                                    direction as u32,
-                                                ),
-                                            );
-                                        }
-                                    },
-                                );
-                            if instructed
-                                && let (Some(direction), Some(entity)) =
-                                    (direction, self.world.entities.get_mut(entity_id))
-                            {
-                                entity.element_data_mut().set_direction_goal(direction);
-                            }
-                        }
+                        self.launch_turn_sequence_deferred_no_transitions(
+                            entity_id,
+                            turn_command,
+                            intent.explicit_direction,
+                            intent.target_x,
+                            intent.target_y,
+                            None,
+                        );
                     }
                 }
                 _ => {

@@ -1510,19 +1510,10 @@ impl EngineInner {
     /// Like [`launch_single_order_sequence_stamped`] but with an
     /// explicit toggle for the auto-insert `generate_transition` pass.
     ///
-    /// `with_transitions = false` follows the direct
-    /// `LaunchSequence` path used by `FaceTo`: the turn order is
-    /// enqueued without the `Bored→WaitingUpright→Alerted` posture
-    /// transitions that `Instruct` prepends for movement commands.
-    /// Skipping them keeps the detection-time turn short
-    /// (~1-2 ticks), so `SUBSTATE_ATTACKING_REACTIONTIME_TURNING`
-    /// fires `EventDone` early rather than eating the full 20-tick
-    /// `LaunchTimer` budget on the lean-forward transition — the
-    /// subsequent `AttackEnemy → GoNear(RUN)` then plays the posture
-    /// transitions itself (via its own `Instruct → GenerateTransition`)
-    /// after `SetEmoticon(XMark)` has landed, matching the original
-    /// game's "`!` appears while the guard is still in bored pose,
-    /// then he leans forward" sequencing.
+    /// `with_transitions = false` is reserved for synthetic prebuilt-order
+    /// lowerings whose Original command path has already selected the exact
+    /// transition order. Ordinary `LaunchSequence` calls still reach Actor
+    /// `Instruct` and generate transitions at the later manager boundary.
     pub(crate) fn launch_single_order_sequence_stamped_ex(
         &mut self,
         owner: EntityId,
@@ -1543,9 +1534,8 @@ impl EngineInner {
     /// Configured single-order launch that installs element properties before
     /// priority arbitration and reports whether the owner was instructed.
     ///
-    /// Turn uses this to mirror Original's `Instruct -> Translate` boundary:
-    /// an element postponed during arbitration retains its authored direction
-    /// property but must not mutate the actor until it is later instructed.
+    /// The callback supports synthetic commands that need to author element
+    /// properties before the direct arbitration boundary.
     pub(crate) fn launch_single_order_sequence_stamped_ex_configured(
         &mut self,
         owner: EntityId,
@@ -1608,9 +1598,8 @@ impl EngineInner {
         // Auto-insert exit / posture / enter transition orders before
         // the command runs.  If the transition is impossible, mark the
         // element Impossible and skip both arbitration and the
-        // InProgress promotion below.  Skipped for
-        // `LaunchSequence`-equivalent paths (`FaceTo`, etc.) that bypass
-        // `Instruct`.
+        // InProgress promotion below. Skipped only by synthetic lowering
+        // paths that have already chosen their exact transition order.
         if with_transitions && !self.generate_transition(owner, seq_id, elem_idx) {
             self.orders
                 .sequence_manager
@@ -1681,10 +1670,6 @@ impl EngineInner {
             .sequence_manager
             .launch_single_order_sequence_unchecked(owner, command);
         if let Some(element) = self.orders.sequence_manager.get_element_mut(seq_id, 0) {
-            let resolver = Self::priority_resolver(&self.world.entities);
-            if element.priority == crate::sequence::SequencePriority::NotYetSet {
-                element.priority = resolver(element);
-            }
             if let Some(direction) = explicit_direction {
                 element.set_property(
                     crate::sequence::Field::Direction,

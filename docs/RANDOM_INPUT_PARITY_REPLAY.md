@@ -1846,6 +1846,36 @@ an exact full-3D source/listener position before its range or deafness work.
 That equality guard is important for attributable cries: a wounded or trapped
 actor must not receive its own `AAARGH`/`HEEELP` broadcast.
 
+## Sequence registration and AI FaceTo lifecycle
+
+Source audit found that the port's default owned-element launcher was based on
+an inverted reading of Original sequence timing. `LaunchSequenceElement`
+wraps and launches a sequence, but `RHSequence::NextSequenceElementsGo`
+registers ordinary work in `mlistSequenceElementsToGo`; only the later
+`RHEngine` manager Hourglass calls `Go -> Instruct`, after the complete entity
+Hourglass walk (`original-code/RHsequence.cpp:240-288`,
+`RHsequencemanager.cpp:321-345,938-970`, `RHengine.cpp:3735-3747`). The only
+registration-time exceptions are explicit `RHPRIORITY_WAIT` elements and the
+`ExecutedImmediately` whitelist.
+
+Commit `58bb5ade2` restores that general boundary. Ordinary combat, input, AI,
+and script launches retain `NOT_YET_SET` priority and undefined transition
+stamps until manager instruction. Synchronous WAIT admission now follows the
+same `RHElementActor::Instruct` order as the ordinary manager path:
+non-interruptable guard, transition generation, then normal arbitration. The
+PC-on-shoulders `MOVE_TO_JUMP` owner transfer remains in the PC `Instruct`
+override and updates the manager's derived owner indexes when it hands the
+element to the carrier.
+
+The follow-up FaceTo audit removed a second eager shortcut. Original
+`RHArtificialIntelligence::FaceTo` halts the actor, authors a TURN sequence,
+and calls `LaunchSequence`; it never calls `Instruct` directly
+(`original-code/RHartificialintelligence.cpp:2722-2782`). Therefore every
+FaceTo Turn, including a Turn authored beside a patrol/group Move, now remains
+untranslated in manager FIFO order. Direction goal, transition orders, and
+priority are sampled only when that Turn reaches the later owner instruction.
+Replay validation is pending the next frozen-runner sweep.
+
 ## Schema-12 comparator coverage audit
 
 The schema-12 reader now treats the trace envelope as an executable contract,
