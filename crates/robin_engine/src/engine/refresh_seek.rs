@@ -283,6 +283,19 @@ impl crate::engine::EngineInner {
             if !flags.contains(MoveFlags::SEEK) {
                 return false;
             }
+            // Original evaluates moved-target refresh only inside
+            // RHElementActor::PerformSeek. The SEEK flag remains attached to
+            // cross-sector wall and ladder orders, but their Execute arms call
+            // PerformMotion directly and must neither refresh nor consume the
+            // route-construction RNG draws. Sampling solely from the element
+            // flags made a climbing PC rebuild a cross-building chase while
+            // Original kept climbing.
+            let Some(order) = elem.orders.front() else {
+                return false;
+            };
+            if super::movement::perform_seek_calls_per_execute(order.order_type) == 0 {
+                return false;
+            }
             let Some(target_id) = *target else {
                 return false;
             };
@@ -809,6 +822,66 @@ mod tests {
                 .unwrap()
                 .state,
             SequenceState::InProgress
+        );
+    }
+
+    #[test]
+    fn climbing_seek_flag_does_not_run_perform_seek_refresh() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = crate::engine::EngineInner::new();
+        let assets = LevelAssets::new();
+        let owner = engine.add_entity(test_pc_at(10.0, 10.0, 1));
+        let target = engine.add_entity(test_pc_at(80.0, 10.0, 2));
+
+        let mut seek = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(owner),
+            OrderType::ClimbingWallUp,
+        );
+        if let SequenceElementData::Movement { flags, element, .. } = &mut seek.data {
+            *flags = MoveFlags::SEEK;
+            *element = Some(target);
+        }
+        seek.orders.push_back(crate::order::Order::test_new(
+            OrderType::ClimbingWallUp,
+            80.0,
+            10.0,
+        ));
+        let seek_seq = engine.orders.sequence_manager.launch_element(seek);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(seek_seq, 0);
+        {
+            let actor = engine
+                .get_entity_mut(owner)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap();
+            actor.active_movement = ActiveMovement::new(seek_seq, 0);
+            actor.seek_refresh_wait = 0;
+            actor.last_seek_target_position = MapPoint::ZERO;
+        }
+
+        assert!(!engine.tick_refresh_seek_for_owner(&sim, &assets, owner));
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seek_seq, 0)
+                .unwrap()
+                .state,
+            SequenceState::InProgress
+        );
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .seek_refresh_wait,
+            0
         );
     }
 

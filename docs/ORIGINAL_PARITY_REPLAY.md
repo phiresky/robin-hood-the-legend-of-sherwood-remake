@@ -4190,6 +4190,30 @@ The arrow-reserve path also now enforces the Original's Lacklandist-only
 dangerous-house check: an otherwise-best door is rejected when its interior
 occupant list contains a PC, without advancing the running minimum.
 
+### Seek refresh follows the selected animation's Execute arm
+
+A movement element can retain `RHMOVE_SEEK` while its selected wall or ladder
+order executes. Original tests moved-target refresh only inside
+`RHElementActor::PerformSeek`; climbing orders call `PerformMotion` directly.
+Rust's owner-slot refresh scan previously used the element flag alone, so a
+climbing actor could abandon its current route, rebuild a cross-building seek,
+and consume random building-wait draws that Original never requested. The scan
+now shares the exact Execute-dispatch table used by movement countdown aging:
+ordinary walk/run orders permit refresh, `RunningStairs` retains its literal
+two `PerformSeek` calls, and wall/ladder orders do not refresh.
+
+### Serialized order AI locks do not make sequences uninterruptible
+
+Original `RHSequenceElement::CanInterruptNow` asserts that its current order
+exists and then always returns true. Although `RHOrder::bLockAI` is serialized,
+the Original code base never reads it during arbitration. Rust had assigned
+that field to Hitting and other ability orders and treated it as an
+"over-top-special" lock, postponing ordinary player replacements that Original
+interrupts immediately. Arbitration now preserves `lock_ai` for save-format
+round trips but gives it no invented runtime effect. This restores immediate
+replacement of a selected Hit by a new Hit/Seek and lets the replacement route
+consume its legitimate building-wait RNG draws in the recorded frame.
+
 A clean baseline proves exact parity only for the state fields serialized by the
 recorder and the behaviors exercised by this session. When a divergence depends
 on unrecorded state, extend the neutral trace schema rather than guessing from a

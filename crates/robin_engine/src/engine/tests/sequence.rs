@@ -929,7 +929,7 @@ fn set_soldier_attentive_mode_plays_transition_while_movement_is_postponed() {
 }
 
 #[test]
-fn arbitration_postpone_current_splits_when_current_cannot_interrupt_now() {
+fn arbitration_ignores_serialized_order_ai_lock_like_original() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
@@ -958,8 +958,8 @@ fn arbitration_postpone_current_splits_when_current_cannot_interrupt_now() {
 
     let accepted = engine.arbitrate_instruct(incoming_seq, 0);
     assert!(
-        !accepted,
-        "locked current order should finish before incoming element dispatches"
+        accepted,
+        "Original CanInterruptNow always accepts a live current order"
     );
 
     let current = engine
@@ -967,19 +967,19 @@ fn arbitration_postpone_current_splits_when_current_cannot_interrupt_now() {
         .sequence_manager
         .get_element(current_seq, 0)
         .unwrap();
-    assert_eq!(current.orders.len(), 1);
-    assert_eq!(current.cross_postponed, Some((incoming_seq, 0)));
+    assert_eq!(current.state, SequenceState::Postponed);
+    assert!(
+        current.orders.is_empty(),
+        "Original postponement discards the translated current order chain"
+    );
 
     let incoming = engine
         .orders
         .sequence_manager
         .get_element(incoming_seq, 0)
         .unwrap();
-    assert_eq!(incoming.state, SequenceState::Postponed);
-    assert!(
-        incoming.cross_postponed.is_some(),
-        "incoming should resume the current continuation after it runs"
-    );
+    assert_eq!(incoming.state, SequenceState::Todo);
+    assert_eq!(incoming.cross_postponed, Some((current_seq, 0)));
 }
 
 #[test]

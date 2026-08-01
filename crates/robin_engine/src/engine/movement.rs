@@ -616,7 +616,7 @@ fn age_seek_refresh_wait(wait: u32) -> u32 {
 /// while their Execute arms call `PerformMotion` directly. Conversely,
 /// `RHNONANIMATION_RUNNING_STAIRS` literally calls `PerformSeek` twice.
 #[inline]
-fn perform_seek_calls_per_execute(order: OrderType) -> u32 {
+pub(super) fn perform_seek_calls_per_execute(order: OrderType) -> u32 {
     match order {
         OrderType::TransitionWalkingUprightWaitingUpright
         | OrderType::TransitionRunningUprightWaitingUpright
@@ -11403,6 +11403,17 @@ mod line_jump_tests {
         assert_eq!(age_seek_refresh_wait(25), 24);
         assert_eq!(age_seek_refresh_wait(0), u32::MAX);
         assert_eq!(age_seek_refresh_wait(u32::MAX), u32::MAX - 1);
+    }
+
+    #[test]
+    fn seek_refresh_dispatch_follows_selected_execute_arm() {
+        assert_eq!(perform_seek_calls_per_execute(OrderType::WalkingUpright), 1);
+        assert_eq!(perform_seek_calls_per_execute(OrderType::RunningStairs), 2);
+        assert_eq!(perform_seek_calls_per_execute(OrderType::ClimbingWallUp), 0);
+        assert_eq!(
+            perform_seek_calls_per_execute(OrderType::ClimbingWallDown),
+            0
+        );
     }
 
     #[test]

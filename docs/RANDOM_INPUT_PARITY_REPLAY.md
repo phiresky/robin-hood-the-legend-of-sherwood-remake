@@ -1724,6 +1724,30 @@ retains that live hold despite the unconscious flag. A focused lifecycle
 regression reconstructs the exact loaded `Wait`/`BeingTied` state and requires
 the counter to advance.
 
+Two Linux3 Profile 002 Savegame 000 traces reached RNG cardinality boundaries
+that were downstream of general sequence-dispatch differences:
+
+- In replay 002 at frame 374, PC 126 was climbing a wall while a SEEK-tagged
+  chase remained selected. Rust ran the moved-target RefreshSeek scan solely
+  from the element flag and rebuilt a cross-building route, consuming four
+  random building-wait draws. Original's climbing Execute arm calls
+  `PerformMotion`, not `PerformSeek`, so it cannot refresh at that boundary.
+  Refresh now additionally requires that the selected order's exact Execute
+  arm dispatches `PerformSeek`; the existing dispatch table also preserves the
+  double call made by `RunningStairs`.
+- In replay 015 at frame 601, a new player Hit command targeted soldier 58
+  while the preceding Hit on soldier 64 was still selected. Original
+  interrupts it and immediately constructs the new chase route, consuming the
+  four recorded building-wait draws. Rust postponed the new Seek because its
+  Hitting order had `lock_ai=true`. Original
+  `RHSequenceElement::CanInterruptNow` unconditionally returns true after
+  asserting that a current order exists; serialized `RHOrder::bLockAI` has no
+  sequence-arbitration reads. Rust now keeps that field only as inert save
+  state and always permits interruption of a live current order.
+
+Both changes preserve the global RNG stream by restoring the Original work
+that owns each draw; neither inserts, skips, or substitutes replay values.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

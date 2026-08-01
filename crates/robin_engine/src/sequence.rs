@@ -3729,24 +3729,20 @@ impl SequenceManager {
     /// Whether the front order on the given element can be interrupted
     /// right now.
     ///
-    /// "Over-top-special" orders cannot be cut immediately and are
-    /// modeled with `Order::lock_ai`: these orders keep the actor's
-    /// execution context locked until their current order finishes,
-    /// so arbitration must split/postpone instead of tearing them
-    /// down synchronously.
+    /// Original's `RHSequenceElement::CanInterruptNow` asserts that a current
+    /// order exists and then unconditionally returns true. `RHOrder::bLockAI`
+    /// is serialized but is never consulted by sequence arbitration. Keep the
+    /// field for save compatibility without inventing gameplay semantics for
+    /// it here.
     pub fn can_interrupt_now(&self, seq_id: SequenceId, elem_idx: usize) -> bool {
-        let Some(elem) = self.get_element(seq_id, elem_idx) else {
-            tracing::warn!(
-                ?seq_id,
-                elem_idx,
-                "can_interrupt_now called for missing sequence element"
-            );
-            return false;
-        };
-        let Some(order) = elem.orders.front() else {
-            return true;
-        };
-        !order.lock_ai
+        let elem = self.get_element(seq_id, elem_idx).unwrap_or_else(|| {
+            panic!("can_interrupt_now called for missing sequence element {seq_id:?}/{elem_idx}")
+        });
+        assert!(
+            elem.orders.front().is_some(),
+            "can_interrupt_now requires a current order on {seq_id:?}/{elem_idx}"
+        );
+        true
     }
 
     /// Keep only the current/front order on an element.
@@ -5666,8 +5662,8 @@ mod tests {
         let foreign_seq = mgr.launch_element(foreign);
 
         assert!(
-            !mgr.can_interrupt_now(current_seq, 0),
-            "locked current order should use split_and_insert fallback"
+            mgr.can_interrupt_now(current_seq, 0),
+            "legacy bLockAI is inert during CanInterruptNow"
         );
         mgr.split_and_insert(current_seq, 0, foreign_seq, 0);
 
