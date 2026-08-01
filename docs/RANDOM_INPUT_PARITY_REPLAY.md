@@ -1762,6 +1762,23 @@ keeps that gate authoritative: the global snapshot no longer mutates
 This preserves live creation-order visibility without broadcasting targets to
 the whole camp.
 
+### 320-trace increment frozen after corpus entry 2222
+
+The serial release sweep under
+`output/parity-audits/random-long-new-since-2222-current-20260802/` completed
+all 320 newly available recordings. Its mutually exclusive result is 5 exact
+EOF, 314 ordinary state divergences, and 1 invariant exit. There are **zero**
+RNG-order exits in this increment, so none of the matching macro/bored RNG
+sites should be changed from this sweep.
+
+The sole exit-101 result is
+`linux3/Profile_002/QuickSave/replay-001`: Original runtime projectile 131,
+creation order 172, has no Rust mapping. This belongs to the already identified
+live bow-release/projectile-creation invariant family, not to global RNG
+cardinality. The frozen runner was built from source head `e42c169614` with
+SHA-256 `c3e3691c93b9ea3eb6e14e803a7f3b5718e7a84b11532c1850da7dd0da19e8c8`;
+the exact per-trace classifications remain in `final-classification.tsv`.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
