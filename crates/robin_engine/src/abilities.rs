@@ -1883,6 +1883,59 @@ pub(crate) fn restore_loaded_active_abilities(
     entities: &mut Entities,
     sequence_manager: &SequenceManager,
 ) {
+    fn classify_loaded_ability_order(
+        element: &crate::sequence::SequenceElement,
+        order: &Order,
+    ) -> Option<(AbilityKind, Option<ListenPhase>, Option<ReceivePursePhase>)> {
+        Some(match order.order_type {
+            OrderType::TransitionWaitingUprightCarryingCorpse => (AbilityKind::Carry, None, None),
+            OrderType::TransitionCarryingCorpseWaitingUpright => (AbilityKind::Drop, None, None),
+            OrderType::Tying => (AbilityKind::Tie, None, None),
+            OrderType::Healing | OrderType::Eating if element.command == Command::HealCmd => {
+                (AbilityKind::Heal, None, None)
+            }
+            OrderType::Whistling => (AbilityKind::Whistle, None, None),
+            OrderType::TransitionWaitingUprightListening => (
+                AbilityKind::Listen,
+                Some(ListenPhase::EnterTransition),
+                None,
+            ),
+            OrderType::Listening => (AbilityKind::Listen, Some(ListenPhase::CountingDown), None),
+            OrderType::TransitionListeningWaitingUpright => {
+                (AbilityKind::Listen, Some(ListenPhase::ExitTransition), None)
+            }
+            OrderType::ThrowingNet => (AbilityKind::ThrowNet, None, None),
+            OrderType::ThrowingWaspNest => (AbilityKind::ThrowWaspNest, None, None),
+            OrderType::ThrowingPurse => (AbilityKind::ThrowPurse, None, None),
+            OrderType::ThrowingApple => (AbilityKind::ThrowApple, None, None),
+            OrderType::ThrowingStone => (AbilityKind::ThrowStone, None, None),
+            OrderType::Paying => (AbilityKind::Pay, None, None),
+            OrderType::ReceivingPurse => (
+                AbilityKind::ReceivePurse,
+                None,
+                Some(ReceivePursePhase::Receiving),
+            ),
+            OrderType::WaitingWithPurse => (
+                AbilityKind::ReceivePurse,
+                None,
+                Some(ReceivePursePhase::Waiting),
+            ),
+            OrderType::TransitionWaitingWithPurseWaitingUpright => (
+                AbilityKind::ReceivePurse,
+                None,
+                Some(ReceivePursePhase::Transition),
+            ),
+            OrderType::Hitting => (AbilityKind::Hit, None, None),
+            OrderType::Strangling => (AbilityKind::Strangle, None, None),
+            OrderType::Eating => (AbilityKind::Eat, None, None),
+            OrderType::ClimbingUpOnShoulders => (AbilityKind::ClimbOnShoulders, None, None),
+            OrderType::ClimbingDownFromShoulders => {
+                (AbilityKind::ClimbDownFromShoulders, None, None)
+            }
+            _ => return None,
+        })
+    }
+
     let active = sequence_manager
         .sequences_iter()
         .flat_map(|sequence| {
@@ -1895,64 +1948,25 @@ pub(crate) fn restore_loaded_active_abilities(
                     if element.state != crate::sequence::SequenceState::InProgress {
                         return None;
                     }
-                    let order = element.current_order()?;
-                    let (kind, listen_phase, receive_purse_phase) = match order.order_type {
-                        OrderType::TransitionWaitingUprightCarryingCorpse => {
-                            (AbilityKind::Carry, None, None)
-                        }
-                        OrderType::TransitionCarryingCorpseWaitingUpright => {
-                            (AbilityKind::Drop, None, None)
-                        }
-                        OrderType::Tying => (AbilityKind::Tie, None, None),
-                        OrderType::Healing | OrderType::Eating
-                            if element.command == Command::HealCmd =>
-                        {
-                            (AbilityKind::Heal, None, None)
-                        }
-                        OrderType::Whistling => (AbilityKind::Whistle, None, None),
-                        OrderType::TransitionWaitingUprightListening => (
-                            AbilityKind::Listen,
-                            Some(ListenPhase::EnterTransition),
-                            None,
-                        ),
-                        OrderType::Listening => {
-                            (AbilityKind::Listen, Some(ListenPhase::CountingDown), None)
-                        }
-                        OrderType::TransitionListeningWaitingUpright => {
-                            (AbilityKind::Listen, Some(ListenPhase::ExitTransition), None)
-                        }
-                        OrderType::ThrowingNet => (AbilityKind::ThrowNet, None, None),
-                        OrderType::ThrowingWaspNest => (AbilityKind::ThrowWaspNest, None, None),
-                        OrderType::ThrowingPurse => (AbilityKind::ThrowPurse, None, None),
-                        OrderType::ThrowingApple => (AbilityKind::ThrowApple, None, None),
-                        OrderType::ThrowingStone => (AbilityKind::ThrowStone, None, None),
-                        OrderType::Paying => (AbilityKind::Pay, None, None),
-                        OrderType::ReceivingPurse => (
-                            AbilityKind::ReceivePurse,
-                            None,
-                            Some(ReceivePursePhase::Receiving),
-                        ),
-                        OrderType::WaitingWithPurse => (
-                            AbilityKind::ReceivePurse,
-                            None,
-                            Some(ReceivePursePhase::Waiting),
-                        ),
-                        OrderType::TransitionWaitingWithPurseWaitingUpright => (
-                            AbilityKind::ReceivePurse,
-                            None,
-                            Some(ReceivePursePhase::Transition),
-                        ),
-                        OrderType::Hitting => (AbilityKind::Hit, None, None),
-                        OrderType::Strangling => (AbilityKind::Strangle, None, None),
-                        OrderType::Eating => (AbilityKind::Eat, None, None),
-                        OrderType::ClimbingUpOnShoulders => {
-                            (AbilityKind::ClimbOnShoulders, None, None)
-                        }
-                        OrderType::ClimbingDownFromShoulders => {
-                            (AbilityKind::ClimbDownFromShoulders, None, None)
-                        }
-                        _ => return None,
-                    };
+                    let current_order = element.current_order()?;
+                    let (order, (kind, listen_phase, receive_purse_phase)) =
+                        classify_loaded_ability_order(element, current_order)
+                            .map(|classification| (current_order, classification))
+                            .or_else(|| {
+                                // Original actor ownership remains on the
+                                // sequence element while its launch-time
+                                // transition prefix plays. The Rust-only
+                                // ability latch must therefore target the
+                                // first non-transition order already stored
+                                // in that same serialized element. Using the
+                                // saved remaining-transition count preserves
+                                // the exact queue boundary without guessing
+                                // from animation names or save provenance.
+                                let ability_order =
+                                    element.orders.get(element.num_transition_orders)?;
+                                classify_loaded_ability_order(element, ability_order)
+                                    .map(|classification| (ability_order, classification))
+                            })?;
                     Some((
                         owner,
                         ActiveAbility {
@@ -2996,6 +3010,58 @@ mod tests {
         assert_eq!(restored.element_index, 0);
         assert_eq!(restored.target, Some(target));
         assert_eq!(restored.order_id, Some(order_id));
+        assert!(!restored.done_effect_applied);
+    }
+
+    #[test]
+    fn loaded_ability_behind_transition_prefix_reconstructs_from_first_command_order() {
+        let mut entities = Entities::new();
+        entities.push(Some(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        })));
+        let owner = entities.id_at_legacy_slot(0).unwrap();
+        let mut manager = SequenceManager::new();
+        let seq_id = launch_ability_element(&mut manager, Command::EatCmd, owner);
+        let transition_id = std::num::NonZeroU32::new(40).unwrap();
+        let eating_id = std::num::NonZeroU32::new(41).unwrap();
+        manager.push_order_on(
+            seq_id,
+            0,
+            Order::new(
+                OrderType::TransitionWalkingUprightWaitingUpright,
+                0.0,
+                0.0,
+                transition_id,
+            ),
+        );
+        manager.push_order_on(
+            seq_id,
+            0,
+            Order::new(OrderType::Eating, 0.0, 0.0, eating_id),
+        );
+        manager
+            .get_element_mut(seq_id, 0)
+            .unwrap()
+            .num_transition_orders = 1;
+
+        restore_loaded_active_abilities(&mut entities, &manager);
+
+        let restored = &entities
+            .get(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability;
+        assert_eq!(restored.kind, Some(AbilityKind::Eat));
+        assert_eq!(restored.sequence_id, Some(seq_id));
+        assert_eq!(restored.element_index, 0);
+        assert_eq!(restored.order_id, Some(eating_id));
         assert!(!restored.done_effect_applied);
     }
 

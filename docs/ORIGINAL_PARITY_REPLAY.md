@@ -4221,6 +4221,31 @@ commented out. Since `CanInterruptNow` cannot return false, neither that stub
 nor the alternate truncate-and-postpone branch can execute. Rust no longer
 maintains working gameplay semantics for either non-Original path.
 
+### Loaded abilities retain ownership behind their transition prefix
+
+An in-progress ability element can be saved before its launch-time transition
+orders have finished. Original keeps `mpSequenceElement` authoritative across
+that whole queue: `RHElementActor::Hourglass` calls `Proceed` when a transition
+terminates and selects the next order on the same element
+(`original-code/RHelementactor.cpp:536-607, 684-697, 740-761`). The command's
+real ability order is therefore already serialized behind the remaining
+transition prefix.
+
+Rust reconstructs a derived `ActiveAbility` owner latch after loading, but it
+previously inspected only the current order. Linux3 Profile 003 Savegame 022
+contains two sessions where an `Eat` element is still playing its final
+transition when loaded. Once that transition ended, no Rust ability owner
+claimed the now-current `Eating` order, so generic execution terminated the
+element and installed `Wait`; Original began eating instead.
+
+Loaded-ability reconstruction now first recognizes the current order and, when
+that is not an ability, selects the first non-transition order using the
+element's serialized `num_transition_orders` boundary. This is the same queue
+boundary already adopted from Original and applies to every supported ability,
+not to a particular command, save, or replay. A focused regression constructs
+an in-progress Eat element with a walking-to-waiting transition prefix and
+verifies that the latch targets the later Eating order's exact identity.
+
 A clean baseline proves exact parity only for the state fields serialized by the
 recorder and the behaviors exercised by this session. When a divergence depends
 on unrecorded state, extend the neutral trace schema rather than guessing from a
