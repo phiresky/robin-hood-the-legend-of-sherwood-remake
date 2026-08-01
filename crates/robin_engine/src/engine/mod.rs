@@ -1297,32 +1297,21 @@ impl EngineInner {
         }
     }
 
-    /// Launch a single sequence element after resolving its priority.
-    /// Wrapper for `sequence_manager.launch_element` — use this (rather
-    /// than the raw manager call) anywhere an engine-level code path
-    /// submits a newly-built element, so the priority decision normally
-    /// made in `Instruct` is applied before the element enters the
-    /// queue.
+    /// Register one element through Original's `LaunchSequenceElement`
+    /// boundary.
     ///
-    /// For elements that carry an `owner`, this routes through
-    /// [`Self::launch_element_for_owner`] so the full synchronous
-    /// `Instruct`-equivalent (posture/action-state stamp + priority
-    /// arbitration against the actor's current element) fires inline.
-    /// Ownerless elements are handed straight to the sequence manager —
-    /// they dispatch from the `EngineCommand` /
-    /// `ExecuteImmediateEngine` hourglass branches and have no actor
-    /// to arbitrate against.
+    /// Ordinary owner work remains untouched until the later sequence-
+    /// manager Hourglass calls `Go -> Instruct`. Priority, transition stamps,
+    /// generated orders, and arbitration therefore observe actor state at
+    /// instruction time, after every entity has completed its current
+    /// Hourglass slot. `SequenceManager` separately routes the two Original
+    /// registration-time exceptions: explicit `RHPRIORITY_WAIT` work and the
+    /// `ExecutedImmediately` command whitelist.
     pub(crate) fn launch_element(
         &mut self,
         elem: crate::sequence::SequenceElement,
     ) -> crate::sequence::SequenceId {
-        if elem.owner.is_some() {
-            self.launch_element_for_owner(elem)
-        } else {
-            let mut elem = elem;
-            self.resolve_element_priority(&mut elem);
-            self.orders.sequence_manager.launch_element(elem)
-        }
+        self.orders.sequence_manager.launch_element(elem)
     }
 
     /// Register an owned element without running its `Instruct` boundary
@@ -1334,10 +1323,9 @@ impl EngineInner {
     /// element. Its unresolved priority is deliberately preserved here:
     /// resolving a wait-priority element would route it through Rust's
     /// synchronous wait queue and expose its `Instruct` before the derived
-    /// Human/NPC tail. Most Rust call sites model re-entrant AI/script
-    /// launches and therefore use [`Self::launch_element_for_owner`];
-    /// actor-execute callbacks that need the manager ordering use this
-    /// narrower wrapper.
+    /// Human/NPC tail. This explicit name remains at older actor-execute call
+    /// sites; the ordinary [`Self::launch_element`] wrapper now has the same
+    /// deferred semantics for every `LaunchSequenceElement` call.
     pub(crate) fn register_owned_element_deferred(
         &mut self,
         elem: crate::sequence::SequenceElement,
@@ -1349,15 +1337,13 @@ impl EngineInner {
         self.orders.sequence_manager.launch_element(elem)
     }
 
-    /// Synchronous `Instruct`-equivalent for owned elements: resolve
-    /// priority, launch via the sequence manager, stamp the actor's
+    /// Direct `Instruct`-equivalent for an already-admitted owned element:
+    /// resolve priority, launch via the sequence manager, stamp the actor's
     /// current posture / action state onto the element, then arbitrate
-    /// against the actor's currently-executing element.  Runs inline
-    /// inside the launch path — the port used to defer arbitration to
-    /// the next hourglass pass, introducing a one-frame skew and
-    /// allowing same-frame launch paths
-    /// (`launch_single_order_sequence_unchecked`) to bypass priority
-    /// arbitration entirely.
+    /// against the actor's currently-executing element. This is not the
+    /// implementation of Original `LaunchSequenceElement`, which merely
+    /// registers ordinary work for the manager Hourglass; use it only when
+    /// the caller is already modelling an `Instruct` boundary directly.
     ///
     /// Caller invariant: `elem.owner` is `Some`.  The returned
     /// `SequenceId` is for the freshly-minted single-element sequence;
@@ -1806,6 +1792,58 @@ impl EngineInner {
         *flags &= !(MoveFlags::TO_JUMP | MoveFlags::SEEK);
         elem.owner = Some(carrier_id);
         *owner = carrier_id;
+    }
+
+    /// Apply the PC-on-shoulders movement redirect when the registered
+    /// element reaches `Instruct`, matching `RHElementActorPC::Instruct`.
+    fn redirect_queued_move_to_jump_if_carried(
+        &mut self,
+        owner: EntityId,
+        sequence_id: crate::sequence::SequenceId,
+        element_index: usize,
+    ) -> EntityId {
+        use crate::element::{Command, Posture};
+        use crate::sequence::{MoveFlags, SequenceElementData};
+
+        let should_redirect = self
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, element_index)
+            .is_some_and(|element| {
+                element.command == Command::Move
+                    && matches!(
+                        &element.data,
+                        SequenceElementData::Movement { flags, .. }
+                            if flags.contains(MoveFlags::TO_JUMP)
+                    )
+            });
+        if !should_redirect {
+            return owner;
+        }
+        let Some(rider) = self.get_entity(owner) else {
+            return owner;
+        };
+        if !rider.is_pc() || rider.element_data().posture != Posture::OnShoulders {
+            return owner;
+        }
+        let carrier = rider
+            .human_data()
+            .and_then(|human| human.carrier)
+            .unwrap_or_else(|| panic!("PC {owner:?} is OnShoulders without the required carrier"));
+
+        let element = self
+            .orders
+            .sequence_manager
+            .get_element_mut(sequence_id, element_index)
+            .expect("queued shoulder movement disappeared before Instruct");
+        let SequenceElementData::Movement { flags, .. } = &mut element.data else {
+            unreachable!("TO_JUMP redirect element changed data kind")
+        };
+        *flags &= !(MoveFlags::TO_JUMP | MoveFlags::SEEK);
+        self.orders
+            .sequence_manager
+            .reassign_element_owner(sequence_id, element_index, carrier);
+        carrier
     }
 
     /// Non-interruptable postpone guard.  Runs *before* GenerateTransition

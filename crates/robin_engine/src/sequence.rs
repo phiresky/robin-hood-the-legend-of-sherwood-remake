@@ -2569,6 +2569,58 @@ impl SequenceManager {
         self.sequences.get_mut(&id)
     }
 
+    /// Reassign a live element at an owner `Instruct` boundary.
+    ///
+    /// Original PC-on-shoulders movement changes the movement element's owner
+    /// from rider to carrier only when the rider receives `Instruct`. Keep the
+    /// derived actor indexes consistent with that pointer mutation.
+    pub(crate) fn reassign_element_owner(
+        &mut self,
+        sequence_id: SequenceId,
+        element_index: usize,
+        new_owner: EntityId,
+    ) {
+        let element_ref = SequenceElementRef::new(sequence_id, element_index);
+        let (old_owner, state) = self
+            .get_element(sequence_id, element_index)
+            .map(|element| (element.owner, element.state))
+            .unwrap_or_else(|| {
+                panic!("cannot reassign missing sequence element {sequence_id:?}/{element_index}")
+            });
+        let Some(old_owner) = old_owner else {
+            panic!("cannot reassign ownerless sequence element {sequence_id:?}/{element_index}")
+        };
+        if old_owner == new_owner {
+            return;
+        }
+
+        if Self::is_actor_live_state(state) {
+            self.remove_actor_live_ref(old_owner, element_ref);
+        }
+        if state == SequenceState::InProgress {
+            if let Some(set) = self.actor_in_progress.get_mut(&old_owner) {
+                set.remove(&element_ref);
+                if set.is_empty() {
+                    self.actor_in_progress.remove(&old_owner);
+                }
+            }
+        }
+
+        self.get_element_mut(sequence_id, element_index)
+            .expect("element disappeared during owner reassignment")
+            .owner = Some(new_owner);
+
+        if Self::is_actor_live_state(state) {
+            self.insert_actor_live_ref(new_owner, element_ref);
+        }
+        if state == SequenceState::InProgress {
+            self.actor_in_progress
+                .entry(new_owner)
+                .or_default()
+                .insert(element_ref);
+        }
+    }
+
     fn index_sequence_actor_refs(&mut self, seq_id: SequenceId) {
         let refs: Vec<(EntityId, SequenceElementRef, SequenceState)> = {
             let Some(seq) = self.sequences.get(&seq_id) else {

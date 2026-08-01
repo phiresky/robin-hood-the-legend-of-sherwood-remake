@@ -6439,11 +6439,8 @@ mod bow_command_body_parity_tests {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
         let owner = engine.add_entity(make_aiming_pc(ActionState::WaitingSword));
-        let parry_sequence = engine.launch_element_for_owner(SequenceElement::new(
-            1,
-            Command::ParrySword,
-            Some(owner),
-        ));
+        let parry_sequence =
+            engine.launch_element(SequenceElement::new(1, Command::ParrySword, Some(owner)));
         assert_eq!(
             engine
                 .orders
@@ -6451,8 +6448,8 @@ mod bow_command_body_parity_tests {
                 .get_element(parry_sequence, 0)
                 .expect("ParrySword remains queued for manager dispatch")
                 .priority,
-            crate::sequence::SequencePriority::Preference,
-            "the exact launch path registers NotYetSet work before resolving its semantic priority"
+            crate::sequence::SequencePriority::NotYetSet,
+            "LaunchSequenceElement must leave ordinary work unresolved until manager Instruct"
         );
 
         engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);

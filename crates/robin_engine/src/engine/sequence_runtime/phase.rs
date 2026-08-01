@@ -447,6 +447,12 @@ impl EngineInner {
                     sequence_id: seq_id,
                     element_index: elem_idx,
                 } => {
+                    // PC::Instruct redirects a TO_JUMP Move from a rider to
+                    // the carrier before Human/Actor Instruct sees it. This
+                    // must sample the live posture here, not when the element
+                    // was registered earlier in the frame.
+                    let owner =
+                        self.redirect_queued_move_to_jump_if_carried(owner, seq_id, elem_idx);
                     // Human::Instruct owns this guard, before
                     // Actor::Instruct resolves priority, stamps transition
                     // state, generates orders, or arbitrates. The action has
@@ -591,11 +597,10 @@ impl EngineInner {
                         continue;
                     }
                     // Posture transitions (leave-disguise, stand-up, …)
-                    // are handled before command dispatch: owned
-                    // single-element launches do it in
-                    // `launch_element_for_owner`, and prebuilt
-                    // `launch_sequence` elements do it at this ordered
-                    // InstructOwner admission boundary.
+                    // are handled before command dispatch at this ordered
+                    // InstructOwner admission boundary. A direct prebuilt-
+                    // order lowering may already have performed that work,
+                    // which is why `needs_transition` gates it above.
                     //
                     // Re-borrow element for data access.
                     let elem = match self.orders.sequence_manager.get_element(seq_id, elem_idx) {
@@ -2226,12 +2231,12 @@ impl EngineInner {
                         // are handled by the animation-completion
                         // side effects in `animation.rs`.
                         //
-                        // `launch_element_for_owner`/single-order launch
-                        // call `generate_transition` before this command
-                        // body is reached.  For these NPC commands the
-                        // transition flags match legacy behavior, so any
-                        // needed leave-action/posture orders have already been
-                        // queued ahead of the command's own animation.
+                        // Instruct admission calls `generate_transition`
+                        // before this command body is reached. For these NPC
+                        // commands the transition flags match legacy behavior,
+                        // so any needed leave-action/posture orders have
+                        // already been queued ahead of the command's own
+                        // animation.
                         Command::SitDown | Command::BeggarShowFace | Command::EnterLeisure => {
                             let barrier = NpcStateCommandContext {
                                 sequence_manager: &mut self.orders.sequence_manager,

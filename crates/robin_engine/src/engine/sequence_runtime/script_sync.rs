@@ -148,16 +148,24 @@ impl EngineInner {
                 if needs_stamp {
                     self.stamp_element_transition_state(owner, sequence_id, element_index);
                 }
-                if !self.arbitrate_instruct(sequence_id, element_index) {
-                    return Ok(());
+                if needs_stamp {
+                    // RHElementActor::Instruct checks a selected
+                    // NON_INTERRUPTABLE element before transition generation,
+                    // then generates transitions before ordinary priority
+                    // arbitration. WAIT-priority Go reaches this synchronous
+                    // dispatcher directly at registration, so it must use the
+                    // same admission order as the manager-Hourglass path.
+                    if self.non_interruptable_guard(owner, sequence_id, element_index) {
+                        return Ok(());
+                    }
+                    if !self.generate_transition(owner, sequence_id, element_index) {
+                        self.orders
+                            .sequence_manager
+                            .element_impossible(sequence_id, element_index);
+                        return Ok(());
+                    }
                 }
-                // `launch_element_for_owner` already stamped and generated a
-                // transition. A recorded WAIT reaches us with Undefined and
-                // needs the same one-time work as the normal hourglass path.
-                if needs_stamp && !self.generate_transition(owner, sequence_id, element_index) {
-                    self.orders
-                        .sequence_manager
-                        .element_impossible(sequence_id, element_index);
+                if !self.arbitrate_instruct(sequence_id, element_index) {
                     return Ok(());
                 }
                 let command = self
