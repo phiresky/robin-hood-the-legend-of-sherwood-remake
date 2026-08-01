@@ -454,7 +454,7 @@ not the current engine's expected failure count.
 | R03 | Listen fix landed; timer rerun required | `actor.wait_time`, alone or beside action state | Original uses the single serialized `mulWaitTime` for Whistle and Listen. Rust now synchronizes its phase-local mirrors and, while Listening, ignores sprite completion until that counter reaches zero. The prior sweep's three unchanged timer pairs (`2 -> 14`, stale `25 -> 4294967269`, and `24 -> 25`) still require current-fix reruns; do not normalize any timer in the comparator. |
 | R04 | Audited; current cohort rerun required | `position_goal_map` | The fresh 700-trace frozen baseline contains nine strict first-field members. They split into two replacement-preserve boundaries, three stop-clear boundaries, three unresolved `MoveOk` waypoint/order-destination differences, and one direct attentive-transition initialization boundary. `7910b1c7d` likely covers replacement preservation, while later identity-aware condolence and direct-transition work may cover the clear/attentive members; none may be called closed until all nine are rerun on one current frozen release runner. The waypoint geometry remains unresolved. |
 | R05 | Unassigned | `actor.command` with posture/direction | Inspect wrapper versus concrete command lifetime and the action-change marker that commits posture. |
-| R06 | Unassigned | `ai.substate` at frame 282 | Compare synchronous command side effects and owner-local AI callback ordering. |
+| R06 | Audited; current cohort rerun required | `ai.substate` | The fresh 700-trace frozen baseline has ten strict first-field traces: two shadow-timer exits, four special-strike entry/exit boundaries, two shield-protection entries, and two heard-steps/group-ordering boundaries. Every divergent frame has no resolved command and an aligned simulation-RNG batch, so these are not input or RNG-cardinality failures. Later special-strike commits are likely relevant; shadow visibility/timer timing, shield-entry predicates, and heard-steps delivery ordering remain unresolved. |
 | R07 | Unassigned | RNG cardinality/order | Treat the first missing or excess call as a downstream symptom until the responsible Original callsite and state gate are identified. Never consume a trace value merely to realign the stream. |
 | R08 | Unassigned | `position_map` | Requires exact movement increment, collision, transition, and command ownership comparison; no coordinate tolerance or replay-specific snap. |
 | R09 | Unassigned | Resolved speech has no pending Rust request | Separate genuinely absent gameplay `Say` calls from already-fixed synchronous speech boundaries before changing restoration or FIFO policy. |
@@ -600,6 +600,92 @@ The current rerun should preserve these four labels while reporting, for each
 trace, either exact EOF or its next independent first boundary. Do not merge
 the three waypoint values with stop/condolence fixes merely because the first
 compared field is the same.
+
+### R06 complete frozen-baseline inventory
+
+Exactly ten traces in the fresh 700-trace sweep report `ai.substate` as their
+first logical field. All ten divergent frame records have `commands=[]`. Their
+RNG batches also have equal Original/Rust cardinality and order; every listed
+draw belongs to the simulation domain. The values and raw Original callsite
+offsets below are diagnostics for the surrounding work, not evidence of an RNG
+fault. These remain frozen-runner results until a current release runner either
+reaches exact EOF or exposes a later independent boundary.
+
+| Family | Trace | Frame | Entity and exact state pair | Boundary RNG batch: `first_index; values; callsite_offsets` |
+|---|---|---:|---|---|
+| Shadow timer/visibility | `Savegame_Nescafe/Profile_001/Restart/replay-003-session-0001.jsonl.zst` | 282 | Soldier 210: Original `11 DefaultOnPost`; Rust `25 DefaultLookingShadow` | `2057; [880120884, 982608437, 1110424676, 833723432]; [1400943, 1202746, 1400943, 1400943]` |
+| Shadow timer/visibility | `Savegame_Nescafe/Profile_003/Restart/replay-003-session-0001.jsonl.zst` | 282 | Soldier 210: Original `11 DefaultOnPost`; Rust `25 DefaultLookingShadow` | `2083; [1472100780, 726318879, 1393065843, 1688743570, 988560093, 110908859]; [1657414, 1400943, 1202746, 1400943, 1400943, 1400943]` |
+| Special-strike entry | `Savegame_SuN1Sh1nE/Profile_004/ExQuickSave/replay-001-session-0001.jsonl.zst` | 35580 | Soldier 97: Original `161 AttackingSwordfightSpecialStrike`; Rust `160 AttackingSwordfight` | `866; [1672075245, 2015418716, 1725795122, 1975707409, 665708928, 347268203, 1112813156]; [1121462, 1657414, 1400943, 1400943, 1441112, 1441162, 1802982]` |
+| Special-strike entry | `Savegame_SuN1Sh1nE/Profile_004/ExQuickSave/replay-002-session-0001.jsonl.zst` | 35580 | Soldier 97: Original `161 AttackingSwordfightSpecialStrike`; Rust `160 AttackingSwordfight` | `865; [1315349388, 1672075245, 2015418716, 1725795122, 1975707409, 665708928, 347268203, 1112813156]; [1121462, 1805845, 1657414, 1400943, 1400943, 1441112, 1441162, 1802982]` |
+| Special-strike entry | `Savegame_SuN1Sh1nE/Profile_004/ExQuickSave/replay-003-session-0001.jsonl.zst` | 35580 | Soldier 97: Original `161 AttackingSwordfightSpecialStrike`; Rust `160 AttackingSwordfight` | `866; [1672075245, 2015418716, 1725795122, 1975707409, 665708928, 347268203, 1112813156]; [1121462, 1657414, 1400943, 1400943, 1441112, 1441162, 1802982]` |
+| Shield-protection entry | `Savegame_SuN1Sh1nE/Profile_004/Savegame_001/replay-002-session-0001.jsonl.zst` | 606 | Soldier 181: Original `183 AttackingProtectingWithShield`; Rust `155 AttackingRunningToEnemy` | `1903; [612615160]; [1115513]` |
+| Special-strike exit | `Savegame_SuN1Sh1nE/Profile_004/Savegame_034/replay-002-session-0001.jsonl.zst` | 585 | Soldier 129: Original `160 AttackingSwordfight`; Rust `161 AttackingSwordfightSpecialStrike` | `1907; [2143148521, 613175802, 970680938]; [1115513, 1805845, 1400943]` |
+| Heard-steps/group ordering | `Savegame_linux3/Profile_001/Savegame_018/replay-001-session-0001.jsonl.zst` | 27759 | Soldiers 132 and 133: Original `248 SeekingHeardstepsPreReactiontime`; Rust `71 SeekingHeardstepsReactiontime` | `718; [812411044, 984367401]; [1657350, 1400751]` |
+| Heard-steps/group ordering | `Savegame_linux3/Profile_001/Savegame_018/replay-002-session-0001.jsonl.zst` | 27738 | Soldiers 132 and 133: Original `248 SeekingHeardstepsPreReactiontime`; Rust `71 SeekingHeardstepsReactiontime` | `699; [1237659534, 896103280]; [1657350, 1657350]` |
+| Shield-protection entry | `Savegame_linux3/Profile_003/Savegame_054/replay-001-session-0001.jsonl.zst` | 534 | Soldier 205: Original `183 AttackingProtectingWithShield`; Rust `155 AttackingRunningToEnemy` | `1683; [248395451, 1861723036, 1448197855]; [1115577, 1401007, 1657926]` |
+
+The callsite offsets resolve, depending on the Original build, to ordinary
+`The16thFrame`, `DefaultBoredStandardProcedure`, actor-hourglass,
+`WillStopAtNextWaypoint`, `StopAll`, `EvaluateSwordfight`,
+`ReconsiderSwordfight`, and `EstimateDamageOfSwordStrike` work. None of these
+batches has a missing or excess draw. Preserve the global draw stream as-is
+while investigating the following four behavior families:
+
+1. **Shadow timer or visibility timing (two traces).** Original handles a timer
+   in `SUBSTATE_DEFAULT_LOOKING_SHADOW` by calling `ReturnToDuty` when
+   `GetMaxVisibility()==0`; otherwise it launches another ten-frame timer
+   (`RHartificialmalignity.cpp:652-665`). Shadow entry itself stops current work,
+   faces the shadow, and launches that timer in
+   `EventSeesShadowStandardProcedure` (`RHartificialmalignity.cpp:8440-8470`).
+   Original has returned to `DefaultOnPost` while frozen Rust remains in
+   `DefaultLookingShadow`. The nominal Rust handler has the same branch, so the
+   next proof must distinguish delayed timer delivery from a differing
+   `max_visibility` refresh. That branch draws no RNG.
+
+2. **Special-strike state entry and exit (four traces).** The three ExQuickSave
+   traces show a missed or late entry into `AttackingSwordfightSpecialStrike`;
+   Savegame 034 shows the inverse, with Rust retaining SpecialStrike after
+   Original has returned to ordinary Swordfight. Original's ordinary
+   swordfight handler reconsiders on `EventReachPoint`, `EventDone`, or
+   `EventTimer`; a successful proposal changes state before `StopAll` and the
+   strike sequence launch. The SpecialStrike handler returns to Swordfight only
+   on `EventDone` or `EventTimer` (`RHartificialmalignity.cpp:3964-4009`, with
+   proposal sites around lines 13525 and 14942). Commits `13777adf8` and
+   `ad1c7d4b8` implement the explicit legacy state and delayed completion
+   ordering and are likely fixes. Both the three entry traces and the inverse
+   exit trace require current exact reruns; one direction does not prove the
+   other.
+
+3. **Shield-protection entry (two traces).** Original
+   `RefreshArrowProtection` admits `AttackingRunningToEnemy`, scans visible bow
+   threats and friendly archers, then either runs to a phalanx slot or performs
+   `StopAll`, raises the shield, and enters `AttackingProtectingWithShield`
+   (`RHartificialmalignity.cpp:17057-17186`). Frozen Rust remains in
+   `AttackingRunningToEnemy`. The difference must therefore precede the state
+   write: eligible-fighter snapshot contents, the seen-last-frame latch,
+   distance tests, friendly-archer count, or phalanx placement. Neither frame
+   contains the random ShieldAdvance draw. `5341bdb03` and later shield commits
+   are relevant but do not prove these exact members.
+
+4. **Heard-steps entry and synchronous group ordering (two traces, four state
+   mismatches).** Both Savegame 018 recordings disagree for Soldiers 132 and
+   133 simultaneously; Soldiers 134 through 139 also acquire Original direction
+   goal 11 versus Rust 10 on that frame. Original
+   `EventHearStandardProcedure` enters `SeekingHeardstepsReactiontime` directly
+   only when the listener is already Seeking, is not in `SeekingGotStopEvent`,
+   and is not an officer. Otherwise it enters
+   `SeekingHeardstepsPreReactiontime` (`RHartificialmalignity.cpp:8520-8605`).
+   Thus Original Pre versus Rust Reaction is evidence that the same noise was
+   handled against a different visible pre-event state or at a different
+   callback boundary, not an enum-decoding error. The simultaneous two-state
+   and six-facing changes point to synchronous multi-NPC noise/group delivery
+   order. Compare sender, listener creation order, and every listener's state
+   immediately before its nested `Think`; do not assign a replacement state or
+   consume an RNG value to align it.
+
+Current validation must rerun all ten traces with one frozen release binary.
+Record exact EOF or the new first boundary independently for every trace; do
+not close R06 from focused tests or source similarity alone.
 
 ## Fix ledger
 
