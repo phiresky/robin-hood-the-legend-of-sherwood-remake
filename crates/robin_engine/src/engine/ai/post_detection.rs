@@ -682,6 +682,48 @@ impl EngineInner {
             // newly registered standalone Turn is not instructed until the
             // later SequenceManager::Hourglass boundary. Focused/global
             // detection entry points have no owner-slot boundary to preserve.
+            let trace_shadow_delivery = matches!(
+                stimulus.stimulus_type,
+                crate::ai::StimulusType::EventSeesShadow
+            );
+            if trace_shadow_delivery {
+                let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
+                    panic!(
+                        "shadow-event receiver {} disappeared before Think",
+                        npc_id.index()
+                    )
+                });
+                let npc = entity.npc_data().unwrap_or_else(|| {
+                    panic!(
+                        "shadow-event receiver {} lost its NPC state before Think",
+                        npc_id.index()
+                    )
+                });
+                let ai = entity.ai_controller().unwrap_or_else(|| {
+                    panic!(
+                        "shadow-event receiver {} lost its AI controller before Think",
+                        npc_id.index()
+                    )
+                });
+                tracing::trace!(
+                    target: "shadow_delivery",
+                    frame = self.control.frame_counter,
+                    phase = "before",
+                    receiver = ?npc_id,
+                    receiver_index = npc_id.index(),
+                    queue_index,
+                    stimulus_info = ?stimulus.info,
+                    to_whole_patrol = stimulus.to_whole_patrol,
+                    state = ?ai.current_state,
+                    substate = ?ai.current_substate,
+                    patrol_chief = ?ai.patrol_chief,
+                    patrol_members = ?ai.patrol,
+                    detection_suspects = ?npc.detection_suspects,
+                    maximal_detection_suspect = npc.maximal_detection_suspect,
+                    maximal_visibility = ai.max_visibility,
+                    "delivering shadow event to AI"
+                );
+            }
             self.dispatch_think_with_drain_mode(
                 sim,
                 npc_id,
@@ -692,6 +734,44 @@ impl EngineInner {
                 false,
                 positions_before_movement.is_some(),
             );
+            if trace_shadow_delivery {
+                let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
+                    panic!(
+                        "shadow-event receiver {} disappeared after Think",
+                        npc_id.index()
+                    )
+                });
+                let npc = entity.npc_data().unwrap_or_else(|| {
+                    panic!(
+                        "shadow-event receiver {} lost its NPC state after Think",
+                        npc_id.index()
+                    )
+                });
+                let ai = entity.ai_controller().unwrap_or_else(|| {
+                    panic!(
+                        "shadow-event receiver {} lost its AI controller after Think",
+                        npc_id.index()
+                    )
+                });
+                tracing::trace!(
+                    target: "shadow_delivery",
+                    frame = self.control.frame_counter,
+                    phase = "after",
+                    receiver = ?npc_id,
+                    receiver_index = npc_id.index(),
+                    queue_index,
+                    stimulus_info = ?stimulus.info,
+                    to_whole_patrol = stimulus.to_whole_patrol,
+                    state = ?ai.current_state,
+                    substate = ?ai.current_substate,
+                    patrol_chief = ?ai.patrol_chief,
+                    patrol_members = ?ai.patrol,
+                    detection_suspects = ?npc.detection_suspects,
+                    maximal_detection_suspect = npc.maximal_detection_suspect,
+                    maximal_visibility = ai.max_visibility,
+                    "finished shadow-event AI delivery"
+                );
+            }
         }
         if let Some(override_data) = enemy_detection_tick_data {
             assert_eq!(

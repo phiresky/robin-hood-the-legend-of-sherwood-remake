@@ -2928,13 +2928,36 @@ impl EngineInner {
                                 npc_id.index()
                             )
                         });
-                    if !update_predetection_shadow_latch(
+                    let shadow_seen_before = det.shadow_seen_last_frame;
+                    let queued = update_predetection_shadow_latch(
                         det.seen_now,
                         suspects_before_scan,
                         target.is_pc,
                         target.guarded,
                         &mut det.shadow_seen_last_frame,
-                    ) {
+                    );
+                    tracing::trace!(
+                        target: "shadow_predetection",
+                        frame = universal_frame,
+                        observer = ?npc_id,
+                        observer_index = npc_id.index(),
+                        detectable_type = ?DetectableType::Enemy,
+                        detectable_target = ?target_id,
+                        detectable_target_index = target_id.index(),
+                        sharpness = (view_speed as f32 * det.last_visibility) as u32,
+                        suspects_before = suspects_before_scan,
+                        is_pc = target.is_pc,
+                        guarded = target.guarded,
+                        seen_now = det.seen_now,
+                        seen_last_frame = det.seen_last_frame,
+                        shadow_seen_now = det.shadow_seen_now,
+                        shadow_seen_before,
+                        shadow_seen_after = det.shadow_seen_last_frame,
+                        last_visibility = det.last_visibility,
+                        queued,
+                        "evaluated Enemy shadow predetection edge"
+                    );
+                    if !queued {
                         continue;
                     }
                     // Queue EVENT_SEES_SHADOW for this NPC's post-detection
@@ -3809,13 +3832,36 @@ impl EngineInner {
                 let Some(target) = targets.get(&target_id) else {
                     continue;
                 };
-                if update_predetection_shadow_latch(
+                let shadow_seen_before = det.shadow_seen_last_frame;
+                let queued = update_predetection_shadow_latch(
                     det.seen_now,
                     suspects_before,
                     target.is_pc,
                     target.guarded,
                     &mut det.shadow_seen_last_frame,
-                ) {
+                );
+                tracing::trace!(
+                    target: "shadow_predetection",
+                    frame = ctx.universal_frame,
+                    observer = ?npc_id,
+                    observer_index = npc_id.index(),
+                    detectable_type = ?kind,
+                    detectable_target = ?target_id,
+                    detectable_target_index = target_id.index(),
+                    sharpness = (ctx.view_speed as f32 * det.last_visibility) as u32,
+                    suspects_before,
+                    is_pc = target.is_pc,
+                    guarded = target.guarded,
+                    seen_now = det.seen_now,
+                    seen_last_frame = det.seen_last_frame,
+                    shadow_seen_now = det.shadow_seen_now,
+                    shadow_seen_before,
+                    shadow_seen_after = det.shadow_seen_last_frame,
+                    last_visibility = det.last_visibility,
+                    queued,
+                    "evaluated non-Enemy shadow predetection edge"
+                );
+                if queued {
                     shadow_dispatches.push(crate::ai::Position {
                         x: target.position.x,
                         y: target.position.y,
