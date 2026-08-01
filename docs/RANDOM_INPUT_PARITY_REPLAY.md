@@ -452,7 +452,7 @@ not the current engine's expected failure count.
 | R01 | Fix landed; rerun required | PC `actor.action_state`, commonly Original idle versus Rust `WalkingUpright` while both retain `MoveOk` | `516728654` preserves Waiting when an entity-target `PerformSeek` remains visibly in progress. All four assigned boundaries clear; one trace is exact and three reach independent later failures. The remaining 53 baseline entries require failure-only reruns before this group can be split or closed. |
 | R02 | Fix landed; cohort rerun required | `direction_goal`, frequently at frame 516 | `7db74f013` makes shared AI and owner-ordered `RefreshPatrol` snapshots expose an active PassDoor member at its committed gate side, and commits the exact endpoint before later owner slots can observe it. Linux2 Profile 002 Savegame 002 is exact through frame 726. The remaining baseline members require current failure-only reruns before this whole group can be attributed to that cause. |
 | R03 | Listen fix landed; timer rerun required | `actor.wait_time`, alone or beside action state | Original uses the single serialized `mulWaitTime` for Whistle and Listen. Rust now synchronizes its phase-local mirrors and, while Listening, ignores sprite completion until that counter reaches zero. The prior sweep's three unchanged timer pairs (`2 -> 14`, stale `25 -> 4294967269`, and `24 -> 25`) still require current-fix reruns; do not normalize any timer in the comparator. |
-| R04 | Audited; partial current validation | `position_goal_map` | The fresh 700-trace frozen baseline contains nine strict first-field members. The apparent three-way `MoveOk` group has separate producers. `fff5ecdcc` fixes Original's literal 40-unit `SwordstrikeDown` seek and its exact Savegame 007 frame-3056 boundary now clears, advancing to an independent Soldier 94 `ai.substate` mismatch at frame 3313. A six-trace current release rerun adds one exact EOF, three advances to independent later boundaries, and two unchanged boundaries; details and logs are recorded below. |
+| R04 | Audited; partial current validation | `position_goal_map` | The fresh 700-trace frozen baseline contains nine strict first-field members. The apparent three-way `MoveOk` group has separate producers. `fff5ecdcc` fixes Original's literal 40-unit `SwordstrikeDown` seek and its exact Savegame 007 frame-3056 boundary now clears, advancing to an independent Soldier 94 `ai.substate` mismatch at frame 3313. The six-trace current release cohort now has one exact EOF and five advances to independent later boundaries; the former Cyrdach stop and nicouzouf attentive-transition holdouts clear with `ec57536a3`. Details and logs are recorded below. |
 | R05 | Unassigned | `actor.command` with posture/direction | Inspect wrapper versus concrete command lifetime and the action-change marker that commits posture. |
 | R06 | Audited; shield and shadow pairs cleared | `ai.substate` | The fresh 700-trace frozen baseline has ten strict first-field traces. `34e4810d7` restores the live ordered `seen_last_frame` Enemy detectable projection for periodic `RefreshArrowProtection`; both shield-entry boundaries clear on the current release runner and advance to independent command mismatches. `aaebc38c9` removes two non-Original per-tick detectable reconciliation loops; both Nescafe shadow boundaries clear from frame 282 to independent frame-507 RNG cardinality failures. Special-strike entry/exit and heard-steps delivery ordering remain open. |
 | R07 | Unassigned | RNG cardinality/order | Treat the first missing or excess call as a downstream symptom until the responsible Original callsite and state gate are identified. Never consume a trace value merely to realign the stream. |
@@ -553,9 +553,10 @@ These nine traces collapse into four source-backed families:
    marks the outgoing card unselected. The call and helper remain unchanged on
    current HEAD; later Stop traversal and postponed-registration changes do not
    alter this replacement boundary. This is one exact general source-backed
-   candidate for both traces, but they still require current exact reruns and
-   EOF. The validated Whistle replacement family is supporting evidence, not a
-   substitute.
+   candidate for both traces. Current validation clears both frozen boundaries:
+   Savegame 004 advances to an independent later position mismatch and Savegame
+   009 reaches exact EOF. The validated Whistle replacement family remains
+   supporting evidence for the same general selection ordering.
 
 2. **A stop clears the still-selected outgoing goal (three traces).** The
    Cyrdach Shield selection and both Bow selections interrupt a live or
@@ -573,11 +574,16 @@ These nine traces collapse into four source-backed families:
    terminal card's captured `was_selected` state. Commits `2f251e446`,
    `4cafa337a`, and `9f25e53e1` landed and generalized that cleanup, while
    `a627bf0d8` aligned `Actor::Stop` traversal with Original's authoritative
-   current element. This is one general source-backed fix candidate for all
-   three traces, not trace-specific handling. It was already present when this
-   frozen inventory was written, however, so source proof does not close the
-   cohort: all three exact traces remain **rerun required** on one current
-   release runner and close only at EOF.
+   current element. The remaining delayed-card fault was that Rust captured
+   `was_selected` at `SetState` but then reinterpreted it when the queued card
+   was dispatched after a new Wait had become current. Commit `ec57536a3`
+   makes that terminal-time identity authoritative; replacement arbitration
+   continues to record `false` explicitly when Original selects the incoming
+   element first. Commit `fd248c2ff` updates the focused fixtures to exercise
+   that explicit replacement-selected path. All three frozen stop boundaries
+   now clear: the two earlier Bow traces advance as recorded below, while
+   Cyrdach advances from frame 536 to the independent frame-1126 command
+   mismatch, PC 108 Original `MoveOk` versus Rust `MoveWaiting`.
 
 3. **The three apparent active-`MoveOk` waypoints have three distinct
    producers.** None is a pathfinder waypoint. In linux3 Savegame 001 frame
@@ -645,9 +651,15 @@ These nine traces collapse into four source-backed families:
    Commit `95c376973` is complementary: it permits creation of the attentive
    transition while movement is postponed, but is not itself the goal-retention
    fix. Current generic dispatch calls Rust `Sprite::perform_action`, which also
-   leaves the map goal untouched. This source proof assigns a general landed
-   candidate, but the exact frozen trace remains **rerun required** and closes
-   only at EOF or its next independent first boundary.
+   leaves the map goal untouched. The remaining zero came from a Rust-only
+   `set_soldier_attentive_mode` special case that cleared the goal whenever
+   `StopMovement` had rewritten the front order to a waiting transition.
+   Original's subsequent `POSTPONE_CURRENT` selects the attentive element and
+   calls movement `Postpone`, which clears orders and restores `MoveOk` to
+   `Move` without a condolence card; the goal therefore survives. Commit
+   `ec57536a3` removes that unconditional clear. The exact trace clears frame
+   374 and advances to an independent sound-manager invariant at frame 480 ->
+   481: exclamation 55 for actor 51 has no pending request.
 
 The current rerun should preserve these four labels while reporting, for each
 trace, either exact EOF or its next independent first boundary. Do not merge
@@ -657,19 +669,23 @@ compared field is the same.
 #### R04 six-trace current release validation
 
 The current release runner was applied sequentially to six source-backed R04
-candidates. Logs are preserved under
-`output/parity-audits/r04-current-head/`. One trace reaches exact EOF, three
-clear their frozen R04 boundary and stop at a later independent boundary, and
-two remain unchanged:
+candidates. The original cohort logs are preserved under
+`output/parity-audits/r04-current-head/`; focused owner-handoff diagnostics are
+under `output/parity-diagnostics/r04-owner-handoff-current/`, and the fresh
+post-fix reruns are under
+`output/parity-validation-2026-08-01/r04-owner-handoff-after-fix/`. One trace
+reaches exact EOF and five clear their frozen R04 boundary before an independent
+later frontier. The complete movement-goal regression filter passes 7/7 and the
+fresh release parity runner builds successfully.
 
 | Trace | Current result | Disposition |
 |---|---|---|
-| `Savegame_Cyrdach/Profile_156/Savegame_010/replay-001` | Frame 536: PC 107 goal Original `(0, 0)`, Rust `(536.9613, 447.9872)` | **Unchanged** |
+| `Savegame_Cyrdach/Profile_156/Savegame_010/replay-001` | Old frame 536 clears; frame 1126 PC 108 command Original `MoveOk`, Rust `MoveWaiting` | Advanced |
 | `Savegame_linux3/Profile_002/QuickSave/replay-001` | Old frame 19932 clears; frame 19968 PC 126 command Original `Wait`, Rust `ShootBow` | Advanced |
 | `Savegame_randomguy/Profile_004/Savegame_008/replay-002` | Old frame 137 clears; frame 671 PC 105 direction Original `1`, Rust `2` | Advanced |
 | `Savegame_SuN1Sh1nE/Profile_004/Savegame_004/replay-003` | Old frame 15812 clears; frame 16062 Soldier 203 position X Original `8.944593`, Rust `8.944144` | Advanced |
 | `Savegame_SuN1Sh1nE/Profile_004/Savegame_009/replay-003` | Every recorded frame matches | **Exact EOF** |
-| `Savegame_nicouzouf/Profile_001/Savegame_055/replay-002` | Frame 374: Soldier 63 goal Original `(1183.0403, 743.6907)`, Rust `(0, 0)` | **Unchanged** |
+| `Savegame_nicouzouf/Profile_001/Savegame_055/replay-002` | Old frame 374 clears; frame 480 -> 481 sound-manager invariant: exclamation 55 for actor 51 has no pending request | Advanced |
 
 ### R06 complete frozen-baseline inventory
 
