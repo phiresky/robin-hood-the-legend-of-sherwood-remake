@@ -595,16 +595,30 @@ These nine traces collapse into four source-backed families:
    family remains unresolved and must be investigated from the producing
    movement order backward.
 
-4. **Zero-destination attentive transition initialization (one trace).** The
-   Soldier 63 trace begins `EnterAttentiveMode` animation 141. Original creates
-   a transition order with a zero destination
-   (`RHelementactorsoldier.cpp:330-353`) and executes it through
-   `PerformMotion(TILL_LAST_FRAME)`. New-order initialization replaces an exact
-   zero destination with the actor's current map position before installing the
-   sprite goal (`RHsprite.cpp:1445-1457`). Frozen Rust left the goal zero.
-   Subsequent direct-transition initialization and stale-goal work may already
-   cover this rule, but the exact trace must be rerun before assigning it to a
-   landed fix.
+4. **An attentive transition retains the completed movement goal (one
+   trace).** Soldier 63 finishes `MoveOk` at exactly
+   `(1183.040283, 743.690674)`, with both its current position and sprite goal
+   equal to that point, then begins `EnterAttentiveMode` animation 141. Original
+   does create the transition order with a default zero destination
+   (`RHelementactorsoldier.cpp:330-353`), but the Soldier Execute arm dispatches
+   `RHANIMATION_TRANSITION_WAITING_UPRIGHT_WAITING_ALERTED` through
+   `RHSprite::PerformAction` (`RHelementactorsoldier.cpp:762-775`). That entry
+   point never writes `PositionGoalMap`, so the prior completed `MoveOk` goal is
+   retained. The frozen Rust runner instead exposed zero. This explicitly
+   retracts the earlier `PerformMotion` diagnosis: there is no zero-to-current
+   fallback in Original. `RHSprite::PerformMotion` installs
+   `pOrderCurrent->pointDestination2D` verbatim on a fresh motion order
+   (`RHsprite.cpp:1445-1457`) and would therefore install zero if this order were
+   routed through it. Commit `b86a53d25` landed the general structural rule that
+   selected non-movement orders execute through the generic action owner;
+   `184e0bd5d` hardened that routing with an explicit Original Execute-arm
+   catalog classifying this exact Soldier transition as `GenericAnimation`.
+   Commit `95c376973` is complementary: it permits creation of the attentive
+   transition while movement is postponed, but is not itself the goal-retention
+   fix. Current generic dispatch calls Rust `Sprite::perform_action`, which also
+   leaves the map goal untouched. This source proof assigns a general landed
+   candidate, but the exact frozen trace remains **rerun required** and closes
+   only at EOF or its next independent first boundary.
 
 The current rerun should preserve these four labels while reporting, for each
 trace, either exact EOF or its next independent first boundary. Do not merge
