@@ -4297,6 +4297,13 @@ and is not exempt, so selecting it must perform the ordinary Normal-priority
 stop before the contextual action is dispatched. Rust no longer treats it as
 an alias of Heal at this selection boundary.
 
+Selecting an action also does not reduce a multi-PC selection to the clicked
+PC. Original `SelectAction` iterates `mlistSelectedElement` and applies the new
+action to every selected PC. Its later "No more multi-selection" block clears
+only the mouse-drag mode flags, not that list. Rust had conflated the two and
+discarded the other selected PCs; it now preserves the group and fans the
+action out like Original.
+
 A clean baseline proves exact parity only for the state fields serialized by the
 recorder and the behaviors exercised by this session. When a divergence depends
 on unrecorded state, extend the neutral trace schema rather than guessing from a

@@ -504,10 +504,7 @@ impl EngineInner {
     ///
     /// - If `pc_id` is not currently selected, only sets `current_action` on
     ///   that one PC.
-    /// - If `pc_id` is selected and `action != NoAction` with more than one
-    ///   PC selected, collapses the selection to just this PC so the action
-    ///   is single-target.
-    /// - Then sets `current_action` on every selected PC.
+    /// - If `pc_id` is selected, sets `current_action` on every selected PC.
     ///
     /// `get_selected_action()` reads directly from the first selected PC's
     /// `current_action`, so there is no separate messenger-level pending
@@ -538,11 +535,6 @@ impl EngineInner {
                 pc.current_action = action;
             }
             return;
-        }
-
-        if action != Action::NoAction && self.players.seats[seat].selection.len() > 1 {
-            self.players.seats[seat].selection.clear();
-            self.players.seats[seat].selection.push(pc_id);
         }
 
         // Trajectory overlay cleanup on any action change from the selected
