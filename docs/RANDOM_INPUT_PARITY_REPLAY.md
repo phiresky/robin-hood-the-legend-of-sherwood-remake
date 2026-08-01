@@ -309,6 +309,40 @@ clear: two traces reach exact EOF and seven expose later independent command or
 AI-state boundaries.  No recorded draw is consumed merely to realign the
 stream.
 
+### Postponed swordfight-entry RNG subgroup
+
+Seven combat traces share an excess `ReconsiderSwordfight` signature: one or
+more additional pairs of `DrunkCombatFreeze` draws, sometimes followed by
+`CombatReposition` and sword-strike proposal draws.  Original
+`RHArtificialMalignity::ReconsiderSwordfight` returns before those draws when
+either an `ENTER_SWORDFIGHT` element is registered to launch or the actor's
+current sequence element has an immediate postponed `ENTER_SWORDFIGHT`
+successor (`original-code/RHartificialmalignity.cpp:13198-13207`).  Rust's two
+live AI-context refresh sites checked only the launch queue, so the postponed
+form could enter combat reconsideration too early.
+
+Commit `a64f50a46` adds the exact combined query.  It follows only the current
+element's intra-sequence or cross-sequence postponed link; it deliberately does
+not treat arbitrary postponed work owned by the actor as equivalent.  Both the
+normal Think boundary and timer-driven post-detection boundary now use it.  A
+focused sequence-manager test proves that an unrelated postponed command does
+not satisfy the predicate and the current element's linked successor does.
+
+The assigned traces are:
+
+- `Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-001`
+- `Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-002`
+- `Savegame_linux/Profile_005/Restart/replay-001`
+- `Savegame_linux3/Profile_001/Continue/replay-002`
+- `Savegame_linux3/Profile_003/Savegame_031/replay-001`
+- `Savegame_nicouzouf/Profile_001/Savegame_039/replay-001`
+- `Savegame_nicouzouf/Profile_001/Savegame_039/replay-002`
+
+This subgroup remains awaiting its serial release rerun; clearing the old RNG
+boundary is not yet recorded as an exact pass.  The other eleven combat-tagged
+RNG traces begin in strike/opponent lifecycle callsites and remain separate
+until their first excess or missing authoritative call is source-mapped.
+
 The long `60s-15x` snapshot contains 1,791 traces and is being swept with one
 runner process to keep memory bounded.  Its totals are provisional until all
 status files exist under `output/parity-audits/random-long-fresh/`.
