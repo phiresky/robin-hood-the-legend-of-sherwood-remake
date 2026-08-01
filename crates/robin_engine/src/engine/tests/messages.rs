@@ -387,18 +387,12 @@ fn completed_immediate_sibling_does_not_clear_selected_movement_goal() {
 
     let sibling = SequenceElement::new(1, Command::SpeakHeroReachDestination, Some(owner));
     let sibling_sequence = engine.orders.sequence_manager.launch_element(sibling);
-    engine
-        .orders
-        .sequence_manager
-        .begin_instruct_callback(owner, sibling_sequence, 0);
+    // The PC speech override terminates before delegating to Actor::Instruct,
+    // so it never replaces the selected movement pointer.
     engine
         .orders
         .sequence_manager
         .element_terminated(sibling_sequence, 0);
-    engine
-        .orders
-        .sequence_manager
-        .end_instruct_callback(owner, sibling_sequence, 0);
     engine.dispatch_condolations(&sim, &LevelAssets::new());
 
     assert_eq!(

@@ -1523,7 +1523,7 @@ fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
     engine
         .orders
         .sequence_manager
-        .element_interrupted(old_sequence, 0, CascadeFlags::NEXT_LEVEL);
+        .element_interrupted_after_replacement_selected(old_sequence, 0, CascadeFlags::NEXT_LEVEL);
     engine.orders.sequence_manager.set_halt_pending(false);
     engine.dispatch_condolations(&sim, &assets);
 
