@@ -1715,7 +1715,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         )
         .unwrap_or_else(|error| panic!("decode schema-12 initial_save body: {error}"));
         eprintln!(
-            "decoded schema-12 Original save through byte {} ({} elements, {} dynamic)",
+            "decoded schema-12 Original save through byte {} ({} elements, {} dynamic, {} pending paths, {} failed paths)",
             save.end_offset,
             save.element_envelope.records.len(),
             save.element_envelope
@@ -1727,8 +1727,18 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                         ..
                     }
                 ))
-                .count()
+                .count(),
+            save.body.tail.pathfinder.requests.len(),
+            save.body.failed_path_requests.requests.len(),
         );
+        if std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some() {
+            for (index, request) in save.body.tail.pathfinder.requests.iter().enumerate() {
+                eprintln!("parity stage: saved pending path {index}: {request:?}");
+            }
+            for (index, request) in save.body.failed_path_requests.requests.iter().enumerate() {
+                eprintln!("parity stage: saved failed path {index}: {request:?}");
+            }
+        }
         loaded_save_host = Some(
             robin_engine::legacy_save::adopt_engine::adopt_known_linux_v48_replay(
                 &mut engine,
