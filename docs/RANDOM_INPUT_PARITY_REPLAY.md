@@ -780,21 +780,42 @@ while investigating the following four behavior families:
    it, while `ProcessShootList` retries from the Human `Hourglass` prelude only
    after the sprite's last animation becomes `AimingWithBow` or
    `AimingWithBowUp` (`RHelementactorhuman.cpp:297,3030-3045,13005-13015`). Rust
-   currently represents that list as an already-instructed cross-postponed
-   element and resumes it synchronously when `EquipBow` terminates. The live
-   shoot-list lifecycle therefore remains **open**: use `HumanData::pending_shoots`
-   as the real FIFO and retry instruction from the existing Human prelude,
-   rather than resuming a postponed successor.
+   previously represented that list as an already-instructed cross-postponed
+   element and resumed it synchronously when `EquipBow` terminated. Commit
+   `0fbeeed54` restores the source lifecycle: both eager live launches and
+   manager-dispatched elements enter one pre-Actor-Instruct guard, retained
+   elements remain pristine `Todo` references in `HumanData::pending_shoots`,
+   and HumanPrelude retries only the FIFO front while the last animation is
+   exactly `AimingWithBow` or `AimingWithBowUp`. `ClearShootList` and
+   `EnterSwordFight` clear that real pointer FIFO. Commit `5c7b52a8c` corrects
+   the focused regression's assertion for the constructor-default action
+   state; the regression proves loading completion and the following Wait
+   frame leave priority, transition state, orders, and selection untouched,
+   and only the aiming frame admits the held shot.
 
    Linux3 frame 574 is command provenance rather than shield animation timing.
    The exact Original RNG branch directly launches an
    `RHCOMMAND_LOWER_SHIELD` element (`RHartificialmalignity.cpp:4520-4532`).
    Rust's AI helper instead queued a bare `LoweringShield` order, which the
-   generic order drain wrapped in `Command::Generic`. `AiController::lower_shield`
-   now sets the existing explicit lower-shield outbox flag, so the engine's
-   preemption drain launches `Command::LowerShield` and uses the established
-   shield dispatcher. A focused outbox regression locks the command-preserving
-   route. This source-exact fix still requires an exact current-run validation.
+   generic order drain wrapped in `Command::Generic`. Commit `60c827804` makes
+   `AiController::lower_shield` set the existing explicit lower-shield outbox
+   flag, so the engine's preemption drain launches `Command::LowerShield` and
+   uses the established shield dispatcher. Its focused controller regression
+   proves the explicit flag is set while the generic order queue remains empty.
+
+   Both focused regressions pass, and the current-HEAD release
+   `original_parity_replay` build succeeds. Targeted scan-all validation clears
+   both source boundaries: the SuN trace advances through frame 631 before an
+   independent frame-637 RNG over-consumption
+   (`VipIdleRemark`/`ArrowPiercingProtection`), and the Linux3 trace advances
+   through frame 574 before an independent frame-718 sound-manager invariant
+   failure (exclamation 5 for actor 86 has no pending request). These scan-all
+   results must not be confused with ordinary first-divergence runs. SuN still
+   reports the earlier unrelated frame-448 `sprite_frame_count` mismatch for
+   Soldier 125 (Original `65535`, Rust `0`); Linux3's ordinary next frontier is
+   frame 607, where PC 296 is Original `UnequipBow` versus Rust `MoveWaiting`.
+   Logs for all four runs are preserved under
+   `output/parity-validation-2026-08-01/`.
 
 4. **Heard-steps entry and synchronous group ordering (two traces, four state
    mismatches).** Both Savegame 018 recordings disagree for Soldiers 132 and
