@@ -4001,43 +4001,41 @@ impl SequenceManager {
     /// Stop all active and pending sequence elements owned by `owner` whose
     /// priority is weak enough to be pre-empted by `stop_priority`.
     ///
-    /// Calls [`Sequence::stop_element`] on the live in-progress and postponed
-    /// elements owned by `owner` (skipping only the in-progress default wait
-    /// element), then runs [`Self::stop_pending_elements`] for the
-    /// not-yet-launched queue. `RHElementActor::Stop` calls `Stop` on the
-    /// actor's current element, whose postponed chain remains reachable even
-    /// while a terminating injury's condolence callback is running. Rust must
-    /// therefore include directly cross-postponed actor work as well as the
-    /// ordinary same-sequence postponed chain.
+    /// Calls [`Sequence::stop_element`] on the actor's authoritative current
+    /// element, then runs [`Self::stop_pending_elements`] for the
+    /// not-yet-launched queue. `RHElementActor::Stop` does not scan every live
+    /// element owned by the actor: it follows `mpSequenceElement`, whose
+    /// postponed chain remains reachable even while a terminating injury's
+    /// condolence callback is running. Cross-sequence postponed work is the
+    /// Rust representation of that same pointer and is stopped explicitly.
     pub fn stop_owner(
         &mut self,
         owner: EntityId,
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
     ) {
-        // Stop the owner's currently running or postponed element(s). A
-        // postponed element can be the actor work hidden underneath the
-        // terminating injury whose condolence callback called StopAll.
-        // Waiting until that injury's continuation resumes the element is too
-        // late: it can then preempt the replacement Wait installed by StopAll.
-        let mut targets: Vec<(SequenceId, usize)> = Vec::new();
-        for (seq_id, seq) in &self.sequences {
-            for (elem_idx, elem) in seq.elements.iter().enumerate() {
-                if elem.owner == Some(owner)
-                    && matches!(
-                        elem.state,
-                        SequenceState::InProgress | SequenceState::Postponed
-                    )
-                    // Only the actor's current default wait is exempt in the
-                    // original. Default waits are explicitly stamped with
-                    // Wait priority; an authored/scripted Wait is ordinary
-                    // stoppable work even while it is in progress.
-                    && !(elem.state == SequenceState::InProgress
-                        && elem.command == Command::Wait
-                        && elem.priority == SequencePriority::Wait)
-                {
-                    targets.push((*seq_id, elem_idx));
-                }
+        // Original `RHElementActor::Stop` starts from exactly
+        // `mpSequenceElement`. Scanning every InProgress/Postponed element is
+        // observably different after loading: stale non-selected branches can
+        // form a large shared next/postponed graph, so recursively stopping
+        // each node as a fresh root repeats that graph exponentially.
+        let mut targets = Vec::new();
+        if let Some(current) = self.current_element_for_actor(owner)
+            && self.get_element(current.0, current.1).is_some_and(|elem| {
+                !(elem.command == Command::Wait && elem.priority == SequencePriority::Wait)
+            })
+        {
+            targets.push(current);
+
+            // A cross-sequence postponed link represents Original's direct
+            // `mpsqePostponedSequenceElement` pointer. Sequence::stop_element
+            // follows same-sequence links itself; only this split-storage edge
+            // needs a second manager-level root.
+            if let Some(cross) = self
+                .get_element(current.0, current.1)
+                .and_then(|elem| elem.cross_postponed)
+            {
+                targets.push(cross);
             }
         }
         let mut stopped = Vec::new();
@@ -5523,6 +5521,41 @@ mod tests {
             mgr.get_element(injury_seq, 0).unwrap().cross_postponed,
             None,
             "the injury must not retain a resumable link to stopped actor work"
+        );
+    }
+
+    #[test]
+    fn stop_owner_does_not_scan_unselected_postponed_branches() {
+        let mut mgr = SequenceManager::new();
+        let owner = EntityId::Pc(crate::entity_id::PcId(3));
+
+        // This branch belongs to the actor but is not reachable from the
+        // actor's authoritative current element. Original Actor::Stop never
+        // discovers it by scanning sequence ownership.
+        let mut stale = make_simple_element(1, Command::EquipBow, Some(owner));
+        stale.priority = SequencePriority::Preference;
+        let stale_seq = mgr.launch_element(stale);
+        let _ = mgr.hourglass();
+        mgr.element_in_progress(stale_seq, 0);
+        mgr.postpone_element(stale_seq, 0);
+
+        let mut current = make_simple_element(1, Command::UnequipBow, Some(owner));
+        current.priority = SequencePriority::Preference;
+        let current_seq = mgr.launch_element(current);
+        let _ = mgr.hourglass();
+        mgr.element_in_progress(current_seq, 0);
+
+        mgr.stop_owner(owner, SequencePriority::Preference, &|elem| elem.priority);
+
+        assert_eq!(
+            mgr.get_element(current_seq, 0).unwrap().state,
+            SequenceState::Interrupted,
+            "Actor::Stop must stop its selected mpSequenceElement"
+        );
+        assert_eq!(
+            mgr.get_element(stale_seq, 0).unwrap().state,
+            SequenceState::Postponed,
+            "unlinked postponed ownership is not an Original traversal root"
         );
     }
 
