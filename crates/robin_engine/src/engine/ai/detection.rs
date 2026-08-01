@@ -2393,9 +2393,6 @@ impl EngineInner {
                     } else {
                         tick_data.primary_target_multiplicity.push((target, 1));
                     }
-                    if !enemy_ai.list_them.contains(&target) {
-                        enemy_ai.list_them.push(target);
-                    }
                 }
 
                 // ── Camp soldier snapshots for alert functions ──

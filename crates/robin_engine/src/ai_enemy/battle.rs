@@ -451,13 +451,25 @@ impl EnemyAi {
                 if cs.handle == me || !self.base.list_us.contains(&cs.handle) {
                     continue;
                 }
-                if cs.ai_state != AiState::Attacking {
+                // The snapshot predates earlier actors' live owner slots.
+                // Overlay a claim recorded by AttackEnemy in this same
+                // creation-ordered pass, but only after the friend passed
+                // the Original's nearby/IsDetecting360Degrees gate above.
+                let same_frame_target = global
+                    .same_frame_target_claims
+                    .iter()
+                    .rev()
+                    .find_map(|&(attacker, target)| {
+                        (attacker == cs.handle && target != 0).then_some(target)
+                    });
+                if cs.ai_state != AiState::Attacking && same_frame_target.is_none() {
                     continue;
                 }
-                let target = self
-                    .find_fighter(cs.handle as HumanHandle, tick)
-                    .map(|f| f.primary_target)
-                    .unwrap_or(0);
+                let target = same_frame_target.unwrap_or_else(|| {
+                    self.find_fighter(cs.handle as HumanHandle, tick)
+                        .map(|f| f.primary_target)
+                        .unwrap_or(0)
+                });
                 if target == 0 || target == me {
                     continue;
                 }
