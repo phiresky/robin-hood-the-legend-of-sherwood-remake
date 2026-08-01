@@ -454,7 +454,7 @@ not the current engine's expected failure count.
 | R03 | Listen fix landed; timer rerun required | `actor.wait_time`, alone or beside action state | Original uses the single serialized `mulWaitTime` for Whistle and Listen. Rust now synchronizes its phase-local mirrors and, while Listening, ignores sprite completion until that counter reaches zero. The prior sweep's three unchanged timer pairs (`2 -> 14`, stale `25 -> 4294967269`, and `24 -> 25`) still require current-fix reruns; do not normalize any timer in the comparator. |
 | R04 | Audited; current cohort rerun required | `position_goal_map` | The fresh 700-trace frozen baseline contains nine strict first-field members. They split into two replacement-preserve boundaries, three stop-clear boundaries, three unresolved `MoveOk` waypoint/order-destination differences, and one direct attentive-transition initialization boundary. `7910b1c7d` likely covers replacement preservation, while later identity-aware condolence and direct-transition work may cover the clear/attentive members; none may be called closed until all nine are rerun on one current frozen release runner. The waypoint geometry remains unresolved. |
 | R05 | Unassigned | `actor.command` with posture/direction | Inspect wrapper versus concrete command lifetime and the action-change marker that commits posture. |
-| R06 | Audited; current cohort rerun required | `ai.substate` | The fresh 700-trace frozen baseline has ten strict first-field traces: two shadow-timer exits, four special-strike entry/exit boundaries, two shield-protection entries, and two heard-steps/group-ordering boundaries. Every divergent frame has no resolved command and an aligned simulation-RNG batch, so these are not input or RNG-cardinality failures. Later special-strike commits are likely relevant; shadow visibility/timer timing, shield-entry predicates, and heard-steps delivery ordering remain unresolved. |
+| R06 | Audited; current cohort rerun required | `ai.substate` | The fresh 700-trace frozen baseline has ten strict first-field traces: two shadow-entry boundaries, four special-strike entry/exit boundaries, two shield-protection entries, and two heard-steps/group-ordering boundaries. Every divergent frame has no resolved command and an aligned simulation-RNG batch, so these are not input or RNG-cardinality failures. Later special-strike commits are likely relevant; shadow predetection/patrol dispatch, shield-entry predicates, and heard-steps delivery ordering remain unresolved. |
 | R07 | Unassigned | RNG cardinality/order | Treat the first missing or excess call as a downstream symptom until the responsible Original callsite and state gate are identified. Never consume a trace value merely to realign the stream. |
 | R08 | Unassigned | `position_map` | Requires exact movement increment, collision, transition, and command ownership comparison; no coordinate tolerance or replay-specific snap. |
 | R09 | Unassigned | Resolved speech has no pending Rust request | Separate genuinely absent gameplay `Say` calls from already-fixed synchronous speech boundaries before changing restoration or FIFO policy. |
@@ -623,8 +623,8 @@ reaches exact EOF or exposes a later independent boundary.
 
 | Family | Trace | Frame | Entity and exact state pair | Boundary RNG batch: `first_index; values; callsite_offsets` |
 |---|---|---:|---|---|
-| Shadow timer/visibility | `Savegame_Nescafe/Profile_001/Restart/replay-003-session-0001.jsonl.zst` | 282 | Soldier 210: Original `11 DefaultOnPost`; Rust `25 DefaultLookingShadow` | `2057; [880120884, 982608437, 1110424676, 833723432]; [1400943, 1202746, 1400943, 1400943]` |
-| Shadow timer/visibility | `Savegame_Nescafe/Profile_003/Restart/replay-003-session-0001.jsonl.zst` | 282 | Soldier 210: Original `11 DefaultOnPost`; Rust `25 DefaultLookingShadow` | `2083; [1472100780, 726318879, 1393065843, 1688743570, 988560093, 110908859]; [1657414, 1400943, 1202746, 1400943, 1400943, 1400943]` |
+| Shadow entry: predetection or patrol dispatch | `Savegame_Nescafe/Profile_001/Restart/replay-003-session-0001.jsonl.zst` | 282 | Soldier 210: Original `11 DefaultOnPost`; Rust `25 DefaultLookingShadow` | `2057; [880120884, 982608437, 1110424676, 833723432]; [1400943, 1202746, 1400943, 1400943]` |
+| Shadow entry: predetection or patrol dispatch | `Savegame_Nescafe/Profile_003/Restart/replay-003-session-0001.jsonl.zst` | 282 | Soldier 210: Original `11 DefaultOnPost`; Rust `25 DefaultLookingShadow` | `2083; [1472100780, 726318879, 1393065843, 1688743570, 988560093, 110908859]; [1657414, 1400943, 1202746, 1400943, 1400943, 1400943]` |
 | Special-strike entry | `Savegame_SuN1Sh1nE/Profile_004/ExQuickSave/replay-001-session-0001.jsonl.zst` | 35580 | Soldier 97: Original `161 AttackingSwordfightSpecialStrike`; Rust `160 AttackingSwordfight` | `866; [1672075245, 2015418716, 1725795122, 1975707409, 665708928, 347268203, 1112813156]; [1121462, 1657414, 1400943, 1400943, 1441112, 1441162, 1802982]` |
 | Special-strike entry | `Savegame_SuN1Sh1nE/Profile_004/ExQuickSave/replay-002-session-0001.jsonl.zst` | 35580 | Soldier 97: Original `161 AttackingSwordfightSpecialStrike`; Rust `160 AttackingSwordfight` | `865; [1315349388, 1672075245, 2015418716, 1725795122, 1975707409, 665708928, 347268203, 1112813156]; [1121462, 1805845, 1657414, 1400943, 1400943, 1441112, 1441162, 1802982]` |
 | Special-strike entry | `Savegame_SuN1Sh1nE/Profile_004/ExQuickSave/replay-003-session-0001.jsonl.zst` | 35580 | Soldier 97: Original `161 AttackingSwordfightSpecialStrike`; Rust `160 AttackingSwordfight` | `866; [1672075245, 2015418716, 1725795122, 1975707409, 665708928, 347268203, 1112813156]; [1121462, 1657414, 1400943, 1400943, 1441112, 1441162, 1802982]` |
@@ -641,16 +641,33 @@ The callsite offsets resolve, depending on the Original build, to ordinary
 batches has a missing or excess draw. Preserve the global draw stream as-is
 while investigating the following four behavior families:
 
-1. **Shadow timer or visibility timing (two traces).** Original handles a timer
-   in `SUBSTATE_DEFAULT_LOOKING_SHADOW` by calling `ReturnToDuty` when
-   `GetMaxVisibility()==0`; otherwise it launches another ten-frame timer
-   (`RHartificialmalignity.cpp:652-665`). Shadow entry itself stops current work,
-   faces the shadow, and launches that timer in
-   `EventSeesShadowStandardProcedure` (`RHartificialmalignity.cpp:8440-8470`).
-   Original has returned to `DefaultOnPost` while frozen Rust remains in
-   `DefaultLookingShadow`. The nominal Rust handler has the same branch, so the
-   next proof must distinguish delayed timer delivery from a differing
-   `max_visibility` refresh. That branch draws no RNG.
+1. **Shadow entry: predetection or patrol dispatch (two traces).** Decoding the
+   frozen comparator cache corrects the earlier timer-expiry diagnosis:
+   Original Soldier 210 is already `DefaultOnPost` before frame 278 and remains
+   there through frame 282, while frozen Rust newly enters
+   `DefaultLookingShadow` at frame 282. Original `HandlePredetection` tests
+   `(uwSharpness > 0) && (suspects[type] >= threshold)` against the accumulator
+   from before the current scan, updates the per-detectable shadow latch, and
+   queues `EVENT_SEES_SHADOW` only on a rising edge
+   (`RHelementactornpc.cpp:1531-1550, 2007-2076`). Both engines then offer that
+   event to whole-patrol dispatch before running the local shadow standard
+   procedure (`RHartificialmalignity.cpp:6249-6254, 20017-20103`). The first
+   boundary is therefore either a Rust-only predetection edge or a difference
+   in patrol chief/member topology, 360-degree detection, or dispatch result;
+   the later shadow timer and `max_visibility` handler cannot explain the first
+   state transition.
+
+   The current trace schema cannot distinguish those cases. At frames 279-282,
+   record for Soldier 210 every scanned detectable's type and logical target,
+   integer sharpness, suspect accumulator before the scan, `seen_now`,
+   `seen_last_frame`, `shadow_seen_last_frame` before and after the update,
+   `last_visibility`, and whether `EVENT_SEES_SHADOW` was queued. At delivery,
+   record receiver identity, `to_whole_patrol`, pre-event state/substate,
+   patrol chief and ordered member identities, each relevant 360-degree
+   detection result, and the final patrol-dispatch result. Also retain the
+   aggregate suspect array, maximal suspect, and maximal visibility so the
+   diagnostic remains useful if the first differing predicate moves. This path
+   draws no RNG.
 
 2. **Special-strike state entry and exit (four traces).** The three ExQuickSave
    traces show a missed or late entry into `AttackingSwordfightSpecialStrike`;
