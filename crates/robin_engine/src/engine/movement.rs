@@ -31,6 +31,15 @@ enum LiftAnimContext {
     },
 }
 
+/// Original `RHElementActor::InstructOwner(RHCOMMAND_MOVE)` direct-dispatch
+/// predicate. `RHMOVE_LINE` changes post-processing of the resulting path; it
+/// does not by itself bypass `RHPathFinder::AddPathRequest`.
+#[inline]
+fn movement_flags_force_direct_dispatch(flags: crate::sequence::MoveFlags) -> bool {
+    flags.contains(crate::sequence::MoveFlags::MAP)
+        || flags.contains(crate::sequence::MoveFlags::STRAIGHT)
+}
+
 #[cfg(test)]
 mod group_move_authorization_tests {
     use super::*;
@@ -10152,15 +10161,10 @@ impl EngineInner {
         }
 
         // Before queuing a path request, if the move is flagged
-        // MAP / STRAIGHT / LINE, or the source→dest segment is
+        // MAP / STRAIGHT, or the source→dest segment is
         // thick-reachable, skip the pathfinder entirely and emit a
         // single direct order.  The pathfinder is never invoked when
         // a straight line suffices.
-        //
-        // LINE is included because C++ routes `AppendMoveToLineToSequence`
-        // through gates while building the sequence; the final
-        // `RHMOVE_LINE` element is then a direct move to the target line
-        // in the already-selected sector.
         //
         // Without this pre-check, short clicks that are directly
         // walkable still hit A*, which can route the actor through
@@ -10190,11 +10194,7 @@ impl EngineInner {
                     crate::sector::LiftType::Wall | crate::sector::LiftType::Ladder
                 )
             });
-        let straight_ok = move_flags.contains(crate::sequence::MoveFlags::MAP)
-            || move_flags.contains(crate::sequence::MoveFlags::STRAIGHT)
-            || move_flags.contains(crate::sequence::MoveFlags::LINE)
-            || is_pass_door
-            || actor_passing_door
+        let straight_ok = movement_flags_force_direct_dispatch(move_flags)
             || self
                 .world
                 .fast_grid
@@ -10897,6 +10897,15 @@ mod movement_transition_state_tests {
 mod path_request_timing_tests {
     use super::*;
     use crate::entity_id::{PcId, SoldierId};
+
+    #[test]
+    fn line_goal_still_uses_pathfinder_when_thick_route_is_blocked() {
+        use crate::sequence::MoveFlags;
+
+        assert!(!movement_flags_force_direct_dispatch(MoveFlags::LINE));
+        assert!(movement_flags_force_direct_dispatch(MoveFlags::MAP));
+        assert!(movement_flags_force_direct_dispatch(MoveFlags::STRAIGHT));
+    }
 
     fn request(owner: EntityId, speed: crate::pathfinder::PathFinderSpeed) -> PendingPathRequest {
         PendingPathRequest {
