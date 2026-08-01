@@ -345,15 +345,22 @@ claimed as consequences of this gate, are:
 - `Savegame_nicouzouf/Profile_001/Savegame_039/replay-002`
 
 A current release rerun is preserved under
-`output/parity-audits/random-rng-combat/`.  The first two direct candidates
-both clear their former RNG boundary: Save024 replay 001 advances from frame 68
-to an independent `ShootBow -> Turn` command mismatch at frame 105, and replay
-002 advances from frame 76 to an independent direction-goal mismatch at frame
-78.  The third direct candidate and four adjacent short-draw traces remain
-queued for the serial runner, so this subgroup is not yet closed.  The other
-eleven combat-tagged RNG traces begin in strike/opponent lifecycle callsites
-and remain separate until their first excess or missing authoritative call is
-source-mapped.
+`output/parity-audits/random-rng-combat/`.  All 18 assigned traces completed
+under the 900-second watchdog: 0 reach exact EOF, 3 advance beyond their old
+RNG boundary, and 15 reproduce it unchanged.  The three advances are exactly
+the direct excess-entry candidates.  Save024 replay 001 advances from frame 68
+to an independent `ShootBow -> Turn` command mismatch at frame 105; replay 002
+advances from frame 76 to an independent direction-goal mismatch at frame 78;
+and Linux3 Continue replay 002 advances from frame 680 to a later RNG boundary
+at frame 769.  This confirms the postponed-entry fix without claiming the
+later failures.
+
+All four adjacent Rust-short `ReconsiderSwordfight` traces are unchanged, as
+expected for an early-return repair, and the other eleven combat-tagged traces
+also reproduce their original strike/opponent-lifecycle RNG boundary.  Those
+15 remain open until their first excess or missing authoritative call is
+source-mapped.  The status split is two ordinary comparison exits and sixteen
+RNG assertion exits; none are interrupted or watchdog results.
 
 The long `60s-15x` snapshot contains 1,791 traces and is being swept with one
 runner process to keep memory bounded.  Its totals are provisional until all
