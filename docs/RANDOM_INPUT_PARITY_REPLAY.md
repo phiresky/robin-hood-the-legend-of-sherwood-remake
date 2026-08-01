@@ -1441,9 +1441,13 @@ rerunning them. The largest exact pairs are Original
 The first, second, fourth, and fifth pairs name the same logical source draw on
 both sides. Their cardinality mismatch is therefore evidence of a differing
 owner/state gate or owner ordering, not a reason to add or discard a random
-draw. The eight-member periodic bored-remark family is the first owner-level
-diagnostic target. None of the commits after the frozen build and before this
-inventory directly changes that periodic callsite.
+draw. Expanding the complete Original/Rust sequences proves that the apparent
+eight-member periodic bored-remark family is not one cause: `VipIdleRemark` is
+only a common matching prefix. The next differing calls split across missing
+battle-predecision work, seek-point cardinality, Rust-only arrow protection, a
+later periodic owner, waypoint/actor work versus a macro continuation,
+principal-opponent assignment, and strike-damage estimation. Do not change
+the matching periodic callsite or assign those eight recordings as a cohort.
 
 Future RNG cursor assertions now include the Original frame's simulation-only
 callsite offsets alongside Rust's `RngSite` sequence. This makes the exact
