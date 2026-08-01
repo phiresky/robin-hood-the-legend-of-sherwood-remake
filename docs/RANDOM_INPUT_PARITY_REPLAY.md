@@ -194,6 +194,16 @@ pair. All eight release reruns advance beyond their former action-state,
 direction, and position boundary; their later results are under
 `output/parity-audits/random-action-wait-fix3/`.
 
+Six residual `Moving -> Waiting` boundaries were missing movement Execute
+state results: five crouched walk-entry transitions and one corpse-carrying
+walk. Original sets `(Crouched, Moving)` when
+`TRANSITION_WAITING_CROUCHED_WALKING_CROUCHED` reaches Done/Terminated, and
+sets `(CarryingCorpse, Moving)` / `(CarryingCorpse, Waiting)` at the
+`WALKING_WITH_CORPSE` Start/Terminated boundaries. Commit `9adde9617` adds
+those shared results. All six release reruns advance to later independent
+comparisons; artifacts are under
+`output/parity-audits/random-action-wait-fix4/`.
+
 ### Fresh `other` subgroup ledger
 
 All 75 failures whose only first logical field is `other` have an exact
