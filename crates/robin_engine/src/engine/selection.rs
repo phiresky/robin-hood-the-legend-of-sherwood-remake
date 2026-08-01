@@ -806,7 +806,9 @@ impl EngineInner {
 
         self.stop_owner(pc_id, SequencePriority::Preference);
         let elem = SequenceElement::new(1, Command::EquipBow, Some(pc_id));
-        self.launch_element(elem);
+        let mut sequence = crate::sequence::Sequence::new();
+        sequence.append_element(elem);
+        self.launch_sequence(sequence);
         self.hero_speaking(assets, pc_id, crate::engine::melee::HERO_ACCEPT_COMMAND);
     }
 
@@ -862,7 +864,9 @@ impl EngineInner {
                         );
                     }
                     let elem = SequenceElement::new(1, Command::UnequipBow, Some(pc_id));
-                    self.launch_element(elem);
+                    let mut sequence = crate::sequence::Sequence::new();
+                    sequence.append_element(elem);
+                    self.launch_sequence(sequence);
                     if parity_debug_stage_timing {
                         eprintln!(
                             "parity action: after bow cleanup launch UnequipBow pc={pc_id:?}"
@@ -875,17 +879,23 @@ impl EngineInner {
                         || posture == Posture::CarryingOnShoulders =>
                 {
                     let elem = SequenceElement::new(1, Command::LeaveHelpingClimb, Some(pc_id));
-                    self.launch_element(elem);
+                    let mut sequence = crate::sequence::Sequence::new();
+                    sequence.append_element(elem);
+                    self.launch_sequence(sequence);
                     tracing::debug!(?pc_id, "UnSelectAction: leaving helping climb");
                 }
                 Action::Beggar if posture == Posture::SimulatingBeggar => {
                     let elem = SequenceElement::new(1, Command::LeaveBeggar, Some(pc_id));
-                    self.launch_element(elem);
+                    let mut sequence = crate::sequence::Sequence::new();
+                    sequence.append_element(elem);
+                    self.launch_sequence(sequence);
                     tracing::debug!(?pc_id, "UnSelectAction: leaving beggar");
                 }
                 Action::Listen if action_state == ActionState::Listening => {
                     let elem = SequenceElement::new(1, Command::LeaveListen, Some(pc_id));
-                    self.launch_element(elem);
+                    let mut sequence = crate::sequence::Sequence::new();
+                    sequence.append_element(elem);
+                    self.launch_sequence(sequence);
                     tracing::debug!(?pc_id, "UnSelectAction: leaving listen");
                 }
                 _ => {}
