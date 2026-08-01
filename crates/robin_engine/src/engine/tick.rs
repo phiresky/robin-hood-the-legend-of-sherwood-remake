@@ -6281,6 +6281,18 @@ mod bow_command_body_parity_tests {
                 .wait_time,
             7
         );
+        assert_eq!(
+            engine
+                .world
+                .entities
+                .get(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .seek_refresh_wait,
+            7,
+            "WAIT_TIMER writes Original's shared mulWaitTime, so every Rust storage mirror must retain the same value across interruption"
+        );
         let element = engine
             .orders
             .sequence_manager
@@ -6292,6 +6304,35 @@ mod bow_command_body_parity_tests {
             Some(OrderType::WaitingUprightBored)
         );
         assert!(!element.current_order().unwrap().compute_direction);
+
+        // A timer may interrupt a seek while the actor-owned post-seek
+        // pointers remain dormant. Once the timer itself is interrupted and
+        // the actor falls back to Wait, the parity view must still expose the
+        // last value written to Original's one shared mulWaitTime scalar.
+        {
+            let actor = engine
+                .world
+                .entities
+                .get_mut(owner)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap();
+            actor.seek_target = Some(owner);
+            actor.post_seek_sequence = Some(Box::new(crate::sequence::Sequence::new()));
+        }
+        engine.orders.sequence_manager.element_interrupted(
+            seq_id,
+            0,
+            crate::sequence::CascadeFlags::NEXT_LEVEL,
+        );
+        let mut idle = SequenceElement::new(1, Command::Wait, Some(owner));
+        idle.priority = crate::sequence::SequencePriority::Wait;
+        let idle_sequence = engine.orders.sequence_manager.launch_element(idle);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(idle_sequence, 0);
+        assert_eq!(engine.actor_legacy_wait_time(owner), 7);
     }
 
     #[test]

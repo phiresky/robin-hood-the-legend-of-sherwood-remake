@@ -1319,7 +1319,12 @@ impl WaitCommandContext<'_> {
                 .unwrap_or_else(|| {
                     panic!("WAIT_TIMER owner {owner:?} vanished during translation")
                 });
-            actor.seek_refresh_wait = 0;
+            // Original has one overloaded `mulWaitTime` scalar. Keep the
+            // seek-side Rust mirror synchronized with this WAIT_TIMER write:
+            // if the timer is interrupted while dormant post-seek ownership
+            // is still present, the isomorphic legacy view may select that
+            // mirror after the current command changes to Wait.
+            actor.seek_refresh_wait = timer;
             actor.wait_time = timer;
         }
         if is_pc
