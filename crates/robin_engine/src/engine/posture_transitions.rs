@@ -349,7 +349,9 @@ impl EngineInner {
         // its command was just nulled by `make_upright`): launch
         // CROUCH_UP so the actor animates to standing.
         let elem = SequenceElement::new(1, Command::CrouchUp, Some(entity));
-        self.launch_element(elem);
+        let mut sequence = crate::sequence::Sequence::new();
+        sequence.append_element(elem);
+        self.launch_sequence(sequence);
     }
 
     /// Crouch the actor down.
@@ -365,7 +367,9 @@ impl EngineInner {
             self.synchronize_rewritten_selected_order(entity, action_before);
         } else {
             let elem = SequenceElement::new(1, Command::CrouchDown, Some(entity));
-            self.launch_element(elem);
+            let mut sequence = crate::sequence::Sequence::new();
+            sequence.append_element(elem);
+            self.launch_sequence(sequence);
         }
     }
 
