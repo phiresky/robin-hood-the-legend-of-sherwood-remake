@@ -11679,6 +11679,7 @@ impl EngineInner {
                     .the_16th_frame(
                         frame_phase,
                         &mut self.ai.global,
+                        &ctx,
                         is_idle,
                         sequence_null_about_to_launch,
                     );

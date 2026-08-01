@@ -160,9 +160,12 @@ impl EnemyAi {
                 // destination.
                 let dest = self.base.last_goto_destination;
                 let flags = self.base.last_goto_flags;
-                if dest.x != 0.0 || dest.y != 0.0 {
-                    let order = crate::ai::AiController::make_move_order(&dest, flags);
-                    self.base.outbox.actor.orders.push(order);
+                if dest.sector.is_some() {
+                    // Original calls GoTo again here.  This must pass through
+                    // the normal already-on-point test: directly manufacturing
+                    // a move order delays the synchronous EVENT_REACHPOINT /
+                    // EVENT_DONE chain and also skips its GetBoredTime RNG draw.
+                    self.base.go_to(dest, flags, ctx);
                 } else {
                     self.base
                         .outbox

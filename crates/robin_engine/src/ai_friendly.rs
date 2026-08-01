@@ -2046,6 +2046,7 @@ impl FriendlyAi {
         &mut self,
         frame_phase: u8,
         _global: &mut AiGlobalState,
+        ctx: &AiContext,
         is_idle: bool,
         sequence_null_about_to_launch: bool,
     ) {
@@ -2089,14 +2090,11 @@ impl FriendlyAi {
                     } else {
                         // Relaunch and reset.
                         let dest = self.base.last_goto_destination;
-                        if dest.x != 0.0 || dest.y != 0.0 {
+                        if dest.sector.is_some() {
                             let flags = self.base.last_goto_flags;
-                            // Rebuild the order directly; we can't
-                            // rebuild an `AiContext` here, so emit
-                            // the raw `Order` and let the engine's
-                            // drain path issue the path request.
-                            let order = AiController::make_move_order(&dest, flags);
-                            self.base.outbox.actor.orders.push(order);
+                            // Original retries through GoTo itself, including
+                            // its synchronous already-on-point callback.
+                            self.base.go_to(dest, flags, ctx);
                         } else {
                             self.base
                                 .outbox
