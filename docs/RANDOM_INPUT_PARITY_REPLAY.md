@@ -48,6 +48,38 @@ or say that it is provisional.
 7. Periodically build a new frozen release runner and perform a failure-only
    sweep. Run a complete fresh sweep before publishing final totals.
 
+## Fresh release sweep (`2026-08-01`)
+
+The current short-corpus snapshot contains 700 traces.  It was run with the
+frozen release runner whose SHA-256 is
+`edbbb6b39c0c8776d8fffb1d2f809f1ea021e453e1668429dfed25f34a831079`.
+The machine-readable results are under
+`output/parity-audits/random-short-fresh/`.
+
+- 102 traces reached exact EOF.
+- 598 traces failed their first authoritative boundary.
+- 521 failures are ordinary state comparisons.  Classified by the first
+  logical field, they are: 192 `actor.command`, 132 `actor.action_state`, 75
+  `other`, 37 `actor.wait_time`, 29 `direction_goal`, 19 `direction`, 10
+  `ai.substate`, 9 `position_goal_map.x`, 9 `layer`, 4 `life_points`, 3
+  `position_map.x`, 1 `elevation`, and 1 `ai.state`.
+- 55 failures are simulation-RNG cardinality/order boundaries.
+- 15 traces contain resolved input commands not understood by this frozen
+  runner (principally `drop_ale_at` and `shield_select_protected`).
+- 6 failures are resolved-speech FIFO/order boundaries.
+- 1 trace hit the 900-second watchdog and requires a dedicated hang run.
+
+The groups are first-visible boundaries, not 598 independent engine bugs.
+Many traces are expected to collapse after each shared cause is fixed.  Work
+is currently split between the command-lifecycle group, the action/wait
+timing group, and the comparator `other` group.  Direction/position, RNG,
+speech, unsupported resolved commands, and the watchdog trace remain explicit
+follow-up groups rather than being silently folded into those assignments.
+
+The long `60s-15x` snapshot contains 1,791 traces and is being swept with one
+runner process to keep memory bounded.  Its totals are provisional until all
+status files exist under `output/parity-audits/random-long-fresh/`.
+
 ## Provisional initial sweep
 
 The first release filter started when 309 complete schema-12 random traces

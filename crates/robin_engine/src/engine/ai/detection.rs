@@ -2284,14 +2284,14 @@ impl EngineInner {
                         });
                 }
 
-                // Build us-list: nearby friendly soldiers.
-                // 360° detection reduces to a distance check within
-                // ~500 units.
+                // Precompute the nearby-friend facts consumed by
+                // BattleDecisions.  Do not update AiBase::list_us here:
+                // Original only rebuilds its persistent mlistUs at the
+                // specific AI routines that own that list (not during the
+                // per-frame detection snapshot).
                 const US_LIST_SQ_RADIUS: f32 = 500.0 * 500.0;
                 let my_company = enemy_ai.company_number;
                 let my_pride = enemy_ai.soldier_profile_pride;
-                enemy_ai.base.list_us.clear();
-                enemy_ai.base.list_us.push(enemy_ai.base.me);
                 tick_data.friends_lower_company = 0;
                 tick_data.soldiers_lower_pride = false;
                 // MakeBattlePredecisions: self contributes 100 + own pride.
@@ -2355,8 +2355,6 @@ impl EngineInner {
                         | AiState::Attacking => {}
                         _ => continue,
                     }
-                    enemy_ai.base.list_us.push(ss.id.index());
-
                     // Company number tracking.
                     if my_company > ss.company_number
                         && (enemy_ai.base.current_substate
@@ -2405,15 +2403,6 @@ impl EngineInner {
                                 tick_data.friends_nearer_to_enemy += 1;
                             }
                         }
-                    }
-
-                    // Add attacking friends' primary targets to the
-                    // them-list.
-                    if ss.ai_state == AiState::Attacking
-                        && ss.primary_target != 0
-                        && !enemy_ai.list_them.contains(&ss.primary_target)
-                    {
-                        enemy_ai.list_them.push(ss.primary_target);
                     }
                 }
 
