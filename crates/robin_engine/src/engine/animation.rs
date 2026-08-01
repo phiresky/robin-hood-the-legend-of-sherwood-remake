@@ -3780,6 +3780,11 @@ impl EngineInner {
                     | OrderType::BeingUnconscious
                     | OrderType::BeingUnconsciousSword
                     | OrderType::BeingUnconsciousBow
+                    // Being tied sets HumanData::unconscious too, but its
+                    // Wait order remains a live animation hold. Original
+                    // RHElementActorHuman::Execute always calls
+                    // PerformAction for RHANIMATION_BEING_TIED.
+                    | OrderType::BeingTied
             );
             if (entity.is_dead()
                 || entity
@@ -4290,6 +4295,7 @@ impl EngineInner {
                         | OrderType::BeingUnconscious
                         | OrderType::BeingUnconsciousSword
                         | OrderType::BeingUnconsciousBow
+                        | OrderType::BeingTied
                 );
 
                 // Dead entities: freeze on last frame unless a

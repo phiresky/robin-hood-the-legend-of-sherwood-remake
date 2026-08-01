@@ -1085,6 +1085,68 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
 }
 
 #[test]
+fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+    use crate::sprite::MotionState;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Tied));
+    let mut selected = SequenceElement::new(1, Command::Wait, Some(owner));
+    let order = Order::test_new(OrderType::BeingTied, 0.0, 0.0);
+    let order_id = order.order_id;
+    selected.orders.push_back(order);
+    let sequence = engine.orders.sequence_manager.launch_element(selected);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+
+    let script = SpriteScript {
+        action_id: OrderType::BeingTied as u16,
+        action_done: 0,
+        average_speed: 0.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 0,
+        frame_ids: vec![1],
+        delays: vec![1],
+        distances: vec![0],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+        sound_ids: vec![0],
+    };
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[OrderType::BeingTied as usize] = 0;
+    let entity = engine.get_entity_mut(owner).unwrap();
+    entity.human_data_mut().unwrap().unconscious = true;
+    entity.actor_data_mut().unwrap().action_state = ActionState::Waiting;
+    entity.element_data_mut().sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script]),
+        std::sync::Arc::new(conversion),
+    );
+    entity.element_data_mut().sprite.last_action = OrderType::BeingTied;
+    entity.element_data_mut().sprite.last_processed_order_id = order_id.get();
+
+    let (_, _, executed) = engine.tick_actor_animation_for(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        owner,
+    );
+
+    assert_eq!(
+        executed.map(|result| result.motion),
+        Some(MotionState::InProgress),
+        "BeingTied is a live Human::Execute hold even though tied humans carry the unconscious flag"
+    );
+    assert_eq!(
+        engine.get_entity(owner).unwrap().sprite().frame_count,
+        1,
+        "the tied hold must retain Original's per-Hourglass PerformAction tick"
+    );
+}
+
+#[test]
 fn move_ok_bored_exit_transition_uses_generic_actor_execute() {
     use crate::element::{ActionState, Command, Posture};
     use crate::order::{Order, OrderType};

@@ -1699,6 +1699,31 @@ required to bridge the unmodeled post-record Refresh phase: its first visit
 preserves the terminal active frame and its second retires the retained entity
 slot.  The focused lifecycle regression now encodes both boundaries.
 
+The remaining frozen `elevation` boundary at Linux3 Profile 001 Savegame 040
+frame 27918 is the direct half of `RHElementActor::PassDoor`. Original changes
+PC 320 from layer/sector 0/0 to 1/72 while retaining the door-rail elevation
+`93.3318`; only the non-direct branch calls `ComputePositionAll`. Rust's common
+door-completion helper instead snapped map XY through the installed plane and
+replaced Z with `90.00101`. Direct completion now rebuilds coherent world XY
+from the exact endpoint map coordinate and the already-computed rail Z without
+probing the plane. Non-direct completion retains its projection recomputation,
+including the outside plane installed when leaving a building. A focused
+sloped-plane regression distinguishes the two source branches.
+
+The post-fix 171-trace follow-up grouped 133 ordinary exits into ten repeated
+loaded-save boundaries whose only differences were tied soldiers'
+`sprite_frame_count` values. Every affected actor had posture `Tied`, the
+serialized `unconscious` flag set, and an in-progress `Wait` element whose
+selected order was `BeingTied`. Rust's generic Execute path treated any
+unconscious actor outside its corpse/KO hold whitelist as settled and returned
+without advancing the sprite; `BeingTied` was missing from both copies of that
+whitelist. Original `RHElementActorHuman::Execute` unconditionally calls
+`PerformAction` for `RHANIMATION_BEING_TIED` and then returns `IN_PROGRESS`, so
+the loaded one-frame hold continues toggling its sub-frame counter. Rust now
+retains that live hold despite the unconscious flag. A focused lifecycle
+regression reconstructs the exact loaded `Wait`/`BeingTied` state and requires
+the counter to advance.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
