@@ -1127,6 +1127,17 @@ impl PositionInterface {
         self.increment_map
     }
 
+    /// Return the stored map increment without asserting that this
+    /// representation is currently authoritative.
+    ///
+    /// This is for complete state snapshots and legacy serialization only.
+    /// Gameplay must use [`Self::get_increment_map`], whose validity assertion
+    /// prevents stale storage from being mistaken for the live increment.
+    #[inline]
+    pub fn raw_increment_map(&self) -> MapVec {
+        self.increment_map
+    }
+
     #[inline]
     pub fn set_reversed_movement(&mut self, v: bool) {
         self.reversed_movement = v;
