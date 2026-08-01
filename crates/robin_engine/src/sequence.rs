@@ -2059,7 +2059,17 @@ impl Sequence {
         // priority resolver and promote `None` to `Normal` so the stop
         // actually succeeds on commands like WAIT / FREEZE.
         if elem.priority == SequencePriority::NotYetSet {
+            if parity_debug_stage_timing {
+                eprintln!(
+                    "parity stop: stop_element before priority resolver depth={depth} idx={elem_idx}"
+                );
+            }
             let mut resolved = resolver(elem);
+            if parity_debug_stage_timing {
+                eprintln!(
+                    "parity stop: stop_element after priority resolver depth={depth} idx={elem_idx} resolved={resolved:?}"
+                );
+            }
             if resolved == SequencePriority::None {
                 resolved = SequencePriority::Normal;
             }
@@ -2073,18 +2083,38 @@ impl Sequence {
                 // successor is interrupted
                 let next_idx = elem_idx + 1;
                 if next_idx < self.elements.len() {
+                    if parity_debug_stage_timing {
+                        eprintln!(
+                            "parity stop: stop_element before interrupt movement successor depth={depth} from={elem_idx} to={next_idx}"
+                        );
+                    }
                     all_effects.push(self.set_element_state(
                         next_idx,
                         SequenceState::Interrupted,
                         CascadeFlags::NEXT_LEVEL,
                     ));
+                    if parity_debug_stage_timing {
+                        eprintln!(
+                            "parity stop: stop_element after interrupt movement successor depth={depth} from={elem_idx} to={next_idx}"
+                        );
+                    }
                 }
             } else {
+                if parity_debug_stage_timing {
+                    eprintln!(
+                        "parity stop: stop_element before interrupt self depth={depth} idx={elem_idx}"
+                    );
+                }
                 all_effects.push(self.set_element_state(
                     elem_idx,
                     SequenceState::Interrupted,
                     CascadeFlags::NEXT_LEVEL,
                 ));
+                if parity_debug_stage_timing {
+                    eprintln!(
+                        "parity stop: stop_element after interrupt self depth={depth} idx={elem_idx}"
+                    );
+                }
             }
         } else {
             // Can't stop this element, but try the next one.
@@ -4119,8 +4149,18 @@ impl SequenceManager {
                     effects_vec.len()
                 );
             }
-            for effects in effects_vec {
+            for (effect_index, effects) in effects_vec.into_iter().enumerate() {
+                if parity_debug_stage_timing {
+                    eprintln!(
+                        "parity stop: manager before process_effects owner={owner:?} seq={seq_id:?} idx={elem_idx} effect={effect_index}"
+                    );
+                }
                 self.process_effects(seq_id, effects);
+                if parity_debug_stage_timing {
+                    eprintln!(
+                        "parity stop: manager after process_effects owner={owner:?} seq={seq_id:?} idx={elem_idx} effect={effect_index}"
+                    );
+                }
             }
             if self
                 .get_element(seq_id, elem_idx)
@@ -4135,6 +4175,11 @@ impl SequenceManager {
         // Remove the now-dead links just as the original Stop method nulls its
         // postponed pointer after recursively interrupting it.
         if !stopped.is_empty() {
+            if parity_debug_stage_timing {
+                eprintln!(
+                    "parity stop: manager before clear stopped links owner={owner:?} stopped={stopped:?}"
+                );
+            }
             for (seq_id, seq) in &mut self.sequences {
                 for elem in &mut seq.elements {
                     if let Some(postponed_idx) = elem.postponed_element_index
@@ -4148,6 +4193,9 @@ impl SequenceManager {
                         elem.cross_postponed = None;
                     }
                 }
+            }
+            if parity_debug_stage_timing {
+                eprintln!("parity stop: manager after clear stopped links owner={owner:?}");
             }
         }
 
