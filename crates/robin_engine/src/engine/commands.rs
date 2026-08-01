@@ -3875,14 +3875,23 @@ mod tests {
     #[test]
     fn resolved_throw_orientation_targets_only_the_recorded_pc() {
         let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Stone, 1)]);
-        let target = WorldPoint3D::new(0.0, 100.0, 0.0);
+        let actor_position = WorldPoint3D::new(242.0, 2329.0, 90.0);
+        engine
+            .get_entity_mut(pc_id)
+            .unwrap()
+            .element_data_mut()
+            .set_position(actor_position);
+        let target = WorldPoint3D::new(435.0, 2329.0, 274.0);
 
         engine.perform_resolved_orientation(&assets, pc_id, Action::Stone, MapPoint::ZERO, target);
 
         let element = engine.get_entity(pc_id).unwrap().element_data();
         assert_eq!(
             i16::from(element.sprite.position_iface.get_direction_goal().as_u8()),
-            crate::position_interface::vector_to_sector_0_to_15_iso(target.x, target.y)
+            crate::position_interface::vector_to_sector_0_to_15_iso(
+                target.x - actor_position.x,
+                target.y - actor_position.y,
+            )
         );
     }
 

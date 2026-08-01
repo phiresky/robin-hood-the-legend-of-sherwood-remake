@@ -2803,7 +2803,11 @@ impl EngineInner {
         let Entity::Pc(pc) = entity else {
             panic!("resolved orientation owner {pc_id:?} is not a PC");
         };
-        let pos = pc.element.position_map();
+        // Original uses `GetPositionGround()` here, i.e. the world-space
+        // `(GetPosition().mX, GetPosition().mY)` pair.  Projected map Y is
+        // `world_y - elevation`; using it makes elevated throwers face too
+        // far north/south even though the resolved target is world-space.
+        let pos = pc.element.position();
         let dx = ground_pt.x - pos.x;
         let dy = ground_pt.y - pos.y;
         if dx == 0.0 && dy == 0.0 {
