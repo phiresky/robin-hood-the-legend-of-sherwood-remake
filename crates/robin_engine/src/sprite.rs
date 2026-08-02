@@ -1809,7 +1809,12 @@ impl Sprite {
             }
         }
 
-        (state, distance)
+        // `perform_action` records its intermediate result, but movement
+        // deliberately overrides that result after initialization (notably
+        // DONE -> START when a fresh waypoint begins on the prior action-done
+        // frame). The actor observes PerformMotion's final return value, so
+        // keep the shared motion latch on that same final state.
+        (self.record_motion_state(state), distance)
     }
 
     // -- Bounding box --
@@ -2487,6 +2492,41 @@ mod tests {
         assert_eq!(s.last_processed_order_id, new_order_id.get());
         assert_eq!(s.position_iface.map_goal(), ctx.destination);
         assert!(s.position_iface.is_increment_map_computed());
+    }
+
+    #[test]
+    fn fresh_motion_records_start_over_intermediate_action_done() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut s = make_test_sprite();
+        let old_order_id = std::num::NonZeroU32::new(42).unwrap();
+        let new_order_id = std::num::NonZeroU32::new(43).unwrap();
+        s.last_processed_order_id = old_order_id.get();
+        s.initialize_action_done(OrderType::WaitingUprightBored);
+        s.current_frame = s.action_done_frame;
+        s.frame_count = s.action_done_counter;
+        s.position_iface.set_map_position(MapPoint::new(10.0, 10.0));
+
+        let (state, _) = s.perform_motion(
+            &sim_context,
+            Some(MotionOrderContext {
+                order_id: new_order_id,
+                destination: MapPoint::new(20.0, 20.0),
+                reverse: false,
+                tolerance: 0.0,
+                directional_tolerance: false,
+                compute_direction: true,
+                next_destination_same_action: None,
+            }),
+            OrderType::WaitingUprightBored,
+            0,
+            FrameProgression::Default,
+            false,
+            MotionMethod::Walk,
+            false,
+        );
+
+        assert_eq!(state, MotionState::Start);
+        assert_eq!(s.last_motion_state, Some(MotionState::Start));
     }
 
     #[test]
