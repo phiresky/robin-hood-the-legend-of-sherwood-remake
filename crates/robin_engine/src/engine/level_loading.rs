@@ -2989,29 +2989,32 @@ impl EngineInner {
                     let mut shadow = crate::sector::ShadowData::default();
                     shadow.initialize_2d(&points);
 
-                    // Inline projection-area lookup.  Every plane sector
-                    // wraps exactly one projection-area obstacle, so
-                    // iterating obstacles gives the same answer as
-                    // walking SECTOR_PLANE GridSectors and following
-                    // their owning sight obstacle.
+                    // Inline projection-area lookup.  The Original creates
+                    // every projection obstacle's SECTOR_PLANE on fast-grid
+                    // layer 0 (`AddSector(pSectorPlane, 0, true)`), then asks
+                    // for planes in the shadow sector's own layer.  Thus a
+                    // nonzero-layer shadow cannot find a plane and retains
+                    // the flat `(x, y, 0)` fallback.  Do not match obstacle
+                    // and shadow layers here: on layer 0 the Original can
+                    // see plane sectors belonging to projection obstacles
+                    // from any obstacle layer.
                     let bary = shadow.barycentre_2d;
                     let mut found_top_plane: Option<[[f32; 3]; 3]> = None;
-                    for (oi, obs) in self.sight_obstacles(assets).iter_indexed() {
-                        if !obs.is_projection_area() {
-                            continue;
+                    if layer == 0 {
+                        for (oi, obs) in self.sight_obstacles(assets).iter_indexed() {
+                            if !obs.is_projection_area() {
+                                continue;
+                            }
+                            if !obs.box_projection.contains_point(bary) {
+                                continue;
+                            }
+                            if !obs.contains_point_projection(bary) {
+                                continue;
+                            }
+                            found_top_plane = Some(obs.top_plane_points);
+                            let _ = oi; // index unused beyond verification
+                            break;
                         }
-                        if obs.layer != layer {
-                            continue;
-                        }
-                        if !obs.box_projection.contains_point(bary) {
-                            continue;
-                        }
-                        if !obs.contains_point_projection(bary) {
-                            continue;
-                        }
-                        found_top_plane = Some(obs.top_plane_points);
-                        let _ = oi; // index unused beyond verification
-                        break;
                     }
                     shadow.initialize_3d(found_top_plane.as_ref());
 

@@ -3387,6 +3387,26 @@ and both elevations, then applies the ordinary isometric sector classifier.
 The shared strike selector therefore benefits for PCs, soldiers, proactive
 attacks, and reactive counter-strikes without any replay-specific choice.
 
+### Nonzero-layer light sectors retain a flat LOS barycentre
+
+Fifteen Savegame 030 random-input traces first diverged at frame 5704 in a
+night/fog view-radius visibility query by Soldier 49. Both engines used the
+same light-sector centroid `(663.75, 1421.5)`, but Rust projected it onto an
+elevated obstacle as `(663.75, 1551.6011, 130.1010)` while Original queried
+`(663.75, 1421.5, 0)`.
+
+This comes from a subtle fast-grid layer rule, not from the general 3D
+visibility routine. Original constructs every projection obstacle's
+`SECTOR_PLANE` on grid layer 0, while `RHSectorShadow::Initialize` asks for
+plane sectors using the shadow sector's own layer. A nonzero-layer shadow can
+therefore find no plane and keeps the explicit flat fallback. Rust had
+bypassed the plane-sector lookup and matched projection obstacles directly by
+their authored layer, incorrectly elevating such shadows. Shadow barycentre
+initialization now performs projection-plane lookup only for layer-0 shadows;
+on that layer it considers all projection obstacles, matching the Original's
+layer-0 plane registration. Human and other ordinary visibility destinations
+remain fully 3D.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
