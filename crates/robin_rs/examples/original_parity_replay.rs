@@ -5219,10 +5219,23 @@ fn compare_engine_state(
         );
     }
     if let Some(expected_controller) = &expected.messenger_controller {
+        let expected_controller = expected_controller.to_json();
+        let mut actual_controller = engine.parity_messenger_controller_state();
+        // Schema v49 introduced this object with only `view_locked`; v50 adds
+        // the independently authoritative action. Keep those existing traces
+        // usable while making the field strict whenever the recorder emitted
+        // it.
+        if expected_controller
+            .as_object()
+            .is_some_and(|controller| !controller.contains_key("selected_action"))
+            && let Some(controller) = actual_controller.as_object_mut()
+        {
+            controller.remove("selected_action");
+        }
         collect_json_differences(
             "frame.engine_state.messenger_controller",
-            &expected_controller.to_json(),
-            &engine.parity_messenger_controller_state(),
+            &expected_controller,
+            &actual_controller,
             differences,
         );
     }
