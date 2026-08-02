@@ -232,19 +232,25 @@ impl EngineInner {
             }
         }
 
-        let touched = self.sequence_manager_has_movement(entity);
-        if touched {
+        if let Some(selected_movement) = self.selected_movement_element(entity) {
             let action_before = self.selected_order_action(entity);
             self.orders.sequence_manager.make_fast(entity);
-            if let Some(pathfinder_index) = self.pending_pathfinder_index(entity) {
+            if let Some(pathfinder_index) = self.pending_pathfinder_index(entity, selected_movement)
+            {
                 self.orders
                     .pending_path_requests
                     .make_fast(entity, pathfinder_index);
                 return;
             }
             self.make_active_door_pass_fast(entity);
-            self.after_make_rewrite(sim, entity);
+            self.after_make_rewrite(sim, entity, selected_movement);
             self.synchronize_rewritten_selected_order(entity, action_before);
+        } else if self.selected_element(entity).is_some() {
+            // Base SequenceElement::MakeFast still recurses into a same-owner
+            // following/postponed movement even when the selected element is
+            // not itself movement. Only the selected-element movement tail
+            // (pathfinder/PostProcessPath) is skipped in that case.
+            self.orders.sequence_manager.make_fast(entity);
         }
     }
 
@@ -254,17 +260,20 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         entity: EntityId,
     ) {
-        if self.sequence_manager_has_movement(entity) {
+        if let Some(selected_movement) = self.selected_movement_element(entity) {
             let action_before = self.selected_order_action(entity);
             self.orders.sequence_manager.make_slow(entity);
-            if let Some(pathfinder_index) = self.pending_pathfinder_index(entity) {
+            if let Some(pathfinder_index) = self.pending_pathfinder_index(entity, selected_movement)
+            {
                 self.orders
                     .pending_path_requests
                     .make_slow(entity, pathfinder_index);
                 return;
             }
-            self.after_make_rewrite(sim, entity);
+            self.after_make_rewrite(sim, entity, selected_movement);
             self.synchronize_rewritten_selected_order(entity, action_before);
+        } else if self.selected_element(entity).is_some() {
+            self.orders.sequence_manager.make_slow(entity);
         }
     }
 
@@ -292,7 +301,7 @@ impl EngineInner {
         // nonzero destination advances the cursor, and zero-position door
         // action points leave it unchanged.
         let tail_cursor = self
-            .find_active_movement_element(entity)
+            .selected_movement_element(entity)
             .and_then(|(seq_id, elem_idx)| {
                 self.orders.sequence_manager.get_element(seq_id, elem_idx)
             })
@@ -348,17 +357,20 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         entity: EntityId,
     ) {
-        if self.sequence_manager_has_active_element(entity) {
+        if self.selected_element(entity).is_some() {
+            let selected_movement = self.selected_movement_element(entity);
             let action_before = self.selected_order_action(entity);
             self.orders.sequence_manager.make_upright(entity);
-            if self.sequence_manager_has_movement(entity) {
-                if let Some(pathfinder_index) = self.pending_pathfinder_index(entity) {
+            if let Some(selected_movement) = selected_movement {
+                if let Some(pathfinder_index) =
+                    self.pending_pathfinder_index(entity, selected_movement)
+                {
                     self.orders
                         .pending_path_requests
                         .make_upright(entity, pathfinder_index);
                     return;
                 }
-                self.after_make_rewrite(sim, entity);
+                self.after_make_rewrite(sim, entity, selected_movement);
                 self.synchronize_rewritten_selected_order(entity, action_before);
                 return;
             }
@@ -378,18 +390,24 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         entity: EntityId,
     ) {
-        if self.sequence_manager_has_movement(entity) {
+        if let Some(selected_movement) = self.selected_movement_element(entity) {
             let action_before = self.selected_order_action(entity);
             self.orders.sequence_manager.make_crouched(entity);
-            if let Some(pathfinder_index) = self.pending_pathfinder_index(entity) {
+            if let Some(pathfinder_index) = self.pending_pathfinder_index(entity, selected_movement)
+            {
                 self.orders
                     .pending_path_requests
                     .make_crouched(entity, pathfinder_index);
                 return;
             }
-            self.after_make_rewrite(sim, entity);
+            self.after_make_rewrite(sim, entity, selected_movement);
             self.synchronize_rewritten_selected_order(entity, action_before);
         } else {
+            if self.selected_element(entity).is_some() {
+                // As in SequenceElement::MakeCrouched, recurse into its linked
+                // tail before launching the actor's own posture command.
+                self.orders.sequence_manager.make_crouched(entity);
+            }
             let elem = SequenceElement::new(1, Command::CrouchDown, Some(entity));
             let mut sequence = crate::sequence::Sequence::new();
             sequence.append_element(elem);
@@ -403,11 +421,12 @@ impl EngineInner {
     ///
     /// Pending `MoveWaiting` requests are handled by the caller through the
     /// pathfinder request rewrite and never reach this materialized-path tail.
-    fn after_make_rewrite(&mut self, sim: &crate::sim_rng::SimulationContext, entity: EntityId) {
-        let (seq_id, elem_idx) = match self.find_active_movement_element(entity) {
-            Some(pair) => pair,
-            None => return,
-        };
+    fn after_make_rewrite(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        entity: EntityId,
+        (seq_id, elem_idx): (SequenceId, usize),
+    ) {
         self.post_process_path(seq_id, elem_idx);
         // Each re-process call re-applies drunken midpoint deviation
         // at the new speed. The initial deviation is applied at
@@ -1029,23 +1048,33 @@ impl EngineInner {
         }
     }
 
-    /// Find the first movement sequence element owned by `entity`
-    /// whose state is `InProgress` (or `Todo`).  An actor has at most
-    /// one active element at a time.
-    fn find_active_movement_element(&self, entity: EntityId) -> Option<(SequenceId, usize)> {
+    /// Return the actor's exact selected element (`mpSequenceElement`).
+    fn selected_element(&self, entity: EntityId) -> Option<(SequenceId, usize)> {
         self.orders
             .sequence_manager
-            .live_element_for_actor_matching(entity, |elem| {
-                elem.data.is_movement()
-                    && matches!(elem.state, SequenceState::InProgress | SequenceState::Todo)
-            })
+            .current_element_for_actor(entity)
+    }
+
+    /// Return the selected element only when that element itself is movement.
+    /// Following or unrelated Todo movements do not own Actor::Make*'s
+    /// pathfinder/PostProcessPath tail.
+    fn selected_movement_element(&self, entity: EntityId) -> Option<(SequenceId, usize)> {
+        let selected = self.selected_element(entity)?;
+        self.orders
+            .sequence_manager
+            .get_element(selected.0, selected.1)
+            .is_some_and(|element| element.data.is_movement())
+            .then_some(selected)
     }
 
     /// Return the actor's pathfinder index only while its selected movement
     /// is waiting for path delivery. Original's posture-specific accessor is
     /// currently compiled to return this same primary index for every posture.
-    fn pending_pathfinder_index(&self, entity: EntityId) -> Option<u16> {
-        let (seq_id, elem_idx) = self.find_active_movement_element(entity)?;
+    fn pending_pathfinder_index(
+        &self,
+        entity: EntityId,
+        (seq_id, elem_idx): (SequenceId, usize),
+    ) -> Option<u16> {
         (self
             .orders
             .sequence_manager
@@ -1058,22 +1087,6 @@ impl EngineInner {
                 .position_iface()
                 .get_pathfinder_index()
         })
-    }
-
-    /// Whether `entity` owns any active/pending movement element.
-    fn sequence_manager_has_movement(&self, entity: EntityId) -> bool {
-        self.find_active_movement_element(entity).is_some()
-    }
-
-    /// Whether `entity` owns any sequence element in the
-    /// `Todo`/`InProgress` lifecycle states (movement or not). Used
-    /// at the top of `actor_make_upright` / `actor_make_crouched` to
-    /// decide whether to recurse into the chain rewrite before
-    /// deciding on a `CROUCH_*` fallback.
-    fn sequence_manager_has_active_element(&self, entity: EntityId) -> bool {
-        self.orders
-            .sequence_manager
-            .has_unpostponed_element_for_actor_matching(entity, |_| true)
     }
 
     /// Cumulative pixel distance of a given animation on the actor's

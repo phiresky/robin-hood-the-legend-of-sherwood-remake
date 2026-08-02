@@ -13,6 +13,59 @@ fn tick_production_owner_coordinator(
 }
 
 #[test]
+fn make_fast_does_not_postprocess_an_unrelated_live_movement() {
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{MoveFlags, Sequence, SequenceElement, SequenceElementData};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+
+    let mut selected = SequenceElement::new(1, Command::Generic, Some(owner));
+    selected
+        .orders
+        .push_back(Order::test_new(OrderType::WaitingUprightBored, 0.0, 0.0));
+    let selected_id = engine.orders.sequence_manager.launch_element(selected);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(selected_id, 0);
+
+    let mut unrelated = Sequence::new();
+    unrelated.append_element(SequenceElement::new_movement(
+        1,
+        Command::MoveWaiting,
+        Some(owner),
+        OrderType::WalkingUpright,
+    ));
+    let unrelated_id = engine.orders.sequence_manager.launch_sequence(unrelated);
+    engine.orders.pending_path_requests =
+        PendingPathRequestQueue::restore_v48_waiting(vec![PendingPathRequest::test_request(
+            owner,
+            unrelated_id,
+            0,
+        )]);
+
+    engine.actor_make_fast(&crate::sim_rng::test_context(), owner);
+
+    let SequenceElementData::Movement { action, flags, .. } = &engine
+        .orders
+        .sequence_manager
+        .get_element(unrelated_id, 0)
+        .expect("unrelated movement remains queued")
+        .data
+    else {
+        panic!("movement variant");
+    };
+    assert_eq!(*action, OrderType::WalkingUpright);
+    assert!(!flags.contains(MoveFlags::FAST));
+    assert_eq!(
+        engine.orders.pending_path_requests.v48_waiting()[0].move_action,
+        OrderType::WalkingUpright,
+        "Original tests only selected mpSequenceElement before invoking RHPathFinder::MakeFast"
+    );
+}
+
+#[test]
 fn production_owner_execution_frozen_blocks_rider_charge_execute_entirely() {
     use crate::engine::melee::{
         clear_test_sword_damage_observations, take_test_sword_damage_observations,
