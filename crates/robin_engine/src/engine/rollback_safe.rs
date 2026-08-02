@@ -496,25 +496,12 @@ impl Engine {
                 }
             }
         };
-        let patrol_stimulus = |stimulus: Option<&crate::ai::Stimulus>| -> Value {
+        let stimulus_state = |stimulus: &crate::ai::Stimulus| -> Value {
             use crate::ai::{StimulusInfo, StimulusType};
-            let Some(stimulus) = stimulus else {
-                return Value::Null;
-            };
-            let is_default = stimulus.stimulus_type == StimulusType::NoEvent
-                && matches!(
-                    stimulus.info,
-                    StimulusInfo::None | StimulusInfo::LegacyInvalidType(_)
-                )
-                && stimulus.owner == 0
-                && !stimulus.to_whole_patrol;
-            if is_default {
-                return Value::Null;
-            }
             assert_ne!(
                 stimulus.stimulus_type,
                 StimulusType::ForceBattleDecision,
-                "parity enemy patrol stimulus contains Rust-only non-serializable type",
+                "parity local-AI stimulus contains Rust-only non-serializable type",
             );
             let (info_type, info) = match stimulus.info {
                 StimulusInfo::None => (0, json!({ "kind": "none" })),
@@ -575,7 +562,7 @@ impl Engine {
                 ),
                 StimulusInfo::Index(value) => (9, json!({ "kind": "index", "value": value })),
                 StimulusInfo::LegacyInvalidType(raw) => {
-                    panic!("parity enemy patrol stimulus retains active invalid type word {raw}")
+                    panic!("parity local-AI stimulus retains active invalid type word {raw}")
                 }
             };
             json!({
@@ -585,6 +572,24 @@ impl Engine {
                 "to_whole_patrol": stimulus.to_whole_patrol,
                 "info": info,
             })
+        };
+        let patrol_stimulus = |stimulus: Option<&crate::ai::Stimulus>| -> Value {
+            use crate::ai::{StimulusInfo, StimulusType};
+            let Some(stimulus) = stimulus else {
+                return Value::Null;
+            };
+            let is_default = stimulus.stimulus_type == StimulusType::NoEvent
+                && matches!(
+                    stimulus.info,
+                    StimulusInfo::None | StimulusInfo::LegacyInvalidType(_)
+                )
+                && stimulus.owner == 0
+                && !stimulus.to_whole_patrol;
+            if is_default {
+                Value::Null
+            } else {
+                stimulus_state(stimulus)
+            }
         };
         let npc_ai = entity.npc_data().and_then(|npc| {
 			let ai = npc.ai_brain.base()?;
@@ -658,8 +663,17 @@ impl Engine {
 				"likes_to_sit": ai.likes_to_sit_around, "special_action": ai.special_action,
 				"friends_alerted": ai.friends_are_alerted, "stay_at_home": ai.is_stay_at_home,
 				"locks": ai.locks_flag_field.bits(), "was_busy": ai.was_busy,
+				"stimulus_queue": ai.stimulus_queue.iter().map(stimulus_state).collect::<Vec<_>>(),
 				"script_locked": ai.script_locked, "remember_events": ai.remember_events,
-				"leave_house_number": ai.leave_house_number, "inside_halt": ai.inside_halt_method,
+				"leave_house_number": ai.leave_house_number,
+				"object_memory": {
+					"forgotten": handles(&ai.forgotten_objects),
+					"desire": resolve_ai_handle(ai.object_of_desire),
+					"checkpoint_charly": resolve_ai_handle(ai.checkpoint_charly),
+					"synchronize_charly": resolve_ai_handle(ai.synchronize_charly),
+				},
+				"inside_halt": ai.inside_halt_method,
+				"synchronizing_actors": handles(&ai.synchronizing_actors),
 				"default_path_flags": ai.default_path_walking_flags.bits(),
 				}).as_object().expect("parity NPC AI continuation chunk must be an object").clone());
 			state
@@ -674,6 +688,13 @@ impl Engine {
 				},
 				"knocked_out_in_money_fight": ai.knocked_out_in_money_fight,
 				"got_beggar_trick": ai.got_the_beggar_trick,
+				"reconnaissance": {
+					"report_type": ai.my_reconnaissance_report.report_type as u32,
+					"seek_position": ai_position(ai.my_reconnaissance_report.seek_position),
+					"seen_bodies": handles(&ai.my_reconnaissance_report.seen_bodies),
+					"charly": resolve_ai_handle(ai.my_reconnaissance_report.charly),
+					"charly_seen": ai.my_reconnaissance_report.charly_seen,
+				},
 				"patrol": {
 					"chief": ai.patrol_chief.map_or(Value::Null, entity_ref),
 					"active": ai.patrol.iter().copied().map(entity_ref).collect::<Vec<_>>(),

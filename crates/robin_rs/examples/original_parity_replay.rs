@@ -1452,8 +1452,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 37;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v37.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 38;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v38.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -5003,6 +5003,25 @@ fn retain_recorded_entity_runtime_coverage(
     {
         actual_npc_ai.remove("subclass");
     }
+    if let (Some(expected_npc_ai), Some(actual_npc_ai)) = (
+        expected
+            .get("npc_ai")
+            .and_then(serde_json::Value::as_object),
+        actual
+            .get_mut("npc_ai")
+            .and_then(serde_json::Value::as_object_mut),
+    ) {
+        for field in [
+            "stimulus_queue",
+            "object_memory",
+            "synchronizing_actors",
+            "reconnaissance",
+        ] {
+            if !expected_npc_ai.contains_key(field) {
+                actual_npc_ai.remove(field);
+            }
+        }
+    }
     if expected
         .get("npc_ai")
         .and_then(|npc_ai| npc_ai.get("subclass"))
@@ -6648,7 +6667,7 @@ mod tests {
     }
 
     #[test]
-    fn old_enemy_snapshots_skip_only_absent_additive_v37_state() {
+    fn old_enemy_snapshots_skip_only_absent_additive_v38_state() {
         let expected = serde_json::json!({
             "npc_ai": {
                 "state": 3,
@@ -6661,6 +6680,16 @@ mod tests {
         let mut actual = serde_json::json!({
             "npc_ai": {
                 "state": 3,
+                "stimulus_queue": [],
+                "object_memory": {
+                    "forgotten": [], "desire": null,
+                    "checkpoint_charly": null, "synchronize_charly": null
+                },
+                "synchronizing_actors": [],
+                "reconnaissance": {
+                    "report_type": 0, "seek_position": {}, "seen_bodies": [],
+                    "charly": null, "charly_seen": false
+                },
                 "subclass": {
                     "kind": "enemy",
                     "frame_when_missed_charly": 17,

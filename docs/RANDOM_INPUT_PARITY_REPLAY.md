@@ -2872,6 +2872,23 @@ fabricated payload; any non-default stimulus remains fully strict. Schema-v37
 therefore completes the gameplay-semantic projection of every field written by
 `SerializeExactlyThisAI` for current v48 saves. The native cache is v37.
 
+### Schema-v38 queued NPC stimuli and reconnaissance state
+
+The shared `RHArtificialIntelligence` checkpoint now covers its high-impact
+serialized object continuations: the ordered delayed-stimulus queue with every
+payload variant, forgotten/object-of-desire and Charly synchronization
+references, the ordered synchronizing-actor list, and the complete
+reconnaissance report. Every element pointer uses the runtime isomorphism and
+every stored AI position uses canonical sector identity.
+
+This is additive for older recordings: only these four absent base-controller
+keys are removed, while a present queue, report, collection, null, or scalar is
+strict. The native cache version and suffix are v38. The remaining base
+serializer audit is tracked separately: patrol-path status and several legacy
+latches are not yet represented by the Rust live controller, while the Linux
+AI log wire format stores only its debug-line type and cannot authoritatively
+recover the remaining in-memory fields.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,
