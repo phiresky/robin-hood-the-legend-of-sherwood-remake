@@ -116,6 +116,14 @@ pub enum LegacyPcHumanAdoptError {
         interface: bool,
     },
     #[error(
+        "saved PC creation order {creation_order} contains two different portrait-display values: interface={interface}, portrait={portrait}"
+    )]
+    PortraitDisplayMismatch {
+        creation_order: u32,
+        interface: bool,
+        portrait: bool,
+    },
+    #[error(
         "saved Human creation order {creation_order} shoot-list entry {index} does not reference an Interaction element"
     )]
     ShootNotInteraction { creation_order: u32, index: usize },
@@ -325,6 +333,23 @@ impl LegacyPcHumanAdoptionPlan {
                 // that pointer. The leaf copy is therefore authoritative over
                 // the campaign stream read immediately beforehand.
                 campaign_character.status = saved.status;
+                for slot in 0..saved.quick_action_sequences.len() {
+                    let Some(action) = saved.quick_action_sequences[slot].clone() else {
+                        continue;
+                    };
+                    let titbit = saved
+                        .titbits
+                        .get(slot)
+                        .copied()
+                        .and_then(crate::titbit::TitbitId::new);
+                    engine.players.macro_store.adopt_legacy_sequence_slot(
+                        record.entity_id,
+                        slot,
+                        action,
+                        saved.quick_seek_sequences[slot].clone(),
+                        titbit,
+                    );
+                }
             }
         }
     }
@@ -542,6 +567,13 @@ fn convert_pc(
             creation_order,
             member: saved.pre_human.playable_member,
             interface: saved.pre_human.playable_interface,
+        });
+    }
+    if saved.pre_human.interface_displayed != saved.portrait.displayed {
+        return Err(LegacyPcHumanAdoptError::PortraitDisplayMismatch {
+            creation_order,
+            interface: saved.pre_human.interface_displayed,
+            portrait: saved.portrait.displayed,
         });
     }
     let mut quick_action_types = Vec::with_capacity(3);

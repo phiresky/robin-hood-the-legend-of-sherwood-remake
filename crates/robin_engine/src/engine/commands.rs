@@ -1438,6 +1438,12 @@ impl EngineInner {
         pc: EntityId,
         slot: u8,
     ) {
+        if self
+            .replay_legacy_sequence_macro(assets, pc, slot)
+            .is_some()
+        {
+            return;
+        }
         // Pre-flight: if any recorded element fails its per-element
         // gate, the entire macro is rejected and the slot is preserved
         // so the player can retry.  The replay walks per-step rather
@@ -1669,6 +1675,120 @@ impl EngineInner {
         if let Some(state) = self.players.macro_store.get_mut(pc) {
             state.clear_slot(slot as usize);
         }
+    }
+
+    /// Launch an exact owner-local quick-action sequence restored from an
+    /// Original save. `Some(false)` preserves the slot after a validity
+    /// failure; `Some(true)` consumed it; `None` selects normal semantic-step
+    /// playback.
+    fn replay_legacy_sequence_macro(
+        &mut self,
+        assets: &LevelAssets,
+        pc: EntityId,
+        slot: u8,
+    ) -> Option<bool> {
+        let (mut action, mut seek) = self
+            .players
+            .macro_store
+            .get(pc)?
+            .slot(slot as usize)?
+            .legacy_sequences()
+            .map(|(action, seek)| (action.clone(), seek.cloned()))?;
+        let swordfighting = self
+            .get_entity(pc)
+            .and_then(|entity| entity.human_data())
+            .is_some_and(|human| !human.opponents.is_empty());
+        fn valid(
+            engine: &EngineInner,
+            assets: &LevelAssets,
+            sequence: &crate::sequence::Sequence,
+            swordfighting: bool,
+            is_seek: bool,
+        ) -> bool {
+            sequence.elements.iter().all(|element| {
+                if swordfighting
+                    && if is_seek {
+                        element.command != Command::SpeakHeroReachDestination
+                    } else {
+                        !matches!(element.command, Command::Move | Command::Seek)
+                    }
+                {
+                    return false;
+                }
+                let owner = element
+                    .owner
+                    .unwrap_or_else(|| panic!("legacy QA element {} has no owner", element.id));
+                let Some(entity) = engine.get_entity(owner) else {
+                    return false;
+                };
+                if entity.is_pc()
+                    && !engine.check_sequence_element_validity(assets, owner, element, false)
+                {
+                    return false;
+                }
+                if element.command == Command::Seek
+                    && let crate::sequence::SequenceElementData::Movement {
+                        post_seek_sequence: Some(post_seek),
+                        ..
+                    } = &element.data
+                    && !valid(engine, assets, post_seek, swordfighting, false)
+                {
+                    return false;
+                }
+                true
+            })
+        }
+        if action.is_empty()
+            || !valid(self, assets, &action, swordfighting, false)
+            || seek
+                .as_ref()
+                .is_some_and(|sequence| !valid(self, assets, sequence, swordfighting, true))
+        {
+            return Some(false);
+        }
+
+        for element in &mut action.elements {
+            element.script_driven = true;
+            element.orders.clear();
+            element.num_transition_orders = 0;
+            element.retained_movement_goal = None;
+            element.cross_postponed = None;
+        }
+        if let Some(sequence) = &mut seek {
+            for element in &mut sequence.elements {
+                element.script_driven = true;
+                element.orders.clear();
+                element.num_transition_orders = 0;
+                element.retained_movement_goal = None;
+                element.cross_postponed = None;
+            }
+            self.append_posture_recovery(pc, sequence);
+        } else {
+            self.append_posture_recovery(pc, &mut action);
+        }
+
+        if let Some(seek) = seek {
+            let actor = self
+                .get_entity_mut(pc)
+                .and_then(|entity| entity.actor_data_mut())
+                .unwrap_or_else(|| panic!("legacy QA owner {pc:?} is not an actor"));
+            actor.post_seek_sequence = Some(Box::new(seek));
+        }
+        self.remove_quick_action_titbits_for(pc, slot);
+        self.launch_sequence(action);
+        self.players
+            .macro_store
+            .get_mut(pc)
+            .expect("legacy QA macro state disappeared")
+            .clear_slot(slot as usize);
+        let saved_pc = self
+            .get_entity_mut(pc)
+            .and_then(|entity| entity.pc_data_mut())
+            .unwrap_or_else(|| panic!("legacy QA owner {pc:?} is not a PC"));
+        saved_pc.quick_action_sequences[slot as usize] = None;
+        saved_pc.quick_seek_sequences[slot as usize] = None;
+        saved_pc.quick_action_special_counts[slot as usize] = 0;
+        Some(true)
     }
 
     /// Pre-flight validity gate for QA replay:

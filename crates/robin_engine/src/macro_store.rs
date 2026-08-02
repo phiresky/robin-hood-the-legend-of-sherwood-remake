@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::coordinates::MapPoint;
 use crate::element::{Command, EntityId};
 use crate::profiles::Action;
-use crate::sequence::Field;
+use crate::sequence::{Field, Sequence};
 
 /// Maximum number of quick-action macros a single PC can hold.
 pub const NUMBER_OF_QA_MEMORY: usize = 3;
@@ -180,19 +180,46 @@ mod map_point_tuple_serde {
 }
 
 /// One macro slot (one recorded sequence).
-#[derive(
-    Debug, Clone, Default, Serialize, Deserialize, PartialEq, robin_state_hash_derive::StateHash,
-)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct QuickActionSlot {
     pub steps: Vec<QuickActionStep>,
+    /// Exact owner-local sequences restored from an Original v48 save.
+    /// These cannot be losslessly reconstructed as high-level player
+    /// commands, so playback launches copies of the retained payloads.
+    legacy_action_sequence: Option<Sequence>,
+    legacy_seek_sequence: Option<Sequence>,
+}
+
+impl PartialEq for QuickActionSlot {
+    fn eq(&self, other: &Self) -> bool {
+        self.steps == other.steps
+            && serde_json::to_value(&self.legacy_action_sequence)
+                .expect("serialize legacy QA action for equality")
+                == serde_json::to_value(&other.legacy_action_sequence)
+                    .expect("serialize legacy QA action for equality")
+            && serde_json::to_value(&self.legacy_seek_sequence)
+                .expect("serialize legacy QA seek for equality")
+                == serde_json::to_value(&other.legacy_seek_sequence)
+                    .expect("serialize legacy QA seek for equality")
+    }
 }
 
 impl QuickActionSlot {
     pub fn is_empty(&self) -> bool {
-        self.steps.is_empty()
+        self.steps.is_empty() && self.legacy_action_sequence.is_none()
     }
     pub fn len(&self) -> usize {
-        self.steps.len()
+        self.steps.len().max(
+            self.legacy_action_sequence
+                .as_ref()
+                .map_or(0, Sequence::len),
+        )
+    }
+
+    pub(crate) fn legacy_sequences(&self) -> Option<(&Sequence, Option<&Sequence>)> {
+        self.legacy_action_sequence
+            .as_ref()
+            .map(|action| (action, self.legacy_seek_sequence.as_ref()))
     }
 }
 
@@ -280,6 +307,8 @@ impl PcMacroState {
             "slot_idx {slot_idx} out of range 0..{NUMBER_OF_QA_MEMORY}"
         );
         self.slots[slot_idx as usize].steps.clear();
+        self.slots[slot_idx as usize].legacy_action_sequence = None;
+        self.slots[slot_idx as usize].legacy_seek_sequence = None;
         self.maul_titbits[slot_idx as usize] = None;
         self.recording_slot = Some(slot_idx);
     }
@@ -302,6 +331,8 @@ impl PcMacroState {
     pub fn clear_slot(&mut self, slot_idx: usize) {
         if let Some(s) = self.slots.get_mut(slot_idx) {
             s.steps.clear();
+            s.legacy_action_sequence = None;
+            s.legacy_seek_sequence = None;
         }
         if let Some(cell) = self.maul_titbits.get_mut(slot_idx) {
             *cell = None;
@@ -384,6 +415,25 @@ impl MacroStore {
             .map(|(_, s)| s)
     }
 
+    pub(crate) fn adopt_legacy_sequence_slot(
+        &mut self,
+        pc: EntityId,
+        slot: usize,
+        action: Sequence,
+        seek: Option<Sequence>,
+        titbit: Option<crate::titbit::TitbitId>,
+    ) {
+        assert!(
+            slot < NUMBER_OF_QA_MEMORY,
+            "legacy QA slot {slot} is out of range"
+        );
+        let state = self.get_or_insert(pc);
+        state.slots[slot].steps.clear();
+        state.slots[slot].legacy_action_sequence = Some(action);
+        state.slots[slot].legacy_seek_sequence = seek;
+        state.maul_titbits[slot] = titbit;
+    }
+
     /// Append to any PC currently recording.  Convenience wrapper for
     /// the `qa_recording_for == Some(pc)` branch.
     pub fn append(&mut self, pc: EntityId, step: QuickActionStep) {
@@ -421,6 +471,7 @@ pub fn dotted_chain_segments(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sequence::SequenceElement;
 
     fn step(action: Action, x: f32, y: f32) -> QuickActionStep {
         QuickActionStep {
@@ -431,6 +482,26 @@ mod tests {
                 running: false,
             },
         }
+    }
+
+    #[test]
+    fn adopted_legacy_sequence_is_a_live_macro_and_clears_atomically() {
+        let pc = EntityId::new(7, crate::element::EntityIdKind::Pc);
+        let mut sequence = Sequence::new();
+        sequence.append_element(SequenceElement::new(1, Command::Wait, Some(pc)));
+        let mut store = MacroStore::new();
+        store.adopt_legacy_sequence_slot(pc, 1, sequence, None, None);
+
+        let state = store.get(pc).expect("adopted PC macro state");
+        assert!(state.has_macro(1));
+        assert_eq!(state.slot(1).expect("slot").len(), 1);
+        assert!(state.slot(1).expect("slot").legacy_sequences().is_some());
+
+        store
+            .get_mut(pc)
+            .expect("adopted PC macro state")
+            .clear_slot(1);
+        assert!(!store.get(pc).expect("adopted PC macro state").has_macro(1));
     }
 
     #[test]
