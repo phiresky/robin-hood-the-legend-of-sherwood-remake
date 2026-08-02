@@ -3892,10 +3892,20 @@ impl OwnerViewRadiusCache {
             return radius;
         }
         let radius = compute();
-        self.values.borrow_mut().insert(obstacle, radius);
+        // Original uses zero as the cache-miss sentinel: a zero result from
+        // ComputeViewRadius is recomputed on the next eligible target.
+        if radius != 0.0 {
+            self.values.borrow_mut().insert(obstacle, radius);
+        }
         radius
     }
 }
+
+// TODO(parity): Original stores this cache on the ground/obstacle and keys it
+// by viewer plus universal frame, so synchronous IsDetecting/Sees calls can
+// reuse a periodic RefreshDetection result later in the same frame. This
+// owner-local cache intentionally covers the contiguous detection buckets;
+// widen its lifetime if a replay reaches the cross-consumer case.
 
 /// Read-only NPC view-state bundled for one tick of the per-type
 /// detection passes (Body / Friend / MissedFriend / Beggar / Object).
@@ -3948,6 +3958,20 @@ mod tests {
             .expect("test obstacle handle should be representable");
         assert_eq!(cache.get_or_compute(Some(obstacle), compute), 321.0);
         assert_eq!(cache.get_or_compute(Some(obstacle), compute), 321.0);
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn owner_view_radius_cache_does_not_reuse_original_zero_sentinel() {
+        let cache = OwnerViewRadiusCache::default();
+        let calls = std::cell::Cell::new(0_u32);
+        let compute_zero = || {
+            calls.set(calls.get() + 1);
+            0.0
+        };
+
+        assert_eq!(cache.get_or_compute(None, compute_zero), 0.0);
+        assert_eq!(cache.get_or_compute(None, compute_zero), 0.0);
         assert_eq!(calls.get(), 2);
     }
 
