@@ -73,6 +73,9 @@ pub struct AiContext {
     /// handlers, as distinct from the periodic detectable-list pass.
     pub self_eye_position: MapPoint,
     pub self_eye_z: f32,
+    /// Direct `ComputeEyesPoint(..., UPRIGHT)` result. Unlike `position`, this
+    /// is never snapped through AI `Position()` while passing a door.
+    pub self_upright_eye_world: crate::coordinates::WorldPoint3D,
     /// Live `mViewParameters.starePoint` in ground-plane coordinates.
     /// Unexpected OUTOFVIEW handling compares this against the actor's
     /// ground position before deciding whether the lost target is behind.

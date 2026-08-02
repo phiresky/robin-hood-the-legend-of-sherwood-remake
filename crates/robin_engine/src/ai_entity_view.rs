@@ -35,6 +35,10 @@ use crate::order::OrderType;
 pub struct AiEntityView {
     /// Map-space x/y plus sector/level.
     pub position: Position,
+    /// Raw element map position before AI `Position()` snaps door transit to
+    /// a gate endpoint or substitutes a carrier for an OnShoulders PC.
+    /// Direct actor geometry such as `ComputeDetectionPoint` uses this.
+    pub detection_position: MapPoint,
     /// 0–15 facing sector.
     pub direction: u16,
     /// Standing / crouching / etc.
@@ -772,6 +776,7 @@ pub fn entity_view_from_entity(
 
     AiEntityView {
         position,
+        detection_position: elem.position_map(),
         direction,
         posture,
         camp,

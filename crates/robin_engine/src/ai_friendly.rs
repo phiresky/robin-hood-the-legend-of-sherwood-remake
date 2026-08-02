@@ -2613,6 +2613,7 @@ mod tests {
             human_handle,
             AiEntityView {
                 position: enemy_pos,
+                detection_position: MapPoint::new(enemy_pos.x, enemy_pos.y),
                 direction: 0,
                 posture: Posture::Upright,
                 camp: Camp::Lacklandists, // different from default (Royalists)
@@ -2960,6 +2961,7 @@ mod tests {
         use crate::order::OrderType;
         crate::ai_entity_view::AiEntityView {
             position: pos,
+            detection_position: MapPoint::new(pos.x, pos.y),
             direction: 0,
             posture: Posture::Upright,
             camp,

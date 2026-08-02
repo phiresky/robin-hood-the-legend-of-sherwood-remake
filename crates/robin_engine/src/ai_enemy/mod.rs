@@ -1664,7 +1664,7 @@ impl EnemyAi {
         //       return false;
         // Viewer half: gate on the viewer's in-building flag.  Active is
         // implied by the AI tick running.
-        if ctx.in_building {
+        if ctx.building_sector.is_some() {
             return false;
         }
         let Some(view) = ctx.entity_view(target) else {
@@ -1674,10 +1674,11 @@ impl EnemyAi {
             );
             return false;
         };
-        // Target half: must be active (`is_able_to_fight` covers active +
-        // alive + conscious — the AI gates that consume this helper need
-        // the same exclusion list) AND outside a building.
-        if !view.is_able_to_fight || view.in_building {
+        // Target half is the literal IsActiveAndOutsideBuilding gate. Dead,
+        // unconscious, tied, and otherwise non-fighting humans remain valid
+        // while their raw element is active and its current sector is not a
+        // building.
+        if !view.active || view.in_building {
             return false;
         }
         // Viewer's eye point (forced upright in this overload) and
@@ -1686,22 +1687,16 @@ impl EnemyAi {
         // 2D-only check over-detect when viewer and target sat at
         // very different elevations (e.g. tower guard above a
         // kneeling target on the ground).
-        let viewer_eye_z = ctx.elevation
-            + crate::stealth::eye_z_for_posture(
-                crate::element::Posture::Upright,
-                ctx.self_is_rider,
-            );
+        let viewer_eye = ctx.self_upright_eye_world;
+        let viewer_eye_z = viewer_eye.z;
         let target_eye_z =
             view.elevation + crate::stealth::detection_z_for_posture(view.posture, view.is_rider);
         let target_detection_xy = crate::stealth::detection_point_xy(
-            crate::coordinates::MapPoint::new(view.position.x, view.position.y),
+            view.detection_position,
             view.posture,
             view.direction as i16,
         );
-        let viewer_eye_ground = crate::coordinates::GroundPoint::from_map_and_z(
-            crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y),
-            ctx.elevation,
-        );
+        let viewer_eye_ground = crate::coordinates::GroundPoint::new(viewer_eye.x, viewer_eye.y);
         let target_detection_ground =
             crate::coordinates::GroundPoint::from_map_and_z(target_detection_xy, view.elevation);
         let dx = target_detection_ground.x - viewer_eye_ground.x;
@@ -1771,7 +1766,7 @@ impl EnemyAi {
         }
 
         let target_detection_xy = crate::stealth::detection_point_xy(
-            crate::coordinates::MapPoint::new(view.position.x, view.position.y),
+            view.detection_position,
             view.posture,
             view.direction as i16,
         );
@@ -4120,6 +4115,7 @@ mod tests {
     fn soldier_view(pos: Position) -> AiEntityView {
         AiEntityView {
             position: pos,
+            detection_position: crate::coordinates::MapPoint::new(pos.x, pos.y),
             direction: 0,
             posture: Posture::Upright,
             camp: Camp::Royalists,
@@ -4193,6 +4189,7 @@ mod tests {
             posture: Posture::Upright,
             self_eye_position: crate::coordinates::MapPoint::new(0.0, 0.0),
             self_eye_z: 45.0,
+            self_upright_eye_world: crate::coordinates::WorldPoint3D::new(0.0, 0.0, 45.0),
             self_view_direction: [1.0, 0.0],
             self_view_radius: 400,
             self_real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
@@ -4206,6 +4203,88 @@ mod tests {
             },
             ..AiContext::default()
         }
+    }
+
+    #[test]
+    fn detecting_360_uses_raw_active_actor_geometry_during_door_transit() {
+        let ai = EnemyAi::new(1);
+        for (posture, unconscious) in [(Posture::Upright, true), (Posture::Tied, false)] {
+            // AI Position() has already snapped the target to its far gate
+            // endpoint, while ComputeDetectionPoint still reads the live raw
+            // actor position near the observer.
+            let mut target = soldier_view(test_position(900.0, 0.0));
+            target.detection_position = MapPoint::new(20.0, 0.0);
+            target.posture = posture;
+            target.is_unconscious = unconscious;
+            target.is_able_to_fight = false;
+            target.passing_door = true;
+
+            let mut views = AiEntityViewMap::new();
+            views.insert(2, target.clone());
+            let ctx = AiContext {
+                // Self is also on a door rail: broad AI inside-building state
+                // and snapped Position() must not replace the current-sector
+                // or direct upright-eye geometry used by this overload.
+                position: test_position(-900.0, 0.0),
+                in_building: true,
+                building_sector: None,
+                self_upright_eye_world: crate::coordinates::WorldPoint3D::new(0.0, 0.0, 45.0),
+                sq_self_view_radius: 200.0 * 200.0,
+                entity_views: Arc::new(views),
+                ..AiContext::default()
+            };
+            assert!(
+                ai.is_detecting_360_degrees(2, &ctx),
+                "active {posture:?} target must use raw actor geometry"
+            );
+
+            let mut inactive = target.clone();
+            inactive.active = false;
+            let mut views = AiEntityViewMap::new();
+            views.insert(2, inactive);
+            assert!(!ai.is_detecting_360_degrees(
+                2,
+                &AiContext {
+                    entity_views: Arc::new(views),
+                    ..ctx.clone()
+                }
+            ));
+
+            let mut indoor = target;
+            indoor.in_building = true;
+            let mut views = AiEntityViewMap::new();
+            views.insert(2, indoor);
+            assert!(!ai.is_detecting_360_degrees(
+                2,
+                &AiContext {
+                    entity_views: Arc::new(views),
+                    ..ctx
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn normal_detection_uses_raw_pass_door_target_position() {
+        let ai = EnemyAi::new(1);
+        let mut target = soldier_view(test_position(900.0, 0.0));
+        target.detection_position = MapPoint::new(100.0, 0.0);
+        target.passing_door = true;
+        let mut views = AiEntityViewMap::new();
+        views.insert(2, target);
+        let ctx = AiContext {
+            direction: 4,
+            self_eye_position: MapPoint::ZERO,
+            self_eye_z: 45.0,
+            self_view_direction: [1.0, 0.0],
+            self_view_radius: 400,
+            self_real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
+            self_eye_status: EyeStatus::LookForward,
+            entity_views: Arc::new(views),
+            ..AiContext::default()
+        };
+
+        assert!(ai.is_detecting(2, &ctx));
     }
 
     fn charly_heading_to_officer() -> EnemyAi {

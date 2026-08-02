@@ -706,6 +706,9 @@ pub(super) fn build_ai_context_from_entity(
         })
         .unwrap_or_else(|| elem.position_map());
     let self_eye_z = self_eye.map(|eye| eye.z).unwrap_or(elem.position().z);
+    let self_upright_eye_world = entity
+        .compute_eyes_point(Some(crate::element::Posture::Upright))
+        .unwrap_or(elem.position());
     let self_stare_point = entity
         .npc_data()
         .map(|npc| npc.stare_point)
@@ -757,6 +760,7 @@ pub(super) fn build_ai_context_from_entity(
         posture: elem.posture,
         self_eye_position,
         self_eye_z,
+        self_upright_eye_world,
         self_stare_point,
         self_view_direction,
         self_view_radius: self_view_radius as u16,
@@ -7173,7 +7177,7 @@ impl EngineInner {
                 if !c.element.active {
                     continue;
                 }
-                if self.entity_data_inside_building(&c.element) {
+                if self.entity_building_sector(c.element.sector()).is_some() {
                     continue;
                 }
                 let p = c.element.position_map();

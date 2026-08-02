@@ -36,6 +36,21 @@ When height is known and ground coordinates are needed:
 let ground = GroundPoint::from_map_and_z(map, z);
 ```
 
+AI snapshots intentionally carry two actor positions when door transit or a
+carried PC can make them differ:
+
+- `AiEntityView::position` is legacy `RHArtificialIntelligence::Position()`.
+  It may snap a passing actor to the gate endpoint or substitute the carrier
+  for a PC on shoulders, and is appropriate for destinations and AI planning.
+- `AiEntityView::detection_position` is direct `GetPositionMap()` from the
+  actor. Geometry that calls `ComputeDetectionPoint` or `ComputeEyesPoint`
+  must start here instead of inheriting the AI-position substitution.
+
+The evaluating NPC follows the same rule: `AiContext::position` is the
+AI-facing position, while `self_upright_eye_world` is the direct unsnapped
+`ComputeEyesPoint(..., UPRIGHT)` value used by the actor overload of
+`IsDetecting360Degrees`.
+
 ## Arithmetic Rules
 
 Points are positions. Vectors are deltas. Keep arithmetic in those terms:

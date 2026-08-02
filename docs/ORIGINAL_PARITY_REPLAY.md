@@ -3719,6 +3719,20 @@ coordinates but stores each rotated cone side with Y compressed by
 reference points now preserve that asymmetric isometric geometry, including
 diagonal views, before testing nearby light-sector barycentres.
 
+### Synchronous actor visibility keeps raw geometry separate from AI Position
+
+Original `IsDetecting360Degrees(actor)` admits every active actor outside a
+BUILDING sector; being unconscious, tied, or otherwise unable to fight is not
+an extra gate. Its viewer uses direct upright `ComputeEyesPoint`, and its
+target uses direct `ComputeDetectionPoint`. Those coordinates remain live
+during a door pass even though `RHArtificialIntelligence::Position()` snaps
+the same actor to a gate endpoint. Rust now carries both coordinate views:
+ordinary AI consumers retain the snapped position, while normal and
+360-degree actor visibility consume raw target geometry and a raw upright
+viewer eye. The 360-degree viewer and nearby-civilian panic paths also test the
+current sector's BUILDING flag rather than the broader door-transit
+`IsInsideBuilding` state.
+
 ### Legacy AI adoption restores both saved seek positions
 
 Original saves serialize both `mposSeekPosition` and

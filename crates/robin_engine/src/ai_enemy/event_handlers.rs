@@ -2713,6 +2713,7 @@ mod tests {
                 sector: None,
                 level: 0,
             },
+            detection_position: crate::coordinates::MapPoint::new(10.0, 20.0),
             direction: 0,
             posture: Posture::Upright,
             camp: Camp::default(),
