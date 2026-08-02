@@ -3033,6 +3033,23 @@ unburns them, and macro record/tetris transitions preserve the renderer's
 exact retained icon semantics. Older traces omit this additive projection;
 the native cache version and suffix are v46.
 
+### Schema-v47 serialized PC core state
+
+Schema v47 adds the remaining pre-Human portion of
+`RHElementActorPC::Serialize`: work icon, exact campaign-description index,
+playability, beam-me slot, first-selection and body-visibility flags,
+immortality and Psykokwack state, list index, teleport progress and origin,
+current/saved actions, and both three-entry action-disable masks. The beam-me
+null sentinel is compared semantically as `-1`; campaign descriptions use
+their stable campaign-array index rather than process-local pointers.
+
+All fields already had exact Linux-save decoding and adoption. The new
+projection makes their later runtime mutations frame-strict and fails loudly
+if a PC lacks its mandatory campaign description or either action mask has an
+invalid length. Rust-only derived render/cache fields are intentionally not
+included. Older traces omit only `pc_core`; the native cache version and
+suffix are v47.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,
@@ -3138,10 +3155,11 @@ Both the current C++ source and the exact recording binary's disassembly show
 that `GetPossibleVictimsOfStraightSwordStrike` checks only whether a principal
 swordfight opponent exists and lies within the stretched strike distance.
 Unlike the other relevant strike collectors, it does not apply activity,
-posture, VIP, or solid-obstacle gates. Rust now preserves that dedicated rule;
-the receiver's `WarnForStrike` path remains responsible for its own state
-guards. The replay advances from frame 714 to the independent frame-724 sword
-damage RNG frontier.
+posture, VIP, or solid-obstacle gates. Rust now preserves that dedicated rule
+at both the warning and completed-hit boundaries; the receiver's
+`WarnForStrike` path remains responsible for its own state guards. This restores
+the frame-714 counter-strike proposal draw and the frame-724
+`ReceiveSwordDamage` protection, bludgeon, and provoke draws.
 
 ## Maintenance checklist
 

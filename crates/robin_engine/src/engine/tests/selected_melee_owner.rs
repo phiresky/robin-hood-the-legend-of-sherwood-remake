@@ -361,6 +361,46 @@ fn straight_start_warns_principal_without_common_victim_filter() {
 }
 
 #[test]
+fn straight_done_hits_principal_without_common_victim_filter() {
+    let mut engine = EngineInner::new();
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let principal = engine.add_entity(make_test_pc(Posture::Upright));
+    set_map_position(&mut engine, attacker, 0.0, 0.0);
+    set_map_position(&mut engine, principal, 20.0, 0.0);
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents
+        .push(principal);
+    engine
+        .get_entity_mut(principal)
+        .unwrap()
+        .element_data_mut()
+        .active = false;
+    bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
+    install_selected_melee(&mut engine, attacker, principal);
+
+    let assets = straight_warning_assets(10, 50);
+    for _ in 0..4 {
+        run_owner_walk(&mut engine, &assets);
+    }
+
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| {
+                element.command == Command::ReceiveSwordDamage && element.owner == Some(principal)
+            }),
+        "GetPossibleVictimsOfStraightSwordStrike must use principal + distance only for the completed hit as well as its warning"
+    );
+}
+
+#[test]
 fn same_owner_replacement_after_selection_cancels_melee_execute_arm() {
     let mut engine = EngineInner::new();
     let attacker = engine.add_entity(make_test_pc(Posture::Upright));

@@ -3110,7 +3110,9 @@ Straight-strike warning candidates follow the dedicated Original collector:
 the principal swordfight opponent is admitted solely by the strike's stretched
 distance range. Unlike the other strike shapes, this path does not call
 `IsPossibleSwordStrikeVictim`; the warning receiver applies its own state
-rules. Separately, a PC's `WarnForStrike` guard uses the original definition of
+rules. The completed straight hit uses that same collector and therefore also
+bypasses the common predicate before registering `ReceiveSwordDamage`.
+Separately, a PC's `WarnForStrike` guard uses the original definition of
 `IsSwordfighting`: a non-empty opponent list, not merely a sword-flavoured
 action state. A dead PC whose visual action has not yet changed but whose duel
 links are already cleared therefore cannot consume counter-strike RNG or

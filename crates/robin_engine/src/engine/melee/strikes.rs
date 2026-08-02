@@ -510,22 +510,7 @@ impl EngineInner {
             .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
             .map(|profile| combat::is_strike_in_range(profile, strike, distance))
             .unwrap_or(distance <= 50.0);
-        let obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        };
-
-        if in_range
-            && is_possible_sword_strike_victim_id(
-                &self.world.entities,
-                attacker_id,
-                victim_id,
-                &assets.profile_manager,
-                &self.world.fast_grid,
-                obstacles,
-            )
-        {
+        if in_range {
             if let Some(profile_idx) = profile_idx {
                 self.queue_sword_damage(sim, assets, victim_id, attacker_id, strike, profile_idx);
             }
