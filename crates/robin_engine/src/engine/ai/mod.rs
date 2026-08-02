@@ -6920,7 +6920,7 @@ impl EngineInner {
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
-            self.process_pending_panic_seek_fallback_for(sim, npc_id, &ctx);
+            self.process_pending_panic_seek_fallback_for(sim, assets, npc_id, &ctx);
         }
 
         // Drain any pending script-driven SeekArea request.  Matches
@@ -7193,7 +7193,7 @@ impl EngineInner {
 
         // Drain the PanicRequest so a door gets picked and GoTo fires.
         self.process_pending_begin_panic_for(sim, assets, civ_id, &ctx);
-        self.process_pending_panic_seek_fallback_for(sim, civ_id, &ctx);
+        self.process_pending_panic_seek_fallback_for(sim, assets, civ_id, &ctx);
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(source = source.index()))]
@@ -7762,6 +7762,7 @@ impl EngineInner {
     pub(super) fn process_pending_panic_seek_fallback_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         npc_id: EntityId,
         ctx: &crate::ai::AiContext,
     ) {
