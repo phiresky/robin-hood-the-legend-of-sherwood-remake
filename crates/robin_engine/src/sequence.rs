@@ -5028,6 +5028,7 @@ impl SequenceManager {
 pub fn make_fast_element(elem: &mut SequenceElement) {
     use crate::order::OrderType;
 
+    let rewrite_orders = elem.state != SequenceState::Todo;
     let SequenceElementData::Movement { flags, action, .. } = &mut elem.data else {
         return;
     };
@@ -5038,17 +5039,19 @@ pub fn make_fast_element(elem: &mut SequenceElement) {
         OrderType::WalkingWithShield => OrderType::RunningUpright,
         other => other,
     };
-    for order in elem.orders.iter_mut() {
-        order.order_type = match order.order_type {
-            OrderType::WalkingUpright | OrderType::WalkingCrouched => OrderType::RunningUpright,
-            OrderType::WalkingWithSword => OrderType::RunningWithSword,
-            OrderType::WalkingWithShield => OrderType::RunningUpright,
-            OrderType::TransitionWaitingUprightWalkingUpright
-            | OrderType::TransitionWaitingCrouchedWalkingCrouched => OrderType::RunningUpright,
-            OrderType::TransitionWalkingUprightWaitingUpright
-            | OrderType::TransitionWalkingCrouchedWaitingCrouched => OrderType::RunningUpright,
-            other => other,
-        };
+    if rewrite_orders {
+        for order in elem.orders.iter_mut() {
+            order.order_type = match order.order_type {
+                OrderType::WalkingUpright | OrderType::WalkingCrouched => OrderType::RunningUpright,
+                OrderType::WalkingWithSword => OrderType::RunningWithSword,
+                OrderType::WalkingWithShield => OrderType::RunningUpright,
+                OrderType::TransitionWaitingUprightWalkingUpright
+                | OrderType::TransitionWaitingCrouchedWalkingCrouched => OrderType::RunningUpright,
+                OrderType::TransitionWalkingUprightWaitingUpright
+                | OrderType::TransitionWalkingCrouchedWaitingCrouched => OrderType::RunningUpright,
+                other => other,
+            };
+        }
     }
 }
 
@@ -5056,6 +5059,7 @@ pub fn make_fast_element(elem: &mut SequenceElement) {
 pub fn make_slow_element(elem: &mut SequenceElement) {
     use crate::order::OrderType;
 
+    let rewrite_orders = elem.state != SequenceState::Todo;
     let SequenceElementData::Movement { flags, action, .. } = &mut elem.data else {
         return;
     };
@@ -5067,15 +5071,17 @@ pub fn make_slow_element(elem: &mut SequenceElement) {
         OrderType::RunningWithSword => OrderType::WalkingWithSword,
         other => other,
     };
-    for order in elem.orders.iter_mut() {
-        order.order_type = match order.order_type {
-            OrderType::RunningUpright => OrderType::WalkingUpright,
-            OrderType::RunningWithSword => OrderType::WalkingWithSword,
-            OrderType::TransitionWaitingUprightRunningUpright
-            | OrderType::TransitionWalkingCrouchedRunningUpright => OrderType::WalkingUpright,
-            OrderType::TransitionRunningUprightWaitingUpright => OrderType::WalkingUpright,
-            other => other,
-        };
+    if rewrite_orders {
+        for order in elem.orders.iter_mut() {
+            order.order_type = match order.order_type {
+                OrderType::RunningUpright => OrderType::WalkingUpright,
+                OrderType::RunningWithSword => OrderType::WalkingWithSword,
+                OrderType::TransitionWaitingUprightRunningUpright
+                | OrderType::TransitionWalkingCrouchedRunningUpright => OrderType::WalkingUpright,
+                OrderType::TransitionRunningUprightWaitingUpright => OrderType::WalkingUpright,
+                other => other,
+            };
+        }
     }
 }
 
@@ -5089,6 +5095,7 @@ pub fn make_upright_element(elem: &mut SequenceElement) {
         elem.command = Command::Null;
     }
 
+    let rewrite_orders = elem.state != SequenceState::Todo;
     let SequenceElementData::Movement { action, .. } = &mut elem.data else {
         return;
     };
@@ -5097,15 +5104,17 @@ pub fn make_upright_element(elem: &mut SequenceElement) {
         OrderType::WalkingCrouched => OrderType::WalkingUpright,
         other => other,
     };
-    for order in elem.orders.iter_mut() {
-        order.order_type = match order.order_type {
-            OrderType::WalkingCrouched => OrderType::WalkingUpright,
-            OrderType::TransitionWaitingCrouchedWalkingCrouched
-            | OrderType::TransitionWalkingUprightWalkingCrouched
-            | OrderType::TransitionRunningUprightWalkingCrouched => OrderType::WalkingUpright,
-            OrderType::TransitionWalkingCrouchedWaitingCrouched => OrderType::WalkingUpright,
-            other => other,
-        };
+    if rewrite_orders {
+        for order in elem.orders.iter_mut() {
+            order.order_type = match order.order_type {
+                OrderType::WalkingCrouched => OrderType::WalkingUpright,
+                OrderType::TransitionWaitingCrouchedWalkingCrouched
+                | OrderType::TransitionWalkingUprightWalkingCrouched
+                | OrderType::TransitionRunningUprightWalkingCrouched => OrderType::WalkingUpright,
+                OrderType::TransitionWalkingCrouchedWaitingCrouched => OrderType::WalkingUpright,
+                other => other,
+            };
+        }
     }
 }
 
@@ -5113,6 +5122,7 @@ pub fn make_upright_element(elem: &mut SequenceElement) {
 pub fn make_crouched_element(elem: &mut SequenceElement) {
     use crate::order::OrderType;
 
+    let rewrite_orders = elem.state != SequenceState::Todo;
     let SequenceElementData::Movement { flags, action, .. } = &mut elem.data else {
         return;
     };
@@ -5122,16 +5132,18 @@ pub fn make_crouched_element(elem: &mut SequenceElement) {
         OrderType::WalkingUpright | OrderType::RunningUpright => OrderType::WalkingCrouched,
         other => other,
     };
-    for order in elem.orders.iter_mut() {
-        order.order_type = match order.order_type {
-            OrderType::WalkingUpright | OrderType::RunningUpright => OrderType::WalkingCrouched,
-            OrderType::TransitionWaitingUprightWalkingUpright
-            | OrderType::TransitionRunningUprightWalkingUpright
-            | OrderType::TransitionWalkingCrouchedWalkingUpright => OrderType::WalkingCrouched,
-            OrderType::TransitionWalkingUprightWaitingUpright
-            | OrderType::TransitionRunningUprightWaitingUpright => OrderType::WalkingCrouched,
-            other => other,
-        };
+    if rewrite_orders {
+        for order in elem.orders.iter_mut() {
+            order.order_type = match order.order_type {
+                OrderType::WalkingUpright | OrderType::RunningUpright => OrderType::WalkingCrouched,
+                OrderType::TransitionWaitingUprightWalkingUpright
+                | OrderType::TransitionRunningUprightWalkingUpright
+                | OrderType::TransitionWalkingCrouchedWalkingUpright => OrderType::WalkingCrouched,
+                OrderType::TransitionWalkingUprightWaitingUpright
+                | OrderType::TransitionRunningUprightWaitingUpright => OrderType::WalkingCrouched,
+                other => other,
+            };
+        }
     }
 }
 
@@ -6372,6 +6384,7 @@ mod tests {
             EntityId::Pc(crate::entity_id::PcId(0)),
             OrderType::WalkingUpright,
         );
+        elem.state = SequenceState::InProgress;
         elem.push_order(Order::test_new(OrderType::WalkingUpright, 0.0, 0.0));
         elem.push_order(Order::test_new(
             OrderType::TransitionWaitingUprightWalkingUpright,
@@ -6402,6 +6415,7 @@ mod tests {
             EntityId::Pc(crate::entity_id::PcId(0)),
             OrderType::WalkingUpright,
         );
+        elem.state = SequenceState::InProgress;
         elem.push_order(Order::test_new(OrderType::Turning, 0.0, 0.0));
         elem.push_order(Order::test_new(OrderType::WalkingWithSword, 0.0, 0.0));
 
@@ -6452,11 +6466,34 @@ mod tests {
     }
 
     #[test]
+    fn make_fast_rewrites_materialized_orders_only_after_todo() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(0));
+        let mut todo = movement_elem(owner, OrderType::WalkingUpright);
+        todo.push_order(Order::test_new(OrderType::WalkingUpright, 0.0, 0.0));
+        let mut in_progress = todo.clone();
+        in_progress.state = SequenceState::InProgress;
+
+        make_fast_element(&mut todo);
+        make_fast_element(&mut in_progress);
+
+        for element in [&todo, &in_progress] {
+            let SequenceElementData::Movement { action, flags, .. } = &element.data else {
+                panic!("movement variant");
+            };
+            assert_eq!(*action, OrderType::RunningUpright);
+            assert!(flags.contains(MoveFlags::FAST));
+        }
+        assert_eq!(todo.orders[0].order_type, OrderType::WalkingUpright);
+        assert_eq!(in_progress.orders[0].order_type, OrderType::RunningUpright);
+    }
+
+    #[test]
     fn make_slow_is_symmetric_to_make_fast() {
         let mut elem = movement_elem(
             EntityId::Pc(crate::entity_id::PcId(0)),
             OrderType::RunningUpright,
         );
+        elem.state = SequenceState::InProgress;
         if let SequenceElementData::Movement { flags, .. } = &mut elem.data {
             *flags |= MoveFlags::FAST;
         }
@@ -6492,6 +6529,7 @@ mod tests {
             EntityId::Pc(crate::entity_id::PcId(0)),
             OrderType::WalkingCrouched,
         );
+        elem.state = SequenceState::InProgress;
         elem.push_order(Order::test_new(OrderType::WalkingCrouched, 0.0, 0.0));
         elem.push_order(Order::test_new(
             OrderType::TransitionWaitingCrouchedWalkingCrouched,
@@ -6532,6 +6570,7 @@ mod tests {
             EntityId::Pc(crate::entity_id::PcId(0)),
             OrderType::RunningUpright,
         );
+        elem.state = SequenceState::InProgress;
         if let SequenceElementData::Movement { flags, .. } = &mut elem.data {
             *flags |= MoveFlags::FAST;
         }
