@@ -679,10 +679,6 @@ impl Engine {
     /// Sparse, serialized sound-source manager state. Host channels and
     /// backend playback queues are deliberately absent; these are the source
     /// fields that survive Original save/load and feed later simulation.
-    // TODO(parity-sound): Rust's deterministic `playing_sources` finish queue
-    // has no isomorphic serialized Original field. If source-completion timing
-    // reaches a replay frontier, record the Original completion boundary as an
-    // ordered external event rather than comparing host channel deadlines.
     #[doc(hidden)]
     pub fn parity_sound_sources_state(&self) -> serde_json::Value {
         use serde_json::{Value, json};
@@ -728,6 +724,42 @@ impl Engine {
             }));
         }
         Value::Array(result)
+    }
+
+    /// Ordered deterministic source-completion deadlines. Looped sources have
+    /// no completion entry; Single, Volatile, and Delayed sources retain the
+    /// order in which Original queued their pending playback records.
+    #[doc(hidden)]
+    pub fn parity_sound_completion_frontier_state(&self) -> serde_json::Value {
+        use serde_json::json;
+
+        serde_json::Value::Array(
+            self.inner
+                .feedback
+                .sound_sim
+                .playing_sources
+                .iter()
+                .map(|playing| {
+                    if self
+                        .inner
+                        .feedback
+                        .sound_sim
+                        .sources
+                        .get(playing.source_index as usize)
+                        .is_none()
+                    {
+                        panic!(
+                            "sound completion frontier references missing source {}",
+                            playing.source_index
+                        );
+                    }
+                    json!({
+                        "source_index": playing.source_index,
+                        "finish_frame": playing.finish_frame,
+                    })
+                })
+                .collect(),
+        )
     }
 
     /// Serialized global AI-manager state. Mission-static seek/archery
@@ -896,7 +928,7 @@ impl Engine {
     /// order. Static geometry and patch configuration come from level data and
     /// are deliberately not duplicated.
     #[doc(hidden)]
-    pub fn parity_world_interactables_state(&self) -> serde_json::Value {
+    pub fn parity_world_interactables_state(&self, assets: &LevelAssets) -> serde_json::Value {
         use serde_json::{Value, json};
 
         let entity = |id: EntityId| {
@@ -943,6 +975,10 @@ impl Engine {
                     "locked_npc_villain": door.locked_npc_villain,
                     "locked_npc_civilian": door.locked_npc_civilian,
                     "unlockable": door.unlockable,
+                    "locked_pc_after_patch": door.locked_pc_after_patch,
+                    "locked_npc_villain_after_patch": door.locked_npc_villain_after_patch,
+                    "locked_npc_civilian_after_patch": door.locked_npc_civilian_after_patch,
+                    "unlockable_after_patch": door.unlockable_after_patch,
                     "special_authorisation_pc": door.special_authorisation_pc,
                     "authorised_pc_direct": door.authorised_pc_direct,
                     "authorised_pc_indirect": door.authorised_pc_indirect,
@@ -993,11 +1029,72 @@ impl Engine {
             })
             .collect::<Vec<_>>();
 
+        let buildings = &self.inner.script_domains.buildings;
+        if buildings.occupants.len() != buildings.arrow_reserves.len() {
+            panic!(
+                "building occupant table length {} differs from arrow-reserve table length {}",
+                buildings.occupants.len(),
+                buildings.arrow_reserves.len()
+            );
+        }
+        let building_state = buildings
+            .occupants
+            .iter()
+            .zip(&buildings.arrow_reserves)
+            .map(|(occupants, &arrow_reserve)| {
+                json!({
+                    "occupants": occupants.iter().map(|&handle| {
+                        let id = self.inner.entity_id_for_actor_handle(handle).unwrap_or_else(|| {
+                            panic!("parity building occupant has invalid actor handle {handle}")
+                        });
+                        entity(id)
+                    }).collect::<Vec<_>>(),
+                    "arrow_reserve": arrow_reserve,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let zones = &self.inner.script_domains.zones.scripts;
+        if zones.len() != assets.scripts.zone_grid_indices.len() {
+            panic!(
+                "script-zone runtime length {} differs from topology length {}",
+                zones.len(),
+                assets.scripts.zone_grid_indices.len()
+            );
+        }
+        let script_zones = zones
+            .iter()
+            .zip(assets.scripts.zone_grid_indices.iter().copied())
+            .map(|(zone, grid_index)| {
+                let grid_apex = grid
+                    .sector_type(grid_index)
+                    .contains(crate::sector::SectorType::APEX);
+                if grid_apex != zone.transformed_to_apex {
+                    panic!(
+                        "script-zone apex state disagrees with sector overlay at grid index {grid_index}"
+                    );
+                }
+                json!({
+                    "occupants": zone.occupant_indices.iter().copied().map(&entity)
+                        .collect::<Vec<_>>(),
+                    "transformed_to_apex": zone.transformed_to_apex,
+                    "max_apex_height": zone.transformed_to_apex.then(|| {
+                        json!({
+                            "bits": zone.max_throwing_apex_height.to_bits(),
+                            "value": zone.max_throwing_apex_height,
+                        })
+                    }).unwrap_or(Value::Null),
+                })
+            })
+            .collect::<Vec<_>>();
+
         json!({
             "patches": patches,
             "doors": doors,
             "sector_doors": sector_doors,
             "lifts": lifts,
+            "buildings": building_state,
+            "script_zones": script_zones,
         })
     }
 
@@ -2444,6 +2541,43 @@ mod tests {
     }
 
     #[test]
+    fn parity_sound_completion_frontier_preserves_pending_order() {
+        let mut inner = EngineInner::new();
+        inner
+            .feedback
+            .sound_sim
+            .sources
+            .sources_push_some(crate::sound_source::SoundSource::new());
+        inner
+            .feedback
+            .sound_sim
+            .sources
+            .sources_push_some(crate::sound_source::SoundSource::new());
+        inner
+            .feedback
+            .sound_sim
+            .playing_sources
+            .push(crate::sound::PlayingSource {
+                source_index: 1,
+                finish_frame: 73,
+            });
+        inner
+            .feedback
+            .sound_sim
+            .playing_sources
+            .push(crate::sound::PlayingSource {
+                source_index: 0,
+                finish_frame: 91,
+            });
+
+        let state = Engine { inner }.parity_sound_completion_frontier_state();
+        assert_eq!(state[0]["source_index"], 1);
+        assert_eq!(state[0]["finish_frame"], 73);
+        assert_eq!(state[1]["source_index"], 0);
+        assert_eq!(state[1]["finish_frame"], 91);
+    }
+
+    #[test]
     fn parity_ai_global_preserves_ordered_statuses_reservations_and_alerts() {
         let mut inner = EngineInner::new();
         inner.ai.global.stupid_soldiers_cheat = true;
@@ -2591,13 +2725,16 @@ mod tests {
         door.locked_pc = true;
         door.locked_npc_villain = true;
         door.unlockable = true;
+        door.locked_pc_after_patch = true;
+        door.locked_npc_civilian_after_patch = true;
+        door.unlockable_after_patch = true;
         door.special_authorisation_pc = true;
         door.authorised_pc_direct = 0x12;
         door.authorised_pc_indirect = 0x34;
         inner.script_domains.interactables.doors.push(door);
         let engine = Engine { inner };
 
-        let state = engine.parity_world_interactables_state();
+        let state = engine.parity_world_interactables_state(&LevelAssets::new());
         assert_eq!(state["patches"][0]["active"], true);
         assert_eq!(state["patches"][0]["locked"], true);
         assert_eq!(state["patches"][0]["applied"], true);
@@ -2611,6 +2748,9 @@ mod tests {
         assert_eq!(state["doors"][0]["locked_pc"], true);
         assert_eq!(state["doors"][0]["locked_npc_villain"], true);
         assert_eq!(state["doors"][0]["unlockable"], true);
+        assert_eq!(state["doors"][0]["locked_pc_after_patch"], true);
+        assert_eq!(state["doors"][0]["locked_npc_civilian_after_patch"], true);
+        assert_eq!(state["doors"][0]["unlockable_after_patch"], true);
         assert_eq!(state["doors"][0]["special_authorisation_pc"], true);
         assert_eq!(state["doors"][0]["authorised_pc_direct"], 0x12);
         assert_eq!(state["doors"][0]["authorised_pc_indirect"], 0x34);
@@ -2652,13 +2792,94 @@ mod tests {
             },
         );
 
-        let state = Engine { inner }.parity_world_interactables_state();
+        let state = Engine { inner }.parity_world_interactables_state(&LevelAssets::new());
         assert_eq!(state["lifts"][0]["sector"], 47);
         assert_eq!(state["lifts"][0]["occupants_pc"], 2);
         assert_eq!(state["lifts"][0]["occupants"], 3);
         assert_eq!(state["lifts"][0]["occupied_upwards"], true);
         assert_eq!(state["lifts"][0]["occupied_downwards"], false);
         assert_eq!(state["lifts"][0]["wait_time"], 71);
+    }
+
+    #[test]
+    fn parity_world_interactables_preserves_ordered_building_and_zone_state() {
+        let mut inner = EngineInner::new();
+        let new_pc = || {
+            crate::element::Entity::Pc(crate::element::ActorPc {
+                element: crate::element::ElementData::default(),
+                actor: crate::element::ActorData::default(),
+                human: crate::element::HumanData::default(),
+                pc: crate::element::PcData::default(),
+            })
+        };
+        let first = inner.add_entity(new_pc());
+        let second = inner.add_entity(new_pc());
+        inner.script_domains.buildings.occupants.push(vec![
+            crate::natives::ScriptHandleCodec::actor_handle(second),
+            crate::natives::ScriptHandleCodec::actor_handle(first),
+        ]);
+        inner.script_domains.buildings.arrow_reserves.push(true);
+
+        inner
+            .script_domains
+            .zones
+            .scripts
+            .push(crate::sector::ScriptSectorData {
+                sector_index: crate::fast_find_grid::SectorIndex::new(0),
+                transformed_to_apex: true,
+                max_throwing_apex_height: 12.5,
+                occupant_indices: vec![first, second],
+                ..Default::default()
+            });
+        let level = std::sync::Arc::make_mut(&mut inner.world.fast_grid.level);
+        level.sectors.push(crate::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: crate::sector::SectorType::SCRIPT,
+            layer: 0,
+            sector_number: crate::sector::SectorNumber::new(47),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        });
+        inner
+            .world
+            .fast_grid
+            .or_sector_type_overlay(0, crate::sector::SectorType::APEX);
+        let mut assets = LevelAssets::new();
+        std::sync::Arc::make_mut(&mut assets.scripts.zone_grid_indices).push(0);
+
+        let state = Engine { inner }.parity_world_interactables_state(&assets);
+        assert_eq!(
+            state["buildings"][0]["occupants"][0]["index"],
+            second.index()
+        );
+        assert_eq!(
+            state["buildings"][0]["occupants"][1]["index"],
+            first.index()
+        );
+        assert_eq!(state["buildings"][0]["arrow_reserve"], true);
+        assert_eq!(
+            state["script_zones"][0]["occupants"][0]["index"],
+            first.index()
+        );
+        assert_eq!(
+            state["script_zones"][0]["occupants"][1]["index"],
+            second.index()
+        );
+        assert_eq!(state["script_zones"][0]["transformed_to_apex"], true);
+        assert_eq!(
+            state["script_zones"][0]["max_apex_height"]["bits"],
+            12.5f32.to_bits()
+        );
     }
 
     #[test]

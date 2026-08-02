@@ -1370,6 +1370,8 @@ struct TraceEngineState {
     pathfinder: TraceJsonValue,
     view_radius_cache: TraceJsonValue,
     sound_sources: TraceJsonValue,
+    #[serde(default)]
+    sound_completion_frontier: Option<TraceJsonValue>,
     ai_global: TraceJsonValue,
     engine_runtime_roots: TraceJsonValue,
     world_interactables: TraceJsonValue,
@@ -1446,8 +1448,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 25;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v25.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 26;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v26.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4806,7 +4808,7 @@ fn canonicalize_authoritative_snapshot(value: &mut serde_json::Value, entity_map
 /// do not exist in the recording are omitted from the actual projection too;
 /// whenever a field is present, comparison remains strict. No expected state
 /// is fabricated for frontiers that cannot be reconstructed from old frames.
-fn retain_recorded_lift_coverage(
+fn retain_recorded_world_interactable_coverage(
     expected: &serde_json::Value,
     actual: &mut serde_json::Value,
 ) {
@@ -4815,6 +4817,38 @@ fn retain_recorded_lift_coverage(
     };
     if !expected.contains_key("lifts") {
         actual.remove("lifts");
+    }
+    for field in ["buildings", "script_zones"] {
+        if !expected.contains_key(field) {
+            actual.remove(field);
+        }
+    }
+
+    let Some(expected_doors) = expected.get("doors").and_then(serde_json::Value::as_array) else {
+        return;
+    };
+    let Some(actual_doors) = actual
+        .get_mut("doors")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    for (expected_door, actual_door) in expected_doors.iter().zip(actual_doors) {
+        let (Some(expected_door), Some(actual_door)) =
+            (expected_door.as_object(), actual_door.as_object_mut())
+        else {
+            continue;
+        };
+        for field in [
+            "locked_pc_after_patch",
+            "locked_npc_villain_after_patch",
+            "locked_npc_civilian_after_patch",
+            "unlockable_after_patch",
+        ] {
+            if !expected_door.contains_key(field) {
+                actual_door.remove(field);
+            }
+        }
     }
 }
 
@@ -4914,6 +4948,17 @@ fn compare_engine_state(
         differences,
     );
 
+    if let Some(expected_frontier) = &expected.sound_completion_frontier {
+        let expected_frontier = expected_frontier.to_json();
+        let actual_frontier = engine.parity_sound_completion_frontier_state();
+        collect_json_differences(
+            "frame.engine_state.sound_completion_frontier",
+            &expected_frontier,
+            &actual_frontier,
+            differences,
+        );
+    }
+
     let mut expected_ai_global = expected.ai_global.to_json();
     canonicalize_authoritative_snapshot(&mut expected_ai_global, entity_map);
     let actual_ai_global = engine.parity_ai_global_state();
@@ -4936,8 +4981,8 @@ fn compare_engine_state(
 
     let mut expected_world_interactables = expected.world_interactables.to_json();
     canonicalize_authoritative_snapshot(&mut expected_world_interactables, entity_map);
-    let mut actual_world_interactables = engine.parity_world_interactables_state();
-    retain_recorded_lift_coverage(
+    let mut actual_world_interactables = engine.parity_world_interactables_state(assets);
+    retain_recorded_world_interactable_coverage(
         &expected_world_interactables,
         &mut actual_world_interactables,
     );
@@ -6228,6 +6273,7 @@ mod tests {
             },
             "view_radius_cache": {"frame": 0, "entries": []},
             "sound_sources": [],
+            "sound_completion_frontier": [],
             "ai_global": {
                 "stupid_soldiers_cheat": false,
                 "seek_points": [],
@@ -6265,7 +6311,9 @@ mod tests {
                 "patches": [],
                 "doors": [],
                 "sector_doors": [],
-                "lifts": []
+                "lifts": [],
+                "buildings": [],
+                "script_zones": []
             },
             "repulsive_points": {
                 "next_id": 0,
@@ -6283,6 +6331,37 @@ mod tests {
             std::panic::catch_unwind(|| validate_trace_frame_envelope(12, &schema_thirteen))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn old_raw_world_snapshots_skip_only_absent_additive_v26_state() {
+        let expected = serde_json::json!({
+            "patches": [],
+            "doors": [{ "locked_pc": true }],
+            "sector_doors": [],
+            "lifts": []
+        });
+        let mut actual = serde_json::json!({
+            "patches": [],
+            "doors": [{
+                "locked_pc": true,
+                "locked_pc_after_patch": false,
+                "locked_npc_villain_after_patch": false,
+                "locked_npc_civilian_after_patch": false,
+                "unlockable_after_patch": false
+            }],
+            "sector_doors": [],
+            "lifts": [],
+            "buildings": [{ "occupants": [], "arrow_reserve": false }],
+            "script_zones": [{
+                "occupants": [],
+                "transformed_to_apex": false,
+                "max_apex_height": null
+            }]
+        });
+
+        retain_recorded_world_interactable_coverage(&expected, &mut actual);
+        assert_eq!(actual, expected);
     }
 
     #[test]

@@ -2433,6 +2433,35 @@ comparator omits only the absent lift projection and keeps all previously
 recorded world-interactable coverage strict. New recordings compare the full
 lift traversal frontier. No lift state is guessed or fabricated for old frames.
 
+### Latent interactable, zone, apex, and sound frontiers
+
+Schema 13 now closes four additional source-confirmed gaps in one version-26
+projection. Doors include the four post-patch rights that Original swaps into
+the live rights when a patch changes state. Buildings include their ordered
+actor occupants and arrow-reserve flag, while script zones include their
+ordered occupants. Actor pointers are emitted as semantic entity references,
+so the comparator applies the normal entity isomorphism instead of comparing
+native IDs or addresses.
+
+Script zones also record whether `ScApex` has converted the authored sector and
+the exact floating-point maximum throwing height. Rust verifies this against
+its runtime sector-type overlay before projecting it, so a stale zone flag or
+stale overlay is an invariant failure rather than a plausible-looking value.
+
+Finally, `engine_state.sound_completion_frontier` records the ordered pending
+Single, Volatile, and Delayed source deadlines at the stable frame boundary.
+Each entry uses the semantic source-manager index and simulation finish frame;
+looped sources have no completion. This compares Rust's deterministic global
+completion stream directly instead of treating host audio callbacks as an
+unobservable timing detail.
+
+The native cache suffix and version are 26. Older native caches are rejected
+and rebuilt. Older raw schema-13 recordings remain usable: the comparator
+omits only these additive fields when they are absent, while retaining strict
+comparison for all state the recording contains. It never supplies guessed
+door rights, occupants, apex state, or completion deadlines. Newly captured
+recordings compare every version-26 field strictly.
+
 ### Sequence-manager and script-VM boundary state
 
 Schema 13 now records the sequence manager's insertion-ordered sequences,
