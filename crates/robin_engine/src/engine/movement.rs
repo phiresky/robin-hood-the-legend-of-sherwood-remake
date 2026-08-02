@@ -1348,6 +1348,12 @@ impl<'a> MovementContext<'a> {
     /// applied by the root coordinator. Rust computes A* synchronously, but the
     /// result remains parked until the next frame's scheduling barrier.
     pub(super) fn start_next(&mut self, assets: &LevelAssets) {
+        // CancelPathRequest retains the logical list head and merely marks
+        // its eventual delivery invalid. Even when interrupting the owner has
+        // already made the sequence element non-live, that retained request
+        // must still occupy this ProcessPathRequests slot; take_completed
+        // records the invalid completion and only then discards its result.
+        let retained_cancelled_head = self.orders.pending_path_requests.ignore_next_path;
         let Some(request) = self.orders.pending_path_requests.pop_to_start() else {
             return;
         };
@@ -1360,7 +1366,7 @@ impl<'a> MovementContext<'a> {
                     && elem.state == crate::sequence::SequenceState::InProgress
                     && elem.command == crate::element::Command::MoveWaiting
             });
-        if !still_live {
+        if !path_request_occupies_result_slot(still_live, retained_cancelled_head) {
             return;
         }
 
@@ -1420,6 +1426,11 @@ impl<'a> MovementContext<'a> {
         self.orders.failed_path_requests = still_waiting;
         expired
     }
+}
+
+#[inline]
+fn path_request_occupies_result_slot(still_live: bool, retained_cancelled_head: bool) -> bool {
+    still_live || retained_cancelled_head
 }
 
 /// Outcome of [`EngineInner::try_dispatch_move_path`], the unified
@@ -11172,6 +11183,28 @@ mod path_request_timing_tests {
 
         let next = queue.pop_to_start().expect("successor remains queued");
         assert_eq!(next.owner, successor);
+    }
+
+    #[test]
+    fn cancelled_waiting_head_starts_even_after_its_element_dies() {
+        let cancelled = EntityId::Soldier(SoldierId(3));
+        let mut queue = PendingPathRequestQueue::default();
+        queue.enqueue(request(cancelled, crate::pathfinder::PathFinderSpeed::Fast));
+
+        queue.cancel_for_owner(cancelled);
+        assert!(queue.ignore_next_path);
+        let retained = queue.pop_to_start().expect("cancelled head remains queued");
+        assert!(path_request_occupies_result_slot(
+            false,
+            queue.ignore_next_path
+        ));
+        queue.set_in_flight(retained, Some(Vec::new()));
+
+        let (completed, valid) = queue
+            .take_completed()
+            .expect("cancelled head still consumes a completion slot");
+        assert_eq!(completed.request.owner, cancelled);
+        assert!(!valid);
     }
 
     #[test]
