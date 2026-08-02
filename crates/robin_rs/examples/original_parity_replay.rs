@@ -1452,8 +1452,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 30;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v30.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 31;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v31.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4992,6 +4992,16 @@ fn retain_recorded_entity_runtime_coverage(
         && let Some(actual) = actual.as_object_mut()
     {
         actual.remove("npc_ai");
+    }
+    if expected
+        .get("npc_ai")
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|npc_ai| !npc_ai.contains_key("subclass"))
+        && let Some(actual_npc_ai) = actual
+            .get_mut("npc_ai")
+            .and_then(serde_json::Value::as_object_mut)
+    {
+        actual_npc_ai.remove("subclass");
     }
 }
 

@@ -548,6 +548,22 @@ impl Engine {
 					"stopped": ai.patrol_stopped, "direction": ai.patrol_direction,
 				},
 				}).as_object().expect("parity NPC AI tail chunk must be an object").clone());
+			if let crate::element::AiBrain::Friendly(friendly) = &npc.ai_brain {
+				state
+					.as_object_mut()
+					.expect("parity NPC AI state must be an object")
+					.insert(
+						"subclass".to_owned(),
+						json!({
+							"kind": "friendly",
+							"fleeing_seen_enemy_counter": friendly.fleeing_seen_enemy_counter,
+							"beggar_dont_talk_counter": friendly.beggar_dont_talk_counter,
+							"wants_to_talk": friendly.wants_to_talk,
+							"last_talk_partner": resolve_ai_handle(friendly.last_talk_partner),
+							"can_go_away": friendly.can_go_away,
+						}),
+					);
+			}
 			Some(state)
 		});
         let subtype = if entity.element_data().active {

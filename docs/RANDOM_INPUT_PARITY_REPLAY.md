@@ -2770,6 +2770,15 @@ objects. New traces compare every field in this slice strictly. Older raw
 traces omit only the absent top-level `npc_ai` projection. The native replay
 cache version and suffix are v30.
 
+### Schema-v31 friendly AI subclass runtime
+
+Civilian NPC checkpoints now extend `npc_ai` with the complete serialized
+`RHArtificialBonhomie` tail: fleeing and beggar-talk counters, talk permission,
+the semantic last-talk-partner reference, and the leave permission latch. New
+traces compare the whole tail strictly. Schema-v30 raw traces retain their
+base-controller coverage by omitting only the absent nested `subclass` field.
+The native replay cache version and suffix are v31.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,
