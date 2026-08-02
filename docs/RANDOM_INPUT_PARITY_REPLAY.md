@@ -2675,6 +2675,24 @@ resumes the common tail immediately. This preserves the Original call boundary
 and query order without using replay IDs or recorded results. Other explicit
 patrol initialization sites retain their own source-defined boundaries.
 
+### Schema-v27 serialized entity runtime frontier
+
+New Original recordings include an additive `runtime` object on every entity.
+It mirrors the gameplay-authoritative fields serialized by
+`RHPositionInterface` and `RHSprite`: lazy-computation flags, complete current/
+old/goal/increment geometry, collision boxes and latches, topology and target
+references, animation counters, action/sound latches, display-order binding,
+and ordered animation replacements. Entity and sector references are
+canonicalized through the existing isomorphic maps before comparison.
+
+The replay cache format is v27. Older raw JSONL recordings remain supported:
+absence of the additive `runtime` object skips only this new frontier, while
+any recording that contains it is compared structurally and exactly. No state
+is reconstructed or fabricated for older recordings. AI-local, dynamic-subtype,
+complete order, and short-briefing frontiers remain explicitly queued as
+separate additive increments so this capture does not block existing parity
+validation with a partially implemented aggregate schema.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

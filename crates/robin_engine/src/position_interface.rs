@@ -888,7 +888,6 @@ impl PositionInterface {
         self.box_blocked = state.blocked_box;
     }
 
-    #[cfg(test)]
     pub(crate) fn v48_serialized_state(&self) -> PositionInterfaceV48State {
         PositionInterfaceV48State {
             computed_position: self.computed_position,

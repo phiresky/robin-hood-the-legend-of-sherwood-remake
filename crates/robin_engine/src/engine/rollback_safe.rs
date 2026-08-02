@@ -209,6 +209,199 @@ pub struct EngineArgs<'a> {
 }
 
 impl Engine {
+    /// Complete serialized position and sprite frontier for one entity.
+    #[doc(hidden)]
+    pub fn parity_entity_runtime_state(
+        &self,
+        id: EntityId,
+        assets: &LevelAssets,
+    ) -> serde_json::Value {
+        use serde_json::{Value, json};
+
+        let entity_ref = |id: EntityId| {
+            let kind = match id.kind() {
+                crate::element::EntityIdKind::Pc => "pc",
+                crate::element::EntityIdKind::Soldier => "soldier",
+                crate::element::EntityIdKind::Civilian => "civilian",
+                crate::element::EntityIdKind::Fx => "fx",
+                crate::element::EntityIdKind::Target => "target",
+                crate::element::EntityIdKind::Bonus => "bonus",
+                crate::element::EntityIdKind::Scroll => "scroll",
+                crate::element::EntityIdKind::Projectile => "projectile",
+                crate::element::EntityIdKind::Net => "net",
+            };
+            json!({ "kind": kind, "index": id.index() })
+        };
+        let entity = self.inner.entities.get(id).unwrap_or_else(|| {
+            panic!("parity runtime projection references missing entity {id:?}")
+        });
+        let sprite = &entity.element_data().sprite;
+        let position = sprite.position_iface.v48_serialized_state();
+        let float = |value: f32| json!({ "bits": value.to_bits(), "value": value });
+        let point2 = |x: f32, y: f32| json!({ "x": float(x), "y": float(y) });
+        let point3 =
+            |x: f32, y: f32, z: f32| json!({ "x": float(x), "y": float(y), "z": float(z) });
+        let bbox = |bbox: crate::coordinates::MapBBox| match bbox.0 {
+            Some(rect) => json!({
+                "min": point2(rect.min().x, rect.min().y),
+                "max": point2(rect.max().x, rect.max().y),
+            }),
+            None => Value::Null,
+        };
+        let sector = |handle: Option<crate::position_interface::SectorHandle>| {
+            handle.map_or(Value::Null, |handle| {
+                let sector = self
+                    .inner
+                    .world
+                    .fast_grid
+                    .level
+                    .sectors
+                    .get(handle.get() as usize)
+                    .unwrap_or_else(|| {
+                        panic!("parity position references missing sector {handle}")
+                    });
+                json!(sector.sector_number.get())
+            })
+        };
+        let target = position.target_element.map_or(Value::Null, entity_ref);
+        let door = if position.door.is_null() {
+            Value::Null
+        } else {
+            let index = usize::try_from(position.door.0)
+                .unwrap_or_else(|_| panic!("parity position door index exceeds usize"));
+            let door = self
+                .inner
+                .script_domains
+                .interactables
+                .doors
+                .get(index)
+                .unwrap_or_else(|| panic!("parity position references missing door {index}"));
+            let kind = match door.gate_type {
+                crate::gate::GateType::Door => "door",
+                crate::gate::GateType::Jump => "jump",
+                crate::gate::GateType::None => "gate",
+            };
+            json!({
+                "kind": kind,
+                "sector_out": door.sector_out.get(),
+                "sector_in": door.sector_in.get(),
+                "layer_out": door.layer_out,
+                "layer_in": door.layer_in,
+                "point_out": point2(door.point_out.x, door.point_out.y),
+                "point_in": point2(door.point_in.x, door.point_in.y),
+            })
+        };
+        let obstacle = position.obstacle.map_or(Value::Null, |handle| {
+            let handle = usize::from(handle);
+            let obstacle = assets
+                .static_sight_obstacles
+                .get(handle)
+                .unwrap_or_else(|| {
+                    panic!("parity position references missing static obstacle {handle}")
+                });
+            if position.layer.get() == u16::MAX {
+                json!({ "kind": "sight", "index": obstacle.id })
+            } else {
+                let index = assets.static_sight_obstacles[..handle]
+                    .iter()
+                    .filter(|candidate| candidate.is_projection_area())
+                    .count();
+                if !obstacle.is_projection_area() {
+                    panic!(
+                        "parity position on layer {} references non-projection obstacle {handle}",
+                        position.layer.get()
+                    );
+                }
+                json!({ "kind": "projection", "index": index })
+            }
+        });
+        if sprite.anims_to_be_replaced.len() != sprite.replacing_anims.len() {
+            panic!(
+                "sprite replacement list length {} differs from replacement value length {} for {id:?}",
+                sprite.anims_to_be_replaced.len(),
+                sprite.replacing_anims.len()
+            );
+        }
+        let replacements = sprite
+            .anims_to_be_replaced
+            .iter()
+            .zip(&sprite.replacing_anims)
+            .map(|(&from, &to)| json!({ "from": from as u32, "to": to as u32 }))
+            .collect::<Vec<_>>();
+
+        // Keep these in bounded chunks: a single `json!` object containing
+        // the entire serialized position frontier exceeds the macro's normal
+        // recursion limit.
+        let mut position_state = json!({
+                "computed_position": position.computed_position.bits(),
+                "computed_increment": position.computed_increment.bits(),
+                "material": position.material,
+                "posture": position.posture as u32,
+                "old_posture": position.old_posture as u32,
+                "direction": i16::from(position.direction),
+                "direction_goal": i16::from(position.direction_goal),
+                "slow_turn_count": position.slow_turn_count,
+                "direction_count": position.direction_count,
+                "layer": position.layer.get(), "layer_goal": position.layer_goal.get(),
+                "tolerance": float(position.tolerance),
+                "directional_tolerance": position.directional_tolerance,
+                "accumulate_movement_map": position.accumulate_movement_map,
+                "anti_collision_on": position.anti_collision_on,
+                "goal_next_valid": position.goal_next_valid,
+                "deviated": position.deviated,
+                "door_direction": position.door_direction,
+                "reversed_movement": position.reversed_movement,
+                "blocked_count": position.blocked_count,
+                "radius": float(position.radius),
+                "emergency_lying_box": position.use_emergency_lying_box,
+                "sector": sector(position.sector), "sector_goal": sector(position.sector_goal),
+                "door": door, "obstacle": obstacle, "target": target,
+        });
+        position_state
+            .as_object_mut()
+            .expect("parity position chunk must be an object")
+            .extend(
+                json!({
+                "world": point3(position.position.x, position.position.y, position.position.z),
+                "map": point2(position.map.x, position.map.y),
+                "sprite": point2(position.sprite.x, position.sprite.y),
+                "old_world": point3(position.old_position.x, position.old_position.y, position.old_position.z),
+                "old_map": point2(position.old_map.x, position.old_map.y),
+                "old_sprite": point2(position.old_sprite.x, position.old_sprite.y),
+                "goal_map": point2(position.goal_map.x, position.goal_map.y),
+                "goal_next_map": point2(position.goal_next_map.x, position.goal_next_map.y),
+                "goal_world": point3(position.goal.x, position.goal.y, position.goal.z),
+                "increment": point3(position.increment.x, position.increment.y, position.increment.z),
+                "increment_map": point2(position.increment_map.x, position.increment_map.y),
+                "accumulated_movement_map": point2(position.accumulated_movement_map.x, position.accumulated_movement_map.y),
+                "forecasted_movement": point3(position.forecasted_movement.x, position.forecasted_movement.y, position.forecasted_movement.z),
+                "move_box": bbox(position.move_box_map), "blocked_box": bbox(position.blocked_box),
+                })
+                .as_object()
+                .expect("parity position geometry chunk must be an object")
+                .clone(),
+            );
+        let sprite_state = json!({
+                "row": sprite.current_row, "frame": sprite.current_frame,
+                "frame_count": sprite.frame_count,
+                "flight_countdown": sprite.flight_frame_countdown,
+                "width": sprite.current_width, "height": sprite.current_height,
+                "last_action": sprite.last_action as u32,
+                "last_processed_order_id": sprite.last_processed_order_id,
+                "masked": sprite.masked, "alternate_profile": sprite.use_alternate_profile,
+                "action_done_frame": sprite.action_done_frame,
+                "action_done_counter": sprite.action_done_counter,
+                "last_sound_id": sprite.last_sound_id,
+                "behind_display_order_reference": sprite.behind_display_order_ref,
+                "display_order_reference": sprite.display_order_ref.map_or(Value::Null, entity_ref),
+                "replacements": replacements,
+        });
+
+        json!({
+            "position": position_state,
+            "sprite": sprite_state,
+        })
+    }
     /// Read-only schema-13 parity view of campaign state at a frame boundary.
     #[doc(hidden)]
     pub fn parity_campaign(&self) -> &Campaign {

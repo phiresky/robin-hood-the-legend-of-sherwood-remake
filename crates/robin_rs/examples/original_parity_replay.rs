@@ -1158,6 +1158,10 @@ struct TraceElement {
     ai: Option<TraceAi>,
     #[serde(default)]
     detection: Option<TraceDetection>,
+    /// Additive v27 whole-entity serialized position/sprite frontier. Older
+    /// raw recordings omit it and therefore cannot assert this state.
+    #[serde(default)]
+    runtime: Option<TraceJsonValue>,
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1448,8 +1452,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 26;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v26.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 27;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v27.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4800,8 +4804,10 @@ fn canonicalize_authoritative_snapshot(value: &mut serde_json::Value, entity_map
 
             for (key, child) in object {
                 canonicalize_authoritative_snapshot(child, entity_map);
-                if matches!(key.as_str(), "area" | "sector" | "sector_in" | "sector_out")
-                    && let Some(original) = child.as_i64()
+                if matches!(
+                    key.as_str(),
+                    "area" | "sector" | "sector_goal" | "sector_in" | "sector_out"
+                ) && let Some(original) = child.as_i64()
                     && original >= 0
                 {
                     let original = u16::try_from(original).unwrap_or_else(|_| {
@@ -5388,6 +5394,17 @@ fn compare_frame(
                 "sprite_frame_count",
                 expected_frame_count,
                 element.sprite.frame_count,
+            );
+        }
+        if let Some(expected_runtime) = &expected.runtime {
+            let mut expected_runtime = expected_runtime.to_json();
+            canonicalize_authoritative_snapshot(&mut expected_runtime, entity_map);
+            let actual_runtime = engine.parity_entity_runtime_state(id, assets);
+            collect_json_differences(
+                &format!("{id:?}.runtime"),
+                &expected_runtime,
+                &actual_runtime,
+                &mut differences,
             );
         }
         if let Some(expected_actor) = &expected.actor {
