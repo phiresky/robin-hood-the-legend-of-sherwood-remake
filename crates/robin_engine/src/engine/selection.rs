@@ -170,6 +170,7 @@ impl EngineInner {
             for id in ids {
                 self.unselect_action(id);
             }
+            self.players.seats[seat].selected_action = Action::NoAction;
         } else if let Some(&id) = self.players.seats[seat].selection.first() {
             let action = self
                 .get_entity(id)
@@ -188,6 +189,9 @@ impl EngineInner {
             .position(|&x| x == id)
         {
             self.players.seats[seat].selection.remove(pos);
+            if self.players.seats[seat].selection.is_empty() {
+                self.players.seats[seat].selected_action = Action::NoAction;
+            }
             if let Some(Entity::Pc(pc)) = self.get_entity_mut(id) {
                 pc.pc.portrait.open = false;
             }
@@ -211,6 +215,7 @@ impl EngineInner {
             }
         }
         self.players.seats[seat].selection.clear();
+        self.players.seats[seat].selected_action = Action::NoAction;
         let pc_ids: Vec<EntityId> = self.world.pc_ids.clone();
         for &pc_id in &pc_ids {
             if !self.is_pc_selectable(assets, pc_id) {
@@ -251,6 +256,7 @@ impl EngineInner {
             }
         }
         self.players.seats[seat].selection.clear();
+        self.players.seats[seat].selected_action = Action::NoAction;
     }
 
     /// Remove a single PC from the selection.
@@ -259,7 +265,12 @@ impl EngineInner {
     /// with a non-zero value (dying / downed PCs kick themselves out of the
     /// selection), and from `PcMessage::DisableCharacter`.
     pub(crate) fn unselect_single_pc(&mut self, id: EntityId) {
+        let was_last = self.players.seats[0].selection.len() == 1
+            && self.players.seats[0].selection.contains(&id);
         self.players.seats[0].selection.retain(|&x| x != id);
+        if was_last {
+            self.players.seats[0].selected_action = Action::NoAction;
+        }
         if let Some(Entity::Pc(pc)) = self.get_entity_mut(id) {
             pc.pc.portrait.open = false;
         }
@@ -555,9 +566,8 @@ impl EngineInner {
     ///   that one PC.
     /// - If `pc_id` is selected, sets `current_action` on every selected PC.
     ///
-    /// `get_selected_action()` reads directly from the first selected PC's
-    /// `current_action`, so there is no separate messenger-level pending
-    /// action to keep in sync.
+    /// The selected branch also updates the seat's messenger-level armed
+    /// action. The not-selected branch deliberately leaves it untouched.
     pub(crate) fn set_pc_action(
         &mut self,
         assets: &LevelAssets,
@@ -610,6 +620,8 @@ impl EngineInner {
             }
             return;
         }
+
+        self.players.seats[seat].selected_action = action;
 
         // Trajectory overlay cleanup on any action change from the selected
         // branch. The jumper trajectory, jumped trajectory, valid-trajectory

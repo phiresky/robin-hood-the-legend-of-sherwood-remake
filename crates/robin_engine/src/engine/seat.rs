@@ -16,6 +16,7 @@
 //! without changing the dispatch surface for every selection command.
 
 use crate::element::EntityId;
+use crate::profiles::Action;
 use serde::{Deserialize, Serialize};
 
 /// Sim-tracked state owned by one player seat.
@@ -41,6 +42,16 @@ pub struct SeatState {
     /// PCs this seat currently has selected. Multiple seats may select
     /// the same PC simultaneously (drop-in/drop-out + co-op control).
     pub selection: Vec<EntityId>,
+    /// Original `RHMessenger::muwAction`: the action currently armed by this
+    /// player's input controller. This is deliberately independent of a PC's
+    /// remembered `current_action`; `MSG_SELECT_ACTION_SIMPLE` clears only
+    /// this value when an action becomes unavailable.
+    #[serde(default)]
+    pub selected_action: Action,
+    /// Original `RHMessenger::muwActionBeforeControl`, used to restore the
+    /// globally armed action when Ctrl is released.
+    #[serde(default)]
+    pub action_before_control: Action,
     /// Quick-select groups (Ctrl+1..9 to assign, 1..9 to recall).
     /// Index 0 = group 1, index 8 = group 9.
     pub quick_select_groups: [Vec<EntityId>; 9],

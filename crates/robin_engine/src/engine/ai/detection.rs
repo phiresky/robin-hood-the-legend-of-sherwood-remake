@@ -20,7 +20,7 @@ pub(crate) fn set_heard_callback_observer(
 use super::*;
 use crate::ai::AiPerTickData;
 use crate::ai_vision;
-use crate::coordinates::MapPoint;
+use crate::coordinates::{GroundPoint, MapPoint};
 use crate::element::{Camp, Detectable, DetectableType, Entity, EntityId, Posture};
 
 const DETECTION_FREQUENCY_BLIP: u32 = 16;
@@ -35,6 +35,7 @@ const BLIP_CONE_APERTURE_FACTOR: f32 = 1.0;
 struct EnemyOpticalTarget {
     id: EntityId,
     position: MapPoint,
+    ground_position: GroundPoint,
     sector: Option<crate::position_interface::SectorHandle>,
     layer: u16,
     posture: crate::element::Posture,
@@ -169,7 +170,7 @@ struct SoldierSightContext {
     sector: Option<crate::position_interface::SectorHandle>,
     alert_status: crate::ai::AlertLevel,
     blipped: bool,
-    position_map: MapPoint,
+    ground_position: GroundPoint,
     camp: Camp,
     ignore_bodies: bool,
 }
@@ -251,7 +252,7 @@ impl SoldierSightContext {
             crate::ai::Substate::SeekingOfficerWaitForAlertingSoldier
                 | crate::ai::Substate::SeekingOfficerGetAlertingReportFromSoldier
         );
-        let position_map = entity.element_data().position_map();
+        let ground_position = entity.ground_position();
         let ground_z = entity.element_data().position().z;
         let (eye, eye_z) = human_eye_point_for_visibility(entity);
 
@@ -278,7 +279,7 @@ impl SoldierSightContext {
             // sightings deliberately raise only the latter.
             alert_status: ai.view_alert_status,
             blipped: entity.element_data().blipped,
-            position_map,
+            ground_position,
             camp,
             ignore_bodies,
         })
@@ -351,9 +352,9 @@ fn queued_human_detection_stimuli(
 fn refresh_detection_scans_target(
     last_visibility: f32,
     viewer_inside_building: bool,
-    viewer_position: MapPoint,
+    viewer_position: GroundPoint,
     view_radius: u16,
-    target_position: MapPoint,
+    target_position: GroundPoint,
 ) -> bool {
     if last_visibility > 0.0 || viewer_inside_building {
         return true;
@@ -1657,7 +1658,7 @@ impl EngineInner {
         let npc_posture = viewer.posture;
         let entity_sector = viewer.sector;
         let viewer_blipped = viewer.blipped;
-        let me_pos_map = viewer.position_map;
+        let me_ground_position = viewer.ground_position;
         // Silence the "unused" warning on the `_action_state` slot
         // we keep for readability of the destructure pattern.
         let _ = ActionState::Waiting;
@@ -1824,13 +1825,14 @@ impl EngineInner {
                 // Original's outer RefreshDetection box gate precedes
                 // ComputeVisibility and its cadence. A previously visible
                 // target and every target while indoors still enter; all
-                // others must lie in the raw-map radius/aspect bounding box.
+                // others must lie in the GetPositionGround world-X/Y
+                // radius/aspect bounding box.
                 if !refresh_detection_scans_target(
                     det.last_visibility,
                     viewer_inside_building,
-                    me_pos_map,
+                    me_ground_position,
                     view_radius,
-                    target.position,
+                    target.ground_position,
                 ) {
                     det.seen_now = false;
                     det.last_visibility = 0.0;
@@ -3080,6 +3082,10 @@ impl EngineInner {
                     Some(EnemyOpticalTarget {
                         id: entity_id,
                         position: snapshot.position,
+                        ground_position: GroundPoint::from_map_and_z(
+                            snapshot.position,
+                            ground_z,
+                        ),
                         sector: pc.element.sector(),
                         layer: pc.element.layer(),
                         posture,
@@ -3135,6 +3141,10 @@ impl EngineInner {
                     Some(EnemyOpticalTarget {
                         id: entity_id,
                         position,
+                        ground_position: GroundPoint::from_map_and_z(
+                            position,
+                            soldier.element.position().z,
+                        ),
                         sector: soldier.element.sector(),
                         layer: soldier.element.layer(),
                         posture,
@@ -3343,7 +3353,7 @@ impl EngineInner {
             // compares the full 3D eye/detection points across layers.
             |_t| true,
             ViewContext {
-                position_map: viewer.position_map,
+                ground_position: viewer.ground_position,
                 viewer_inside_building,
                 camp: viewer.camp,
                 eye,
@@ -3383,7 +3393,7 @@ impl EngineInner {
             !matches!(current_state, AiState::Sleeping | AiState::Default),
             object_targets,
             ViewContext {
-                position_map: viewer.position_map,
+                ground_position: viewer.ground_position,
                 viewer_inside_building,
                 camp: viewer.camp,
                 eye,
@@ -3431,7 +3441,7 @@ impl EngineInner {
             // Per-target pre-filter: target must `IsAbleToHelp()`.
             |t| t.able_to_help,
             ViewContext {
-                position_map: viewer.position_map,
+                ground_position: viewer.ground_position,
                 viewer_inside_building,
                 camp: viewer.camp,
                 eye,
@@ -3476,7 +3486,7 @@ impl EngineInner {
             // Per-target pre-filter: skip dead / unconscious targets.
             |t| !missed_friend_or_beggar_target_blocked(t.dead, t.unconscious),
             ViewContext {
-                position_map: viewer.position_map,
+                ground_position: viewer.ground_position,
                 viewer_inside_building,
                 camp: viewer.camp,
                 eye,
@@ -3534,7 +3544,7 @@ impl EngineInner {
             // Per-target pre-filter: skip dead / unconscious targets.
             |t| !missed_friend_or_beggar_target_blocked(t.dead, t.unconscious),
             ViewContext {
-                position_map: viewer.position_map,
+                ground_position: viewer.ground_position,
                 viewer_inside_building,
                 camp: viewer.camp,
                 eye,
@@ -3637,9 +3647,9 @@ impl EngineInner {
             if !refresh_detection_scans_target(
                 det.last_visibility,
                 ctx.viewer_inside_building,
-                ctx.position_map,
+                ctx.ground_position,
                 ctx.view_radius,
-                target.position,
+                target.ground_position,
             ) {
                 det.seen_now = false;
                 det.last_visibility = 0.0;
@@ -3945,9 +3955,9 @@ impl EngineInner {
             if !refresh_detection_scans_target(
                 det.last_visibility,
                 ctx.viewer_inside_building,
-                ctx.position_map,
+                ctx.ground_position,
                 ctx.view_radius,
-                object.position,
+                object.ground_position,
             ) {
                 det.seen_now = false;
                 det.last_visibility = 0.0;
@@ -4119,7 +4129,7 @@ impl OwnerViewRadiusCache {
 /// from the soldier's npc/element state at the start of the per-NPC
 /// pass; nothing here mutates.
 struct ViewContext<'a> {
-    position_map: MapPoint,
+    ground_position: GroundPoint,
     /// Original `IsInsideBuilding`: building sector or active door transit.
     /// Used only by RefreshDetection's outer scan-entry alternative.
     viewer_inside_building: bool,
@@ -4215,10 +4225,10 @@ mod tests {
 
     #[test]
     fn refresh_detection_outer_box_matches_original_entry_alternatives() {
-        let viewer = MapPoint::new(100.0, 200.0);
+        let viewer = GroundPoint::new(100.0, 200.0);
         let radius = 80_u16;
         let radius_y = radius as f32 * crate::position_interface::ASPECT_RATIO;
-        let far = MapPoint::new(1000.0, 1000.0);
+        let far = GroundPoint::new(1000.0, 1000.0);
 
         assert!(refresh_detection_scans_target(
             0.25, false, viewer, radius, far
@@ -4231,22 +4241,44 @@ mod tests {
             false,
             viewer,
             radius,
-            MapPoint::new(viewer.x + radius as f32, viewer.y + radius_y),
+            GroundPoint::new(viewer.x + radius as f32, viewer.y + radius_y),
         ));
         assert!(!refresh_detection_scans_target(
             0.0,
             false,
             viewer,
             radius,
-            MapPoint::new(viewer.x + radius as f32 + 0.25, viewer.y),
+            GroundPoint::new(viewer.x + radius as f32 + 0.25, viewer.y),
         ));
         assert!(!refresh_detection_scans_target(
             f32::NAN,
             false,
             viewer,
             radius,
-            MapPoint::new(viewer.x, viewer.y + radius_y + 0.25),
+            GroundPoint::new(viewer.x, viewer.y + radius_y + 0.25),
         ));
+    }
+
+    #[test]
+    fn refresh_detection_outer_box_uses_ground_not_projected_map_y() {
+        // Continue/replay-012: Civilian 64 and PC 343 are only 157.57 units
+        // apart in Original GetPositionGround Y. Their projected map Y differs
+        // by 471.49 because the PC stands roughly 314 units lower. A map-space
+        // broad phase incorrectly suppresses the visibility query entirely.
+        let viewer_ground = GroundPoint::new(491.0, 1135.000_98);
+        let target_ground = GroundPoint::new(668.028_6, 1292.568_2);
+        assert!(refresh_detection_scans_target(
+            0.0,
+            false,
+            viewer_ground,
+            400,
+            target_ground,
+        ));
+
+        let viewer_map = MapPoint::new(491.0, 715.0);
+        let target_map = MapPoint::new(668.028_6, 1186.492_8);
+        let map_radius_y = 400.0 * crate::position_interface::ASPECT_RATIO;
+        assert!((target_map.y - viewer_map.y).abs() > map_radius_y);
     }
 
     #[test]

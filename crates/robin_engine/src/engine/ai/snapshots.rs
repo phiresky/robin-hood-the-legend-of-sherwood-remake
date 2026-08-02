@@ -7,7 +7,7 @@
 //! snapshots without re-borrowing `self.world.entities`.
 
 use super::*;
-use crate::coordinates::MapPoint;
+use crate::coordinates::{GroundPoint, MapPoint};
 use crate::element::{Camp, Entity, EntityId, Human};
 use serde::{Deserialize, Serialize};
 
@@ -289,6 +289,9 @@ pub(super) struct SoldierSnapshot {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub(super) struct HumanTarget {
     pub(super) position: MapPoint,
+    /// Original `GetPositionGround()`, i.e. stored world-space X/Y.  This is
+    /// distinct from projected map position whenever ground Z is non-zero.
+    pub(super) ground_position: GroundPoint,
     pub(super) sector: Option<crate::position_interface::SectorHandle>,
     pub(super) layer: u16,
     pub(super) eye_z: f32,
@@ -339,6 +342,8 @@ pub(super) struct HumanTarget {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub(super) struct ObjectTarget {
     pub(super) position: MapPoint,
+    /// Original `GetPositionGround()` used by RefreshDetection's outer box.
+    pub(super) ground_position: GroundPoint,
     /// Original object point after the detection path's `mZ += 1`.
     pub(super) world_position: crate::coordinates::WorldPoint3D,
     pub(super) layer: u16,
@@ -1070,6 +1075,7 @@ impl EngineInner {
             // default).
             let is_rider = matches!(entity, Entity::Soldier(s) if s.soldier.rider);
             let ground_z = entity.element_data().position().z;
+            let ground_position = GroundPoint::from_map_and_z(position, ground_z);
             let eye_z = ground_z + crate::stealth::detection_z_for_posture(posture, is_rider);
             let direction = entity.element_data().direction();
             let is_pc = matches!(entity, Entity::Pc(_));
@@ -1111,6 +1117,7 @@ impl EngineInner {
                 id,
                 HumanTarget {
                     position,
+                    ground_position,
                     sector: entity.element_data().sector(),
                     layer,
                     eye_z,
@@ -1143,6 +1150,7 @@ impl EngineInner {
                 .unwrap_or_else(|| entity.element_data().position_map());
             let world_position =
                 object_detection_world_position(position, entity.element_data().position().z);
+            let ground_position = GroundPoint::new(world_position.x, world_position.y);
             let layer = entity.element_data().layer();
             let active = entity.element_data().active;
             // Original `RefreshDetection` casts DETECTABLE_OBJECT entries to
@@ -1157,6 +1165,7 @@ impl EngineInner {
                 id,
                 ObjectTarget {
                     position,
+                    ground_position,
                     world_position,
                     layer,
                     belongs_to_beggar,

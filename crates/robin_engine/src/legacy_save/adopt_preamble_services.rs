@@ -50,6 +50,7 @@ impl LegacyPreambleServicesPlan {
             engine.feedback.sound_sim = sound;
         }
         engine.players.view_locked = self.messenger.lock_view;
+        engine.players.seats[0].selected_action = self.messenger.action;
         engine.orders.messenger.restore_v48_state(self.messenger);
 
         let ui = &mut engine.script_domains.mission_ui;
@@ -481,6 +482,7 @@ mod tests {
         assert_eq!(engine.orders.messenger.count(), 0);
         let restored = engine.orders.messenger.v48_state().unwrap();
         assert_eq!(restored.action, Action::Bow);
+        assert_eq!(engine.players.seats[0].selected_action, Action::Bow);
         assert!(restored.lock_view);
         assert!(engine.players.view_locked);
         assert!(

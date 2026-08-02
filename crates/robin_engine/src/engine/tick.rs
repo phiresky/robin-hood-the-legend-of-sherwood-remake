@@ -2175,6 +2175,7 @@ impl EngineInner {
                             let restore = self.players.action_before_recording_macro;
                             self.players.action_before_recording_macro =
                                 crate::profiles::Action::NoAction;
+                            self.players.seats[0].selected_action = restore;
                             for id in self.players.seats[0].selection.clone() {
                                 if let Some(entity) = self.get_entity_mut(id)
                                     && let Some(pc) = entity.pc_data_mut()
@@ -2436,6 +2437,18 @@ impl EngineInner {
                     // side-effect flag.
                     MessageType::Pc(crate::messenger::PcMessage::SelectActionSimple, _)
                     | MessageType::Pc(crate::messenger::PcMessage::DisableAction, _) => {
+                        if matches!(
+                            msg.msg_type,
+                            MessageType::Pc(crate::messenger::PcMessage::SelectActionSimple, _)
+                        ) {
+                            self.players.seats[0].selected_action =
+                                crate::profiles::Action::try_from(msg.value).unwrap_or_else(|_| {
+                                    panic!(
+                                        "MSG_SELECT_ACTION_SIMPLE carried invalid action {}",
+                                        msg.value
+                                    )
+                                });
+                        }
                         self.feedback
                             .pending_side_effects
                             .invalidate_trajectory_preview = true;

@@ -109,25 +109,20 @@ pub enum TrajectoryPreview {
 impl EngineInner {
     // ─── Mouse cursor / focus ────────────────────────────────────
 
-    /// Get the currently selected action for the first selected PC on
-    /// the host seat. Reads the selected PC's `current_action`. Returns
-    /// `Action::NoAction` if no PC is selected.
+    /// Get the action armed in the host seat's messenger controller.
     pub fn get_selected_action(&self) -> crate::profiles::Action {
         self.selected_action_for_seat(crate::player_command::PlayerId::HOST)
     }
 
-    /// Get the currently selected action for the first selected PC on
-    /// `player_id`'s seat. Returns `Action::NoAction` if that seat has
-    /// no selected PC.
+    /// Get the action armed in `player_id`'s messenger controller.
     pub fn selected_action_for_seat(
         &self,
         player_id: crate::player_command::PlayerId,
     ) -> crate::profiles::Action {
-        self.seat_selection(player_id)
-            .first()
-            .and_then(|&id| self.get_entity(id))
-            .and_then(|e| e.pc_data())
-            .map(|pc| pc.current_action)
+        self.players
+            .seats
+            .get(player_id.0 as usize)
+            .map(|seat| seat.selected_action)
             .unwrap_or(crate::profiles::Action::NoAction)
     }
 

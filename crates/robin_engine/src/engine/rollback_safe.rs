@@ -1311,7 +1311,10 @@ impl Engine {
     /// Serialized messenger controller state that remains gameplay-visible.
     #[doc(hidden)]
     pub fn parity_messenger_controller_state(&self) -> serde_json::Value {
-        serde_json::json!({ "view_locked": self.inner.players.view_locked })
+        serde_json::json!({
+            "view_locked": self.inner.players.view_locked,
+            "selected_action": self.inner.players.seats[0].selected_action as u32,
+        })
     }
 
     /// Canonical manager-insertion-ordered sequence state for schema-13
@@ -3621,11 +3624,12 @@ mod tests {
         let mut inner = EngineInner::new();
         inner.players.view_locked = true;
         inner.players.seats[0].locker_active = false;
+        inner.players.seats[0].selected_action = crate::profiles::Action::Bow;
 
         let engine = Engine { inner };
         assert_eq!(
             engine.parity_messenger_controller_state(),
-            serde_json::json!({ "view_locked": true })
+            serde_json::json!({ "view_locked": true, "selected_action": 1 })
         );
         assert!(!engine.locker_active());
         assert!(engine.view_locked());

@@ -532,6 +532,7 @@ impl EngineInner {
                 for pc_id in self.players.seats[seat].selection.clone() {
                     self.unselect_action(pc_id);
                 }
+                self.players.seats[seat].selected_action = crate::profiles::Action::NoAction;
             }
             MouseRightDown => {
                 input.right_mouse_down = true;
@@ -686,6 +687,8 @@ impl EngineInner {
                 self.players.seats[seat].is_lock_alt = *on;
             }
             KeyControl => {
+                self.players.seats[seat].action_before_control =
+                    self.players.seats[seat].selected_action;
                 self.save_action_for_selected_pcs(seat);
                 // Park every selected PC at NoAction so the held ctrl
                 // key lets the follow-up move command run unobstructed.
@@ -712,27 +715,29 @@ impl EngineInner {
                 self.feedback
                     .pending_side_effects
                     .invalidate_trajectory_preview = true;
+                self.players.seats[seat].selected_action = crate::profiles::Action::NoAction;
             }
             #[cfg(not(target_os = "macos"))]
             KeyReleaseControl => {
-                // Restore each selected PC's saved action.  Stored
-                // per-PC on `PcData::saved_action`, so different
-                // selections regain different actions.
+                // Original restores the messenger-global action captured on
+                // Ctrl press, then fans that one action over the selection.
+                let restore = self.players.seats[seat].action_before_control;
                 let ids = self.players.seats[seat].selection.clone();
                 for id in ids {
-                    let (saved, cur) = match self.get_entity(id).and_then(|e| e.pc_data()) {
-                        Some(pc) => (pc.saved_action, pc.current_action),
+                    let cur = match self.get_entity(id).and_then(|e| e.pc_data()) {
+                        Some(pc) => pc.current_action,
                         None => continue,
                     };
-                    if cur != saved {
+                    if cur != restore {
                         self.unselect_action(id);
                     }
                     if let Some(entity) = self.get_entity_mut(id)
                         && let Some(pc) = entity.pc_data_mut()
                     {
-                        pc.current_action = saved;
+                        pc.current_action = restore;
                     }
                 }
+                self.players.seats[seat].selected_action = restore;
                 self.feedback
                     .pending_side_effects
                     .invalidate_trajectory_preview = true;

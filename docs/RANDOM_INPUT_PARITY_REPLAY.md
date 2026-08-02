@@ -3077,6 +3077,22 @@ Original-equivalent input sites. Camera follow behavior remains on
 makes the serialized flag strict in new traces; older traces omit it, and the
 native cache version is v49.
 
+### Schema-v50 authoritative messenger selected action
+
+Original serializes `RHMessenger::muwAction` independently of every PC's
+remembered `mcurrentAction`. They normally move together, but are not an
+invariant: the simple action-reset path clears the messenger action without
+running `RHEngine::SelectAction`, and loaded saves can therefore begin with a
+globally armed action that differs from the selected PC field. Input dispatch,
+Ctrl restoration, cursor choice, and double-click handling all consult the
+messenger value.
+
+Rust now retains the armed action per player seat, adopts the exact Linux-save
+messenger value, and uses it for input decisions. Ordinary action selection
+updates both controller and selected PCs; the simple reset deliberately updates
+only the controller. `engine_state.messenger_controller.selected_action` makes
+that distinction frame-strict, and the native cache version is v50.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,
@@ -3202,6 +3218,26 @@ the later-created PC is 90.7 units away and the soldier's maximal range is 90:
 Original compares 90 and remains in range, while Rust's fractional comparison
 incorrectly treated 90.7 as out of range. Reconsideration now performs the same
 unsigned-integer truncation for every soldier and both range gates.
+
+### Detection's outer radius box uses ground-world coordinates
+
+Continue replay 012 reached Civilian 64's optical scan at frame 119441.
+Original issued visibility queries for PCs 342 and 343, while Rust issued only
+the first. The missing query was not a cadence or visibility-result mismatch:
+Rust rejected PC 343 in `RefreshDetection`'s broad phase before computing LOS.
+
+Original builds this axis-aligned box around both elements'
+`GetPositionGround()` values—the X/Y components of their 3D world positions.
+Rust instead compared projected map positions. Here the civilian and PC differ
+by about 158 world-Y units but 471 projected-map-Y units because they stand at
+different elevations, so only the Rust check placed the PC outside the
+radius-aspect box.
+
+Every detection bucket now carries owner-boundary ground-world positions into
+the shared broad phase: Enemy, Body, Object, Friend, MissedFriend, and Beggar.
+This restores the Original coordinate space generally across elevated terrain;
+the subsequent visibility query still determines whether an admitted target is
+actually visible.
 
 ## Maintenance checklist
 
