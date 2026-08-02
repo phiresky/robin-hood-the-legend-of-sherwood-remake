@@ -3163,6 +3163,11 @@ impl AiController {
         self.face_position_impl(pos, ctx, 0.0, false);
     }
 
+    /// Turn quickly to face a 2D position (`Face(position, true)`).
+    pub fn face_position_fast_with_ctx(&mut self, pos: Position, ctx: &AiContext) {
+        self.face_position_impl(pos, ctx, 0.0, true);
+    }
+
     /// Face an `RHposition` through the Original `PositionToPoint3D`
     /// projection. Unlike the explicitly 2D overload above, this preserves
     /// the target sector/layer elevation in world-horizontal Y before

@@ -5353,14 +5353,14 @@ impl EnemyAi {
                         AiState::Attacking,
                         Substate::AttackingArcherRetireFromCombatTurn,
                     );
-                    // Cheat-face primary target if still known, else the
-                    // stored seek position. Rust doesn't yet distinguish the
-                    // "fast" turn flag — the face command is consumed by
-                    // the order system either way.
+                    // Cheat-face the primary target if still known, else the
+                    // stored seek position. Original passes `true` to both
+                    // Face overloads, selecting RHCOMMAND_TURN_FAST.
                     if self.base.primary_target != 0 {
-                        self.base.face_entity(self.base.primary_target, ctx);
+                        self.base.face_entity_fast(self.base.primary_target, ctx);
                     } else {
-                        self.base.face_position(self.base.seek_position);
+                        self.base
+                            .face_position_fast_with_ctx(self.base.seek_position, ctx);
                     }
                 }
             }
