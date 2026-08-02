@@ -10434,13 +10434,37 @@ impl EngineInner {
             .fast_grid
             .is_position_authorized(&move_box_map, entity_layer)
         {
+            let capture_extraction = crate::movement_diagnostics::parity_movement_capture_active();
+            let original_box = move_box_map;
             let mut box_element = Self::expand_move_box_for_command_extraction(move_box_map);
-            if self
+            let expanded_box = box_element;
+            let expanded_motion_lines = capture_extraction
+                .then(|| {
+                    self.world
+                        .fast_grid
+                        .get_active_motion_line_indices(entity_layer, &expanded_box)
+                        .into_iter()
+                        .map(|index| usize::from(index) as u32)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let authorized = self
                 .world
                 .fast_grid
-                .find_authorized_position(&mut box_element, entity_layer)
-            {
-                let center = box_element.center();
+                .find_authorized_position(&mut box_element, entity_layer);
+            let authorized_box = box_element;
+            let authorized_motion_lines = capture_extraction
+                .then(|| {
+                    self.world
+                        .fast_grid
+                        .get_active_motion_line_indices(entity_layer, &authorized_box)
+                        .into_iter()
+                        .map(|index| usize::from(index) as u32)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let center = authorized.then(|| authorized_box.center());
+            if let Some(center) = center {
                 source = MapPoint::new(center.x, center.y);
                 if let Some(entity) = self.get_entity_mut(owner) {
                     entity.position_iface_mut().set_map_position(source);
@@ -10449,6 +10473,38 @@ impl EngineInner {
                     elem.update_grid_cell();
                     move_box_map = *entity.position_iface().get_move_box_map();
                 }
+            }
+            let corrected_position = authorized.then(|| {
+                self.get_entity(owner)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "RHCOMMAND_MOVE extraction owner {owner:?} disappeared after correction"
+                        )
+                    })
+                    .element_data()
+                    .position_map()
+            });
+            let sector = self
+                .get_entity(owner)
+                .and_then(|entity| entity.element_data().sector())
+                .map(u16::from);
+            if capture_extraction {
+                crate::movement_diagnostics::record_parity_move_box_extraction(
+                    crate::movement_diagnostics::ParityMoveBoxExtraction {
+                        entity: owner,
+                        layer: entity_layer,
+                        sector,
+                        pathfinder_area: pf_idx,
+                        original_box: original_box.into(),
+                        expanded_box: expanded_box.into(),
+                        expanded_motion_lines,
+                        authorized,
+                        authorized_box: authorized_box.into(),
+                        authorized_motion_lines,
+                        authorized_center: center.map(Into::into),
+                        corrected_position: corrected_position.map(Into::into),
+                    },
+                );
             }
         }
 

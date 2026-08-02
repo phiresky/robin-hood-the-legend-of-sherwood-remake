@@ -1517,10 +1517,12 @@ struct RollingDumpFrame {
     original_visibility_queries: Vec<TraceVisibilityQuery>,
     rust_visibility_queries: Vec<robin_engine::sight_obstacle::ParityVisibilityQuery>,
     rust_movement_steps: Vec<robin_engine::movement_diagnostics::ParityMovementStep>,
+    rust_move_box_extractions: Vec<robin_engine::movement_diagnostics::ParityMoveBoxExtraction>,
     rng_start: usize,
     expected_rng_end: usize,
     actual_rng_end: usize,
     rust_rng_sites: Vec<robin_engine::sim_rng::RngSite>,
+    rust_rng_diagnostics: robin_engine::sim_rng::OriginalRngDiagnostics,
     differences: Vec<String>,
 }
 
@@ -2294,6 +2296,8 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             robin_engine::sight_obstacle::take_parity_visibility_capture();
         let actual_movement_steps =
             robin_engine::movement_diagnostics::take_parity_movement_capture();
+        let actual_move_box_extractions =
+            robin_engine::movement_diagnostics::take_parity_move_box_extractions();
         let actual_path_events = robin_engine::pathfinder::take_parity_path_capture();
         // Restart immediately: the post-frame comparison and one-shot
         // PostInitialize below precede the next recorded frame boundary.
@@ -2427,6 +2431,9 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         let rust_rng_sites = engine
             .original_rng_replay_sites(rng_start..actual_rng_end)
             .expect("original RNG site history unexpectedly disabled");
+        let rust_rng_diagnostics = engine
+            .original_rng_replay_diagnostics(rng_start..actual_rng_end)
+            .expect("original RNG diagnostics unexpectedly disabled");
         if let Some((options, writer)) = &mut dump
             && options.includes(frame.frame_after)
         {
@@ -2443,9 +2450,11 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 rng_end,
                 actual_rng_end,
                 &rust_rng_sites,
+                &rust_rng_diagnostics,
                 &actual_path_events,
                 &actual_visibility_queries,
                 &actual_movement_steps,
+                &actual_move_box_extractions,
                 &differences,
             );
         }
@@ -2465,10 +2474,12 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     original_visibility_queries: frame.visibility_queries.clone(),
                     rust_visibility_queries: actual_visibility_queries.clone(),
                     rust_movement_steps: actual_movement_steps.clone(),
+                    rust_move_box_extractions: actual_move_box_extractions.clone(),
                     rng_start,
                     expected_rng_end: rng_end,
                     actual_rng_end,
                     rust_rng_sites: rust_rng_sites.clone(),
+                    rust_rng_diagnostics: rust_rng_diagnostics.clone(),
                     differences: differences.clone(),
                 },
             );
@@ -2487,7 +2498,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 );
             }
             panic!(
-                "Rust consumed RNG draws {:?} at sites {rust_rng_sites:?} during original frame {}; original ended at draw {rng_end}; Original simulation callsite offsets for the frame: {:?}",
+                "Rust consumed RNG draws {:?} at sites {rust_rng_sites:?} with script diagnostics {rust_rng_diagnostics:#?} during original frame {}; original ended at draw {rng_end}; Original simulation callsite offsets for the frame: {:?}",
                 rng_start..actual_rng_end,
                 frame.frame_before,
                 frame.rng_draws.gameplay_callsite_offsets(),
@@ -2948,9 +2959,11 @@ fn write_engine_dump_frame(
     expected_rng_end: usize,
     actual_rng_end: usize,
     rust_rng_sites: &[robin_engine::sim_rng::RngSite],
+    rust_rng_diagnostics: &robin_engine::sim_rng::OriginalRngDiagnostics,
     rust_path_events: &[robin_engine::pathfinder::ParityPathEvent],
     rust_visibility_queries: &[robin_engine::sight_obstacle::ParityVisibilityQuery],
     rust_movement_steps: &[robin_engine::movement_diagnostics::ParityMovementStep],
+    rust_move_box_extractions: &[robin_engine::movement_diagnostics::ParityMoveBoxExtraction],
     differences: &[String],
 ) {
     let diagnostic_engine = engine.diagnostic_snapshot_without_original_rng_replay();
@@ -2984,11 +2997,13 @@ fn write_engine_dump_frame(
         &frame.visibility_queries,
         rust_visibility_queries,
         rust_movement_steps,
+        rust_move_box_extractions,
         resolved_commands,
         rng_start,
         expected_rng_end,
         actual_rng_end,
         rust_rng_sites,
+        rust_rng_diagnostics,
         differences,
         Some(&original_entities),
     );
@@ -3009,11 +3024,13 @@ fn write_engine_dump_snapshot_frame(
     original_visibility_queries: &[TraceVisibilityQuery],
     rust_visibility_queries: &[robin_engine::sight_obstacle::ParityVisibilityQuery],
     rust_movement_steps: &[robin_engine::movement_diagnostics::ParityMovementStep],
+    rust_move_box_extractions: &[robin_engine::movement_diagnostics::ParityMoveBoxExtraction],
     resolved_commands: serde_json::Value,
     rng_start: usize,
     expected_rng_end: usize,
     actual_rng_end: usize,
     rust_rng_sites: &[robin_engine::sim_rng::RngSite],
+    rust_rng_diagnostics: &robin_engine::sim_rng::OriginalRngDiagnostics,
     differences: &[String],
     original_entities: Option<&[&TraceElement]>,
 ) {
@@ -3065,11 +3082,13 @@ fn write_engine_dump_snapshot_frame(
             "rust": rust_visibility_queries,
         },
         "rust_movement_steps": rust_movement_steps,
+        "rust_move_box_extractions": rust_move_box_extractions,
         "rng": {
             "cursor_before": rng_start,
             "expected_cursor_after": expected_rng_end,
             "actual_cursor_after": actual_rng_end,
             "rust_sites": rust_rng_sites,
+            "rust_script_diagnostics": rust_rng_diagnostics,
             "original_frame_draws": rng_draws,
             "engine_original_replay_stream_omitted": true,
         },
@@ -3163,11 +3182,13 @@ fn write_automatic_rolling_dump(
             &frame.original_visibility_queries,
             &frame.rust_visibility_queries,
             &frame.rust_movement_steps,
+            &frame.rust_move_box_extractions,
             frame.resolved_commands.clone(),
             frame.rng_start,
             frame.expected_rng_end,
             frame.actual_rng_end,
             &frame.rust_rng_sites,
+            &frame.rust_rng_diagnostics,
             &frame.differences,
             None,
         );

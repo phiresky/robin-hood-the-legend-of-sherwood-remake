@@ -8,11 +8,12 @@ use std::cell::RefCell;
 
 use serde::Serialize;
 
-use crate::coordinates::{MapPoint, MapVec};
+use crate::coordinates::{MapBBox, MapPoint, MapVec};
 use crate::entity_id::EntityId;
 
 thread_local! {
     static CAPTURE: RefCell<Option<Vec<ParityMovementStep>>> = const { RefCell::new(None) };
+    static MOVE_BOX_EXTRACTIONS: RefCell<Option<Vec<ParityMoveBoxExtraction>>> = const { RefCell::new(None) };
 }
 
 /// A float paired with its exact IEEE-754 representation. The decimal value
@@ -56,6 +57,47 @@ impl From<MapVec> for ParityPoint {
     }
 }
 
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct ParityBox {
+    pub min: Option<ParityPoint>,
+    pub max: Option<ParityPoint>,
+}
+
+impl From<MapBBox> for ParityBox {
+    fn from(value: MapBBox) -> Self {
+        if value.is_somewhere() {
+            Self {
+                min: Some(MapPoint::new(value.x_min(), value.y_min()).into()),
+                max: Some(MapPoint::new(value.x_max(), value.y_max()).into()),
+            }
+        } else {
+            Self {
+                min: None,
+                max: None,
+            }
+        }
+    }
+}
+
+/// Exact inputs and output of RHCOMMAND_MOVE's unauthorized-actor extraction.
+/// This correction runs before ordinary PerformMotion and therefore needs its
+/// own record rather than appearing as a movement step.
+#[derive(Clone, Debug, Serialize)]
+pub struct ParityMoveBoxExtraction {
+    pub entity: EntityId,
+    pub layer: u16,
+    pub sector: Option<u16>,
+    pub pathfinder_area: u16,
+    pub original_box: ParityBox,
+    pub expanded_box: ParityBox,
+    pub expanded_motion_lines: Vec<u32>,
+    pub authorized: bool,
+    pub authorized_box: ParityBox,
+    pub authorized_motion_lines: Vec<u32>,
+    pub authorized_center: Option<ParityPoint>,
+    pub corrected_position: Option<ParityPoint>,
+}
+
 /// Exact inputs and result of one distance-producing `PerformMotion` commit.
 #[derive(Clone, Debug, Serialize)]
 pub struct ParityMovementStep {
@@ -86,6 +128,19 @@ pub struct ParityMovementStep {
 /// Start capturing movement commits on the current thread.
 pub fn begin_parity_movement_capture() {
     CAPTURE.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
+    MOVE_BOX_EXTRACTIONS.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
+}
+
+pub fn parity_movement_capture_active() -> bool {
+    CAPTURE.with(|capture| capture.borrow().is_some())
+}
+
+pub fn record_parity_move_box_extraction(extraction: ParityMoveBoxExtraction) {
+    MOVE_BOX_EXTRACTIONS.with(|capture| {
+        if let Some(extractions) = capture.borrow_mut().as_mut() {
+            extractions.push(extraction);
+        }
+    });
 }
 
 /// Record one movement commit when parity capture is active.
@@ -100,4 +155,8 @@ pub fn record_parity_movement_step(step: ParityMovementStep) {
 /// Finish and return the current thread's movement capture.
 pub fn take_parity_movement_capture() -> Vec<ParityMovementStep> {
     CAPTURE.with(|capture| capture.borrow_mut().take().unwrap_or_default())
+}
+
+pub fn take_parity_move_box_extractions() -> Vec<ParityMoveBoxExtraction> {
+    MOVE_BOX_EXTRACTIONS.with(|capture| capture.borrow_mut().take().unwrap_or_default())
 }
