@@ -627,6 +627,16 @@ fn stationary_motion_waits(speed: f32, tolerance_arrival: bool, distance: f32) -
     speed <= 0.0 && !tolerance_arrival && distance > f32::EPSILON
 }
 
+#[inline]
+fn motion_recomputes_exact_position(
+    is_transition: bool,
+    has_map_target: bool,
+    speed: f32,
+    distance: f32,
+) -> bool {
+    is_transition && has_map_target && speed > 0.0 && distance <= f32::EPSILON
+}
+
 /// Original only performs the exact zero-tolerance goal snap from the
 /// post-movement arrival branches. An order which starts at its goal is
 /// consumed without rewriting the actor's coordinates.
@@ -7384,6 +7394,12 @@ impl EngineInner {
                 // the stored vector when the new vector is zero.
                 let transition_has_distance =
                     transition_has_map_target && speed > 0.0 && dist > f32::EPSILON;
+                let transition_recomputes_exact_position = motion_recomputes_exact_position(
+                    is_transition_anim,
+                    transition_has_map_target,
+                    speed,
+                    dist,
+                );
                 let transition_crossing_start = transition_has_distance.then(|| {
                     let old_pos = entity.element_data().position_map();
                     let layer = entity.element_data().layer();
@@ -7494,6 +7510,20 @@ impl EngineInner {
                         elem.sprite.position_iface.reset_increment_computed();
                         elem.sprite.position_iface.compute_increment_all(true);
                     }
+                    elem.update_grid_cell();
+                } else if transition_recomputes_exact_position {
+                    // PerformMotion gates its position update on animation
+                    // distance, not on the length of the normalized map
+                    // increment. With an exact-position transition target a
+                    // nonzero sprite-frame distance therefore still reaches
+                    // UpdatePositionAntiCollision/ComputePositionAll with a
+                    // zero increment. Recompute the same map point so the
+                    // terrain-plane rounding and IsMoving 3D latch match that
+                    // call instead of leaving the save-loaded elevation
+                    // untouched.
+                    let position = entity.element_data().position_map();
+                    let elem = entity.element_data_mut();
+                    elem.set_position_map(position);
                     elem.update_grid_cell();
                 }
                 // TILL_LAST_FRAME still performs the ordinary arrival check
@@ -11719,6 +11749,19 @@ mod line_jump_tests {
         assert!(
             !stationary_motion_waits(0.0, true, 1.0),
             "a pre-motion seek-tolerance arrival must complete without displacement"
+        );
+    }
+
+    #[test]
+    fn only_nonzero_distance_transition_frames_recompute_an_exact_position() {
+        assert!(motion_recomputes_exact_position(true, true, 2.0, 0.0));
+        assert!(
+            !motion_recomputes_exact_position(false, true, 2.0, 0.0),
+            "an ordinary exact-goal move takes the arrival path and must preserve its coordinates"
+        );
+        assert!(
+            !motion_recomputes_exact_position(true, true, 0.0, 0.0),
+            "a zero-distance transition frame never enters Original's position-update block"
         );
     }
 
