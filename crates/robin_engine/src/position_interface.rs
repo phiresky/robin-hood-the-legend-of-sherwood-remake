@@ -1523,6 +1523,10 @@ impl PositionInterface {
             let map = self.position_map;
             let goal = self.goal_map;
             let v = goal - map;
+            // Original stores the subtraction before checking whether it is
+            // zero. This clears a stale map direction at an exact-position
+            // goal while intentionally leaving the 3D increment untouched.
+            self.increment_map = v;
 
             very_small = v.x.abs().max(v.y.abs()) < 1.0;
 
@@ -2312,6 +2316,21 @@ mod tests {
         let increment = pi.get_increment_map();
         assert_eq!(increment.x.to_bits(), 0x3f3dc409);
         assert_eq!(increment.y.to_bits(), 0xbf2bd408);
+    }
+
+    #[test]
+    fn zero_goal_overwrites_map_increment_but_preserves_3d_increment() {
+        let mut pi = PositionInterface::new();
+        pi.set_map_position(MapPoint::new(50.0, 75.0));
+        pi.increment_map = MapVec::new(-0.4, -0.9);
+        pi.increment = WorldVec3D::new(0.25, 0.5, 0.75);
+        pi.computed_increment = IncrementComputed::NONE;
+        pi.set_map_goal(MapPoint::new(50.0, 75.0));
+
+        pi.compute_increment_all(false);
+
+        assert_eq!(pi.get_increment_map(), MapVec::ZERO);
+        assert_eq!(pi.get_increment(), WorldVec3D::new(0.25, 0.5, 0.75));
     }
 
     #[test]
