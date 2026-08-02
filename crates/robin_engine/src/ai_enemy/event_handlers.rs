@@ -2278,7 +2278,9 @@ impl EnemyAi {
         self.set_state(AiState::Seeking, Substate::SeekingBodyReactiontime);
 
         // Turn to look at the body.
-        self.base.face_position(body_pos);
+        // Original uses `Face(RHposition)`: preserve its 3D projection and
+        // its same-direction Waiting/Bored short-circuit.
+        self.base.face_position_3d_with_ctx(body_pos, ctx);
         self.base.set_emoticon(EmoticonType::QuestionMark);
 
         // Post-SetState charly check fires the unalert cascade for
