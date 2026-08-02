@@ -1488,7 +1488,7 @@ impl EnemyAi {
                             self.base.seek_position,
                             radius,
                             SeekFlags::LOCATION_FIRST | SeekFlags::WALKING,
-                            0,
+                            UNDEFINED_DIRECTION,
                             global,
                             ctx,
                             tick,
