@@ -5477,17 +5477,15 @@ impl EngineInner {
             );
         }
 
-        for pc_id in sides.beggar_wait_handoffs {
-            // RHElementActorPC::Execute calls Wait() before the select-action
-            // message and coin/AI side effects in both beggar transition DONE
-            // arms. A fresh priority-Wait must therefore arbitrate while the
-            // transition element is still live; ensure_wait_element would
-            // incorrectly suppress it because that helper is only for the
-            // next-frame null-order fallback.
-            self.actor_wait(pc_id);
-        }
-
         for (pc_id, enabled) in sides.beggar_coin_flags {
+            // TODO(parity): Original also calls the PC's explicit Wait() on
+            // this DONE edge. Its actor slot runs after SequenceManager's
+            // Hourglass, so releasing that postponed Wait cannot Instruct it
+            // until the next frame. Rust currently runs its manager phase
+            // later and would consume the released Wait in this frame,
+            // publishing SIMULATING_BEGGAR one frame early. Restore the
+            // source-level Wait once manager registrations carry their
+            // Original phase generation.
             super::beggar::set_flags_of_near_coins_on_ground(
                 &mut self.world.entities,
                 pc_id,
