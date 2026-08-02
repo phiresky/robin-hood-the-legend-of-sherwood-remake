@@ -1359,6 +1359,8 @@ struct TraceEngineState {
     chorus_timer: u16,
     force_check: bool,
     men_to_blazon_conversion: bool,
+    #[serde(default)]
+    game_ui: Option<TraceJsonValue>,
     pc_registry: TraceJsonValue,
     lock_engine: bool,
     freeze_all: bool,
@@ -1454,7 +1456,7 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 47;
+const TRACE_CACHE_VERSION: u32 = 48;
 const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v45.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
@@ -5205,6 +5207,15 @@ fn compare_engine_state(
     field!(quit_lost);
     field!(quit_interrupted);
     field!(script_globals);
+
+    if let Some(expected_game_ui) = &expected.game_ui {
+        collect_json_differences(
+            "frame.engine_state.game_ui",
+            &expected_game_ui.to_json(),
+            &engine.parity_game_ui_state(),
+            differences,
+        );
+    }
 
     let mut expected_pc_registry = expected.pc_registry.to_json();
     canonicalize_authoritative_snapshot(&mut expected_pc_registry, entity_map);

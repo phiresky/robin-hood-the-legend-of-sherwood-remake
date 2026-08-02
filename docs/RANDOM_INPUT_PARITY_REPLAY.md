@@ -3050,6 +3050,17 @@ invalid length. Rust-only derived render/cache fields are intentionally not
 included. Older traces omit only `pc_core`; the native cache version and
 suffix are v47.
 
+### Schema-v48 serialized game UI/controller state
+
+Schema v48 adds the seven remaining `RHGame::Serialize` latches to an
+additive `engine_state.game_ui` object: campaign-map ownership and display,
+post-initialization, temporary start/quit disabling, and persistent start/quit
+enablement. These are mission/controller state even though host widgets mirror
+some of them. Rust already retains and mutates the exact values in
+`MissionUiState`, including Linux-save adoption; the projection makes later
+runtime changes frame-strict. Older traces omit only `game_ui`; the native
+cache version and suffix are v48.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,

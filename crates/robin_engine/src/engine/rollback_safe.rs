@@ -1292,6 +1292,22 @@ impl Engine {
         }
     }
 
+    /// Exact serialized `RHGame` mission/controller latches. Host widgets
+    /// mirror these values but do not own their authoritative state.
+    #[doc(hidden)]
+    pub fn parity_game_ui_state(&self) -> serde_json::Value {
+        let ui = &self.inner.script_domains.mission_ui;
+        serde_json::json!({
+            "campaign_map": ui.campaign_map,
+            "campaign_map_displayed": ui.campaign_map_displayed,
+            "post_initialized": ui.game_post_initialized,
+            "start_mission_disabled_temp": ui.start_mission_disabled_temp,
+            "quit_mission_disabled_temp": ui.quit_mission_disabled_temp,
+            "start_mission_enabled": ui.start_mission_enabled,
+            "quit_mission_enabled": ui.quit_mission_enabled,
+        })
+    }
+
     /// Canonical manager-insertion-ordered sequence state for schema-13
     /// Original parity. Runtime allocation IDs are deliberately replaced by
     /// `(sequence ordinal, element index)` references.
@@ -3566,6 +3582,32 @@ mod tests {
         assert_eq!(state.chorus_timer, 23);
         assert!(state.force_check);
         assert!(state.men_to_blazon_conversion);
+    }
+
+    #[test]
+    fn parity_game_ui_state_preserves_serialized_latches() {
+        let mut inner = EngineInner::new();
+        let ui = &mut inner.script_domains.mission_ui;
+        ui.campaign_map = true;
+        ui.campaign_map_displayed = true;
+        ui.game_post_initialized = true;
+        ui.start_mission_disabled_temp = true;
+        ui.quit_mission_disabled_temp = false;
+        ui.start_mission_enabled = true;
+        ui.quit_mission_enabled = false;
+
+        assert_eq!(
+            Engine { inner }.parity_game_ui_state(),
+            serde_json::json!({
+                "campaign_map": true,
+                "campaign_map_displayed": true,
+                "post_initialized": true,
+                "start_mission_disabled_temp": true,
+                "quit_mission_disabled_temp": false,
+                "start_mission_enabled": true,
+                "quit_mission_enabled": false,
+            })
+        );
     }
 
     #[test]
