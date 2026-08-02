@@ -1441,14 +1441,19 @@ impl EnemyAi {
                                 .camp_soldiers
                                 .iter()
                                 .find(|cs| {
+                                    // Preserve the C++ predicate order: it
+                                    // performs the authoritative LOS query
+                                    // before script-lock and seek-position
+                                    // rejection, so the query's synchronous
+                                    // cache side effect still occurs.
                                     cs.rank == ProfileRank::Officer
                                         && cs.is_able_to_fight
+                                        && self
+                                            .is_detecting_360_degrees(cs.handle as HumanHandle, ctx)
                                         && !cs.script_locked
                                         && cs.seek_position.x == my_seek.x
                                         && cs.seek_position.y == my_seek.y
                                         && cs.seek_position.level == my_seek.level
-                                        && self
-                                            .is_detecting_360_degrees(cs.handle as HumanHandle, ctx)
                                 })
                                 .map(|cs| cs.handle);
                         }
