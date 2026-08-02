@@ -4802,6 +4802,22 @@ fn canonicalize_authoritative_snapshot(value: &mut serde_json::Value, entity_map
     }
 }
 
+/// Preserve additive schema-13 coverage for older raw recordings. Fields that
+/// do not exist in the recording are omitted from the actual projection too;
+/// whenever a field is present, comparison remains strict. No expected state
+/// is fabricated for frontiers that cannot be reconstructed from old frames.
+fn retain_recorded_lift_coverage(
+    expected: &serde_json::Value,
+    actual: &mut serde_json::Value,
+) {
+    let (Some(expected), Some(actual)) = (expected.as_object(), actual.as_object_mut()) else {
+        return;
+    };
+    if !expected.contains_key("lifts") {
+        actual.remove("lifts");
+    }
+}
+
 fn compare_engine_state(
     differences: &mut Vec<String>,
     expected: &TraceEngineState,
@@ -4920,7 +4936,11 @@ fn compare_engine_state(
 
     let mut expected_world_interactables = expected.world_interactables.to_json();
     canonicalize_authoritative_snapshot(&mut expected_world_interactables, entity_map);
-    let actual_world_interactables = engine.parity_world_interactables_state();
+    let mut actual_world_interactables = engine.parity_world_interactables_state();
+    retain_recorded_lift_coverage(
+        &expected_world_interactables,
+        &mut actual_world_interactables,
+    );
     collect_json_differences(
         "frame.engine_state.world_interactables",
         &expected_world_interactables,

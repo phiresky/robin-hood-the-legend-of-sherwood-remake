@@ -2427,8 +2427,11 @@ projected as default state for an authored lift with no materialized entry,
 matching Original's constructor state without weakening the comparison.
 
 Adding `engine_state.world_interactables.lifts` changes the native parity cache
-to version 25. Older schema-13 frames are rejected rather than compared without
-the lift traversal frontier.
+to version 25, so native caches are rebuilt from their raw recordings. Raw
+schema-13 recordings made before this additive field remain usable: the
+comparator omits only the absent lift projection and keeps all previously
+recorded world-interactable coverage strict. New recordings compare the full
+lift traversal frontier. No lift state is guessed or fabricated for old frames.
 
 ### Sequence-manager and script-VM boundary state
 
