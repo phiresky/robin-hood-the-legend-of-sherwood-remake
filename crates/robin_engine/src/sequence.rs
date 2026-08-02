@@ -1846,6 +1846,10 @@ impl Default for Sequence {
 /// The caller (SequenceManager) must process these effects.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct StateChangeEffects {
+    /// Loaded movement element's exact `mpsqeLinkedSeekSequenceElement`.
+    /// Original interrupts this target with `CASCADE_FOLLOWING` before the
+    /// movement element's base-class Interrupted handling.
+    pub interrupt_linked_seek: Option<SequenceElementRef>,
     /// Elements whose state should also be changed (cascade).
     pub cascade: Vec<(usize, SequenceState, CascadeFlags)>,
     /// Whether `Sequence::element_ready()` should be called.
@@ -1891,6 +1895,7 @@ impl Sequence {
         flags: CascadeFlags,
     ) -> StateChangeEffects {
         let mut effects = StateChangeEffects {
+            interrupt_linked_seek: None,
             cascade: Vec::new(),
             signal_ready: false,
             start_postponed: None,
@@ -1961,6 +1966,7 @@ impl Sequence {
                         was_selected: false,
                         from_halt: false,
                         postponed_successor_pending: false,
+                        cancel_path_request_owner: None,
                     });
                 }
                 // Cascade
@@ -1968,6 +1974,28 @@ impl Sequence {
             }
 
             SequenceState::Interrupted => {
+                let mut cancel_path_request_owner = None;
+                if self.elements[elem_idx].data.is_movement() {
+                    // RHSequenceElementMovement::MaybeCancelPathRequest runs
+                    // before the base-class Interrupted transition. The
+                    // engine consumes this marker before dispatching the
+                    // resulting condolence card.
+                    if self.elements[elem_idx].command == Command::MoveWaiting {
+                        self.elements[elem_idx].command = Command::Move;
+                        cancel_path_request_owner =
+                            Some(self.elements[elem_idx].owner.unwrap_or_else(|| {
+                                panic!(
+                                    "MoveWaiting element {:?}/{elem_idx} has no actor owner",
+                                    self.id
+                                )
+                            }));
+                    }
+                    effects.interrupt_linked_seek = self.elements[elem_idx]
+                        .legacy_v48
+                        .as_ref()
+                        .and_then(|legacy| legacy.linked_seek)
+                        .flatten();
+                }
                 // Original SetState(RHSEQ_INTERRUPTED) deliberately does not
                 // call StartPostponedSequenceElement. Instruct arbitration
                 // transfers the postponed pointer to the replacement before
@@ -1987,6 +2015,7 @@ impl Sequence {
                         was_selected: false,
                         from_halt: false,
                         postponed_successor_pending: false,
+                        cancel_path_request_owner,
                     });
                 }
                 // Cascade
@@ -2008,6 +2037,7 @@ impl Sequence {
                                 was_selected: false,
                                 from_halt: false,
                                 postponed_successor_pending: false,
+                                cancel_path_request_owner: None,
                             });
                         }
                         // Tell the sequence this element is done
@@ -2517,6 +2547,12 @@ pub struct PendingCondolation {
     /// this card.  Such a successor makes `IsLastRealAction` false while
     /// `SendCondolationCard` is running.
     pub postponed_successor_pending: bool,
+    /// Movement override ran `MaybeCancelPathRequest` for a
+    /// `MOVE_WAITING` element. The engine removes this owner's pending and
+    /// failed requests immediately before this card's callback. This can
+    /// differ from `owner` when a movement interrupts its linked Seek first.
+    #[serde(default)]
+    pub cancel_path_request_owner: Option<EntityId>,
 }
 
 /// A condolence card plus the portion of `SetState` that the original
@@ -3996,6 +4032,55 @@ impl SequenceManager {
 
     /// Process effects from a state change.
     fn process_effects(&mut self, seq_id: SequenceId, mut effects: StateChangeEffects) {
+        // RHSequenceElementMovement's override interrupts its exact linked
+        // Seek before delegating to the base element's Interrupted handling.
+        // Process the cross-sequence target before bookkeeping or queuing the
+        // movement element's own condolence card to preserve callback order.
+        if let Some(linked) = effects.interrupt_linked_seek.take() {
+            let cancel_before_linked_callback = effects
+                .condolation
+                .as_mut()
+                .and_then(|card| card.cancel_path_request_owner.take());
+            let linked_element = self
+                .get_element(linked.sequence_id, linked.element_index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "loaded movement linked Seek references missing element {:?}/{}",
+                        linked.sequence_id, linked.element_index
+                    )
+                });
+            assert!(
+                linked_element.data.is_movement(),
+                "loaded movement linked Seek target {:?}/{} is not a movement element",
+                linked.sequence_id,
+                linked.element_index
+            );
+            let mut linked_effects = self
+                .sequences
+                .get_mut(&linked.sequence_id)
+                .expect("linked Seek sequence disappeared")
+                .set_element_state(
+                    linked.element_index,
+                    SequenceState::Interrupted,
+                    CascadeFlags::FOLLOWING,
+                );
+            if let Some(cancel_owner) = cancel_before_linked_callback {
+                if let Some(linked_card) = linked_effects.condolation.as_mut() {
+                    assert!(
+                        linked_card.cancel_path_request_owner.is_none()
+                            || linked_card.cancel_path_request_owner == Some(cancel_owner),
+                        "linked movement cancellation crosses actors"
+                    );
+                    linked_card.cancel_path_request_owner = Some(cancel_owner);
+                } else if let Some(card) = effects.condolation.as_mut() {
+                    // An already-terminal linked target has no callback. Keep
+                    // cancellation on the source movement's own card.
+                    card.cancel_path_request_owner = Some(cancel_owner);
+                }
+            }
+            self.process_effects(linked.sequence_id, linked_effects);
+        }
+
         if let Some(card) = effects.condolation.as_mut() {
             card.was_selected = self.current_element_for_actor(card.owner)
                 == Some((card.seq_id, usize::from(card.elem_idx)));
@@ -6906,6 +6991,44 @@ mod tests {
             mgr.get_element(sequence_id, 2).unwrap().state,
             SequenceState::Interrupted
         );
+    }
+
+    #[test]
+    fn loaded_movement_interruption_reaches_cross_sequence_linked_seek() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(1));
+        let mut mgr = SequenceManager::new();
+
+        let mut linked = Sequence::new();
+        linked.append_element(movement_elem(owner, OrderType::WalkingUpright));
+        let linked_id = mgr.launch_sequence(linked);
+
+        let mut movement = movement_elem(owner, OrderType::WalkingUpright);
+        movement.command = Command::MoveWaiting;
+        let movement_id = mgr.launch_element(movement);
+        mgr.get_element_mut(movement_id, 0).unwrap().legacy_v48 =
+            Some(LegacyV48SequenceElementState {
+                linked_seek: Some(Some(SequenceElementRef::new(linked_id, 0))),
+                ..loaded_v48_state(None)
+            });
+
+        mgr.element_interrupted(movement_id, 0, CascadeFlags::NEXT_LEVEL);
+
+        assert_eq!(
+            mgr.get_element(movement_id, 0).unwrap().command,
+            Command::Move,
+            "MaybeCancelPathRequest restores MOVE_WAITING to MOVE"
+        );
+        assert_eq!(
+            mgr.get_element(linked_id, 0).unwrap().state,
+            SequenceState::Interrupted,
+            "movement override interrupts its exact loaded linked Seek"
+        );
+        let cards = mgr.drain_pending_condolations();
+        assert_eq!(cards.len(), 2);
+        assert_eq!(cards[0].card.seq_id, linked_id);
+        assert_eq!(cards[1].card.seq_id, movement_id);
+        assert_eq!(cards[0].card.cancel_path_request_owner, Some(owner));
+        assert_eq!(cards[1].card.cancel_path_request_owner, None);
     }
 
     #[test]

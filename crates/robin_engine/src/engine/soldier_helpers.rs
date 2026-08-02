@@ -516,7 +516,22 @@ impl EngineInner {
             was_selected,
             from_halt,
             postponed_successor_pending,
+            cancel_path_request_owner,
         } = card;
+
+        if let Some(path_owner) = cancel_path_request_owner {
+            // RHSequenceElementMovement::MaybeCancelPathRequest runs before
+            // the base-class SendCondolationCard call. Keep cancellation at
+            // that same callback boundary so no linked-Seek or owner Think
+            // callback can observe the stale request.
+            self.world.pathfinder.cancel_requests_for(path_owner);
+            self.orders
+                .pending_path_requests
+                .cancel_for_owner(path_owner);
+            self.orders
+                .failed_path_requests
+                .retain(|request| request.owner != path_owner);
+        }
 
         // Snapshot the owner's posture for the `is_very_very_busy` check
         // below without holding a mutable borrow on `self.world.entities` — so
