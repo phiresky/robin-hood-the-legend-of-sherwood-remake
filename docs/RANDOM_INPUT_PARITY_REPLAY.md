@@ -2114,6 +2114,11 @@ position lies within the viewer's raw-map bounding box. The box uses half
 extents `(real_radius, real_radius * ASPECT_RATIO)` and includes its boundary.
 Enemy, human non-enemy, and Object scans now share this source-order gate; a
 focused regression covers all three entry alternatives and both box axes.
+The outer gate's building alternative uses Original `IsInsideBuilding`, which
+includes an active door pointer as well as a building sector. This remains
+separate from the later per-type `GetBuilding` checks, which are sector-only;
+door transit may enter the scan without being treated as already indoors by
+`ComputeVisibility`.
 
 ### Sequence-manager and script-VM boundary state
 

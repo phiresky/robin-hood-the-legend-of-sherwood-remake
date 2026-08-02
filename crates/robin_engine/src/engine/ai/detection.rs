@@ -3132,7 +3132,7 @@ impl EngineInner {
         use crate::ai::AiState;
 
         // -- Read NPC view-state in a scoped read borrow --
-        let viewer = {
+        let (viewer, viewer_inside_building) = {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
@@ -3150,7 +3150,10 @@ impl EngineInner {
             if viewer.camp != Camp::Lacklandists {
                 return;
             }
-            viewer
+            (
+                viewer,
+                self.entity_data_inside_building(entity.element_data()),
+            )
         };
         let eye = viewer.eye;
         let eye_z = viewer.eye_z;
@@ -3239,6 +3242,7 @@ impl EngineInner {
             |_t| true,
             ViewContext {
                 position_map: viewer.position_map,
+                viewer_inside_building,
                 eye,
                 eye_z,
                 ground_z,
@@ -3277,6 +3281,7 @@ impl EngineInner {
             object_targets,
             ViewContext {
                 position_map: viewer.position_map,
+                viewer_inside_building,
                 eye,
                 eye_z,
                 ground_z,
@@ -3323,6 +3328,7 @@ impl EngineInner {
             |t| t.able_to_help,
             ViewContext {
                 position_map: viewer.position_map,
+                viewer_inside_building,
                 eye,
                 eye_z,
                 ground_z,
@@ -3366,6 +3372,7 @@ impl EngineInner {
             |t| !t.unconscious,
             ViewContext {
                 position_map: viewer.position_map,
+                viewer_inside_building,
                 eye,
                 eye_z,
                 ground_z,
@@ -3422,6 +3429,7 @@ impl EngineInner {
             |t| !t.unconscious,
             ViewContext {
                 position_map: viewer.position_map,
+                viewer_inside_building,
                 eye,
                 eye_z,
                 ground_z,
@@ -3516,7 +3524,7 @@ impl EngineInner {
             };
             if !refresh_detection_scans_target(
                 det.last_visibility,
-                ctx.viewer_in_building,
+                ctx.viewer_inside_building,
                 ctx.position_map,
                 ctx.view_radius,
                 target.position,
@@ -3817,7 +3825,7 @@ impl EngineInner {
             };
             if !refresh_detection_scans_target(
                 det.last_visibility,
-                ctx.viewer_in_building,
+                ctx.viewer_inside_building,
                 ctx.position_map,
                 ctx.view_radius,
                 object.position,
@@ -3963,6 +3971,9 @@ impl OwnerViewRadiusCache {
 /// pass; nothing here mutates.
 struct ViewContext<'a> {
     position_map: MapPoint,
+    /// Original `IsInsideBuilding`: building sector or active door transit.
+    /// Used only by RefreshDetection's outer scan-entry alternative.
+    viewer_inside_building: bool,
     eye: MapPoint,
     eye_z: f32,
     ground_z: f32,
