@@ -3828,6 +3828,7 @@ impl EngineInner {
             door_pass_crenel_transition_dir,
             validated_antagonist,
             waiting_sword_direction_goal,
+            extracting_arrow_sword_direction_goal,
             pc_taking_direction_goal,
             pc_target_direction_goal,
         ) = {
@@ -4103,6 +4104,36 @@ impl EngineInner {
                 }
             });
 
+            // RHElementActorHuman::Execute(EXTRACTING_ARROW_SWORD) only
+            // refreshes the goal on the order's initialization tick, then
+            // calls Turn() on every tick while the actor remains in a
+            // swordfight.  The arrow impact may have just snapped the body
+            // toward the projectile, so retaining that direction as the goal
+            // makes the extraction animation face away from the live duel.
+            let extracting_arrow_sword_direction = if actor.execute_order_initialising
+                && anim_type == OrderType::ExtractingArrowSword
+                && is_swordfighting
+            {
+                let opponent_id = entity
+                    .human_data()
+                    .and_then(|human| human.opponents.first().copied())
+                    .expect("swordfighting arrow-damage actor has no principal opponent");
+                let opponent = self.world.entities.get(opponent_id).unwrap_or_else(|| {
+                    panic!(
+                        "actor {entity_id:?} extracting-arrow opponent {opponent_id:?} is missing at legacy slot {}",
+                        entity_id.index()
+                    )
+                });
+                let from = entity.element_data().position();
+                let to = opponent.element_data().position();
+                Some(crate::position_interface::vector_to_sector_0_to_15_iso(
+                    to.x - from.x,
+                    to.y - from.y,
+                ))
+            } else {
+                None
+            };
+
             // RHElementActorPC::Execute initializes TAKING from the live
             // owner/object map positions immediately before its per-tick
             // Turn(). Do not rely on a preceding Seek having left a suitable
@@ -4169,6 +4200,7 @@ impl EngineInner {
                 door_direction,
                 validated_antagonist,
                 waiting_sword_direction,
+                extracting_arrow_sword_direction,
                 taking_direction,
                 target_direction,
             )
@@ -4496,6 +4528,9 @@ impl EngineInner {
                     let owner_is_pc = entity.is_pc();
                     let order_is_initialising = actor.execute_order_initialising;
                     if let Some(direction) = waiting_sword_direction_goal {
+                        entity.element_data_mut().set_direction_goal(direction);
+                    }
+                    if let Some(direction) = extracting_arrow_sword_direction_goal {
                         entity.element_data_mut().set_direction_goal(direction);
                     }
                     if let Some(direction) = pc_taking_direction_goal {
