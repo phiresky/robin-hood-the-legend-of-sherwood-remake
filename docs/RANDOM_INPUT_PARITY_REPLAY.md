@@ -2244,6 +2244,29 @@ excluded because resolved commands are the replay input boundary.
 Adding `engine_state.engine_runtime_roots` changes the native parity cache to
 version 18. The field is required for every schema-13 frame.
 
+### Persistent world-interactable state
+
+Schema 13 records dynamic patches and gates in their canonical mission-table
+order. Each patch contributes its active, locked, applied, and in-transition
+flags plus the ordered occupant list; occupants are canonical entity
+references. Each gate slot contributes its kind and active flag, while door
+slots additionally preserve the three lock categories, unlockability, special
+PC authorization mode, and both authorization masks. Door-sector active flags
+are recorded in canonical sector order with sector identities mapped through
+the existing topology isomorphism.
+
+These fields control later path authorization, patch triggering, obstacle and
+line swaps, actor entry/leave decisions, and script-visible door behavior.
+Static door points, patch polygons, linked geometry, configured after-patch
+rights, and other mission-authored data are reconstructed from identical level
+content. Original's serialized `display_doors` patch bit is intentionally not
+part of the authoritative projection: it is a local selection/highlight cache,
+and resolved commands are the replay input boundary.
+
+Adding `engine_state.world_interactables` changes the native parity cache to
+version 19. Older schema-13 frames are rejected rather than compared without
+patch and door coverage.
+
 ### Sequence-manager and script-VM boundary state
 
 Schema 13 now records the sequence manager's insertion-ordered sequences,

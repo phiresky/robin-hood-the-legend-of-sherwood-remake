@@ -845,6 +845,87 @@ impl Engine {
         })
     }
 
+    /// Mutable patch, gate, and door-sector state in canonical mission-table
+    /// order. Static geometry and patch configuration come from level data and
+    /// are deliberately not duplicated.
+    #[doc(hidden)]
+    pub fn parity_world_interactables_state(&self) -> serde_json::Value {
+        use serde_json::{Value, json};
+
+        let entity = |id: EntityId| {
+            let kind = match id.kind() {
+                crate::element::EntityIdKind::Pc => "pc",
+                crate::element::EntityIdKind::Soldier => "soldier",
+                crate::element::EntityIdKind::Civilian => "civilian",
+                crate::element::EntityIdKind::Fx => "fx",
+                crate::element::EntityIdKind::Target => "target",
+                crate::element::EntityIdKind::Bonus => "bonus",
+                crate::element::EntityIdKind::Scroll => "scroll",
+                crate::element::EntityIdKind::Projectile => "projectile",
+                crate::element::EntityIdKind::Net => "net",
+            };
+            json!({ "kind": kind, "index": id.index() })
+        };
+        let interactables = &self.inner.script_domains.interactables;
+        let patches = interactables
+            .patches
+            .iter()
+            .map(|patch| {
+                json!({
+                    "active": patch.active,
+                    "locked": patch.locked,
+                    "occupants": patch.occupants.iter().map(|occupant| {
+                        let id = self.inner.entity_id_for_index(occupant.0).unwrap_or_else(|| {
+                            panic!("parity patch occupant references missing entity {}", occupant.0)
+                        });
+                        entity(id)
+                    }).collect::<Vec<_>>(),
+                    "applied": patch.applied,
+                    "in_transition": patch.in_transition,
+                })
+            })
+            .collect::<Vec<_>>();
+        let doors = interactables
+            .doors
+            .iter()
+            .map(|door| match door.gate_type {
+                crate::gate::GateType::Door => json!({
+                    "kind": "door",
+                    "active": door.active,
+                    "locked_pc": door.locked_pc,
+                    "locked_npc_villain": door.locked_npc_villain,
+                    "locked_npc_civilian": door.locked_npc_civilian,
+                    "unlockable": door.unlockable,
+                    "special_authorisation_pc": door.special_authorisation_pc,
+                    "authorised_pc_direct": door.authorised_pc_direct,
+                    "authorised_pc_indirect": door.authorised_pc_indirect,
+                }),
+                crate::gate::GateType::Jump => json!({
+                    "kind": "jump", "active": door.active,
+                }),
+                crate::gate::GateType::None => json!({
+                    "kind": "gate", "active": door.active,
+                }),
+            })
+            .collect::<Vec<_>>();
+        let grid = &self.inner.world.fast_grid;
+        let sector_doors = grid
+            .level
+            .sectors
+            .iter()
+            .enumerate()
+            .filter(|(_, sector)| sector.sector_type.is_door())
+            .map(|(index, sector)| {
+                let active = *grid.sector_active.get(index).unwrap_or_else(|| {
+                    panic!("parity door sector {index} has no active-state slot")
+                });
+                json!({ "sector": sector.sector_number.get(), "active": active })
+            })
+            .collect::<Vec<_>>();
+
+        json!({ "patches": patches, "doors": doors, "sector_doors": sector_doors })
+    }
+
     /// Persistent mission-VM state at a quiescent frame boundary. VM native
     /// handles are decoded to their semantic table kind/index; raw process or
     /// Rust handle encodings never enter the trace.
@@ -2254,6 +2335,46 @@ mod tests {
             0
         );
         assert!(state["follow_element"].is_null());
+    }
+
+    #[test]
+    fn parity_world_interactables_preserves_dynamic_patch_and_door_fields() {
+        let mut inner = EngineInner::new();
+        let mut patch = crate::patch::Patch::default();
+        patch.active = true;
+        patch.locked = true;
+        patch.applied = true;
+        patch.in_transition = true;
+        inner.script_domains.interactables.patches.push(patch);
+        let mut door = crate::gate::Door::default();
+        door.active = false;
+        door.locked_pc = true;
+        door.locked_npc_villain = true;
+        door.unlockable = true;
+        door.special_authorisation_pc = true;
+        door.authorised_pc_direct = 0x12;
+        door.authorised_pc_indirect = 0x34;
+        inner.script_domains.interactables.doors.push(door);
+        let engine = Engine { inner };
+
+        let state = engine.parity_world_interactables_state();
+        assert_eq!(state["patches"][0]["active"], true);
+        assert_eq!(state["patches"][0]["locked"], true);
+        assert_eq!(state["patches"][0]["applied"], true);
+        assert_eq!(state["patches"][0]["in_transition"], true);
+        assert_eq!(
+            state["patches"][0]["occupants"].as_array().unwrap().len(),
+            0
+        );
+        assert_eq!(state["doors"][0]["kind"], "door");
+        assert_eq!(state["doors"][0]["active"], false);
+        assert_eq!(state["doors"][0]["locked_pc"], true);
+        assert_eq!(state["doors"][0]["locked_npc_villain"], true);
+        assert_eq!(state["doors"][0]["unlockable"], true);
+        assert_eq!(state["doors"][0]["special_authorisation_pc"], true);
+        assert_eq!(state["doors"][0]["authorised_pc_direct"], 0x12);
+        assert_eq!(state["doors"][0]["authorised_pc_indirect"], 0x34);
+        assert_eq!(state["sector_doors"].as_array().unwrap().len(), 0);
     }
 
     #[test]

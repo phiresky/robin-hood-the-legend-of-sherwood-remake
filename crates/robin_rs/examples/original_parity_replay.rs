@@ -1367,6 +1367,7 @@ struct TraceEngineState {
     sound_sources: TraceJsonValue,
     ai_global: TraceJsonValue,
     engine_runtime_roots: TraceJsonValue,
+    world_interactables: TraceJsonValue,
     failed_path_requests: Vec<TraceFailedPathRequest>,
 }
 
@@ -1438,8 +1439,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 18;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v18.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 19;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v19.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4880,6 +4881,16 @@ fn compare_engine_state(
         differences,
     );
 
+    let mut expected_world_interactables = expected.world_interactables.to_json();
+    canonicalize_authoritative_snapshot(&mut expected_world_interactables, entity_map);
+    let actual_world_interactables = engine.parity_world_interactables_state();
+    collect_json_differences(
+        "frame.engine_state.world_interactables",
+        &expected_world_interactables,
+        &actual_world_interactables,
+        differences,
+    );
+
     if expected.speed.bits != actual.speed.to_bits() {
         differences.push(format!(
             "frame.engine_state.speed: original={} (0x{:08x}) rust={} (0x{:08x})",
@@ -6166,6 +6177,11 @@ mod tests {
                 "user_locked": false,
                 "selection_before_user_lock": [],
                 "follow_element": null
+            },
+            "world_interactables": {
+                "patches": [],
+                "doors": [],
+                "sector_doors": []
             },
             "failed_path_requests": []
         });
