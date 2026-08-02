@@ -581,6 +581,61 @@ fn pc_noise_is_live_at_the_following_npc_slot_only() {
 }
 
 #[test]
+fn quiet_pc_noise_refresh_preserves_the_previous_hearing_box() {
+    use crate::order::OrderType;
+
+    let mut engine = EngineInner::new();
+    let pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let Entity::Pc(pc_entity) = engine.get_entity_mut(pc).expect("noise PC exists") else {
+        panic!("noise PC changed kind")
+    };
+    pc_entity.element.active = true;
+    pc_entity
+        .element
+        .set_position_map(MapPoint::new(100.0, 200.0));
+
+    // An unclassified animation reaches RefreshProducedNoise's common tail:
+    // volume zero and a +/-100 box around the current position.
+    engine.refresh_pc_produced_noise_for_with_order(pc, OrderType::Invalid);
+    let initial_box = engine
+        .get_entity(pc)
+        .and_then(Entity::actor_data)
+        .expect("noise PC remains an actor")
+        .hear_noise_box;
+    assert_eq!(
+        initial_box,
+        crate::coordinates::MapBBox::from_coords(0.0, 100.0, 200.0, 300.0)
+    );
+
+    // Original's breath arm updates the noise position and volume, then
+    // returns before rebuilding mboxHearMyNoiseBox. Preserve both halves of
+    // that deliberately inconsistent state after the PC moves.
+    let Entity::Pc(pc_entity) = engine.get_entity_mut(pc).unwrap() else {
+        unreachable!()
+    };
+    pc_entity
+        .element
+        .set_position_map(MapPoint::new(210.0, 220.0));
+    engine.refresh_pc_produced_noise_for_with_order(pc, OrderType::WaitingUpright);
+
+    let actor = engine
+        .get_entity(pc)
+        .and_then(Entity::actor_data)
+        .expect("noise PC remains an actor");
+    let noise = actor
+        .produced_noise
+        .expect("quiet refresh still publishes the current noise record");
+    assert_eq!(noise.volume, 15);
+    assert_eq!((noise.origin.x, noise.origin.y), (210.0, 220.0));
+    assert_eq!(actor.hear_noise_box, initial_box);
+    assert!(
+        !actor
+            .hear_noise_box
+            .contains_point(MapPoint::new(210.0, 220.0))
+    );
+}
+
+#[test]
 fn fused_owner_gates_keep_fried_frozen_and_inactive_original_boundaries() {
     use super::tick::{ActorOwnerEnvelopePhase as Phase, capture_actor_owner_envelope};
 

@@ -1074,16 +1074,15 @@ impl EngineInner {
                     None
                 } else {
                     let pc_volume = pc.noise_volume;
-                    // Hear-my-noise-box pre-filter: half-extents are
-                    // (volume + 100, volume*ASPECT_RATIO + 100) in raw
-                    // map coords. Outside this box original RefreshDetection
-                    // does not call UpdateHearing, so the latch is untouched.
+                    // Hear-my-noise-box pre-filter. Original stores this box
+                    // on the PC and does not rebuild it when
+                    // RefreshProducedNoise returns through its
+                    // inactive/building or quiet-animation arms. It can thus
+                    // intentionally disagree with the current noise origin
+                    // and volume; outside the stale box UpdateHearing is not
+                    // called and the edge latch remains untouched.
                     let noise = pc.produced_noise;
-                    let dx = noise.origin.x - position_map.x;
-                    let dy_raw = noise.origin.y - position_map.y;
-                    let half_x = pc_volume as f32 + 100.0;
-                    let half_y = pc_volume as f32 * crate::position_interface::ASPECT_RATIO + 100.0;
-                    if dx.abs() > half_x || dy_raw.abs() > half_y {
+                    if !pc.hear_noise_box.contains_point(position_map) {
                         None
                     } else {
                         // GetHearVolume uses the full 3D position. Its noise

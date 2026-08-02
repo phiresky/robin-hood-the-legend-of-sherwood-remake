@@ -113,6 +113,10 @@ pub(super) struct PcSnapshot {
     /// shadow-stage carry-over work (`pc_noise_volume` reads
     /// the stored prev-frame value from `actor.last_noise_volume`).
     pub(super) noise_volume: u16,
+    /// Persistent `mboxHearMyNoiseBox` sampled at this creation boundary.
+    /// It can intentionally lag behind `produced_noise`: several Original
+    /// `RefreshProducedNoise` arms return before rebuilding the box.
+    pub(super) hear_noise_box: crate::coordinates::MapBBox,
     /// Full owner-local noise record, including the position metadata from
     /// the PC's most recently visited Human Hourglass slot.
     pub(super) produced_noise: crate::ai::Noise,
@@ -575,6 +579,7 @@ impl EngineInner {
                 carried: is_carried,
                 passing_door: is_passing_door,
                 noise_volume,
+                hear_noise_box: pc.actor.hear_noise_box,
                 produced_noise,
                 sector_num: pc.element.sector().map(u16::from).unwrap_or(0),
                 ground_elevation: pc.element.sprite.position_iface.get_elevation() as u16,

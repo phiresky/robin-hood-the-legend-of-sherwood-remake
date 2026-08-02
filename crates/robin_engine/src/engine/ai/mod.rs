@@ -3846,24 +3846,25 @@ impl EngineInner {
     /// quiet, water = noisiest, light-shadow = silent).  The jump,
     /// sword-fight and breath volumes are material-independent.
     ///
-    /// Returns `0` when the PC is inside a building or inactive, or
-    /// when the animation doesn't map to any of the noise cases —
-    /// matching the `inside_building || !active` early-out.
+    /// Returns the volume and whether Original reaches the final
+    /// `mboxHearMyNoiseBox` rebuild. The inactive/building and breath arms
+    /// return early and deliberately preserve the previous box.
     fn pc_noise_volume(
         order_type: crate::order::OrderType,
         material: crate::element::GameMaterial,
         in_building: bool,
         active: bool,
         prev_volume: u16,
-    ) -> u16 {
+    ) -> (u16, bool) {
         use crate::element::GameMaterial as Material;
         use crate::order::OrderType as OT;
 
         // When the actor is inside a building or inactive, the volume
         // is forced to 0.  Hearing then becomes impossible because the
-        // hear-my-noise box collapses.
+        // current noise is silent, but Original returns before updating the
+        // persistent hear-my-noise box.
         if in_building || !active {
-            return 0;
+            return (0, false);
         }
 
         // Walk/run/drop volumes per material.
@@ -3913,7 +3914,7 @@ impl EngineInner {
             | OT::WaitingFreeLift
             | OT::Sitting
             | OT::TransitionWaitingUprightSitting
-            | OT::TransitionSittingWaitingUpright => BREATH,
+            | OT::TransitionSittingWaitingUpright => (BREATH, false),
 
             // ── WALK (material-dependent) ──
             OT::WalkingUpright
@@ -3946,7 +3947,7 @@ impl EngineInner {
             | OT::WalkingCrouched
             | OT::TransitionWalkingCrouchedWaitingCrouched
             | OT::TransitionWalkingUprightWalkingCrouched
-            | OT::TransitionWalkingCrouchedWalkingUpright => walk,
+            | OT::TransitionWalkingCrouchedWalkingUpright => (walk, true),
 
             // ── RUN (material-dependent) ──
             OT::RunningUpright
@@ -3959,13 +3960,13 @@ impl EngineInner {
             | OT::RunningStairs
             | OT::ClimbingLadderUpFast
             | OT::ClimbingLadderDownFast
-            | OT::RunningWithSword => run,
+            | OT::RunningWithSword => (run, true),
 
             // ── JUMP land transitions ──
-            OT::TransitionJumpingUpWaitingCrouched => JUMP_UP,
+            OT::TransitionJumpingUpWaitingCrouched => (JUMP_UP, true),
             OT::TransitionJumpingLongWaitingUpright
-            | OT::TransitionJumpingLongSwordWaitingSword => JUMP_LONG,
-            OT::TransitionJumpingDownWaitingCrouched => JUMP_DOWN,
+            | OT::TransitionJumpingLongSwordWaitingSword => (JUMP_LONG, true),
+            OT::TransitionJumpingDownWaitingCrouched => (JUMP_DOWN, true),
 
             // ── SWORDFIGHT ──
             OT::StrikingRightSmalltalk
@@ -3990,14 +3991,14 @@ impl EngineInner {
             | OT::TransitionParryingSwordWaitingSword
             | OT::ParryingLowSword
             | OT::Provoking
-            | OT::StrikingDownSword => SWORDFIGHT,
+            | OT::StrikingDownSword => (SWORDFIGHT, true),
 
             // ── DROP (material-dependent) ──
-            OT::Rolling | OT::TransitionCarryingCorpseWaitingUpright => drop,
+            OT::Rolling | OT::TransitionCarryingCorpseWaitingUpright => (drop, true),
 
             // Everything else (injuries, death, bow injuries, menacing,
             // beggar, climbing shoulders, drinking, etc.) — silent.
-            _ => 0,
+            _ => (0, true),
         }
     }
 
@@ -4066,7 +4067,8 @@ impl EngineInner {
                 noise,
             )
         };
-        let volume = Self::pc_noise_volume(order_type, material, in_building, active, previous);
+        let (volume, refresh_hear_box) =
+            Self::pc_noise_volume(order_type, material, in_building, active, previous);
         let Entity::Pc(pc) = self.world.entities.get_mut(pc_id).unwrap_or_else(|| {
             panic!(
                 "PC produced-noise owner {} disappeared before write-back",
@@ -4079,6 +4081,16 @@ impl EngineInner {
             );
         };
         pc.actor.last_noise_volume = volume;
+        if refresh_hear_box {
+            let half_x = volume as f32 + 100.0;
+            let half_y = volume as f32 * crate::position_interface::ASPECT_RATIO + 100.0;
+            pc.actor.hear_noise_box = crate::coordinates::MapBBox::from_coords(
+                noise.origin.x - half_x,
+                noise.origin.y - half_y,
+                noise.origin.x + half_x,
+                noise.origin.y + half_y,
+            );
+        }
         pc.actor.produced_noise = Some(crate::ai::Noise { volume, ..noise });
     }
 

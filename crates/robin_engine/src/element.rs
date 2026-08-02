@@ -36,7 +36,9 @@ use serde::{Deserialize, Serialize};
 use crate::ai::{AiController, AiState as AiTopState, Substate as AiSubstate};
 use crate::ai_enemy::EnemyAi;
 use crate::ai_friendly::FriendlyAi;
-use crate::coordinates::{GroundPoint, MapPoint, MapVec, SpriteTopLeft, WorldPoint3D, WorldVec3D};
+use crate::coordinates::{
+    GroundPoint, MapBBox, MapPoint, MapVec, SpriteTopLeft, WorldPoint3D, WorldVec3D,
+};
 use crate::fast_find_grid::GRID_CELL_SIZE;
 use crate::jump_line::JumpLineIndex;
 use crate::movement::{ActiveMovement, ActiveShot};
@@ -817,6 +819,14 @@ pub struct ActorData {
     /// `refresh_produced_noise`, where walks/runs on light-shadow keep
     /// the previous frame's volume.
     pub last_noise_volume: u16,
+    /// Persistent `RHElementActorHuman::mboxHearMyNoiseBox` state.
+    ///
+    /// Original `RefreshProducedNoise` updates the noise origin before its
+    /// animation switch, but its inactive/building and quiet-animation arms
+    /// return before rebuilding this box.  Hearing therefore deliberately
+    /// tests a stale box in those cases instead of deriving one from the
+    /// current volume and origin.
+    pub hear_noise_box: MapBBox,
     /// Complete produced-noise record from this PC's most recently visited
     /// Human Hourglass slot. NPCs earlier in creation order observe this
     /// prior record; later NPCs observe the freshly replaced record.
@@ -866,6 +876,7 @@ impl Default for ActorData {
             last_executed_rider_charge_order_id: None,
             shield_obstacle: None,
             last_noise_volume: 0,
+            hear_noise_box: MapBBox::new(),
             produced_noise: None,
         }
     }
