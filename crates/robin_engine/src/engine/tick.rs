@@ -5559,6 +5559,14 @@ impl EngineInner {
         // coin pickup, remarks, blood-alcohol bump).
         let sides = outcomes.execute_sides;
 
+        for pc_id in sides.pc_bow_equip_action {
+            // RHElementActorHuman::Execute forwards this synchronously from
+            // the TransitionEquipBow START arm after setting AimingWithBow.
+            // An unselected PC only restores its remembered action; a
+            // selected PC also restores the messenger-global action.
+            self.set_pc_action_from_message(assets, 0, pc_id, crate::profiles::Action::Bow);
+        }
+
         for _pc_id in sides.stature_change_end {
             self.orders.messenger.send(crate::messenger::Message::new(
                 crate::messenger::MessageType::Simple(

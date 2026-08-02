@@ -657,6 +657,21 @@ mod tests {
             entity.actor_data().unwrap().action_state,
             ActionState::AimingWithBow
         );
+        assert!(forwards_pc_bow_action_on_start(
+            &entity,
+            OrderType::TransitionEquipBow,
+            MotionState::Start,
+            false,
+        ));
+        assert!(
+            !forwards_pc_bow_action_on_start(
+                &entity,
+                OrderType::TransitionEquipBow,
+                MotionState::Start,
+                true,
+            ),
+            "script-driven bow equips must not select the player action"
+        );
     }
 
     #[test]
@@ -1663,6 +1678,26 @@ pub(super) struct ExecuteSideOutcomes {
     /// Original forwards the unparameterized stature-change notification
     /// from both terminal switch arms.
     pub stature_change_end: Vec<EntityId>,
+    /// Non-script PC bow-equip transitions that reached START. Original
+    /// forwards `MSG_SELECT_ACTION(BOW)` from the Human Execute arm after
+    /// entering the aiming state, restoring the PC's remembered action (and
+    /// the messenger action when that PC is selected).
+    pub pc_bow_equip_action: Vec<EntityId>,
+}
+
+fn forwards_pc_bow_action_on_start(
+    entity: &Entity,
+    anim_type: OrderType,
+    motion: MotionState,
+    script_driven: bool,
+) -> bool {
+    entity.is_pc()
+        && !script_driven
+        && motion == MotionState::Start
+        && matches!(
+            anim_type,
+            OrderType::TransitionEquipBow | OrderType::TransitionEquipBowAnonymous
+        )
 }
 
 /// Apply the soldier-specific side effects triggered on each motion-state
@@ -4305,6 +4340,12 @@ impl EngineInner {
                         .get_element(s, e)
                         .map(|el| el.command_level)
                 });
+                let current_element_script_driven = order_seq_elem.is_some_and(|(s, e)| {
+                    self.orders
+                        .sequence_manager
+                        .get_element(s, e)
+                        .is_some_and(|element| element.script_driven)
+                });
                 let turn_retains_movement_goal = order_seq_elem.is_some_and(|(s, e)| {
                     self.orders
                         .sequence_manager
@@ -4929,6 +4970,17 @@ impl EngineInner {
                             anim_type,
                             motion_state,
                         );
+                        if forwards_pc_bow_action_on_start(
+                            entity,
+                            anim_type,
+                            motion_state,
+                            current_element_script_driven,
+                        ) {
+                            completion_outcomes
+                                .execute_sides
+                                .pc_bow_equip_action
+                                .push(entity_id);
+                        }
                         if entity.is_pc() && motion_state == MotionState::Done {
                             match anim_type {
                                 OrderType::TransitionWaitingUprightSimulatingBeggar => {
