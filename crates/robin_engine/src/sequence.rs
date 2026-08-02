@@ -4743,7 +4743,7 @@ impl SequenceManager {
             let Some(element) = self.get_element(seq_id, elem_idx) else {
                 continue;
             };
-            if !Self::should_rewrite(element, entity) {
+            if element.owner != Some(entity) {
                 continue;
             }
 
@@ -4943,21 +4943,6 @@ impl SequenceManager {
             changed = true;
         }
         changed
-    }
-
-    /// Whether the given element is owned by `entity` and eligible for
-    /// a make_* rewrite (Todo / InProgress / Postponed, never terminal).
-    ///
-    /// Postponed elements waiting on a blocker need their
-    /// `action`/orders rewritten too; otherwise once the blocker
-    /// finishes and the postponed element resumes (state → `Todo`) it
-    /// executes with its original (un-rewritten) `OrderType`.
-    fn should_rewrite(elem: &SequenceElement, entity: EntityId) -> bool {
-        elem.owner == Some(entity)
-            && matches!(
-                elem.state,
-                SequenceState::Todo | SequenceState::InProgress | SequenceState::Postponed
-            )
     }
 
     /// Resolve "next element in chain" for
@@ -6463,6 +6448,32 @@ mod tests {
         };
         assert_eq!(*action, OrderType::WalkingUpright);
         assert!(!flags.contains(MoveFlags::FAST));
+    }
+
+    #[test]
+    fn make_fast_rewrites_a_terminal_same_owner_follower() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(0));
+        let mut mgr = SequenceManager::new();
+        let mut sequence = Sequence::new();
+        sequence.append_element(movement_elem(owner, OrderType::WalkingUpright));
+        let mut finished = movement_elem(owner, OrderType::WalkingUpright);
+        finished.state = SequenceState::Terminated;
+        finished.push_order(Order::test_new(OrderType::WalkingUpright, 0.0, 0.0));
+        sequence.append_element(finished);
+        let sequence_id = mgr.launch_sequence(sequence);
+        mgr.element_in_progress(sequence_id, 0);
+
+        mgr.make_fast(owner);
+
+        let follower = mgr
+            .get_element(sequence_id, 1)
+            .expect("terminal following element remains present");
+        let SequenceElementData::Movement { action, flags, .. } = &follower.data else {
+            panic!("movement variant");
+        };
+        assert_eq!(*action, OrderType::RunningUpright);
+        assert!(flags.contains(MoveFlags::FAST));
+        assert_eq!(follower.orders[0].order_type, OrderType::RunningUpright);
     }
 
     #[test]
