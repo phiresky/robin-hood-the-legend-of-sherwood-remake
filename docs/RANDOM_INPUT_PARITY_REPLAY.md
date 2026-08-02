@@ -3107,7 +3107,10 @@ an optional unselect-all followed by one select-add-with-echo per intersecting
 PC. This preserves controller-action clearing/restitution, Robin ordering,
 portrait state, and selection barks instead of mutating the Rust vector alone.
 These trace-decoder and selection changes advance the native cache version to
-v51.
+v51. Early schema-12 human objects likewise predate the additive `opponents`
+list; its absence is non-authoritative while recordings containing it remain
+strict. That final structural compatibility update advances the cache version
+to v52.
 
 ### Generic script RNG provenance
 

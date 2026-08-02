@@ -1185,7 +1185,8 @@ struct TraceHuman {
     original_camp: i32,
     vip: bool,
     civilian: bool,
-    opponents: Vec<TraceEntityId>,
+    #[serde(default)]
+    opponents: Option<Vec<TraceEntityId>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1462,7 +1463,7 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 51;
+const TRACE_CACHE_VERSION: u32 = 52;
 const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v45.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
@@ -5856,24 +5857,19 @@ fn compare_frame(
                 expected_human.civilian,
                 actual.is_civilian(),
             );
-            let expected_opponents: Vec<EntityId> = expected_human
-                .opponents
-                .iter()
-                .copied()
-                .map(|opponent| entity_map.translate(opponent))
-                .collect();
-            let actual_opponents = actual
-                .human_data()
-                .unwrap_or_else(|| panic!("trace reports human opponents for non-human {id:?}"))
-                .opponents
-                .clone();
-            compare(
-                &mut differences,
-                id,
-                "human.opponents",
-                expected_opponents,
-                actual_opponents,
-            );
+            if let Some(expected) = &expected_human.opponents {
+                let expected: Vec<EntityId> = expected
+                    .iter()
+                    .copied()
+                    .map(|opponent| entity_map.translate(opponent))
+                    .collect();
+                let actual = actual
+                    .human_data()
+                    .unwrap_or_else(|| panic!("trace reports human opponents for non-human {id:?}"))
+                    .opponents
+                    .clone();
+                compare(&mut differences, id, "human.opponents", expected, actual);
+            }
         }
         if let Some(expected_pc) = &expected.pc {
             use robin_engine::profiles::Action;
@@ -7249,6 +7245,18 @@ mod tests {
         assert_eq!(early_schema_twelve.locked, None);
         assert_eq!(early_schema_twelve.list_us, None);
         assert_eq!(early_schema_twelve.list_them, None);
+
+        let early_human: TraceHuman = serde_json::from_value(serde_json::json!({
+            "life_points": 60,
+            "dead": false,
+            "unconscious": false,
+            "camp": "outlaw",
+            "original_camp": 0,
+            "vip": false,
+            "civilian": false
+        }))
+        .expect("early schema-12 human state without opponents remains readable");
+        assert_eq!(early_human.opponents, None);
 
         let recorded_null_cursor: TraceAi = serde_json::from_value(serde_json::json!({
             "state": 3,
