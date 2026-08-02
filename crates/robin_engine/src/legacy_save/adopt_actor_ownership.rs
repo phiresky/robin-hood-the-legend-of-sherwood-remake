@@ -11,7 +11,7 @@
 use thiserror::Error;
 
 use crate::{
-    element::{Command, Entity, EntityId},
+    element::{Command, Entity, EntityId, InstalledActorOrder},
     engine::{EngineInner, LevelAssets},
     natives::ScriptHandleCodec,
     sequence::{Sequence, SequenceElementRef},
@@ -115,6 +115,7 @@ struct PlannedActorOwnership {
     selected_element: Option<SequenceElementRef>,
     /// Retained for diagnostics: the manager is the canonical owner.
     wait_element: Option<SequenceElementRef>,
+    installed_order: Option<InstalledActorOrder>,
     post_seek_sequence: Option<Box<Sequence>>,
     vm_heap: Option<Vec<u8>>,
 }
@@ -198,6 +199,10 @@ impl LegacyActorOwnershipAdoptionPlan {
             }
 
             let resolved_order = sequences.resolve_order("order", saved.order)?;
+            let installed_order = resolved_order.map(|(_, _, order)| InstalledActorOrder {
+                order_id: order.order_id,
+                order_type: order.order_type,
+            });
             match (selected_element, resolved_order) {
                 (None, Some(_)) => {
                     return Err(LegacyActorOwnershipAdoptError::OrderWithoutElement {
@@ -269,6 +274,7 @@ impl LegacyActorOwnershipAdoptionPlan {
                 entity,
                 selected_element,
                 wait_element,
+                installed_order,
                 post_seek_sequence,
                 vm_heap,
             });
@@ -299,13 +305,14 @@ impl LegacyActorOwnershipAdoptionPlan {
                 );
             }
 
-            engine
+            let actor = engine
                 .world
                 .entities
                 .get_mut(planned.entity)
                 .and_then(Entity::actor_data_mut)
-                .expect("preflighted actor ownership entity changed kind")
-                .post_seek_sequence = planned.post_seek_sequence;
+                .expect("preflighted actor ownership entity changed kind");
+            actor.installed_order = planned.installed_order;
+            actor.post_seek_sequence = planned.post_seek_sequence;
             if let Some(heap) = planned.vm_heap {
                 engine
                     .scripts

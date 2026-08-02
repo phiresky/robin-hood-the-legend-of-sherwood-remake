@@ -664,51 +664,14 @@ impl NativeContext<'_, '_> {
         if !entity.is_actor() {
             return None;
         }
-        let entity_id = self.actor_id(actor)?;
-        let Some((sequence_id, element_index, order)) = self
-            .sequence_manager
-            .as_ref()
-            .expect("script native requires a live SequenceManager query view")
-            .current_order_for_actor(entity_id)
-        else {
-            // RHElementActor::GetAnimation() returns RHNONANIMATION_END when
-            // the actor has no installed RHOrder. Returning zero here makes
-            // scripts mistake an orderless actor for WAITING_UPRIGHT; in
-            // Sherwood that changes which production actions are launched
-            // and therefore changes the global RNG draw stream.
-            return Some(OrderType::NonanimationEnd);
-        };
-        let command = self
-            .sequence_manager
-            .as_ref()
-            .expect("script native requires a live SequenceManager query view")
-            .get_element(sequence_id, element_index)
-            .expect("current actor order lost its owning sequence element")
-            .command;
-        let deferred_wait_install = matches!(
-            command,
-            crate::element::Command::Wait
-                | crate::element::Command::WaitTimer
-                | crate::element::Command::WaitFreeLift
-        ) && entity.sprite().last_processed_order_id
-            != order.order_id.get();
-        if deferred_wait_install {
-            // SequenceManager can select a new wait element at the tail of an
-            // engine frame. The Original does not install that wait RHOrder
-            // as the actor's `mpOrder` until the actor's next Hourglass, so
-            // GetAnimation/GetCurrentAction still exposes the preceding
-            // animation during this one-frame handoff.
-            Some(
-                entity
-                    .actor_data()
-                    .expect("checked actor")
-                    .latched_order_type
-                    .filter(|order_type| *order_type != OrderType::Invalid)
-                    .unwrap_or(entity.sprite().last_action),
-            )
-        } else {
-            Some(order.order_type)
-        }
+        Some(
+            entity
+                .actor_data()
+                .expect("checked actor")
+                .installed_order
+                .map(|order| order.order_type)
+                .unwrap_or(OrderType::NonanimationEnd),
+        )
     }
 
     /// True iff `handle` resolves to a PC whose profile carries a corpse

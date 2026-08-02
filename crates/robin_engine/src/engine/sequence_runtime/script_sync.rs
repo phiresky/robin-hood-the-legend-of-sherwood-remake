@@ -360,6 +360,9 @@ impl EngineInner {
                     )
                     .into());
                 }
+                // Accepted Actor::Instruct assigns mpOrder after Translate
+                // and any zero-frame completion cascade has settled.
+                self.publish_selected_order_as_installed(owner);
             }
             SequenceAction::EngineCommand {
                 sequence_id,

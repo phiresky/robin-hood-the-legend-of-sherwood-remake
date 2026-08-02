@@ -600,12 +600,12 @@ impl EngineInner {
                 cleared_selected_goal = true;
             }
 
-            // `latched_order_type` is Rust's mirror of the selected
-            // `mpOrder`. Original clears that pointer before entering the NPC
+            // `installed_order` is Rust's mirror of the selected `mpOrder`.
+            // Original clears that pointer before entering the NPC
             // condolence callback, so every recursive Think must observe
             // NONANIMATION_END rather than the completed sprite transition.
             if detaches_selected_order && let Some(actor) = entity.actor_data_mut() {
-                actor.latched_order_type = Some(crate::order::OrderType::Invalid);
+                actor.installed_order = None;
             }
 
             // Rust's movement tracker is separate from Original's selected

@@ -768,22 +768,13 @@ pub(super) fn build_ai_context_from_entity(
     // WAITING_UPRIGHT; GoTo's close-point shortcut must still recognize that
     // idle order and synchronously advance the patrol waypoint.
     //
-    // `latched_order_type` is Rust's current-order equivalent. Fall back to
-    // the sprite only before an actor has latched its first order.
+    // `installed_order` is Rust's exact current-order pointer mirror. A null
+    // pointer is the NonanimationEnd sentinel; sequence selection and the
+    // visible sprite are not substitutes for an installed mpOrder.
     let self_animation = actor
-        .and_then(|actor| actor.latched_order_type)
-        .map(|order_type| {
-            // `Invalid` is the actor-hourglass latch for a cleared `mpOrder`.
-            // Original `RHElementActor::GetAnimation()` exposes that state as
-            // the `RHNONANIMATION_END` sentinel, which is significant to
-            // GoTo's close-point shortcut.
-            if order_type == crate::order::OrderType::Invalid {
-                crate::order::OrderType::NonanimationEnd
-            } else {
-                order_type
-            }
-        })
-        .unwrap_or(elem.sprite.last_action);
+        .and_then(|actor| actor.installed_order)
+        .map(|order| order.order_type)
+        .unwrap_or(crate::order::OrderType::NonanimationEnd);
     // Only soldiers can be forced-attentive; civilians always read
     // `false`.  Threaded into AiContext so
     // `set_alert_status_with_flags` can apply the view-override from

@@ -2552,6 +2552,11 @@ impl EngineInner {
                                 .element_terminated(seq_id, elem_idx);
                         }
                     }
+                    // Accepted Actor::Instruct publishes the translated
+                    // current order through mpOrder. Keep this write at the
+                    // dispatch boundary rather than inferring it later from
+                    // whichever element happens to be selected.
+                    self.publish_selected_order_as_installed(owner);
                 }
                 crate::sequence::SequenceAction::ExecuteImmediateOwner {
                     owner,
@@ -2620,13 +2625,13 @@ impl EngineInner {
             // registers that element; the authoritative write therefore
             // belongs here, after SequenceManager::Hourglass has actually
             // dispatched InstructOwner.
-            self.world
+            let actor = self
+                .world
                 .entities
                 .get_mut(owner)
                 .and_then(Entity::actor_data_mut)
-                .expect("accepted InstructOwner lost its actor")
-                .continuation
-                .motion_state = crate::sprite::MotionState::InProgress;
+                .expect("accepted InstructOwner lost its actor");
+            actor.continuation.motion_state = crate::sprite::MotionState::InProgress;
         }
     }
 }

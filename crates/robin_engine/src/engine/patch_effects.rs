@@ -408,8 +408,28 @@ impl EngineInner {
                     actor.active_movement.clear();
                 }
                 match self.try_dispatch_move_path(sim, assets, id, seq_id, elem_idx, dest, action) {
-                    MovePathOutcome::Success => {}
-                    MovePathOutcome::Pending => {}
+                    MovePathOutcome::Success | MovePathOutcome::Pending => {
+                        // Corrected Original InvalidateMovements refreshes
+                        // mpOrder from the retranslated selected element. The
+                        // old order storage has been deleted, so retaining the
+                        // previous installed snapshot would reproduce its
+                        // former dangling-pointer allocator dependence.
+                        let installed_order = self
+                            .orders
+                            .sequence_manager
+                            .current_order_for_actor(id)
+                            .filter(|(live_seq, live_idx, _)| {
+                                *live_seq == seq_id && *live_idx == elem_idx
+                            })
+                            .map(|(_, _, order)| crate::element::InstalledActorOrder {
+                                order_id: order.order_id,
+                                order_type: order.order_type,
+                            });
+                        self.get_entity_mut(id)
+                            .and_then(crate::element::Entity::actor_data_mut)
+                            .expect("retranslated movement owner lost actor data")
+                            .installed_order = installed_order;
+                    }
                     MovePathOutcome::ActorGone => {
                         self.orders
                             .sequence_manager

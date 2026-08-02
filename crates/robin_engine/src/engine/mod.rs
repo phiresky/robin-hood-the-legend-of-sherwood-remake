@@ -301,67 +301,38 @@ pub(crate) fn entity_id_for_occupied_slot(index: u32, entity: &Entity) -> Entity
     EntityId::new(index, entity.entity_id_kind())
 }
 
-/// Resolve Original's actor `mpOrder` animation identity.
-///
-/// `RHElementActor::Instruct` installs the translated element's first order in
-/// `mpOrder` immediately, so an installed sequence-manager order is
-/// authoritative even before Rust executes and latches it. In the narrow
-/// interval where an incoming element is selected but has no installed order,
-/// interrupting the outgoing element does not clear Original's old `mpOrder`;
-/// the actor latch preserves that value as the fallback.
+/// Resolve Original's actor `mpOrder` animation identity from the explicit
+/// installed pointer mirror. A selected SequenceManager element is not a
+/// substitute: selection and `Instruct`/`DoNextOrder` pointer publication are
+/// observably separate boundaries in the Original.
 fn resolve_actor_order_type(
-    latched: Option<crate::order::OrderType>,
-    selected: Option<crate::order::OrderType>,
-) -> Option<crate::order::OrderType> {
-    selected.or_else(|| {
-        latched.map(|order_type| {
-            if order_type == crate::order::OrderType::Invalid {
-                crate::order::OrderType::NonanimationEnd
-            } else {
-                order_type
-            }
-        })
-    })
+    installed: Option<crate::element::InstalledActorOrder>,
+) -> crate::order::OrderType {
+    installed
+        .map(|order| order.order_type)
+        .unwrap_or(crate::order::OrderType::NonanimationEnd)
 }
 
 #[cfg(test)]
 mod actor_order_type_tests {
     use super::resolve_actor_order_type;
-    use crate::order::OrderType;
+    use crate::{element::InstalledActorOrder, order::OrderType};
+    use std::num::NonZeroU32;
 
     #[test]
-    fn installed_incoming_order_overrides_the_stale_actor_latch() {
+    fn installed_order_is_authoritative() {
         assert_eq!(
-            resolve_actor_order_type(
-                Some(OrderType::WaitingUprightBored),
-                Some(OrderType::TransitionWaitingUprightBoredWaitingUpright),
-            ),
-            Some(OrderType::TransitionWaitingUprightBoredWaitingUpright)
+            resolve_actor_order_type(Some(InstalledActorOrder {
+                order_id: NonZeroU32::new(7).unwrap(),
+                order_type: OrderType::TransitionWaitingUprightBoredWaitingUpright,
+            })),
+            OrderType::TransitionWaitingUprightBoredWaitingUpright
         );
     }
 
     #[test]
-    fn actor_latch_survives_an_incoming_uninstalled_order() {
-        assert_eq!(
-            resolve_actor_order_type(Some(OrderType::AimingWithBow), None),
-            Some(OrderType::AimingWithBow)
-        );
-    }
-
-    #[test]
-    fn cleared_actor_latch_exposes_original_nonanimation_sentinel() {
-        assert_eq!(
-            resolve_actor_order_type(Some(OrderType::Invalid), None),
-            Some(OrderType::NonanimationEnd)
-        );
-    }
-
-    #[test]
-    fn selected_order_bootstraps_an_actor_without_a_latch() {
-        assert_eq!(
-            resolve_actor_order_type(None, Some(OrderType::AimingWithBow)),
-            Some(OrderType::AimingWithBow)
-        );
+    fn null_installed_pointer_exposes_original_nonanimation_sentinel() {
+        assert_eq!(resolve_actor_order_type(None), OrderType::NonanimationEnd);
     }
 }
 
@@ -1257,17 +1228,28 @@ impl EngineInner {
 
     /// Current animation/order type for parity diagnostics.
     pub fn actor_order_type(&self, actor: EntityId) -> Option<crate::order::OrderType> {
-        let latched = self
-            .get_entity(actor)
+        self.get_entity(actor)
             .and_then(|entity| entity.actor_data())
-            .and_then(|actor| actor.latched_order_type);
-        let selected = self
+            .map(|actor| resolve_actor_order_type(actor.installed_order))
+    }
+
+    /// Mirror an Original boundary that assigns `mpOrder` from the selected
+    /// sequence element's current order. Callers must invoke this only where
+    /// the C++ source performs that assignment (Hourglass, accepted Instruct,
+    /// or corrected movement retranslation), never as a read-time fallback.
+    pub(crate) fn publish_selected_order_as_installed(&mut self, actor: EntityId) {
+        let installed_order = self
             .orders
             .sequence_manager
             .current_order_for_actor(actor)
-            .map(|(_, _, order)| order.order_type);
-
-        resolve_actor_order_type(latched, selected)
+            .map(|(_, _, order)| crate::element::InstalledActorOrder {
+                order_id: order.order_id,
+                order_type: order.order_type,
+            });
+        self.get_entity_mut(actor)
+            .and_then(Entity::actor_data_mut)
+            .expect("mpOrder publication owner lost actor data")
+            .installed_order = installed_order;
     }
 
     /// Original `RHElementActor::GetAnimation()`: the live sequence order,
@@ -3909,7 +3891,7 @@ impl EngineInner {
             );
         }
         // Pop the just-completed front order, capture context.
-        let Some((owner, next_exists)) = self
+        let Some((owner, next_order)) = self
             .orders
             .sequence_manager
             .get_element_mut(seq_id, elem_idx)
@@ -3930,16 +3912,28 @@ impl EngineInner {
                         );
                     }
                 }
-                let next_exists = !elem.orders.is_empty();
-                (elem.owner, next_exists)
+                let next_order =
+                    elem.current_order()
+                        .map(|order| crate::element::InstalledActorOrder {
+                            order_id: order.order_id,
+                            order_type: order.order_type,
+                        });
+                (elem.owner, next_order)
             })
         else {
             return;
         };
 
-        if next_exists {
-            // Next front order already has its `order_id` stamped at
-            // push time; the animation driver picks it up next tick.
+        if let Some(next_order) = next_order {
+            // Original DoNextOrder assigns mpOrder = Proceed() immediately.
+            if let Some(owner) = owner {
+                self.world
+                    .entities
+                    .get_mut(owner)
+                    .and_then(Entity::actor_data_mut)
+                    .expect("next-order owner disappeared before mpOrder publication")
+                    .installed_order = Some(next_order);
+            }
             return;
         }
 
@@ -3949,6 +3943,12 @@ impl EngineInner {
         // current order, so perform that owner-side cleanup at the same
         // terminal boundary before the Rust sequence registry removes it.
         if let Some(owner) = owner {
+            self.world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::actor_data_mut)
+                .expect("exhausted-order owner disappeared before mpOrder clear")
+                .installed_order = None;
             if tracing::enabled!(target: "parity_owner_handoff", tracing::Level::TRACE) {
                 let selected = self
                     .orders

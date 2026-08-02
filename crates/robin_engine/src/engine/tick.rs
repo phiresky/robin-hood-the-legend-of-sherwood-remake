@@ -3367,6 +3367,25 @@ impl EngineInner {
                         .sequence_manager
                         .current_order_for_actor(entity_id)
                         .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_id));
+                    // Actor::Hourglass refreshes mpOrder from the selected
+                    // element immediately before Execute. Preserve that
+                    // pointer publication independently of manager selection:
+                    // later DoNextOrder or Instruct calls update the explicit
+                    // mirror at their own boundaries.
+                    let installed_at_entry = self
+                        .orders
+                        .sequence_manager
+                        .current_order_for_actor(entity_id)
+                        .map(|(_, _, order)| crate::element::InstalledActorOrder {
+                            order_id: order.order_id,
+                            order_type: order.order_type,
+                        });
+                    self.world
+                        .entities
+                        .get_mut(entity_id)
+                        .and_then(Entity::actor_data_mut)
+                        .expect("actor disappeared before installing its Hourglass order")
+                        .installed_order = installed_at_entry;
                     let selected_owner_family = self
                         .orders
                         .sequence_manager
@@ -3762,42 +3781,19 @@ impl EngineInner {
                         entity_id,
                     ));
                     self.dispatch_actor_action_change_for(sim, assets, entity_id);
-                    // `mpOrder` is latched at Actor::Hourglass entry.
-                    // `DoNextOrder` updates it when it advances within the
-                    // same element. Terminating the element clears it through
-                    // SendCondolationCard; a synchronously instructed real
-                    // successor writes its own first order. Otherwise the
-                    // selected pointer is null for the remainder of this
-                    // owner slot.
-                    let derived_tail_order_type =
-                        if let Some((selected_seq, selected_idx, _)) = selected_order {
-                            let current = self
-                                .orders
-                                .sequence_manager
-                                .current_order_for_actor(entity_id);
-                            if let Some((_, _, order)) = current.filter(|(seq, idx, _)| {
-                                *seq == selected_seq && *idx == selected_idx
-                            }) {
-                                order.order_type
-                            } else {
-                                current
-                                    .map(|(_, _, order)| order.order_type)
-                                    .unwrap_or(crate::order::OrderType::Invalid)
-                            }
-                        } else {
-                            self.orders
-                                .sequence_manager
-                                .current_order_for_actor(entity_id)
-                                .map(|(_, _, order)| order.order_type)
-                                .unwrap_or(crate::order::OrderType::Invalid)
-                        };
-                    self.world
+                    // Do not derive mpOrder from the manager at the tail. The
+                    // exact pointer was published at Hourglass entry and is
+                    // subsequently changed only by DoNextOrder, selected
+                    // element cleanup, or a synchronous accepted Instruct.
+                    let installed_tail_order_type = self
+                        .world
                         .entities
-                        .get_mut(entity_id)
-                        .and_then(Entity::actor_data_mut)
-                        .expect("actor disappeared before latching its derived tail order")
-                        .latched_order_type = Some(derived_tail_order_type);
-                    after_slot(self, entity_id, derived_tail_order_type);
+                        .get(entity_id)
+                        .and_then(Entity::actor_data)
+                        .and_then(|actor| actor.installed_order)
+                        .map(|order| order.order_type)
+                        .unwrap_or(crate::order::OrderType::NonanimationEnd);
+                    after_slot(self, entity_id, installed_tail_order_type);
 
                     if let Some(actor) = self
                         .world

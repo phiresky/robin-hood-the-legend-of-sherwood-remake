@@ -637,6 +637,20 @@ pub struct ActiveDoorPass {
     pub saved_action_state: Option<ActionState>,
 }
 
+/// Exact Rust mirror of Original's installed `RHElementActor::mpOrder`.
+///
+/// Sequence-manager selection is deliberately not sufficient: an element can
+/// be selected before `Instruct` installs its first order, while `DoNextOrder`
+/// can clear the pointer for the remainder of an actor slot even if later
+/// manager work has already selected a fallback element.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct InstalledActorOrder {
+    pub order_id: std::num::NonZeroU32,
+    pub order_type: crate::order::OrderType,
+}
+
 /// Actor-level data.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct ActorData {
@@ -653,9 +667,8 @@ pub struct ActorData {
     /// `mulLastOrderID`. This is deliberately independent of the sprite's
     /// processed order: FrozenAll still consumes actor initialization once.
     pub last_execute_order_id: Option<std::num::NonZeroU32>,
-    /// Original `mpOrder->action` after this actor's most recent base
-    /// `RHElementActor::Hourglass` slot.
-    pub latched_order_type: Option<crate::order::OrderType>,
+    /// Original's live `mpOrder` pointer identity and action.
+    pub installed_order: Option<InstalledActorOrder>,
     /// Original `mbNewOrder` for the currently-entered Execute call. Set at
     /// owner selection and cleared after Execute/completion/ActionChange.
     pub execute_order_initialising: bool,
@@ -843,7 +856,7 @@ impl Default for ActorData {
             execution_frozen: false,
             sequence_element_started: false,
             last_execute_order_id: None,
-            latched_order_type: None,
+            installed_order: None,
             execute_order_initialising: false,
             wait_time: 0,
             listen_wait_time: 0,
