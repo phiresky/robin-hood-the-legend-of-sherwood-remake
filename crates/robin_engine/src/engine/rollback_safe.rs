@@ -970,7 +970,35 @@ impl Engine {
             })
             .collect::<Vec<_>>();
 
-        json!({ "patches": patches, "doors": doors, "sector_doors": sector_doors })
+        let lifts = grid
+            .level
+            .sectors
+            .iter()
+            .enumerate()
+            .filter(|(_, sector)| sector.sector_type.is_lift())
+            .map(|(index, sector)| {
+                let state = grid
+                    .lift_state
+                    .get(&(index as u32))
+                    .copied()
+                    .unwrap_or_default();
+                json!({
+                    "sector": sector.sector_number.get(),
+                    "occupants_pc": state.occupants_pc,
+                    "occupants": state.occupants,
+                    "occupied_upwards": state.occupied_upwards,
+                    "occupied_downwards": state.occupied_downwards,
+                    "wait_time": state.wait_time,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        json!({
+            "patches": patches,
+            "doors": doors,
+            "sector_doors": sector_doors,
+            "lifts": lifts,
+        })
     }
 
     /// Ordered script-created repulsive points plus Original's process-global
@@ -2587,6 +2615,50 @@ mod tests {
         assert_eq!(state["doors"][0]["authorised_pc_direct"], 0x12);
         assert_eq!(state["doors"][0]["authorised_pc_indirect"], 0x34);
         assert_eq!(state["sector_doors"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn parity_world_interactables_preserves_lift_runtime_state() {
+        let mut inner = EngineInner::new();
+        let sector_number = crate::sector::SectorNumber::new(47);
+        let level = std::sync::Arc::make_mut(&mut inner.world.fast_grid.level);
+        level.sector_number_map.insert(sector_number, 0);
+        level.sectors.push(crate::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: crate::sector::SectorType::LIFT,
+            layer: 0,
+            sector_number,
+            door_index: None,
+            lift_type: Some(crate::sector::LiftType::Ladder),
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        });
+        inner.world.fast_grid.lift_state.insert(
+            0,
+            crate::fast_find_grid::LiftRuntimeState {
+                occupants_pc: 2,
+                occupants: 3,
+                occupied_upwards: true,
+                occupied_downwards: false,
+                wait_time: 71,
+            },
+        );
+
+        let state = Engine { inner }.parity_world_interactables_state();
+        assert_eq!(state["lifts"][0]["sector"], 47);
+        assert_eq!(state["lifts"][0]["occupants_pc"], 2);
+        assert_eq!(state["lifts"][0]["occupants"], 3);
+        assert_eq!(state["lifts"][0]["occupied_upwards"], true);
+        assert_eq!(state["lifts"][0]["occupied_downwards"], false);
+        assert_eq!(state["lifts"][0]["wait_time"], 71);
     }
 
     #[test]
