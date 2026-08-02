@@ -1964,13 +1964,7 @@ impl Sequence {
                     });
                 }
                 // Cascade
-                Self::compute_cascade(
-                    &self.elements,
-                    elem_idx,
-                    new_state,
-                    flags,
-                    &mut effects.cascade,
-                );
+                self.compute_cascade(elem_idx, new_state, flags, &mut effects.cascade);
             }
 
             SequenceState::Interrupted => {
@@ -1995,13 +1989,7 @@ impl Sequence {
                     });
                 }
                 // Cascade
-                Self::compute_cascade(
-                    &self.elements,
-                    elem_idx,
-                    new_state,
-                    flags,
-                    &mut effects.cascade,
-                );
+                self.compute_cascade(elem_idx, new_state, flags, &mut effects.cascade);
             }
 
             SequenceState::Terminated => {
@@ -2073,28 +2061,62 @@ impl Sequence {
 
     /// Compute cascade targets for interrupted/impossible state propagation.
     fn compute_cascade(
-        elements: &[SequenceElement],
+        &self,
         elem_idx: usize,
         new_state: SequenceState,
         flags: CascadeFlags,
         cascade: &mut Vec<(usize, SequenceState, CascadeFlags)>,
     ) {
-        let command_level = elements[elem_idx].command_level;
+        let command_level = self.elements[elem_idx].command_level;
 
         if flags.contains(CascadeFlags::FOLLOWING) {
-            // Cascade to ALL following elements
-            if elem_idx + 1 < elements.len() {
-                cascade.push((elem_idx + 1, new_state, CascadeFlags::FOLLOWING));
-            }
-        } else if flags.contains(CascadeFlags::NEXT_LEVEL) {
-            // Find first following element with a higher command level
-            let mut next = elem_idx + 1;
-            while next < elements.len() && elements[next].command_level == command_level {
-                next += 1;
-            }
-            if next < elements.len() {
+            if let Some(next) = self.following_element_index(elem_idx) {
                 cascade.push((next, new_state, CascadeFlags::FOLLOWING));
             }
+        } else if flags.contains(CascadeFlags::NEXT_LEVEL) {
+            // Find the first linked follower with a different command level.
+            let mut visited = HashSet::new();
+            let mut next = self.following_element_index(elem_idx);
+            while let Some(next_idx) = next {
+                assert!(
+                    visited.insert(next_idx),
+                    "loaded v48 sequence {:?} has a cycle in its following chain at {next_idx}",
+                    self.id
+                );
+                if self.elements[next_idx].command_level != command_level {
+                    cascade.push((next_idx, new_state, CascadeFlags::FOLLOWING));
+                    break;
+                }
+                next = self.following_element_index(next_idx);
+            }
+        }
+    }
+
+    /// Resolve Original's `mpsqeNextSequenceElement` inside one sequence.
+    /// Runtime-authored sequences wire this pointer in append order. Loaded
+    /// v48 elements retain its exact serialized target, including null and
+    /// non-adjacent links.
+    fn following_element_index(&self, elem_idx: usize) -> Option<usize> {
+        let element = self.elements.get(elem_idx)?;
+        if let Some(legacy) = &element.legacy_v48 {
+            let next = legacy.next?;
+            // TODO(legacy-sequence-runtime): promote cascade effects from
+            // element indices to SequenceElementRef if a real save ever
+            // contains a following pointer outside its mummy sequence.
+            assert_eq!(
+                next.sequence_id, self.id,
+                "loaded v48 following pointer crosses sequences: {:?}/{elem_idx} -> {:?}/{}",
+                self.id, next.sequence_id, next.element_index
+            );
+            assert!(
+                next.element_index < self.elements.len(),
+                "loaded v48 following pointer targets missing element: {:?}/{elem_idx} -> {}",
+                self.id,
+                next.element_index
+            );
+            Some(next.element_index)
+        } else {
+            self.elements.get(elem_idx + 1).map(|_| elem_idx + 1)
         }
     }
 
@@ -2138,18 +2160,16 @@ impl Sequence {
         }
         let mut all_effects: Vec<StateChangeEffects> = Vec::new();
 
-        let elem = &mut self.elements[elem_idx];
-
         // Determine priority if not yet set: ask the owning actor's
         // priority resolver and promote `None` to `Normal` so the stop
         // actually succeeds on commands like WAIT / FREEZE.
-        if elem.priority == SequencePriority::NotYetSet {
+        if self.elements[elem_idx].priority == SequencePriority::NotYetSet {
             if parity_debug_stage_timing {
                 eprintln!(
                     "parity stop: stop_element before priority resolver depth={depth} idx={elem_idx}"
                 );
             }
-            let mut resolved = resolver(elem);
+            let mut resolved = resolver(&self.elements[elem_idx]);
             if parity_debug_stage_timing {
                 eprintln!(
                     "parity stop: stop_element after priority resolver depth={depth} idx={elem_idx} resolved={resolved:?}"
@@ -2158,16 +2178,17 @@ impl Sequence {
             if resolved == SequencePriority::None {
                 resolved = SequencePriority::Normal;
             }
-            elem.priority = resolved;
+            self.elements[elem_idx].priority = resolved;
         }
 
         // Is the priority weak enough to be stopped? (>= means weaker or equal)
-        if elem.priority >= stop_priority {
-            if elem.state == SequenceState::InProgress && elem.data.is_movement() {
+        if self.elements[elem_idx].priority >= stop_priority {
+            if self.elements[elem_idx].state == SequenceState::InProgress
+                && self.elements[elem_idx].data.is_movement()
+            {
                 // Movements in progress are kept (for transition) but their
                 // successor is interrupted
-                let next_idx = elem_idx + 1;
-                if next_idx < self.elements.len() {
+                if let Some(next_idx) = self.following_element_index(elem_idx) {
                     if parity_debug_stage_timing {
                         eprintln!(
                             "parity stop: stop_element before interrupt movement successor depth={depth} from={elem_idx} to={next_idx}"
@@ -2203,8 +2224,7 @@ impl Sequence {
             }
         } else {
             // Can't stop this element, but try the next one.
-            let next_idx = elem_idx + 1;
-            if next_idx < self.elements.len() {
+            if let Some(next_idx) = self.following_element_index(elem_idx) {
                 if parity_debug_stage_timing {
                     eprintln!(
                         "parity stop: stop_element before next depth={depth} from={elem_idx} to={next_idx}"
@@ -2222,10 +2242,17 @@ impl Sequence {
                         "parity stop: stop_element after next depth={depth} from={elem_idx} to={next_idx}"
                     );
                 }
-                // We use positional adjacency, so there's no pointer to
-                // clear after a recursive stop succeeds — the cascade
-                // bookkeeping in `set_element_state` already handles
-                // the interrupted-next propagation.
+                if self.elements[next_idx].state == SequenceState::Interrupted {
+                    if let Some(legacy) = self.elements[elem_idx].legacy_v48.as_mut() {
+                        legacy.next = None;
+                    } else {
+                        // TODO(sequence-runtime): runtime-authored elements
+                        // infer next from append order and cannot yet retain
+                        // Original's Stop-time pointer severing. The reached
+                        // successor is already terminal, so no current replay
+                        // behavior depends on traversing this edge again.
+                    }
+                }
             }
         }
 
@@ -4651,46 +4678,48 @@ impl SequenceManager {
         self.rewrite_selected_actor_chain(entity, make_fast_element);
     }
 
-    /// Set `action` on the element at `(seq_id, elem_idx)` and on every
-    /// subsequent element in the same sequence that is still owned by
-    /// the same entity (walk stops when the owner changes).  Callers
-    /// use this to force every queued movement order for one actor
-    /// onto the same animation — e.g. `MakeCrouched`'s fallback.
+    /// Set `action` on the movement element at `(seq_id, elem_idx)` and recurse
+    /// through its same-owner following/postponed graph. Callers use this to
+    /// force a door-authored movement chain onto one animation.
     pub fn set_action_recursive(&mut self, seq_id: SequenceId, elem_idx: usize, action: OrderType) {
-        // The action propagates through the entire postponed sub-chain
-        // (and any cross-sequence postponed back-link) — not just the
-        // next-chain tail.  Iterative worklist + visited set so we
-        // cover postponed and `cross_postponed` transitively without
-        // infinite loops.
-        let mut visited: HashSet<(SequenceId, usize)> = HashSet::new();
-        let mut worklist: Vec<(SequenceId, usize)> = vec![(seq_id, elem_idx)];
-        while let Some((sid, start)) = worklist.pop() {
-            let Some(seq) = self.sequences.get_mut(&sid) else {
+        let Some(root) = self.get_element(seq_id, elem_idx) else {
+            return;
+        };
+        let owner = root.owner;
+        let mut visited = HashSet::new();
+        let mut pending = vec![(seq_id, elem_idx)];
+        while let Some((sid, idx)) = pending.pop() {
+            if !visited.insert((sid, idx)) {
+                continue;
+            }
+            let Some(element) = self.get_element(sid, idx) else {
                 continue;
             };
-            let Some(first) = seq.elements.get(start) else {
+            if element.owner != owner {
                 continue;
+            }
+            let following = if let Some(legacy) = &element.legacy_v48 {
+                legacy
+                    .next
+                    .map(|next| (next.sequence_id, next.element_index))
+            } else {
+                self.sequences
+                    .get(&sid)
+                    .and_then(|sequence| sequence.elements.get(idx + 1))
+                    .map(|_| (sid, idx + 1))
             };
-            let owner = first.owner;
-            let len = seq.elements.len();
-            for idx in start..len {
-                if seq.elements[idx].owner != owner {
-                    break;
-                }
-                if !visited.insert((sid, idx)) {
-                    continue;
-                }
-                seq.elements[idx].set_action(action);
-                if let Some(p) = seq.elements[idx].postponed_element_index
-                    && !visited.contains(&(sid, p))
-                {
-                    worklist.push((sid, p));
-                }
-                if let Some((cs, ci)) = seq.elements[idx].cross_postponed
-                    && !visited.contains(&(cs, ci))
-                {
-                    worklist.push((cs, ci));
-                }
+            let postponed = element
+                .cross_postponed
+                .or_else(|| element.postponed_element_index.map(|next| (sid, next)));
+
+            self.get_element_mut(sid, idx)
+                .expect("SetActionRecursive graph element disappeared")
+                .set_action(action);
+            if let Some(following) = following {
+                pending.push(following);
+            }
+            if let Some(postponed) = postponed {
+                pending.push(postponed);
             }
         }
     }
@@ -6366,6 +6395,13 @@ mod tests {
         SequenceElement::new_movement(1, Command::Move, Some(owner), action)
     }
 
+    fn movement_action(element: &SequenceElement) -> OrderType {
+        let SequenceElementData::Movement { action, .. } = &element.data else {
+            panic!("movement variant");
+        };
+        *action
+    }
+
     fn loaded_v48_state(next: Option<SequenceElementRef>) -> LegacyV48SequenceElementState {
         LegacyV48SequenceElementState {
             deleted: false,
@@ -6669,6 +6705,136 @@ mod tests {
             panic!("movement variant");
         };
         assert_eq!(action, OrderType::RunningUpright);
+    }
+
+    #[test]
+    fn set_action_recursive_honors_loaded_null_and_nonadjacent_next() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(1));
+
+        let mut null_mgr = SequenceManager::new();
+        let mut null_sequence = Sequence::new();
+        null_sequence.append_element(movement_elem(owner, OrderType::RunningUpright));
+        null_sequence.append_element(movement_elem(owner, OrderType::RunningUpright));
+        let null_id = null_mgr.launch_sequence(null_sequence);
+        null_mgr.get_element_mut(null_id, 0).unwrap().legacy_v48 = Some(loaded_v48_state(None));
+        null_mgr.set_action_recursive(null_id, 0, OrderType::WalkingCrouched);
+        assert_eq!(
+            movement_action(null_mgr.get_element(null_id, 0).unwrap()),
+            OrderType::WalkingCrouched
+        );
+        assert_eq!(
+            movement_action(null_mgr.get_element(null_id, 1).unwrap()),
+            OrderType::RunningUpright
+        );
+
+        let mut linked_mgr = SequenceManager::new();
+        let mut linked_sequence = Sequence::new();
+        for _ in 0..3 {
+            linked_sequence.append_element(movement_elem(owner, OrderType::RunningUpright));
+        }
+        let linked_id = linked_mgr.launch_sequence(linked_sequence);
+        linked_mgr.get_element_mut(linked_id, 0).unwrap().legacy_v48 = Some(loaded_v48_state(
+            Some(SequenceElementRef::new(linked_id, 2)),
+        ));
+        linked_mgr.set_action_recursive(linked_id, 0, OrderType::WalkingCrouched);
+        assert_eq!(
+            movement_action(linked_mgr.get_element(linked_id, 0).unwrap()),
+            OrderType::WalkingCrouched
+        );
+        assert_eq!(
+            movement_action(linked_mgr.get_element(linked_id, 1).unwrap()),
+            OrderType::RunningUpright
+        );
+        assert_eq!(
+            movement_action(linked_mgr.get_element(linked_id, 2).unwrap()),
+            OrderType::WalkingCrouched
+        );
+    }
+
+    #[test]
+    fn set_action_recursive_follows_cross_postponed_link() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(1));
+        let mut mgr = SequenceManager::new();
+        let root = mgr.launch_element(movement_elem(owner, OrderType::RunningUpright));
+        let postponed = mgr.launch_element(movement_elem(owner, OrderType::RunningUpright));
+        mgr.get_element_mut(root, 0).unwrap().cross_postponed = Some((postponed, 0));
+
+        mgr.set_action_recursive(root, 0, OrderType::WalkingCrouched);
+
+        assert_eq!(
+            movement_action(mgr.get_element(postponed, 0).unwrap()),
+            OrderType::WalkingCrouched
+        );
+    }
+
+    #[test]
+    fn loaded_nonadjacent_next_controls_interruption_cascade() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(1));
+        let mut mgr = SequenceManager::new();
+        let mut sequence = Sequence::new();
+        for _ in 0..3 {
+            sequence.append_element(SequenceElement::new(1, Command::Generic, Some(owner)));
+        }
+        let sequence_id = mgr.launch_sequence(sequence);
+        mgr.get_element_mut(sequence_id, 0).unwrap().legacy_v48 = Some(loaded_v48_state(Some(
+            SequenceElementRef::new(sequence_id, 2),
+        )));
+
+        mgr.element_interrupted(sequence_id, 0, CascadeFlags::FOLLOWING);
+
+        assert_eq!(
+            mgr.get_element(sequence_id, 1).unwrap().state,
+            SequenceState::Todo
+        );
+        assert_eq!(
+            mgr.get_element(sequence_id, 2).unwrap().state,
+            SequenceState::Interrupted
+        );
+    }
+
+    #[test]
+    fn loaded_nonadjacent_next_controls_stop_recursion() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(1));
+        let mut mgr = SequenceManager::new();
+        let mut sequence = Sequence::new();
+        for priority in [
+            SequencePriority::NonInterruptable,
+            SequencePriority::Normal,
+            SequencePriority::Normal,
+        ] {
+            let mut element = SequenceElement::new(1, Command::Generic, Some(owner));
+            element.priority = priority;
+            sequence.append_element(element);
+        }
+        let sequence_id = mgr.launch_sequence(sequence);
+        mgr.get_element_mut(sequence_id, 0).unwrap().legacy_v48 = Some(loaded_v48_state(Some(
+            SequenceElementRef::new(sequence_id, 2),
+        )));
+
+        mgr.get_sequence_mut(sequence_id).unwrap().stop_element(
+            0,
+            SequencePriority::Normal,
+            &|_| SequencePriority::Normal,
+        );
+
+        assert_eq!(
+            mgr.get_element(sequence_id, 1).unwrap().state,
+            SequenceState::Todo
+        );
+        assert_eq!(
+            mgr.get_element(sequence_id, 2).unwrap().state,
+            SequenceState::Interrupted
+        );
+        assert_eq!(
+            mgr.get_element(sequence_id, 0)
+                .unwrap()
+                .legacy_v48
+                .as_ref()
+                .unwrap()
+                .next,
+            None,
+            "Original clears mpsqeNextSequenceElement after Stop interrupts it"
+        );
     }
 
     #[test]
