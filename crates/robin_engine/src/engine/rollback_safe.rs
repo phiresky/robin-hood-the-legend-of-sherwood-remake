@@ -600,6 +600,30 @@ impl Engine {
 					.map(resolve_ai_handle)
 					.collect::<Vec<_>>()
 			};
+			let patrol_path_status = if let Some(path) = &ai.patrol_path {
+				json!({
+					"current_waypoint_index": path.current_waypoint_index,
+					"last_waypoint_index": path.last_waypoint_index,
+					"forward": path.forward,
+					"hiking_path_index": path.hiking_path_index.get(),
+					"history": path.history.iter().map(|entry| json!({
+						"position": ai_position(entry.position), "direction": entry.direction,
+						"distance": entry.distance,
+					})).collect::<Vec<_>>(),
+				})
+			} else {
+				let path = &ai.detached_patrol_path_status;
+				json!({
+					"current_waypoint_index": path.current_waypoint_index,
+					"last_waypoint_index": path.last_waypoint_index,
+					"forward": path.forward,
+					"hiking_path_index": path.hiking_path_index.map_or(Value::Null, |id| json!(id.get())),
+					"history": path.history.iter().map(|entry| json!({
+						"position": ai_position(entry.position), "direction": entry.direction,
+						"distance": entry.distance,
+					})).collect::<Vec<_>>(),
+				})
+			};
 			let mut state = json!({
 				"last_goto": {
 					"destination": ai_position(ai.last_goto_destination),
@@ -615,6 +639,14 @@ impl Engine {
 				"attitude": ai.attitude as u32, "blood_alcohol": ai.blood_alcohol,
 				"initial_action": ai.initial_action, "number_of_looks": ai.number_of_looks,
 				"can_move": ai.can_move,
+				"path_control": {
+					"stop_before_end": ai.stop_before_end_of_path,
+					"use_max_norm": ai.use_max_norm_to_stop_before_end_of_path,
+					"stop_distance": ai.stop_before_end_of_path_distance,
+					"status": patrol_path_status,
+					"has_patrol_path": ai.has_patrol_path,
+					"macro_cursor": ai.has_patrol_path.then_some(ai.macro_command_offset),
+				},
 				"macro": {
 					"remaining_bytes": ai.number_of_remaining_macro_bytes,
 					"in_progress": ai.macro_in_progress,

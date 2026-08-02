@@ -75,6 +75,30 @@ pub struct PatrolPath {
     pub history: Vec<PathHistoryEntry>,
 }
 
+/// Exact serialized `RHPath::SerializeStatus` state retained while no hiking
+/// path is attached. `RHPath::Init(-1)` only clears the path pointer/index; it
+/// deliberately preserves these cursor, direction, and history values.
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct DetachedPatrolPathStatus {
+    pub hiking_path_index: Option<PathId>,
+    pub current_waypoint_index: u8,
+    pub last_waypoint_index: u8,
+    pub forward: bool,
+    pub history: Vec<PathHistoryEntry>,
+}
+
+impl Default for DetachedPatrolPathStatus {
+    fn default() -> Self {
+        Self {
+            hiking_path_index: None,
+            current_waypoint_index: 0,
+            last_waypoint_index: 0,
+            forward: true,
+            history: Vec::new(),
+        }
+    }
+}
+
 impl PatrolPath {
     /// Initialize from a hiking path index and the loaded hiking paths.
     /// Returns `None` if the index is out of range.

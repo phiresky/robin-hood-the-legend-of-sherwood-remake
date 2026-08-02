@@ -13,9 +13,9 @@ use crate::{
     actor_state::{ActorContinuationState, ActorSeekSector},
     ai::{
         AiController, AiGlobalState, AiLockFlags, AiState, AlertLevel, Attitude, CombatInfo,
-        DoorCombatInfo, GotoFlags, Hint, Noise, NoiseType, PathHistoryEntry, PathId, PatrolPath,
-        Position, ReconnaissanceReport, Remark, ReportType, Stimulus, StimulusInfo, StimulusType,
-        StolenObject, Substate,
+        DetachedPatrolPathStatus, DoorCombatInfo, GotoFlags, Hint, Noise, NoiseType,
+        PathHistoryEntry, PathId, PatrolPath, Position, ReconnaissanceReport, Remark, ReportType,
+        Stimulus, StimulusInfo, StimulusType, StolenObject, Substate,
     },
     coordinates::{GroundPoint, MapPoint, MapVec},
     element::{
@@ -628,6 +628,10 @@ struct ConvertedLocalAiCommon {
     can_move: bool,
     has_patrol_path: bool,
     patrol_path: Option<PatrolPath>,
+    detached_patrol_path_status: DetachedPatrolPathStatus,
+    stop_before_end_of_path: bool,
+    use_max_norm_to_stop_before_end_of_path: bool,
+    stop_before_end_of_path_distance: u16,
     macro_command: Vec<u8>,
     macro_command_offset: usize,
     primary_target: u32,
@@ -1734,6 +1738,8 @@ fn convert_local_ai_common(
 ) -> Result<ConvertedLocalAiCommon, LegacyElementAdoptError> {
     let (macro_command, macro_command_offset) =
         convert_macro_command(saved, creation_order, &assets.hiking_paths)?;
+    let (patrol_path, detached_patrol_path_status) =
+        convert_patrol_path(&saved.path, creation_order, topology, &assets.hiking_paths)?;
     let saved_current_remark = remark(
         saved.current_remark,
         creation_order,
@@ -1803,12 +1809,11 @@ fn convert_local_ai_common(
         number_of_looks: saved.number_of_looks,
         can_move: saved.can_move,
         has_patrol_path: saved.has_patrol_path,
-        patrol_path: convert_patrol_path(
-            &saved.path,
-            creation_order,
-            topology,
-            &assets.hiking_paths,
-        )?,
+        patrol_path,
+        detached_patrol_path_status,
+        stop_before_end_of_path: saved.stop_before_end_of_path,
+        use_max_norm_to_stop_before_end_of_path: saved.use_max_norm_to_stop_before_end_of_path,
+        stop_before_end_of_path_distance: saved.stop_before_end_of_path_distance,
         macro_command,
         macro_command_offset,
         primary_target: ai_handle(
@@ -2225,6 +2230,10 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.can_move = saved.can_move;
     ai.has_patrol_path = saved.has_patrol_path;
     ai.patrol_path = saved.patrol_path;
+    ai.detached_patrol_path_status = saved.detached_patrol_path_status;
+    ai.stop_before_end_of_path = saved.stop_before_end_of_path;
+    ai.use_max_norm_to_stop_before_end_of_path = saved.use_max_norm_to_stop_before_end_of_path;
+    ai.stop_before_end_of_path_distance = saved.stop_before_end_of_path_distance;
     ai.macro_command = saved.macro_command;
     ai.macro_command_offset = saved.macro_command_offset;
     ai.primary_target = saved.primary_target;
@@ -2977,9 +2986,39 @@ fn convert_patrol_path(
     creation_order: u32,
     topology: &LegacyPositionTopology,
     hiking_paths: &[crate::level_data::RawHikingPath],
-) -> Result<Option<PatrolPath>, LegacyElementAdoptError> {
+) -> Result<(Option<PatrolPath>, DetachedPatrolPathStatus), LegacyElementAdoptError> {
+    let history = saved
+        .history
+        .iter()
+        .map(|entry| {
+            Ok(PathHistoryEntry {
+                position: Position {
+                    x: entry.position_x,
+                    y: entry.position_y,
+                    sector: sector(
+                        entry.sector.0,
+                        topology,
+                        creation_order,
+                        "local_ai.path.history.sector",
+                    )?,
+                    level: entry.level,
+                },
+                direction: entry.direction,
+                distance: entry.distance,
+            })
+        })
+        .collect::<Result<_, LegacyElementAdoptError>>()?;
     let Some(raw_path_id) = saved.hiking_path_index else {
-        return Ok(None);
+        return Ok((
+            None,
+            DetachedPatrolPathStatus {
+                hiking_path_index: None,
+                current_waypoint_index: saved.current_waypoint_index,
+                last_waypoint_index: saved.last_waypoint_index,
+                forward: saved.forward_movement,
+                history,
+            },
+        ));
     };
     let path_id = PathId::new(raw_path_id)
         .expect("Legacy decoder already maps the 0xffff no-path sentinel to None");
@@ -3010,35 +3049,17 @@ fn convert_patrol_path(
     // never indexes mpHikingPath with it. The value is historical state used
     // by patrol synchronization comparisons, so it may legitimately be
     // outside the size of the currently authored path.
-    let history = saved
-        .history
-        .iter()
-        .map(|entry| {
-            Ok(PathHistoryEntry {
-                position: Position {
-                    x: entry.position_x,
-                    y: entry.position_y,
-                    sector: sector(
-                        entry.sector.0,
-                        topology,
-                        creation_order,
-                        "local_ai.path.history.sector",
-                    )?,
-                    level: entry.level,
-                },
-                direction: entry.direction,
-                distance: entry.distance,
-            })
-        })
-        .collect::<Result<_, LegacyElementAdoptError>>()?;
-    Ok(Some(PatrolPath {
-        hiking_path_index: path_id,
-        current_waypoint_index: saved.current_waypoint_index,
-        last_waypoint_index: saved.last_waypoint_index,
-        forward: saved.forward_movement,
-        size,
-        history,
-    }))
+    Ok((
+        Some(PatrolPath {
+            hiking_path_index: path_id,
+            current_waypoint_index: saved.current_waypoint_index,
+            last_waypoint_index: saved.last_waypoint_index,
+            forward: saved.forward_movement,
+            size,
+            history,
+        }),
+        DetachedPatrolPathStatus::default(),
+    ))
 }
 
 fn convert_macro_command(

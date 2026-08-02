@@ -43,9 +43,9 @@ pub use types::{
 
 mod macro_patrol;
 pub use macro_patrol::{
-    ForecastInput, ForecastedDestination, MacroOpcode, PATROL_SPEED_BASE, PATROL_SPEED_DIVISOR,
-    PathHistoryEntry, PathId, PatrolPath, Position, PreparedForecastDestination,
-    forecast_destination_for_ia, prepare_forecast_destination_for_ia,
+    DetachedPatrolPathStatus, ForecastInput, ForecastedDestination, MacroOpcode, PATROL_SPEED_BASE,
+    PATROL_SPEED_DIVISOR, PathHistoryEntry, PathId, PatrolPath, Position,
+    PreparedForecastDestination, forecast_destination_for_ia, prepare_forecast_destination_for_ia,
 };
 
 mod model;

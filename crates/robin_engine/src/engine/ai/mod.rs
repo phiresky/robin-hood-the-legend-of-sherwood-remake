@@ -3141,7 +3141,7 @@ impl EngineInner {
                     ai.patrol_path = patrol_path_opt;
                     ai.has_patrol_path = true;
                 } else {
-                    ai.patrol_path = None;
+                    ai.detach_patrol_path(None, false);
                     ai.has_patrol_path = false;
                 }
 

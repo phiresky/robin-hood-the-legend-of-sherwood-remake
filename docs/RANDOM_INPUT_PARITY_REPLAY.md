@@ -2889,6 +2889,22 @@ latches are not yet represented by the Rust live controller, while the Linux
 AI log wire format stores only its debug-line type and cannot authoritatively
 recover the remaining in-memory fields.
 
+### Schema-v39 shared NPC path continuation
+
+The shared controller now projects the complete serialized `RHPath` status:
+current and previous waypoint cursors, travel direction, authored hiking-path
+identity, and ordered formation history with semantic positions. The
+conditional macro cursor is present only when the Original writes it. The
+three stop-before-end latches are also authoritative and Rust updates them at
+the same `GoNear` boundary as the Original.
+
+Rust legacy-save adoption no longer drops no-path status. A dedicated detached
+status preserves the cursor, direction, and history that `RHPath::Init(-1)`
+intentionally leaves alive; active paths continue using their live runtime
+object. Invalid hiking-path and waypoint references remain hard load errors.
+For older traces only the absent `path_control` key is removed. The native
+cache version and suffix are v39.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,

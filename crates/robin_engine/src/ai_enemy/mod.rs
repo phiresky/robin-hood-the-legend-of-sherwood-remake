@@ -2599,7 +2599,7 @@ impl EnemyAi {
         {
             self.changed_to_alert_path = true;
             self.base.path_id = Some(alert_path_id);
-            self.base.patrol_path = None;
+            self.base.detach_patrol_path(Some(alert_path_id), true);
             self.base.has_patrol_path = true;
         }
 

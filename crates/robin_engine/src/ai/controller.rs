@@ -69,7 +69,14 @@ pub struct AiController {
     pub has_patrol_path: bool,
     /// Runtime patrol path tracking (wraps a hiking path with current waypoint).
     pub patrol_path: Option<PatrolPath>,
+    /// Serialized status retained when `patrol_path` is detached. The Original
+    /// preserves this state across `RHPath::Init(-1)`.
+    pub detached_patrol_path_status: DetachedPatrolPathStatus,
     pub can_move: bool,
+
+    pub stop_before_end_of_path: bool,
+    pub use_max_norm_to_stop_before_end_of_path: bool,
+    pub stop_before_end_of_path_distance: u16,
 
     /// Think-method recursion depth — incremented on every `Think(...)`
     /// entry, decremented on exit. Read by `go_near` to shrink the
@@ -296,7 +303,11 @@ impl Default for AiController {
             number_of_looks: 0,
             has_patrol_path: false,
             patrol_path: None,
+            detached_patrol_path_status: DetachedPatrolPathStatus::default(),
             can_move: false,
+            stop_before_end_of_path: false,
+            use_max_norm_to_stop_before_end_of_path: false,
+            stop_before_end_of_path_distance: 0,
             think_recursion_depth: 0,
             macro_command: Vec::new(),
             macro_command_offset: 0,
@@ -1422,6 +1433,31 @@ impl AiController {
 
     // -- Patrol macro helpers --
 
+    /// Detach the live hiking path while preserving the exact status fields
+    /// that `RHPath::Init` leaves behind. Supplying a new path ID models the
+    /// alert-path switch, which resets only the current cursor and direction.
+    pub fn detach_patrol_path(
+        &mut self,
+        hiking_path_index: Option<PathId>,
+        reset_for_new_path: bool,
+    ) {
+        if let Some(path) = self.patrol_path.take() {
+            self.detached_patrol_path_status = DetachedPatrolPathStatus {
+                hiking_path_index,
+                current_waypoint_index: path.current_waypoint_index,
+                last_waypoint_index: path.last_waypoint_index,
+                forward: path.forward,
+                history: path.history,
+            };
+        } else {
+            self.detached_patrol_path_status.hiking_path_index = hiking_path_index;
+        }
+        if reset_for_new_path {
+            self.detached_patrol_path_status.current_waypoint_index = 0;
+            self.detached_patrol_path_status.forward = true;
+        }
+    }
+
     /// Assign a new patrol path (or drop the current one). The three
     /// call shapes (sentinel `-1`, sentinel `-2`, valid index) collapse
     /// to the cases encoded in [`PatrolAssignment`].
@@ -1456,7 +1492,7 @@ impl AiController {
             PatrolAssignment::ClearPath | PatrolAssignment::ClearPathSitAround => {
                 let sits = matches!(assignment, PatrolAssignment::ClearPathSitAround);
                 self.has_patrol_path = false;
-                self.patrol_path = None;
+                self.detach_patrol_path(None, false);
                 self.path_id = None;
                 self.initial_position = current_position;
                 self.initial_view_direction = current_direction & 0x0F;
@@ -1486,7 +1522,20 @@ impl AiController {
                     return false;
                 }
                 self.path_id = Some(pid);
-                self.patrol_path = PatrolPath::new(pid, hiking_paths);
+                let (last_waypoint_index, history) = if let Some(path) = self.patrol_path.take() {
+                    (path.last_waypoint_index, path.history)
+                } else {
+                    (
+                        self.detached_patrol_path_status.last_waypoint_index,
+                        std::mem::take(&mut self.detached_patrol_path_status.history),
+                    )
+                };
+                self.patrol_path = PatrolPath::new(pid, hiking_paths).map(|mut path| {
+                    // RHPath::Init(new_index) resets current/forward only.
+                    path.last_waypoint_index = last_waypoint_index;
+                    path.history = history;
+                    path
+                });
                 self.likes_to_sit_around = false;
                 self.special_action = false;
                 if !self.script_locked && self.current_state == AiState::Default {
@@ -1508,7 +1557,7 @@ impl AiController {
         self.break_macro();
 
         self.path_id = None;
-        self.patrol_path = None;
+        self.detach_patrol_path(None, false);
         self.has_patrol_path = false;
         self.initial_position = post_position;
         self.initial_view_direction = post_direction & 0x0F;
@@ -3005,6 +3054,9 @@ impl AiController {
             let depth = self.think_recursion_depth as i32;
             (((100 - depth) * distance) / 100).max(0)
         };
+        self.stop_before_end_of_path = true;
+        self.use_max_norm_to_stop_before_end_of_path = !flags.contains(GotoFlags::USE_NORM);
+        self.stop_before_end_of_path_distance = effective_distance as u16;
 
         // The near-distance early-out also requires same-layer — a
         // different-layer destination falls through to the full launch
