@@ -3069,6 +3069,92 @@ fn wait_timer_zero_completes_after_execute_and_before_action_change() {
 }
 
 #[test]
+fn derived_tail_instruction_rewrites_terminated_motion_to_in_progress() {
+    use crate::element::Command;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let actor = engine.add_entity(make_scripted_soldier(""));
+    let assets = LevelAssets::new();
+    bind_test_actor_animations(
+        &mut engine,
+        actor,
+        &[OrderType::Pointing, OrderType::LookingLeft],
+    );
+
+    let terminating = Order::new(
+        OrderType::Pointing,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    );
+    let terminating_id = terminating.order_id;
+    install_test_order_queue(&mut engine, actor, [terminating]);
+    {
+        let sprite = &mut engine
+            .get_entity_mut(actor)
+            .expect("derived-tail actor exists")
+            .element_data_mut()
+            .sprite;
+        sprite.last_processed_order_id = terminating_id.get();
+        sprite.last_action = OrderType::Pointing;
+        sprite.current_row = 0;
+        sprite.current_frame = 1;
+        sprite.frame_count = 0;
+        sprite.action_done_frame = 1;
+        sprite.action_done_counter = 0;
+    }
+
+    let mut successor = None;
+    engine.tick_actor_animation_action_change_slots_with_after_slot(
+        &crate::sim_rng::test_context(),
+        &assets,
+        |engine, owner| {
+            if owner != actor || successor.is_some() {
+                return;
+            }
+            let mut element = SequenceElement::new(1, Command::LookLeft, Some(actor));
+            element.orders.push_back(Order::new(
+                OrderType::LookingLeft,
+                0.0,
+                0.0,
+                engine.orders.allocate_order_id(),
+            ));
+            let sequence = engine.orders.sequence_manager.launch_element(element);
+            engine
+                .orders
+                .sequence_manager
+                .element_in_progress(sequence, 0);
+            let _ = engine
+                .orders
+                .sequence_manager
+                .take_pending_synchronous_actions();
+            successor = Some(sequence);
+        },
+    );
+
+    let successor = successor.expect("derived tail installed a successor");
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(actor),
+        Some((successor, 0))
+    );
+    assert_eq!(
+        engine
+            .get_entity(actor)
+            .and_then(|entity| entity.actor_data())
+            .expect("derived-tail actor remains typed")
+            .continuation
+            .motion_state,
+        crate::sprite::MotionState::InProgress,
+        "Instruct in the derived NPC/Human tail must perform the Original mmotionState rewrite"
+    );
+}
+
+#[test]
 fn turning_selects_sprite_row_after_the_direction_step() {
     use crate::element::Command;
     use crate::order::{Order, OrderType};

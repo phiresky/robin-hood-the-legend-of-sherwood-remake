@@ -3637,6 +3637,34 @@ impl EngineInner {
                         .latched_order_type = Some(derived_tail_order_type);
                     after_slot(self, entity_id, derived_tail_order_type);
 
+                    let post_tail_order_changed =
+                        selected_order.is_some_and(|(entry_seq, entry_idx, entry_order)| {
+                            self.orders
+                                .sequence_manager
+                                .current_order_for_actor(entity_id)
+                                .is_some_and(|(live_seq, live_idx, live_order)| {
+                                    live_seq != entry_seq
+                                        || live_idx != entry_idx
+                                        || live_order.order_id != entry_order
+                                })
+                        });
+                    if post_tail_order_changed {
+                        // NPC/Human derived Hourglass work runs after the
+                        // base Actor completion and can synchronously Instruct
+                        // a successor (AI macros and en-route continuation do
+                        // this). RHElementActor::Instruct writes
+                        // mmotionState=IN_PROGRESS when it accepts that live
+                        // element. The earlier base-completion normalization
+                        // cannot observe a successor installed in this tail.
+                        self.world
+                            .entities
+                            .get_mut(entity_id)
+                            .and_then(Entity::actor_data_mut)
+                            .expect("derived-tail successor owner disappeared")
+                            .continuation
+                            .motion_state = crate::sprite::MotionState::InProgress;
+                    }
+
                     if let Some(actor) = self
                         .world
                         .entities
