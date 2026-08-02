@@ -904,7 +904,7 @@ impl NativeContext<'_, '_> {
                         view_forward,
                         real_half_aperture,
                         is_night_or_fog,
-                        &self.fast_grid.level,
+                        &self.fast_grid,
                         sight_obstacle_list,
                         target_obstacle,
                     );

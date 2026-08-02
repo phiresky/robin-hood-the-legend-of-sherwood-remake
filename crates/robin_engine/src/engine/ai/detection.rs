@@ -1978,7 +1978,7 @@ impl EngineInner {
                                         view_forward,
                                         real_half_aperture,
                                         is_night_or_fog,
-                                        &self.world.fast_grid.level,
+                                        &self.world.fast_grid,
                                         sight_obstacles,
                                         target_obstacle,
                                     )
@@ -3708,7 +3708,7 @@ impl EngineInner {
                                     ctx.view_forward,
                                     ctx.real_half_aperture,
                                     ctx.is_night_or_fog,
-                                    ctx.level,
+                                    ctx.fast_grid,
                                     *ctx.sight_obstacles,
                                     target_obstacle,
                                 )

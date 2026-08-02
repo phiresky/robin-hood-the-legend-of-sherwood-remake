@@ -2544,11 +2544,10 @@ impl AiController {
             // Post-only friend. Try the post, then post + 15 Z; if
             // neither is visible, warn and continue into the wait
             // setup anyway.
-            let post = crate::coordinates::WorldPoint3D {
-                x: target_view.initial_position.x,
-                y: target_view.initial_position.y,
-                z: target_view.elevation,
-            };
+            // Original calls PositionToPoint3D here. `initial_position` is
+            // projected map space, so using its Y directly as world Y drops
+            // the ground elevation and can suppress both post LOS queries.
+            let post = ctx.position_to_point_3d(target_view.initial_position);
             if !ctx.is_detecting_point_360(post) {
                 let mut elevated = post;
                 elevated.z += 15.0;

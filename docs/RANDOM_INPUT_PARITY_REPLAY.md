@@ -2563,6 +2563,31 @@ movement-unit family remains separate until its exact Original arithmetic or
 completion boundary is established. These 19 results are an incremental
 frontier only, not a claim about the already-audited portion of the corpus.
 
+### Schema-v24 visibility-call frontier: grid-selected lights and post coordinates
+
+Two visibility-query count divergences exposed general coordinate/spatial-query
+shortcuts in the Rust port:
+
+- Original night/fog `ComputeViewRadius` asks `RHFastFindGrid::GetSectors` for
+  every active shadow sector registered in the 64-pixel blocks touched by its
+  clipped 800x800 search box. Rust instead scanned all shadow sectors and
+  rejected those whose barycentre was more than 400 units from the reference
+  point. That incorrectly excluded large light polygons which touch the box
+  while their barycentre lies outside it. The Rust lookup now preserves the
+  Original row-major block traversal, first-encounter uniqueness, runtime
+  active filtering, and resulting light-sector LOS order.
+- Original `InitializeFriendCheck` converts a post-only partner's authored
+  `RHposition` with `PositionToPoint3D` before its base and +15Z LOS probes.
+  Rust had copied projected map Y directly into world Y and separately used
+  the target's live elevation. Post probes now use the shared sector/layer
+  projection helper, matching the same conversion already used for patrol
+  waypoints.
+
+These changes are mission- and replay-independent. The corresponding source
+sites are `RHElementActorNPC::ComputeViewRadius`,
+`RHFastFindGrid::GetSectors`, and
+`RHArtificialMalignity::InitializeFriendCheck` in `original-code`.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

@@ -1820,7 +1820,7 @@ impl EnemyAi {
                     (ctx.self_view_direction[0], ctx.self_view_direction[1]),
                     ctx.self_real_half_aperture,
                     ctx.is_night_or_fog,
-                    &ctx.fast_grid.level,
+                    &ctx.fast_grid,
                     sight_obstacles,
                     target_obstacle,
                 )

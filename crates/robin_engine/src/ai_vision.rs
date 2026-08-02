@@ -797,6 +797,65 @@ pub fn distance_sharpness(sqr_distance: f32, view_radius: f32) -> f32 {
 
 // ─── compute_view_radius (night/fog) ────────────────────────────
 
+/// Reproduce `RHFastFindGrid::GetSectors(box, SECTOR_SHADOW)` ordering.
+///
+/// The query visits grid cells in row-major order and appends each matching
+/// active sector on first encounter. This is intentionally not a barycentre
+/// radius query: a large polygon can touch the search box while its
+/// barycentre lies outside it.
+fn night_fog_shadow_sector_indices(
+    fast_grid: &crate::fast_find_grid::FastFindGrid,
+    reference: MapPoint,
+    layer: u16,
+) -> Vec<u32> {
+    let level = &fast_grid.level;
+    let query_box = crate::coordinates::MapBBox::from_coords(
+        reference.x - 400.0,
+        reference.y - 400.0,
+        reference.x + 400.0,
+        reference.y + 400.0,
+    );
+    let clipped = query_box.to_geo().clip_bbox(&level.map_bbox.to_geo());
+    let Some(clipped_rect) = clipped.0 else {
+        return Vec::new();
+    };
+    let x_min = ((clipped_rect.min().x as i16) >> 6).max(0) as u16;
+    let y_min = ((clipped_rect.min().y as i16) >> 6).max(0) as u16;
+    let x_max = (((clipped_rect.max().x as i16) >> 6).max(0) as u16)
+        .min(level.grid_width.saturating_sub(1));
+    let y_max = (((clipped_rect.max().y as i16) >> 6).max(0) as u16)
+        .min(level.grid_height.saturating_sub(1));
+    let mut visited = vec![false; level.sectors.len()];
+    let mut result = Vec::new();
+
+    for cy in y_min..=y_max {
+        for cx in x_min..=x_max {
+            let block_idx = fast_grid.block_index_from_cell(cx, cy, layer);
+            let Some(block) = level.blocks.get(block_idx) else {
+                continue;
+            };
+            for &sector_idx in &block.sector_indices {
+                let sector_idx_usize = sector_idx as usize;
+                if visited.get(sector_idx_usize).copied().unwrap_or(false) {
+                    continue;
+                }
+                let Some(gs) = level.sectors.get(sector_idx_usize) else {
+                    continue;
+                };
+                if !fast_grid.is_sector_active(sector_idx)
+                    || !fast_grid.sector_type(sector_idx).is_shadow()
+                    || gs.points.is_empty()
+                {
+                    continue;
+                }
+                visited[sector_idx_usize] = true;
+                result.push(sector_idx);
+            }
+        }
+    }
+    result
+}
+
 /// Computes the effective view radius after:
 /// 1. Ground-plane sphere projection: `sqrt(R² − Z²)` — converts the
 ///    3D view sphere to a ground-plane circle given the eye height.
@@ -827,10 +886,11 @@ pub fn compute_view_radius(
     view_forward: (f32, f32),
     half_aperture: f32,
     is_night_or_fog: bool,
-    level: &crate::fast_find_grid::LevelGrid,
+    fast_grid: &crate::fast_find_grid::FastFindGrid,
     sight_obstacles: ObstacleList<'_>,
     target_obstacle: Option<&SightObstacle>,
 ) -> f32 {
+    let level = &fast_grid.level;
     let r = view_radius as f32;
 
     // Base radius.  Without an obstacle, slice the view sphere with
@@ -884,14 +944,12 @@ pub fn compute_view_radius(
 
     let mut factor_result: f32 = 0.5;
 
-    for (sector_idx, gs) in level.sectors.iter().enumerate() {
-        if !gs.sector_type.is_shadow() || gs.points.is_empty() {
-            continue;
-        }
-        if gs.layer != shadow_layer {
-            continue;
-        }
-
+    // Original does not select lights by barycentre distance. `GetSectors`
+    // walks every 64-pixel grid block touched by the clipped +/-400 query
+    // box and appends each active SHADOW sector on first encounter. A large
+    // light polygon may therefore be selected even when its barycentre lies
+    // farther than 400 units from `pt_ref`.
+    for sector_idx in night_fog_shadow_sector_indices(fast_grid, pt_ref, shadow_layer) {
         // Use the precomputed centroid + 3D barycentre from
         // `RHSectorShadow::Initialize` (`level.shadow_data` populated
         // in the post-load pass at
@@ -899,7 +957,7 @@ pub fn compute_view_radius(
         // 3D barycentre is needed for the `is_reachable` ray; if it
         // is missing, the load pipeline is incomplete and this
         // sector cannot be sampled correctly.
-        let Some(shadow) = level.shadow_data.get(&(sector_idx as u32)) else {
+        let Some(shadow) = level.shadow_data.get(&sector_idx) else {
             tracing::warn!(
                 sector_idx,
                 "shadow sector missing precomputed barycentre; skipping compute_view_radius sample"
@@ -912,13 +970,6 @@ pub fn compute_view_radius(
             shadow.barycentre_3d_y,
             shadow.barycentre_3d_z,
         ];
-
-        // Quick 400-unit bounding-box reject.
-        let dx = pt_ref.x - bary.x;
-        let dy = pt_ref.y - bary.y;
-        if dx * dx + dy * dy > 400.0 * 400.0 {
-            continue;
-        }
 
         // 3D LOS check to the light source — segment-vs-obstacle test
         // using the precomputed 3D barycentre.  Using the 3D variant
@@ -1565,6 +1616,73 @@ fn vec_angle(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn shadow_sector(number: i16, points: Vec<MapPoint>) -> crate::fast_find_grid::GridSector {
+        let mut bounding_box = crate::coordinates::MapBBox::new();
+        for &point in &points {
+            bounding_box.expand_point(point);
+        }
+        crate::fast_find_grid::GridSector {
+            points,
+            bounding_box,
+            sector_type: crate::sector::SectorType::SHADOW,
+            layer: 0,
+            sector_number: crate::sector::SectorNumber::new(number),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        }
+    }
+
+    #[test]
+    fn night_fog_light_lookup_uses_touched_blocks_not_barycentre_radius() {
+        let mut grid = crate::fast_find_grid::FastFindGrid::new();
+        grid.size_map(32, 32);
+        grid.allocate_layers(1);
+
+        // The +/-400 query around (512, 512) ends at X=912. This large
+        // sector touches the final selected 64px block, although a legal
+        // barycentre near X=1000 would be farther than 400 from the query
+        // reference. Original GetSectors still includes it.
+        let selected = grid.add_sector(
+            shadow_sector(
+                1,
+                vec![
+                    MapPoint::new(850.0, 480.0),
+                    MapPoint::new(1100.0, 480.0),
+                    MapPoint::new(1100.0, 544.0),
+                    MapPoint::new(850.0, 544.0),
+                ],
+            ),
+            0,
+        );
+        let inactive = grid.add_sector(
+            shadow_sector(
+                2,
+                vec![
+                    MapPoint::new(500.0, 500.0),
+                    MapPoint::new(520.0, 500.0),
+                    MapPoint::new(520.0, 520.0),
+                    MapPoint::new(500.0, 520.0),
+                ],
+            ),
+            0,
+        );
+        grid.set_sector_active(inactive, false);
+
+        assert_eq!(
+            night_fog_shadow_sector_indices(&grid, MapPoint::new(512.0, 512.0), 0),
+            vec![selected]
+        );
+    }
 
     #[test]
     fn view_radius_cache_is_one_last_writer_per_surface_and_frame() {
