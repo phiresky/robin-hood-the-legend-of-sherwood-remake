@@ -1452,8 +1452,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 29;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v29.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 30;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v30.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4972,9 +4972,9 @@ fn retain_recorded_order_runtime_coverage(
     }
 }
 
-/// Remove only schema-v29's additive dynamic subtype projection when an
-/// older raw recording predates it. If `subtype` is present, every nested
-/// field (including explicit nulls) remains structurally strict.
+/// Remove only additive entity-runtime projections when an older raw
+/// recording predates them. Once present, every nested field (including
+/// explicit nulls) remains structurally strict.
 fn retain_recorded_entity_runtime_coverage(
     expected: &serde_json::Value,
     actual: &mut serde_json::Value,
@@ -4985,6 +4985,13 @@ fn retain_recorded_entity_runtime_coverage(
         && let Some(actual) = actual.as_object_mut()
     {
         actual.remove("subtype");
+    }
+    if !expected
+        .as_object()
+        .is_some_and(|object| object.contains_key("npc_ai"))
+        && let Some(actual) = actual.as_object_mut()
+    {
+        actual.remove("npc_ai");
     }
 }
 

@@ -2744,6 +2744,21 @@ without inventing defaults. Older raw traces remain supported by removing only
 the absent top-level `subtype` projection. Presence is otherwise strict. The
 native replay cache version and suffix are v29.
 
+### Schema-v30 semantic NPC base-controller runtime
+
+Every NPC runtime snapshot now includes a semantic `npc_ai` base-controller
+checkpoint: state/substate and alert attitude, authoritative targets, ordinary
+and macro timers, macro continuation latches, stimulus history, group lists,
+seek/alert positions, panic and movement-failure continuation, lock/script
+state, remarks/emoticons, and patrol coordination. Pointer identities are
+canonical entity references and AI positions use canonical sector identities.
+
+This first coherent controller slice intentionally precedes the separate
+enemy/friendly subclass tails and the larger serialized path/stimulus/report
+objects. New traces compare every field in this slice strictly. Older raw
+traces omit only the absent top-level `npc_ai` projection. The native replay
+cache version and suffix are v30.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,

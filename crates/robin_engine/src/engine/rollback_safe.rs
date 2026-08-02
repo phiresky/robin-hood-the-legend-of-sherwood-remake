@@ -432,6 +432,124 @@ impl Engine {
                 "trajectory": trajectory,
             })
         };
+        let resolve_ai_handle = |handle: u32| -> Value {
+            if handle == 0 {
+                return Value::Null;
+            }
+            let resolved = self
+                .inner
+                .world
+                .entities
+                .occupied()
+                .find_map(|(candidate, _)| (candidate.index() == handle).then_some(candidate))
+                .unwrap_or_else(|| panic!("parity local AI references missing handle {handle}"));
+            entity_ref(resolved)
+        };
+        let ai_position = |position: crate::ai::Position| {
+            json!({
+                "map": point2(position.x, position.y),
+                "sector": sector(position.sector),
+                "layer": position.level,
+            })
+        };
+        let npc_ai = entity.npc_data().and_then(|npc| {
+			let ai = npc.ai_brain.base()?;
+			let handles = |values: &[u32]| {
+				values
+					.iter()
+					.copied()
+					.map(resolve_ai_handle)
+					.collect::<Vec<_>>()
+			};
+			let mut state = json!({
+				"last_goto": {
+					"destination": ai_position(ai.last_goto_destination),
+					"flags": ai.last_goto_flags.bits(), "stuck_counter": ai.stuck_counter,
+				},
+				"forbidden_remarks": ai.forbidden_remark_ids,
+				"current_remark_flags": ai.current_remark_flags,
+				"owner": ai.owner_entity_id.map_or(Value::Null, entity_ref),
+				"state": ai.current_state as u32, "old_state": ai.old_state,
+				"substate": ai.current_substate as u32,
+				"music_alert": ai.current_music_alert_status as u32,
+				"timer_launch_substate": ai.substate_at_last_timer_launch as u32,
+				"attitude": ai.attitude as u32, "blood_alcohol": ai.blood_alcohol,
+				"initial_action": ai.initial_action, "number_of_looks": ai.number_of_looks,
+				"can_move": ai.can_move,
+				"macro": {
+					"remaining_bytes": ai.number_of_remaining_macro_bytes,
+					"in_progress": ai.macro_in_progress,
+					"started_this_frame": ai.macro_started_in_this_frame,
+					"next_rand": ai.next_macro_rand,
+					"next_rand_forecasted": ai.next_macro_rand_forecasted,
+				},
+				"targets": {
+					"primary": resolve_ai_handle(ai.primary_target),
+					"friend_in_trouble": resolve_ai_handle(ai.friend_in_trouble),
+					"detected_body": resolve_ai_handle(ai.detected_body),
+					"interesting_object": resolve_ai_handle(ai.interesting_object),
+					"antagonist": resolve_ai_handle(ai.antagonist),
+					"last_stimulus_actor": ai.last_stimulus_actor.map_or(Value::Null, resolve_ai_handle),
+				},
+				"timers": {
+					"running": ai.timer_is_running, "ring": ai.when_does_timer_ring,
+					"macro_running": ai.macro_timer_is_running,
+					"macro_ring": ai.when_does_macro_timer_ring,
+					"standing_around": ai.standing_around_timer,
+				},
+			});
+			state
+				.as_object_mut()
+				.expect("parity NPC AI state must be an object")
+				.extend(json!({
+				"sorrow": ai.sorrow_level,
+				"last_stimuli": ai.last_stimulus.map(|stimulus| stimulus as u32),
+				"last_stimulus_multiplicities": ai.last_stimulus_multiplicity,
+				"group": {
+					"is_master": ai.is_master, "master": resolve_ai_handle(ai.master),
+					"us": handles(&ai.list_us), "alerted_us": handles(&ai.list_alerted_us),
+					"staying_us": handles(&ai.list_staying_us),
+				},
+				"seek_position": ai_position(ai.seek_position),
+				"alert_soldiers_point": ai_position(ai.alert_soldiers_point),
+				"first_try": ai.first_try,
+				"panic": {
+					"center": point2(ai.panic_center_x, ai.panic_center_y),
+					"lasting_runs": ai.lasting_panic_runs, "directed": ai.directed_panic,
+				},
+				"movement_failures": {
+					"could_not_reach": ai.couldnt_reachpoint,
+					"already_on_point": ai.already_on_point, "already_turned": ai.already_turned,
+				},
+				"likes_to_sit": ai.likes_to_sit_around, "special_action": ai.special_action,
+				"friends_alerted": ai.friends_are_alerted, "stay_at_home": ai.is_stay_at_home,
+				"locks": ai.locks_flag_field.bits(), "was_busy": ai.was_busy,
+				"script_locked": ai.script_locked, "remember_events": ai.remember_events,
+				"leave_house_number": ai.leave_house_number, "inside_halt": ai.inside_halt_method,
+				"default_path_flags": ai.default_path_walking_flags.bits(),
+				}).as_object().expect("parity NPC AI continuation chunk must be an object").clone());
+			state
+				.as_object_mut()
+				.expect("parity NPC AI state must be an object")
+				.extend(json!({
+				"current_remark": ai.current_remark as u32,
+				"emoticon": {
+					"type": ai.current_emoticon_type as u32,
+					"expiration": ai.emoticon_expiration_date,
+					"has_expiration": ai.emoticon_has_expiration_date,
+				},
+				"knocked_out_in_money_fight": ai.knocked_out_in_money_fight,
+				"got_beggar_trick": ai.got_the_beggar_trick,
+				"patrol": {
+					"chief": ai.patrol_chief.map_or(Value::Null, entity_ref),
+					"active": ai.patrol.iter().copied().map(entity_ref).collect::<Vec<_>>(),
+					"missed": ai.missed_patrol_members.iter().copied().map(entity_ref).collect::<Vec<_>>(),
+					"theoretical": ai.theoretical_patrol.iter().copied().map(entity_ref).collect::<Vec<_>>(),
+					"stopped": ai.patrol_stopped, "direction": ai.patrol_direction,
+				},
+				}).as_object().expect("parity NPC AI tail chunk must be an object").clone());
+			Some(state)
+		});
         let subtype = if entity.element_data().active {
             match entity {
                 crate::element::Entity::Target(target) => Some(json!({
@@ -508,6 +626,12 @@ impl Engine {
                 .as_object_mut()
                 .expect("parity entity runtime must be an object")
                 .insert("subtype".to_owned(), subtype);
+        }
+        if let Some(npc_ai) = npc_ai {
+            result
+                .as_object_mut()
+                .expect("parity entity runtime must be an object")
+                .insert("npc_ai".to_owned(), npc_ai);
         }
         result
     }
