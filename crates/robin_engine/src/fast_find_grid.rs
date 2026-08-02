@@ -3333,23 +3333,24 @@ impl FastFindGrid {
             let seg_lines = self.get_active_motion_line_indices(layer, &seg_bbox);
             let box_lines = self.get_active_motion_line_indices(layer, bbox);
 
-            // Merge and dedup
-            let mut all_indices = seg_lines;
-            for &idx in &box_lines {
-                if !all_indices.contains(&idx) {
-                    all_indices.push(idx);
+            // Original calls the segment and box GetLines overloads in
+            // sequence. Each overload filters only the lines it newly
+            // appended before the unique list is extended by the next
+            // query. Preserve that provenance and insertion order here:
+            // filtering the merged candidates with `segment || box` can
+            // promote a box-only line into the segment prefix.
+            let segment = geo2d::segment(center.to_geo(), click.to_geo());
+            let mut intersecting: Vec<LineIndex> = seg_lines
+                .into_iter()
+                .filter(|&idx| self.level.lines[usize::from(idx)].intersects_segment(segment))
+                .collect();
+            for idx in box_lines {
+                if self.level.lines[usize::from(idx)].intersects_bbox(bbox)
+                    && !intersecting.contains(&idx)
+                {
+                    intersecting.push(idx);
                 }
             }
-
-            // Filter to actually intersecting lines
-            let intersecting: Vec<LineIndex> = all_indices
-                .into_iter()
-                .filter(|&idx| {
-                    let line = &self.level.lines[usize::from(idx)];
-                    line.intersects_bbox(bbox)
-                        || line.intersects_segment(geo2d::segment(center.to_geo(), click.to_geo()))
-                })
-                .collect();
 
             if intersecting.is_empty() {
                 return true;
@@ -3924,6 +3925,40 @@ mod tests {
         assert!(grid.is_position_authorized(&bbox, 0));
         // Box should have been pushed below the line
         assert!(bbox.y_min() > 128.0);
+    }
+
+    #[test]
+    fn find_authorized_position_toward_preserves_query_provenance_order() {
+        let mut grid = FastFindGrid::new();
+        grid.size_map(20, 20);
+        grid.allocate_layers(1);
+
+        // Consecutive Original sector edges around the Savegame 051 corpse
+        // relocation. The second edge shares the click's grid cell and is a
+        // raw candidate for the degenerate center-to-click segment, but does
+        // not intersect that segment. It must not be promoted ahead of the
+        // first edge, which is found by the following box query.
+        grid.add_line(
+            GridLine::new(
+                MapPoint::new(753.0, 678.0),
+                MapPoint::new(741.0, 700.0),
+                true,
+            ),
+            0,
+        );
+        grid.add_line(
+            GridLine::new(
+                MapPoint::new(741.0, 700.0),
+                MapPoint::new(617.0, 721.0),
+                true,
+            ),
+            0,
+        );
+
+        let click = MapPoint::new(742.302, 704.8645);
+        let mut bbox = MapBBox::from_coords(732.302, 699.8645, 752.302, 709.8645);
+        assert!(grid.find_authorized_position_toward(&mut bbox, click, 0));
+        assert_eq!(bbox.center(), MapPoint::new(749.9404, 709.0309));
     }
 
     #[test]
