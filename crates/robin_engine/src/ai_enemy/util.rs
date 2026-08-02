@@ -955,10 +955,14 @@ fn estimate_damage(
         });
     {
         let is_rank_soldier = attacker.rank == ProfileRank::Soldier && !attacker.is_pc;
-        // `GetProtection` computes `me_to_him_direction = (him - me).sector_0_to_15()`
-        // where `me` is the defender — i.e. (attacker - target), the sector
-        // from defender to attacker.
-        let target_to_attacker_sector = vec_to_sector(-dx, -dy_raw) as i16;
+        // `GetProtection(target, attacker, ...)` does not use the proposed
+        // combat-position coordinates: it dereferences both actors and
+        // computes the defender-to-attacker sector from their *live* ground
+        // positions.  Range still uses the hypothetical coordinates above.
+        let target_to_attacker_sector = vec_to_sector(
+            attacker.position.x - target.position.x,
+            attacker.position.y - target.position.y,
+        ) as i16;
 
         use crate::weapons::SwordStrike;
         const NORMAL_STRIKES: [SwordStrike; crate::weapons::NUM_NORMAL_SWORD_STRIKES] = [
