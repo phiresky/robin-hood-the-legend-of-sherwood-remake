@@ -2676,6 +2676,19 @@ impl EngineInner {
             )
             .take_completed();
             self.apply_completed_path_work(sim, completed);
+
+            // In Original's synchronous WAITING arm, starting the first
+            // request recursively enters the READY arm.  That arm delivers
+            // the result and immediately computes the next queued request
+            // before returning.  Keep that successor parked in-flight: it
+            // must not be delivered at this barrier, but a later cancellation
+            // observes its already-computed raw path.
+            MovementContext::new(
+                self.control.frame_counter,
+                &mut self.world,
+                &mut self.orders,
+            )
+            .start_next(assets);
         }
 
         // ── Failed-path retry ────────────────────────────────────
