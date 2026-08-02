@@ -10776,6 +10776,28 @@ impl EngineInner {
             is_fast: _,
         } = request;
 
+        let selected_pre_path_tail = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(owner)
+            .and_then(|(selected_seq, selected_idx, current)| {
+                let element = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;
+                let tail_index = element.orders.len().checked_sub(1)?;
+                let tail = element.orders.get(tail_index)?;
+                let installed_matches = self
+                    .world
+                    .entities
+                    .get(owner)
+                    .and_then(Entity::actor_data)
+                    .and_then(|actor| actor.installed_order)
+                    .is_some_and(|installed| installed.order_id == current.order_id);
+                (selected_seq == seq_id
+                    && selected_idx == elem_idx
+                    && current.order_id == tail.order_id
+                    && installed_matches)
+                    .then_some(tail_index)
+            });
+
         // Drunken-soldier path deviation.  Only applies to upright
         // walking/running animations and not to PassDoor commands.
         let is_movement_anim = matches!(
@@ -10868,6 +10890,7 @@ impl EngineInner {
                 waypoints.remove(0);
             }
         }
+        let mut rewritten_installed_order = None;
         {
             let next_order_id = &mut self.orders.next_order_id;
             if let Some(elem) = self
@@ -10897,7 +10920,27 @@ impl EngineInner {
                     next_order_id,
                     restored_from_v48,
                 );
+                rewritten_installed_order = selected_pre_path_tail
+                    .and_then(|tail_index| elem.orders.get(tail_index))
+                    .map(|order| crate::element::InstalledActorOrder {
+                        order_id: order.order_id,
+                        order_type: order.order_type,
+                    });
             }
+        }
+
+        if let Some(installed_order) = rewritten_installed_order {
+            // ProcessPathRequests reuses the selected movement's final
+            // pre-path RHOrder, calls NewID, and changes its action in place.
+            // Keep the explicit mpOrder mirror on that rewritten object; a
+            // later PostProcessPath may insert other orders ahead of it but
+            // does not repoint mpOrder until the next Actor::Hourglass.
+            self.world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::actor_data_mut)
+                .expect("resolved path owner lost actor data")
+                .installed_order = Some(installed_order);
         }
 
         // Splice startup / end transitions into the order queue

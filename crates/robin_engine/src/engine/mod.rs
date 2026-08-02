@@ -2831,6 +2831,11 @@ impl EngineInner {
         let pathfinder = &mut self.world.pathfinder;
         let next_order_id = &mut self.orders.next_order_id;
         let resolver = Self::priority_resolver(&self.world.entities);
+        let selected_movement_before_stop = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(owner)
+            .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_id));
         if parity_debug_stage_timing {
             eprintln!("parity stop: before stop_movement_for_owner owner={owner:?}");
         }
@@ -2844,6 +2849,25 @@ impl EngineInner {
                 pathfinder.cancel_requests_for(id);
             },
         );
+        let rewritten_selected_order = if let Some((before_seq, before_idx, before_id)) =
+            selected_movement_before_stop
+            && let Some((after_seq, after_idx, after_order)) =
+                self.orders.sequence_manager.current_order_for_actor(owner)
+            && after_seq == before_seq
+            && after_idx == before_idx
+            && after_order.order_id != before_id
+        {
+            // RHSequenceElementMovement::StopMovement mutates the first
+            // RHOrder's action and calls NewID in place. mpOrder still points
+            // at that same object, so update Rust's explicit pointer mirror
+            // only when the selected element survived with a rewritten ID.
+            Some(crate::element::InstalledActorOrder {
+                order_id: after_order.order_id,
+                order_type: after_order.order_type,
+            })
+        } else {
+            None
+        };
         if parity_debug_stage_timing {
             eprintln!("parity stop: after stop_movement_for_owner owner={owner:?}");
         }
@@ -2864,6 +2888,15 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .stop_owner(owner, stop_priority, &resolver);
+        drop(resolver);
+        if let Some(installed_order) = rewritten_selected_order {
+            self.world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::actor_data_mut)
+                .expect("rewritten StopMovement owner lost actor data")
+                .installed_order = Some(installed_order);
+        }
         if parity_debug_stage_timing {
             eprintln!("parity stop: after sequence stop_owner owner={owner:?}");
             eprintln!(
