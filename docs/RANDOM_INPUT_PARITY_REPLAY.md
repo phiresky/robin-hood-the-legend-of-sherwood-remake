@@ -2036,6 +2036,15 @@ post-completion rewrite after synchronous owner work drains. This accounts for
 both transition-to-successor `Terminated`/InProgress differences and stale
 first-frame movement Done/InProgress values loaded from a save.
 
+A follow-up boundary three frames later showed that the rewrite point extends
+through the derived Human/NPC Hourglass tail. After base Actor completion,
+en-route AI or a macro can synchronously instruct the next element; Original
+`Instruct` then overwrites the still-serialized Terminated result with
+InProgress. Rust now compares the Execute-entry order identity with the live
+order after that derived tail and performs the same rewrite when a successor
+was accepted. This cleared the final LookLeft/LookRight completions and the
+next en-route walking-order handoff without inventing an eager fallback Wait.
+
 ### Battle-decision visibility timing
 
 The strict schema-12 sweep of Linux profile 1, Savegame 040, replay 013 first
@@ -2130,6 +2139,27 @@ in progress, the remaining transition-order prefix is authoritative.
 Adding the two structured snapshots changes the native parity cache to version
 13. Existing JSONL recordings that predate these required schema-13 fields are
 intentionally rejected rather than silently compared with partial coverage.
+
+### Persistent synchronous-pathfinder state
+
+Schema 13 also records the pathfinder state that survives a simulation-frame
+boundary. Synchronous A* does not make this state empty: when one READY result
+is delivered, Original immediately computes the next queue head but leaves
+that result READY for the following `ProcessPathRequests` barrier. The snapshot
+therefore preserves the logical request FIFO, its manager-ordinal element
+owner, the READY head's ordered waypoints (including an empty failed result),
+`mbIgnoreNextPath`, the attempt count, and every per-layer/per-area dynamic
+obstacle-state word.
+
+Capture accepts only WAITING and READY. READY must own the logical queue head;
+BUSY, NEW_REQUEST, SLEEP, OFF, a missing request element, or a mismatched
+current request aborts recording as an unstable/incomplete boundary. A* open
+lists, visited-node scores, current-node pointers, and other solver scratch are
+not recorded: synchronous search has completed before READY, and the next
+search resets those values before observing them. Rust compares entity and
+sector/area identities through the existing isomorphism and preserves the
+same in-flight-head-before-waiting ordering. This additive snapshot changes
+the native cache to version 14.
 
 ## Maintenance checklist
 
