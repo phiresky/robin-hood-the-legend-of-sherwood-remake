@@ -140,18 +140,42 @@ impl EnemyAi {
             return;
         }
 
-        // For IQ ≥ `CHECK_BEGGAR_MIN_IQ` non-trainer soldiers, wipe the
-        // `DETECTABLE_BEGGAR` list, clear `beggar_to_examine`, and
-        // re-add every `is_true_or_false_beggar()` actor so the seek
-        // pass fires fresh beggar detections. The detection-list
-        // refresh is covered by per-frame `EventSeesBeggar` stimulus
-        // dispatched from `engine/ai.rs` (already IQ-gated), so no
-        // re-add is needed. But `beggar_to_examine = 0` is a separate
-        // cached-handle clear — without it, a SeekArea entry from a
-        // non-`return_to_duty` caller leaves a stale beggar handle that
-        // downstream `EventDecideAfterBeggarShowsFace` cascades may
-        // consume.
+        // For IQ ≥ `CHECK_BEGGAR_MIN_IQ` non-trainer soldiers, Original
+        // clears `DETECTABLE_BEGGAR` and immediately re-adds every actor for
+        // which `IsTrueOrFalseBeggar()` holds. This is authoritative list
+        // state, not merely preparation for the next detection refresh: a
+        // frame dump taken after SeekArea already contains the rebuilt list.
         if (self.get_iq(ctx) as i32) >= parameters_ai::CHECK_BEGGAR_MIN_IQ && !self.combat_trainer {
+            use crate::element::{DetectableType, Posture};
+
+            self.base
+                .outbox
+                .actor
+                .delete_detectables
+                .push(DetectableType::Beggar);
+            let mut beggars: Vec<_> = ctx
+                .entity_views
+                .iter()
+                .filter_map(|(&handle, view)| {
+                    let is_true_or_false_beggar =
+                        view.is_beggar || (view.is_pc && view.posture == Posture::SimulatingBeggar);
+                    is_true_or_false_beggar.then(|| {
+                        (
+                            view.original_creation_order,
+                            handle,
+                            view.entity_id(handle).unwrap_or_else(|| {
+                                panic!("beggar actor {handle} has no typed entity identity")
+                            }),
+                        )
+                    })
+                })
+                .collect();
+            beggars.sort_unstable_by_key(|&(creation_order, handle, _)| (creation_order, handle));
+            self.base.outbox.actor.add_detectables.extend(
+                beggars
+                    .into_iter()
+                    .map(|(_, _, entity_id)| (entity_id, DetectableType::Beggar)),
+            );
             self.beggar_to_examine = 0;
         }
 
