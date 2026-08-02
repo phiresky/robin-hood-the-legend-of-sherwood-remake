@@ -2010,6 +2010,32 @@ The initial hypothesis that this actor was taking the special
 engine dump showed `execution_frozen == false`. No frozen-actor behavior was
 changed for this finding.
 
+The follow-up first-frame dumps exposed two Execute return/ordering details.
+Base Actor's ordinary `WAITING_UPRIGHT_BORED` arm returns `RHMOTION_START` on
+the new-order edge, then coerces all later results to InProgress; Rust had
+coerced Start as well. The ordinary bored loop now forwards exactly that Start
+edge while the random bored variant retains its always-InProgress behavior.
+
+Savegame 046 Civilian 82 resumed a Turn at direction 0 toward direction 14.
+Original calls `Turn`/`TurnFast` before `RHSprite::PerformAction`, so its body
+stepped to direction 15 and selected directional sprite row 159 in the same
+slot (`original-code/RHelementactor.cpp`, `RHANIMATION_TURNING`). Rust selected
+row 144 from direction 0 and only then rotated the body to 15. The shared Turn
+Execute arm now rotates first and supplies the stepped direction to sprite-row
+selection; a focused regression covers the 0-to-15 wraparound.
+
+The remaining motion-state-only differences were the serialized result of the
+same actor slot, not animation or AI differences. `RHElementActor::Hourglass`
+first assigns the derived `Execute` result to `mmotionState`; a terminating
+order then enters `DoNextOrder`, whose `Proceed` path rewrites that member to
+InProgress when another order becomes current. Terminating an element can also
+install a successor synchronously through `SetState`/`Ready`/`Instruct`, which
+performs the same rewrite. Rust now latches specialized movement/combat/ability
+Execute results as well as generic animation results, and applies this
+post-completion rewrite after synchronous owner work drains. This accounts for
+both transition-to-successor `Terminated`/InProgress differences and stale
+first-frame movement Done/InProgress values loaded from a save.
+
 ### Battle-decision visibility timing
 
 The strict schema-12 sweep of Linux profile 1, Savegame 040, replay 013 first
@@ -2046,6 +2072,64 @@ its own call site, as Original does, instead of consuming aggregates produced
 from a speculative geometric scan. This keeps general tick-data and parity
 diagnostic construction observer-neutral: building a snapshot cannot append
 opaque query records or warm visibility state before its logical consumer.
+
+Night/fog view-radius modulation exposed a second kind of hoisting. Rust
+computed the ground radius and every obstacle-specific radius before cadence,
+target validity, range, and close-detection gates. `ComputeViewRadius` itself
+tests opaque reachability to nearby light/shadow-sector barycentres, so this
+apparently numerical precomputation produced 134 extra queries in Savegame 040
+and 103 leading queries in Savegame 041 after the fighter/sleeping cleanup.
+Original reaches `ComputeViewRadius` inside `ComputeVisibility(human)` only
+after GoldenEye, disguise, eye, building, active, forest, radius/behind, and
+very-close exits (`RHelementactornpc.cpp:2324-2411`).
+
+Human visibility now accepts a once-only effective-radius computation and
+invokes it at that exact pipeline point. Periodic Enemy and per-type detection,
+synchronous AI `IsDetecting`, and the script-native visibility query all use
+the lazy path. A counter regression proves early-rejected and very-close
+targets never request a radius, while an eligible target requests it exactly
+once.
+
+The lazy computation retains Original's same-viewer/same-frame cache: Enemy,
+Body, Friend, MissedFriend, and Beggar buckets share one owner-local ground
+entry and one entry per projection obstacle for the contiguous
+`RefreshDetection` call. Thus the first eligible target performs the shadow
+LOS work and later targets on the same surface reuse it without appending
+duplicate parity queries. A focused cache regression covers both ground and
+obstacle keys.
+
+### Sequence-manager and script-VM boundary state
+
+Schema 13 now records the sequence manager's insertion-ordered sequences,
+elements, orders, queue, actor-current ownership, postpone links, transition
+counters, and subtype payloads at every stable frame boundary. Runtime
+sequence IDs and element pointers are represented by manager ordinal plus
+element index. Entity handles, gates, jump lines, and sectors are emitted as
+semantic references or geometry; the Rust comparator maps entity and sparse
+sector allocation identities through the existing creation/topology
+isomorphism before performing a strict structural diff.
+
+The same frame snapshot records persistent mission-script VM state: sparse
+nonzero static words, declaration-ordered class member heaps for the engine
+and every instantiated actor, target, scroll, zone, and waypoint, plus the
+ordered computed-location table. Native VM words are decoded to semantic
+entity/mobile/location/door/patch/sound/building/way handles rather than
+capturing process pointers. Both engines reject capture if a synchronous VM
+activation or sequence recording is still open, because omitting such state
+would make the frame snapshot falsely appear complete.
+
+Rust now retains and compares the behavioral `script_driven` bit on live
+sequence elements. `RecordAction` stamps it for the same SHOOT, ENTER_SF,
+LEAVE_SF, and UNEQUIP_BOW cases as Original, and ENTER_SF records the explicit
+null opponent/jump-line plus false prepared flag that the C++ property map
+contains. Generic-field comparison uses explicit Original enum ordinals so
+the Rust-only retained-movement compatibility field cannot shift later
+fields. Dormant transition outputs are normalized away; while an element is
+in progress, the remaining transition-order prefix is authoritative.
+
+Adding the two structured snapshots changes the native parity cache to version
+13. Existing JSONL recordings that predate these required schema-13 fields are
+intentionally rejected rather than silently compared with partial coverage.
 
 ## Maintenance checklist
 
