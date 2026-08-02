@@ -2569,6 +2569,59 @@ impl FastFindGrid {
         result
     }
 
+    /// Return active non-elevation `LINE_CROSS` candidates in the same
+    /// block/line discovery order as Original `RHFastFindGrid::GetLines`.
+    ///
+    /// Actor crossing dispatch must collect patch, script, and sound lines
+    /// into one list before its stable distance sort. Querying each kind
+    /// separately loses the insertion order for equal-distance crossings at
+    /// a shared vertex.
+    pub fn get_actor_non_elevation_crossing_line_indices(
+        &self,
+        layer: u16,
+        old_pos: MapPoint,
+        new_pos: MapPoint,
+    ) -> Vec<LineIndex> {
+        let bbox = map_bbox_from_points(old_pos, new_pos);
+        let Some(rect) = bbox.0 else {
+            return Vec::new();
+        };
+
+        let x_min = ((rect.min().x / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
+        let y_min = ((rect.min().y / GRID_CELL_SIZE_F).floor() as i16).max(0) as u16;
+        let x_max = ((rect.max().x / GRID_CELL_SIZE_F).floor() as u16)
+            .min(self.level.grid_width.saturating_sub(1));
+        let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
+            .min(self.level.grid_height.saturating_sub(1));
+        let movement = geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
+
+        let mut visited = QueryVisited::new(self.level.lines.len());
+        let mut result = Vec::new();
+        for cy in y_min..=y_max {
+            for cx in x_min..=x_max {
+                let block_idx = self.block_index_from_cell(cx, cy, layer);
+                if block_idx >= self.level.blocks.len() {
+                    continue;
+                }
+                for &line_idx in &self.level.blocks[block_idx].line_indices {
+                    if !visited.try_mark(usize::from(line_idx)) {
+                        continue;
+                    }
+                    let line = &self.level.lines[usize::from(line_idx)];
+                    if !(line.is_patch || line.is_script || line.is_sound)
+                        || !self.is_line_active(line_idx)
+                    {
+                        continue;
+                    }
+                    if geo2d::segments_intersect(line.segment(), movement) {
+                        result.push(line_idx);
+                    }
+                }
+            }
+        }
+        result
+    }
+
     /// Construct `LINE_SCRIPT | LINE_CROSS` boundary segments for a
     /// `SECTOR_SCRIPT` polygon and register them in the grid via
     /// `add_line`.
@@ -3894,6 +3947,10 @@ mod tests {
             grid.get_crossing_sound_line_indices(0, old_pos, new_pos),
             vec![sound_line]
         );
+        assert_eq!(
+            grid.get_actor_non_elevation_crossing_line_indices(0, old_pos, new_pos),
+            vec![script_line, patch_line, sound_line]
+        );
     }
 
     fn horizontal_motion_line_impact_ratio(line_a_x: f32, line_b_x: f32) -> Option<f32> {
@@ -4109,19 +4166,11 @@ mod tests {
             ),
             2,
         );
-        let mut solid = square_projection_obstacle(
-            MapPoint::new(0.0, 0.0),
-            MapPoint::new(128.0, 128.0),
-            0,
-            0,
-        );
+        let mut solid =
+            square_projection_obstacle(MapPoint::new(0.0, 0.0), MapPoint::new(128.0, 128.0), 0, 0);
         solid.obstacle_type = SIGHTOBSTACLE_SOLID;
-        let projection = square_projection_obstacle(
-            MapPoint::new(0.0, 0.0),
-            MapPoint::new(128.0, 128.0),
-            2,
-            22,
-        );
+        let projection =
+            square_projection_obstacle(MapPoint::new(0.0, 0.0), MapPoint::new(128.0, 128.0), 2, 22);
         let obstacles = [solid, projection];
 
         let resolution = grid.resolve_projectile_landing_with_obstacle(
