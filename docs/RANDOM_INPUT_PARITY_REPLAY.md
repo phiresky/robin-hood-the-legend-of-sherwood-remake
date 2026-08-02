@@ -2595,6 +2595,26 @@ movement-unit family remains separate until its exact Original arithmetic or
 completion boundary is established. These 19 results are an incremental
 frontier only, not a claim about the already-audited portion of the corpus.
 
+The same frozen snapshot was rerun with the schema-v26 release runner after
+the projectile settlement/target-impact and Listening visual fixes. Results
+are under
+`output/parity-audits/random-long-after-2988-v26-20260802/`:
+
+- One trace now reaches exact EOF.
+- All twelve traces that previously stopped at the shared projectile frame
+  clear it; none retain an arrow-state first divergence.
+- Eight traces now share an exact-zero movement-completion boundary, and two
+  Continue traces differ by one map fixed-point unit in a committed movement
+  delta. Exact-bit generic movement records were added to automatic dumps so
+  the upstream arithmetic/order can be compared without adding a nonexistent
+  epsilon tolerance.
+- The remaining independent frontiers are two sprite transitions, three
+  command/motion/sequence transitions, the residual Listen motion-state
+  publication, and one ScriptRand cardinality boundary.
+
+This is progress through the first frontier, not closure of the 19-trace
+increment: 18 traces still require exact EOF validation.
+
 ### Schema-v24 visibility-call frontier: grid-selected lights and post coordinates
 
 Two visibility-query count divergences exposed general coordinate/spatial-query
