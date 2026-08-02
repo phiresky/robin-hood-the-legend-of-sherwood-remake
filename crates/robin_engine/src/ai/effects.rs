@@ -123,6 +123,10 @@ pub enum AiOwnerWork {
         /// reaches the engine boundary.
         owner_boundary_positions: Vec<(u32, Position)>,
     },
+    /// Continue `CMD_PATROL_START` after its inline `InitializePatrol` call.
+    ResumeMacroAfterPatrolInit {
+        owner_boundary_positions: Vec<(u32, Position)>,
+    },
     Speech(AiSpeechAttempt),
     RestoreDetectableObjects {
         knocked_out_in_money_fight: bool,
