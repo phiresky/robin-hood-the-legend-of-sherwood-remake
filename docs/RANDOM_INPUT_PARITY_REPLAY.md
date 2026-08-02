@@ -3497,6 +3497,51 @@ creation-ordered Beggar detectable rebuild rather than waiting for a later
 detection refresh (`06a3f79e4`); validation of its new frontier is pending the
 next frozen release runner.
 
+### Current targeted frontier advances (2026-08-02)
+
+The next targeted pass fixed several independent source-level mismatches:
+
+- accepted prebuilt actor orders now publish the selected order into the live
+  `mpOrder` mirror at `Instruct` (`50057fa71`);
+- the isometric vector norm divides Y by the supplied aspect ratio exactly as
+  `SBGeoVector2D::Norm` does, avoiding a one-ULP archer retreat endpoint
+  difference (`a0c7b9067`);
+- both archer-retreat facing overloads use `TURN_FAST`, and a visible primary
+  target is restored to `mlistThem` before the post-turn `BattleDecisions`, as
+  in `RHArtificialMalignity` (`e56aafd09`, `e7e2d204a`);
+- AI destination forecasts retain RNG-free building-exit alternatives in the
+  entity view and resolve the gate draw only at the exact Original consumer,
+  instead of drawing eagerly for every human while building snapshots
+  (`b4e435c85`, `9ea72d9ba`);
+- lift translation now precedes the soldier attentive-animation substitution,
+  preventing a stairs animation from being translated twice (`b4e435c85`);
+- door-passage position-interface pointers, the sector-only outside-building
+  view predicate, and creation-order friend scans now follow their Original
+  owner boundaries (`8b317c3da`, `1e9b74e5f`, `517de0796`).
+
+Release validation moved nicouzouf Savegame 051 replay 008 from frame 670
+through its archer-retreat RNG burst to frame 897, nicouzouf Savegame 063
+replay 001 past the eager building-exit draw at frame 569 back to frame 1,391,
+and Linux2 Savegame 030 replay 001 from frame 6,096 to frame 6,153. The latter
+now shares the creation-ordered civilian-panic subsystem being validated
+against the H07 replay.
+
+At Savegame 051 frame 897, Rust's reactive PC strike used the UI-facing
+`melee_target` cache after the ordered opponent list had changed. Original
+`RHElementActorPC::WarnForStrike` calls `GetPrincipalOpponent()` for both the
+deadline calculation and counter-strike target. Rust now reads the first live
+opponent instead (`f12178d93`), advancing the replay to frame 1,153.
+
+The next injury boundary exposed two more general ordering omissions. A
+synchronous knockout now drains the victim AI's `SlowlyCloseEyes` result at
+the same `Think` return boundary as the Original (`d96874ce0`), advancing to
+frame 1,302. Archer `ShootArrowAt` no longer inserts a Rust-only face command
+between `StopAll` and `SHOOT_BOW` (`f3653e7e4`), advancing to frame 1,329.
+Finally, `EXTRACTING_ARROW_SWORD` now initializes its direction goal from the
+live principal opponent and performs the Original's per-frame turn during the
+injury animation (`eacbecd25`). The current validated Savegame 051 frontier is
+frame 1,351, in the following projectile flight.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
