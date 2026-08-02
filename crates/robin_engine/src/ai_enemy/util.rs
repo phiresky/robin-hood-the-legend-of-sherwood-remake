@@ -563,8 +563,8 @@ impl FighterSnapshot {
 /// Convert a 0–15 compass sector to a unit direction vector.
 /// Sector 0 = north (0, -1), increasing clockwise.
 pub(super) fn sector_to_vector(sector: u16) -> (f32, f32) {
-    let angle = (sector as f32) * std::f32::consts::PI / 8.0;
-    (angle.sin(), -angle.cos())
+    let [x, y] = crate::shadow_polygon::sector_to_direction(sector as i16);
+    (x, y)
 }
 
 /// Dot product of two 2D vectors.
