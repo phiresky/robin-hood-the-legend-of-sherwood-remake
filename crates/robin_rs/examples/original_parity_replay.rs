@@ -1512,6 +1512,7 @@ struct RollingDumpFrame {
     rust_path_events: Vec<robin_engine::pathfinder::ParityPathEvent>,
     original_visibility_queries: Vec<TraceVisibilityQuery>,
     rust_visibility_queries: Vec<robin_engine::sight_obstacle::ParityVisibilityQuery>,
+    rust_movement_steps: Vec<robin_engine::movement_diagnostics::ParityMovementStep>,
     rng_start: usize,
     expected_rng_end: usize,
     actual_rng_end: usize,
@@ -2276,6 +2277,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             );
         }
         robin_engine::sight_obstacle::begin_parity_visibility_capture();
+        robin_engine::movement_diagnostics::begin_parity_movement_capture();
         let tick_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             engine.perform_hourglass_with_body_gate(
                 &mut display,
@@ -2286,6 +2288,8 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         }));
         let actual_visibility_queries =
             robin_engine::sight_obstacle::take_parity_visibility_capture();
+        let actual_movement_steps =
+            robin_engine::movement_diagnostics::take_parity_movement_capture();
         let actual_path_events = robin_engine::pathfinder::take_parity_path_capture();
         // Restart immediately: the post-frame comparison and one-shot
         // PostInitialize below precede the next recorded frame boundary.
@@ -2437,6 +2441,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 &rust_rng_sites,
                 &actual_path_events,
                 &actual_visibility_queries,
+                &actual_movement_steps,
                 &differences,
             );
         }
@@ -2455,6 +2460,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                     rust_path_events: actual_path_events.clone(),
                     original_visibility_queries: frame.visibility_queries.clone(),
                     rust_visibility_queries: actual_visibility_queries.clone(),
+                    rust_movement_steps: actual_movement_steps.clone(),
                     rng_start,
                     expected_rng_end: rng_end,
                     actual_rng_end,
@@ -2940,6 +2946,7 @@ fn write_engine_dump_frame(
     rust_rng_sites: &[robin_engine::sim_rng::RngSite],
     rust_path_events: &[robin_engine::pathfinder::ParityPathEvent],
     rust_visibility_queries: &[robin_engine::sight_obstacle::ParityVisibilityQuery],
+    rust_movement_steps: &[robin_engine::movement_diagnostics::ParityMovementStep],
     differences: &[String],
 ) {
     let diagnostic_engine = engine.diagnostic_snapshot_without_original_rng_replay();
@@ -2972,6 +2979,7 @@ fn write_engine_dump_frame(
         rust_path_events,
         &frame.visibility_queries,
         rust_visibility_queries,
+        rust_movement_steps,
         resolved_commands,
         rng_start,
         expected_rng_end,
@@ -2996,6 +3004,7 @@ fn write_engine_dump_snapshot_frame(
     rust_path_events: &[robin_engine::pathfinder::ParityPathEvent],
     original_visibility_queries: &[TraceVisibilityQuery],
     rust_visibility_queries: &[robin_engine::sight_obstacle::ParityVisibilityQuery],
+    rust_movement_steps: &[robin_engine::movement_diagnostics::ParityMovementStep],
     resolved_commands: serde_json::Value,
     rng_start: usize,
     expected_rng_end: usize,
@@ -3051,6 +3060,7 @@ fn write_engine_dump_snapshot_frame(
             "original": original_visibility_queries,
             "rust": rust_visibility_queries,
         },
+        "rust_movement_steps": rust_movement_steps,
         "rng": {
             "cursor_before": rng_start,
             "expected_cursor_after": expected_rng_end,
@@ -3148,6 +3158,7 @@ fn write_automatic_rolling_dump(
             &frame.rust_path_events,
             &frame.original_visibility_queries,
             &frame.rust_visibility_queries,
+            &frame.rust_movement_steps,
             frame.resolved_commands.clone(),
             frame.rng_start,
             frame.expected_rng_end,

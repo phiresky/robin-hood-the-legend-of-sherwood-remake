@@ -49,6 +49,7 @@ pub mod messenger;
 pub mod mission;
 pub mod mission_stat;
 pub mod movement;
+pub mod movement_diagnostics;
 pub mod multiplayer;
 pub mod natives;
 pub mod order;

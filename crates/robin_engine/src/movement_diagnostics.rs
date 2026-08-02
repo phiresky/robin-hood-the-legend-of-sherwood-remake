@@ -1,0 +1,103 @@
+//! Per-frame movement inputs captured for parity divergence diagnostics.
+//!
+//! This is deliberately thread-local and opt-in, like the path and visibility
+//! parity captures. Normal gameplay pays only one boolean branch per committed
+//! motion step, and the capture is not simulation or save state.
+
+use std::cell::RefCell;
+
+use serde::Serialize;
+
+use crate::coordinates::{MapPoint, MapVec};
+use crate::entity_id::EntityId;
+
+thread_local! {
+    static CAPTURE: RefCell<Option<Vec<ParityMovementStep>>> = const { RefCell::new(None) };
+}
+
+/// A float paired with its exact IEEE-754 representation. The decimal value
+/// is convenient to read while `bits` makes one-ULP differences unambiguous.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct ParityFloat {
+    pub value: f32,
+    pub bits: u32,
+}
+
+impl From<f32> for ParityFloat {
+    fn from(value: f32) -> Self {
+        Self {
+            value,
+            bits: value.to_bits(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct ParityPoint {
+    pub x: ParityFloat,
+    pub y: ParityFloat,
+}
+
+impl From<MapPoint> for ParityPoint {
+    fn from(value: MapPoint) -> Self {
+        Self {
+            x: value.x.into(),
+            y: value.y.into(),
+        }
+    }
+}
+
+impl From<MapVec> for ParityPoint {
+    fn from(value: MapVec) -> Self {
+        Self {
+            x: value.x.into(),
+            y: value.y.into(),
+        }
+    }
+}
+
+/// Exact inputs and result of one distance-producing `PerformMotion` commit.
+#[derive(Clone, Debug, Serialize)]
+pub struct ParityMovementStep {
+    pub entity: EntityId,
+    pub order_action: String,
+    pub animation: String,
+    pub motion_method: String,
+    pub pre_position: ParityPoint,
+    pub goal: ParityPoint,
+    pub cached_increment: ParityPoint,
+    pub frame_distance_raw: ParityFloat,
+    pub speed_factor: ParityFloat,
+    pub speed_factor_applied: bool,
+    pub direction_differs_from_goal: bool,
+    pub effective_distance: ParityFloat,
+    pub anti_collision_on: bool,
+    pub deviated_before: bool,
+    pub blocked_count_before: u16,
+    pub requested_delta: ParityPoint,
+    pub raw_committed_delta: ParityPoint,
+    pub committed_delta: ParityPoint,
+    pub post_position: ParityPoint,
+    pub deviated_after: bool,
+    pub blocked_count_after: u16,
+    pub goal_reached_after_commit: bool,
+}
+
+/// Start capturing movement commits on the current thread.
+pub fn begin_parity_movement_capture() {
+    CAPTURE.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
+}
+
+/// Record one movement commit when parity capture is active.
+pub fn record_parity_movement_step(step: ParityMovementStep) {
+    CAPTURE.with(|capture| {
+        if let Some(steps) = capture.borrow_mut().as_mut() {
+            steps.push(step);
+        }
+    });
+}
+
+/// Finish and return the current thread's movement capture.
+pub fn take_parity_movement_capture() -> Vec<ParityMovementStep> {
+    CAPTURE.with(|capture| capture.borrow_mut().take().unwrap_or_default())
+}

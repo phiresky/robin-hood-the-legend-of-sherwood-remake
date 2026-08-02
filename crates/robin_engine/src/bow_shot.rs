@@ -3827,6 +3827,13 @@ fn tick_arrows_matching(
         } else if let Some((fx_id, fx_command, fx_position_map)) = fx_target_hit {
             let impact_pos = fx_position_map;
             proj.projectile.flying = false;
+            // RHElementProjectile::Hourglass handles a successful HitTarget
+            // synchronously: stop flight and DeleteTrajectory before the
+            // frame snapshot. Unlike HitHuman it does not rewind to the old
+            // position, so the following Refresh keeps the arrow for this
+            // moving frame; next Hourglass calls NewMove and the subsequent
+            // Refresh retires the now-stationary empty arrow.
+            proj.projectile.trajectory.clear();
             let despawn = if is_burster {
                 set_projectile_animation(proj, Animation::ObjectBursting);
                 false
@@ -6487,27 +6494,25 @@ mod tests {
         let check = TrajectoryObstacleCheck {
             fast_find_grid: &grid,
             layer: 0,
-            sight_obstacles:
-                crate::sight_obstacle::ObstacleList::from_slice_all_active(&obstacles),
+            sight_obstacles: crate::sight_obstacle::ObstacleList::from_slice_all_active(&obstacles),
             water_zones: None,
         };
 
-        let (trajectory, terminal_obstacle) =
-            compute_trajectory_ballistic_with_terminal_obstacle(
-                WorldPoint3D {
-                    x: 0.0,
-                    y: 0.0,
-                    z: 25.0,
-                },
-                WorldVec3D {
-                    x: 10.0,
-                    y: 0.0,
-                    z: 0.0,
-                },
-                MASS_ARROW_FLAT,
-                false,
-                Some(&check),
-            );
+        let (trajectory, terminal_obstacle) = compute_trajectory_ballistic_with_terminal_obstacle(
+            WorldPoint3D {
+                x: 0.0,
+                y: 0.0,
+                z: 25.0,
+            },
+            WorldVec3D {
+                x: 10.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            MASS_ARROW_FLAT,
+            false,
+            Some(&check),
+        );
 
         assert!(!trajectory.is_empty());
         assert_eq!(terminal_obstacle.map(u16::from), Some(0));

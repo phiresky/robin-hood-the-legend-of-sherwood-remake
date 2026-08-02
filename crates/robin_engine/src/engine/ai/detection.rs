@@ -605,6 +605,12 @@ impl EngineInner {
                     crate::sprite::FrameProgression::Default,
                     false,
                 );
+                // RHElementActorPC::Execute deliberately discards
+                // PerformAction's START/DONE result for LISTENING and returns
+                // RHMOTION_IN_PROGRESS on every nonterminal countdown tick.
+                // The actor continuation stores that wrapper result, not the
+                // raw sprite edge.
+                pc.actor.continuation.motion_state = crate::sprite::MotionState::InProgress;
                 return false;
             }
             // Countdown hit 0 — fire the one-shot reveal and

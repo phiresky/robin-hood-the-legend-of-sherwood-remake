@@ -8273,6 +8273,9 @@ impl EngineInner {
                     let nx = cached_increment.x;
                     let ny = cached_increment.y;
                     let anti_on = entity.position_iface().is_anti_collision_on();
+                    let movement_diag_pre_position = entity.element_data().position_map();
+                    let movement_diag_deviated_before = entity.position_iface().is_deviated();
+                    let movement_diag_blocked_count_before = entity.position_iface().blocked_count;
                     // Preserve the two storage roundings of Original's
                     // double-PerformMotion fast-climb dispatch. See the
                     // transition branch above for why the summed distance is
@@ -8484,6 +8487,52 @@ impl EngineInner {
                     let movement_goal_reached = entity
                         .position_iface()
                         .is_goal_reached(&self.world.fast_grid, goal_target_infos[actor_id]);
+                    let movement_diag_raw_post = entity.element_data().position_map();
+                    // PerformMotion snaps an undeviated zero-tolerance arrival
+                    // after IsGoalReached. Include that authoritative visible
+                    // result in the diagnostic while retaining the raw
+                    // anti-collision commit separately.
+                    let movement_diag_post = if movement_goal_reached
+                        && order_tolerance == 0.0
+                        && !entity.position_iface().is_deviated()
+                    {
+                        goal
+                    } else {
+                        movement_diag_raw_post
+                    };
+                    crate::movement_diagnostics::record_parity_movement_step(
+                        crate::movement_diagnostics::ParityMovementStep {
+                            entity: entity_id,
+                            order_action: format!("{order_action:?}"),
+                            animation: format!("{anim:?}"),
+                            motion_method: format!("{motion_method:?}"),
+                            pre_position: movement_diag_pre_position.into(),
+                            goal: goal.into(),
+                            cached_increment: cached_increment.into(),
+                            frame_distance_raw: frame_dist_raw.into(),
+                            speed_factor: speed_factor.into(),
+                            speed_factor_applied: apply_speed_factor,
+                            direction_differs_from_goal,
+                            effective_distance: speed.into(),
+                            anti_collision_on: anti_on,
+                            deviated_before: movement_diag_deviated_before,
+                            blocked_count_before: movement_diag_blocked_count_before,
+                            requested_delta: crate::coordinates::MapVec::new(
+                                nx * speed,
+                                ny * speed,
+                            )
+                            .into(),
+                            raw_committed_delta: (movement_diag_raw_post
+                                - movement_diag_pre_position)
+                                .into(),
+                            committed_delta: (movement_diag_post - movement_diag_pre_position)
+                                .into(),
+                            post_position: movement_diag_post.into(),
+                            deviated_after: entity.position_iface().is_deviated(),
+                            blocked_count_after: entity.position_iface().blocked_count,
+                            goal_reached_after_commit: movement_goal_reached,
+                        },
+                    );
                     point_seek_post_arrival = is_final_waypoint
                         && movement_goal_reached
                         && point_seek_post_sectors[actor_id]
@@ -8834,9 +8883,7 @@ impl EngineInner {
                 .orders
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
-                .is_some_and(|element| {
-                    element.state == crate::sequence::SequenceState::Terminated
-                });
+                .is_some_and(|element| element.state == crate::sequence::SequenceState::Terminated);
             if exhausted && let Some(owner) = owner {
                 // A replacement Move can be registered before this actor's
                 // slot and instructed afterward. Genuine exhaustion of the
