@@ -1452,8 +1452,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 40;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v40.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 41;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v41.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4993,6 +4993,13 @@ fn retain_recorded_entity_runtime_coverage(
     {
         actual.remove("npc_ai");
     }
+    if !expected
+        .as_object()
+        .is_some_and(|object| object.contains_key("human_continuation"))
+        && let Some(actual) = actual.as_object_mut()
+    {
+        actual.remove("human_continuation");
+    }
     if expected
         .get("npc_ai")
         .and_then(serde_json::Value::as_object)
@@ -6669,7 +6676,7 @@ mod tests {
     }
 
     #[test]
-    fn old_enemy_snapshots_skip_only_absent_additive_v40_state() {
+    fn old_enemy_snapshots_skip_only_absent_additive_v41_state() {
         let expected = serde_json::json!({
             "npc_ai": {
                 "state": 3,
@@ -6680,6 +6687,10 @@ mod tests {
             }
         });
         let mut actual = serde_json::json!({
+            "human_continuation": {
+                "already_detectable_body": false,
+                "sword_strike_boredom": [0, 0, 0, 0, 0, 0, 0, 0, 0]
+            },
             "npc_ai": {
                 "state": 3,
                 "stimulus_queue": [],

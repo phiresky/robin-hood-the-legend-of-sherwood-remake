@@ -2921,6 +2921,22 @@ and both AI subclasses stamp last-hint actuality at the Original InitOneAI
 boundary. Older traces omit only the absent `legacy_continuation` object. The
 native cache version and suffix are v40.
 
+### Schema-v41 human combat continuation
+
+Every human runtime snapshot now includes the high-frequency serialized
+combat continuation shared by PCs, soldiers, and civilians: concussion and
+healing/tiredness counters, parry and detectability state, invulnerability and
+step-back latches, smalltalk initiative/hint ownership, net and sword-strike
+boredom counters, carrier and repulsive-radius state, and the complete hulk
+fade frontier. This is a semantic projection; entity references use canonical
+parity identities and hulk speed retains its exact floating-point bits.
+
+The legacy loader already adopted these fields atomically through the common
+human plan. Schema v41 makes them strict per-frame parity state so ordinary
+recordings can expose fresh-runtime drift as well as save-load drift. Older
+traces omit only the additive `human_continuation` object. The native cache
+version and suffix are v41.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,

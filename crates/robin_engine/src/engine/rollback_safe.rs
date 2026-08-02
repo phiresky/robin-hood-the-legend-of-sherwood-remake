@@ -891,6 +891,34 @@ impl Engine {
 			}
 			Some(state)
 		});
+        let human_continuation = entity.human_data().map(|human| {
+            json!({
+                "already_detectable_body": human.already_detectable_body,
+                "concussion_healing_timeout": human.concussion_healing_timeout,
+                "tiredness": human.tiredness,
+                "concussion": human.concussion_of_the_brain,
+                "parry_counter": human.parry_counter,
+                "detectable_list_index": human.detectable_list_index,
+                "invulnerable": human.invulnerable,
+                "last_motion_was_step_back": human.last_motion_was_step_back_in_combat,
+                "smalltalk_initiative": human.smalltalk_initiative,
+                "received_smalltalk_initiative": human.received_smalltalk_initiative,
+                "smalltalk_hint": human.smalltalk_hint as u32,
+                "smalltalk_hint_opponent": human.smalltalk_hint_opponent.map_or(Value::Null, entity_ref),
+                "relative_fighting_ability": human.relative_fighting_ability,
+                "hollow_man": human.hollow_man,
+                "killed_by_accident": human.killed_by_accident,
+                "stuck_under_nets_counter": human.stuck_under_nets_counter,
+                "sword_strike_boredom": &human.sword_strike_boredom,
+                "carrier": human.carrier.map_or(Value::Null, entity_ref),
+                "small_repulsive_radius": human.small_repulsive_radius,
+                "hulk": {
+                    "running": human.running_hulk, "time": human.time_hulk,
+                    "level": human.hulk_level, "direction": human.hulk_direction,
+                    "speed": float(human.hulk_speed),
+                },
+            })
+        });
         let subtype = if entity.element_data().active {
             match entity {
                 crate::element::Entity::Target(target) => Some(json!({
@@ -973,6 +1001,12 @@ impl Engine {
                 .as_object_mut()
                 .expect("parity entity runtime must be an object")
                 .insert("npc_ai".to_owned(), npc_ai);
+        }
+        if let Some(human_continuation) = human_continuation {
+            result
+                .as_object_mut()
+                .expect("parity entity runtime must be an object")
+                .insert("human_continuation".to_owned(), human_continuation);
         }
         result
     }
