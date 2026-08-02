@@ -139,6 +139,19 @@ mod group_move_authorization_tests {
         assert_eq!(player_group_move_action(false), OrderType::WalkingUpright);
         assert_eq!(player_group_move_action(true), OrderType::RunningUpright);
     }
+
+    #[test]
+    fn non_sprite_movement_actions_return_authoritative_motion_states() {
+        assert_eq!(
+            non_sprite_movement_motion(OrderType::Freezing),
+            Some(MotionState::InProgress)
+        );
+        assert_eq!(
+            non_sprite_movement_motion(OrderType::PassingDoor),
+            Some(MotionState::Terminated)
+        );
+        assert_eq!(non_sprite_movement_motion(OrderType::WalkingUpright), None);
+    }
 }
 
 /// Apply the lift-sector portion of Original
@@ -1621,6 +1634,20 @@ fn player_group_move_action(run: bool) -> OrderType {
         OrderType::RunningUpright
     } else {
         OrderType::WalkingUpright
+    }
+}
+
+/// Movement Execute arms which return without calling into `Sprite` still
+/// produce an authoritative `mmotionState` in the Original actor. Rust uses
+/// the sprite's transient motion latch to carry specialized Execute results to
+/// the actor coordinator, so these non-sprite arms must publish their return
+/// explicitly.
+#[inline]
+fn non_sprite_movement_motion(action: OrderType) -> Option<MotionState> {
+    match action {
+        OrderType::Freezing => Some(MotionState::InProgress),
+        OrderType::PassingDoor => Some(MotionState::Terminated),
+        _ => None,
     }
 }
 
@@ -6293,10 +6320,16 @@ impl EngineInner {
                 // RHElementActor::Execute arm returns IN_PROGRESS without
                 // touching the sprite; this token has no destination-backed
                 // motion state to initialize or validate.
+                entity.element_data_mut().sprite.last_motion_state =
+                    non_sprite_movement_motion(order_action);
                 continue;
             }
 
             if order_action == OrderType::PassingDoor {
+                // Actor::Execute returns TERMINATED directly after the door
+                // callback; no Sprite method runs for this action point.
+                entity.element_data_mut().sprite.last_motion_state =
+                    non_sprite_movement_motion(order_action);
                 let eid = entity_id;
                 if entity
                     .actor_data()
