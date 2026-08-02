@@ -4845,6 +4845,24 @@ impl EngineInner {
                                     sprite_anim_for_order(sprite, effective_anim, owner_is_pc),
                                     FrameProgression::FrozenFirstFrame,
                                 )
+                            } else if owner_is_pc
+                                && matches!(
+                                    anim_type,
+                                    OrderType::WaitingCape
+                                        | OrderType::WaitingCapeAnonymousArcher
+                                        | OrderType::WaitingHidden
+                                )
+                            {
+                                // These PC idle arms explicitly use
+                                // RHPROGRESSION_CYCLICALLY in the Original.
+                                // WaitingCapeAnonymousArcher is a
+                                // non-animation control token which plays the
+                                // ordinary WaitingCape sprite, but retains the
+                                // same non-terminating progression.
+                                (
+                                    sprite_anim_for_order(sprite, effective_anim, owner_is_pc),
+                                    FrameProgression::Cyclically,
+                                )
                             } else if let Some(animation) = requested_custom_animation {
                                 let progression = match cur_command {
                                     Some(Command::PlayAnimLoop) => FrameProgression::Cyclically,
