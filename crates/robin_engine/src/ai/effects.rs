@@ -114,6 +114,15 @@ pub enum AiOwnerWork {
         /// movement phase too early.
         owner_boundary_positions: Vec<(u32, Position)>,
     },
+    /// Continue Enemy `ReturnToDuty` after its synchronous
+    /// `InitializePatrol` engine callback has completed.
+    ResumeReturnToDutyAfterPatrolInit {
+        flags: DutyFlags,
+        /// Original evaluates patrol geometry at this owner's legacy slot;
+        /// later Rust entity slots may already have moved when the owner FIFO
+        /// reaches the engine boundary.
+        owner_boundary_positions: Vec<(u32, Position)>,
+    },
     Speech(AiSpeechAttempt),
     RestoreDetectableObjects {
         knocked_out_in_money_fight: bool,

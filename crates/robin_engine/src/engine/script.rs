@@ -3026,6 +3026,19 @@ impl EngineInner {
                     );
                     continue;
                 }
+                crate::ai::AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
+                    flags,
+                    owner_boundary_positions,
+                } => {
+                    self.resume_return_to_duty_after_patrol_init_for_npc(
+                        sim,
+                        owner,
+                        assets,
+                        flags,
+                        &owner_boundary_positions,
+                    );
+                    continue;
+                }
                 crate::ai::AiOwnerWork::Speech(attempt) => {
                     // A rejected Say invokes MYTALK synchronously before Say
                     // returns. Detach the outer statement tail so recursive

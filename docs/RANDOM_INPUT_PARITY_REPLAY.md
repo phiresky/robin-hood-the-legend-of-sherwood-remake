@@ -2620,6 +2620,23 @@ sites are `RHElementActorNPC::ComputeViewRadius`,
 `RHFastFindGrid::GetSectors`, and
 `RHArtificialMalignity::InitializeFriendCheck` in `original-code`.
 
+### Synchronous patrol initialization during ReturnToDuty
+
+Save063 exposed an owner-order divergence when a patrol chief and its members
+returned to duty in the same frame. Original Enemy `ReturnToDuty` calls
+`InitializePatrol` inline and only then calls `ReturnToDutyCommonStuff`.
+Consequently the chief emits its ordered chief-to-member admission queries,
+writes each admitted member's `patrol_chief`, and a later member immediately
+emits the reciprocal member-to-chief query from the common routine. Rust had
+reduced `InitializePatrol` to a flag consumed by a later patrol-coordination
+phase, so the member reached the common routine before that assignment existed.
+
+ReturnToDuty now suspends at the engine owner boundary, runs the general patrol
+admission/sort/pairing helper against that owner's captured position views, and
+resumes the common tail immediately. This preserves the Original call boundary
+and query order without using replay IDs or recorded results. Other explicit
+patrol initialization sites retain their own source-defined boundaries.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

@@ -3669,7 +3669,33 @@ impl EnemyAi {
             self.base.object_of_desire = 0;
         }
 
-        self.initialize_patrol();
+        // Original calls InitializePatrol synchronously, then immediately
+        // enters ReturnToDutyCommonStuff. Patrol admission needs the engine's
+        // entity table and can itself issue authoritative visibility queries,
+        // so suspend the tail at the owner boundary instead of setting the
+        // frame-deferred `needs_patrol_reinit` flag. This also lets a patrol
+        // member observe the chief assignment written moments earlier and
+        // perform its reciprocal member -> chief visibility query in-order.
+        self.base.outbox.reentrant.owner_work.push(
+            AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
+                flags,
+                owner_boundary_positions: ctx
+                    .entity_views
+                    .iter()
+                    .map(|(&handle, view)| (handle, view.position))
+                    .collect(),
+            },
+        );
+    }
+
+    /// Resume the non-engine half of Original Enemy `ReturnToDuty` after its
+    /// inline `InitializePatrol` call has returned.
+    pub fn resume_return_to_duty_after_patrol_init(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        flags: DutyFlags,
+        ctx: &AiContext,
+    ) {
         let outgoing_state = self.base.current_state;
         let outgoing_substate = self.base.current_substate;
         self.base.return_to_duty_common_stuff(sim, flags, ctx);
@@ -4905,11 +4931,21 @@ mod tests {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         let mut ai = EnemyAi::new(1);
-        ai.set_state(AiState::Attacking, Substate::AttackingSwordfight);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingSwordfight;
         ai.current_task_priority = task_priority::ENEMY;
         let ctx = AiContext::default();
         let tick = AiPerTickData::stub();
         ai.return_to_duty(sim, DutyFlags::empty(), &ctx, &tick);
+
+        assert_eq!(ai.base.current_state, AiState::Attacking);
+        assert!(!ai.base.needs_patrol_reinit);
+        assert!(matches!(
+            ai.base.outbox.reentrant.owner_work.as_slice(),
+            [AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }]
+        ));
+
+        ai.resume_return_to_duty_after_patrol_init(sim, DutyFlags::empty(), &ctx);
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.current_task_priority, task_priority::NONE);
     }

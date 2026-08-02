@@ -11286,6 +11286,76 @@ impl EngineInner {
         self.initialize_patrol_for_npc_from_owner_views(assets, npc_id, &scratch.ai_entity_views);
     }
 
+    /// Run Enemy `ReturnToDuty`'s synchronous patrol initialization and then
+    /// resume the common tail at the same owner boundary.
+    pub(super) fn resume_return_to_duty_after_patrol_init_for_npc(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+        flags: crate::ai::DutyFlags,
+        owner_boundary_positions: &[(u32, crate::ai::Position)],
+    ) {
+        let mut scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let views = std::sync::Arc::make_mut(&mut scratch.ai_entity_views);
+        for &(handle, position) in owner_boundary_positions {
+            if let Some(view) = views.get_mut(&handle) {
+                view.position = position;
+            }
+        }
+
+        // This is an inline C++ call, not a future Hourglass request. It must
+        // settle before ReturnToDutyCommonStuff checks `patrol_chief` and may
+        // issue the reciprocal visibility query.
+        self.initialize_patrol_for_npc_from_owner_views(assets, npc_id, &scratch.ai_entity_views);
+
+        let frame = self.control.frame_counter;
+        let in_uninterruptible_command = self.is_very_very_busy(npc_id);
+        let live_animation = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(npc_id)
+            .map(|(_, _, order)| order.order_type)
+            .unwrap_or(crate::order::OrderType::NonanimationEnd);
+        let ctx = {
+            let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
+                panic!(
+                    "return-to-duty continuation owner {} disappeared",
+                    npc_id.index()
+                )
+            });
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let mut ctx = build_ai_context_from_entity(
+                entity,
+                frame,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.hiking_paths,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            ctx.in_uninterruptible_command = in_uninterruptible_command;
+            ctx.self_animation = live_animation;
+            ctx
+        };
+        self.world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "return-to-duty continuation owner {} lost its Enemy AI",
+                    npc_id.index()
+                )
+            })
+            .resume_return_to_duty_after_patrol_init(sim, flags, &ctx);
+    }
+
     /// Run Original's `InitializePatrol` at a captured owner boundary.
     ///
     /// Non-position fields are intentionally resolved from the live world
