@@ -36,7 +36,7 @@ use crate::element_kinds::{
 use crate::order::OrderType;
 use crate::sequence::{SequenceElementData, SequenceId};
 
-use super::EngineInner;
+use super::{EngineInner, LevelAssets};
 
 // ---------------------------------------------------------------------------
 // Snapshot: read-only context passed to the flag/transition helpers so
@@ -1002,6 +1002,8 @@ fn make_action_transition_actor(
 
 fn make_action_transition_human(
     engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -1054,6 +1056,13 @@ fn make_action_transition_human(
                 // element).
                 push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionLoweringSword);
                 set_action_state_after(engine, seq_id, elem_idx, ActionState::Waiting);
+                // Original reaches this through
+                // Translate(existing_element, RHCOMMAND_QUIT_SWORDFIGHT),
+                // whose translation calls QuitSwordFight immediately after
+                // queuing the lowering animation. Relationship removal and
+                // AI callbacks therefore happen at transition-generation
+                // time, not when the animation eventually starts.
+                engine.quit_swordfight(sim, assets, owner);
             }
             true
         }
@@ -1114,6 +1123,8 @@ fn make_action_transition_human(
 
 fn make_action_transition_soldier(
     engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -1165,11 +1176,13 @@ fn make_action_transition_soldier(
         return true;
     }
 
-    make_action_transition_human(engine, seq_id, elem_idx, owner, flags)
+    make_action_transition_human(engine, sim, assets, seq_id, elem_idx, owner, flags)
 }
 
 fn make_action_transition_pc(
     engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -1188,11 +1201,13 @@ fn make_action_transition_pc(
             return false;
         }
     }
-    make_action_transition_human(engine, seq_id, elem_idx, owner, flags)
+    make_action_transition_human(engine, sim, assets, seq_id, elem_idx, owner, flags)
 }
 
 fn dispatch_make_action_transition(
     engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -1203,12 +1218,14 @@ fn dispatch_make_action_transition(
         .map(|e| e.kind())
         .unwrap_or(ElementKind::ActorCivilian);
     match kind {
-        ElementKind::ActorPc => make_action_transition_pc(engine, seq_id, elem_idx, owner, flags),
+        ElementKind::ActorPc => {
+            make_action_transition_pc(engine, sim, assets, seq_id, elem_idx, owner, flags)
+        }
         ElementKind::ActorSoldier => {
-            make_action_transition_soldier(engine, seq_id, elem_idx, owner, flags)
+            make_action_transition_soldier(engine, sim, assets, seq_id, elem_idx, owner, flags)
         }
         ElementKind::ActorCivilian => {
-            make_action_transition_human(engine, seq_id, elem_idx, owner, flags)
+            make_action_transition_human(engine, sim, assets, seq_id, elem_idx, owner, flags)
         }
         _ => make_action_transition_actor(engine, seq_id, elem_idx, owner, flags),
     }
@@ -2039,6 +2056,8 @@ impl EngineInner {
     /// subsumes.
     pub(crate) fn generate_transition(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         seq_id: SequenceId,
         elem_idx: usize,
@@ -2083,7 +2102,8 @@ impl EngineInner {
 
         let (exit_flags, change_flags, enter_flags) = get_transition_flags(&ctx);
 
-        if !dispatch_make_action_transition(self, seq_id, elem_idx, owner, exit_flags) {
+        if !dispatch_make_action_transition(self, sim, assets, seq_id, elem_idx, owner, exit_flags)
+        {
             return false;
         }
 
@@ -2206,6 +2226,17 @@ mod tests {
             .unwrap_or_default()
     }
 
+    fn generate_transition(
+        engine: &mut EngineInner,
+        owner: EntityId,
+        seq: SequenceId,
+        idx: usize,
+    ) -> bool {
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::default();
+        engine.generate_transition(&sim, &assets, owner, seq, idx)
+    }
+
     fn order_compute_direction_for(
         engine: &EngineInner,
         seq: SequenceId,
@@ -2250,7 +2281,7 @@ mod tests {
         let owner = engine.add_entity(make_soldier(P::Lying, AS::WaitingSword, false));
         let (seq, idx) = launch(&mut engine, owner, Command::Turn);
 
-        let ok = engine.generate_transition(owner, seq, idx);
+        let ok = generate_transition(&mut engine, owner, seq, idx);
         assert!(ok);
 
         let orders = orders_for(&engine, seq, idx);
@@ -2273,12 +2304,49 @@ mod tests {
     }
 
     #[test]
+    fn sword_exit_transition_synchronously_quits_the_fight() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_pc(P::Upright, AS::WaitingSword));
+        let opponent = engine.add_entity(make_pc(P::Upright, AS::WaitingSword));
+        assert!(EngineInner::add_opponent(
+            &mut engine.world.entities,
+            owner,
+            opponent,
+            None,
+        ));
+        assert!(EngineInner::add_opponent(
+            &mut engine.world.entities,
+            opponent,
+            owner,
+            None,
+        ));
+
+        let (seq, idx) = launch(&mut engine, owner, Command::LookLeft);
+        assert!(generate_transition(&mut engine, owner, seq, idx));
+
+        assert_eq!(
+            orders_for(&engine, seq, idx),
+            vec![OrderType::TransitionLoweringSword],
+            "Translate(QUIT_SWORDFIGHT) must still queue the visible lowering"
+        );
+        for actor in [owner, opponent] {
+            assert!(
+                engine
+                    .get_entity(actor)
+                    .and_then(Entity::human_data)
+                    .is_some_and(|human| human.opponents.is_empty()),
+                "QuitSwordFight relationship cleanup is synchronous during transition generation"
+            );
+        }
+    }
+
+    #[test]
     fn tied_soldier_rejects_upright_command_like_original_release() {
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(make_soldier(P::Tied, AS::Waiting, false));
         let (seq, idx) = launch(&mut engine, owner, Command::RaiseBow);
 
-        assert!(!engine.generate_transition(owner, seq, idx));
+        assert!(!generate_transition(&mut engine, owner, seq, idx));
         assert!(orders_for(&engine, seq, idx).is_empty());
         assert_eq!(
             engine
@@ -2297,7 +2365,7 @@ mod tests {
         let owner = engine.add_entity(make_pc(P::AnonymousArcher, AS::Waiting));
         let (seq, idx) = launch(&mut engine, owner, Command::LowerBow);
 
-        let ok = engine.generate_transition(owner, seq, idx);
+        let ok = generate_transition(&mut engine, owner, seq, idx);
         assert!(ok);
 
         let orders = orders_for(&engine, seq, idx);
@@ -2320,7 +2388,7 @@ mod tests {
         let (seq, idx) =
             launch_movement(&mut engine, owner, Command::Move, OrderType::WalkingUpright);
 
-        let ok = engine.generate_transition(owner, seq, idx);
+        let ok = generate_transition(&mut engine, owner, seq, idx);
         assert!(ok, "transition should succeed");
 
         let orders = orders_for(&engine, seq, idx);
@@ -2340,7 +2408,7 @@ mod tests {
         let owner = engine.add_entity(make_soldier(P::LeaningOut, AS::Waiting, false));
         let (seq, idx) = launch(&mut engine, owner, Command::LeanOut);
 
-        let ok = engine.generate_transition(owner, seq, idx);
+        let ok = generate_transition(&mut engine, owner, seq, idx);
         assert!(ok, "repeat lean-out transition should succeed");
         assert!(orders_for(&engine, seq, idx).is_empty());
         assert_eq!(
@@ -2387,7 +2455,7 @@ mod tests {
         let owner = engine.add_entity(make_soldier(P::LeaningOut, AS::AimingWithBowDown, false));
         let (seq, idx) = launch(&mut engine, owner, Command::Turn);
 
-        let ok = engine.generate_transition(owner, seq, idx);
+        let ok = generate_transition(&mut engine, owner, seq, idx);
         assert!(ok);
 
         let orders = orders_for(&engine, seq, idx);
@@ -2414,7 +2482,7 @@ mod tests {
         let (seq, idx) =
             launch_movement(&mut engine, owner, Command::Move, OrderType::WalkingUpright);
 
-        let ok = engine.generate_transition(owner, seq, idx);
+        let ok = generate_transition(&mut engine, owner, seq, idx);
         assert!(ok);
 
         let orders = orders_for(&engine, seq, idx);
@@ -2443,7 +2511,7 @@ mod tests {
         let (seq, idx) =
             launch_movement(&mut engine, owner, Command::Move, OrderType::RunningUpright);
 
-        let ok = engine.generate_transition(owner, seq, idx);
+        let ok = generate_transition(&mut engine, owner, seq, idx);
         assert!(ok);
 
         let orders = orders_for(&engine, seq, idx);
@@ -2472,7 +2540,7 @@ mod tests {
         let owner = engine.add_entity(carrier);
         let (seq, idx) = launch(&mut engine, owner, Command::Turn);
 
-        let ok = engine.generate_transition(owner, seq, idx);
+        let ok = generate_transition(&mut engine, owner, seq, idx);
         assert!(ok);
 
         assert_eq!(
@@ -2497,7 +2565,7 @@ mod tests {
         let owner = engine.add_entity(make_pc(P::CarryingCorpse, AS::Waiting));
         let (seq, idx) = launch(&mut engine, owner, Command::Turn);
 
-        let ok = engine.generate_transition(owner, seq, idx);
+        let ok = generate_transition(&mut engine, owner, seq, idx);
         assert!(
             !ok,
             "CarryingCorpse without pc.carried should fail instead of silently snapping upright"
@@ -2517,7 +2585,7 @@ mod tests {
         let owner = engine.add_entity(make_pc(P::Crouched, AS::Waiting));
         let (seq, idx) = launch(&mut engine, owner, Command::CrouchUp);
 
-        let ok = engine.generate_transition(owner, seq, idx);
+        let ok = generate_transition(&mut engine, owner, seq, idx);
         assert!(ok);
 
         // Refused double-crouch case: CROUCH_UP on Upright → false.
@@ -2542,7 +2610,7 @@ mod tests {
         let owner = engine.add_entity(make_soldier(P::Upright, AS::Waiting, false));
         let (seq, idx) = launch(&mut engine, owner, Command::EnterSwordfight);
 
-        let ok = engine.generate_transition(owner, seq, idx);
+        let ok = generate_transition(&mut engine, owner, seq, idx);
         assert!(ok, "transition should succeed");
 
         let orders = orders_for(&engine, seq, idx);
@@ -2571,7 +2639,7 @@ mod tests {
         let owner = engine.add_entity(e);
         let (seq, idx) = launch(&mut engine, owner, Command::EnterSwordfight);
 
-        let ok = engine.generate_transition(owner, seq, idx);
+        let ok = generate_transition(&mut engine, owner, seq, idx);
         assert!(ok);
 
         let orders = orders_for(&engine, seq, idx);
@@ -2652,7 +2720,7 @@ mod tests {
         let owner = engine.add_entity(make_soldier(P::Upright, AS::Waiting, true));
         let (seq, idx) = launch(&mut engine, owner, Command::EnterSwordfight);
 
-        let ok = engine.generate_transition(owner, seq, idx);
+        let ok = generate_transition(&mut engine, owner, seq, idx);
         assert!(ok);
 
         let orders = orders_for(&engine, seq, idx);
@@ -2672,7 +2740,7 @@ mod tests {
         let owner = engine.add_entity(make_soldier(P::Upright, AS::Bored, false));
         let (seq, idx) = launch(&mut engine, owner, Command::Wait);
 
-        let ok = engine.generate_transition(owner, seq, idx);
+        let ok = generate_transition(&mut engine, owner, seq, idx);
         assert!(ok);
 
         let orders = orders_for(&engine, seq, idx);
@@ -2693,7 +2761,7 @@ mod tests {
         let owner = engine.add_entity(make_soldier(P::Upright, AS::Moving, false));
         let (seq, idx) = launch(&mut engine, owner, Command::CrouchDown);
 
-        let ok = engine.generate_transition(owner, seq, idx);
+        let ok = generate_transition(&mut engine, owner, seq, idx);
         assert!(ok);
 
         let orders = orders_for(&engine, seq, idx);

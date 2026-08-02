@@ -5364,6 +5364,8 @@ impl EngineInner {
             });
         let lowering_id = self.orders.allocate_order_id();
         self.launch_single_order_sequence_stamped_ex(
+            sim,
+            assets,
             owner,
             crate::element::Command::QuitSwordfight,
             crate::order::Order::new(OrderType::TransitionLoweringSword, 0.0, 0.0, lowering_id),
@@ -9221,10 +9223,14 @@ impl EngineInner {
     /// drained inside [`Self::launch_pending_orders_for_npc`] so the
     /// halt happens on the same call stack as the new element launch,
     /// `StopAll` / `FaceTo` halt the actor inline.
-    pub(super) fn process_pending_ai_orders(&mut self) {
+    pub(super) fn process_pending_ai_orders(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
-            self.launch_pending_orders_for_npc(npc_id);
+            self.launch_pending_orders_for_npc(sim, assets, npc_id);
         }
     }
 
@@ -9235,16 +9241,25 @@ impl EngineInner {
     /// in [`EngineInner::dispatch_think_with_drain`] so `Face` / `GoTo`
     /// etc. take effect inside the same call stack as the handler that
     /// issued them — `Face` / `GoTo` launch the sequence inline.
-    pub(super) fn launch_pending_orders_for_npc(&mut self, entity_id: EntityId) {
-        self.launch_pending_orders_for_npc_mode(entity_id, false);
+    pub(super) fn launch_pending_orders_for_npc(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+    ) {
+        self.launch_pending_orders_for_npc_mode(sim, assets, entity_id, false);
     }
 
     pub(super) fn launch_pending_orders_for_npc_mode(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         entity_id: EntityId,
         defer_turn_instruction: bool,
     ) {
         self.launch_pending_orders_for_npc_mode_after_halt(
+            sim,
+            assets,
             entity_id,
             defer_turn_instruction,
             false,
@@ -9253,6 +9268,8 @@ impl EngineInner {
 
     pub(super) fn launch_pending_orders_for_npc_mode_after_halt(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         entity_id: EntityId,
         _defer_turn_instruction: bool,
         halt_already_applied: bool,
@@ -9478,6 +9495,8 @@ impl EngineInner {
                     // sequence for the animation driver to pick up.
                     let order = intent.stamp(self.orders.allocate_order_id());
                     self.launch_single_order_sequence_stamped(
+                        sim,
+                        assets,
                         entity_id,
                         crate::element::Command::Generic,
                         order,

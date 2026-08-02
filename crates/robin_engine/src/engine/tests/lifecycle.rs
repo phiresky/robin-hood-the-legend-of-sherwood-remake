@@ -1454,7 +1454,7 @@ fn positional_face_to_captures_direction_before_deferred_manager_instruction() {
         .orders
         .push(AiOrderIntent::face_toward(target.x, target.y));
 
-    engine.launch_pending_orders_for_npc_mode(owner, false);
+    engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
 
     let turn_sequence = engine
         .orders
@@ -1566,7 +1566,7 @@ fn face_to_waits_for_manager_regardless_of_owner_drain_mode() {
         .orders
         .push(AiOrderIntent::face_direction(9));
 
-    engine.launch_pending_orders_for_npc_mode(owner, false);
+    engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
 
     let turn_sequence = engine
         .orders
@@ -1624,6 +1624,8 @@ fn explicit_halt_then_goto_keeps_single_stop_transition() {
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
     use std::num::NonZeroU32;
 
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let mut soldier = make_test_soldier(Posture::Upright);
     let Entity::Soldier(soldier_data) = &mut soldier else {
@@ -1661,7 +1663,7 @@ fn explicit_halt_then_goto_keeps_single_stop_transition() {
             .push(AiOrderIntent::new(OrderType::RunningUpright, 900.0, 1700.0));
     }
 
-    engine.launch_pending_orders_for_npc_mode(owner, false);
+    engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
 
     let old = engine
         .orders

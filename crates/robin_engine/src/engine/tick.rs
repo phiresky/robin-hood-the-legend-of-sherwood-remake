@@ -2544,7 +2544,7 @@ impl EngineInner {
         // launch a fresh Move each frame and `InterruptCurrent` the
         // in-flight one. A*-requiring elements enter the frame-paced
         // path-request queue advanced by the following `Paths` phase.
-        self.process_pending_ai_orders();
+        self.process_pending_ai_orders(sim, assets);
         self.drain_pending_move_requests(sim);
 
         // ── Dispatch per-waypoint ReachPoint scripts ─────────────
@@ -4895,7 +4895,13 @@ impl EngineInner {
                 // order generic sequence so the visible unstick
                 // transition still plays.  Without a host element
                 // we launch a tiny one just to carry this animation.
-                self.launch_single_order_sequence_stamped(owner, Command::Generic, order);
+                self.launch_single_order_sequence_stamped(
+                    &crate::sim_rng::test_context(),
+                    &LevelAssets::new(),
+                    owner,
+                    Command::Generic,
+                    order,
+                );
             }
         }
 

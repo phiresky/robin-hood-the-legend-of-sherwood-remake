@@ -158,7 +158,7 @@ impl EngineInner {
                     if self.non_interruptable_guard(owner, sequence_id, element_index) {
                         return Ok(());
                     }
-                    if !self.generate_transition(owner, sequence_id, element_index) {
+                    if !self.generate_transition(sim, assets, owner, sequence_id, element_index) {
                         self.orders
                             .sequence_manager
                             .element_impossible(sequence_id, element_index);

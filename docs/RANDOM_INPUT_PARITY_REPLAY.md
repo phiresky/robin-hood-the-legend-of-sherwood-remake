@@ -3334,6 +3334,23 @@ its dedicated Turning fast path bypassed that row selector. The fast path now
 uses the entry direction for `TURNING_ALERTED` and the updated direction for
 ordinary Turning, preserving both Original handlers.
 
+### Sword-state exit transitions quit their relationships synchronously
+
+Savegame 063 replay 001 next reached Soldier 218's postponed `LookLeft` at
+frame 1283. The command resumed after `EnterSwordfight` completed and both
+engines queued `TransitionLoweringSword`, but Rust retained the soldier's
+opponent link to PC 298 while Original removed it immediately.
+
+Original Human `MakeActionTransition` does not merely append the lowering
+animation when a command requires leaving a sword action state. It calls
+`Translate(existing_element, QUIT_SWORDFIGHT)`, which appends that animation
+and synchronously runs `QuitSwordFight`, including reciprocal relationship,
+PC-action, strength, and AI callback effects. Rust's transition generator now
+receives the active simulation and level context and calls the shared
+`quit_swordfight` implementation at that exact translation boundary. A
+regression verifies that the visible lowering remains queued while both sides'
+opponent lists are already empty when transition generation returns.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

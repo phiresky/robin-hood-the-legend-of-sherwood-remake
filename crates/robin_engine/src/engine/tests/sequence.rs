@@ -1169,6 +1169,8 @@ fn pc_shoot_bow_waits_through_load_and_wait_then_retries_only_while_aiming() {
     use crate::order::OrderType;
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
+    let sim = crate::sim_rng::test_context();
+    let assets = crate::engine::LevelAssets::new();
     let mut engine = EngineInner::new();
     let pc = engine.add_entity(make_test_pc(Posture::Upright));
     engine
@@ -1182,7 +1184,7 @@ fn pc_shoot_bow_waits_through_load_and_wait_then_retries_only_while_aiming() {
     // side-effect free; this regression is about Human::Instruct admission,
     // not projectile construction.
     let incoming = SequenceElement::new_interaction(1, Command::ShootBow, Some(pc), None);
-    let incoming_seq = engine.launch_element_for_owner(incoming);
+    let incoming_seq = engine.launch_element_for_owner(&sim, &assets, incoming);
 
     let held = engine
         .orders
@@ -1274,6 +1276,8 @@ fn started_pass_door_rejects_new_move() {
     use crate::order::OrderType;
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
+    let sim = crate::sim_rng::test_context();
+    let assets = crate::engine::LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_entity(make_test_soldier(Posture::Upright));
 
@@ -1294,7 +1298,7 @@ fn started_pass_door_rejects_new_move() {
 
     let incoming =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
-    let incoming_seq = engine.launch_element_for_owner(incoming);
+    let incoming_seq = engine.launch_element_for_owner(&sim, &assets, incoming);
 
     let pass = engine
         .orders
@@ -1317,6 +1321,8 @@ fn executing_pass_door_postpones_new_move() {
     use crate::order::OrderType;
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
+    let sim = crate::sim_rng::test_context();
+    let assets = crate::engine::LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_entity(make_test_soldier(Posture::Upright));
 
@@ -1338,7 +1344,7 @@ fn executing_pass_door_postpones_new_move() {
 
     let incoming =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
-    let incoming_seq = engine.launch_element_for_owner(incoming);
+    let incoming_seq = engine.launch_element_for_owner(&sim, &assets, incoming);
 
     let pass = engine
         .orders

@@ -6126,6 +6126,8 @@ impl EngineInner {
             after
         };
         self.launch_pending_orders_for_npc_mode_after_halt(
+            sim,
+            assets,
             npc_id,
             defer_turn_instruction,
             halt_count != 0,
@@ -6155,7 +6157,7 @@ impl EngineInner {
             // behind it as well so that phase arbitrates the two elements in
             // authored FIFO order instead of eagerly instructing the Turn
             // past the still-Todo attentive barrier.
-            self.launch_pending_orders_for_npc_mode_after_halt(npc_id, true, true);
+            self.launch_pending_orders_for_npc_mode_after_halt(sim, assets, npc_id, true, true);
         }
 
         // Process pending `SetGuardedPC` — `set_guarded_pc`.  The AI
@@ -7461,7 +7463,7 @@ impl EngineInner {
         // subsequently drains the resulting deferred InstructOwner action
         // with the still-active VM stack, so the replacement transition is
         // constructed from this call frame's position just like Original.
-        self.launch_pending_orders_for_npc(npc_id);
+        self.launch_pending_orders_for_npc(sim, assets, npc_id);
         let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
     }
 
@@ -7674,7 +7676,7 @@ impl EngineInner {
             // immediately and may retry without the directed-door filter in
             // the same call. Resolve this owner's queued move before reading
             // `couldnt_reachpoint`.
-            self.launch_pending_orders_for_npc(npc_id);
+            self.launch_pending_orders_for_npc(sim, assets, npc_id);
             self.drain_pending_move_requests_for_owner(sim, npc_id);
             let couldnt_reachpoint = self
                 .world
@@ -7705,7 +7707,7 @@ impl EngineInner {
                         ai.directed_panic = false;
                         ai.go_to(retry_door, crate::ai::GotoFlags::RUN, ctx);
                     }
-                    self.launch_pending_orders_for_npc(npc_id);
+                    self.launch_pending_orders_for_npc(sim, assets, npc_id);
                     self.drain_pending_move_requests_for_owner(sim, npc_id);
                     let retry_failed = self
                         .world
@@ -7820,7 +7822,7 @@ impl EngineInner {
                 // therefore observes a failed seek-point route immediately.
                 // Rust queues movement construction behind the controller
                 // borrow, so close just that owner-local path boundary here.
-                self.launch_pending_orders_for_npc(npc_id);
+                self.launch_pending_orders_for_npc(sim, assets, npc_id);
                 let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
                 let ai = self
                     .world
@@ -9879,7 +9881,7 @@ impl EngineInner {
             // order outbox. Owner-local SetState notifications are also part
             // of this fixed point, so late script-seek callbacks cannot leak
             // into a global batch or strand in the outbox.
-            self.launch_pending_orders_for_npc_mode(npc_id, defer_turn_instruction);
+            self.launch_pending_orders_for_npc_mode(sim, assets, npc_id, defer_turn_instruction);
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
             self.surface_synchronous_move_failure_for_owner(npc_id);
 
@@ -11054,7 +11056,7 @@ impl EngineInner {
                 owner_local_no_forecast,
                 defer_turn_instruction,
             );
-            self.launch_pending_orders_for_npc_mode(npc_id, defer_turn_instruction);
+            self.launch_pending_orders_for_npc_mode(sim, assets, npc_id, defer_turn_instruction);
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
             self.surface_synchronous_move_failure_for_owner(npc_id);
             self.process_synchronous_reentrant_actions_for_mode(
@@ -11721,7 +11723,7 @@ impl EngineInner {
                 owner_local_no_forecast,
                 defer_turn_instruction,
             );
-            self.launch_pending_orders_for_npc_mode(npc_id, defer_turn_instruction);
+            self.launch_pending_orders_for_npc_mode(sim, assets, npc_id, defer_turn_instruction);
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
             self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
             self.dispatch_condolations_for_npc(sim, npc_id, assets);

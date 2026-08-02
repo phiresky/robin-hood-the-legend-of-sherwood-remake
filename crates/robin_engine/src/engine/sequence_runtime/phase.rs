@@ -48,7 +48,7 @@ impl EngineInner {
             self.dispatch_condolations(sim, assets);
             return false;
         }
-        if !self.generate_transition(owner, seq_id, elem_idx) {
+        if !self.generate_transition(sim, assets, owner, seq_id, elem_idx) {
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
@@ -554,7 +554,9 @@ impl EngineInner {
                     // Outside that special arm, Original generates the
                     // incoming element's transition orders before normal
                     // priority comparison with the selected element.
-                    if needs_transition && !self.generate_transition(owner, seq_id, elem_idx) {
+                    if needs_transition
+                        && !self.generate_transition(sim, assets, owner, seq_id, elem_idx)
+                    {
                         self.orders
                             .sequence_manager
                             .element_impossible(seq_id, elem_idx);

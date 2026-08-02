@@ -301,6 +301,58 @@ pub(crate) fn entity_id_for_occupied_slot(index: u32, entity: &Entity) -> Entity
     EntityId::new(index, entity.entity_id_kind())
 }
 
+/// Resolve Original's actor `mpOrder` animation identity.
+///
+/// The actor latch is authoritative once initialized. In particular, an
+/// incoming sequence element can become selected before its order is
+/// installed; interrupting the outgoing element in that interval does not
+/// clear Original's old `mpOrder`. The sequence-manager value is therefore
+/// only a bootstrap fallback for actors that have never latched an order.
+fn resolve_actor_order_type(
+    latched: Option<crate::order::OrderType>,
+    selected: Option<crate::order::OrderType>,
+) -> Option<crate::order::OrderType> {
+    latched
+        .map(|order_type| {
+            if order_type == crate::order::OrderType::Invalid {
+                crate::order::OrderType::NonanimationEnd
+            } else {
+                order_type
+            }
+        })
+        .or(selected)
+}
+
+#[cfg(test)]
+mod actor_order_type_tests {
+    use super::resolve_actor_order_type;
+    use crate::order::OrderType;
+
+    #[test]
+    fn installed_actor_latch_survives_an_incoming_uninstalled_order() {
+        assert_eq!(
+            resolve_actor_order_type(Some(OrderType::AimingWithBow), None),
+            Some(OrderType::AimingWithBow)
+        );
+    }
+
+    #[test]
+    fn cleared_actor_latch_exposes_original_nonanimation_sentinel() {
+        assert_eq!(
+            resolve_actor_order_type(Some(OrderType::Invalid), Some(OrderType::Special)),
+            Some(OrderType::NonanimationEnd)
+        );
+    }
+
+    #[test]
+    fn selected_order_bootstraps_an_actor_without_a_latch() {
+        assert_eq!(
+            resolve_actor_order_type(None, Some(OrderType::AimingWithBow)),
+            Some(OrderType::AimingWithBow)
+        );
+    }
+}
+
 impl EngineInner {
     /// Queue concrete speech sample resolutions produced by the logical sound
     /// manager after the preceding engine frame.
@@ -1193,10 +1245,17 @@ impl EngineInner {
 
     /// Current animation/order type for parity diagnostics.
     pub fn actor_order_type(&self, actor: EntityId) -> Option<crate::order::OrderType> {
-        self.orders
+        let latched = self
+            .get_entity(actor)
+            .and_then(|entity| entity.actor_data())
+            .and_then(|actor| actor.latched_order_type);
+        let selected = self
+            .orders
             .sequence_manager
             .current_order_for_actor(actor)
-            .map(|(_, _, order)| order.order_type)
+            .map(|(_, _, order)| order.order_type);
+
+        resolve_actor_order_type(latched, selected)
     }
 
     /// Original `RHElementActor::GetAnimation()`: the live sequence order,
@@ -1351,6 +1410,8 @@ impl EngineInner {
     /// the element sits at index 0.
     pub(crate) fn launch_element_for_owner(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         mut elem: crate::sequence::SequenceElement,
     ) -> crate::sequence::SequenceId {
         let parity_debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
@@ -1461,7 +1522,7 @@ impl EngineInner {
         if parity_debug_stage_timing {
             eprintln!("parity launch: before generate_transition owner={owner:?} seq={seq_id:?}");
         }
-        if !self.generate_transition(owner, seq_id, elem_idx) {
+        if !self.generate_transition(sim, assets, owner, seq_id, elem_idx) {
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
@@ -1501,11 +1562,13 @@ impl EngineInner {
     /// scanners ignore it.
     pub(crate) fn launch_single_order_sequence_stamped(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         command: crate::element::Command,
         order: crate::order::Order,
     ) -> crate::sequence::SequenceId {
-        self.launch_single_order_sequence_stamped_ex(owner, command, order, true)
+        self.launch_single_order_sequence_stamped_ex(sim, assets, owner, command, order, true)
     }
 
     /// Like [`launch_single_order_sequence_stamped`] but with an
@@ -1517,12 +1580,16 @@ impl EngineInner {
     /// `Instruct` and generate transitions at the later manager boundary.
     pub(crate) fn launch_single_order_sequence_stamped_ex(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         command: crate::element::Command,
         order: crate::order::Order,
         with_transitions: bool,
     ) -> crate::sequence::SequenceId {
         self.launch_single_order_sequence_stamped_ex_configured(
+            sim,
+            assets,
             owner,
             command,
             order,
@@ -1539,6 +1606,8 @@ impl EngineInner {
     /// properties before the direct arbitration boundary.
     pub(crate) fn launch_single_order_sequence_stamped_ex_configured(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         command: crate::element::Command,
         order: crate::order::Order,
@@ -1601,7 +1670,7 @@ impl EngineInner {
         // element Impossible and skip both arbitration and the
         // InProgress promotion below. Skipped only by synthetic lowering
         // paths that have already chosen their exact transition order.
-        if with_transitions && !self.generate_transition(owner, seq_id, elem_idx) {
+        if with_transitions && !self.generate_transition(sim, assets, owner, seq_id, elem_idx) {
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
