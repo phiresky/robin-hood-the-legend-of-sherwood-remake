@@ -3291,7 +3291,20 @@ impl EngineInner {
                 door_goal_info.as_ref().map(|(_, p, _, _, _)| p.clone())
             } else {
                 let Some(goal_sector) = pc_goal_sector else {
-                    tracing::warn!("skipping gate path without resolved goal sector");
+                    // This is the same failed route-construction outcome as
+                    // FindPathIntoDoor / FindPathGates returning false in
+                    // RHSequence::AppendMoveToSequence.  Original reports
+                    // every such failure through the authoritative unable
+                    // bark before abandoning the new sequence.
+                    tracing::warn!(
+                        actor = ?pc_id,
+                        "skipping gate path without resolved goal sector"
+                    );
+                    self.hero_speaking(
+                        assets,
+                        *pc_id,
+                        crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+                    );
                     continue;
                 };
                 let level = self.world.fast_grid.level.clone();
