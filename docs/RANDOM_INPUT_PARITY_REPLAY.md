@@ -1878,6 +1878,25 @@ Replay validation is pending the next frozen-runner sweep.
 
 ## Schema-12 comparator coverage audit
 
+### Strict cache-v12 sweep: renderer handles are diagnostic
+
+The frozen 563-trace increment under
+`output/parity-audits/random-long-strict-v12-since-2222-through-2785-20260802/`
+first completed `linux3/Profile_001/Savegame_040/replay-013`. Its initial frame
+reported 251 raw `surface_id` and 251 raw `class_id` differences alongside the
+real actor-motion and visibility-output boundaries.
+
+Those two bulk groups were comparator representation errors. Original PC and
+soldier constructors obtain `mulSpriteID` from
+`SBDrawManager::CreateSurface` (`RHelementactorpc.cpp:429` and
+`RHelementactorsoldier.cpp:206`); Rust does not allocate an isomorphic
+per-entity renderer surface. Original numeric class IDs are likewise redundant
+with the concrete entity kind already checked through the runtime identity
+mapping, and Rust dispatches on that typed kind. Both raw values remain in the
+trace and diagnostic dumps, but logical comparison now omits them. This does
+not suppress the same frame's eight motion-state differences, animation
+difference, or ordered visibility-query mismatch.
+
 ### Dormant increment vectors
 
 Original release builds serialize/dump `mvIncrementMap` even while its
