@@ -2925,14 +2925,43 @@ pub struct ArrowTickResult {
     pub human_hit_old_position: Option<WorldPoint3D>,
 }
 
-fn current_arrow_orientation_sector(proj: &ElementProjectile) -> i16 {
-    let vx = proj.projectile.velocity_increment.x;
-    let vy = proj.projectile.velocity_increment.y;
-    if vx != 0.0 || vy != 0.0 {
-        crate::position_interface::vector_to_sector_0_to_15_iso(vx, vy)
-    } else {
-        proj.element.direction()
+/// Original `RHElementArrow::GetOrientations` points from the arrow's current
+/// position to the *next queued trajectory point*. The current per-frame
+/// increment is not equivalent: `Hourglass` has already removed the point
+/// which produced that increment, and the next ballistic segment can have a
+/// different vertical pitch.
+fn current_arrow_orientation(proj: &mut ElementProjectile) -> (u16, i16) {
+    let Some(next) = proj.projectile.trajectory.first() else {
+        return (
+            proj.projectile.last_orientation_sector,
+            proj.projectile.last_orientation_azimuth,
+        );
+    };
+    let current = proj.element.position();
+    let dx = next.position.x - current.x;
+    let dy = next.position.y - current.y;
+    let dz = next.position.z - current.z;
+    let norm_sq = dx * dx + dy * dy + dz * dz;
+    if norm_sq == 0.0 {
+        return (
+            proj.projectile.last_orientation_sector,
+            proj.projectile.last_orientation_azimuth,
+        );
     }
+
+    let inv_norm = 1.0 / norm_sq.sqrt();
+    let nx = dx * inv_norm;
+    let ny = dy * inv_norm;
+    let nz = dz * inv_norm;
+    let sector = crate::position_interface::vector_to_sector_0_to_15_iso(nx, ny) as u16 & 15;
+    let ground_norm = (nx * nx + ny * ny).sqrt().min(1.0);
+    let mut azimuth = (ground_norm.acos() * 180.0 / std::f32::consts::PI).min(60.0) as i16;
+    if nz < 0.0 {
+        azimuth = -azimuth;
+    }
+    proj.projectile.last_orientation_sector = sector;
+    proj.projectile.last_orientation_azimuth = azimuth;
+    (sector, azimuth)
 }
 
 fn apply_arrow_falling_sprite_visual(
@@ -2951,12 +2980,38 @@ fn apply_arrow_falling_sprite_visual(
     proj.projectile.falling_direction = (row + 14) % 16;
 }
 
-pub(crate) fn make_arrow_falling_down(
+/// Apply the presentation pass which Original runs after the parity snapshot.
+/// The engine calls this immediately before the next `PerformHourglass`, which
+/// exposes the same row/frame at the next snapshot and puts falling-arrow RNG
+/// before that frame's simulation draws.
+pub(crate) fn refresh_arrow_after_previous_hourglass(
     sim: &crate::sim_rng::SimulationContext,
+    proj: &mut ElementProjectile,
+) {
+    if !proj.element.active {
+        return;
+    }
+    if proj.projectile.trajectory.is_empty() && !proj.element.sprite.position_iface.is_moving() {
+        proj.element.active = false;
+        return;
+    }
+
+    if proj.projectile.falling {
+        apply_arrow_falling_sprite_visual(sim, proj);
+    } else {
+        let (sector, azimuth) = current_arrow_orientation(proj);
+        let frame = ((azimuth as f32 * 0.066_666_67_f32 + 0.5_f32) as i32 + 4) as u16;
+        proj.element.sprite.force_sprite_row_raw(sector);
+        proj.element.sprite.force_sprite(sector, frame);
+    }
+}
+
+pub(crate) fn make_arrow_falling_down(
+    _sim: &crate::sim_rng::SimulationContext,
     proj: &mut ElementProjectile,
     thrown_away_by_shield: bool,
 ) {
-    let sector = current_arrow_orientation_sector(proj);
+    let (sector, _) = current_arrow_orientation(proj);
     proj.projectile.falling = true;
     proj.projectile.flying = true;
 
@@ -2999,7 +3054,6 @@ pub(crate) fn make_arrow_falling_down(
     // recomputing the trajectory, so the ricochet visibly advances on
     // the same tick as the shield/target impact.
     proj.advance_trajectory_one_frame();
-    apply_arrow_falling_sprite_visual(sim, proj);
 }
 
 /// Advance every arrow projectile by one frame along its precomputed
@@ -3440,50 +3494,6 @@ fn tick_arrows_matching(
                     proj.element.position().z,
                 ));
         }
-        let vx = proj.projectile.velocity_increment.x;
-        let vy = proj.projectile.velocity_increment.y;
-        let vz = proj.projectile.velocity_increment.z;
-
-        // Cache the sector + vertical-pitch azimut into `last_sector`
-        // / `last_azimut` whenever the trajectory is non-empty so
-        // later callers with an empty trajectory can still read the
-        // last known orientation.  Computed from the per-frame
-        // velocity increment.
-        //
-        // After the per-frame position + sector update, push row +
-        // frame into the sprite so the arrow renders with the
-        // directional sector row and the vertical-pitch frame.
-        if matches!(proj.object.object_type, ObjectType::Arrow) {
-            if proj.projectile.falling {
-                apply_arrow_falling_sprite_visual(sim, proj);
-            } else if vx != 0.0 || vy != 0.0 {
-                let norm_sq = vx * vx + vy * vy + vz * vz;
-                if norm_sq > 0.0 {
-                    let inv_norm = 1.0 / norm_sq.sqrt();
-                    let nx = vx * inv_norm;
-                    let ny = vy * inv_norm;
-                    let nz = vz * inv_norm;
-                    // Ground-projection norm = sqrt(nx² + ny²) ≤ 1.
-                    let ground_norm = (nx * nx + ny * ny).sqrt().min(1.0);
-                    // `acos(ground_norm) * 180/PI`, clamped ≤ 60 then
-                    // signed by the sign of Z.
-                    let mut azimut_deg =
-                        (ground_norm.acos() * 180.0 / std::f32::consts::PI).min(60.0) as i16;
-                    if nz < 0.0 {
-                        azimut_deg = -azimut_deg;
-                    }
-                    let sector = current_arrow_orientation_sector(proj) as u16 & 15;
-                    // row = sector, frame = `(azimut * 0.0666…) + 0.5`
-                    // rounded + 4 (nine vertical-pitch frames centred
-                    // on 4 for horizontal flight).
-                    let azimut_frame =
-                        ((azimut_deg as f32 * 0.066_666_67_f32 + 0.5_f32) as i32 + 4) as u16;
-                    proj.element.sprite.force_sprite_row_raw(sector);
-                    proj.element.sprite.force_sprite(sector, azimut_frame);
-                }
-            }
-        }
-
         // Increment lifetime counter for diagnostics/replay state. C++
         // projectile lifetime is governed by trajectory exhaustion and
         // impact side effects; it has no hard timeout.
@@ -7048,5 +7058,98 @@ mod tests {
                 "throw path {index} advanced more than once before insertion"
             );
         }
+    }
+
+    fn refresh_test_arrow() -> ElementProjectile {
+        let mut element = ElementData {
+            kind: ElementKind::ObjectProjectile,
+            active: true,
+            ..Default::default()
+        };
+        element.sprite.current_row = 9;
+        element.sprite.current_frame = 2;
+        ElementProjectile {
+            element,
+            object: ObjectData {
+                object_type: ObjectType::Arrow,
+                animation: Animation::ObjectFlying,
+                ..Default::default()
+            },
+            projectile: ProjectileData {
+                flying: true,
+                trajectory: vec![TrajectoryPoint {
+                    position: WorldPoint3D::new(10.0, 0.0, 100.0),
+                    time: 4,
+                }],
+                // Deliberately horizontal: Refresh must use the next queued
+                // point rather than this current-segment increment.
+                velocity_increment: WorldVec3D::new(1.0, 0.0, 0.0),
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    fn arrow_refresh_is_deferred_and_uses_next_waypoint_pitch() {
+        let mut arrow = refresh_test_arrow();
+        assert_eq!(
+            (
+                arrow.element.sprite.current_row,
+                arrow.element.sprite.current_frame
+            ),
+            (9, 2)
+        );
+
+        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
+
+        assert_eq!(arrow.projectile.last_orientation_sector, 0);
+        assert_eq!(arrow.projectile.last_orientation_azimuth, 60);
+        assert_eq!(
+            (
+                arrow.element.sprite.current_row,
+                arrow.element.sprite.current_frame
+            ),
+            (0, 8)
+        );
+    }
+
+    #[test]
+    fn falling_arrow_refresh_consumes_exactly_one_draw_and_rotates_afterward() {
+        let mut arrow = refresh_test_arrow();
+        arrow.projectile.falling = true;
+        arrow.projectile.falling_direction = 6;
+
+        let (_, draws) = crate::sim_rng::with_draw_trace(|| {
+            refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow)
+        });
+
+        assert_eq!(draws, vec![crate::sim_rng::RngSite::ArrowFallingFrame]);
+        assert_eq!(arrow.element.sprite.current_row, 6);
+        assert!((3..=5).contains(&arrow.element.sprite.current_frame));
+        assert_eq!(arrow.projectile.falling_direction, 4);
+    }
+
+    #[test]
+    fn moving_arrow_with_empty_trajectory_reuses_serialized_orientation_cache() {
+        let mut arrow = refresh_test_arrow();
+        arrow.projectile.trajectory.clear();
+        arrow.projectile.last_orientation_sector = 7;
+        arrow.projectile.last_orientation_azimuth = -30;
+        arrow
+            .element
+            .sprite
+            .position_iface
+            .set_old_position(WorldPoint3D::new(-1.0, 0.0, 0.0));
+
+        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
+
+        assert!(arrow.element.active);
+        assert_eq!(
+            (
+                arrow.element.sprite.current_row,
+                arrow.element.sprite.current_frame
+            ),
+            (7, 3)
+        );
     }
 }

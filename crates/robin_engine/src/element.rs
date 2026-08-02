@@ -2233,16 +2233,16 @@ pub struct ProjectileData {
     /// is falling to the ground.  Falling arrows skip shield and victim
     /// collision checks.
     pub falling: bool,
-    /// Deferred arrow-refresh retirement. Original records parity after
-    /// `Hourglass` but before `RHElementArrow::Refresh`; this latch preserves
-    /// the terminal active snapshot and retires the stopped arrow when its
-    /// next owner slot models that refresh boundary.
+    /// Last non-falling horizontal orientation computed by
+    /// `RHElementArrow::Refresh`. Original serializes this cache and reuses it
+    /// when the trajectory has become empty.
     #[serde(default)]
-    pub retirement_pending: bool,
-    /// Sector (0..15) used by a falling arrow's visual rotation.  Cycled
-    /// each tick while falling; the sprite-row driver that consumes this
-    /// is part of the unported per-frame arrow refresh pass, so the field
-    /// is preserved for the future hook-up.
+    pub last_orientation_sector: u16,
+    /// Last non-falling vertical orientation, in degrees in `[-60, 60]`.
+    #[serde(default)]
+    pub last_orientation_azimuth: i16,
+    /// Sector (0..15) used by a falling arrow's visual rotation. Cycled by
+    /// the deferred `RHElementArrow::Refresh` boundary, not by Hourglass.
     pub falling_direction: u16,
     /// Purse / coin back-pointers — populated for `ObjectType::Purse`
     /// and `ObjectType::Coin` projectiles, default for everything else.
@@ -2273,7 +2273,8 @@ impl Default for ProjectileData {
             trajectory_frame_count: 0,
             damage: 0,
             falling: false,
-            retirement_pending: false,
+            last_orientation_sector: 0,
+            last_orientation_azimuth: 0,
             falling_direction: 0,
             purse: PurseData::default(),
             wasp: WaspData::default(),

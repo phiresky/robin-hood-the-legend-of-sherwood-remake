@@ -773,7 +773,7 @@ fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
 }
 
 #[test]
-fn grounded_arrow_exposes_terminal_active_frame_then_retires_and_keeps_its_slot() {
+fn grounded_arrow_exposes_terminal_active_frame_then_refresh_retires_its_slot() {
     use crate::element::{
         Animation, ElementData, ElementKind, ElementProjectile, ObjectData, ObjectType,
         ProjectileData,
@@ -807,15 +807,14 @@ fn grounded_arrow_exposes_terminal_active_frame_then_retires_and_keeps_its_slot(
         projectile.element.active,
         "Original records terminal Hourglass state before arrow Refresh"
     );
-    assert!(projectile.projectile.retirement_pending);
-
-    engine.tick_projectile_or_net_hourglass(&sim, &assets, arrow);
+    engine.control.arrow_refresh_pending = true;
+    engine.apply_pending_arrow_refresh(&sim);
     let Entity::Projectile(projectile) = engine.get_entity(arrow).unwrap() else {
         unreachable!()
     };
     assert!(
         !projectile.element.active,
-        "the following owner slot must observe completed Refresh retirement"
+        "the between-frame Refresh must retire a stationary empty arrow"
     );
 
     engine.tick_projectile_or_net_hourglass(&sim, &assets, arrow);

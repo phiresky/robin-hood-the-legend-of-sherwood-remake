@@ -20,6 +20,12 @@ pub(crate) struct SimulationControl {
     pub(crate) mission_start_rng_seed: u64,
     pub(crate) mission_start_sim_config: SimConfig,
     pub(crate) fast_forward: bool,
+    /// A completed `PerformHourglass` is followed by the presentation-only
+    /// `RHElementArrow::Refresh` pass. Parity snapshots sit between those
+    /// calls, so Rust applies this pending pass immediately before the next
+    /// hourglass instead of mutating arrow sprites during their entity tick.
+    #[serde(default)]
+    pub(crate) arrow_refresh_pending: bool,
 }
 
 impl SimulationControl {
@@ -35,6 +41,7 @@ impl SimulationControl {
             mission_start_rng_seed: seed,
             mission_start_sim_config: sim_config,
             fast_forward: false,
+            arrow_refresh_pending: false,
         }
     }
 
@@ -89,5 +96,6 @@ mod tests {
         assert_eq!(control.chorus_timer, 0);
         assert_eq!(control.rng.seed(), 17);
         assert!(!control.fast_forward);
+        assert!(!control.arrow_refresh_pending);
     }
 }

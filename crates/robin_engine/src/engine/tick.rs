@@ -1314,6 +1314,16 @@ impl EngineInner {
     ) -> super::SideEffects {
         let _hourglass_timer = HourglassTimer::start();
 
+        let sim = self.control.simulation_context();
+        let sim = &sim;
+
+        // RHGame records parity immediately after PerformHourglass, then its
+        // render pass calls RHElementArrow::Refresh. Reproduce that
+        // between-frame mutation here, before any draw from the next engine
+        // frame. A restored mission starts with no pending pass because its
+        // serialized sprites already crossed the preceding Refresh boundary.
+        self.apply_pending_arrow_refresh(sim);
+
         // RHScript::FadeToBlack presents its ramp in a tight loop without
         // calling PerformHourglass. Drain the corresponding presentation
         // count before lending the explicit simulation context or touching any simulation,
@@ -1328,9 +1338,6 @@ impl EngineInner {
             return fx;
         }
 
-        let sim = self.control.simulation_context();
-        let sim = &sim;
-
         // Director work runs after the preceding PerformHourglass and can
         // complete a CameraGoto/ZoomLevel sequence element there.  Original
         // `SetState(Terminated) -> Ready() -> Go()` executes immediate
@@ -1341,6 +1348,7 @@ impl EngineInner {
         self.drain_pending_immediate_actions_sync(sim, display, assets);
 
         let code = self.perform_hourglass_inner(sim, display, assets, dev, simulation_body_allowed);
+        self.control.arrow_refresh_pending = true;
 
         // Post-tick sim mutations that used to live in `game_session`
         // between the hourglass and the render pass. They have to run
@@ -1438,6 +1446,45 @@ impl EngineInner {
         fx
     }
 
+    fn apply_pending_arrow_refresh(&mut self, sim: &crate::sim_rng::SimulationContext) {
+        if !std::mem::take(&mut self.control.arrow_refresh_pending) {
+            return;
+        }
+
+        // SortForDisplay orders non-animation elements by display depth and
+        // Original creation order. That order is authoritative for multiple
+        // falling arrows because each Refresh consumes one global RNG draw.
+        let mut arrows: Vec<_> = self
+            .world
+            .entities
+            .occupied()
+            .filter_map(|(id, entity)| match entity {
+                Entity::Projectile(projectile)
+                    if projectile.object.object_type == crate::element::ObjectType::Arrow =>
+                {
+                    Some((
+                        id,
+                        projectile.element.position().y,
+                        self.world.original_creation_order(id),
+                    ))
+                }
+                _ => None,
+            })
+            .collect();
+        arrows.sort_by(|a, b| {
+            a.1.partial_cmp(&b.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.2.cmp(&b.2))
+        });
+
+        for (id, _, _) in arrows {
+            let Some(Entity::Projectile(projectile)) = self.world.entities.get_mut(id) else {
+                panic!("arrow {id:?} vanished during deferred Refresh");
+            };
+            crate::bow_shot::refresh_arrow_after_previous_hourglass(sim, projectile);
+        }
+    }
+
     /// Run the one-shot mission-script `PostInitialize` stage.
     ///
     /// The original `RHGame::GameLoop` calls this after the first
@@ -1465,6 +1512,11 @@ impl EngineInner {
         // boundary.
         let sim = self.control.simulation_context();
         let sim = &sim;
+
+        // This explicit host stage is defined to run after the first native
+        // Refresh. Cross the same pending arrow boundary before PostInitialize
+        // can consume RNG or inspect sprite state.
+        self.apply_pending_arrow_refresh(sim);
 
         self.run_post_initialize_if_needed(sim, assets);
         self.drain_pending_immediate_actions_sync(sim, display, assets);
@@ -4040,25 +4092,6 @@ impl EngineInner {
                             .expect("arrow owner changed concrete entity kind");
                         if flying {
                             self.tick_existing_projectile(sim, assets, id);
-                        } else {
-                            let Entity::Projectile(projectile) = self
-                                .get_entity_mut(id)
-                                .expect("active arrow vanished before retirement refresh")
-                            else {
-                                panic!("arrow owner changed concrete entity kind");
-                            };
-                            // This branch is reached in the same owner slot in
-                            // which Hourglass observes terminal flight state.
-                            // Original records that frame before
-                            // RHElementArrow::Refresh, so keep the arrow active
-                            // once. Its next owner slot models the completed
-                            // refresh boundary and retires the retained slot.
-                            projectile.element.sprite.position_iface.new_move();
-                            if projectile.projectile.retirement_pending {
-                                projectile.element.active = false;
-                            } else {
-                                projectile.projectile.retirement_pending = true;
-                            }
                         }
                     }
                     base_active

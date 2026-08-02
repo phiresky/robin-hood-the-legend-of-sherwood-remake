@@ -261,6 +261,8 @@ struct PlannedProjectile {
     flying: bool,
     falling: bool,
     falling_direction: u16,
+    last_orientation_sector: u16,
+    last_orientation_azimuth: i16,
     trajectory_frame_count: u16,
     start_of_trajectory_x: f32,
     start_of_trajectory_y: f32,
@@ -607,10 +609,13 @@ fn preflight_object_item(
     creation_order: u32,
     entities: &LegacyEntityFixups,
 ) -> Result<PlannedLeaf, LegacyObjectLeafAdoptError> {
-    let arrow_falling = match saved {
-        LegacyObjectItemPayload::Arrow(payload) => {
-            Some((payload.falling, u16::from(payload.falling_direction)))
-        }
+    let arrow_state = match saved {
+        LegacyObjectItemPayload::Arrow(payload) => Some((
+            payload.falling,
+            u16::from(payload.falling_direction),
+            u16::from(payload.last_sector),
+            payload.last_azimuth,
+        )),
         _ => None,
     };
     let (object, projectile, saved_kind, predicate): (
@@ -687,9 +692,11 @@ fn preflight_object_item(
     let object = preflight_object(object, creation_order, entities)?;
     if let Some(projectile) = projectile {
         let mut projectile = preflight_projectile(projectile, creation_order, entities)?;
-        if let Some((falling, falling_direction)) = arrow_falling {
+        if let Some((falling, falling_direction, last_sector, last_azimuth)) = arrow_state {
             projectile.falling = falling;
             projectile.falling_direction = falling_direction;
+            projectile.last_orientation_sector = last_sector;
+            projectile.last_orientation_azimuth = last_azimuth;
         }
         Ok(PlannedLeaf::Projectile {
             entity: entity_id,
@@ -751,6 +758,8 @@ fn preflight_projectile(
         // field and is overlaid by preflight_object_item above.
         falling: false,
         falling_direction: 0,
+        last_orientation_sector: 0,
+        last_orientation_azimuth: 0,
         trajectory_frame_count: saved.frame_count,
         start_of_trajectory_x: saved.trajectory_origin_map.x,
         start_of_trajectory_y: saved.trajectory_origin_map.y,
@@ -767,6 +776,8 @@ fn apply_projectile(runtime: &mut ProjectileData, saved: PlannedProjectile) {
     runtime.flying = saved.flying;
     runtime.falling = saved.falling;
     runtime.falling_direction = saved.falling_direction;
+    runtime.last_orientation_sector = saved.last_orientation_sector;
+    runtime.last_orientation_azimuth = saved.last_orientation_azimuth;
     runtime.trajectory_frame_count = saved.trajectory_frame_count;
     runtime.start_of_trajectory_x = saved.start_of_trajectory_x;
     runtime.start_of_trajectory_y = saved.start_of_trajectory_y;
@@ -776,9 +787,6 @@ fn apply_projectile(runtime: &mut ProjectileData, saved: PlannedProjectile) {
     runtime.shooter = saved.shooter;
     runtime.trajectory = saved.trajectory;
     runtime.velocity_increment = saved.velocity_increment;
-    // This is a Rust scheduling latch, not serialized Original state. A
-    // restored projectile has not yet crossed a Rust owner-slot boundary.
-    runtime.retirement_pending = false;
 }
 
 fn preflight_object(

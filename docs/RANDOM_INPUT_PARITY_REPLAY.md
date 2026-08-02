@@ -2446,6 +2446,30 @@ sector/area identities through the existing isomorphism and preserves the
 same in-flight-head-before-waiting ordering. This additive snapshot changes
 the native cache to version 14.
 
+### Deferred arrow presentation refresh
+
+Arrow sprite orientation is an unusual piece of authoritative presentation
+state. Original records each parity frame immediately after
+`RHEngine::PerformHourglass`, then `RHGame::Refresh` sorts the display list and
+calls `RHElementArrow::Refresh`. Consequently a newly fired arrow remains on
+its constructor row/frame in its creation-frame snapshot, and the forced
+orientation first appears in the following snapshot. Falling arrows also draw
+their random tumble frame in this between-frame pass, before every simulation
+RNG draw attributed to the following frame.
+
+Rust now retains an engine-level pending-refresh boundary. A completed
+hourglass schedules it; the next hourglass applies it before any other work,
+in display-depth and retained Original-creation order. Loaded saves begin with
+no pending pass because their serialized sprite state already crossed the
+preceding native refresh. Non-falling orientation uses the vector from the
+arrow's current position to the next queued trajectory point, exactly as
+`RHElementArrow::GetOrientations` does after the current point has been popped,
+not the current segment's per-frame increment. The serialized last-sector and
+last-azimuth cache is retained for a moving arrow whose trajectory is empty.
+Falling row/frame forcing, its single RNG draw, direction rotation, and
+stationary empty-trajectory retirement all occur only at this deferred
+refresh boundary.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
