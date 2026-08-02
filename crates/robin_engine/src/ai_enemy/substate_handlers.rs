@@ -3187,6 +3187,7 @@ impl EnemyAi {
                         30,
                         crate::ai::RemarkTargetFlags::THIS_GUY.bits(),
                         0,
+                        ctx.original_creation_order,
                         ctx.frame,
                     );
                     self.seek_area(
@@ -6065,7 +6066,7 @@ mod tests {
             human: Default::default(),
             pc: Default::default(),
         });
-        crate::ai_entity_view::entity_view_from_entity(&entity, false, None, None)
+        crate::ai_entity_view::entity_view_from_entity(&entity, 41, false, None, None)
     }
 
     #[test]

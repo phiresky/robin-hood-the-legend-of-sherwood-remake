@@ -24,9 +24,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::ai::{AiState, Position, Substate};
+use crate::coordinates::MapPoint;
 use crate::element::{Camp, Entity, Posture};
 use crate::order::OrderType;
-use crate::coordinates::MapPoint;
 
 /// Snapshot of a single entity's AI-facing state at the top of the
 /// current tick.
@@ -34,6 +34,9 @@ use crate::coordinates::MapPoint;
     Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
 pub struct AiEntityView {
+    /// Original `RHElement::GetCreationOrder()`. Runtime entity slots are not
+    /// an interchangeable identity for creation-ordered AI behavior.
+    pub original_creation_order: u32,
     /// Map-space x/y plus sector/level.
     pub position: Position,
     /// Raw element map position before AI `Position()` snaps door transit to
@@ -351,6 +354,7 @@ pub type SharedAiEntityViews = Arc<AiEntityViewMap>;
 /// from this module without threading the engine through.
 pub fn entity_view_from_entity(
     entity: &Entity,
+    original_creation_order: u32,
     in_building: bool,
     building_sector: Option<crate::position_interface::SectorHandle>,
     campaign: Option<&crate::campaign::Campaign>,
@@ -776,6 +780,7 @@ pub fn entity_view_from_entity(
     };
 
     AiEntityView {
+        original_creation_order,
         position,
         detection_position: elem.position_map(),
         direction,

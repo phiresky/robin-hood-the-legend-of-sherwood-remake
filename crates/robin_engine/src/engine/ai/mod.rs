@@ -567,6 +567,15 @@ pub(super) fn build_ai_context_from_entity(
     difficulty: crate::player_profile::DifficultyLevel,
 ) -> AiContext {
     let elem = entity.element_data();
+    let original_creation_order = entity_views
+        .get(&(elem.index_in_elements_list as u32))
+        .unwrap_or_else(|| {
+            panic!(
+                "AI owner {} is missing its authoritative entity view",
+                elem.index_in_elements_list
+            )
+        })
+        .original_creation_order;
     let camp = match entity {
         Entity::Soldier(s) => s.soldier.cached_camp,
         Entity::Civilian(c) => c.civilian.cached_camp,
@@ -754,6 +763,7 @@ pub(super) fn build_ai_context_from_entity(
     };
     AiContext {
         difficulty,
+        original_creation_order,
         position: self_position,
         frame,
         direction: elem.direction() as u16,
@@ -1156,6 +1166,7 @@ fn build_entity_views_inner(
         let building_sector = engine.entity_building_sector(elem.sector());
         let mut view = ai_entity_view::entity_view_from_entity(
             entity,
+            engine.world.original_creation_order(entity_id),
             building_sector.is_some(),
             building_sector,
             Some(&engine.mission_domain.campaign),
@@ -4770,6 +4781,7 @@ impl EngineInner {
 
         if !flags.contains(SpeechFlags::ALWAYS) {
             let frame = self.control.frame_counter;
+            let owner_creation_order = self.world.original_creation_order(owner);
             // Original scans lazily in list order. It deletes expired entries
             // only as encountered and returns on the first live match, leaving
             // every later entry (including expired ones) untouched.
@@ -4789,7 +4801,7 @@ impl EngineInner {
                     {
                         forbidden = true;
                     } else if scope.contains(RemarkTargetFlags::THIS_GUY)
-                        && entry.guy_index == owner.index() as u16
+                        && u32::from(entry.guy_index) == owner_creation_order
                     {
                         forbidden = true;
                     } else if is_soldier && scope.contains(RemarkTargetFlags::VILLAINS) {
@@ -4998,7 +5010,7 @@ impl EngineInner {
             &mut self.ai.global.forbidden_remarks,
             attempt.remark,
             speech_id,
-            owner.index() as u16,
+            self.world.original_creation_order(owner) as u16,
             is_soldier,
             self.control.frame_counter,
         );

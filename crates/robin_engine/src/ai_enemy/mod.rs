@@ -1153,15 +1153,15 @@ impl EnemyAi {
         frames: u32,
         flags: u16,
         speech_id: u32,
+        original_creation_order: u32,
         frame: u32,
     ) {
         global.forbidden_remarks.push(crate::ai::ForbiddenRemark {
             remark,
             flags,
             speech_id,
-            // EntityId is monotonic and never reused, so it plays
-            // the same role as a creation-order index.
-            guy_index: self.base.me as u16,
+            // Original narrows ULONG GetCreationOrder() into this UWORD field.
+            guy_index: original_creation_order as u16,
             bad_guy: true, // ai_enemy is always a soldier
             forbidden_till_frame: frame + frames,
         });
@@ -4114,6 +4114,7 @@ mod tests {
 
     fn soldier_view(pos: Position) -> AiEntityView {
         AiEntityView {
+            original_creation_order: 41,
             position: pos,
             detection_position: crate::coordinates::MapPoint::new(pos.x, pos.y),
             direction: 0,

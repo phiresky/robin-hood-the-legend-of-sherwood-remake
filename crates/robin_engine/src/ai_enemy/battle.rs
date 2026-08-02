@@ -2836,7 +2836,7 @@ mod tests {
                 ..Default::default()
             },
         });
-        crate::ai_entity_view::entity_view_from_entity(&entity, false, None, None)
+        crate::ai_entity_view::entity_view_from_entity(&entity, 41, false, None, None)
     }
 
     #[test]

@@ -2707,6 +2707,7 @@ mod tests {
 
     fn object_view(object_type: ObjectType) -> AiEntityView {
         AiEntityView {
+            original_creation_order: 41,
             position: Position {
                 x: 10.0,
                 y: 20.0,

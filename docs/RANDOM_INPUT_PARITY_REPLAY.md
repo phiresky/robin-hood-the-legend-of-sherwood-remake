@@ -2375,6 +2375,12 @@ authoritative as well.
 rewritten to a semantic entity reference. Original stores `GetCreationOrder()`
 in this field; comparing the scalar exposes an implementation that incorrectly
 stores a runtime entity slot instead of concealing that behavioral mismatch.
+Rust now threads the retained Original creation order through its AI context,
+uses it for both automatic and explicit `ForbidRemark` insertion, and compares
+the stored `UWORD` against the full creation order. This preserves Original's
+otherwise surprising C++ conversion behavior: insertion narrows the `ULONG`
+creation order to 16 bits, while lookup promotes that stored value before the
+comparison, so a creation order above 65535 cannot match a `THIS_GUY` entry.
 Screen remarks and the unused fixed remark-expiry array are excluded as
 presentation-only and dead state respectively.
 

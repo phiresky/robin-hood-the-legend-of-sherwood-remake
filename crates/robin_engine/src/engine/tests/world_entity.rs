@@ -789,11 +789,12 @@ fn speech_fifo_preserves_rejected_accepted_busy_and_emergency_attempts() {
         SpeechNpcKind::Soldier { vip: false },
         501,
     );
+    let owner_creation_order = engine.world.original_creation_order(owner);
     engine.ai.global.forbidden_remarks.push(ForbiddenRemark {
         remark: Remark::Arrow,
         flags: RemarkTargetFlags::THIS_GUY.bits(),
         speech_id: 0,
-        guy_index: owner.index() as u16,
+        guy_index: owner_creation_order as u16,
         bad_guy: true,
         forbidden_till_frame: 50,
     });
@@ -973,6 +974,7 @@ fn forbidden_scan_is_lazy_ordered_and_equal_deadline_is_live() {
         SpeechNpcKind::Soldier { vip: false },
         601,
     );
+    let owner_creation_order = engine.world.original_creation_order(owner);
     engine.ai.global.forbidden_remarks = vec![
         ForbiddenRemark {
             remark: Remark::WaspSting,
@@ -986,7 +988,7 @@ fn forbidden_scan_is_lazy_ordered_and_equal_deadline_is_live() {
             remark: Remark::Arrow,
             flags: RemarkTargetFlags::THIS_GUY.bits(),
             speech_id: 0,
-            guy_index: owner.index() as u16,
+            guy_index: owner_creation_order as u16,
             bad_guy: true,
             forbidden_till_frame: 10,
         },
@@ -1052,11 +1054,13 @@ fn this_guy_forbid_isolated_by_npc_creation_order() {
         612,
     );
     assert!(first.index() < second.index());
+    let first_creation_order = engine.world.original_creation_order(first);
+    assert_ne!(first_creation_order, first.index());
     engine.ai.global.forbidden_remarks.push(ForbiddenRemark {
         remark: Remark::Arrow,
         flags: RemarkTargetFlags::THIS_GUY.bits(),
         speech_id: 0,
-        guy_index: first.index() as u16,
+        guy_index: first_creation_order as u16,
         bad_guy: true,
         forbidden_till_frame: engine.control.frame_counter,
     });
@@ -1079,6 +1083,53 @@ fn this_guy_forbid_isolated_by_npc_creation_order() {
     );
     assert_eq!(last_speech_impossible(&engine, second), None);
     assert!(exclamation_for(&engine, second).is_some());
+}
+
+#[test]
+fn this_guy_forbid_preserves_original_uword_narrowing_and_ulong_comparison() {
+    use std::collections::BTreeMap;
+
+    use crate::ai::{ForbiddenRemark, Remark, RemarkTargetFlags, SpeechFlags};
+
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let owner = add_speech_test_npc(
+        &mut engine,
+        &mut assets,
+        SpeechNpcKind::Soldier { vip: false },
+        613,
+    );
+    let creation_order = u32::from(u16::MAX) + 2;
+    engine.world.install_original_creation_orders(
+        BTreeMap::from([(owner, creation_order)]),
+        creation_order + 1,
+    );
+    engine.ai.global.forbidden_remarks.push(ForbiddenRemark {
+        remark: Remark::Drunken,
+        flags: RemarkTargetFlags::THIS_GUY.bits(),
+        speech_id: 0,
+        guy_index: creation_order as u16,
+        bad_guy: true,
+        forbidden_till_frame: engine.control.frame_counter,
+    });
+
+    queue_and_settle_speech(
+        &mut engine,
+        &assets,
+        owner,
+        Remark::Drunken,
+        SpeechFlags::empty(),
+    );
+
+    assert_ne!(last_speech_impossible(&engine, owner), Some(2));
+    let personal = engine
+        .ai
+        .global
+        .forbidden_remarks
+        .last()
+        .expect("accepted Drunken speech adds its personal forbid");
+    assert_eq!(personal.flags, RemarkTargetFlags::THIS_GUY.bits());
+    assert_eq!(personal.guy_index, creation_order as u16);
 }
 
 #[test]
@@ -1109,11 +1160,12 @@ fn missing_speech_profile_is_lazy_for_early_and_non_type_rejections() {
         .unwrap()
         .element_data_mut()
         .blipped = false;
+    let owner_creation_order = early.world.original_creation_order(owner);
     early.ai.global.forbidden_remarks.push(ForbiddenRemark {
         remark: Remark::Arrow,
         flags: RemarkTargetFlags::THIS_GUY.bits(),
         speech_id: 0,
-        guy_index: owner.index() as u16,
+        guy_index: owner_creation_order as u16,
         bad_guy: true,
         forbidden_till_frame: early.control.frame_counter,
     });
@@ -1179,6 +1231,7 @@ fn speech_snapshot_roundtrip_and_hash_cover_fifo_live_identity_and_global_state(
         SpeechNpcKind::Soldier { vip: false },
         702,
     );
+    let first_creation_order = engine.world.original_creation_order(first);
     let ai = engine
         .get_entity_mut(first)
         .unwrap()
@@ -1215,7 +1268,7 @@ fn speech_snapshot_roundtrip_and_hash_cover_fifo_live_identity_and_global_state(
         remark: Remark::Arrow,
         flags: RemarkTargetFlags::THIS_GUY.bits(),
         speech_id: 701,
-        guy_index: first.index() as u16,
+        guy_index: first_creation_order as u16,
         bad_guy: true,
         forbidden_till_frame: 88,
     });

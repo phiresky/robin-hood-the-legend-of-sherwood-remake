@@ -2612,6 +2612,7 @@ mod tests {
         views.insert(
             human_handle,
             AiEntityView {
+                original_creation_order: 41,
                 position: enemy_pos,
                 detection_position: MapPoint::new(enemy_pos.x, enemy_pos.y),
                 direction: 0,
@@ -2960,6 +2961,7 @@ mod tests {
         use crate::element::Posture;
         use crate::order::OrderType;
         crate::ai_entity_view::AiEntityView {
+            original_creation_order: 41,
             position: pos,
             detection_position: MapPoint::new(pos.x, pos.y),
             direction: 0,
