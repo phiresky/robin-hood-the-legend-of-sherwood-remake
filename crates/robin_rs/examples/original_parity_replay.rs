@@ -1452,8 +1452,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 31;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v31.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 32;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v32.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.

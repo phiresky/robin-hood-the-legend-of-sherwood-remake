@@ -548,20 +548,48 @@ impl Engine {
 					"stopped": ai.patrol_stopped, "direction": ai.patrol_direction,
 				},
 				}).as_object().expect("parity NPC AI tail chunk must be an object").clone());
-			if let crate::element::AiBrain::Friendly(friendly) = &npc.ai_brain {
+			let subclass = match &npc.ai_brain {
+				crate::element::AiBrain::Friendly(friendly) => Some(json!({
+					"kind": "friendly",
+					"fleeing_seen_enemy_counter": friendly.fleeing_seen_enemy_counter,
+					"beggar_dont_talk_counter": friendly.beggar_dont_talk_counter,
+					"wants_to_talk": friendly.wants_to_talk,
+					"last_talk_partner": resolve_ai_handle(friendly.last_talk_partner),
+					"can_go_away": friendly.can_go_away,
+				})),
+				crate::element::AiBrain::Enemy(enemy) => Some(json!({
+					"kind": "enemy",
+					"frame_when_missed_charly": enemy.frame_when_missed_charly,
+					"frame_when_enemy_detected": enemy.base.frame_when_enemy_detected,
+					"fleeing_seen_enemy_counter": enemy.fleeing_seen_enemy_counter,
+					"pc_gone_direction": enemy.pc_gone_away_in_this_direction,
+					"detected_something_there": ai_position(enemy.detected_something_there),
+					"missed_pc": resolve_ai_handle(enemy.missed_pc),
+					"last_seek_direction_index": enemy.last_seek_direction_index,
+					"beggar_to_examine": resolve_ai_handle(enemy.beggar_to_examine),
+					"pc_missed": enemy.pc_missed,
+					"task_priorities": {
+						"current": enemy.current_task_priority,
+						"minimal": enemy.minimal_task_priority,
+						"new": enemy.new_task_priority,
+					},
+					"different_checkpoints": enemy.number_of_different_checkpoints,
+					"delta_sorrow": enemy.base.delta_sorrow_level,
+					"thirsty": enemy.thirsty,
+					"old_life_points": enemy.old_life_points,
+					"initial_life_points": enemy.initial_life_points,
+					"old_odds": enemy.old_odds,
+					"position_change_locked_for_test": enemy.position_change_locked_for_test,
+				})),
+				crate::element::AiBrain::None => None,
+			};
+			if let Some(subclass) = subclass {
 				state
 					.as_object_mut()
 					.expect("parity NPC AI state must be an object")
 					.insert(
 						"subclass".to_owned(),
-						json!({
-							"kind": "friendly",
-							"fleeing_seen_enemy_counter": friendly.fleeing_seen_enemy_counter,
-							"beggar_dont_talk_counter": friendly.beggar_dont_talk_counter,
-							"wants_to_talk": friendly.wants_to_talk,
-							"last_talk_partner": resolve_ai_handle(friendly.last_talk_partner),
-							"can_go_away": friendly.can_go_away,
-						}),
+						subclass,
 					);
 			}
 			Some(state)

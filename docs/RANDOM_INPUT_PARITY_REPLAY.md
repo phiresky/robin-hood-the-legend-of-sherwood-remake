@@ -2779,6 +2779,17 @@ traces compare the whole tail strictly. Schema-v30 raw traces retain their
 base-controller coverage by omitting only the absent nested `subclass` field.
 The native replay cache version and suffix are v31.
 
+### Schema-v32 enemy AI search/task core
+
+Soldier NPC checkpoints now add the first coherent
+`RHArtificialMalignity` slice: Charly/enemy observation frames, fleeing and
+missed-PC continuation, the last detected position and semantic target
+references, task priorities, checkpoint/sorrow counters, thirst and cached
+life values, prior battle odds, and the test/script position lock. Ordered
+search, battle, ambush, seek, and archery collections remain the next enemy
+tail increment. Older traces omit only an absent nested subclass checkpoint;
+new enemy checkpoints are strict. The native replay cache is v32.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,
