@@ -5000,11 +5000,10 @@ impl EnemyAi {
                     } else if self.left_combat_neighbour != 0 || self.right_combat_neighbour != 0 {
                         // You should be doing phalanx stuff
                         self.set_state(AiState::Attacking, Substate::AttackingPhalanx);
-                        let target_pos = self
-                            .find_fighter(self.base.primary_target, tick)
-                            .map(|f| f.position)
-                            .unwrap_or(ctx.position);
-                        self.base.face_position(target_pos);
+                        // Original calls `mpMe->Focus(mpPrimaryTarget)` here.
+                        // Focus locks the NPC view cone; it does not launch an
+                        // actor Face/Turn command.
+                        self.base.outbox.actor.set_focus(self.base.primary_target);
                         self.base.launch_timer(5, ctx.frame);
                     } else if self.archer_behind_me != 0 {
                         // Protecting an archer — update direction and stay
@@ -5132,7 +5131,9 @@ impl EnemyAi {
                                 .map(|f| (f.position, f.elevation as f32))
                                 .unwrap_or((ctx.position, ctx.elevation));
                             self.base.raise_shield(target_pos, target_elevation);
-                            self.base.face_position(target_pos);
+                            // Original follows the RaiseShield launch with
+                            // `Focus(mpPrimaryTarget)`, not an actor turn.
+                            self.base.outbox.actor.set_focus(target);
                             self.base.launch_timer(20, ctx.frame);
                         } else {
                             self.battle_decisions(sim, global, ctx, tick, grid);
