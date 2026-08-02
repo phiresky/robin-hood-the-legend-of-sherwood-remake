@@ -4850,13 +4850,6 @@ fn compare_frame(
         compare(
             &mut differences,
             id,
-            "class_id",
-            expected.class_id,
-            element.class_id,
-        );
-        compare(
-            &mut differences,
-            id,
             "kind",
             expected.kind,
             trace_kind_for_entity(actual),
@@ -4882,13 +4875,11 @@ fn compare_frame(
             expected.blipped,
             element.blipped,
         );
-        compare(
-            &mut differences,
-            id,
-            "surface_id",
-            expected.surface_id,
-            element.sprite_id,
-        );
+        // `class_id` is redundant with the concrete kind above. Rust uses
+        // that typed kind for dispatch rather than retaining Original's raw
+        // numeric RTTI token. `surface_id` is a DrawManager allocation handle;
+        // Rust has no corresponding per-entity render surface. Both fields
+        // remain deserialized for diagnostics, but neither is logical state.
         if expected.actor.is_some() {
             compare(
                 &mut differences,
@@ -6210,6 +6201,10 @@ mod tests {
         }))
         .expect("parse authoritative recorded element state");
 
+        // Raw class/surface identifiers remain available to dumps even though
+        // logical parity compares the concrete kind instead. In particular,
+        // Original surface values are renderer allocation handles.
+        assert_eq!(element.class_id, 1);
         assert_eq!(element.surface_id, 1226);
         assert_eq!(element.layer_goal, 0);
         assert_eq!(element.sprite_row, 64);

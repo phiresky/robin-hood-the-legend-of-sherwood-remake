@@ -4274,8 +4274,9 @@ movement, destination layer, actor motion result, AI locks, detection memory,
 or camp state.
 
 The trace model and comparator now retain and compare every recorded logical
-base-element field: creation order, class and kind, active/blipped/unreachable
-flags, surface identity, current/old/goal map positions, current/old elevation,
+base-element logical field: creation order, concrete kind,
+active/blipped/unreachable flags, current/old/goal map positions,
+current/old elevation,
 cached increment and movement, sector and current/goal layer, posture,
 current/goal direction, both movement predicates, and the complete sprite
 cursor. Actor payloads additionally compare action state, motion result,
@@ -4291,8 +4292,12 @@ authoritative comparison.
 Entity references inside opponent, battle, and detection lists pass through
 the existing creation-order isomorphism; raw table indices are never compared.
 Creation order itself remains exact because it is the stable Original identity
-used to construct that mapping. Surface IDs and class IDs are authored content
-identities and therefore compare directly. Missing profiles, target handles,
+used to construct that mapping. Raw class IDs remain diagnostic only because
+the already-compared concrete entity kind is their isomorphic Rust equivalent.
+Surface IDs are likewise diagnostic presentation handles: Original PC and
+soldier constructors allocate them dynamically with
+`SBDrawManager::CreateSurface`, while Rust has no equivalent per-entity render
+surface. Missing profiles, target handles,
 or a one-sided AI/detection payload fail loudly rather than fabricating a
 default. The native trace cache was v9 for these additions and advances to v10
 for the visibility-query stream below; focused ingestion coverage contains
