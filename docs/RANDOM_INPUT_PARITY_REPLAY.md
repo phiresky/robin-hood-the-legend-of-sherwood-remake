@@ -2107,6 +2107,14 @@ LOS work and later targets on the same surface reuse it without appending
 duplicate parity queries. A focused cache regression covers both ground and
 obstacle keys.
 
+`RefreshDetection` also has an outer scan gate before detectable-type cadence
+and `ComputeVisibility`: an entry is evaluated only when its previous
+visibility is positive, the viewer is inside a building, or the target ground
+position lies within the viewer's raw-map bounding box. The box uses half
+extents `(real_radius, real_radius * ASPECT_RATIO)` and includes its boundary.
+Enemy, human non-enemy, and Object scans now share this source-order gate; a
+focused regression covers all three entry alternatives and both box axes.
+
 ### Sequence-manager and script-VM boundary state
 
 Schema 13 now records the sequence manager's insertion-ordered sequences,

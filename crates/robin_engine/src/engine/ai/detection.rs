@@ -330,6 +330,23 @@ fn queued_human_detection_stimuli(
     stimuli
 }
 
+fn refresh_detection_scans_target(
+    last_visibility: f32,
+    viewer_inside_building: bool,
+    viewer_position: MapPoint,
+    view_radius: u16,
+    target_position: MapPoint,
+) -> bool {
+    if last_visibility > 0.0 || viewer_inside_building {
+        return true;
+    }
+
+    let radius_x = view_radius as f32;
+    let radius_y = radius_x * crate::position_interface::ASPECT_RATIO;
+    (target_position.x - viewer_position.x).abs() <= radius_x
+        && (target_position.y - viewer_position.y).abs() <= radius_y
+}
+
 /// Original `RHElementActorNPC::HandlePredetection` shadow-edge update.
 ///
 /// The shadow threshold is tested against the suspect accumulator as it stood
@@ -1687,6 +1704,22 @@ impl EngineInner {
                             npc_id.index()
                         )
                     });
+
+                // Original's outer RefreshDetection box gate precedes
+                // ComputeVisibility and its cadence. A previously visible
+                // target and every target while indoors still enter; all
+                // others must lie in the raw-map radius/aspect bounding box.
+                if !refresh_detection_scans_target(
+                    det.last_visibility,
+                    viewer_inside_building,
+                    me_pos_map,
+                    view_radius,
+                    target.position,
+                ) {
+                    det.seen_now = false;
+                    det.last_visibility = 0.0;
+                    continue;
+                }
 
                 // ComputeVisibility returns zero for blind eyes before either
                 // camp's cadence branch. Clear the cached sample too so a
@@ -3205,6 +3238,7 @@ impl EngineInner {
             // compares the full 3D eye/detection points across layers.
             |_t| true,
             ViewContext {
+                position_map: viewer.position_map,
                 eye,
                 eye_z,
                 ground_z,
@@ -3242,6 +3276,7 @@ impl EngineInner {
             !matches!(current_state, AiState::Sleeping | AiState::Default),
             object_targets,
             ViewContext {
+                position_map: viewer.position_map,
                 eye,
                 eye_z,
                 ground_z,
@@ -3287,6 +3322,7 @@ impl EngineInner {
             // Per-target pre-filter: target must `IsAbleToHelp()`.
             |t| t.able_to_help,
             ViewContext {
+                position_map: viewer.position_map,
                 eye,
                 eye_z,
                 ground_z,
@@ -3329,6 +3365,7 @@ impl EngineInner {
             // Per-target pre-filter: skip dead / unconscious targets.
             |t| !t.unconscious,
             ViewContext {
+                position_map: viewer.position_map,
                 eye,
                 eye_z,
                 ground_z,
@@ -3384,6 +3421,7 @@ impl EngineInner {
             // Per-target pre-filter: skip dead / unconscious targets.
             |t| !t.unconscious,
             ViewContext {
+                position_map: viewer.position_map,
                 eye,
                 eye_z,
                 ground_z,
@@ -3476,6 +3514,17 @@ impl EngineInner {
                 det.last_visibility = 0.0;
                 continue;
             };
+            if !refresh_detection_scans_target(
+                det.last_visibility,
+                ctx.viewer_in_building,
+                ctx.position_map,
+                ctx.view_radius,
+                target.position,
+            ) {
+                det.seen_now = false;
+                det.last_visibility = 0.0;
+                continue;
+            }
             let visibility: f32 = if extra_gate_blocks_visibility
                 || ctx.viewer_in_building
                 || !target_pre_filter(target)
@@ -3766,6 +3815,17 @@ impl EngineInner {
                 det.last_visibility = 0.0;
                 continue;
             };
+            if !refresh_detection_scans_target(
+                det.last_visibility,
+                ctx.viewer_in_building,
+                ctx.position_map,
+                ctx.view_radius,
+                object.position,
+            ) {
+                det.seen_now = false;
+                det.last_visibility = 0.0;
+                continue;
+            }
             let visibility: f32 = if ctx.viewer_in_building {
                 0.0
             } else if gate_open {
@@ -3902,6 +3962,7 @@ impl OwnerViewRadiusCache {
 /// from the soldier's npc/element state at the start of the per-NPC
 /// pass; nothing here mutates.
 struct ViewContext<'a> {
+    position_map: MapPoint,
     eye: MapPoint,
     eye_z: f32,
     ground_z: f32,
@@ -3929,6 +3990,42 @@ mod tests {
     use super::*;
     use crate::ai::{Position, Substate};
     use crate::element::Posture;
+
+    #[test]
+    fn refresh_detection_outer_box_matches_original_entry_alternatives() {
+        let viewer = MapPoint::new(100.0, 200.0);
+        let radius = 80_u16;
+        let radius_y = radius as f32 * crate::position_interface::ASPECT_RATIO;
+        let far = MapPoint::new(1000.0, 1000.0);
+
+        assert!(refresh_detection_scans_target(
+            0.25, false, viewer, radius, far
+        ));
+        assert!(refresh_detection_scans_target(
+            0.0, true, viewer, radius, far
+        ));
+        assert!(refresh_detection_scans_target(
+            0.0,
+            false,
+            viewer,
+            radius,
+            MapPoint::new(viewer.x + radius as f32, viewer.y + radius_y),
+        ));
+        assert!(!refresh_detection_scans_target(
+            0.0,
+            false,
+            viewer,
+            radius,
+            MapPoint::new(viewer.x + radius as f32 + 0.25, viewer.y),
+        ));
+        assert!(!refresh_detection_scans_target(
+            f32::NAN,
+            false,
+            viewer,
+            radius,
+            MapPoint::new(viewer.x, viewer.y + radius_y + 0.25),
+        ));
+    }
 
     #[test]
     fn owner_view_radius_cache_computes_once_per_ground_or_obstacle_key() {
