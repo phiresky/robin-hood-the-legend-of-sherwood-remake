@@ -1507,6 +1507,8 @@ struct RollingDumpFrame {
     resolved_commands: serde_json::Value,
     original_path_events: Vec<TracePathEvent>,
     rust_path_events: Vec<robin_engine::pathfinder::ParityPathEvent>,
+    original_visibility_queries: Vec<TraceVisibilityQuery>,
+    rust_visibility_queries: Vec<robin_engine::sight_obstacle::ParityVisibilityQuery>,
     rng_start: usize,
     expected_rng_end: usize,
     actual_rng_end: usize,
@@ -2431,6 +2433,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 actual_rng_end,
                 &rust_rng_sites,
                 &actual_path_events,
+                &actual_visibility_queries,
                 &differences,
             );
         }
@@ -2447,6 +2450,8 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                         .expect("automatic diagnostic frame captured its resolved commands"),
                     original_path_events: frame.path_events.clone(),
                     rust_path_events: actual_path_events.clone(),
+                    original_visibility_queries: frame.visibility_queries.clone(),
+                    rust_visibility_queries: actual_visibility_queries.clone(),
                     rng_start,
                     expected_rng_end: rng_end,
                     actual_rng_end,
@@ -2931,6 +2936,7 @@ fn write_engine_dump_frame(
     actual_rng_end: usize,
     rust_rng_sites: &[robin_engine::sim_rng::RngSite],
     rust_path_events: &[robin_engine::pathfinder::ParityPathEvent],
+    rust_visibility_queries: &[robin_engine::sight_obstacle::ParityVisibilityQuery],
     differences: &[String],
 ) {
     let diagnostic_engine = engine.diagnostic_snapshot_without_original_rng_replay();
@@ -2961,6 +2967,8 @@ fn write_engine_dump_frame(
         &frame.rng_draws,
         &frame.path_events,
         rust_path_events,
+        &frame.visibility_queries,
+        rust_visibility_queries,
         resolved_commands,
         rng_start,
         expected_rng_end,
@@ -2983,6 +2991,8 @@ fn write_engine_dump_snapshot_frame(
     rng_draws: &TraceRngBatch,
     original_path_events: &[TracePathEvent],
     rust_path_events: &[robin_engine::pathfinder::ParityPathEvent],
+    original_visibility_queries: &[TraceVisibilityQuery],
+    rust_visibility_queries: &[robin_engine::sight_obstacle::ParityVisibilityQuery],
     resolved_commands: serde_json::Value,
     rng_start: usize,
     expected_rng_end: usize,
@@ -3034,6 +3044,10 @@ fn write_engine_dump_snapshot_frame(
         },
         "original_path_events": original_path_events,
         "rust_path_events": rust_path_events,
+        "visibility_queries": {
+            "original": original_visibility_queries,
+            "rust": rust_visibility_queries,
+        },
         "rng": {
             "cursor_before": rng_start,
             "expected_cursor_after": expected_rng_end,
@@ -3129,6 +3143,8 @@ fn write_automatic_rolling_dump(
             &frame.rng_draws,
             &frame.original_path_events,
             &frame.rust_path_events,
+            &frame.original_visibility_queries,
+            &frame.rust_visibility_queries,
             frame.resolved_commands.clone(),
             frame.rng_start,
             frame.expected_rng_end,

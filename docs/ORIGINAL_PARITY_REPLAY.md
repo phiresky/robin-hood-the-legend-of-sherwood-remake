@@ -757,6 +757,10 @@ On the first logical or RNG divergence, this default run writes a complete
 JSONL snapshot for the divergent frame and its 32 predecessors to a unique
 temporary path and prints that path. Use the explicit `--dump-jsonl` options
 only when a different frame range or entity filter is needed.
+Each snapshot includes the ordered Original and Rust visibility calls—their
+origins, destinations, and results—alongside the corresponding path events. A
+visibility-count mismatch therefore retains the concrete calls needed to find
+the emitting subsystem rather than only reporting the differing lengths.
 
 For long traces where only the first divergent frame is needed, skip the
 33-frame rolling engine snapshot:
