@@ -9004,11 +9004,24 @@ impl EngineInner {
             _ => 0,
         };
 
+        // RHnoise keeps the complete RHposition supplied by the source,
+        // including its motion-sector pointer. Delayed reactions later feed
+        // that position through PositionToPoint3D, so dropping the sector
+        // also drops authored elevation. Only inherit it when the supplied
+        // source still describes this exact noise origin.
+        let origin_sector = source_entity
+            .and_then(|id| self.world.entities.get(id))
+            .filter(|entity| {
+                entity.element_data().position_map() == origin
+                    && entity.element_data().layer() == origin_layer
+            })
+            .and_then(|entity| entity.element_data().sector());
+
         Noise {
             origin: Position {
                 x: origin.x,
                 y: origin.y,
-                sector: None,
+                sector: origin_sector,
                 level: origin_layer,
             },
             noise_type,

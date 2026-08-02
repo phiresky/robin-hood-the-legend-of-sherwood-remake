@@ -669,7 +669,8 @@ impl EnemyAi {
             // timer arm — we just stage here.
             Substate::WonderingHeardWhistling => {
                 if stimulus_type == StimulusType::EventTimer {
-                    self.base.face_position(self.base.seek_position);
+                    self.base
+                        .face_position_3d_with_ctx(self.base.seek_position, ctx);
                     self.set_state(AiState::Wondering, Substate::WonderingWatchingWhistling);
                     self.base
                         .launch_timer(parameters_ai::AI_FIRST_LOOK_TIME as u32, ctx.frame);
