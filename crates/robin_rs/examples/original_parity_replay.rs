@@ -1366,6 +1366,7 @@ struct TraceEngineState {
     view_radius_cache: TraceJsonValue,
     sound_sources: TraceJsonValue,
     ai_global: TraceJsonValue,
+    engine_runtime_roots: TraceJsonValue,
     failed_path_requests: Vec<TraceFailedPathRequest>,
 }
 
@@ -1437,8 +1438,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 17;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v17.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 18;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v18.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4782,6 +4783,7 @@ fn compare_engine_state(
     expected: &TraceEngineState,
     engine: &Engine,
     assets: &LevelAssets,
+    menu_text: &dyn robin_engine::sherwood_stat::MenuTextLookup,
     entity_map: &EntityMap,
 ) {
     let actual = engine.parity_engine_state();
@@ -4865,6 +4867,16 @@ fn compare_engine_state(
         "frame.engine_state.ai_global",
         &expected_ai_global,
         &actual_ai_global,
+        differences,
+    );
+
+    let mut expected_runtime_roots = expected.engine_runtime_roots.to_json();
+    canonicalize_authoritative_snapshot(&mut expected_runtime_roots, entity_map);
+    let actual_runtime_roots = engine.parity_engine_runtime_roots_state(menu_text);
+    collect_json_differences(
+        "frame.engine_state.engine_runtime_roots",
+        &expected_runtime_roots,
+        &actual_runtime_roots,
         differences,
     );
 
@@ -4975,7 +4987,14 @@ fn compare_frame(
         collect_json_differences("frame.campaign", &expected, &actual, &mut differences);
     }
     if let Some(expected) = &frame.engine_state {
-        compare_engine_state(&mut differences, expected, engine, assets, entity_map);
+        compare_engine_state(
+            &mut differences,
+            expected,
+            engine,
+            assets,
+            menu_text,
+            entity_map,
+        );
     }
 
     if frame.game_code != actual_game_code {
@@ -6127,6 +6146,26 @@ mod tests {
                 "overall_alert_status": 0,
                 "overall_villain_alert_status": 0,
                 "saved_random_seed": 0
+            },
+            "engine_runtime_roots": {
+                "timer_elements": [],
+                "camera_sequence": null,
+                "dead_pc": null,
+                "mission_stat": {
+                    "collected_money": 0,
+                    "bonus_money": 0,
+                    "soldier_money": 0,
+                    "living_soldier_count": 0,
+                    "total_soldier_count": 0,
+                    "new_peasant_count": 0,
+                    "killed_peasant_count": 0,
+                    "killed_allied_count": 0,
+                    "added_score": 0,
+                    "pc_names": []
+                },
+                "user_locked": false,
+                "selection_before_user_lock": [],
+                "follow_element": null
             },
             "failed_path_requests": []
         });

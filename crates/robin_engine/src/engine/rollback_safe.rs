@@ -761,6 +761,90 @@ impl Engine {
         })
     }
 
+    /// Engine-owned roots serialized outside the element/sequence managers.
+    /// References use the same semantic entity and manager-ordinal sequence
+    /// forms as the rest of the parity snapshot.
+    #[doc(hidden)]
+    pub fn parity_engine_runtime_roots_state(
+        &self,
+        menu_text: &dyn crate::sherwood_stat::MenuTextLookup,
+    ) -> serde_json::Value {
+        use serde_json::{Value, json};
+
+        let entity = |id: EntityId| {
+            let kind = match id.kind() {
+                crate::element::EntityIdKind::Pc => "pc",
+                crate::element::EntityIdKind::Soldier => "soldier",
+                crate::element::EntityIdKind::Civilian => "civilian",
+                crate::element::EntityIdKind::Fx => "fx",
+                crate::element::EntityIdKind::Target => "target",
+                crate::element::EntityIdKind::Bonus => "bonus",
+                crate::element::EntityIdKind::Scroll => "scroll",
+                crate::element::EntityIdKind::Projectile => "projectile",
+                crate::element::EntityIdKind::Net => "net",
+            };
+            json!({ "kind": kind, "index": id.index() })
+        };
+        let manager = &self.inner.orders.sequence_manager;
+        let sequence_ordinals: std::collections::BTreeMap<_, _> = manager
+            .sequences_iter()
+            .enumerate()
+            .map(|(ordinal, sequence)| (sequence.id, ordinal))
+            .collect();
+        let reference = |value: crate::sequence::SequenceElementRef| {
+            let sequence = sequence_ordinals
+                .get(&value.sequence_id)
+                .copied()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "parity runtime root points outside sequence manager: {:?}/{}",
+                        value.sequence_id, value.element_index
+                    )
+                });
+            json!({ "sequence": sequence, "element": value.element_index })
+        };
+        let stat = &self.inner.mission_domain.mission_stat;
+        let pc_names = stat
+            .pc_names
+            .iter()
+            .map(|name| {
+                if let Some(slot) = name.name_override {
+                    let resolved = menu_text.get(slot.menu_text_id());
+                    if !resolved.is_empty() {
+                        return resolved;
+                    }
+                }
+                name.fallback.clone()
+            })
+            .collect::<Vec<_>>();
+
+        json!({
+            "timer_elements": self.inner.orders.timer_elements.iter().map(|timer| json!({
+                "element": reference(timer.element_ref), "remaining": timer.remaining,
+            })).collect::<Vec<_>>(),
+            "camera_sequence": self.inner.feedback.cutscene_camera.sequence_element
+                .map(&reference).unwrap_or(Value::Null),
+            "dead_pc": self.inner.mission_domain.dead_pc.map(&entity).unwrap_or(Value::Null),
+            "mission_stat": {
+                "collected_money": stat.collected_money,
+                "bonus_money": stat.bonus_money,
+                "soldier_money": stat.soldier_money,
+                "living_soldier_count": stat.living_soldier_count,
+                "total_soldier_count": stat.total_soldier_count,
+                "new_peasant_count": stat.new_peasant_count,
+                "killed_peasant_count": stat.killed_peasant_count,
+                "killed_allied_count": stat.killed_allied_count,
+                "added_score": stat.added_score,
+                "pc_names": pc_names,
+            },
+            "user_locked": self.inner.players.user_locked,
+            "selection_before_user_lock": self.inner.players.selection_before_user_lock
+                .iter().copied().map(&entity).collect::<Vec<_>>(),
+            "follow_element": self.inner.players.seats[0].follow_element
+                .map(&entity).unwrap_or(Value::Null),
+        })
+    }
+
     /// Persistent mission-VM state at a quiescent frame boundary. VM native
     /// handles are decoded to their semantic table kind/index; raw process or
     /// Rust handle encodings never enter the trace.
@@ -2129,6 +2213,47 @@ mod tests {
         assert_eq!(state["overall_alert_status"], 1);
         assert_eq!(state["overall_villain_alert_status"], 2);
         assert_eq!(state["saved_random_seed"], -73);
+    }
+
+    #[test]
+    fn parity_runtime_roots_preserves_mission_stat_and_empty_reference_roots() {
+        struct MenuText;
+        impl crate::sherwood_stat::MenuTextLookup for MenuText {
+            fn get(&self, id: usize) -> String {
+                format!("menu-{id}")
+            }
+        }
+
+        let mut inner = EngineInner::new();
+        inner.players.user_locked = true;
+        inner.mission_domain.mission_stat.collected_money = 73;
+        inner.mission_domain.mission_stat.added_score = 91;
+        inner
+            .mission_domain
+            .mission_stat
+            .pc_names
+            .push(crate::mission_stat::PcStatName::new(
+                "fallback".into(),
+                Some(crate::pc_status::SpecialPeasantName::B),
+            ));
+        let engine = Engine { inner };
+
+        let state = engine.parity_engine_runtime_roots_state(&MenuText);
+        assert_eq!(state["timer_elements"].as_array().unwrap().len(), 0);
+        assert!(state["camera_sequence"].is_null());
+        assert!(state["dead_pc"].is_null());
+        assert_eq!(state["mission_stat"]["collected_money"], 73);
+        assert_eq!(state["mission_stat"]["added_score"], 91);
+        assert_eq!(state["mission_stat"]["pc_names"][0], "menu-251");
+        assert_eq!(state["user_locked"], true);
+        assert_eq!(
+            state["selection_before_user_lock"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+        assert!(state["follow_element"].is_null());
     }
 
     #[test]

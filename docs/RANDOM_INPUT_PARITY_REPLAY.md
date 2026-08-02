@@ -2223,6 +2223,27 @@ Adding this required manager snapshot changes the native parity cache to
 version 17. Recordings without `engine_state.ai_global` are intentionally
 rejected instead of silently omitting global AI coverage.
 
+### Persistent engine runtime roots
+
+Schema 13 records the authoritative roots that Original serializes outside
+the element and sequence-manager bodies. This includes the ordered anonymous
+timer list with each timer's manager-ordinal sequence-element reference and
+remaining count, the active camera sequence element, the pending dead-PC
+pointer, and the complete mission-stat counters plus ordered resolved PC
+display names. A missing timer membership or camera root can otherwise leave
+identical sequence elements advancing on different future frames.
+
+The same object preserves the user-lock flag, the ordered selection saved
+before that lock, and the followed camera entity. Entity and sequence pointers
+use the existing semantic isomorphisms. These roots determine later mission
+failure, score/campaign updates, cutscene completion, and which PCs are
+restored when a script unlocks user control; they are not presentation-only
+state. The host-only selected-view overlay and local camera raster caches stay
+excluded because resolved commands are the replay input boundary.
+
+Adding `engine_state.engine_runtime_roots` changes the native parity cache to
+version 18. The field is required for every schema-13 frame.
+
 ### Sequence-manager and script-VM boundary state
 
 Schema 13 now records the sequence manager's insertion-ordered sequences,
