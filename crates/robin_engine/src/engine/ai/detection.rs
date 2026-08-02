@@ -3498,7 +3498,7 @@ impl EngineInner {
                         .unwrap_or_else(|| {
                             panic!(
                                 "{:?} visibility target {} requires missing obstacle {}",
-                                det_type,
+                                kind,
                                 target_id.index(),
                                 u16::from(handle)
                             )
