@@ -342,6 +342,14 @@ pub(super) struct ObjectTarget {
     pub(super) active: bool,
 }
 
+fn object_detection_world_position(
+    position: MapPoint,
+    ground_z: f32,
+) -> crate::coordinates::WorldPoint3D {
+    let ground = crate::coordinates::GroundPoint::from_map_and_z(position, ground_z);
+    crate::coordinates::WorldPoint3D::new(ground.x, ground.y, ground_z + 1.0)
+}
+
 /// Immutable start-of-tick PC and combat view consumed by AI phases.
 ///
 /// The original engine exposes stable live pointers throughout one actor's
@@ -1128,10 +1136,8 @@ impl EngineInner {
             let position = positions_before_movement
                 .map(|positions| self.position_at_owner_boundary(id, npc_id, positions, true))
                 .unwrap_or_else(|| entity.element_data().position_map());
-            let mut world_position = entity.element_data().position();
-            world_position.x = position.x;
-            world_position.y = position.y;
-            world_position.z += 1.0;
+            let world_position =
+                object_detection_world_position(position, entity.element_data().position().z);
             let layer = entity.element_data().layer();
             let active = entity.element_data().active;
             // Original `RefreshDetection` casts DETECTABLE_OBJECT entries to
@@ -1160,7 +1166,7 @@ impl EngineInner {
 
 #[cfg(test)]
 mod tests {
-    use super::is_archer_from_bow;
+    use super::{is_archer_from_bow, object_detection_world_position};
 
     #[test]
     fn bow_presence_defines_archer_even_with_zero_normal_range() {
@@ -1168,5 +1174,13 @@ mod tests {
         assert_eq!(bow.normal_shoot.range, 0);
         assert!(is_archer_from_bow(Some(&bow)));
         assert!(!is_archer_from_bow(None));
+    }
+
+    #[test]
+    fn object_detection_reconstructs_world_y_before_raising_the_ray() {
+        assert_eq!(
+            object_detection_world_position(crate::coordinates::MapPoint::new(10.0, 18.0), 7.0),
+            crate::coordinates::WorldPoint3D::new(10.0, 25.0, 8.0)
+        );
     }
 }

@@ -1619,6 +1619,25 @@ fn one_shot_hearing_defers_listener_state_filtering_but_rejects_its_source_point
             .is_none(),
         "the actor at the exact full-3D source point must not hear its own cry"
     );
+
+    engine.control.frame_counter = 6;
+    let max_norm_only =
+        engine.one_shot_noise(NoiseType::Bonk, MapPoint::new(18.0, 14.0), 0, 10, 0, None);
+    assert!(
+        engine
+            .subjective_one_shot_noise_for(listener_id, max_norm_only)
+            .is_none(),
+        "a source inside the max-norm box can still have no positive Euclidean remainder"
+    );
+    assert_eq!(
+        engine
+            .get_entity(listener_id)
+            .and_then(Entity::npc_data)
+            .expect("listener keeps NPC state")
+            .old_cover_noise_deafness_frame_counter,
+        5,
+        "GetHearVolume must not refresh deafness until subjective volume is positive"
+    );
 }
 
 #[test]

@@ -8938,6 +8938,14 @@ impl EngineInner {
             return None;
         }
 
+        let distance = (dx * dx + dy_stretched * dy_stretched + dz * dz).sqrt();
+        // GetHearVolume returns before GetDeafness when the Euclidean
+        // remainder is non-positive, even if the earlier max-norm range test
+        // admitted the source.
+        if modified_volume - distance <= 0.0 {
+            return None;
+        }
+
         let cover_volume = self
             .feedback
             .sound_sim
@@ -8957,7 +8965,6 @@ impl EngineInner {
             })
             .get_deafness(frame, cover_volume);
 
-        let distance = (dx * dx + dy_stretched * dy_stretched + dz * dz).sqrt();
         let subjective = subjective_hear_volume(modified_volume, distance, deafness);
         (subjective != 0).then_some(crate::ai::Noise {
             volume: subjective,

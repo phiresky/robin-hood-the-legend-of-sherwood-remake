@@ -3737,6 +3737,28 @@ horizontally close target at another eye height into fractional visibility.
 The split now matches Original and fixes Savegame 041's 1.9456216-versus-2.0
 cached visibility (and 38-versus-40 maximum sharpness).
 
+The surrounding detection accumulators are literal `UWORD`s. Original casts
+each sharpness to 16 bits, adds per-target sharpness and the saved suspect
+counter with 16-bit wraparound, and only then evaluates thresholds. Rust's
+wide/saturating accumulators could invent a detection on overflow. Enemy,
+human non-enemy, and object buckets now retain the Original narrowing and
+wrapping boundaries.
+
+Periodic hearing separates audibility geometry from the authoritative event
+payload. `GetHearVolume` uses the PC's current produced-noise record, but a
+rising edge constructs a fresh noise at `Position(pEnemy)`, including the AI
+door-side/carrier substitution, and reclassifies footsteps versus swordfight
+from the live target. `GetDeafness` is also lazy: it runs only after the hear
+box, semantic/range gates, and positive Euclidean volume remainder accept a
+source. One-shot noise uses the same lazy remainder boundary, preserving the
+cached deafness frame when all candidates are inaudible.
+
+Object visibility likewise keeps projected and world coordinates distinct.
+Its LOS endpoint starts from the target's current map position, reconstructs
+world Y with the target ground Z, and then raises only world Z by one unit.
+Copying projected map Y directly into the world endpoint introduced a false
+elevation-sized diagonal in every raised-object sight ray.
+
 ### Synchronous actor visibility keeps raw geometry separate from AI Position
 
 Original `IsDetecting360Degrees(actor)` admits every active actor outside a

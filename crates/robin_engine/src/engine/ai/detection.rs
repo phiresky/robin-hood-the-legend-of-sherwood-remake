@@ -93,6 +93,16 @@ fn visibility_eye_xy(eye: crate::coordinates::WorldPoint3D, ground_z: f32) -> Ma
     MapPoint::from_world_xyz(eye.x, eye.y, ground_z)
 }
 
+#[inline]
+fn detection_sharpness(view_speed: u16, visibility: f32) -> u16 {
+    (view_speed as f32 * visibility) as u16
+}
+
+#[inline]
+fn accumulate_detection_sharpness(sum: u16, sharpness: u16) -> u16 {
+    sum.wrapping_add(sharpness)
+}
+
 fn visibility_world_point(
     projected: MapPoint,
     ground_z: f32,
@@ -981,7 +991,7 @@ impl EngineInner {
             .sources
             .max_noise_covering_volume_for_3d(position_world.x, position_world.y, position_world.z);
 
-        let (deafness, pc_target_ids) = {
+        let pc_target_ids = {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
@@ -990,7 +1000,6 @@ impl EngineInner {
             };
             let enemy_idx = DetectableType::Enemy as usize;
 
-            let deafness = npc.get_deafness(universal_frame, cover_volume);
             // `RefreshDetection` walks this NPC's DETECTABLE_ENEMY list, not
             // the engine PC registry. Preserve that list's insertion order:
             // each inline Think may mutate state observed by the next entry.
@@ -1001,7 +1010,7 @@ impl EngineInner {
                     _ => None,
                 })
                 .collect();
-            (deafness, pc_target_ids)
+            pc_target_ids
         };
 
         let enemy_idx = DetectableType::Enemy as usize;
@@ -1069,12 +1078,21 @@ impl EngineInner {
                         // modified-volume max norm. UpdateHearing still runs
                         // for all of these inside-box cases and clears its
                         // rising-edge latch.
-                        let subjective =
-                            if pc_volume == 0 || distance == 0.0 || max_norm > modified_volume {
-                                0
-                            } else {
-                                subjective_hear_volume(modified_volume, distance, deafness)
-                            };
+                        let subjective = if pc_volume == 0
+                            || distance == 0.0
+                            || max_norm > modified_volume
+                            || modified_volume - distance <= 0.0
+                        {
+                            0
+                        } else {
+                            // GetHearVolume reaches GetDeafness only after
+                            // every semantic/range check and the positive
+                            // subjective-volume test. Besides avoiding wasted
+                            // work, this preserves the observable cached-frame
+                            // mutation when all tracked PCs are inaudible.
+                            let deafness = npc.get_deafness(universal_frame, cover_volume);
+                            subjective_hear_volume(modified_volume, distance, deafness)
+                        };
 
                         let (det_heard, det_seen) = npc.detectable_lists[enemy_idx]
                             .iter()
@@ -1091,7 +1109,11 @@ impl EngineInner {
                         let stimulus = if subjective > 0 && !det_heard && !det_seen {
                             let noise = crate::ai::Noise {
                                 origin: noise.origin,
-                                noise_type: noise.noise_type,
+                                noise_type: if pc.is_swordfighting {
+                                    crate::ai::NoiseType::ZingZing
+                                } else {
+                                    crate::ai::NoiseType::TapTapTap
+                                },
                                 volume: subjective,
                                 elevation: noise.elevation,
                                 element_id: noise.element_id,
@@ -1117,7 +1139,7 @@ impl EngineInner {
                 }
             };
 
-            let Some(stimulus) = stimulus else {
+            let Some(mut stimulus) = stimulus else {
                 continue;
             };
 
@@ -1125,6 +1147,24 @@ impl EngineInner {
             // edge because an earlier PC's hearing handler may mutate state
             // consumed by the next handler or by optical detection below.
             let scratch = self.build_sim_scratch(sim, assets);
+            let source_position = scratch
+                .ai_entity_views
+                .get(&pc_id.index())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "heard PC {} vanished before UpdateHearing payload construction",
+                        pc_id.index()
+                    )
+                })
+                .position;
+            let crate::ai::StimulusInfo::Noise(ref mut heard_noise) = stimulus.info else {
+                panic!("periodic hearing edge lost its required noise payload")
+            };
+            // UpdateHearing constructs a fresh event and assigns
+            // Position(pEnemy), which is the AI planning position (including
+            // committed door-side and carrier substitution), not the raw
+            // produced-noise origin used by GetHearVolume above.
+            heard_noise.origin = source_position;
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let building_sector = self
                 .world
@@ -1727,7 +1767,7 @@ impl EngineInner {
             // soldiers already target this PC.  We use `u32::MAX`
             // for "no target yet" so the first visible PC always
             // replaces it.
-            let mut sum_sharpness_new: u32 = 0;
+            let mut sum_sharpness_new: u16 = 0;
             let mut any_seen_now = false;
             let mut best_target: Option<(EntityId, MapPoint, u32)> = None;
             let mut max_sharpness: u32 = 0;
@@ -2003,7 +2043,7 @@ impl EngineInner {
 
                 // Sharpness depends on posture.  Leaning out uses
                 // 10x faster detection (200 vs 20).
-                let sharpness = (view_speed as f32 * visibility) as u32;
+                let sharpness = detection_sharpness(view_speed, visibility);
                 let is_visible = sharpness > 0;
                 tracing::trace!(
                     npc = ?npc_id,
@@ -2034,7 +2074,8 @@ impl EngineInner {
                 // suspect counter (and the growing question-mark
                 // emoticon) toward DETECTION_SUSPECT_THRESHOLD.
                 if is_visible && !det.seen_last_frame {
-                    sum_sharpness_new = sum_sharpness_new.saturating_add(sharpness);
+                    sum_sharpness_new =
+                        accumulate_detection_sharpness(sum_sharpness_new, sharpness);
                 }
 
                 if is_visible {
@@ -2074,7 +2115,7 @@ impl EngineInner {
                 // detectable's cached visibility on closed-cadence frames.
                 // Using `visibility_raw` here would falsely report zero every
                 // other frame and can end a shadow investigation early.
-                max_sharpness = max_sharpness.max(sharpness);
+                max_sharpness = max_sharpness.max(u32::from(sharpness));
             }
 
             // Write back the beggar-trick flag if a mid-transition
@@ -2811,7 +2852,10 @@ impl EngineInner {
                         detectable_type = ?DetectableType::Enemy,
                         detectable_target = ?target_id,
                         detectable_target_index = target_id.index(),
-                        sharpness = (view_speed as f32 * det.last_visibility) as u32,
+                        sharpness = u32::from(detection_sharpness(
+                            view_speed,
+                            det.last_visibility,
+                        )),
                         suspects_before = suspects_before_scan,
                         is_pc = target.is_pc,
                         guarded = target.guarded,
@@ -2848,7 +2892,7 @@ impl EngineInner {
             // Original adds the current scan only after every detectable has
             // run HandlePredetection against the prior accumulator.
             let suspects = &mut npc.detection_suspects[enemy_idx];
-            *suspects = suspects.saturating_add(sum_sharpness_new.min(u16::MAX as u32) as u16);
+            *suspects = suspects.wrapping_add(sum_sharpness_new);
 
             // Commit condition.
             let threshold_hit = *suspects as u32 >= ai_vision::DETECTION_SUSPECT_THRESHOLD;
@@ -3550,7 +3594,7 @@ impl EngineInner {
         // staring/following.
         let gate_open = ctx.modified_frame.is_multiple_of(frequency);
 
-        let mut sum_of_sharpnesses: u32 = 0;
+        let mut sum_of_sharpnesses: u16 = 0;
         let mut max_sharpness: u32 = 0;
 
         // (1) Per-detectable visibility pass.
@@ -3659,12 +3703,12 @@ impl EngineInner {
                 det.last_visibility
             };
 
-            let sharpness = (ctx.view_speed as f32 * visibility) as u32;
+            let sharpness = detection_sharpness(ctx.view_speed, visibility);
             let is_visible = sharpness > 0;
-            max_sharpness = max_sharpness.max(sharpness);
+            max_sharpness = max_sharpness.max(u32::from(sharpness));
 
             if !det.seen_last_frame {
-                sum_of_sharpnesses = sum_of_sharpnesses.saturating_add(sharpness);
+                sum_of_sharpnesses = accumulate_detection_sharpness(sum_of_sharpnesses, sharpness);
             }
 
             det.seen_now = is_visible;
@@ -3724,7 +3768,10 @@ impl EngineInner {
                     detectable_type = ?kind,
                     detectable_target = ?target_id,
                     detectable_target_index = target_id.index(),
-                    sharpness = (ctx.view_speed as f32 * det.last_visibility) as u32,
+                    sharpness = u32::from(detection_sharpness(
+                        ctx.view_speed,
+                        det.last_visibility,
+                    )),
                     suspects_before,
                     is_pc = target.is_pc,
                     guarded = target.guarded,
@@ -3749,7 +3796,7 @@ impl EngineInner {
         }
 
         // (4) Accumulate and determine whether the full detection commits.
-        let suspects_after = suspects_before.saturating_add(sum_of_sharpnesses as u16);
+        let suspects_after = suspects_before.wrapping_add(sum_of_sharpnesses);
         npc.detection_suspects[kind_idx] = suspects_after;
         let commit_threshold = suspects_after >= ai_vision::DETECTION_SUSPECT_THRESHOLD as u16
             || (instant_detection && sum_of_sharpnesses > 0);
@@ -3856,7 +3903,7 @@ impl EngineInner {
             targets.get(&target_id).map(|o| o.active).unwrap_or(false)
         });
 
-        let mut sum_of_sharpnesses: u32 = 0;
+        let mut sum_of_sharpnesses: u16 = 0;
         let mut max_sharpness: u32 = 0;
 
         for det in npc.detectable_lists[obj_idx].iter_mut() {
@@ -3909,11 +3956,11 @@ impl EngineInner {
                 det.last_visibility
             };
 
-            let sharpness = (ctx.view_speed as f32 * visibility) as u32;
+            let sharpness = detection_sharpness(ctx.view_speed, visibility);
             let is_visible = sharpness > 0;
-            max_sharpness = max_sharpness.max(sharpness);
+            max_sharpness = max_sharpness.max(u32::from(sharpness));
             if !det.seen_last_frame {
-                sum_of_sharpnesses = sum_of_sharpnesses.saturating_add(sharpness);
+                sum_of_sharpnesses = accumulate_detection_sharpness(sum_of_sharpnesses, sharpness);
             }
             det.seen_now = is_visible;
             // Match the unconditional outer-loop SetLastVisibility write.
@@ -3924,8 +3971,7 @@ impl EngineInner {
             ai.max_visibility = ai.max_visibility.max(max_sharpness);
         }
 
-        let suspects_after =
-            npc.detection_suspects[obj_idx].saturating_add(sum_of_sharpnesses as u16);
+        let suspects_after = npc.detection_suspects[obj_idx].wrapping_add(sum_of_sharpnesses);
         npc.detection_suspects[obj_idx] = suspects_after;
         let commit_threshold = suspects_after >= ai_vision::DETECTION_SUSPECT_THRESHOLD as u16
             || (instant_detection && sum_of_sharpnesses > 0);
@@ -4078,6 +4124,11 @@ struct ViewContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detection_sharpness_accumulation_wraps_as_uword() {
+        assert_eq!(accumulate_detection_sharpness(u16::MAX - 5, 10), 4);
+    }
     use crate::ai::{Position, Substate};
     use crate::element::Posture;
 
