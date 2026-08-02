@@ -803,6 +803,7 @@ pub(super) fn build_ai_context_from_entity(
         antagonist: None,
         entity_views: entity_views.clone(),
         sight_obstacles: sight_obstacles.clone(),
+        view_radius_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
         fast_grid: fast_grid.clone(),
         hiking_paths: hiking_paths.clone(),
         all_soldier_handles: all_soldier_handles.clone(),
