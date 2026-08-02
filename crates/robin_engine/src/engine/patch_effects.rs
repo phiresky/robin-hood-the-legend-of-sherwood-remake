@@ -391,6 +391,7 @@ impl EngineInner {
                 });
 
             if let Some((seq_id, elem_idx, dest, action)) = retranslate {
+                crate::movement_diagnostics::record_parity_late_movement_retranslation(id);
                 // Clear orders and the actor's active-movement link
                 // so `try_dispatch_move_path` can re-establish them
                 // from a clean slate.

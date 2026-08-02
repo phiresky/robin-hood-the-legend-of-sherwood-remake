@@ -3439,6 +3439,28 @@ restricted to fast ladder/wall actions, so running stairs keep their second
 animation advance even when the first motion call reaches and snaps to the
 endpoint.
 
+### Patch retranslation no longer exposes a dangling actor order
+
+The nicouzouf Savegame 008 and 010 families produced opposite one-frame
+running/stop-transition mismatches when a patch changed the pathfinder state.
+Original `RHElementActor::InvalidateMovements` deleted the live movement's
+entire order list and translated its replacement after the actor's Hourglass
+slot, but did not refresh `mpOrder`. `GetAnimation()` consequently dereferenced
+the freed `RHOrder` until the next frame. Depending on whether rebuilding made
+one or several orders, allocator reuse made that stale address appear either
+unchanged or replaced by the final transition order.
+
+Original now refreshes `mpOrder` from the translated element immediately,
+matching the existing `Instruct` and `Hourglass` cache boundaries. Old
+schema-12 traces cannot reconstruct the corrected first order because they do
+not contain a per-frame sequence snapshot. The parity runner therefore captures
+the exact actors whose live movement was retranslated at this late patch
+boundary and omits only their allocator-dependent `actor.animation` field for
+that frame. Movement, motion-line state, commands, path events, sprite state,
+and all subsequent actor frames remain authoritative. This advances Savegame
+008 replay 004 from frame 175 to frame 705 and Savegame 010 replay 005 from
+frame 182 to frame 913.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

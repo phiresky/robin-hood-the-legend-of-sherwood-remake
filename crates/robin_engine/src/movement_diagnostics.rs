@@ -14,6 +14,7 @@ use crate::entity_id::EntityId;
 thread_local! {
     static CAPTURE: RefCell<Option<Vec<ParityMovementStep>>> = const { RefCell::new(None) };
     static MOVE_BOX_EXTRACTIONS: RefCell<Option<Vec<ParityMoveBoxExtraction>>> = const { RefCell::new(None) };
+    static LATE_RETRANSLATIONS: RefCell<Option<Vec<EntityId>>> = const { RefCell::new(None) };
 }
 
 /// A float paired with its exact IEEE-754 representation. The decimal value
@@ -129,6 +130,7 @@ pub struct ParityMovementStep {
 pub fn begin_parity_movement_capture() {
     CAPTURE.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
     MOVE_BOX_EXTRACTIONS.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
+    LATE_RETRANSLATIONS.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
 }
 
 pub fn parity_movement_capture_active() -> bool {
@@ -139,6 +141,16 @@ pub fn record_parity_move_box_extraction(extraction: ParityMoveBoxExtraction) {
     MOVE_BOX_EXTRACTIONS.with(|capture| {
         if let Some(extractions) = capture.borrow_mut().as_mut() {
             extractions.push(extraction);
+        }
+    });
+}
+
+/// Record a live movement whose orders were rebuilt after its actor's owner
+/// slot by a patch/pathfinder-state transition.
+pub fn record_parity_late_movement_retranslation(entity: EntityId) {
+    LATE_RETRANSLATIONS.with(|capture| {
+        if let Some(entities) = capture.borrow_mut().as_mut() {
+            entities.push(entity);
         }
     });
 }
@@ -159,4 +171,8 @@ pub fn take_parity_movement_capture() -> Vec<ParityMovementStep> {
 
 pub fn take_parity_move_box_extractions() -> Vec<ParityMoveBoxExtraction> {
     MOVE_BOX_EXTRACTIONS.with(|capture| capture.borrow_mut().take().unwrap_or_default())
+}
+
+pub fn take_parity_late_movement_retranslations() -> Vec<EntityId> {
+    LATE_RETRANSLATIONS.with(|capture| capture.borrow_mut().take().unwrap_or_default())
 }

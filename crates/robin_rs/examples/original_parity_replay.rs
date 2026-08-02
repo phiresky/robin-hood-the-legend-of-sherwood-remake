@@ -2318,6 +2318,8 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             robin_engine::movement_diagnostics::take_parity_movement_capture();
         let actual_move_box_extractions =
             robin_engine::movement_diagnostics::take_parity_move_box_extractions();
+        let late_movement_retranslations =
+            robin_engine::movement_diagnostics::take_parity_late_movement_retranslations();
         let actual_path_events = robin_engine::pathfinder::take_parity_path_capture();
         // Restart immediately: the post-frame comparison and one-shot
         // PostInitialize below precede the next recorded frame boundary.
@@ -2440,6 +2442,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             &frame,
             tick_effects.code as i32,
             map,
+            &late_movement_retranslations,
         ));
         if debug_stage_timing {
             eprintln!(
@@ -5478,6 +5481,7 @@ fn compare_frame(
     frame: &TraceFrame,
     actual_game_code: i32,
     entity_map: &EntityMap,
+    late_movement_retranslations: &[EntityId],
 ) -> Vec<String> {
     let mut differences = Vec::new();
 
@@ -5784,16 +5788,28 @@ fn compare_frame(
                 expected_actor.wait_time,
                 engine.actor_legacy_wait_time(id),
             );
-            compare(
-                &mut differences,
-                id,
-                "actor.animation",
-                expected_actor.animation,
-                engine
-                    .actor_order_type(id)
-                    .unwrap_or(robin_engine::order::OrderType::NonanimationEnd)
-                    as u32,
-            );
+            // Legacy schema-12 recordings made before Original commit
+            // 7243bed9 captured a dangling `RHElementActor::mpOrder` here.
+            // `InvalidateMovements` runs after the actor's owner slot, deletes
+            // its live orders, and translates replacements. The old pointer's
+            // apparent animation then depended on RHOrder allocator reuse and
+            // is not logical game state. The replay has no sequence snapshot
+            // from which to reconstruct the corrected first order, but Rust's
+            // retranslation is independently compared through movement,
+            // motion-line, and subsequent-frame actor state. Omit only this
+            // explicitly captured post-slot physical representation.
+            if !late_movement_retranslations.contains(&id) {
+                compare(
+                    &mut differences,
+                    id,
+                    "actor.animation",
+                    expected_actor.animation,
+                    engine
+                        .actor_order_type(id)
+                        .unwrap_or(robin_engine::order::OrderType::NonanimationEnd)
+                        as u32,
+                );
+            }
             compare(
                 &mut differences,
                 id,
