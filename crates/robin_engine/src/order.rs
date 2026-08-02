@@ -545,6 +545,19 @@ pub struct Order {
     /// gameplay. Preserve loaded values for save round trips, but do not use
     /// it for sequence arbitration.
     pub lock_ai: bool,
+    /// Complete serialized RHOrder transition/flight frontier. These members
+    /// are mostly dormant, but destination_3d is authoritative for carried,
+    /// thrown, and jumping actions and therefore belongs on the live order.
+    #[serde(default)]
+    pub apply_transition_at_this_point: bool,
+    #[serde(default)]
+    pub can_fly: bool,
+    #[serde(default)]
+    pub transition: bool,
+    #[serde(default)]
+    pub destination_3d: [f32; 3],
+    #[serde(default)]
+    pub flight_vector: [f32; 2],
     /// Play the animation in reverse.
     pub reverse: bool,
     /// Whether this order has been completed.
@@ -591,6 +604,11 @@ impl Order {
             deferred_movement_state_start: false,
             tolerance: 0.0,
             lock_ai: false,
+            apply_transition_at_this_point: false,
+            can_fly: false,
+            transition: false,
+            destination_3d: [0.0; 3],
+            flight_vector: [0.0; 2],
             reverse: false,
             done: false,
             move_flags: 0,
@@ -804,6 +822,11 @@ impl AiOrderIntent {
             deferred_movement_state_start: false,
             tolerance: self.tolerance,
             lock_ai: self.lock_ai,
+            apply_transition_at_this_point: false,
+            can_fly: false,
+            transition: false,
+            destination_3d: [0.0; 3],
+            flight_vector: [0.0; 2],
             reverse: self.reverse,
             done: self.done,
             move_flags: self.move_flags,

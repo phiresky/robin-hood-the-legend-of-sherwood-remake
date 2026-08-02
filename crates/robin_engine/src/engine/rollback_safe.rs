@@ -521,10 +521,24 @@ impl Engine {
                         json!({
                             "action": order.order_type as u32,
                             "destination": point(order.target_x, order.target_y),
+                            "destination_3d": point3(
+                                order.destination_3d[0],
+                                order.destination_3d[1],
+                                order.destination_3d[2],
+                            ),
+                            "flight_vector": point(
+                                order.flight_vector[0],
+                                order.flight_vector[1],
+                            ),
                             "tolerance": float(order.tolerance),
+                            "apply_transition": order.apply_transition_at_this_point,
                             "reverse": order.reverse,
                             "compute_direction": order.compute_direction,
+                            "can_fly": order.can_fly,
+                            "lock_ai": order.lock_ai,
+                            "transition": order.transition,
                             "done": order.done,
+                            "id": order.order_id.get() - 1,
                             "antagonist": order.antagonist.map(&entity).unwrap_or(Value::Null),
                         })
                     })
@@ -682,6 +696,7 @@ impl Engine {
 
         let (elements_to_go, actor_current) = manager.parity_runtime_refs();
         json!({
+            "next_order_id": self.inner.orders.next_order_id - 1,
             "sequences": sequences,
             "elements_to_go": elements_to_go
                 .into_iter()

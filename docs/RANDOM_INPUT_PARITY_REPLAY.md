@@ -2693,6 +2693,24 @@ complete order, and short-briefing frontiers remain explicitly queued as
 separate additive increments so this capture does not block existing parity
 validation with a partially implemented aggregate schema.
 
+### Schema-v28 complete order runtime frontier
+
+New recordings extend the ordered sequence-manager projection with
+`RHOrder::mulNextID` and every serialized member of each queued order:
+transition/flight flags, lock state, identity, 2D and 3D destinations, flight
+vector, tolerance, direction/reverse flags, and antagonist. Rust's internal
+nonzero order identity remains offset by one; the projection subtracts that
+implementation offset so IDs and the static next-ID counter compare in
+Original's zero-based domain.
+
+Original now explicitly zero-initializes `vFlightVector`. Its constructor
+previously left those serialized bytes indeterminate even though copy and save
+paths retained them. This is a general determinism correction, not replay-
+specific state. Rust stores the complete frontier on live `Order` values and
+adopts old-save values into those same fields instead of a legacy-only
+sidecar. Cache v28 remains compatible with older raw traces by removing only
+the named additive order keys when they are absent from the recording.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,

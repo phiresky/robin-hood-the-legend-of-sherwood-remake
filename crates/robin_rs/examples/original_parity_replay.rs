@@ -1452,8 +1452,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 27;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v27.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 28;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v28.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4890,6 +4890,88 @@ fn retain_recorded_world_interactable_coverage(
     }
 }
 
+/// Remove only the additive v28 order fields that are absent from an older
+/// raw sequence snapshot. Presence remains strict, including null/zero values.
+fn retain_recorded_order_runtime_coverage(
+    expected: &serde_json::Value,
+    actual: &mut serde_json::Value,
+) {
+    if !expected
+        .as_object()
+        .is_some_and(|object| object.contains_key("next_order_id"))
+        && let Some(actual) = actual.as_object_mut()
+    {
+        actual.remove("next_order_id");
+    }
+
+    let Some(expected_sequences) = expected
+        .get("sequences")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return;
+    };
+    let Some(actual_sequences) = actual
+        .get_mut("sequences")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    for (expected_sequence, actual_sequence) in
+        expected_sequences.iter().zip(actual_sequences.iter_mut())
+    {
+        let Some(expected_elements) = expected_sequence
+            .get("elements")
+            .and_then(serde_json::Value::as_array)
+        else {
+            continue;
+        };
+        let Some(actual_elements) = actual_sequence
+            .get_mut("elements")
+            .and_then(serde_json::Value::as_array_mut)
+        else {
+            continue;
+        };
+        for (expected_element, actual_element) in
+            expected_elements.iter().zip(actual_elements.iter_mut())
+        {
+            let Some(expected_orders) = expected_element
+                .get("orders")
+                .and_then(serde_json::Value::as_array)
+            else {
+                continue;
+            };
+            let Some(actual_orders) = actual_element
+                .get_mut("orders")
+                .and_then(serde_json::Value::as_array_mut)
+            else {
+                continue;
+            };
+            for (expected_order, actual_order) in
+                expected_orders.iter().zip(actual_orders.iter_mut())
+            {
+                let (Some(expected_order), Some(actual_order)) =
+                    (expected_order.as_object(), actual_order.as_object_mut())
+                else {
+                    continue;
+                };
+                for field in [
+                    "destination_3d",
+                    "flight_vector",
+                    "apply_transition",
+                    "can_fly",
+                    "lock_ai",
+                    "transition",
+                    "id",
+                ] {
+                    if !expected_order.contains_key(field) {
+                        actual_order.remove(field);
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn compare_engine_state(
     differences: &mut Vec<String>,
     expected: &TraceEngineState,
@@ -4939,7 +5021,8 @@ fn compare_engine_state(
 
     let mut expected_sequences = expected.sequence_manager.to_json();
     canonicalize_authoritative_snapshot(&mut expected_sequences, entity_map);
-    let actual_sequences = engine.parity_sequence_manager_state();
+    let mut actual_sequences = engine.parity_sequence_manager_state();
+    retain_recorded_order_runtime_coverage(&expected_sequences, &mut actual_sequences);
     collect_json_differences(
         "frame.engine_state.sequence_manager",
         &expected_sequences,
@@ -6410,6 +6493,38 @@ mod tests {
         });
 
         retain_recorded_world_interactable_coverage(&expected, &mut actual);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn old_raw_sequence_snapshots_skip_only_absent_additive_v28_order_state() {
+        let expected = serde_json::json!({
+            "sequences": [{
+                "elements": [{
+                    "orders": [{ "action": 6, "done": false }]
+                }]
+            }]
+        });
+        let mut actual = serde_json::json!({
+            "next_order_id": 44,
+            "sequences": [{
+                "elements": [{
+                    "orders": [{
+                        "action": 6,
+                        "done": false,
+                        "destination_3d": {},
+                        "flight_vector": {},
+                        "apply_transition": false,
+                        "can_fly": false,
+                        "lock_ai": false,
+                        "transition": false,
+                        "id": 43
+                    }]
+                }]
+            }]
+        });
+
+        retain_recorded_order_runtime_coverage(&expected, &mut actual);
         assert_eq!(actual, expected);
     }
 

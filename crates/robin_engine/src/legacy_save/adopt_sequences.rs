@@ -1111,21 +1111,21 @@ fn convert_orders(
         converted.compute_direction = order.compute_direction;
         converted.tolerance = order.tolerance;
         converted.lock_ai = order.lock_ai;
+        converted.apply_transition_at_this_point = order.apply_transition_at_this_point;
+        converted.can_fly = order.can_fly;
+        converted.transition = order.transition;
+        converted.destination_3d = [
+            order.destination_3d.x,
+            order.destination_3d.y,
+            order.destination_3d.z,
+        ];
+        converted.flight_vector = [order.flight_vector.x, order.flight_vector.y];
         converted.reverse = order.reverse;
         converted.target_actor = antagonist.map(EntityId::index);
         converted.antagonist = antagonist;
         orders.push(converted);
         retained.push(LegacyV48OrderState {
             legacy_id: order.unique_id.0,
-            apply_transition_at_this_point: order.apply_transition_at_this_point,
-            can_fly: order.can_fly,
-            transition: order.transition,
-            destination_3d: [
-                order.destination_3d.x,
-                order.destination_3d.y,
-                order.destination_3d.z,
-            ],
-            flight_vector: [order.flight_vector.x, order.flight_vector.y],
         });
     }
     Ok((orders, retained))
@@ -1732,7 +1732,7 @@ mod tests {
             Some(Some(SequenceElementRef::new(SequenceId(10), 1)))
         );
         assert!(retained.script_driven);
-        assert_eq!(retained.order_state[0].destination_3d, [7.0, 8.0, 9.0]);
+        assert_eq!(movement.orders[0].destination_3d, [7.0, 8.0, 9.0]);
         assert_eq!(
             manager
                 .get_element(SequenceId(10), 1)

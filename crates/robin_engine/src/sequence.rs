@@ -935,7 +935,7 @@ pub struct SequenceElement {
     /// Original-only authoritative members retained during v48 adoption.
     ///
     /// TODO(legacy-sequence-runtime): route `next`, `mummy`, linked-seek,
-    /// deleted/script-driven, arrow, and the order geometry flags through the
+    /// deleted/script-driven and arrow fields through the
     /// corresponding runtime paths. Keeping the exact values here prevents a
     /// successful load from silently discarding state while those behaviors
     /// are being ported.
@@ -945,11 +945,6 @@ pub struct SequenceElement {
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub(crate) struct LegacyV48OrderState {
     pub legacy_id: u32,
-    pub apply_transition_at_this_point: bool,
-    pub can_fly: bool,
-    pub transition: bool,
-    pub destination_3d: [f32; 3],
-    pub flight_vector: [f32; 2],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
