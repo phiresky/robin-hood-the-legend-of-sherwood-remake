@@ -1273,7 +1273,7 @@ struct TraceVisibilityQuery {
     blocking_obstacle: Option<TraceSightObstacle>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(Clone, Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceSightObstacle {
     id: u32,
     index: i64,
@@ -1287,7 +1287,7 @@ struct TraceSightObstacle {
     points: Vec<TraceSightObstaclePoint>,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(Clone, Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceSightObstacleTypes {
     solid: bool,
     opaque: bool,
@@ -1297,13 +1297,13 @@ struct TraceSightObstacleTypes {
     show_shadow_polygon: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(Clone, Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceSightObstacleBox {
     min: TracePoint,
     max: TracePoint,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(Clone, Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceSightObstaclePoint {
     x: TraceFloat,
     y: TraceFloat,
