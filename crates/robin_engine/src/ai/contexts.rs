@@ -403,9 +403,9 @@ pub struct AntagonistInfo {
 ///  * `unconscious_enemies` — enemies that were in `list_them` when
 ///    the cleanup pass filtered them out because they weren't
 ///    `IsAbleToFight()`.
-///  * `nearby_sleeping_enemies` — 360°-range scan of all unconscious,
-///    non-carried enemies around the NPC. Used by the final
-///    `KillNearbySleepingEnemies` fallback.
+///  * `nearby_sleeping_enemies` — ordered unconscious, non-carried fighter
+///    candidates. The final `KillNearbySleepingEnemies` fallback performs its
+///    360°-range and LOS query lazily at the Original call site.
 #[derive(Debug, Clone)]
 pub struct SleepingEnemyInfo {
     pub handle: HumanHandle,

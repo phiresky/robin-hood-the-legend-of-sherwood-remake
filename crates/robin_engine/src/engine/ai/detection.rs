@@ -2179,11 +2179,10 @@ impl EngineInner {
                 tick_data.personally_visible_enemies = tick_data.enemy_sq_distances.len() as u16;
 
                 // ── KillNearbySleepingEnemies scan ──────────────
-                // Walk every enemy in the level and collect the
-                // ones that are unconscious, not carried and pass
-                // the NPC's 360°/LOS detection check.  This is the
-                // final fallback used by `battle_decisions` when
-                // there's literally nothing else left to do.
+                // Preserve every unconscious, non-carried enemy candidate in
+                // fighter-registry order. The final BattleDecisions fallback
+                // owns the observable IsDetecting360Degrees query; snapshot
+                // construction must not issue or cache LOS speculatively.
                 //
                 // Scoped to PCs here — unconscious enemy NPCs
                 // would require iterating the opposing-camp
@@ -2193,33 +2192,8 @@ impl EngineInner {
                 // so the scan rarely matters.  Extending to
                 // enemy-camp `soldier_snapshots` would duplicate
                 // this loop with an additional camp filter.
-                let view_radius_f = view_radius as f32;
-                let sq_view_radius_kill = view_radius_f * view_radius_f;
                 for pc in pc_snapshots {
                     if !pc.unconscious || pc.carried {
-                        continue;
-                    }
-                    if pc.layer != layer {
-                        continue;
-                    }
-                    // 360-degree detection: stretched-Y distance
-                    // check against the real view radius, followed
-                    // by a fast-grid LOS test against opaque
-                    // obstacles.
-                    let dx = pc.position.x - eye.x;
-                    let dy =
-                        (pc.position.y - eye.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-                    let sq_dist = dx * dx + dy * dy;
-                    if sq_dist > sq_view_radius_kill {
-                        continue;
-                    }
-                    if !ai_vision::los_clear_spatial(
-                        eye,
-                        pc.position,
-                        layer,
-                        sight_obstacles,
-                        &self.world.fast_grid,
-                    ) {
                         continue;
                     }
                     tick_data
@@ -2273,32 +2247,6 @@ impl EngineInner {
                         (ss.position.y - eye.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
                     let friend_sq_dist = fdx * fdx + fdy * fdy;
                     if friend_sq_dist > US_LIST_SQ_RADIUS {
-                        continue;
-                    }
-                    if !crate::ai_enemy::soldier_detects_target_360(
-                        crate::ai::Position {
-                            x: eye.x,
-                            y: eye.y,
-                            sector: None,
-                            level: layer,
-                        },
-                        ground_z,
-                        viewer.is_rider,
-                        view_radius,
-                        viewer_building_sector.is_some(),
-                        crate::ai::Position {
-                            x: ss.position.x,
-                            y: ss.position.y,
-                            sector: None,
-                            level: ss.layer,
-                        },
-                        ss.ground_z,
-                        ss.posture,
-                        ss.is_rider,
-                        ss.direction as i16,
-                        ss.building_sector.is_some(),
-                        sight_obstacles,
-                    ) {
                         continue;
                     }
                     // Only count soldiers in active states
@@ -2495,7 +2443,6 @@ impl EngineInner {
                                 level: my_layer,
                             },
                             direction: me_snap.direction,
-                            is_detected_360_by_owner: true,
                             is_friendly: true,
                             is_swordfighting: me_snap.is_swordfighting,
                             is_able_to_fight: me_snap.able_to_fight,
@@ -2590,30 +2537,6 @@ impl EngineInner {
                                 level: ss.layer,
                             },
                             direction: ss.direction,
-                            is_detected_360_by_owner: crate::ai_enemy::soldier_detects_target_360(
-                                crate::ai::Position {
-                                    x: eye.x,
-                                    y: eye.y,
-                                    sector: None,
-                                    level: layer,
-                                },
-                                ground_z,
-                                viewer.is_rider,
-                                view_radius,
-                                viewer_building_sector.is_some(),
-                                crate::ai::Position {
-                                    x: ss.position.x,
-                                    y: ss.position.y,
-                                    sector: None,
-                                    level: ss.layer,
-                                },
-                                ss.ground_z,
-                                ss.posture,
-                                ss.is_rider,
-                                ss.direction as i16,
-                                ss.building_sector.is_some(),
-                                sight_obstacles,
-                            ),
                             is_friendly: true,
                             is_swordfighting: ss.is_swordfighting,
                             is_able_to_fight: ss.able_to_fight,
@@ -2694,30 +2617,6 @@ impl EngineInner {
                                 level: pc.layer,
                             },
                             direction: pc.direction,
-                            is_detected_360_by_owner: crate::ai_enemy::soldier_detects_target_360(
-                                crate::ai::Position {
-                                    x: eye.x,
-                                    y: eye.y,
-                                    sector: None,
-                                    level: layer,
-                                },
-                                ground_z,
-                                viewer.is_rider,
-                                view_radius,
-                                viewer_building_sector.is_some(),
-                                crate::ai::Position {
-                                    x: pc.position.x,
-                                    y: pc.position.y,
-                                    sector: None,
-                                    level: pc.layer,
-                                },
-                                pc.ground_z,
-                                pc.posture,
-                                false,
-                                pc.direction as i16,
-                                pc.building_sector.is_some(),
-                                sight_obstacles,
-                            ),
                             is_friendly: false,
                             is_swordfighting: pc.is_swordfighting,
                             is_able_to_fight: pc.able_to_fight,

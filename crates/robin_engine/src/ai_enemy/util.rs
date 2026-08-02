@@ -441,11 +441,6 @@ pub struct FighterSnapshot {
     pub handle: HumanHandle,
     pub position: Position,
     pub direction: u16,
-    /// Whether the AI owning this per-tick snapshot detects this fighter
-    /// through the Original upright-eye 360-degree radius + 3D opaque-LOS
-    /// query. `BattleDecisions` uses this gate when rebuilding `mlistUs`;
-    /// the generic 500-unit combat radius alone is not sufficient.
-    pub is_detected_360_by_owner: bool,
     /// True if this fighter is on the same side as the evaluating AI.
     pub is_friendly: bool,
     pub is_swordfighting: bool,

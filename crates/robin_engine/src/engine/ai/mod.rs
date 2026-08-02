@@ -1751,11 +1751,7 @@ impl EngineInner {
             });
 
             for friend in &tick.nearby_fighters {
-                if !friend.is_friendly
-                    || friend.handle == me_handle
-                    || !friend.is_able_to_fight
-                    || !friend.is_detected_360_by_owner
-                {
+                if !friend.is_friendly || friend.handle == me_handle || !friend.is_able_to_fight {
                     continue;
                 }
 
@@ -2048,7 +2044,7 @@ impl EngineInner {
         &self,
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
-        sight_obstacles: &crate::sight_obstacle::SharedSightObstacles,
+        _sight_obstacles: &crate::sight_obstacle::SharedSightObstacles,
     ) -> Vec<crate::ai_enemy::FighterSnapshot> {
         use crate::ai::Position;
         use crate::ai_enemy::FighterSnapshot;
@@ -2067,10 +2063,6 @@ impl EngineInner {
             sector: soldier.element.sector(),
             level: soldier.element.layer(),
         };
-        let me_ground_z = soldier.element.position().z;
-        let me_in_building = soldier.element.hidden_in_building;
-        let me_is_rider = soldier.soldier.rider;
-        let me_view_radius = soldier.npc.view_radius;
         let my_camp = soldier.soldier.cached_camp;
         let me_handle = enemy_ai.base.me;
 
@@ -2087,26 +2079,6 @@ impl EngineInner {
                 return None;
             }
             let pos = s.element.position_map();
-            let is_detected_360_by_owner = handle == me_handle
-                || crate::ai_enemy::soldier_detects_target_360(
-                    me_position,
-                    me_ground_z,
-                    me_is_rider,
-                    me_view_radius,
-                    me_in_building,
-                    Position {
-                        x: pos.x,
-                        y: pos.y,
-                        sector: s.element.sector(),
-                        level: s.element.layer(),
-                    },
-                    s.element.position().z,
-                    s.element.posture,
-                    s.soldier.rider,
-                    s.element.direction(),
-                    s.element.hidden_in_building,
-                    sight_obstacles.list(),
-                );
             let enemy_ai_other = s
                 .npc
                 .ai_brain
@@ -2206,7 +2178,6 @@ impl EngineInner {
                     level: s.element.layer(),
                 },
                 direction: s.element.direction() as u16,
-                is_detected_360_by_owner,
                 is_friendly,
                 is_swordfighting: !s.human.opponents.is_empty(),
                 is_able_to_fight,
@@ -2260,25 +2231,6 @@ impl EngineInner {
             let is_carried = pc.human.carrier.is_some();
             let alive = !is_unconscious;
             let pos = pc.element.position_map();
-            let is_detected_360_by_owner = crate::ai_enemy::soldier_detects_target_360(
-                me_position,
-                me_ground_z,
-                me_is_rider,
-                me_view_radius,
-                me_in_building,
-                Position {
-                    x: pos.x,
-                    y: pos.y,
-                    sector: pc.element.sector(),
-                    level: pc.element.layer(),
-                },
-                pc.element.position().z,
-                pc.element.posture,
-                false,
-                pc.element.direction(),
-                pc.element.hidden_in_building,
-                sight_obstacles.list(),
-            );
             let character = assets
                 .profile_manager
                 .get_character(pc.pc.profile_index)
@@ -2320,7 +2272,6 @@ impl EngineInner {
                     level: pc.element.layer(),
                 },
                 direction: pc.element.direction() as u16,
-                is_detected_360_by_owner,
                 is_friendly: false,
                 is_swordfighting: !pc.human.opponents.is_empty(),
                 is_able_to_fight: alive

@@ -1799,7 +1799,6 @@ fn nearby_fighters_keeps_inactive_self_and_filters_ineligible_others() {
     );
     assert_eq!(fighters.len(), 1);
     assert_eq!(fighters[0].handle, self_id.index());
-    assert!(fighters[0].is_detected_360_by_owner);
     assert!(!fighters[0].is_able_to_fight);
     assert!(!fighters[0].is_dead);
     assert!(!fighters[0].is_unconscious);

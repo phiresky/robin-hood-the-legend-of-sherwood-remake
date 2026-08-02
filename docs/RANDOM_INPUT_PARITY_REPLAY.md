@@ -2032,6 +2032,21 @@ used by `CommandSoldiersToAttack` and the officer cone query used by
 now lazy as well; generic camp-soldier snapshot construction performs no
 opaque visibility queries.
 
+The follow-up observer-neutrality audit found two more eager families in the
+generic AI tick-data builders. `FighterSnapshot` stored owner-to-fighter 360°
+LOS even though `FillListWithAllNearFighters` has no visibility predicate, and
+the final `KillNearbySleepingEnemies` fallback was scanned on every detection
+tick. The former cache member and all of its speculative queries were removed.
+The sleeping-enemy snapshot now carries only ordered unconscious/non-carried
+candidates; the battle fallback performs `IsDetecting360Degrees` when and only
+when Original reaches that function.
+
+`MakeBattlePredecisions` now also walks the persistent `mlistUs` equivalent at
+its own call site, as Original does, instead of consuming aggregates produced
+from a speculative geometric scan. This keeps general tick-data and parity
+diagnostic construction observer-neutral: building a snapshot cannot append
+opaque query records or warm visibility state before its logical consumer.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

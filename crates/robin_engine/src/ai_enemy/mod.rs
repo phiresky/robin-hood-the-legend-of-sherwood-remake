@@ -5211,7 +5211,12 @@ mod tests {
             let mut ai = EnemyAi::new(1);
             ai.list_them.push(99);
             ai.base.list_us.push(1);
-            let ctx = AiContext::default();
+            let mut views = AiEntityViewMap::new();
+            views.insert(1, soldier_view(Position::default()));
+            let ctx = AiContext {
+                entity_views: Arc::new(views),
+                ..AiContext::default()
+            };
             let tick = AiPerTickData::stub();
             let d = ai.make_battle_predecisions(sim, &ctx, &tick);
             assert!(d == Decision::PredecisionOffensive || d == Decision::PredecisionDefensive);

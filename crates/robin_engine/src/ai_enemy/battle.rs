@@ -65,6 +65,27 @@ fn battle_friend_detected_360(
     )
 }
 
+fn sleeping_enemy_detected_360(
+    ctx: &AiContext,
+    enemy: &SleepingEnemyInfo,
+    target: &crate::ai_entity_view::AiEntityView,
+) -> bool {
+    super::soldier_detects_target_360(
+        ctx.position,
+        ctx.elevation,
+        ctx.self_is_rider,
+        ctx.self_view_radius,
+        ctx.in_building,
+        enemy.position,
+        target.elevation,
+        target.posture,
+        target.is_rider,
+        target.direction as i16,
+        target.in_building,
+        ctx.obstacle_list(),
+    )
+}
+
 impl EnemyAi {
     pub(super) fn enter_battle_reserve(&mut self, ctx: &AiContext, tick: &AiPerTickData) {
         self.enter_battle_reserve_with_multiplicity(ctx, tick, None);
@@ -197,13 +218,26 @@ impl EnemyAi {
             self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
         }
 
-        // Clear the them-list before refilling it with sleeping bodies.
-        self.list_them.clear();
+        // Original performs IsDetecting360Degrees here, after the
+        // unconscious/not-carried gates and only when the final battle
+        // fallback is reached. The engine snapshot carries ordered fighter
+        // candidates but must remain observer-neutral.
+        let visible = tick
+            .nearby_sleeping_enemies
+            .iter()
+            .filter(|enemy| {
+                let target = ctx.entity_view(enemy.handle).unwrap_or_else(|| {
+                    panic!(
+                        "KillNearbySleepingEnemies candidate {} is absent from the AI entity view",
+                        enemy.handle
+                    )
+                });
+                sleeping_enemy_detected_360(ctx, enemy, target)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
 
-        // The engine-side scan already handled the
-        // `IsDetecting360Degrees` + non-carried + layer check.
-        // Everything we see here is a valid finish-off candidate.
-        self.approach_sleeping_enemies(sim, &tick.nearby_sleeping_enemies, ctx, tick);
+        self.approach_sleeping_enemies(sim, &visible, ctx, tick);
     }
 
     // -----------------------------------------------------------------------
@@ -311,10 +345,40 @@ impl EnemyAi {
         }
 
         // --------- US ---------
-        // Points include pride for soldiers (100 + pride), flat 100 for
-        // PCs. Pre-computed by the engine tick into
-        // `tick.us_battle_points`.
-        let us_points: u32 = tick.us_battle_points.max(100);
+        // Original walks the persistent mlistUs at this exact call site.
+        // Deriving the aggregate while constructing generic tick snapshots
+        // both made stale list assumptions and used to trigger eager LOS.
+        let mut us_points = 0_u32;
+        let mut there_is_an_officer = false;
+        for &friend_handle in &self.base.list_us {
+            let friend = ctx.entity_view(friend_handle).unwrap_or_else(|| {
+                panic!(
+                    "MakeBattlePredecisions us-list member {} is absent from the AI entity view",
+                    friend_handle
+                )
+            });
+            if friend.is_pc {
+                us_points = us_points.saturating_add(100);
+                continue;
+            }
+            let (pride, rank) = if friend_handle == self.base.me {
+                (self.soldier_profile_pride, self.get_rank())
+            } else {
+                let soldier = tick
+                    .camp_soldiers
+                    .iter()
+                    .find(|soldier| soldier.handle == friend_handle)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "MakeBattlePredecisions soldier {} is absent from camp_soldiers",
+                            friend_handle
+                        )
+                    });
+                (soldier.pride, soldier.rank)
+            };
+            us_points = us_points.saturating_add(100 + u32::from(pride));
+            there_is_an_officer |= friend_handle != self.base.me && rank == ProfileRank::Officer;
+        }
 
         // --------- THEM ---------
         // Enemies contribute 100 each. Zero-enemy case never reaches
@@ -345,7 +409,7 @@ impl EnemyAi {
         // Officer nearby bonus (multiplicative): with OFFICER_ODDS_BONUS
         // = 30, soldiers with an officer nearby almost always choose
         // offensive behaviour.
-        if self.get_rank() == ProfileRank::Soldier && tick.has_officer_nearby {
+        if self.get_rank() == ProfileRank::Soldier && there_is_an_officer {
             odds = (odds as i32 * combat::OFFICER_ODDS_BONUS).min(i16::MAX as i32) as i16;
         }
 
@@ -503,13 +567,14 @@ impl EnemyAi {
                 if !self.base.list_us.contains(&friend.handle) {
                     continue;
                 }
-                let same_frame_target = global
-                    .same_frame_target_claims
-                    .iter()
-                    .rev()
-                    .find_map(|&(attacker, target)| {
-                        (attacker == friend.handle && target != 0).then_some(target)
-                    });
+                let same_frame_target =
+                    global
+                        .same_frame_target_claims
+                        .iter()
+                        .rev()
+                        .find_map(|&(attacker, target)| {
+                            (attacker == friend.handle && target != 0).then_some(target)
+                        });
                 if friend.ai_state != AiState::Attacking && same_frame_target.is_none() {
                     continue;
                 }
@@ -2819,6 +2884,28 @@ mod tests {
             target.direction,
             &target,
         ));
+    }
+
+    #[test]
+    fn sleeping_enemy_visibility_is_evaluated_only_by_the_fallback() {
+        let mut target = pc_view();
+        target.position.x = 100.0;
+        target.is_unconscious = true;
+        let candidate = SleepingEnemyInfo {
+            handle: 198,
+            position: target.position,
+            is_pc: true,
+            is_robin: false,
+            is_vip: false,
+        };
+        let ctx = AiContext {
+            self_view_radius: 500,
+            ..AiContext::default()
+        };
+
+        assert!(sleeping_enemy_detected_360(&ctx, &candidate, &target));
+        target.in_building = true;
+        assert!(!sleeping_enemy_detected_360(&ctx, &candidate, &target));
     }
 
     #[test]
