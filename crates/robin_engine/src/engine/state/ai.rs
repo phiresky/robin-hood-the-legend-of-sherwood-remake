@@ -7,6 +7,9 @@ use crate::ai::AiGlobalState;
 pub(crate) struct AiRuntime {
     pub(crate) global: AiGlobalState,
     pub(crate) standard_view_polygon_radius: u16,
+    /// Authoritative within-frame memo state stored on the ground singleton
+    /// and projection obstacles in Original.
+    pub(crate) view_radius_cache: crate::ai_vision::ViewRadiusCache,
 }
 
 impl AiRuntime {
@@ -14,6 +17,7 @@ impl AiRuntime {
         Self {
             global: AiGlobalState::default(),
             standard_view_polygon_radius: 0,
+            view_radius_cache: crate::ai_vision::ViewRadiusCache::default(),
         }
     }
 }
@@ -27,6 +31,7 @@ mod tests {
         let ai = AiRuntime::new();
 
         assert_eq!(ai.standard_view_polygon_radius, 0);
+        assert!(ai.view_radius_cache.is_empty());
         assert!(ai.global.seek_points.is_empty());
         assert!(ai.global.ambush_points.is_empty());
     }

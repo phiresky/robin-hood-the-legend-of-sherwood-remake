@@ -23,6 +23,7 @@ pub struct NativeSessionCapabilities<'a> {
     selected_pcs: Option<RefCell<&'a mut Vec<EntityId>>>,
     short_briefings: Option<RefCell<&'a mut crate::short_briefings::ShortBriefings>>,
     standard_view_radius: Option<RefCell<&'a mut u16>>,
+    view_radius_cache: Option<RefCell<&'a mut crate::ai_vision::ViewRadiusCache>>,
     sight_obstacles: Option<crate::sight_obstacle::ObstacleList<'a>>,
     sound_sources: Option<RefCell<&'a mut crate::sound_source::SoundSourceManager>>,
     weather: Option<&'a crate::engine::WeatherState>,
@@ -47,6 +48,7 @@ impl<'a> NativeSessionCapabilities<'a> {
             selected_pcs: None,
             short_briefings: None,
             standard_view_radius: None,
+            view_radius_cache: None,
             sight_obstacles: None,
             sound_sources: None,
             weather: None,
@@ -114,6 +116,14 @@ impl<'a> NativeSessionCapabilities<'a> {
     /// `InitViewRadius` in the Original.
     pub fn with_standard_view_radius(mut self, radius: &'a mut u16) -> Self {
         self.standard_view_radius = Some(RefCell::new(radius));
+        self
+    }
+
+    pub fn with_view_radius_cache(
+        mut self,
+        cache: &'a mut crate::ai_vision::ViewRadiusCache,
+    ) -> Self {
+        self.view_radius_cache = Some(RefCell::new(cache));
         self
     }
 
@@ -242,6 +252,15 @@ impl<'a> NativeSessionCapabilities<'a> {
     }
 
     #[doc(hidden)]
+    pub fn view_radius_cache_option(
+        &self,
+    ) -> Option<RefMut<'_, crate::ai_vision::ViewRadiusCache>> {
+        self.view_radius_cache
+            .as_ref()
+            .map(|cache| RefMut::map(cache.borrow_mut(), |cache| &mut **cache))
+    }
+
+    #[doc(hidden)]
     pub fn sight_obstacles_option(&self) -> Option<crate::sight_obstacle::ObstacleList<'a>> {
         self.sight_obstacles
     }
@@ -287,6 +306,7 @@ pub struct NativeContext<'ctx, 'owners: 'ctx> {
     pub(crate) selected_pcs: Option<RefMut<'ctx, Vec<EntityId>>>,
     pub(crate) short_briefings: Option<RefMut<'ctx, crate::short_briefings::ShortBriefings>>,
     pub(crate) standard_view_radius: Option<RefMut<'ctx, u16>>,
+    pub(crate) view_radius_cache: Option<RefMut<'ctx, crate::ai_vision::ViewRadiusCache>>,
     pub(crate) sight_obstacles: Option<crate::sight_obstacle::ObstacleList<'owners>>,
     pub(crate) sound_sources: Option<RefMut<'ctx, crate::sound_source::SoundSourceManager>>,
     pub(crate) weather: Option<&'owners crate::engine::WeatherState>,
@@ -317,6 +337,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             selected_pcs: capabilities.selected_pcs_option(),
             short_briefings: capabilities.short_briefings_option(),
             standard_view_radius: capabilities.standard_view_radius_option(),
+            view_radius_cache: capabilities.view_radius_cache_option(),
             sight_obstacles: capabilities.sight_obstacles_option(),
             sound_sources: capabilities.sound_sources_option(),
             weather: capabilities.weather_option(),
@@ -348,6 +369,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             selected_pcs: capabilities.selected_pcs_option(),
             short_briefings: capabilities.short_briefings_option(),
             standard_view_radius: capabilities.standard_view_radius_option(),
+            view_radius_cache: capabilities.view_radius_cache_option(),
             sight_obstacles: capabilities.sight_obstacles_option(),
             sound_sources: capabilities.sound_sources_option(),
             weather: capabilities.weather_option(),
@@ -380,6 +402,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             selected_pcs: capabilities.selected_pcs_option(),
             short_briefings: capabilities.short_briefings_option(),
             standard_view_radius: capabilities.standard_view_radius_option(),
+            view_radius_cache: capabilities.view_radius_cache_option(),
             sight_obstacles: capabilities.sight_obstacles_option(),
             sound_sources: capabilities.sound_sources_option(),
             weather: capabilities.weather_option(),

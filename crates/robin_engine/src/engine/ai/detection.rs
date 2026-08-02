@@ -1219,7 +1219,11 @@ impl EngineInner {
             // ground entry plus one entry on each projection obstacle. Enemy
             // and the later detectable-type buckets share the same cache
             // during this contiguous RefreshDetection call.
-            let view_radius_cache = OwnerViewRadiusCache::default();
+            let view_radius_cache = OwnerViewRadiusCache::from_persistent(
+                &self.ai.view_radius_cache,
+                npc_id,
+                universal_frame,
+            );
             let think_input = self.tick_enemy_ai_refresh_detection_for_npc(
                 npc_id,
                 assets,
@@ -1285,6 +1289,10 @@ impl EngineInner {
                 golden_eye,
                 &view_radius_cache,
             );
+            // No other viewer can run inside this contiguous
+            // RefreshDetection scan. Commit at its boundary before the first
+            // queued Think, where synchronous IsDetecting may consume it.
+            view_radius_cache.commit_to(&mut self.ai.view_radius_cache, npc_id, universal_frame);
 
             let has_pending_stimuli = self
                 .world
@@ -3952,6 +3960,40 @@ struct OwnerViewRadiusCache {
 }
 
 impl OwnerViewRadiusCache {
+    fn from_persistent(
+        persistent: &crate::ai_vision::ViewRadiusCache,
+        viewer: EntityId,
+        frame: u32,
+    ) -> Self {
+        let cache = Self::default();
+        if let Some(radius) = persistent.get(None, viewer, frame) {
+            cache.values.borrow_mut().insert(None, radius);
+        }
+        for index in 0..persistent.obstacles.len() {
+            let Some(handle) = u16::try_from(index)
+                .ok()
+                .and_then(crate::position_interface::ObstacleHandle::new)
+            else {
+                continue;
+            };
+            if let Some(radius) = persistent.get(Some(handle), viewer, frame) {
+                cache.values.borrow_mut().insert(Some(handle), radius);
+            }
+        }
+        cache
+    }
+
+    fn commit_to(
+        &self,
+        persistent: &mut crate::ai_vision::ViewRadiusCache,
+        viewer: EntityId,
+        frame: u32,
+    ) {
+        for (&surface, &radius) in self.values.borrow().iter() {
+            persistent.set(surface, viewer, frame, radius);
+        }
+    }
+
     fn get_or_compute(
         &self,
         obstacle: Option<crate::position_interface::ObstacleHandle>,
@@ -3969,12 +4011,6 @@ impl OwnerViewRadiusCache {
         radius
     }
 }
-
-// TODO(parity): Original stores this cache on the ground/obstacle and keys it
-// by viewer plus universal frame, so synchronous IsDetecting/Sees calls can
-// reuse a periodic RefreshDetection result later in the same frame. This
-// owner-local cache intentionally covers the contiguous detection buckets;
-// widen its lifetime if a replay reaches the cross-consumer case.
 
 /// Read-only NPC view-state bundled for one tick of the per-type
 /// detection passes (Body / Friend / MissedFriend / Beggar / Object).

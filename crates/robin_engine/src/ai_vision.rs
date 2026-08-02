@@ -33,9 +33,90 @@
 use crate::coordinates::{GroundBBox, GroundPoint, MapPoint, WorldPoint3D};
 use crate::element::{ActionState, EntityId, EyeStatus, NpcData, Posture};
 use crate::order::OrderType;
-use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
+use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO, ObstacleHandle};
 use crate::sight_obstacle::ObstacleList;
 use crate::sight_obstacle::SightObstacle;
+
+/// One surface-owned `ComputeViewRadius` result, corresponding to Original's
+/// last-viewer, last-radius, and universal-frame fields.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    serde::Deserialize,
+    serde::Serialize,
+    robin_state_hash_derive::StateHash,
+)]
+pub(crate) struct ViewRadiusCacheEntry {
+    pub(crate) viewer: EntityId,
+    pub(crate) frame: u32,
+    pub(crate) radius: f32,
+}
+
+/// Persistent surface-owned view-radius memo table.
+///
+/// Each surface has only one last writer. A different viewer in the same
+/// frame therefore overwrites the prior entry, exactly as `RHSightObstacle`
+/// does. Stale entries remain stored but do not hit; Original also leaves them
+/// in place and gates them by the universal frame counter.
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    serde::Deserialize,
+    serde::Serialize,
+    robin_state_hash_derive::StateHash,
+)]
+pub(crate) struct ViewRadiusCache {
+    pub(crate) ground: Option<ViewRadiusCacheEntry>,
+    pub(crate) obstacles: Vec<Option<ViewRadiusCacheEntry>>,
+}
+
+impl ViewRadiusCache {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.ground.is_none() && self.obstacles.iter().all(Option::is_none)
+    }
+
+    pub(crate) fn get(
+        &self,
+        surface: Option<ObstacleHandle>,
+        viewer: EntityId,
+        frame: u32,
+    ) -> Option<f32> {
+        let entry = match surface {
+            None => self.ground,
+            Some(handle) => self.obstacles.get(usize::from(handle)).copied().flatten(),
+        }?;
+        (entry.viewer == viewer && entry.frame == frame && entry.radius != 0.0)
+            .then_some(entry.radius)
+    }
+
+    pub(crate) fn set(
+        &mut self,
+        surface: Option<ObstacleHandle>,
+        viewer: EntityId,
+        frame: u32,
+        radius: f32,
+    ) {
+        let entry = Some(ViewRadiusCacheEntry {
+            viewer,
+            frame,
+            radius,
+        });
+        match surface {
+            None => self.ground = entry,
+            Some(handle) => {
+                let index = usize::from(handle);
+                if self.obstacles.len() <= index {
+                    self.obstacles.resize(index + 1, None);
+                }
+                self.obstacles[index] = entry;
+            }
+        }
+    }
+}
 
 // ─── Constants ───────────────────────────────────────────────────
 

@@ -1196,7 +1196,8 @@ impl EngineInner {
             )
             .with_campaign(campaign, &mut mission_domain.mission_stat)
             .with_short_briefings(&mut mission_domain.short_briefings)
-            .with_standard_view_radius(&mut ai.standard_view_polygon_radius);
+            .with_standard_view_radius(&mut ai.standard_view_polygon_radius)
+            .with_view_radius_cache(&mut ai.view_radius_cache);
             let result = callback(script, script_domains, &capabilities);
             result
         };

@@ -716,6 +716,25 @@ impl NativeContext<'_, '_> {
                     );
                     return 0;
                 }
+                let npc_index = u32::try_from(
+                    Self::actor_handle_index(npc_h)
+                        .expect("validated Sees NPC handle must decode as an actor"),
+                )
+                .expect("validated Sees NPC slot exceeds u32");
+                let npc_id = crate::element::EntityId::new(
+                    npc_index,
+                    match npc_entity {
+                        Entity::Pc(_) => crate::entity_id::EntityIdKind::Pc,
+                        Entity::Soldier(_) => crate::entity_id::EntityIdKind::Soldier,
+                        Entity::Civilian(_) => crate::entity_id::EntityIdKind::Civilian,
+                        Entity::Fx(_) => crate::entity_id::EntityIdKind::Fx,
+                        Entity::Target(_) => crate::entity_id::EntityIdKind::Target,
+                        Entity::Bonus(_) => crate::entity_id::EntityIdKind::Bonus,
+                        Entity::Scroll(_) => crate::entity_id::EntityIdKind::Scroll,
+                        Entity::Projectile(_) => crate::entity_id::EntityIdKind::Projectile,
+                        Entity::Net(_) => crate::entity_id::EntityIdKind::Net,
+                    },
+                );
                 let Some(target_entity) = self.get_entity(target_h) else {
                     tracing::warn!(
                         "Script Error: Trying to test if a NPC sees an invalid actor element ({target_h})."
@@ -820,7 +839,8 @@ impl NativeContext<'_, '_> {
                 let sight_obstacle_list = self
                     .sight_obstacles
                     .expect("Sees requires live canonical sight-obstacle views");
-                let target_obstacle = target_entity.element_data().obstacle_index().map(|handle| {
+                let target_obstacle_handle = target_entity.element_data().obstacle_index();
+                let target_obstacle = target_obstacle_handle.map(|handle| {
                     sight_obstacle_list
                         .get(usize::from(handle))
                         .unwrap_or_else(|| {
@@ -844,6 +864,9 @@ impl NativeContext<'_, '_> {
                 if forest_180_degree_view && !npc_entity.is_active() {
                     return 0;
                 }
+                let universal_frame = *self
+                    .frame_counter
+                    .expect("Sees requires the live universal frame counter");
                 let q = crate::ai_vision::VisibilityQuery {
                     viewer_los: viewer_eye,
                     viewer_world: viewer_eye_3d,
@@ -870,7 +893,12 @@ impl NativeContext<'_, '_> {
                     target_passing_door: tgt_passing_door,
                 };
                 if crate::ai_vision::compute_visibility_with_effective_radius(&q, || {
-                    crate::ai_vision::compute_view_radius(
+                    if let Some(radius) = self.view_radius_cache.as_ref().and_then(|cache| {
+                        cache.get(target_obstacle_handle, npc_id, universal_frame)
+                    }) {
+                        return radius;
+                    }
+                    let radius = crate::ai_vision::compute_view_radius(
                         viewer_eye_3d,
                         view_radius,
                         view_forward,
@@ -879,7 +907,13 @@ impl NativeContext<'_, '_> {
                         &self.fast_grid.level,
                         sight_obstacle_list,
                         target_obstacle,
-                    )
+                    );
+                    if radius != 0.0
+                        && let Some(cache) = self.view_radius_cache.as_mut()
+                    {
+                        cache.set(target_obstacle_handle, npc_id, universal_frame, radius);
+                    }
+                    radius
                 }) > 0.0
                 {
                     1

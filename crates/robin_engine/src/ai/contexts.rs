@@ -215,6 +215,13 @@ pub struct AiContext {
     /// borrow. Use `obstacle_list()` for the borrowed `ObstacleList<'_>`
     /// shape that `ai_vision::los_clear` accepts.
     pub sight_obstacles: crate::sight_obstacle::SharedSightObstacles,
+    /// Owner-local view of the engine's surface-owned radius cache. Engine
+    /// dispatch seeds this immediately before Think and commits it immediately
+    /// after Think, allowing immutable AI handlers to preserve Original's
+    /// synchronous cache semantics without sharing rollback state by `Arc`.
+    pub(crate) view_radius_cache: std::cell::RefCell<
+        std::collections::HashMap<Option<crate::position_interface::ObstacleHandle>, f32>,
+    >,
     /// FastFindGrid snapshot used for `IsReachable` line-of-sight queries
     /// from AI code that only has an `AiContext`.
     pub fast_grid: crate::fast_find_grid::FastFindGrid,
@@ -231,6 +238,58 @@ pub struct AiContext {
 }
 
 impl AiContext {
+    pub(crate) fn seed_view_radius_cache(
+        &self,
+        cache: &crate::ai_vision::ViewRadiusCache,
+        viewer: crate::element::EntityId,
+    ) {
+        let mut values = self.view_radius_cache.borrow_mut();
+        values.clear();
+        if let Some(radius) = cache.get(None, viewer, self.frame) {
+            values.insert(None, radius);
+        }
+        for (index, entry) in cache.obstacles.iter().enumerate() {
+            let Some(handle) = u16::try_from(index)
+                .ok()
+                .and_then(crate::position_interface::ObstacleHandle::new)
+            else {
+                continue;
+            };
+            if entry.is_some()
+                && let Some(radius) = cache.get(Some(handle), viewer, self.frame)
+            {
+                values.insert(Some(handle), radius);
+            }
+        }
+    }
+
+    pub(crate) fn compute_view_radius_cached(
+        &self,
+        surface: Option<crate::position_interface::ObstacleHandle>,
+        compute: impl FnOnce() -> f32,
+    ) -> f32 {
+        if let Some(radius) = self.view_radius_cache.borrow().get(&surface).copied() {
+            return radius;
+        }
+        let radius = compute();
+        // Original's getter uses zero as the miss sentinel even after its
+        // setter stored a computed zero.
+        if radius != 0.0 {
+            self.view_radius_cache.borrow_mut().insert(surface, radius);
+        }
+        radius
+    }
+
+    pub(crate) fn commit_view_radius_cache(
+        &self,
+        cache: &mut crate::ai_vision::ViewRadiusCache,
+        viewer: crate::element::EntityId,
+    ) {
+        for (&surface, &radius) in self.view_radius_cache.borrow().iter() {
+            cache.set(surface, viewer, self.frame, radius);
+        }
+    }
+
     /// Look up a handle in the per-tick entity view map.
     ///
     /// Returns `None` for handle `0`, for handles that were never

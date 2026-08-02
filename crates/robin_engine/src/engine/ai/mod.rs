@@ -9687,6 +9687,12 @@ impl EngineInner {
         owner_local_no_forecast: bool,
         defer_turn_instruction: bool,
     ) -> bool {
+        // Original's ComputeViewRadius memo lives on the target surface, so a
+        // synchronous IsDetecting inside Think must see a RefreshDetection
+        // result produced earlier in this universal frame. Keep AiContext's
+        // immutable-handler facade bounded exactly by the synchronous Think
+        // call, then commit any newly computed surfaces before later callbacks.
+        ctx.seed_view_radius_cache(&self.ai.view_radius_cache, npc_id);
         let had_ai_at_entry = self
             .world
             .entities
@@ -9703,6 +9709,7 @@ impl EngineInner {
             owner_local_no_forecast,
             defer_turn_instruction,
         );
+        ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache, npc_id);
 
         // `RHArtificialIntelligence::ExecuteWaypointScript` invokes the
         // waypoint VM directly from the active Think handler. Close that

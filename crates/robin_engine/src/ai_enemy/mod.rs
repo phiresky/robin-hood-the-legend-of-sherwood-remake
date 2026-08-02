@@ -1818,16 +1818,18 @@ impl EnemyAi {
             target_passing_door: view.passing_door,
         };
         crate::ai_vision::compute_visibility_with_effective_radius(&q, || {
-            crate::ai_vision::compute_view_radius(
-                q.viewer_world,
-                ctx.self_view_radius,
-                (ctx.self_view_direction[0], ctx.self_view_direction[1]),
-                ctx.self_real_half_aperture,
-                ctx.is_night_or_fog,
-                &ctx.fast_grid.level,
-                sight_obstacles,
-                target_obstacle,
-            )
+            ctx.compute_view_radius_cached(view.obstacle_idx, || {
+                crate::ai_vision::compute_view_radius(
+                    q.viewer_world,
+                    ctx.self_view_radius,
+                    (ctx.self_view_direction[0], ctx.self_view_direction[1]),
+                    ctx.self_real_half_aperture,
+                    ctx.is_night_or_fog,
+                    &ctx.fast_grid.level,
+                    sight_obstacles,
+                    target_obstacle,
+                )
+            })
         }) > 0.0
     }
 
