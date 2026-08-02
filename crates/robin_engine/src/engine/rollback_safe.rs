@@ -452,6 +452,15 @@ impl Engine {
                 "layer": position.level,
             })
         };
+        let seek_point = |point: &crate::ai::SeekPoint| {
+            json!({
+                "position": ai_position(point.position),
+                "frame_when_full_interest": point.frame_when_full_interest,
+                "directions": &point.directions,
+                "last_calculated_interest": point.last_calculated_interest,
+                "locked": point.locked,
+            })
+        };
         let npc_ai = entity.npc_data().and_then(|npc| {
 			let ai = npc.ai_brain.base()?;
 			let handles = |values: &[u32]| {
@@ -587,6 +596,18 @@ impl Engine {
 					"other_bodies_to_examine": handles(&enemy.other_bodies_to_examine),
 					"beggars_to_control": handles(&enemy.beggars_to_control),
 					"them": handles(&enemy.list_them),
+					"ambush_point_array_reset": enemy.ambush_point_array_reset,
+					"ambush_point_status": enemy.ambush_point_status.iter().map(|status| *status as u32).collect::<Vec<_>>(),
+					"my_seek_points": &enemy.my_seek_points,
+					"personal_seek_point_1": enemy.personal_seek_point_1.as_ref().map(|point| seek_point(point)),
+					"personal_seek_point_2": enemy.personal_seek_point_2.as_ref().map(|point| seek_point(point)),
+					"seek_center": ai_position(enemy.seek_center),
+					"actual_seek_point": enemy.actual_seek_point,
+					"seek_point_view_directions": &enemy.seek_point_view_directions,
+					"positions_of_beggars_to_control": enemy.positions_of_beggars_to_control.iter().copied().map(ai_position).collect::<Vec<_>>(),
+					"seek_flags": enemy.seek_flags.bits(),
+					"seen_dead_body": enemy.seen_dead_body,
+					"seeking_charly": enemy.seeking_charly,
 				})),
 				crate::element::AiBrain::None => None,
 			};

@@ -1452,8 +1452,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 33;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v33.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 34;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v34.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -5029,6 +5029,18 @@ fn retain_recorded_entity_runtime_coverage(
             "other_bodies_to_examine",
             "beggars_to_control",
             "them",
+            "ambush_point_array_reset",
+            "ambush_point_status",
+            "my_seek_points",
+            "personal_seek_point_1",
+            "personal_seek_point_2",
+            "seek_center",
+            "actual_seek_point",
+            "seek_point_view_directions",
+            "positions_of_beggars_to_control",
+            "seek_flags",
+            "seen_dead_body",
+            "seeking_charly",
         ] {
             if !expected_subclass.contains_key(field) {
                 actual_subclass.remove(field);
@@ -6595,7 +6607,7 @@ mod tests {
     }
 
     #[test]
-    fn old_enemy_snapshots_skip_only_absent_additive_v33_collections() {
+    fn old_enemy_snapshots_skip_only_absent_additive_v34_state() {
         let expected = serde_json::json!({
             "npc_ai": {
                 "state": 3,
@@ -6617,7 +6629,19 @@ mod tests {
                     "missed_in_action": [],
                     "other_bodies_to_examine": [],
                     "beggars_to_control": [],
-                    "them": []
+                    "them": [],
+                    "ambush_point_array_reset": false,
+                    "ambush_point_status": [],
+                    "my_seek_points": [],
+                    "personal_seek_point_1": null,
+                    "personal_seek_point_2": null,
+                    "seek_center": {},
+                    "actual_seek_point": null,
+                    "seek_point_view_directions": [],
+                    "positions_of_beggars_to_control": [],
+                    "seek_flags": 0,
+                    "seen_dead_body": false,
+                    "seeking_charly": false
                 }
             }
         });

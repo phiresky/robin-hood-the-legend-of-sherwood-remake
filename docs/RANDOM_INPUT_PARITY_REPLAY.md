@@ -2806,6 +2806,23 @@ did not record, while every present list is structurally strict. Ambush, seek,
 formation, stimulus, and archery tails remain separate source-backed slices.
 The native replay cache version and suffix are v33.
 
+### Schema-v34 enemy ambush and seek continuation
+
+Enemy checkpoints now include the complete live ambush/seek slice serialized
+by `RHArtificialMalignity`: ordered ambush statuses, the ordered global and
+personal seek-point queue, both personal point payloads, the active point,
+seek center and view directions, pending beggar positions, seek flags, and the
+dead-body/Charly seeking latches. Personal points are identified by the
+Original's 1111/2222 sentinels; a missing active point remains explicit null.
+
+Seek-point positions and sectors use the same semantic topology projection as
+all other AI positions. Directions and all queues retain source order. The
+point payload intentionally excludes its runtime ID because `SerializeAllData`
+does not write that member; identity is already represented by the queue and
+personal-point slot. Older recordings remove only absent additive keys, while
+present values remain strict. Battle decisions, formation/reports, patrol
+stimulus, and archery state remain later slices. The native cache is v34.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,
