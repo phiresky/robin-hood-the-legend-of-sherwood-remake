@@ -426,6 +426,21 @@ impl EngineInner {
 
         // ── Sequence manager dispatch ────────────────────────────
         // Process pending sequence elements in the manager's emitted order.
+        let actor_elements_before_instruct = self
+            .world
+            .entities
+            .occupied()
+            .filter_map(|(owner, entity)| {
+                entity.actor_data().is_some().then(|| {
+                    (
+                        owner,
+                        self.orders
+                            .sequence_manager
+                            .current_element_for_actor(owner),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
         let mut phase = SequencePhase::begin(&mut self.orders);
 
         // Dispatch each action at its exact FIFO position. In particular,
@@ -2572,6 +2587,32 @@ impl EngineInner {
             // work goes to the front, while newly registered normal work is
             // appended behind actions that were already waiting.
             phase.splice_registered_actions(&mut self.orders);
+        }
+
+        let instructed_owners = actor_elements_before_instruct
+            .into_iter()
+            .filter_map(|(owner, before)| {
+                let after = self
+                    .orders
+                    .sequence_manager
+                    .current_element_for_actor(owner);
+                (after.is_some() && after != before).then_some(owner)
+            })
+            .collect::<Vec<_>>();
+        for owner in instructed_owners {
+            // RHElementActor::Instruct writes mmotionState=IN_PROGRESS after
+            // an accepted element has survived translation and entered
+            // INPROGRESS. AI work in the preceding derived NPC tail only
+            // registers that element; the authoritative write therefore
+            // belongs here, after SequenceManager::Hourglass has actually
+            // dispatched InstructOwner.
+            self.world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::actor_data_mut)
+                .expect("accepted InstructOwner lost its actor")
+                .continuation
+                .motion_state = crate::sprite::MotionState::InProgress;
         }
     }
 }

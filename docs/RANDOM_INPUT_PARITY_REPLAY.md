@@ -2037,13 +2037,14 @@ both transition-to-successor `Terminated`/InProgress differences and stale
 first-frame movement Done/InProgress values loaded from a save.
 
 A follow-up boundary three frames later showed that the rewrite point extends
-through the derived Human/NPC Hourglass tail. After base Actor completion,
-en-route AI or a macro can synchronously instruct the next element; Original
-`Instruct` then overwrites the still-serialized Terminated result with
-InProgress. Rust now compares the Execute-entry order identity with the live
-order after that derived tail and performs the same rewrite when a successor
-was accepted. This cleared the final LookLeft/LookRight completions and the
-next en-route walking-order handoff without inventing an eager fallback Wait.
+past the derived Human/NPC Hourglass tail. After base Actor completion,
+en-route AI or a macro only registers the next element; SequenceManager's
+later same-frame `Instruct` accepts it. Original `Instruct` then overwrites the
+still-serialized Terminated result with InProgress. Rust now snapshots each
+actor's selected element at the start of the sequence-manager drain and
+performs that rewrite for elements newly accepted by `InstructOwner`. This
+clears the final LookLeft/LookRight completions and the next en-route walking
+handoff without inventing an eager fallback Wait.
 
 ### Battle-decision visibility timing
 
@@ -2119,6 +2120,13 @@ includes an active door pointer as well as a building sector. This remains
 separate from the later per-type `GetBuilding` checks, which are sector-only;
 door transit may enter the scan without being treated as already indoors by
 `ComputeVisibility`.
+
+Blind eye states are likewise rejected by Original's detectable wrapper before
+its camp/type switch and therefore before every per-type cadence decision.
+Human non-enemy and Object scans now zero visibility before cadence when eyes
+are closed or dying/unconscious instead of reusing a stale positive sample on
+a closed cadence. Enemy detection already observed this ordering. A focused
+gate regression covers blind, type-blocked, and eligible cases.
 
 ### Sequence-manager and script-VM boundary state
 
