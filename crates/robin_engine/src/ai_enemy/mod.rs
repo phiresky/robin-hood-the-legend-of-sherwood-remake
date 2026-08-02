@@ -1405,17 +1405,44 @@ impl EnemyAi {
             //   * `< 200²` — always reacts.
             //   * `200²..350²` — `IsDetecting180Degrees(me)`.
             //   * `≥ 350²` — `IsDetecting(me)` (full cone + LOS,
-            //     officer-side).  The cone+LOS result is
-            //     pre-snapshotted on
-            //     `CampSoldierInfo::is_detecting_cone` by the engine
-            //     populator against the brawler's position, so the
-            //     per-call site reads the cached flag.
+            //     officer-side), evaluated here at the Original call site.
             let react = if sq < SQ_HEARS {
                 true
             } else if sq < SQ_SEES_180 {
                 soldier_detects_position_180(&officer, ctx.position, ctx.sq_standard_view_radius)
             } else {
-                officer.is_detecting_cone
+                let officer_view = ctx.entity_view(officer.handle).unwrap_or_else(|| {
+                    panic!(
+                        "MaybeOfficerSeesMeFighting officer {} is absent from the AI entity view",
+                        officer.handle
+                    )
+                });
+                !officer.eye_blind
+                    && !officer.in_building
+                    && officer.is_able_to_fight
+                    && !ctx.in_building
+                    && crate::ai_vision::is_detecting_target(
+                        crate::coordinates::MapPoint::new(
+                            officer.position.x,
+                            officer.position.y,
+                        ),
+                        crate::coordinates::GroundPoint::new(
+                            officer.position.x,
+                            officer.position.y + officer_view.elevation,
+                        ),
+                        officer.direction as i16,
+                        (officer.view_direction[0], officer.view_direction[1]),
+                        officer.real_half_aperture,
+                        officer.view_radius,
+                        crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y),
+                        crate::coordinates::GroundPoint::new(
+                            ctx.position.x,
+                            ctx.position.y + ctx.elevation,
+                        ),
+                        ctx.position.level,
+                        ctx.obstacle_list(),
+                        &ctx.fast_grid,
+                    )
             };
             if react {
                 self.base
@@ -4865,7 +4892,6 @@ mod tests {
             ai_state: AiState::Default,
             ai_substate: Substate::None,
             is_able_to_fight: true,
-            is_detected_360_by_owner: false,
             primary_target: 0,
             pride: 0,
             is_able_to_help: true,
@@ -4895,8 +4921,6 @@ mod tests {
             view_radius: 400,
             real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
             eye_blind: false,
-            is_detecting_360: false,
-            is_detecting_cone: false,
         };
         let ahead = Position {
             x: 100.0,

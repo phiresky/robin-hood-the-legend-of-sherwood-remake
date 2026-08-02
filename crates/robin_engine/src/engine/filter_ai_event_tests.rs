@@ -3017,10 +3017,30 @@ fn wait_timer_zero_completes_after_execute_and_before_action_change() {
     assert_eq!(
         observed_action_args(&engine, actor),
         (
-            OrderType::WaitingUprightBored as i32,
+            OrderType::NonanimationEnd as i32,
             OrderType::Pointing as i32,
         ),
-        "zero WAIT_TIMER must Execute its idle order, complete/DoNext, then expose the promoted Wait order to ActionChange"
+        "zero WAIT_TIMER must Execute its current order, complete/DoNext, then expose the null order to ActionChange"
+    );
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(actor)
+            .and_then(|entity| entity.actor_data())
+            .expect("timer actor remains typed")
+            .continuation
+            .motion_state,
+        crate::sprite::MotionState::Terminated,
+        "Actor::Hourglass must retain the post-WAIT_TIMER Execute result in serialized mmotionState"
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(actor)
+            .is_none(),
+        "Original does not create fallback Wait after same-slot DoNextOrder exhaustion"
     );
     assert_eq!(
         engine

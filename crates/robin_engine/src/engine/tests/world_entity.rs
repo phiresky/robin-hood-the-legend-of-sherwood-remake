@@ -2989,7 +2989,6 @@ fn final_review_combat_alert_all_refused_enters_reserve_without_success_remark()
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
     let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-    assert!(tick.camp_soldiers[0].is_detecting_360);
     let global = engine.ai.global.clone();
     engine
         .get_entity_mut(officer_id)
@@ -3075,11 +3074,6 @@ fn final_review_combat_alert_partial_refusal_uses_only_acceptor_for_formation() 
 
     let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
     assert_eq!(tick.camp_soldiers.len(), 2);
-    assert!(
-        tick.camp_soldiers
-            .iter()
-            .all(|soldier| soldier.is_detecting_360)
-    );
     let global = engine.ai.global.clone();
     let grid = &engine.world.fast_grid;
     engine
@@ -3143,7 +3137,6 @@ fn final_review_combat_alert_requires_recipient_360_detection() {
         .expect("360-degree recipient is a soldier")
         .view_radius = 10;
     let (ctx, tick) = review2_context_and_tick(&engine, &sim, &assets, officer_id);
-    assert!(!tick.camp_soldiers[0].is_detecting_360);
     let global = engine.ai.global.clone();
     let start = engine
         .get_entity_mut(officer_id)
@@ -3303,10 +3296,6 @@ fn closure_review_combat_alert_closed_eyes_do_not_disable_360_detection() {
         .expect("closed-eye recipient is in camp snapshot");
     assert!(candidate.eye_blind);
     assert!(candidate.is_able_to_fight);
-    assert!(
-        candidate.is_detecting_360,
-        "Original IsDetecting360Degrees ignores the eye-status cone gate"
-    );
     assert_eq!(start, crate::ai_enemy::CommandSoldiersStart::Pending);
 
     engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);

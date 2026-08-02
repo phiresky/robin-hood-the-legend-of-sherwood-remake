@@ -3470,11 +3470,22 @@ impl EngineInner {
                     // completion/DoNextOrder. Sampling the current element
                     // here is intentional: WaitingSword callbacks above may
                     // have synchronously replaced it.
-                    let mut completed_execute_may_need_idle_successor = false;
                     if let Some(mut result) = execute_result.take() {
                         self.apply_actor_post_execute_wait_modifier(entity_id, &mut result);
-                        completed_execute_may_need_idle_successor =
-                            result.motion == crate::sprite::MotionState::Terminated;
+                        // RHElementActor::Hourglass stores every Execute
+                        // return in serialized `mmotionState` before it
+                        // handles Done/Terminated/Aborted. Keeping only the
+                        // transient Sprite result leaves the save-loaded
+                        // value frozen forever and makes the very first
+                        // post-load frame diverge whenever an animation
+                        // crosses a motion boundary.
+                        self.world
+                            .entities
+                            .get_mut(entity_id)
+                            .and_then(Entity::actor_data_mut)
+                            .expect("Execute owner disappeared before motion-state latch")
+                            .continuation
+                            .motion_state = result.motion;
                         self.stage_actor_execute_completion(
                             entity_id,
                             selected_order.map(|(_, _, order_id)| order_id),
@@ -3502,32 +3513,13 @@ impl EngineInner {
                                 "actor {entity_id:?} completion at legacy slot {slot} failed to drain synchronous sequence work: {error:?}"
                             )
                         });
-                    // Completion callbacks may synchronously install a real
-                    // successor. Only after that stack has settled, supply
-                    // Actor::Hourglass's idle Wait when the completed order
-                    // left the owner empty. Its translated animation must be
-                    // visible to the same-slot ActionChange callback.
-                    let mut installed_idle_successor = false;
-                    if completed_execute_may_need_idle_successor {
-                        let had_live_order = self
-                            .orders
-                            .sequence_manager
-                            .current_order_for_actor(entity_id)
-                            .is_some();
-                        self.ensure_wait_element(entity_id);
-                        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
-                            .unwrap_or_else(|error| {
-                                panic!(
-                                    "actor {entity_id:?} post-completion Wait at legacy slot {slot} failed to drain synchronous sequence work: {error:?}"
-                                )
-                            });
-                        installed_idle_successor = !had_live_order
-                            && self
-                                .orders
-                                .sequence_manager
-                                .current_order_for_actor(entity_id)
-                                .is_some();
-                    }
+                    // DoNextOrder may synchronously expose a real postponed
+                    // successor through SetState/Ready. If it does not,
+                    // Original leaves mpOrder null for the rest of this
+                    // Actor::Hourglass call. The fallback Wait is created
+                    // only by the null-order guard at the start of the next
+                    // actor frame, so ActionChange observes NONANIMATION_END
+                    // on this completion frame.
                     #[cfg(test)]
                     observe_actor_animation_boundary(
                         ActorAnimationBoundaryPhase::CompletionEffects(entity_id),
@@ -3545,9 +3537,9 @@ impl EngineInner {
                     // `DoNextOrder` updates it when it advances within the
                     // same element. Terminating the element clears it through
                     // SendCondolationCard; a synchronously instructed real
-                    // successor writes its own first order, while the
-                    // synthetic idle Wait Rust installs for the next frame
-                    // must remain invisible to this derived tail.
+                    // successor writes its own first order. Otherwise the
+                    // selected pointer is null for the remainder of this
+                    // owner slot.
                     let derived_tail_order_type =
                         if let Some((selected_seq, selected_idx, _)) = selected_order {
                             let current = self
@@ -3558,15 +3550,11 @@ impl EngineInner {
                                 *seq == selected_seq && *idx == selected_idx
                             }) {
                                 order.order_type
-                            } else if installed_idle_successor {
-                                crate::order::OrderType::Invalid
                             } else {
                                 current
                                     .map(|(_, _, order)| order.order_type)
                                     .unwrap_or(crate::order::OrderType::Invalid)
                             }
-                        } else if installed_idle_successor {
-                            crate::order::OrderType::Invalid
                         } else {
                             self.orders
                                 .sequence_manager

@@ -43,6 +43,28 @@ fn enough_nearer_friends_to_observe(
         >= visible_enemies + visible_enemies * (0.045_f32 * f32::from(courage))
 }
 
+fn battle_friend_detected_360(
+    ctx: &AiContext,
+    friend_position: Position,
+    friend_direction: u16,
+    target: &crate::ai_entity_view::AiEntityView,
+) -> bool {
+    super::soldier_detects_target_360(
+        ctx.position,
+        ctx.elevation,
+        ctx.self_is_rider,
+        ctx.self_view_radius,
+        ctx.in_building,
+        friend_position,
+        target.elevation,
+        target.posture,
+        target.is_rider,
+        friend_direction as i16,
+        target.in_building,
+        ctx.obstacle_list(),
+    )
+}
+
 impl EnemyAi {
     pub(super) fn enter_battle_reserve(&mut self, ctx: &AiContext, tick: &AiPerTickData) {
         self.enter_battle_reserve_with_multiplicity(ctx, tick, None);
@@ -371,12 +393,26 @@ impl EnemyAi {
         self.base.list_us.push(self.base.me);
         for friend in &battle_tick.camp_soldiers {
             if !friend.is_able_to_fight
-                || !friend.is_detected_360_by_owner
                 || !matches!(
                     friend.ai_state,
                     AiState::Default | AiState::Wondering | AiState::Seeking | AiState::Attacking
                 )
             {
+                continue;
+            }
+            // Original evaluates `mpMe->IsDetecting360Degrees(pHuman)` here,
+            // after the cheap able-to-fight gate, and only when
+            // BattleDecisions actually runs. Do not use the historical
+            // snapshot bit: populating it eagerly issued O(N²) opaque-LOS
+            // queries on every RefreshDetection pass and changed both trace
+            // ordering and the visibility cache before any battle decision.
+            let target = ctx.entity_view(friend.handle).unwrap_or_else(|| {
+                panic!(
+                    "BattleDecisions camp friend {} is absent from the AI entity view",
+                    friend.handle
+                )
+            });
+            if !battle_friend_detected_360(ctx, friend.position, friend.direction, target) {
                 continue;
             }
             self.base.list_us.push(friend.handle);
@@ -2758,6 +2794,31 @@ mod tests {
             (dx * dx + dy * dy).sqrt() > 75.0,
             "the general aspect-corrected distance would miss this swordfight boundary"
         );
+    }
+
+    #[test]
+    fn battle_friend_visibility_is_evaluated_at_the_decision_call_site() {
+        let mut target = pc_view();
+        target.position.x = 100.0;
+        let ctx = AiContext {
+            self_view_radius: 500,
+            ..AiContext::default()
+        };
+
+        assert!(battle_friend_detected_360(
+            &ctx,
+            target.position,
+            target.direction,
+            &target,
+        ));
+
+        target.in_building = true;
+        assert!(!battle_friend_detected_360(
+            &ctx,
+            target.position,
+            target.direction,
+            &target,
+        ));
     }
 
     #[test]

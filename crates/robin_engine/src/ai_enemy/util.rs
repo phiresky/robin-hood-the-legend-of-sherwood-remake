@@ -177,11 +177,6 @@ pub struct CampSoldierInfo {
     pub ai_state: AiState,
     pub ai_substate: Substate,
     pub is_able_to_fight: bool,
-    /// Snapshot of the ticking owner detecting this soldier through
-    /// `IsDetecting360Degrees`. BattleDecisions scans the complete camp
-    /// fighter registry and applies the owner's real view radius; it is not
-    /// limited to the 500-unit swordfight-consideration neighborhood.
-    pub is_detected_360_by_owner: bool,
     /// Live primary target used when BattleDecisions merges an attacking
     /// friend's target into its persistent Them list.
     pub primary_target: HumanHandle,
@@ -275,16 +270,6 @@ pub struct CampSoldierInfo {
     /// Whether the eyes are blind (closed / dying / unconscious), so
     /// the cone+LOS gate skips blind officers.
     pub eye_blind: bool,
-    /// Snapshot of `soldier.IsDetecting360Degrees(current_officer)`.
-    /// CommandSoldiersToAttack uses the recipient's view, not the caller's.
-    pub is_detecting_360: bool,
-    /// Snapshot of full radius + cone + opaque-LOS detection from
-    /// this soldier's POV against the ticking NPC's position,
-    /// evaluated at populate time.  Drives
-    /// `MaybeOfficerSeesMeFighting`'s ≥350² band so the per-call site
-    /// reads the cached flag instead of redoing the geometry per
-    /// brawler/officer pair.
-    pub is_detecting_cone: bool,
 }
 
 #[allow(clippy::too_many_arguments)]

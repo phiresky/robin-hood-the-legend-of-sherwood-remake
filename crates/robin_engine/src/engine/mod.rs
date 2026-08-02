@@ -3830,9 +3830,10 @@ impl EngineInner {
     /// execute.  No-op when a wait element already exists for this
     /// actor.
     ///
-    /// Called at level-load for every spawned actor and in the
-    /// queue-exhausted branch of `do_next_order`, so every actor always
-    /// has something the animation driver can read.
+    /// Called by the null-order guard at the start of an actor Hourglass.
+    /// Exhausting the final order does not call this again in the same slot:
+    /// Original leaves `mpOrder` null through ActionChange and creates the
+    /// fallback Wait on the actor's next frame.
     pub(crate) fn ensure_wait_element(&mut self, entity_id: EntityId) {
         use crate::sequence::{SequenceElement, SequencePriority};
 

@@ -1983,6 +1983,55 @@ makes the otherwise-unused but serialized `uwSector`, and `ulTime` before a
 real failure stamps it, deterministic instead of allocator-dependent. Save
 loads still restore the exact bytes stored by the save.
 
+### First-frame actor motion and exhausted-order timing
+
+The strict schema-12 Linux Savegame 040 replay 013 first diverged at frame
+27429 in eight actors' `motion_state`; Savegame 041 and 046 repetitions showed
+the same family immediately after load. The sprite rows, frames, counters,
+selected orders, and Execute animations already matched. Rust was computing
+the live Execute result but leaving `ActorContinuationState::motion_state` at
+the value decoded from the save. Original assigns every Execute return to the
+serialized `RHElementActor::mmotionState` before handling Done, Terminated, or
+Aborted (`original-code/RHelementactor.cpp`). Rust now latches the final result
+after WAIT_TIMER / WAIT_FREE_LIFT modification and before sequence completion,
+so a first-post-load animation boundary replaces the saved prior-frame value.
+
+Soldier 149 exposed the related exhausted-order boundary: its final order
+terminated on frame 27429. Original `DoNextOrder` clears `mpOrder` and does not
+run the entry-only `Wait()` guard again during that actor slot, so
+`ActionChange` and `GetAnimation` observe `RHNONANIMATION_END`; fallback Wait is
+created on the next frame. Rust used to install and instruct Wait immediately
+after completion, exposing `WAITING_UPRIGHT` one frame early. That same-slot
+insertion is removed. A focused zero-frame WAIT_TIMER regression locks both
+the serialized Terminated latch and the null-order ActionChange boundary.
+
+The initial hypothesis that this actor was taking the special
+`mbExecutionFrozen && mpOrder == NULL` early return was rejected: the focused
+engine dump showed `execution_frozen == false`. No frozen-actor behavior was
+changed for this finding.
+
+### Battle-decision visibility timing
+
+The strict schema-12 sweep of Linux profile 1, Savegame 040, replay 013 first
+diverged at frame 27429 with no Original visibility queries and 1038 Rust
+queries. These were not periodic enemy detection: Rust eagerly populated every
+same-camp soldier's `is_detected_360_by_owner` snapshot while building each
+NPC's tick data.
+
+Original `RHArtificialMalignity::BattleDecisions` performs
+`mpMe->IsDetecting360Degrees(pHuman)` inside its fighter loop, after the cheap
+`IsAbleToFight` gate, and only when a stimulus or timer actually invokes
+`BattleDecisions`. Rust now evaluates the same 3D radius and opaque-LOS query
+at that AI call site. Both engine snapshot constructors leave the obsolete
+compatibility member unset, preventing idle RefreshDetection passes from
+issuing O(N²) queries or warming the visibility cache in a source-impossible
+order. A focused unit regression covers the decision-local geometry and its
+building short circuit. The same audit confirmed that the reverse-view query
+used by `CommandSoldiersToAttack` and the officer cone query used by
+`MaybeOfficerSeesMeFighting` belong inside those Original handlers. They are
+now lazy as well; generic camp-soldier snapshot construction performs no
+opaque visibility queries.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

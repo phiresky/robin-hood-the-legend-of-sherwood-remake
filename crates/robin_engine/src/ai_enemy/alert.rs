@@ -148,7 +148,33 @@ impl EnemyAi {
         for cs in &tick.camp_soldiers {
             // Original eligibility is rank soldier + IsAbleToFight; the
             // recipient's live Think handles script/AI locks and state gates.
-            if cs.rank != ProfileRank::Soldier || !cs.is_able_to_fight || !cs.is_detecting_360 {
+            if cs.rank != ProfileRank::Soldier || !cs.is_able_to_fight {
+                continue;
+            }
+            // Original calls `pFriend->IsDetecting360Degrees(mpMe)` here,
+            // after the cheap rank/body gates and before its distance gates.
+            // Evaluating this while constructing every tick snapshot changes
+            // the observable LOS call stream even when no officer broadcasts.
+            let friend = ctx.entity_view(cs.handle).unwrap_or_else(|| {
+                panic!(
+                    "CommandSoldiersToAttack candidate {} is absent from the AI entity view",
+                    cs.handle
+                )
+            });
+            if !super::soldier_detects_target_360(
+                cs.position,
+                friend.elevation,
+                friend.is_rider,
+                cs.view_radius,
+                cs.in_building,
+                ctx.position,
+                ctx.elevation,
+                ctx.posture,
+                ctx.self_is_rider,
+                ctx.direction as i16,
+                ctx.in_building,
+                ctx.obstacle_list(),
+            ) {
                 continue;
             }
             // MaxNorm distance check

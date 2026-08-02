@@ -1909,31 +1909,9 @@ impl EngineInner {
         &self,
         npc_id: crate::element::EntityId,
         my_camp: crate::element::Camp,
-        scratch: &SimScratch,
+        _scratch: &SimScratch,
         forecast_destinations: bool,
     ) -> Vec<crate::ai_enemy::CampSoldierInfo> {
-        // Snapshot the ticking NPC (the brawler / self) once so each
-        // officer's `is_detecting_cone` cache below evaluates
-        // "officer is detecting brawler" against a single target.
-        let me_brawler = self.world.entities.get(npc_id).and_then(|e| match e {
-            Entity::Soldier(s) => Some(s),
-            _ => None,
-        });
-        let me_brawler_data = me_brawler.map(|s| {
-            let pos = s.element.position_map();
-            (
-                crate::coordinates::MapPoint::new(pos.x, pos.y),
-                s.element.position().z,
-                s.element.layer(),
-                self.entity_data_inside_building(&s.element),
-                s.element.posture,
-                s.soldier.rider,
-                s.element.direction(),
-            )
-        });
-        let obstacles_owned = scratch.ai_sight_obstacles.clone();
-        let obstacles = obstacles_owned.list();
-
         let mut camp_soldiers =
             Vec::with_capacity(self.world.entities.soldiers().count().saturating_sub(1));
         for (other_id, s) in self.world.entities.soldiers() {
@@ -2010,86 +1988,7 @@ impl EngineInner {
                 sector: s.element.sector(),
                 level: s.element.layer(),
             };
-            // Snapshot "officer is detecting brawler" (full radius +
-            // cone + opaque-LOS) so `MaybeOfficerSeesMeFighting`'s
-            // ≥350² band reads a cached flag instead of redoing the
-            // geometry per fighter pair.  Short-circuit when the
-            // viewer is blind / indoors / KO'd or when the target sits
-            // inside a building; fold those into the cached `false` here.
             let eye_blind = s.npc.eye_status.is_blind();
-            let is_detecting_cone = match me_brawler_data {
-                Some((me_pos, me_ground_z, me_layer, me_in_building, ..))
-                    if !eye_blind && !in_building && able_to_fight && !me_in_building =>
-                {
-                    let viewer = crate::coordinates::MapPoint::new(position.x, position.y);
-                    crate::ai_vision::is_detecting_target(
-                        viewer,
-                        crate::coordinates::GroundPoint::new(
-                            viewer.x,
-                            viewer.y + s.element.position().z,
-                        ),
-                        s.element.direction(),
-                        (s.npc.view_direction[0], s.npc.view_direction[1]),
-                        s.npc.real_half_aperture,
-                        s.npc.view_radius,
-                        me_pos,
-                        crate::coordinates::GroundPoint::new(me_pos.x, me_pos.y + me_ground_z),
-                        me_layer,
-                        obstacles,
-                        &self.world.fast_grid,
-                    )
-                }
-                _ => false,
-            };
-            let is_detecting_360 = match me_brawler_data {
-                Some((me_pos, me_ground_z, _, me_in_building, posture, is_rider, direction)) => {
-                    crate::ai_enemy::soldier_detects_target_360(
-                        cs_position,
-                        s.element.position().z,
-                        s.soldier.rider,
-                        s.npc.view_radius,
-                        in_building,
-                        crate::ai::Position {
-                            x: me_pos.x,
-                            y: me_pos.y,
-                            sector: None,
-                            level: 0,
-                        },
-                        me_ground_z,
-                        posture,
-                        is_rider,
-                        direction,
-                        me_in_building,
-                        obstacles,
-                    )
-                }
-                None => false,
-            };
-            let is_detected_360_by_owner = match me_brawler {
-                Some(me) => {
-                    let me_position = me.element.position_map();
-                    crate::ai_enemy::soldier_detects_target_360(
-                        crate::ai::Position {
-                            x: me_position.x,
-                            y: me_position.y,
-                            sector: me.element.sector(),
-                            level: me.element.layer(),
-                        },
-                        me.element.position().z,
-                        me.soldier.rider,
-                        me.npc.view_radius,
-                        self.entity_data_inside_building(&me.element),
-                        cs_position,
-                        s.element.position().z,
-                        s.element.posture,
-                        s.soldier.rider,
-                        s.element.direction(),
-                        in_building,
-                        obstacles,
-                    )
-                }
-                None => false,
-            };
             camp_soldiers.push(crate::ai_enemy::CampSoldierInfo {
                 handle: other_id.index(),
                 position: cs_position,
@@ -2098,7 +1997,6 @@ impl EngineInner {
                 ai_state: s.npc.ai_state(),
                 ai_substate: s.npc.ai_substate(),
                 is_able_to_fight: able_to_fight,
-                is_detected_360_by_owner,
                 primary_target: enemy_ai.base.primary_target,
                 pride: enemy_ai.soldier_profile_pride,
                 is_able_to_help: crate::ai_enemy::soldier_is_able_to_help_state(
@@ -2132,8 +2030,6 @@ impl EngineInner {
                 view_radius: s.npc.view_radius,
                 real_half_aperture: s.npc.real_half_aperture,
                 eye_blind,
-                is_detecting_360,
-                is_detecting_cone,
             });
         }
         camp_soldiers
