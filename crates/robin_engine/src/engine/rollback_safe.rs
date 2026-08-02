@@ -580,6 +580,13 @@ impl Engine {
 					"initial_life_points": enemy.initial_life_points,
 					"old_odds": enemy.old_odds,
 					"position_change_locked_for_test": enemy.position_change_locked_for_test,
+					"heard_nets": handles(&enemy.heard_nets),
+					"other_seen_ale": handles(&enemy.other_seen_ale),
+					"search_charly_way": enemy.search_charly_way.iter().copied().map(ai_position).collect::<Vec<_>>(),
+					"missed_in_action": handles(&enemy.base.missed_in_action),
+					"other_bodies_to_examine": handles(&enemy.other_bodies_to_examine),
+					"beggars_to_control": handles(&enemy.beggars_to_control),
+					"them": handles(&enemy.list_them),
 				})),
 				crate::element::AiBrain::None => None,
 			};

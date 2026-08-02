@@ -1452,8 +1452,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 32;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v32.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 33;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v33.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -5003,6 +5003,38 @@ fn retain_recorded_entity_runtime_coverage(
     {
         actual_npc_ai.remove("subclass");
     }
+    if expected
+        .get("npc_ai")
+        .and_then(|npc_ai| npc_ai.get("subclass"))
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|subclass| {
+            subclass.get("kind").and_then(serde_json::Value::as_str) == Some("enemy")
+        })
+        && let (Some(expected_subclass), Some(actual_subclass)) = (
+            expected
+                .get("npc_ai")
+                .and_then(|npc_ai| npc_ai.get("subclass"))
+                .and_then(serde_json::Value::as_object),
+            actual
+                .get_mut("npc_ai")
+                .and_then(|npc_ai| npc_ai.get_mut("subclass"))
+                .and_then(serde_json::Value::as_object_mut),
+        )
+    {
+        for field in [
+            "heard_nets",
+            "other_seen_ale",
+            "search_charly_way",
+            "missed_in_action",
+            "other_bodies_to_examine",
+            "beggars_to_control",
+            "them",
+        ] {
+            if !expected_subclass.contains_key(field) {
+                actual_subclass.remove(field);
+            }
+        }
+    }
 }
 
 fn compare_engine_state(
@@ -6559,6 +6591,38 @@ mod tests {
         });
 
         retain_recorded_order_runtime_coverage(&expected, &mut actual);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn old_enemy_snapshots_skip_only_absent_additive_v33_collections() {
+        let expected = serde_json::json!({
+            "npc_ai": {
+                "state": 3,
+                "subclass": {
+                    "kind": "enemy",
+                    "frame_when_missed_charly": 17
+                }
+            }
+        });
+        let mut actual = serde_json::json!({
+            "npc_ai": {
+                "state": 3,
+                "subclass": {
+                    "kind": "enemy",
+                    "frame_when_missed_charly": 17,
+                    "heard_nets": [],
+                    "other_seen_ale": [],
+                    "search_charly_way": [],
+                    "missed_in_action": [],
+                    "other_bodies_to_examine": [],
+                    "beggars_to_control": [],
+                    "them": []
+                }
+            }
+        });
+
+        retain_recorded_entity_runtime_coverage(&expected, &mut actual);
         assert_eq!(actual, expected);
     }
 

@@ -2790,6 +2790,22 @@ search, battle, ambush, seek, and archery collections remain the next enemy
 tail increment. Older traces omit only an absent nested subclass checkpoint;
 new enemy checkpoints are strict. The native replay cache is v32.
 
+### Schema-v33 ordered enemy AI collections
+
+Soldier checkpoints now retain the first ordered collection slice from
+`RHArtificialMalignity::SerializeExactlyThisAI`: heard nets, other seen ale,
+the search-Charly waypoint continuation, missed patrol actors, bodies still to
+examine, beggars still to control, and the current battle-opponent list.
+Entity references are compared through the existing runtime isomorphism;
+waypoint sectors use the canonical topology identity and all list order remains
+authoritative.
+
+This is a general projection of live serialized state, not a reconstruction
+from a particular trace. Older recordings omit only collection keys that they
+did not record, while every present list is structurally strict. Ambush, seek,
+formation, stimulus, and archery tails remain separate source-backed slices.
+The native replay cache version and suffix are v33.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,
