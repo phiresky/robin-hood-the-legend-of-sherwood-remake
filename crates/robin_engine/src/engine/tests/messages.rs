@@ -407,6 +407,55 @@ fn completed_immediate_sibling_does_not_clear_selected_movement_goal() {
 }
 
 #[test]
+fn pc_arrival_speech_finishes_before_non_interruptable_postponement() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{Sequence, SequenceElement, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::SimulatingBeggar));
+
+    let mut leave_beggar = SequenceElement::new(1, Command::LeaveBeggar, Some(owner));
+    leave_beggar.priority = SequencePriority::NonInterruptable;
+    let blocker = engine.orders.sequence_manager.launch_element(leave_beggar);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(blocker, 0);
+
+    let mut sequence = Sequence::new();
+    sequence.append_element(SequenceElement::new_movement(
+        1,
+        Command::Move,
+        Some(owner),
+        OrderType::WalkingUpright,
+    ));
+    sequence.append_element(SequenceElement::new(
+        1,
+        Command::SpeakHeroReachDestination,
+        Some(owner),
+    ));
+    sequence.append_element(SequenceElement::new(2, Command::EnterBeggar, Some(owner)));
+    let movement = engine.launch_sequence(sequence);
+
+    assert!(engine.non_interruptable_guard(owner, movement, 0));
+    assert!(engine.non_interruptable_guard(owner, movement, 1));
+
+    let sequence = engine
+        .orders
+        .sequence_manager
+        .get_sequence(movement)
+        .expect("movement sequence survives while its move is postponed");
+    assert_eq!(sequence.elements[0].state, SequenceState::Postponed);
+    assert_eq!(sequence.elements[1].state, SequenceState::Terminated);
+    assert_eq!(
+        sequence.elements[2].state,
+        SequenceState::Todo,
+        "terminating the same-level PC speech must not cascade Impossible into posture recovery"
+    );
+}
+
+#[test]
 fn interrupted_movement_preserves_goal_when_incoming_action_is_selected() {
     use crate::coordinates::MapPoint;
     use crate::element::{Command, Posture};

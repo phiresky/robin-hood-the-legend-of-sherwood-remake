@@ -1848,6 +1848,12 @@ impl EngineInner {
         use crate::element::Command;
         use crate::sequence::SequencePriority;
 
+        // RHElementActorPC::Instruct owns these early-return commands before
+        // it delegates to the base Actor method containing this guard.
+        if self.pc_instruct_early_completion(owner, new_seq, new_idx) {
+            return true;
+        }
+
         let Some((cur_seq, cur_idx)) = self.current_sequence_element_for_actor(owner) else {
             return false;
         };
@@ -1955,6 +1961,43 @@ impl EngineInner {
         for (pc_id, expression) in queued {
             self.hero_speaking(assets, pc_id, expression);
         }
+    }
+
+    /// Run the PC `Instruct` arms which return before delegating to
+    /// `RHElementActorHuman::Instruct` / `RHElementActor::Instruct`.
+    ///
+    /// Arrival speech must terminate here before base Actor's
+    /// non-interruptable-current guard can postpone it. Otherwise parallel
+    /// movement can win the postponed-chain priority comparison, abandon the
+    /// speech, and cascade `Impossible` into later posture recovery work.
+    fn pc_instruct_early_completion(
+        &mut self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> bool {
+        if !self.get_entity(owner).is_some_and(Entity::is_pc) {
+            return false;
+        }
+        let command = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .map(|element| element.command);
+        let expression = match command {
+            Some(crate::element::Command::SpeakHeroReachDestination) => {
+                crate::engine::melee::HERO_DONE_COMMAND
+            }
+            Some(crate::element::Command::SpeakVipsAreForRobin) => {
+                crate::engine::melee::HERO_PROVOKE_VIP
+            }
+            _ => return false,
+        };
+        self.orders
+            .sequence_manager
+            .element_terminated(seq_id, elem_idx);
+        self.orders.pending_hero_speeches.push((owner, expression));
+        true
     }
 
     /// Register a prebuilt sequence for the manager hourglass.
@@ -2093,36 +2136,19 @@ impl EngineInner {
             return false;
         }
 
-        // PC Instruct intercepts a handful of commands before falling
-        // through to the Human path.  Port the ones with observable
-        // effect here.
+        // Some direct callers enter arbitration without the ordinary
+        // base-Actor admission wrapper. Preserve the PC derived-class early
+        // return for those paths as well.
+        if self.pc_instruct_early_completion(owner, new_seq, new_idx) {
+            return false;
+        }
+
+        // PC Instruct intercepts the remaining commands before falling
+        // through to the Human path.
         if let Some(entity) = self.get_entity(owner)
             && entity.is_pc()
         {
             match new_command {
-                // SpeakHeroReachDestination / SpeakVipsAreForRobin:
-                // terminate the element immediately and fire a
-                // hero-speech cue.  Speech goes through a pending queue
-                // because `arbitrate_instruct` doesn't carry
-                // `&LevelAssets`.
-                Command::SpeakHeroReachDestination => {
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(new_seq, new_idx);
-                    self.orders
-                        .pending_hero_speeches
-                        .push((owner, crate::engine::melee::HERO_DONE_COMMAND));
-                    return false;
-                }
-                Command::SpeakVipsAreForRobin => {
-                    self.orders
-                        .sequence_manager
-                        .element_terminated(new_seq, new_idx);
-                    self.orders
-                        .pending_hero_speeches
-                        .push((owner, crate::engine::melee::HERO_PROVOKE_VIP));
-                    return false;
-                }
                 // CROUCH_UP / CROUCH_DOWN: reject when swordfighting.
                 // When the PC is doing a non-movement sequence element,
                 // first Stop(PREFERENCE) so the posture change can take
