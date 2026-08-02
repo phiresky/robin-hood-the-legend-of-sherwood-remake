@@ -559,6 +559,14 @@ impl EnemyAi {
         // position is closer to our chosen target than ours is.
         let mut friends_nearer_to_enemy = 0_u16;
         if let Some(target) = ctx.entity_view(self.base.primary_target) {
+            // Original deliberately mixes two position APIs here.  The
+            // reference distance is `SquareDistance(primary_target)`, which
+            // compares the actors' literal positions with the isometric Y
+            // stretch.  Each friend is then compared through
+            // `Position(friend) - Position(primary_target)`: those calls
+            // forecast movement/door destinations and use the raw map norm.
+            // Using the current camp-snapshot positions for both sides loses
+            // allies whose active movement already ends beside the target.
             let my_dx = ctx.position.x - target.position.x;
             let my_dy = (ctx.position.y - target.position.y)
                 * crate::position_interface::INVERSE_ASPECT_RATIO;
@@ -586,9 +594,18 @@ impl EnemyAi {
                     friends_nearer_to_enemy = friends_nearer_to_enemy.saturating_add(1);
                     continue;
                 }
-                let dx = friend.position.x - target.position.x;
-                let dy = (friend.position.y - target.position.y)
-                    * crate::position_interface::INVERSE_ASPECT_RATIO;
+                let friend_position = ctx
+                    .entity_view(friend.handle)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "BattleDecisions friend {} disappeared from the AI entity view",
+                            friend.handle
+                        )
+                    })
+                    .forecasted_destination;
+                let target_position = target.forecasted_destination;
+                let dx = friend_position.x - target_position.x;
+                let dy = friend_position.y - target_position.y;
                 if dx * dx + dy * dy < my_target_sq {
                     friends_nearer_to_enemy = friends_nearer_to_enemy.saturating_add(1);
                 }
