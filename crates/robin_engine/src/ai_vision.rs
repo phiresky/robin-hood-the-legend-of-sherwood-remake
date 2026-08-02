@@ -369,7 +369,7 @@ pub fn compute_visibility_with_effective_radius(
     // process; the branch is wired anyway so future friendly-AI
     // ports get correct behaviour for free.
     if q.forest_180_degree_view {
-        return if is_detecting_180_degrees(q) {
+        return if is_detecting_180_degrees(q, effective_view_radius) {
             1.0
         } else {
             0.0
@@ -703,7 +703,10 @@ fn los_clear_for_detection(
 /// Merry-men forest-level 180° view: vision is a flat 180° forward
 /// half-plane bounded by the view radius — no narrow cone, no distance
 /// curve.
-fn is_detecting_180_degrees(q: &VisibilityQuery<'_>) -> bool {
+fn is_detecting_180_degrees(
+    q: &VisibilityQuery<'_>,
+    effective_view_radius: impl FnOnce() -> f32,
+) -> bool {
     let dx = q.target_world.x - q.viewer_world.x;
     let dy = q.target_world.y - q.viewer_world.y;
     let sy = dy * INVERSE_ASPECT_RATIO;
@@ -718,14 +721,14 @@ fn is_detecting_180_degrees(q: &VisibilityQuery<'_>) -> bool {
     // the viewer.  If so, return detected immediately, with no LOS
     // check.
     if sqr_distance < 50.0 * 50.0 {
-        let (fx, fy) = q.view_forward;
-        // Stretch the direction vector Y to match the view vector's
-        // aspect-ratio-stretched coordinate space.
-        let sfx = fx;
-        let sfy = fy * INVERSE_ASPECT_RATIO;
-        let fwd_len = dx * sfx + sy * sfy;
-        let fc_x = sfx * fwd_len;
-        let fc_y = sfy * fwd_len;
+        // Original uses GetDirectionVector(), not the independently mutable
+        // RefreshView direction. GetDirectionVector's map-space Y is already
+        // compressed by ASPECT_RATIO, then this function expands it again,
+        // leaving the ordinary unit body vector in stretched coordinates.
+        let (body_x, body_y) = sector_to_forward(q.viewer_direction);
+        let fwd_len = dx * body_x + sy * body_y;
+        let fc_x = body_x * fwd_len;
+        let fc_y = body_y * fwd_len;
         let perp_sq = (dx - fc_x) * (dx - fc_x) + (sy - fc_y) * (sy - fc_y);
         if perp_sq >= fwd_len {
             return true;
@@ -733,8 +736,8 @@ fn is_detecting_180_degrees(q: &VisibilityQuery<'_>) -> bool {
     }
 
     // 180° forward: dot product with view direction ≥ 0.
-    let (fx, fy) = q.view_forward;
-    if dx * fx + sy * fy < 0.0 {
+    let (body_x, body_y) = sector_to_forward(q.viewer_direction);
+    if dx * body_x + sy * body_y < 0.0 {
         return false;
     }
 
@@ -742,7 +745,10 @@ fn is_detecting_180_degrees(q: &VisibilityQuery<'_>) -> bool {
     // (night/fog modulation + obstacle-projection shrink).  Without
     // this, a Royalist NPC on a dark/foggy forest level would detect
     // Lacklandist targets at the full unmodulated radius.
-    if sqr_distance > q.effective_view_radius * q.effective_view_radius {
+    // Keep this lazy: Original does not call ComputeViewRadius for a target
+    // rejected by the full-radius, near-side, or forward-halfplane gates.
+    let effective_view_radius = effective_view_radius();
+    if sqr_distance > effective_view_radius * effective_view_radius {
         return false;
     }
 
@@ -1755,6 +1761,46 @@ mod tests {
         let mut q = query(pt(0.0, 0.0), 4, pt(-100.0, 0.0), &[]);
         q.forest_180_degree_view = true;
         assert_eq!(compute_visibility(&q), 0.0);
+    }
+
+    #[test]
+    fn forest_180_degree_view_uses_body_not_mutable_view_direction() {
+        let mut q = query(pt(0.0, 0.0), 4, pt(100.0, 0.0), &[]);
+        q.forest_180_degree_view = true;
+        // The body faces east while RefreshView's independently mutable cone
+        // faces west. Original IsDetecting180Degrees uses GetDirectionVector,
+        // so the eastward target remains in front.
+        q.view_forward = sector_to_forward(12);
+        assert_eq!(compute_visibility(&q), 1.0);
+    }
+
+    #[test]
+    fn forest_180_degree_view_computes_effective_radius_at_original_boundary() {
+        use std::cell::Cell;
+
+        let calls = Cell::new(0);
+        let mut behind = query(pt(0.0, 0.0), 4, pt(-100.0, 0.0), &[]);
+        behind.forest_180_degree_view = true;
+        assert_eq!(
+            compute_visibility_with_effective_radius(&behind, || {
+                calls.set(calls.get() + 1);
+                50.0
+            }),
+            0.0
+        );
+        assert_eq!(calls.get(), 0, "behind targets skip ComputeViewRadius");
+
+        let mut ahead = query(pt(0.0, 0.0), 4, pt(100.0, 0.0), &[]);
+        ahead.forest_180_degree_view = true;
+        assert_eq!(
+            compute_visibility_with_effective_radius(&ahead, || {
+                calls.set(calls.get() + 1);
+                // Models a night/fog or obstacle-projection radius shrink.
+                50.0
+            }),
+            0.0
+        );
+        assert_eq!(calls.get(), 1, "forward targets compute the radius once");
     }
 
     #[test]

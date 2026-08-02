@@ -3695,6 +3695,13 @@ ordinary forward cone. The periodic visibility query now uses the literal
 forest-and-camp predicate for every Royalist; a focused regression keeps rider
 state out of that decision entirely.
 
+The specialized 180-degree query also follows its own Original geometry. Its
+forward and very-near side tests use the actor's body `GetDirectionVector`, not
+the independently animated look/stare cone direction. Only after the
+full-radius and forward gates accept a target does it lazily call
+`ComputeViewRadius`, preserving both night/fog and obstacle-plane radius
+shrinking and the observable owner-local cache-call boundary.
+
 ### Legacy AI adoption restores both saved seek positions
 
 Original saves serialize both `mposSeekPosition` and
