@@ -2299,6 +2299,10 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         }));
         let actual_visibility_queries =
             robin_engine::sight_obstacle::take_parity_visibility_capture();
+        // Restart immediately so post-frame work and the next frame's
+        // director/input/sound prefix are attributed to that next frame,
+        // matching the Original recorder's frame envelope.
+        robin_engine::sight_obstacle::begin_parity_visibility_capture();
         let actual_movement_steps =
             robin_engine::movement_diagnostics::take_parity_movement_capture();
         let actual_move_box_extractions =
