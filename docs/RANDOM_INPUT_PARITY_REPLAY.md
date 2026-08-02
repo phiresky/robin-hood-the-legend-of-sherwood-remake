@@ -2843,6 +2843,21 @@ validity now resolves that exact description through the shared checked
 helper, matching the other ability paths and supporting duplicate profile
 indices throughout the campaign rather than special-casing Eat or this PC.
 
+### Already-arrived movement does not rewrite position
+
+H12 Continue replay 013 reached a `MoveOk` whose destination was already the
+actor's exact map position. Rust consumed the order but also reapplied that
+map point. The actor had been loaded with a legacy 3D position one ULP away
+from a fresh projection through its sloped plane, so the redundant projection
+made `IsMoving` true for one frame even though its map position never changed.
+
+Original's ordinary `PerformMotion` goal snap is nested under `if (bMoving)`;
+the `TillLastFrame` branch likewise requires nonzero distance and increment.
+Rust now snaps an undeviated zero-tolerance arrival only after committing a
+movement step. Orders that begin at their goal still terminate normally but
+preserve the existing coordinates. This is general movement lifecycle parity,
+not a replay- or actor-specific position exception.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

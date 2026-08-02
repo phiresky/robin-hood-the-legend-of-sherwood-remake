@@ -627,6 +627,19 @@ fn stationary_motion_waits(speed: f32, tolerance_arrival: bool, distance: f32) -
     speed <= 0.0 && !tolerance_arrival && distance > f32::EPSILON
 }
 
+/// Original only performs the exact zero-tolerance goal snap from the
+/// post-movement arrival branches. An order which starts at its goal is
+/// consumed without rewriting the actor's coordinates.
+#[inline]
+fn should_snap_arrival(
+    arrived_after_committed_step: bool,
+    tolerance_arrival: bool,
+    order_tolerance: f32,
+    deviated: bool,
+) -> bool {
+    arrived_after_committed_step && !tolerance_arrival && order_tolerance == 0.0 && !deviated
+}
+
 /// Motion state observed by the Original Execute arm after `PerformSeek`.
 ///
 /// Entity-target `PerformSeek` consumes non-terminal sprite results and returns
@@ -7942,6 +7955,7 @@ impl EngineInner {
             // IsGoalReached. Re-enter the shared tail after that commit while
             // retaining (not recomputing) the pre-motion seek predicate.
             let mut post_step_arrival = dist <= f32::EPSILON || tolerance_arrival;
+            let mut arrived_after_committed_step = false;
             'arrival: loop {
                 if post_step_arrival {
                     // Original PerformMotion/PerformSeek returns TERMINATED
@@ -7954,11 +7968,17 @@ impl EngineInner {
                     if is_sword_motion {
                         sword_movement_terminations.push(entity_id);
                     }
-                    // Reached waypoint — snap to it and advance
-                    if !tolerance_arrival
-                        && order_tolerance == 0.0
-                        && !entity.position_iface().is_deviated()
-                    {
+                    // Reached waypoint — snap to it and advance. Original's
+                    // ordinary PerformMotion snap lives inside `if (bMoving)`;
+                    // its TillLastFrame equivalent requires nonzero distance
+                    // and increment. If an order starts at its exact goal,
+                    // consume it without needlessly recomputing map -> 3D.
+                    if should_snap_arrival(
+                        arrived_after_committed_step,
+                        tolerance_arrival,
+                        order_tolerance,
+                        entity.position_iface().is_deviated(),
+                    ) {
                         entity
                             .element_data_mut()
                             .set_position_map(crate::coordinates::MapPoint {
@@ -8540,6 +8560,7 @@ impl EngineInner {
                             .unwrap_or(false);
                     post_step_arrival = movement_goal_reached || tolerance_arrival;
                     if post_step_arrival {
+                        arrived_after_committed_step = true;
                         continue 'arrival;
                     }
                     break 'arrival;
@@ -11245,6 +11266,20 @@ mod movement_transition_state_tests {
             second_order_id,
             "the terminated transition must advance to its same-action successor"
         );
+    }
+}
+
+#[cfg(test)]
+mod arrival_snap_tests {
+    use super::should_snap_arrival;
+
+    #[test]
+    fn exact_goal_without_a_committed_step_does_not_snap() {
+        assert!(!should_snap_arrival(false, false, 0.0, false));
+        assert!(should_snap_arrival(true, false, 0.0, false));
+        assert!(!should_snap_arrival(true, true, 0.0, false));
+        assert!(!should_snap_arrival(true, false, 1.0, false));
+        assert!(!should_snap_arrival(true, false, 0.0, true));
     }
 }
 
