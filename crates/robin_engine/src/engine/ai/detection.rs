@@ -359,6 +359,29 @@ fn missed_friend_or_beggar_target_blocked(dead: bool, unconscious: bool) -> bool
     dead || unconscious
 }
 
+fn apply_enemy_beggar_disguise(
+    viewer_camp: Camp,
+    target_is_pc: bool,
+    got_beggar_trick: &mut bool,
+    order_type: crate::order::OrderType,
+    visibility: f32,
+) -> f32 {
+    if viewer_camp != Camp::Lacklandists || !target_is_pc || *got_beggar_trick || visibility <= 0.0
+    {
+        return visibility;
+    }
+
+    match order_type {
+        crate::order::OrderType::SimulatingBeggar => 0.0,
+        crate::order::OrderType::TransitionWaitingUprightSimulatingBeggar
+        | crate::order::OrderType::TransitionSimulatingBeggarWaitingUpright => {
+            *got_beggar_trick = true;
+            visibility
+        }
+        _ => visibility,
+    }
+}
+
 /// Original `RHElementActorNPC::HandlePredetection` shadow-edge update.
 ///
 /// The shadow threshold is tested against the suspect accumulator as it stood
@@ -1961,23 +1984,13 @@ impl EngineInner {
                 //     stays > 0 so the sighting still commits this frame.
                 // Once the flag is true the NPC sees through future
                 // beggar disguises permanently (per-NPC, not global).
-                if viewer.camp == Camp::Lacklandists
-                    && target.is_pc
-                    && !got_beggar_trick
-                    && visibility > 0.0
-                {
-                    use crate::order::OrderType;
-                    match target.order_type {
-                        OrderType::SimulatingBeggar => {
-                            visibility = 0.0;
-                        }
-                        OrderType::TransitionWaitingUprightSimulatingBeggar
-                        | OrderType::TransitionSimulatingBeggarWaitingUpright => {
-                            got_beggar_trick = true;
-                        }
-                        _ => {}
-                    }
-                }
+                visibility = apply_enemy_beggar_disguise(
+                    viewer.camp,
+                    target.is_pc,
+                    &mut got_beggar_trick,
+                    target.order_type,
+                    visibility,
+                );
 
                 // Sharpness depends on posture.  Leaning out uses
                 // 10x faster detection (200 vs 20).
@@ -2042,13 +2055,11 @@ impl EngineInner {
                 // Single-field update.  Next frame's edge-trigger
                 // reads this value directly.
                 det.seen_now = is_visible;
-                // Store the post-frequency / post-detection-speed
-                // visibility.  Only update on gate-open frames;
-                // closed-gate frames re-read the cached value above
-                // without overwriting it.
-                if gate_open {
-                    det.last_visibility = visibility;
-                }
+                // Original's outer RefreshDetection loop writes the final
+                // wrapper result on every scanned entry. Eligible closed
+                // cadence reuses the same value, while the beggar-disguise
+                // post-filter must be able to replace that cached value by 0.
+                det.last_visibility = visibility;
                 // Original updates `muwMaximalVisibility` from the integer
                 // sharpness returned after ComputeVisibility has reused a
                 // detectable's cached visibility on closed-cadence frames.
@@ -4058,6 +4069,30 @@ mod tests {
     use super::*;
     use crate::ai::{Position, Substate};
     use crate::element::Posture;
+
+    #[test]
+    fn closed_cadence_beggar_disguise_turns_reused_visibility_into_cached_zero() {
+        let mut got_beggar_trick = false;
+        let visibility = apply_enemy_beggar_disguise(
+            Camp::Lacklandists,
+            true,
+            &mut got_beggar_trick,
+            crate::order::OrderType::SimulatingBeggar,
+            16.0,
+        );
+        assert_eq!(visibility, 0.0);
+        assert!(!got_beggar_trick);
+
+        let visibility = apply_enemy_beggar_disguise(
+            Camp::Lacklandists,
+            true,
+            &mut got_beggar_trick,
+            crate::order::OrderType::TransitionWaitingUprightSimulatingBeggar,
+            16.0,
+        );
+        assert_eq!(visibility, 16.0);
+        assert!(got_beggar_trick);
+    }
 
     #[test]
     fn missed_friend_and_beggar_reject_dead_or_unconscious_before_cadence() {

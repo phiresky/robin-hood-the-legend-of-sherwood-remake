@@ -1536,6 +1536,33 @@ fn vec_angle(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn view_radius_cache_is_one_last_writer_per_surface_and_frame() {
+        let first = EntityId::from(crate::entity_id::SoldierId(7));
+        let second = EntityId::from(crate::entity_id::SoldierId(9));
+        let obstacle = ObstacleHandle::new(3).unwrap();
+        let mut cache = ViewRadiusCache::default();
+
+        cache.set(Some(obstacle), first, 40, 125.0);
+        assert_eq!(cache.get(Some(obstacle), first, 40), Some(125.0));
+        assert_eq!(cache.get(Some(obstacle), first, 41), None);
+
+        cache.set(Some(obstacle), second, 40, 90.0);
+        assert_eq!(cache.get(Some(obstacle), first, 40), None);
+        assert_eq!(cache.get(Some(obstacle), second, 40), Some(90.0));
+    }
+
+    #[test]
+    fn view_radius_cache_zero_is_a_miss_but_remains_last_writer_state() {
+        let viewer = EntityId::from(crate::entity_id::CivilianId(12));
+        let mut cache = ViewRadiusCache::default();
+
+        cache.set(None, viewer, 55, 0.0);
+
+        assert_eq!(cache.get(None, viewer, 55), None);
+        assert_eq!(cache.ground.unwrap().viewer, viewer);
+    }
+
     const NO_OBSTACLES: &[SightObstacle] = &[];
 
     fn pt(x: f32, y: f32) -> MapPoint {

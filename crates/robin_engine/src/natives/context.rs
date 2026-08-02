@@ -119,7 +119,7 @@ impl<'a> NativeSessionCapabilities<'a> {
         self
     }
 
-    pub fn with_view_radius_cache(
+    pub(crate) fn with_view_radius_cache(
         mut self,
         cache: &'a mut crate::ai_vision::ViewRadiusCache,
     ) -> Self {

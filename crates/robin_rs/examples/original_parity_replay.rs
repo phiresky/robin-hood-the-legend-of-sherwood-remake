@@ -1363,6 +1363,7 @@ struct TraceEngineState {
     sequence_manager: TraceJsonValue,
     script_runtime: TraceJsonValue,
     pathfinder: TraceJsonValue,
+    view_radius_cache: TraceJsonValue,
     failed_path_requests: Vec<TraceFailedPathRequest>,
 }
 
@@ -1434,8 +1435,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 14;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v14.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 15;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v15.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4778,6 +4779,7 @@ fn compare_engine_state(
     differences: &mut Vec<String>,
     expected: &TraceEngineState,
     engine: &Engine,
+    assets: &LevelAssets,
     entity_map: &EntityMap,
 ) {
     let actual = engine.parity_engine_state();
@@ -4832,6 +4834,16 @@ fn compare_engine_state(
         "frame.engine_state.pathfinder",
         &expected_pathfinder,
         &actual_pathfinder,
+        differences,
+    );
+
+    let mut expected_view_radius_cache = expected.view_radius_cache.to_json();
+    canonicalize_authoritative_snapshot(&mut expected_view_radius_cache, entity_map);
+    let actual_view_radius_cache = engine.parity_view_radius_cache_state(assets);
+    collect_json_differences(
+        "frame.engine_state.view_radius_cache",
+        &expected_view_radius_cache,
+        &actual_view_radius_cache,
         differences,
     );
 
@@ -4942,7 +4954,7 @@ fn compare_frame(
         collect_json_differences("frame.campaign", &expected, &actual, &mut differences);
     }
     if let Some(expected) = &frame.engine_state {
-        compare_engine_state(&mut differences, expected, engine, entity_map);
+        compare_engine_state(&mut differences, expected, engine, assets, entity_map);
     }
 
     if frame.game_code != actual_game_code {
@@ -6082,6 +6094,7 @@ mod tests {
                 "area_states": [],
                 "requests": []
             },
+            "view_radius_cache": {"frame": 0, "entries": []},
             "failed_path_requests": []
         });
         let schema_thirteen: TraceFrame = serde_json::from_value(schema_thirteen_json).unwrap();

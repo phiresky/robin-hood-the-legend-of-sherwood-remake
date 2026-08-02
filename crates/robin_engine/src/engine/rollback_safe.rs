@@ -581,6 +581,89 @@ impl Engine {
         })
     }
 
+    /// Current-frame, behaviorally reusable `ComputeViewRadius` entries.
+    /// Stale entries and zero-radius writes are omitted because Original's
+    /// getter treats both as misses. Projection surfaces use their ordinal in
+    /// Original's projection-area array after the synthetic ground slot.
+    #[doc(hidden)]
+    pub fn parity_view_radius_cache_state(&self, assets: &LevelAssets) -> serde_json::Value {
+        use serde_json::json;
+
+        let frame = self.inner.control.frame_counter;
+        let cache = &self.inner.ai.view_radius_cache;
+        let entity = |id: EntityId| {
+            let kind = match id.kind() {
+                crate::element::EntityIdKind::Pc => "pc",
+                crate::element::EntityIdKind::Soldier => "soldier",
+                crate::element::EntityIdKind::Civilian => "civilian",
+                crate::element::EntityIdKind::Fx => "fx",
+                crate::element::EntityIdKind::Target => "target",
+                crate::element::EntityIdKind::Bonus => "bonus",
+                crate::element::EntityIdKind::Scroll => "scroll",
+                crate::element::EntityIdKind::Projectile => "projectile",
+                crate::element::EntityIdKind::Net => "net",
+            };
+            json!({ "kind": kind, "index": id.index() })
+        };
+        let entry = |surface: serde_json::Value, value: crate::ai_vision::ViewRadiusCacheEntry| {
+            assert!(
+                value.radius.is_finite(),
+                "view-radius cache contains non-finite radius for {:?}",
+                value.viewer
+            );
+            json!({
+                "surface": surface,
+                "viewer": entity(value.viewer),
+                "radius": { "bits": value.radius.to_bits(), "value": value.radius },
+            })
+        };
+
+        let mut entries = Vec::new();
+        if let Some(value) = cache.ground
+            && value.frame == frame
+            && value.radius != 0.0
+        {
+            entries.push(entry(json!({ "kind": "ground" }), value));
+        }
+
+        let obstacles = self.inner.sight_obstacles(assets);
+        let mut projection_ordinal = 0usize;
+        for (raw_index, obstacle) in obstacles.iter_indexed() {
+            if !obstacle.is_projection_area() {
+                continue;
+            }
+            let ordinal = projection_ordinal;
+            projection_ordinal += 1;
+            let Some(value) = cache.obstacles.get(raw_index as usize).copied().flatten() else {
+                continue;
+            };
+            if value.frame != frame || value.radius == 0.0 {
+                continue;
+            }
+            entries.push(entry(
+                json!({ "kind": "projection", "index": ordinal }),
+                value,
+            ));
+        }
+        for (raw_index, value) in cache.obstacles.iter().enumerate() {
+            if value.is_some() && raw_index >= obstacles.len() {
+                panic!("view-radius cache references missing obstacle {raw_index}");
+            }
+            if let Some(value) = value
+                && value.frame == frame
+                && value.radius != 0.0
+                && !obstacles
+                    .get(raw_index)
+                    .expect("validated obstacle index")
+                    .is_projection_area()
+            {
+                panic!("view-radius cache references non-projection obstacle {raw_index}");
+            }
+        }
+
+        json!({ "frame": frame, "entries": entries })
+    }
+
     /// Persistent mission-VM state at a quiescent frame boundary. VM native
     /// handles are decoded to their semantic table kind/index; raw process or
     /// Rust handle encodings never enter the trace.

@@ -2153,6 +2153,15 @@ Beggar visibility to zero before cadence. Rust now walks those buckets with a
 camp-aware pre-cadence zero gate, so stale non-enemy state cannot survive a
 camp transition or save load. The shared gate regression includes Royalists.
 
+Enemy entries follow the same unconditional outer-loop cache write after the
+wrapper returns. This is observable on a closed cadence when an unrecognized
+PC reuses positive visibility but is currently in the resting beggar order:
+the disguise post-filter returns zero, and Original stores that zero rather
+than preserving the pre-disguise sample. Rust now writes every final Enemy
+wrapper result, preventing the old visibility from reappearing if the PC
+changes order before the next cadence. A focused regression feeds reused
+visibility through resting and transition beggar orders.
+
 ### Sequence-manager and script-VM boundary state
 
 Schema 13 now records the sequence manager's insertion-ordered sequences,
