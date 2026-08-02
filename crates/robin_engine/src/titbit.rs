@@ -473,6 +473,13 @@ impl TitbitManager {
         &self.titbits
     }
 
+    /// Original's serialized monotonic titbit-ID counter. Exposed only for
+    /// the strict parity snapshot; ordinary callers should use returned IDs.
+    #[doc(hidden)]
+    pub fn parity_current_id(&self) -> u32 {
+        self.current_id
+    }
+
     pub fn titbits_mut(&mut self) -> &mut Vec<TitbitInfo> {
         &mut self.titbits
     }

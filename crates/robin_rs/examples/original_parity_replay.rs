@@ -1368,6 +1368,7 @@ struct TraceEngineState {
     ai_global: TraceJsonValue,
     engine_runtime_roots: TraceJsonValue,
     world_interactables: TraceJsonValue,
+    titbit_manager: TraceJsonValue,
     failed_path_requests: Vec<TraceFailedPathRequest>,
 }
 
@@ -1439,8 +1440,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 19;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v19.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 20;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v20.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4891,6 +4892,16 @@ fn compare_engine_state(
         differences,
     );
 
+    let mut expected_titbit_manager = expected.titbit_manager.to_json();
+    canonicalize_authoritative_snapshot(&mut expected_titbit_manager, entity_map);
+    let actual_titbit_manager = engine.parity_titbit_manager_state();
+    collect_json_differences(
+        "frame.engine_state.titbit_manager",
+        &expected_titbit_manager,
+        &actual_titbit_manager,
+        differences,
+    );
+
     if expected.speed.bits != actual.speed.to_bits() {
         differences.push(format!(
             "frame.engine_state.speed: original={} (0x{:08x}) rust={} (0x{:08x})",
@@ -6182,6 +6193,10 @@ mod tests {
                 "patches": [],
                 "doors": [],
                 "sector_doors": []
+            },
+            "titbit_manager": {
+                "current_id": 0,
+                "titbits": []
             },
             "failed_path_requests": []
         });

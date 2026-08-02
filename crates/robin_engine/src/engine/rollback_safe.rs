@@ -926,6 +926,59 @@ impl Engine {
         json!({ "patches": patches, "doors": doors, "sector_doors": sector_doors })
     }
 
+    /// Original-serialized titbit-manager state. Render-only manager counters
+    /// are excluded, but every live titbit field is retained because existence,
+    /// lifetime, phase, and manager links participate in game logic.
+    #[doc(hidden)]
+    pub fn parity_titbit_manager_state(&self) -> serde_json::Value {
+        use serde_json::{Value, json};
+
+        let entity = |handle: crate::titbit::ElementHandle| {
+            if !handle.is_valid() {
+                return Value::Null;
+            }
+            let id = self
+                .inner
+                .entity_id_for_index(handle.0)
+                .unwrap_or_else(|| panic!("parity titbit references missing entity {}", handle.0));
+            let kind = match id.kind() {
+                crate::element::EntityIdKind::Pc => "pc",
+                crate::element::EntityIdKind::Soldier => "soldier",
+                crate::element::EntityIdKind::Civilian => "civilian",
+                crate::element::EntityIdKind::Fx => "fx",
+                crate::element::EntityIdKind::Target => "target",
+                crate::element::EntityIdKind::Bonus => "bonus",
+                crate::element::EntityIdKind::Scroll => "scroll",
+                crate::element::EntityIdKind::Projectile => "projectile",
+                crate::element::EntityIdKind::Net => "net",
+            };
+            json!({ "kind": kind, "index": id.index() })
+        };
+        let float = |value: f32| json!({ "bits": value.to_bits(), "value": value });
+        let manager = &self.inner.feedback.titbit_manager;
+        json!({
+            "current_id": manager.parity_current_id(),
+            "titbits": manager.titbits().iter().map(|titbit| json!({
+                "kind": titbit.kind as u32,
+                "frame_count": titbit.frame_count,
+                "sprite_frame": titbit.sprite_frame,
+                "sprite_row": titbit.sprite_row,
+                "phase": titbit.phase,
+                "display_order": float(titbit.display_order),
+                "layer": titbit.layer,
+                "blinking": titbit.blinking,
+                "id": titbit.id,
+                "element_supplier": entity(titbit.element_supplier),
+                "element_manager": entity(titbit.element_manager),
+                "position": {
+                    "x": float(titbit.position.x),
+                    "y": float(titbit.position.y),
+                    "z": float(titbit.position.z),
+                },
+            })).collect::<Vec<_>>(),
+        })
+    }
+
     /// Persistent mission-VM state at a quiescent frame boundary. VM native
     /// handles are decoded to their semantic table kind/index; raw process or
     /// Rust handle encodings never enter the trace.
@@ -2375,6 +2428,52 @@ mod tests {
         assert_eq!(state["doors"][0]["authorised_pc_direct"], 0x12);
         assert_eq!(state["doors"][0]["authorised_pc_indirect"], 0x34);
         assert_eq!(state["sector_doors"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn parity_titbits_preserves_serialized_manager_and_live_entry_fields() {
+        let mut inner = EngineInner::new();
+        let id = inner.feedback.titbit_manager.add_titbit(
+            crate::coordinates::WorldPoint3D::new(1.5, -2.0, 3.25),
+            4,
+            crate::titbit::TitbitKind::DangerPoint,
+            crate::titbit::ElementHandle::INVALID,
+            7,
+            crate::titbit::ElementHandle::INVALID,
+            false,
+            crate::titbit::INVALID_ID,
+            true,
+            None,
+            None,
+        );
+        let titbit = &mut inner.feedback.titbit_manager.titbits_mut()[0];
+        titbit.sprite_row = 8;
+        titbit.sprite_frame = 9;
+        titbit.frame_count = 10;
+        titbit.display_order = 11.5;
+        titbit.blinking = true;
+        let engine = Engine { inner };
+
+        let state = engine.parity_titbit_manager_state();
+        assert_eq!(state["current_id"], 1);
+        assert_eq!(state["titbits"][0]["kind"], 10);
+        assert_eq!(state["titbits"][0]["phase"], 7);
+        assert_eq!(state["titbits"][0]["sprite_row"], 8);
+        assert_eq!(state["titbits"][0]["sprite_frame"], 9);
+        assert_eq!(state["titbits"][0]["frame_count"], 10);
+        assert_eq!(
+            state["titbits"][0]["display_order"]["bits"],
+            11.5f32.to_bits()
+        );
+        assert_eq!(state["titbits"][0]["layer"], 4);
+        assert_eq!(state["titbits"][0]["blinking"], true);
+        assert_eq!(state["titbits"][0]["id"], id);
+        assert!(state["titbits"][0]["element_supplier"].is_null());
+        assert!(state["titbits"][0]["element_manager"].is_null());
+        assert_eq!(
+            state["titbits"][0]["position"]["x"]["bits"],
+            1.5f32.to_bits()
+        );
     }
 
     #[test]

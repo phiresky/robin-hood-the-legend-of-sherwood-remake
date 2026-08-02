@@ -2267,6 +2267,34 @@ Adding `engine_state.world_interactables` changes the native parity cache to
 version 19. Older schema-13 frames are rejected rather than compared without
 patch and door coverage.
 
+### Persistent titbit-manager state
+
+Schema 13 records Original's monotonic titbit ID counter and the complete live
+titbit list in its authoritative current manager order. Every
+Original-serialized entry field is retained: kind, lifetime frame count,
+sprite frame and row,
+phase, exact display-order float, layer, blinking flag, ID, position, and both
+the supplier and manager entity references. Entity pointers use the existing
+creation-order isomorphism rather than raw allocation addresses.
+
+Titbits are gameplay-relevant despite their visual presentation: queries and
+removals by kind, supplier, manager, and ID control locks, hidden indicators,
+emoticons, stun/work/speech feedback, and their later completion behavior.
+Dropping list order, link identity, or the next ID could therefore conceal a
+divergence that changes future simulation state.
+
+Original does not serialize the manager's blink counter, dotted-blink phase,
+current iteration index, or row-frame-count metadata, so those presentation
+and traversal caches are excluded. Ground marks are also intentionally
+excluded: Original serializes and ticks them, but the inspected readers only
+drive click-animation rendering and do not affect later simulation decisions.
+If an authoritative gameplay reader is found, ground-mark state must be added
+as a separately ordered projection.
+
+Adding `engine_state.titbit_manager` changes the native parity cache to version
+20. Older schema-13 frames are rejected rather than compared without titbit
+coverage.
+
 ### Sequence-manager and script-VM boundary state
 
 Schema 13 now records the sequence manager's insertion-ordered sequences,
