@@ -123,59 +123,11 @@ impl EngineInner {
                     .element_impossible(seq_id, elem_idx);
             }
             MovePathOutcome::Failed => {
-                let source = self.get_entity(owner).map(|e| {
-                    let elem = e.element_data();
-                    (
-                        elem.position_map(),
-                        elem.layer(),
-                        elem.sector().map(u16::from),
-                    )
-                });
-                let movement_meta = self
-                    .orders
-                    .sequence_manager
-                    .get_element(seq_id, elem_idx)
-                    .and_then(|elem| match &elem.data {
-                        crate::sequence::SequenceElementData::Movement {
-                            flags,
-                            line_id,
-                            gate_id,
-                            sector,
-                            layer,
-                            ..
-                        } => Some((*flags, *line_id, *gate_id, *sector, *layer)),
-                        _ => None,
-                    });
-                tracing::warn!(
-                    actor = ?owner,
-                    ?seq_id,
-                    elem_idx,
-                    dest_x = dest.x,
-                    dest_y = dest.y,
-                    src_x = source.map(|(p, _, _)| p.x),
-                    src_y = source.map(|(p, _, _)| p.y),
-                    src_layer = source.map(|(_, layer, _)| layer),
-                    src_sector = source.and_then(|(_, _, sector)| sector),
-                    elem_flags = ?movement_meta.map(|(flags, _, _, _, _)| flags),
-                    elem_line = ?movement_meta.and_then(|(_, line, _, _, _)| line),
-                    elem_gate = ?movement_meta.and_then(|(_, _, gate, _, _)| gate),
-                    elem_sector = ?movement_meta.and_then(|(_, _, _, sector, _)| sector),
-                    elem_layer = ?movement_meta.map(|(_, _, _, _, layer)| layer),
-                    action = ?move_action,
-                    frame = self.control.frame_counter,
-                    "Move path dispatch failed; queuing 100-frame failed_path timeout"
-                );
-                self.orders.failed_path_requests.push(
-                    crate::engine::movement::FailedPathRequest::synthetic(
-                        owner,
-                        seq_id,
-                        elem_idx,
-                        self.control.frame_counter,
-                    ),
-                );
-                self.orders
-                    .sequence_manager
-                    .element_in_progress(seq_id, elem_idx);
+                // `RHPathFinder::AddPathRequest` calls Stop + Wait when it
+                // cannot extract the actor, then returns without adding the
+                // request to either path queue. `try_dispatch_move_path`
+                // already performed those owner effects; there is no failed
+                // A* request to retain or time out here.
             }
         }
     }

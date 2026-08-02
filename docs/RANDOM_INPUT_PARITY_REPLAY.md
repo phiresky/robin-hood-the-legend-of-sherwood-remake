@@ -1941,6 +1941,29 @@ Coverage boundaries verified by the audit:
   visibility, speech, and line-state boundaries. Direct comparison of those
   internals would require additive recorder fields and fresh recordings.
 
+### Failed-path lifecycle and source extraction
+
+Schema 13 exposes the ordered failed-path timeout list, which uncovered two
+Rust-only states that cannot occur in the Original. `mListFailedPathRequests`
+receives an entry only after a real queued A* request completes with an empty
+path. Failure to extract an actor in `RHPathFinder::AddPathRequest` instead
+performs `Stop()` plus `Wait()` and returns without placing the request in
+either path list. Rust no longer fabricates a payload-less 100-frame timeout
+for that dispatch outcome; every `FailedPathRequest` now owns the exact
+authoritative `PendingPathRequest` that failed A*.
+
+The Original also applies its `IsPositionAutorized` / `FindAutorizedPosition`
+gate to every non-direct path request. Rust's old PassDoor, active-door-pass,
+and wall/ladder bypasses had no source counterpart and could change the
+request source and `bUseFirstPoint`. They have been removed. Door and lift
+authorization discrepancies must be fixed in the relevant grid state rather
+than hidden at path dispatch.
+
+Fresh Original `RHpathRequest` allocations are now value-initialized. This
+makes the otherwise-unused but serialized `uwSector`, and `ulTime` before a
+real failure stamps it, deterministic instead of allocator-dependent. Save
+loads still restore the exact bytes stored by the save.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

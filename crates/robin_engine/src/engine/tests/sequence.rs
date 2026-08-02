@@ -230,15 +230,12 @@ fn postponing_pathfinding_movement_restores_move_and_cancels_failure() {
         .orders
         .sequence_manager
         .element_in_progress(movement_sequence, 0);
-    engine
-        .orders
-        .failed_path_requests
-        .push(crate::engine::movement::FailedPathRequest::synthetic(
-            owner,
-            movement_sequence,
+    engine.orders.failed_path_requests.push(
+        crate::engine::movement::FailedPathRequest::from_pending(
+            crate::engine::movement::PendingPathRequest::test_request(owner, movement_sequence, 0),
             0,
-            0,
-        ));
+        ),
+    );
 
     let mut blocker = SequenceElement::new(1, Command::LeaveAttentiveMode, Some(owner));
     blocker.priority = SequencePriority::PostponeEverythingButInjuries;

@@ -40,6 +40,13 @@ fn movement_flags_force_direct_dispatch(flags: crate::sequence::MoveFlags) -> bo
         || flags.contains(crate::sequence::MoveFlags::STRAIGHT)
 }
 
+/// `RHPathFinder::AddPathRequest` runs this gate for every request it receives;
+/// command type and actor posture do not provide bypasses.
+#[inline]
+fn path_request_needs_source_extraction(direct_dispatch: bool, source_authorized: bool) -> bool {
+    !direct_dispatch && !source_authorized
+}
+
 #[cfg(test)]
 mod group_move_authorization_tests {
     use super::*;
@@ -826,14 +833,8 @@ pub(crate) struct FailedPathRequest {
     /// Universal frame counter at failure time.  Ages out at
     /// `first_fail_frame + 100`.
     pub(crate) first_fail_frame: u32,
-    /// Exact `RHpathRequest` payload retained for save/replay parity.
-    ///
-    /// Runtime failures produced by an actual A* request and all imported v48
-    /// failures populate this. A few Rust-only dispatch failures occur before
-    /// an Original request could be constructed and therefore use `None`.
-    /// TODO(path-dispatch): remove those synthetic timeout entries or give
-    /// them an explicit non-Original state instead of sharing this queue.
-    pub(crate) authoritative_request: Option<PendingPathRequest>,
+    /// Exact `RHpathRequest` payload retained by the Original timeout list.
+    pub(crate) request: PendingPathRequest,
 }
 
 impl FailedPathRequest {
@@ -843,22 +844,7 @@ impl FailedPathRequest {
             seq_id: request.seq_id,
             elem_idx: request.elem_idx,
             first_fail_frame,
-            authoritative_request: Some(request),
-        }
-    }
-
-    pub(crate) fn synthetic(
-        owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-        first_fail_frame: u32,
-    ) -> Self {
-        Self {
-            owner,
-            seq_id,
-            elem_idx,
-            first_fail_frame,
-            authoritative_request: None,
+            request,
         }
     }
 }
@@ -903,6 +889,38 @@ pub(crate) struct PendingPathRequest {
     pub(crate) elem_flags: crate::sequence::MoveFlags,
     pub(crate) sword_movement_context: bool,
     pub(crate) is_fast: bool,
+}
+
+#[cfg(test)]
+impl PendingPathRequest {
+    pub(crate) fn test_request(
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> Self {
+        Self {
+            restored_from_v48: false,
+            owner,
+            seq_id,
+            elem_idx,
+            source: MapPoint::new(10.0, 10.0),
+            dest: MapPoint::new(20.0, 20.0),
+            layer: 0,
+            sector: 0,
+            legacy_sector: 0,
+            half_diagonal_idx: 0,
+            use_first_point: false,
+            move_action: OrderType::WalkingUpright,
+            speed: crate::pathfinder::PathFinderSpeed::Medium,
+            reverse: false,
+            tolerance: 0.0,
+            antagonist: None,
+            is_pass_door: false,
+            elem_flags: crate::sequence::MoveFlags::empty(),
+            sword_movement_context: false,
+            is_fast: false,
+        }
+    }
 }
 
 fn parity_path_request_state(
@@ -1687,12 +1705,7 @@ impl EngineInner {
             .failed_path_requests
             .iter()
             .map(|failed| {
-                let request = failed.authoritative_request.as_ref().unwrap_or_else(|| {
-                    panic!(
-                        "failed-path parity snapshot found synthetic Rust-only timeout for {:?}",
-                        failed.owner
-                    )
-                });
+                let request = &failed.request;
                 assert_eq!(
                     failed.owner, request.owner,
                     "failed-path timeout owner disagrees with retained request"
@@ -10217,15 +10230,7 @@ impl EngineInner {
         // Read entity position / layer / sector / pathfinder index +
         // current move box + half diagonal (half diagonal drives the
         // thick-reachability pre-check below).
-        let (
-            mut source,
-            entity_layer,
-            entity_sector,
-            pf_idx,
-            mut move_box_map,
-            half_diagonal,
-            actor_passing_door,
-        ) = {
+        let (mut source, entity_layer, entity_sector, pf_idx, mut move_box_map, half_diagonal) = {
             let entity = match self.world.entities.get(owner) {
                 Some(e) => e,
                 _ => return MovePathOutcome::ActorGone,
@@ -10243,9 +10248,6 @@ impl EngineInner {
                 pf_idx,
                 *pi.get_move_box_map(),
                 pi.get_half_diagonal(),
-                entity
-                    .actor_data()
-                    .is_some_and(|actor| actor.active_door_pass.is_some()),
             )
         };
 
@@ -10303,15 +10305,6 @@ impl EngineInner {
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .is_some_and(|e| e.command == crate::element::Command::PassDoor);
-        let source_is_lift_rail = self
-            .grid_sector_by_number(crate::sector::SectorNumber::new(entity_sector as i16))
-            .and_then(|gs| gs.lift_type)
-            .is_some_and(|lt| {
-                matches!(
-                    lt,
-                    crate::sector::LiftType::Wall | crate::sector::LiftType::Ladder
-                )
-            });
         let straight_ok = movement_flags_force_direct_dispatch(move_flags)
             || self
                 .world
@@ -10337,14 +10330,12 @@ impl EngineInner {
         // this handles "actor must always stay on an authorized
         // position" by pre-snapping the request source.
         let mut use_first_point = false;
-        let skip_source_extraction = is_pass_door || actor_passing_door || source_is_lift_rail;
-        if !straight_ok
-            && !skip_source_extraction
-            && !self
+        let source_authorized = straight_ok
+            || self
                 .world
                 .fast_grid
-                .is_position_authorized(&move_box_map, entity_layer)
-        {
+                .is_position_authorized(&move_box_map, entity_layer);
+        if path_request_needs_source_extraction(straight_ok, source_authorized) {
             let mut box_element = move_box_map;
             if !self
                 .world
@@ -11032,6 +11023,13 @@ mod path_request_timing_tests {
         assert!(movement_flags_force_direct_dispatch(MoveFlags::STRAIGHT));
     }
 
+    #[test]
+    fn every_non_direct_request_uses_the_source_extraction_gate() {
+        assert!(path_request_needs_source_extraction(false, false));
+        assert!(!path_request_needs_source_extraction(false, true));
+        assert!(!path_request_needs_source_extraction(true, false));
+    }
+
     fn request(owner: EntityId, speed: crate::pathfinder::PathFinderSpeed) -> PendingPathRequest {
         PendingPathRequest {
             restored_from_v48: false,
@@ -11185,7 +11183,10 @@ mod path_request_timing_tests {
         element.command = crate::element::Command::MoveWaiting;
         orders
             .failed_path_requests
-            .push(FailedPathRequest::synthetic(owner, sequence_id, 0, 10));
+            .push(FailedPathRequest::from_pending(
+                PendingPathRequest::test_request(owner, sequence_id, 0),
+                10,
+            ));
 
         let at_boundary =
             MovementContext::new(110, &mut world, &mut orders).take_expired_failures();

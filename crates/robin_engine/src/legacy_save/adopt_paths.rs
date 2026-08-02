@@ -609,14 +609,7 @@ mod tests {
         let first_request = request(first, 0x1234);
         let failed = FailedPathRequest::from_pending(first_request.clone(), 0x8765_4321);
         assert_eq!(failed.first_fail_frame, 0x8765_4321);
-        assert_eq!(
-            failed
-                .authoritative_request
-                .as_ref()
-                .expect("exact failed payload")
-                .legacy_sector,
-            0x1234
-        );
+        assert_eq!(failed.request.legacy_sector, 0x1234);
 
         let queue = PendingPathRequestQueue::restore_v48_waiting(vec![
             first_request,

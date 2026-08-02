@@ -415,25 +415,9 @@ impl EngineInner {
                             .element_impossible(seq_id, elem_idx);
                     }
                     MovePathOutcome::Failed => {
-                        tracing::warn!(
-                            actor = ?id,
-                            ?seq_id,
-                            elem_idx,
-                            dest_x = dest.x,
-                            dest_y = dest.y,
-                            action = ?action,
-                            frame = self.control.frame_counter,
-                            "Patch-triggered move retranslation failed; queuing failed_path timeout"
-                        );
-                        // Re-translate failed — slide into MOVE_WAITING.
-                        self.orders.failed_path_requests.push(
-                            crate::engine::movement::FailedPathRequest::synthetic(
-                                id,
-                                seq_id,
-                                elem_idx,
-                                self.control.frame_counter,
-                            ),
-                        );
+                        // Source extraction failure already performed the
+                        // Original Stop + Wait effects and never enters the
+                        // failed-A* timeout list.
                     }
                 }
             }
