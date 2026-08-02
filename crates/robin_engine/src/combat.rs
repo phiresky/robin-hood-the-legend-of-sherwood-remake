@@ -1175,6 +1175,23 @@ fn estimate_damage_of_this_strike(
     damage + concussion
 }
 
+/// Direction used by `RHSword::GetProtection` during strike estimation.
+///
+/// Sword hit arcs use projected map coordinates with the shipping
+/// `INVERSE_SWORDFIGHT_ASPECT_RATIO` (1.0), but armor localization is a
+/// separate calculation in Original: `GetProtection` subtracts the actors'
+/// unprojected `GetPositionGround()` points and calls
+/// `GetSector0to15(ASPECT_RATIO)`. Reconstruct world Y from map Y + elevation
+/// before applying that ordinary isometric sector classifier.
+fn protection_direction_to_attacker(attacker_elevation: f32, victim: &NearbyVictim<'_>) -> i16 {
+    let victim_to_attacker_x = -victim.dx;
+    let victim_to_attacker_world_y = -victim.dy_stretched + attacker_elevation - victim.elevation;
+    crate::position_interface::vector_to_sector_0_to_15_iso(
+        victim_to_attacker_x,
+        victim_to_attacker_world_y,
+    )
+}
+
 /// Estimate total damage of a strike against all nearby victims.
 ///
 /// Returns `(overall_damage, num_victims)` where `num_victims == -1`
@@ -1220,9 +1237,7 @@ fn estimate_damage_of_sword_strike(
             return (0, -1);
         }
 
-        // `direction_sector` runs attacker→victim; `get_sword_protection`
-        // expects defender→attacker, so invert by 8.
-        let victim_to_attacker = ((victim.direction_sector as i16) + 8) & 15;
+        let victim_to_attacker = protection_direction_to_attacker(attacker_elevation, victim);
         let dmg = estimate_damage_of_this_strike(
             attacker_profile,
             strike,
@@ -1981,6 +1996,32 @@ mod tests {
             defender_higher, 11,
             "defender higher than attacker → baseline lookup",
         );
+    }
+
+    #[test]
+    fn estimated_protection_uses_ground_space_isometric_direction() {
+        // Geometry from the Save063 sword-selection frontier. The sword arc
+        // sees the un-isometric projected-map direction (sector 1), while
+        // RHSword::GetProtection reconstructs ground/world Y and applies the
+        // ordinary ASPECT_RATIO classifier (the reverse direction is sector
+        // 8, not the arc sector rotated by 8 to sector 9).
+        let victim = NearbyVictim {
+            eligible_for_regular_strikes: true,
+            dx: 8.706_726,
+            dy_stretched: -28.601_807,
+            distance: 29.896,
+            direction_sector: 1,
+            camp: Camp::Lacklandists,
+            facing_direction: 8,
+            elevation: 90.001_01,
+            life_points: 150,
+            defender_profile: None,
+            is_primary_target: false,
+            is_walking_with_sword: false,
+        };
+
+        assert_eq!(protection_direction_to_attacker(90.001_01, &victim), 8);
+        assert_eq!(((victim.direction_sector as i16) + 8) & 15, 9);
     }
 
     // ── Tie-up ─────────────────────────────────────────────────────

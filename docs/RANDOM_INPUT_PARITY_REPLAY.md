@@ -3369,6 +3369,24 @@ like the existing proactive-PC and NPC parade paths. The change applies to all
 PC auto-parry/counter-strike decisions and contains no replay-specific IDs,
 frames, commands, or RNG values.
 
+### Estimated armor direction uses ground-space projection
+
+Savegame 063 replay 001 next diverged at frame 1288 when unselected PC 298's
+autonomous sword proposal chose thrust D in Rust while Original chose thrust
+A. The principal opponent and a second active soldier were close enough for
+the lateral-strike scorer, so armor localization changed the relative scores.
+
+Original deliberately uses two coordinate conventions in this calculation.
+Sword-hit arcs use projected map vectors stretched by
+`INVERSE_SWORDFIGHT_ASPECT_RATIO` (1.0 in the shipping build), while
+`RHSword::GetProtection` separately subtracts unprojected
+`GetPositionGround()` coordinates and calls `GetSector0to15(ASPECT_RATIO)`.
+Rust reused the arc sector, rotated by eight, for armor localization. Strike
+estimation now reconstructs defender-to-attacker ground/world Y from map Y
+and both elevations, then applies the ordinary isometric sector classifier.
+The shared strike selector therefore benefits for PCs, soldiers, proactive
+attacks, and reactive counter-strikes without any replay-specific choice.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
