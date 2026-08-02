@@ -478,6 +478,24 @@ impl Engine {
                 "locked": point.locked,
             })
         };
+        let known_strike_command = |strike: Option<crate::weapons::SwordStrike>| -> i32 {
+            use crate::{element::Command, weapons::SwordStrike};
+            match strike {
+                None => Command::Null as i32,
+                Some(SwordStrike::A) => Command::SwordstrikeThrustA as i32,
+                Some(SwordStrike::B) => Command::SwordstrikeThrustB as i32,
+                Some(SwordStrike::C) => Command::SwordstrikeThrustC as i32,
+                Some(SwordStrike::D) => Command::SwordstrikeThrustD as i32,
+                Some(SwordStrike::E) => Command::SwordstrikeThrustE as i32,
+                Some(SwordStrike::F) => Command::SwordstrikeThrustF as i32,
+                Some(SwordStrike::G) => Command::SwordstrikeThrustG as i32,
+                Some(SwordStrike::H) => Command::SwordstrikeThrustH as i32,
+                Some(SwordStrike::I) => Command::SwordstrikeThrustI as i32,
+                Some(other) => {
+                    panic!("parity enemy known-strike slot contains invalid strike {other:?}")
+                }
+            }
+        };
         let npc_ai = entity.npc_data().and_then(|npc| {
 			let ai = npc.ai_brain.base()?;
 			let handles = |values: &[u32]| {
@@ -664,6 +682,25 @@ impl Engine {
 					"phalanx_aborted": enemy.phalanx_aborted,
 					"changed_to_alert_path": enemy.changed_to_alert_path,
 					}).as_object().expect("parity enemy AI continuation must be an object").clone());
+					subclass
+						.as_object_mut()
+						.expect("parity enemy AI state must be an object")
+						.extend(json!({
+					"shooting_point": enemy.my_shooting_point.map(|(sector_index, point_index)| json!({
+						"sector_index": sector_index, "point_index": point_index,
+					})),
+					"archery_sector": enemy.my_archery_sector,
+					"archery_sector_index": enemy.my_archery_sector_index,
+					"archery_point_index": enemy.my_archery_point_index.0,
+					"archery_point_increment": enemy.my_archery_point_increment,
+					"enemy_seen_below": enemy.enemy_seen_below,
+					"enemy_had_this_elevation": enemy.enemy_had_this_elevation,
+					"known_enemy_strike_commands": [
+						known_strike_command(enemy.known_enemy_strike_1),
+						known_strike_command(enemy.known_enemy_strike_2),
+						known_strike_command(enemy.known_enemy_strike_3),
+					],
+					}).as_object().expect("parity enemy archery continuation must be an object").clone());
 					Some(subclass)
 				},
 				crate::element::AiBrain::None => None,

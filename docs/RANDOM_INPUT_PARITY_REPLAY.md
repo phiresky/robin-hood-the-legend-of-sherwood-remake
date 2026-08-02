@@ -2840,6 +2840,22 @@ Older raw traces omit only absent additive fields; recorded nulls and values
 are strict. The last patrol stimulus and archery reservation/strike state
 remain independent slices. The native cache version and suffix are v35.
 
+### Schema-v36 enemy archery continuation
+
+Enemy checkpoints now include the complete serialized archery tail: the
+reserved shooting point, assigned archery sector, scan indices/increment,
+relative-elevation observation, and three learned enemy-strike command slots.
+Shooting-point and sector pointers are resolved to the exact authored global
+archery array indices used by the Original serializer; an unregistered live
+pointer fails recording instead of producing a guessed identity.
+
+Rust converts its typed `SwordStrike` options back into the Original
+`RHcommand` domain (`NULL` or thrust A through I), rejecting strike variants
+that cannot inhabit these serialized slots. Older traces remove only missing
+additive keys; explicit null reservations and every present scalar/slot remain
+strict. The full patrol stimulus is the final mapped enemy serializer slice.
+The native cache version and suffix are v36.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,

@@ -1452,8 +1452,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 35;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v35.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 36;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v36.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -5073,6 +5073,14 @@ fn retain_recorded_entity_runtime_coverage(
             "shield_bearer_direction",
             "phalanx_aborted",
             "changed_to_alert_path",
+            "shooting_point",
+            "archery_sector",
+            "archery_sector_index",
+            "archery_point_index",
+            "archery_point_increment",
+            "enemy_seen_below",
+            "enemy_had_this_elevation",
+            "known_enemy_strike_commands",
         ] {
             if !expected_subclass.contains_key(field) {
                 actual_subclass.remove(field);
@@ -6639,7 +6647,7 @@ mod tests {
     }
 
     #[test]
-    fn old_enemy_snapshots_skip_only_absent_additive_v35_state() {
+    fn old_enemy_snapshots_skip_only_absent_additive_v36_state() {
         let expected = serde_json::json!({
             "npc_ai": {
                 "state": 3,
@@ -6705,7 +6713,15 @@ mod tests {
                     "my_line_jump": null,
                     "shield_bearer_direction": 0,
                     "phalanx_aborted": false,
-                    "changed_to_alert_path": false
+                    "changed_to_alert_path": false,
+                    "shooting_point": null,
+                    "archery_sector": null,
+                    "archery_sector_index": 0,
+                    "archery_point_index": 0,
+                    "archery_point_increment": 0,
+                    "enemy_seen_below": false,
+                    "enemy_had_this_elevation": 0,
+                    "known_enemy_strike_commands": [0, 0, 0]
                 }
             }
         });
