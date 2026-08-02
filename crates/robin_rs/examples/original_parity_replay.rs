@@ -1368,6 +1368,7 @@ struct TraceEngineState {
     ai_global: TraceJsonValue,
     engine_runtime_roots: TraceJsonValue,
     world_interactables: TraceJsonValue,
+    repulsive_points: TraceJsonValue,
     titbit_manager: TraceJsonValue,
     failed_path_requests: Vec<TraceFailedPathRequest>,
 }
@@ -1440,8 +1441,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 20;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v20.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 21;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v21.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4892,6 +4893,15 @@ fn compare_engine_state(
         differences,
     );
 
+    let expected_repulsive_points = expected.repulsive_points.to_json();
+    let actual_repulsive_points = engine.parity_repulsive_points_state();
+    collect_json_differences(
+        "frame.engine_state.repulsive_points",
+        &expected_repulsive_points,
+        &actual_repulsive_points,
+        differences,
+    );
+
     let mut expected_titbit_manager = expected.titbit_manager.to_json();
     canonicalize_authoritative_snapshot(&mut expected_titbit_manager, entity_map);
     let actual_titbit_manager = engine.parity_titbit_manager_state();
@@ -6193,6 +6203,10 @@ mod tests {
                 "patches": [],
                 "doors": [],
                 "sector_doors": []
+            },
+            "repulsive_points": {
+                "next_id": 0,
+                "points": []
             },
             "titbit_manager": {
                 "current_id": 0,

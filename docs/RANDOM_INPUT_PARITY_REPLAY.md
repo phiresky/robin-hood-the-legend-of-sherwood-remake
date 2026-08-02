@@ -2295,6 +2295,34 @@ Adding `engine_state.titbit_manager` changes the native parity cache to version
 20. Older schema-13 frames are rejected rather than compared without titbit
 coverage.
 
+### Persistent script repulsive-point state
+
+Schema 13 records Original FastGrid's script-created static repulsive points
+in exact vector order together with the identically ordered layer vector and
+the process-global next repulsive-point ID. Each point retains every field
+written by `RHRepulsivePoint::Serialize`: exact position, concavity, both
+action-field limits, action radius, force coefficients, radius, stable ID,
+and the four PC/soldier/civilian/animal affect flags. The paired layer is
+emitted on the same entry, and capture fails if the two Original vectors ever
+have different lengths.
+
+This state is simulation-authoritative. Movement gathers matching points by
+layer and actor kind before computing anti-collision deviation, while mission
+scripts retain the returned stable ID and later pass it to
+`DeleteRepulsivePoint`. A missing point, changed order or geometry, mismatched
+layer, or different next ID can therefore change both future movement and
+which point a later script removes.
+
+Mission-authored obstacle repulsion, entity-owned repulsive shapes, and other
+derived geometry are excluded from this manager projection: they are rebuilt
+from identical level/entity data and covered at their canonical owners. This
+field is limited to FastGrid's serialized dynamic vector and the serialized
+global allocator counter.
+
+Adding `engine_state.repulsive_points` changes the native parity cache to
+version 21. Older schema-13 frames are rejected rather than compared without
+dynamic repulsive-point coverage.
+
 ### Sequence-manager and script-VM boundary state
 
 Schema 13 now records the sequence manager's insertion-ordered sequences,

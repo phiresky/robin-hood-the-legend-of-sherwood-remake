@@ -926,6 +926,58 @@ impl Engine {
         json!({ "patches": patches, "doors": doors, "sector_doors": sector_doors })
     }
 
+    /// Ordered script-created repulsive points plus Original's process-global
+    /// next-ID counter. Mission-authored geometry is reconstructed from level
+    /// data and is not duplicated here.
+    #[doc(hidden)]
+    pub fn parity_repulsive_points_state(&self) -> serde_json::Value {
+        use serde_json::json;
+
+        let float = |value: f32| json!({ "bits": value.to_bits(), "value": value });
+        let points = self
+            .inner
+            .ai
+            .global
+            .repulsive_points
+            .iter()
+            .map(|point| {
+                let id = u32::try_from(point.id).unwrap_or_else(|_| {
+                    panic!("parity repulsive point has negative ID {}", point.id)
+                });
+                json!({
+                    "position": {
+                        "x": float(point.position.x),
+                        "y": float(point.position.y),
+                    },
+                    "concave": point.concave,
+                    "limit_left": {
+                        "x": float(point.limit_left.x),
+                        "y": float(point.limit_left.y),
+                    },
+                    "limit_right": {
+                        "x": float(point.limit_right.x),
+                        "y": float(point.limit_right.y),
+                    },
+                    "action_radius": float(point.action_radius),
+                    "force_a": float(point.force_a),
+                    "force_b": float(point.force_b),
+                    "radius": float(point.radius),
+                    "id": id,
+                    "affects_pcs": point.flags & 1 != 0,
+                    "affects_soldiers": point.flags & 2 != 0,
+                    "affects_civilians": point.flags & 4 != 0,
+                    "affects_animals": point.flags & 8 != 0,
+                    "layer": point.position.level,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        json!({
+            "next_id": self.inner.world.original_repulsive_point_counter,
+            "points": points,
+        })
+    }
+
     /// Original-serialized titbit-manager state. Render-only manager counters
     /// are excluded, but every live titbit field is retained because existence,
     /// lifetime, phase, and manager links participate in game logic.
@@ -2428,6 +2480,75 @@ mod tests {
         assert_eq!(state["doors"][0]["authorised_pc_direct"], 0x12);
         assert_eq!(state["doors"][0]["authorised_pc_indirect"], 0x34);
         assert_eq!(state["sector_doors"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn parity_repulsive_points_preserves_serialized_fields_order_and_next_id() {
+        let mut inner = EngineInner::new();
+        inner.world.original_repulsive_point_counter = 42;
+        let mut first = crate::ai::RepulsivePoint::new(
+            17,
+            crate::ai::Position {
+                x: 1.25,
+                y: -2.5,
+                sector: None,
+                level: 3,
+            },
+            4.0,
+            5.0,
+            1 | 4 | 8,
+        );
+        first.concave = true;
+        first.limit_left = crate::coordinates::MapVec::new(6.0, 7.0);
+        first.limit_right = crate::coordinates::MapVec::new(8.0, 9.0);
+        inner.ai.global.repulsive_points.push(first);
+        inner
+            .ai
+            .global
+            .repulsive_points
+            .push(crate::ai::RepulsivePoint::new(
+                18,
+                crate::ai::Position {
+                    level: 5,
+                    ..Default::default()
+                },
+                10.0,
+                11.0,
+                2,
+            ));
+        let engine = Engine { inner };
+
+        let state = engine.parity_repulsive_points_state();
+        assert_eq!(state["next_id"], 42);
+        assert_eq!(state["points"][0]["id"], 17);
+        assert_eq!(state["points"][1]["id"], 18);
+        assert_eq!(
+            state["points"][0]["position"]["x"]["bits"],
+            1.25f32.to_bits()
+        );
+        assert_eq!(
+            state["points"][0]["position"]["y"]["bits"],
+            (-2.5f32).to_bits()
+        );
+        assert_eq!(state["points"][0]["concave"], true);
+        assert_eq!(
+            state["points"][0]["limit_left"]["x"]["bits"],
+            6.0f32.to_bits()
+        );
+        assert_eq!(
+            state["points"][0]["limit_right"]["y"]["bits"],
+            9.0f32.to_bits()
+        );
+        assert_eq!(state["points"][0]["radius"]["bits"], 4.0f32.to_bits());
+        assert_eq!(
+            state["points"][0]["action_radius"]["bits"],
+            9.0f32.to_bits()
+        );
+        assert_eq!(state["points"][0]["affects_pcs"], true);
+        assert_eq!(state["points"][0]["affects_soldiers"], false);
+        assert_eq!(state["points"][0]["affects_civilians"], true);
+        assert_eq!(state["points"][0]["affects_animals"], true);
+        assert_eq!(state["points"][0]["layer"], 3);
     }
 
     #[test]
