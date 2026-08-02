@@ -347,6 +347,13 @@ fn refresh_detection_scans_target(
         && (target_position.y - viewer_position.y).abs() <= radius_y
 }
 
+fn non_enemy_visibility_blocked_before_cadence(
+    eye_status: crate::element::EyeStatus,
+    type_gate_blocked: bool,
+) -> bool {
+    eye_status.is_blind() || type_gate_blocked
+}
+
 /// Original `RHElementActorNPC::HandlePredetection` shadow-edge update.
 ///
 /// The shadow threshold is tested against the suspect accumulator as it stood
@@ -3533,10 +3540,12 @@ impl EngineInner {
                 det.last_visibility = 0.0;
                 continue;
             }
-            let visibility: f32 = if extra_gate_blocks_visibility
-                || ctx.viewer_in_building
-                || !target_pre_filter(target)
-            {
+            let visibility: f32 = if non_enemy_visibility_blocked_before_cadence(
+                ctx.eye_status,
+                extra_gate_blocks_visibility
+                    || ctx.viewer_in_building
+                    || !target_pre_filter(target),
+            ) {
                 0.0
             } else if gate_open {
                 let target_in_same_building = ctx.viewer_in_building
@@ -3834,7 +3843,10 @@ impl EngineInner {
                 det.last_visibility = 0.0;
                 continue;
             }
-            let visibility: f32 = if ctx.viewer_in_building {
+            let visibility: f32 = if non_enemy_visibility_blocked_before_cadence(
+                ctx.eye_status,
+                ctx.viewer_in_building,
+            ) {
                 0.0
             } else if gate_open {
                 let q = ai_vision::ObjectVisibilityQuery {
@@ -4001,6 +4013,22 @@ mod tests {
     use super::*;
     use crate::ai::{Position, Substate};
     use crate::element::Posture;
+
+    #[test]
+    fn blind_non_enemy_visibility_is_blocked_before_closed_cadence_reuse() {
+        assert!(non_enemy_visibility_blocked_before_cadence(
+            crate::element::EyeStatus::Closed,
+            false,
+        ));
+        assert!(non_enemy_visibility_blocked_before_cadence(
+            crate::element::EyeStatus::LookForward,
+            true,
+        ));
+        assert!(!non_enemy_visibility_blocked_before_cadence(
+            crate::element::EyeStatus::LookForward,
+            false,
+        ));
+    }
 
     #[test]
     fn refresh_detection_outer_box_matches_original_entry_alternatives() {
