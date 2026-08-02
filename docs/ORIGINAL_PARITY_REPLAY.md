@@ -3686,6 +3686,16 @@ backfilled for the corresponding civilian NPCs. Linux3 Profile 001 Savegame
 030 matches through its former frame-30378 divergence and now reaches the next
 independent mismatch at frame 30435.
 
+### Worst-detected type resets after every detectable bucket
+
+Original clears `muwWorstDetectedType` only after Enemy, Body, Object, Friend,
+MissedFriend, and Beggar have all run, and only when the resulting maximum
+Enemy/Body/Object suspect value is zero. Rust previously cleared it inside the
+Enemy pass, losing a persistent Body or Object classification on a frame with
+no Enemy suspect and no fresh non-enemy sharpness. The reset now occurs at the
+complete detectable-loop boundary, after cached Body/Object suspects have
+contributed to the maximum.
+
 ### Forest rear-view detection includes mounted Royalists
 
 Original's forest-level 180-degree detection exception depends only on the

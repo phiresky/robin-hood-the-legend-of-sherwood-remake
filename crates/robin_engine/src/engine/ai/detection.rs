@@ -180,6 +180,14 @@ fn forest_180_degree_view_enabled(is_forest_level: bool, viewer_camp: Camp) -> b
     is_forest_level && viewer_camp == Camp::Royalists
 }
 
+/// Original clears the remembered worst type only after every detectable
+/// bucket has contributed its persistent suspect value to the frame maximum.
+fn finalize_detection_summary(npc: &mut crate::element::NpcData) {
+    if npc.maximal_detection_suspect == 0 {
+        npc.worst_detected_type = DetectableType::None;
+    }
+}
+
 impl SoldierSightContext {
     fn from_npc_viewer(
         npc_id: EntityId,
@@ -2854,16 +2862,10 @@ impl EngineInner {
                 *suspects = suspects.saturating_sub(1);
             }
 
-            // Recompute max-across-non-friend and reset worst-type
-            // when nothing is suspect.  Runs after both the commit
-            // (`*suspects = 0`) and decay arms so
-            // `maximal_detection_suspect` always reflects the
-            // post-frame value.  Only Enemy is maintained, so the
-            // max reduces to that single entry.
+            // Seed the frame maximum from Enemy. Body and Object fold their
+            // persistent suspects into it below; only after every type has
+            // run may the remembered worst type be cleared.
             npc.maximal_detection_suspect = npc.detection_suspects[enemy_idx];
-            if npc.maximal_detection_suspect == 0 {
-                npc.worst_detected_type = DetectableType::None;
-            }
 
             // Walk every detectable and edge-detect `seen_last_frame`.
             //   - Rising edge (detected && !latched) fires EVENT_VIEW for
@@ -3485,6 +3487,11 @@ impl EngineInner {
                 fast_grid: &self.world.fast_grid,
             },
         );
+
+        // Original performs this reset after the complete detectable-type
+        // loop. A Body/Object suspect retained across a closed cadence must
+        // keep its earlier worst type even when Enemy is currently zero.
+        finalize_detection_summary(npc);
     }
 
     /// Per-NPC per-type detection helper for the four
@@ -4459,5 +4466,25 @@ mod tests {
         assert!(forest_180_degree_view_enabled(true, Camp::Royalists));
         assert!(!forest_180_degree_view_enabled(false, Camp::Royalists));
         assert!(!forest_180_degree_view_enabled(true, Camp::Lacklandists));
+    }
+
+    #[test]
+    fn persistent_body_or_object_suspect_preserves_worst_detected_type() {
+        for kind in [DetectableType::Body, DetectableType::Object] {
+            let mut npc = crate::element::NpcData::default();
+            npc.detection_suspects[kind as usize] = 23;
+            npc.maximal_detection_suspect = 23;
+            npc.worst_detected_type = kind;
+
+            // No fresh sharpness is required: the per-type fold retains the
+            // existing suspect before the complete-loop finalizer runs.
+            finalize_detection_summary(&mut npc);
+            assert_eq!(npc.worst_detected_type, kind);
+
+            npc.detection_suspects[kind as usize] = 0;
+            npc.maximal_detection_suspect = 0;
+            finalize_detection_summary(&mut npc);
+            assert_eq!(npc.worst_detected_type, DetectableType::None);
+        }
     }
 }
