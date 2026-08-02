@@ -1279,7 +1279,7 @@ impl NativeContext<'_, '_> {
                 const UNEQUIP_BOW: i32 = 19;
                 const CROUCH_DOWN: i32 = 20;
 
-                let elem = match action_id {
+                let mut elem = match action_id {
                     WAIT => SequenceElement::new(level, Command::Wait, owner),
                     TURN => {
                         let mut e = SequenceElement::new_generic(level, Command::Turn, owner);
@@ -1312,10 +1312,17 @@ impl NativeContext<'_, '_> {
                         // Store the opponent unconditionally
                         // after the bounds check; a null-slot
                         // antagonist still gets recorded.
-                        if let Some(ant) = antagonist {
-                            e.set_property(Field::Opponent, FieldValue::Element(ant));
-                        }
-                        e.set_property(Field::JumplineDestination, FieldValue::Integer(0));
+                        e.set_property(
+                            Field::Opponent,
+                            antagonist
+                                .map(FieldValue::Element)
+                                .unwrap_or(FieldValue::OptionalElement(None)),
+                        );
+                        e.set_property(
+                            Field::JumplineDestination,
+                            FieldValue::OptionalLineId(None),
+                        );
+                        e.set_property(Field::SwordfightPrepared, FieldValue::Bool(false));
                         e
                     }
                     LEAVE_SF => SequenceElement::new(level, Command::QuitSwordfight, owner),
@@ -1367,6 +1374,10 @@ impl NativeContext<'_, '_> {
                         return 0;
                     }
                 };
+                // Original marks precisely the scripted bow/swordfight
+                // commands whose execution must not manipulate the player's
+                // selected action (`RHScript.cpp:2773-2795,2934`).
+                elem.script_driven = matches!(action_id, SHOOT | ENTER_SF | LEAVE_SF | UNEQUIP_BOW);
                 self.record_element(elem)
             }
 

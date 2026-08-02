@@ -547,6 +547,63 @@ pub enum Field {
     ScrollOwner,
 }
 
+impl Field {
+    /// Discriminant used by the Original `RHfield` enum. Rust's
+    /// `RetainedMovementGoal` is an engine cache with no Original property
+    /// entry, so callers must handle it separately instead of shifting every
+    /// subsequent field ordinal.
+    #[doc(hidden)]
+    pub(crate) fn original_ordinal(self) -> Option<u32> {
+        use Field::*;
+        Some(match self {
+            Direction => 0,
+            Event => 1,
+            RetainedMovementGoal => return None,
+            Timer => 2,
+            Message => 3,
+            MessageArgument => 4,
+            MessageExtendedArgument => 5,
+            BowTargetGuy => 6,
+            BowTargetPoint => 7,
+            CameraPoint => 8,
+            CameraZoomLevel => 9,
+            CameraSpeed => 10,
+            ActionId => 11,
+            ActionAvailable => 12,
+            CharacterAvailable => 13,
+            ConcussionLevel => 14,
+            SpeakId => 15,
+            SpeakFlags => 16,
+            SpeakVariant => 17,
+            DialogId => 18,
+            DialogSource => 19,
+            PopupTextId => 20,
+            AnimationId => 21,
+            MapDisplay => 22,
+            JumplineSource => 23,
+            JumplineDestination => 24,
+            SwordfightPrepared => 34,
+            Amount => 25,
+            ShieldDangerPoint => 26,
+            ShieldDangerPointLayer => 27,
+            ShieldProtected => 28,
+            RollPoint => 29,
+            PurseTarget => 30,
+            NetTarget => 31,
+            WaspNestTarget => 32,
+            Opponent => 33,
+            Gate => 35,
+            Door => 36,
+            OldAnimation => 37,
+            NewAnimation => 38,
+            Freeze => 39,
+            Scroll => 40,
+            ScrollReader => 41,
+            ScrollOwner => 42,
+        })
+    }
+}
+
 /// Polymorphic value stored in a generic sequence element's property map.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub enum FieldValue {
@@ -826,6 +883,12 @@ pub struct SequenceElement {
     /// Interruption priority.
     pub priority: SequencePriority,
 
+    /// Suppress player-input selection side effects for actions authored by
+    /// mission scripts or replayed quick-action sequences. Mirrors
+    /// `RHSequenceElement::mbScriptDriven`; it is behavior, not save-only
+    /// provenance, because bow equip/unequip reads it while executing.
+    pub script_driven: bool,
+
     /// Posture the actor should have after transition orders complete.
     pub posture_after_transition: Posture,
 
@@ -939,6 +1002,7 @@ impl SequenceElement {
             owner,
             state: SequenceState::Todo,
             priority: SequencePriority::NotYetSet,
+            script_driven: false,
             posture_after_transition: Posture::default(),
             action_state_after_transition: ActionState::default(),
             num_transition_orders: 0,
@@ -1525,6 +1589,17 @@ pub struct Sequence {
 }
 
 impl Sequence {
+    /// Stable-boundary counters used by the Original parity recorder.
+    #[doc(hidden)]
+    pub(crate) fn parity_counters(&self) -> (usize, u16, u16, u16, bool) {
+        (
+            self.cursor,
+            self.current_command_level,
+            self.running_elements,
+            self.elements_in_progress,
+            self.started,
+        )
+    }
     /// Create a new empty sequence. `id` is a placeholder —
     /// `SequenceManager::launch_sequence` stamps the real per-engine
     /// deterministic id at launch time.
@@ -2407,6 +2482,30 @@ impl Default for SequenceManager {
 }
 
 impl SequenceManager {
+    /// Ordered queue and selected-owner views used by the schema-13 parity
+    /// snapshot. References remain in native IDs here; the engine facade maps
+    /// them to manager insertion ordinals before exposing the snapshot.
+    #[doc(hidden)]
+    pub(crate) fn parity_runtime_refs(
+        &self,
+    ) -> (
+        Vec<(SequenceId, usize)>,
+        Vec<(EntityId, SequenceElementRef)>,
+    ) {
+        if !self.pending_synchronous_actions.is_empty()
+            || !self.pending_condolations.is_empty()
+            || !self.actor_instructing.is_empty()
+            || self.halt_pending
+        {
+            panic!("parity sequence capture reached a non-quiescent dispatch boundary");
+        }
+        let actor_current = self
+            .actor_in_progress
+            .iter()
+            .filter_map(|(owner, refs)| refs.first().copied().map(|element| (*owner, element)))
+            .collect();
+        (self.elements_to_go.iter().copied().collect(), actor_current)
+    }
     fn is_actor_live_state(state: SequenceState) -> bool {
         matches!(
             state,

@@ -232,6 +232,526 @@ impl Engine {
         }
     }
 
+    /// Canonical manager-insertion-ordered sequence state for schema-13
+    /// Original parity. Runtime allocation IDs are deliberately replaced by
+    /// `(sequence ordinal, element index)` references.
+    #[doc(hidden)]
+    pub fn parity_sequence_manager_state(&self) -> serde_json::Value {
+        use crate::sequence::{Field, FieldValue, SequenceElementData};
+        use serde_json::{Value, json};
+
+        let float = |value: f32| json!({ "bits": value.to_bits() });
+        let point = |x: f32, y: f32| json!({ "x": float(x), "y": float(y) });
+        let point3 =
+            |x: f32, y: f32, z: f32| json!({ "x": float(x), "y": float(y), "z": float(z) });
+        let entity = |id: EntityId| {
+            let kind = match id.kind() {
+                crate::element::EntityIdKind::Pc => "pc",
+                crate::element::EntityIdKind::Soldier => "soldier",
+                crate::element::EntityIdKind::Civilian => "civilian",
+                crate::element::EntityIdKind::Fx => "fx",
+                crate::element::EntityIdKind::Target => "target",
+                crate::element::EntityIdKind::Bonus => "bonus",
+                crate::element::EntityIdKind::Scroll => "scroll",
+                crate::element::EntityIdKind::Projectile => "projectile",
+                crate::element::EntityIdKind::Net => "net",
+            };
+            json!({ "kind": kind, "index": id.index() })
+        };
+        let doors = &self.inner.script_domains.interactables.doors;
+        let gate = |id: Option<crate::gate::DoorIndex>| -> Value {
+            let Some(id) = id else { return Value::Null };
+            let door = doors
+                .get(usize::from(id))
+                .unwrap_or_else(|| panic!("parity sequence references missing door {id}"));
+            let kind = match door.gate_type {
+                crate::gate::GateType::Door => "door",
+                crate::gate::GateType::Jump => "jump",
+                crate::gate::GateType::None => "gate",
+            };
+            json!({
+                "kind": kind,
+                "sector_out": door.sector_out.get(),
+                "sector_in": door.sector_in.get(),
+                "layer_out": door.layer_out,
+                "layer_in": door.layer_in,
+                "point_out": point(door.point_out.x, door.point_out.y),
+                "point_in": point(door.point_in.x, door.point_in.y),
+            })
+        };
+        let lines = &self.inner.world.fast_grid.level.jump_lines;
+        let line = |id: Option<crate::jump_line::JumpLineIndex>| -> Value {
+            let Some(id) = id else { return Value::Null };
+            let line = lines
+                .get(usize::from(id))
+                .unwrap_or_else(|| panic!("parity sequence references missing jump line {id}"));
+            json!({
+                "a": point(line.point_a.x, line.point_a.y),
+                "b": point(line.point_b.x, line.point_b.y),
+            })
+        };
+
+        let manager = &self.inner.orders.sequence_manager;
+        let sequence_ordinals: std::collections::BTreeMap<_, _> = manager
+            .sequences_iter()
+            .enumerate()
+            .map(|(ordinal, sequence)| (sequence.id, ordinal))
+            .collect();
+        let reference = |id: crate::sequence::SequenceId, element: usize| {
+            let sequence = sequence_ordinals.get(&id).copied().unwrap_or_else(|| {
+                panic!("parity sequence reference points outside manager: {id:?}/{element}")
+            });
+            json!({ "sequence": sequence, "element": element })
+        };
+
+        let mut sequences = Vec::new();
+        for sequence in manager.sequences_iter() {
+            let (cursor, current_level, running, in_progress, started) = sequence.parity_counters();
+            let mut elements = Vec::new();
+            for element_state in &sequence.elements {
+                let orders: Vec<_> = element_state
+                    .orders
+                    .iter()
+                    .map(|order| {
+                        json!({
+                            "action": order.order_type as u32,
+                            "destination": point(order.target_x, order.target_y),
+                            "tolerance": float(order.tolerance),
+                            "reverse": order.reverse,
+                            "compute_direction": order.compute_direction,
+                            "done": order.done,
+                            "antagonist": order.antagonist.map(&entity).unwrap_or(Value::Null),
+                        })
+                    })
+                    .collect();
+
+                let subtype = match &element_state.data {
+                    SequenceElementData::Simple => json!({ "kind": "simple" }),
+                    SequenceElementData::Interaction { antagonist } => json!({
+                        "kind": "interaction",
+                        "antagonist": antagonist.map(&entity).unwrap_or(Value::Null),
+                    }),
+                    SequenceElementData::Damage {
+                        origin,
+                        projectile,
+                        damage,
+                        concussion,
+                        sword_strike,
+                        is_harder_hit,
+                        ..
+                    } => json!({
+                        "kind": "damage",
+                        "origin": origin.map(&entity).unwrap_or(Value::Null),
+                        "damage": damage,
+                        "concussion": concussion,
+                        "harder_hit": is_harder_hit,
+                        "sword_strike": sword_strike.map(|strike| strike as i32).unwrap_or(11),
+                        "arrow": projectile.map(&entity).unwrap_or(Value::Null),
+                    }),
+                    SequenceElementData::Movement {
+                        destination,
+                        layer,
+                        sector,
+                        gate_id,
+                        line_id,
+                        element,
+                        flags,
+                        tolerance,
+                        direction,
+                        action,
+                        speed_factor,
+                        ..
+                    } => {
+                        let linked_seek = element_state
+                            .legacy_v48
+                            .as_ref()
+                            .and_then(|legacy| legacy.linked_seek)
+                            .flatten()
+                            .map(|linked| reference(linked.sequence_id, linked.element_index))
+                            .unwrap_or(Value::Null);
+                        json!({
+                            "kind": "movement",
+                            "destination": point(destination.x, destination.y),
+                            "layer": layer,
+                            "sector": sector.map(|value| value.get() as i32).unwrap_or(-1),
+                            "gate": gate(*gate_id),
+                            "line": line(*line_id),
+                            "target": element.map(&entity).unwrap_or(Value::Null),
+                            "flags": flags.bits(),
+                            "tolerance": float(*tolerance),
+                            "direction": direction,
+                            "action": *action as u32,
+                            "speed_factor": float(*speed_factor),
+                            "linked_seek": linked_seek,
+                        })
+                    }
+                    SequenceElementData::Generic { properties } => {
+                        let mut ordered: Vec<_> = properties
+                            .iter()
+                            .filter_map(|(field, value)| {
+                                field
+                                    .original_ordinal()
+                                    .map(|ordinal| (ordinal, *field, value))
+                            })
+                            .collect();
+                        ordered.sort_by_key(|(ordinal, _, _)| *ordinal);
+                        let properties: Vec<_> = ordered
+                            .into_iter()
+                            .map(|(ordinal, field, value)| {
+                                let value = match value {
+                                    FieldValue::Bool(value) => json!(value),
+                                    FieldValue::Integer(value) => {
+                                        if matches!(
+                                            field,
+                                            Field::JumplineSource | Field::JumplineDestination
+                                        ) && *value == 0
+                                        {
+                                            Value::Null
+                                        } else {
+                                            json!(value)
+                                        }
+                                    }
+                                    FieldValue::Float(value) => float(*value),
+                                    FieldValue::GeoPoint2D { x, y } => point(*x, *y),
+                                    FieldValue::Point3D { x, y, z } => point3(*x, *y, *z),
+                                    FieldValue::Element(value) => entity(*value),
+                                    FieldValue::OptionalElement(value) => {
+                                        value.map(&entity).unwrap_or(Value::Null)
+                                    }
+                                    FieldValue::Animation(value) => json!(*value as u32),
+                                    FieldValue::LineId(value) => line(Some(*value)),
+                                    FieldValue::OptionalLineId(value) => line(*value),
+                                    FieldValue::DoorId(value) => gate(Some(*value)),
+                                    FieldValue::OptionalDoorId(value) => gate(*value),
+                                };
+                                json!({ "field": ordinal, "value": value })
+                            })
+                            .collect();
+                        json!({ "kind": "generic", "properties": properties })
+                    }
+                };
+
+                let postponed = match (
+                    element_state.postponed_element_index,
+                    element_state.cross_postponed,
+                ) {
+                    (Some(index), None) => reference(sequence.id, index),
+                    (None, Some((id, index))) => reference(id, index),
+                    (None, None) => Value::Null,
+                    (Some(_), Some(_)) => panic!(
+                        "parity sequence element carries both intra- and cross-sequence postponed refs"
+                    ),
+                };
+                let transition_live =
+                    element_state.state == crate::sequence::SequenceState::InProgress;
+                elements.push(json!({
+                    "command": element_state.command as u32,
+                    "level": element_state.command_level,
+                    "owner": element_state.owner.map(&entity).unwrap_or(Value::Null),
+                    "state": element_state.state as u32,
+                    "priority": element_state.priority as u32,
+                    "posture_after_transition": transition_live
+                        .then(|| json!(element_state.posture_after_transition as u32))
+                        .unwrap_or(Value::Null),
+                    "action_state_after_transition": transition_live
+                        .then(|| json!(element_state.action_state_after_transition as u32))
+                        .unwrap_or(Value::Null),
+                    "transition_orders": transition_live
+                        .then(|| json!(element_state.num_transition_orders))
+                        .unwrap_or(Value::Null),
+                    "script_driven": element_state.script_driven,
+                    "postponed": postponed,
+                    "orders": orders,
+                    "subtype": subtype,
+                }));
+            }
+            sequences.push(json!({
+                "cursor": cursor,
+                "current_level": current_level,
+                "running_elements": running,
+                "elements_in_progress": in_progress,
+                "started": started,
+                "elements": elements,
+            }));
+        }
+
+        let (elements_to_go, actor_current) = manager.parity_runtime_refs();
+        json!({
+            "sequences": sequences,
+            "elements_to_go": elements_to_go
+                .into_iter()
+                .map(|(id, element)| reference(id, element))
+                .collect::<Vec<_>>(),
+            "actor_current": actor_current
+                .into_iter()
+                .map(|(owner, selected)| json!({
+                    "owner": entity(owner),
+                    "element": reference(selected.sequence_id, selected.element_index),
+                }))
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    /// Persistent mission-VM state at a quiescent frame boundary. VM native
+    /// handles are decoded to their semantic table kind/index; raw process or
+    /// Rust handle encodings never enter the trace.
+    #[doc(hidden)]
+    pub fn parity_script_runtime_state(&self) -> serde_json::Value {
+        use crate::scb::TypeTag;
+        use crate::script_manager::ScriptInstance;
+        use serde_json::{Value, json};
+
+        let Some(script) = self.inner.scripts.mission.as_ref() else {
+            return json!({
+                "static_words": [], "instances": [], "computed_locations": []
+            });
+        };
+        script.assert_no_active_call_frames();
+        if script.state.sequence_recorder.recording.is_some() {
+            panic!("parity script capture reached an open sequence recording");
+        }
+
+        let float = |value: f32| json!({ "bits": value.to_bits() });
+        let entity = |id: EntityId| {
+            let kind = match id.kind() {
+                crate::element::EntityIdKind::Pc => "pc",
+                crate::element::EntityIdKind::Soldier => "soldier",
+                crate::element::EntityIdKind::Civilian => "civilian",
+                crate::element::EntityIdKind::Fx => "fx",
+                crate::element::EntityIdKind::Target => "target",
+                crate::element::EntityIdKind::Bonus => "bonus",
+                crate::element::EntityIdKind::Scroll => "scroll",
+                crate::element::EntityIdKind::Projectile => "projectile",
+                crate::element::EntityIdKind::Net => "net",
+            };
+            json!({ "kind": kind, "index": id.index() })
+        };
+        let actor_entity = |handle: i32| {
+            let index = crate::natives::ScriptHandleCodec::actor_handle_index(handle)
+                .unwrap_or_else(|| panic!("script instance has invalid actor handle {handle}"));
+            let id = self
+                .inner
+                .world
+                .entities
+                .id_at_legacy_slot(index as u32)
+                .unwrap_or_else(|| panic!("script instance actor slot {index} is empty"));
+            entity(id)
+        };
+
+        let native = |type_name: &str, bits: u32| -> Value {
+            if bits == 0 {
+                return Value::Null;
+            }
+            let handle = bits as i32;
+            if matches!(type_name, "Actor" | "Scroll") {
+                let index = crate::natives::ScriptHandleCodec::actor_handle_index(handle)
+                    .unwrap_or_else(|| {
+                        panic!("parity script member {type_name} has invalid handle 0x{bits:08x}")
+                    });
+                let id = self
+                    .inner
+                    .world
+                    .entities
+                    .id_at_legacy_slot(index as u32)
+                    .unwrap_or_else(|| panic!("script member {type_name} slot {index} is empty"));
+                if type_name == "Actor"
+                    && let Some(mobile) =
+                        self.inner
+                            .world
+                            .entities
+                            .get(id)
+                            .and_then(|entity| match entity {
+                                crate::element::Entity::Fx(fx) => fx.fx.mobile_index,
+                                _ => None,
+                            })
+                {
+                    return json!({ "kind": type_name, "mobile": mobile });
+                }
+                return json!({ "kind": type_name, "entity": entity(id) });
+            }
+            let index = match type_name {
+                "Door" => crate::natives::ScriptHandleCodec::door_index(handle),
+                "Patch" => crate::natives::ScriptHandleCodec::patch_index(handle),
+                "Location" => crate::natives::ScriptHandleCodec::location_index(handle),
+                "SoundSource" => crate::natives::ScriptHandleCodec::sound_source_index(handle),
+                "Building" => crate::natives::ScriptHandleCodec::building_index(handle),
+                "Way" => crate::natives::ScriptHandleCodec::way_index(handle),
+                _ => panic!("parity script state encountered unknown native type {type_name}"),
+            }
+            .unwrap_or_else(|| {
+                panic!("parity script member {type_name} has invalid handle 0x{bits:08x}")
+            });
+            json!({ "kind": type_name, "index": index })
+        };
+
+        let vm_state = |instance: &ScriptInstance| {
+            let class = script
+                .manager
+                .scb()
+                .classes
+                .get(instance.class_idx())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "script instance has invalid class index {}",
+                        instance.class_idx()
+                    )
+                });
+            let members: Vec<_> = class
+                .member_variables
+                .iter()
+                .map(|member| {
+                    let address = usize::try_from(member.address).unwrap_or_else(|_| {
+                        panic!("script member {} has negative heap address", member.name)
+                    });
+                    let bytes = instance
+                        .vm
+                        .heap
+                        .get(address..address + 4)
+                        .unwrap_or_else(|| panic!("script member {} exceeds VM heap", member.name));
+                    let bits = u32::from_le_bytes(bytes.try_into().expect("four-byte VM word"));
+                    let type_name = match member.ty.tag {
+                        TypeTag::Bool => "bool",
+                        TypeTag::Int => "int",
+                        TypeTag::Float => "float",
+                        TypeTag::Void => "void",
+                        TypeTag::NativeType => member.ty.native_type_name.as_str(),
+                        TypeTag::NotDefined
+                        | TypeTag::Event
+                        | TypeTag::Function
+                        | TypeTag::NativeFunction => "NotExpected",
+                    };
+                    let value = if member.ty.tag == TypeTag::NativeType {
+                        native(type_name, bits)
+                    } else {
+                        json!({ "bits": bits })
+                    };
+                    json!({ "name": member.name, "type": type_name, "value": value })
+                })
+                .collect();
+            json!({ "class": class.class_name, "members": members })
+        };
+
+        let mut static_words = Vec::new();
+        let chunks = script.manager.static_area.chunks_exact(4);
+        if !chunks.remainder().is_empty() {
+            panic!("parity script static area is not word aligned");
+        }
+        for (word, bytes) in chunks.enumerate() {
+            let bits = u32::from_le_bytes(bytes.try_into().expect("four-byte static word"));
+            if bits != 0 {
+                static_words.push(json!({ "offset": word * 4, "bits": bits }));
+            }
+        }
+
+        let mut instances = Vec::new();
+        instances.push(json!({
+            "owner": { "kind": "engine" },
+            "vm": vm_state(&script.instance),
+        }));
+
+        let mut entity_instances: Vec<(u32, &str, EntityId, &ScriptInstance)> = Vec::new();
+        for (&handle, instance) in &script.actor_instances {
+            let owner = actor_entity(handle);
+            let index = owner["index"].as_u64().expect("entity index") as u32;
+            let id = self
+                .inner
+                .world
+                .entities
+                .id_at_legacy_slot(index)
+                .expect("actor entity");
+            entity_instances.push((index, "actor", id, instance));
+        }
+        for (&handle, instance) in &script.target_instances {
+            let owner = actor_entity(handle);
+            let index = owner["index"].as_u64().expect("entity index") as u32;
+            let id = self
+                .inner
+                .world
+                .entities
+                .id_at_legacy_slot(index)
+                .expect("target entity");
+            entity_instances.push((index, "target", id, instance));
+        }
+        for (&handle, instance) in &script.scroll_instances {
+            let owner = actor_entity(handle);
+            let index = owner["index"].as_u64().expect("entity index") as u32;
+            let id = self
+                .inner
+                .world
+                .entities
+                .id_at_legacy_slot(index)
+                .expect("scroll entity");
+            entity_instances.push((index, "scroll", id, instance));
+        }
+        entity_instances.sort_by_key(|(index, _, _, _)| *index);
+        instances.extend(entity_instances.into_iter().map(|(_, kind, id, instance)| {
+            json!({
+                "owner": { "kind": kind, "entity": entity(id) },
+                "vm": vm_state(instance),
+            })
+        }));
+
+        for (&zone, instance) in &script.zone_instances {
+            let location = script.bindings.script_point_count + zone;
+            let grid_index = *script
+                .bindings
+                .script_zone_grid_indices
+                .get(zone)
+                .unwrap_or_else(|| panic!("script VM references missing zone {zone}"));
+            let sector = self
+                .inner
+                .world
+                .fast_grid
+                .level
+                .sectors
+                .get(grid_index as usize)
+                .unwrap_or_else(|| {
+                    panic!("script zone {zone} has missing grid sector {grid_index}")
+                })
+                .sector_number
+                .get();
+            instances.push(json!({
+                "owner": { "kind": "zone", "location": location, "sector": sector },
+                "vm": vm_state(instance),
+            }));
+        }
+        for (&(path, waypoint), instance) in &script.waypoint_instances {
+            instances.push(json!({
+                "owner": {
+                    "kind": "waypoint", "path": path.get(), "waypoint": waypoint,
+                },
+                "vm": vm_state(instance),
+            }));
+        }
+
+        let computed_locations: Vec<_> = script
+            .state
+            .computed_locations
+            .iter()
+            .map(|location| {
+                let Some(location) = location else {
+                    return Value::Null;
+                };
+                let (Some(layer), Some(sector)) = (location.layer, location.sector) else {
+                    panic!("non-null computed script location lacks spatial attachment");
+                };
+                json!({
+                    "position": {
+                        "x": float(location.position.0), "y": float(location.position.1),
+                    },
+                    "layer": layer,
+                    "sector": sector,
+                })
+            })
+            .collect();
+
+        json!({
+            "static_words": static_words,
+            "instances": instances,
+            "computed_locations": computed_locations,
+        })
+    }
+
     /// Read-only schema-13 snapshot of the ordered failed-path timeout list.
     #[doc(hidden)]
     pub fn parity_failed_path_requests(&self) -> Vec<crate::pathfinder::ParityFailedPathRequest> {

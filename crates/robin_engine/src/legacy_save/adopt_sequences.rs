@@ -822,6 +822,7 @@ fn convert_element(
     element.id = base.unique_id.0;
     element.state = state;
     element.priority = priority;
+    element.script_driven = base.script_driven;
     element.posture_after_transition = posture_after_transition;
     element.action_state_after_transition = action_state_after_transition;
     element.orders = orders.into();

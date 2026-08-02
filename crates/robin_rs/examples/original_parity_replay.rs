@@ -1360,7 +1360,43 @@ struct TraceEngineState {
     quit_lost: bool,
     quit_interrupted: bool,
     script_globals: Vec<i32>,
+    sequence_manager: TraceJsonValue,
+    script_runtime: TraceJsonValue,
     failed_path_requests: Vec<TraceFailedPathRequest>,
+}
+
+/// Cache-safe recursive JSON used for high-volume authoritative snapshots.
+///
+/// `serde_json::Value` deliberately has no native `bincode::Encode`
+/// implementation. This equivalent tree keeps schema-13 frame parsing strict
+/// without making the native trace cache serialize a JSON string per frame.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, bincode::Decode, bincode::Encode)]
+#[serde(untagged)]
+enum TraceJsonValue {
+    Null(()),
+    Bool(bool),
+    Unsigned(u64),
+    Signed(i64),
+    String(String),
+    Array(Vec<TraceJsonValue>),
+    Object(BTreeMap<String, TraceJsonValue>),
+}
+
+impl TraceJsonValue {
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            Self::Null(()) => serde_json::Value::Null,
+            Self::Bool(value) => (*value).into(),
+            Self::Unsigned(value) => (*value).into(),
+            Self::Signed(value) => (*value).into(),
+            Self::String(value) => value.clone().into(),
+            Self::Array(values) => values.iter().map(Self::to_json).collect(),
+            Self::Object(values) => values
+                .iter()
+                .map(|(key, value)| (key.clone(), value.to_json()))
+                .collect(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1397,8 +1433,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 12;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v12.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 13;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v13.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4160,6 +4196,10 @@ impl EntityMap {
     fn sectors_equivalent(&self, original: u16, rust: u16) -> bool {
         original == rust || self.sectors.get(&original) == Some(&rust)
     }
+
+    fn translate_sector(&self, original: u16) -> u16 {
+        self.sectors.get(&original).copied().unwrap_or(original)
+    }
 }
 
 fn pair_runtime_identities_by_persistent_rank(
@@ -4655,6 +4695,84 @@ fn collect_json_differences(
     }
 }
 
+fn trace_entity_kind_name(name: &str) -> Option<TraceEntityKind> {
+    Some(match name {
+        "pc" => TraceEntityKind::Pc,
+        "soldier" => TraceEntityKind::Soldier,
+        "civilian" => TraceEntityKind::Civilian,
+        "fx" => TraceEntityKind::Fx,
+        "target" => TraceEntityKind::Target,
+        "bonus" => TraceEntityKind::Bonus,
+        "scroll" => TraceEntityKind::Scroll,
+        "projectile" => TraceEntityKind::Projectile,
+        "net" => TraceEntityKind::Net,
+        _ => return None,
+    })
+}
+
+fn entity_kind_name(kind: robin_engine::element::EntityIdKind) -> &'static str {
+    match kind {
+        robin_engine::element::EntityIdKind::Pc => "pc",
+        robin_engine::element::EntityIdKind::Soldier => "soldier",
+        robin_engine::element::EntityIdKind::Civilian => "civilian",
+        robin_engine::element::EntityIdKind::Fx => "fx",
+        robin_engine::element::EntityIdKind::Target => "target",
+        robin_engine::element::EntityIdKind::Bonus => "bonus",
+        robin_engine::element::EntityIdKind::Scroll => "scroll",
+        robin_engine::element::EntityIdKind::Projectile => "projectile",
+        robin_engine::element::EntityIdKind::Net => "net",
+    }
+}
+
+/// Replace Original allocation identities in the schema-13 whole-engine
+/// snapshots with their Rust-side isomorphic identities before structural
+/// comparison. Native VM table indices and sequence ordinals are semantic and
+/// intentionally remain untouched.
+fn canonicalize_authoritative_snapshot(value: &mut serde_json::Value, entity_map: &EntityMap) {
+    match value {
+        serde_json::Value::Array(values) => {
+            for value in values {
+                canonicalize_authoritative_snapshot(value, entity_map);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            let entity_reference = if object.len() == 2 {
+                object
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(trace_entity_kind_name)
+                    .zip(object.get("index").and_then(serde_json::Value::as_u64))
+            } else {
+                None
+            };
+            if let Some((kind, index)) = entity_reference {
+                let index = u32::try_from(index)
+                    .unwrap_or_else(|_| panic!("Original entity index {index} exceeds u32"));
+                let id = entity_map.translate(TraceEntityId { kind, index });
+                *value = serde_json::json!({
+                    "kind": entity_kind_name(id.kind()),
+                    "index": id.index(),
+                });
+                return;
+            }
+
+            for (key, child) in object {
+                canonicalize_authoritative_snapshot(child, entity_map);
+                if matches!(key.as_str(), "sector" | "sector_in" | "sector_out")
+                    && let Some(original) = child.as_i64()
+                    && original >= 0
+                {
+                    let original = u16::try_from(original).unwrap_or_else(|_| {
+                        panic!("Original snapshot sector {original} exceeds u16")
+                    });
+                    *child = entity_map.translate_sector(original).into();
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 fn compare_engine_state(
     differences: &mut Vec<String>,
     expected: &TraceEngineState,
@@ -4685,6 +4803,27 @@ fn compare_engine_state(
     field!(quit_lost);
     field!(quit_interrupted);
     field!(script_globals);
+
+    let mut expected_sequences = expected.sequence_manager.to_json();
+    canonicalize_authoritative_snapshot(&mut expected_sequences, entity_map);
+    let actual_sequences = engine.parity_sequence_manager_state();
+    collect_json_differences(
+        "frame.engine_state.sequence_manager",
+        &expected_sequences,
+        &actual_sequences,
+        differences,
+    );
+
+    let mut expected_script = expected.script_runtime.to_json();
+    canonicalize_authoritative_snapshot(&mut expected_script, entity_map);
+    let actual_script = engine.parity_script_runtime_state();
+    collect_json_differences(
+        "frame.engine_state.script_runtime",
+        &expected_script,
+        &actual_script,
+        differences,
+    );
+
     if expected.speed.bits != actual.speed.to_bits() {
         differences.push(format!(
             "frame.engine_state.speed: original={} (0x{:08x}) rust={} (0x{:08x})",
@@ -5914,6 +6053,12 @@ mod tests {
             "quit_lost": false,
             "quit_interrupted": false,
             "script_globals": [],
+            "sequence_manager": {
+                "sequences": [], "elements_to_go": [], "actor_current": []
+            },
+            "script_runtime": {
+                "static_words": [], "instances": [], "computed_locations": []
+            },
             "failed_path_requests": []
         });
         let schema_thirteen: TraceFrame = serde_json::from_value(schema_thirteen_json).unwrap();
