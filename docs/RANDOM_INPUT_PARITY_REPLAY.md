@@ -3019,6 +3019,20 @@ serialized Original visibility values (`RHElementActorPC` and its portrait
 widget) to agree before adoption. Older traces omit only this additive object;
 the native cache version and suffix are v45.
 
+### Schema-v46 PC portrait/widget state
+
+Schema v46 records the full Original portrait widget state for each PC:
+ammunition quantities, two-button layout, displayed/open/burned flags, raw
+life gauge, trumpet enablement, and the three quick-icon phase/running pairs.
+Rust derives quantities, layout, display, life, and trumpet state from the
+same canonical profile/status/PC fields used by Original's widget refresh.
+Legacy-save adoption rejects contradictory copies rather than silently
+repairing them. Open/burn/quick-icon values remain explicit event-driven
+state: selection opens and closes portraits, death/coma burns them, revive
+unburns them, and macro record/tetris transitions preserve the renderer's
+exact retained icon semantics. Older traces omit this additive projection;
+the native cache version and suffix are v46.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,

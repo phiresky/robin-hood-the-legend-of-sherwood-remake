@@ -1038,6 +1038,36 @@ impl Engine {
                 "displayed": !pc.interface_hidden,
             })
         });
+        let pc_portrait = entity.pc_data().map(|pc| {
+            let profile = assets
+                .profile_manager
+                .get_character(pc.profile_index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "PC {id:?} portrait has missing profile {}",
+                        pc.profile_index
+                    )
+                });
+            let description = self
+                .inner
+                .pc_description_for_pc_data(pc)
+                .unwrap_or_else(|| panic!("PC {id:?} portrait has no campaign description"));
+            let quantities = profile
+                .actions
+                .map(|action| description.status.get_ammo(action));
+            json!({
+                "quantities": quantities,
+                "two_buttons_mode": profile.actions[2] == crate::profiles::Action::NoAction,
+                "displayed": !pc.interface_hidden,
+                "burned": pc.portrait.burned,
+                "open": pc.portrait.open,
+                "life_level": float(f32::from(pc.life_points)),
+                "trumpet_enabled": pc.trumpet_enabled,
+                "quick_icons": pc.portrait.quick_icons.iter().map(|icon| json!({
+                    "titbit": icon.titbit_id, "running": icon.running,
+                })).collect::<Vec<_>>(),
+            })
+        });
         let pc_tail = entity.pc_data().map(|pc| {
             json!({
                 "carried": pc.carried.map_or(Value::Null, entity_ref),
@@ -1172,6 +1202,12 @@ impl Engine {
                 .as_object_mut()
                 .expect("parity entity runtime must be an object")
                 .insert("pc_interface".to_owned(), pc_interface);
+        }
+        if let Some(pc_portrait) = pc_portrait {
+            result
+                .as_object_mut()
+                .expect("parity entity runtime must be an object")
+                .insert("pc_portrait".to_owned(), pc_portrait);
         }
         result
     }

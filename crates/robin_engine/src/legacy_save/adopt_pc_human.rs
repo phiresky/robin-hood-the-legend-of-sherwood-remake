@@ -142,6 +142,30 @@ pub enum LegacyPcHumanAdoptError {
         button: u16,
     },
     #[error(
+        "saved PC creation order {creation_order} portrait quantities {actual:?} disagree with status/profile-derived quantities {expected:?}"
+    )]
+    PortraitQuantityMismatch {
+        creation_order: u32,
+        actual: [u16; 3],
+        expected: [u16; 3],
+    },
+    #[error(
+        "saved PC creation order {creation_order} portrait two-buttons flag {actual} disagrees with profile-derived value {expected}"
+    )]
+    PortraitButtonModeMismatch {
+        creation_order: u32,
+        actual: bool,
+        expected: bool,
+    },
+    #[error(
+        "saved PC creation order {creation_order} portrait life bits 0x{actual:08x} disagree with PC-status life bits 0x{expected:08x}"
+    )]
+    PortraitLifeMismatch {
+        creation_order: u32,
+        actual: u32,
+        expected: u32,
+    },
+    #[error(
         "saved Human creation order {creation_order} shoot-list entry {index} does not reference an Interaction element"
     )]
     ShootNotInteraction { creation_order: u32, index: usize },
@@ -604,6 +628,31 @@ fn convert_pc(
             portrait: saved.portrait.displayed,
         });
     }
+    let status = pc_status(&saved.post_human.status);
+    let expected_quantities = profile.actions.map(|action| status.get_ammo(action));
+    if saved.portrait.quantities != expected_quantities {
+        return Err(LegacyPcHumanAdoptError::PortraitQuantityMismatch {
+            creation_order,
+            actual: saved.portrait.quantities,
+            expected: expected_quantities,
+        });
+    }
+    let expected_two_buttons = profile.actions[2] == crate::profiles::Action::NoAction;
+    if saved.portrait.two_buttons_mode != expected_two_buttons {
+        return Err(LegacyPcHumanAdoptError::PortraitButtonModeMismatch {
+            creation_order,
+            actual: saved.portrait.two_buttons_mode,
+            expected: expected_two_buttons,
+        });
+    }
+    let expected_life = f32::from(status.life_points).to_bits();
+    if saved.portrait.life_level.to_bits() != expected_life {
+        return Err(LegacyPcHumanAdoptError::PortraitLifeMismatch {
+            creation_order,
+            actual: saved.portrait.life_level.to_bits(),
+            expected: expected_life,
+        });
+    }
     let mut quick_action_types = Vec::with_capacity(3);
     let mut quick_action_sequences = Vec::with_capacity(3);
     let mut quick_seek_sequences = Vec::with_capacity(3);
@@ -663,7 +712,6 @@ fn convert_pc(
         quick_action_interactors.push(interactor);
         titbits.push(action.metadata.titbit);
     }
-    let status = pc_status(&saved.post_human.status);
     let carried = checked_ref(
         entities.resolve_element(saved.post_human.carried)?,
         creation_order,

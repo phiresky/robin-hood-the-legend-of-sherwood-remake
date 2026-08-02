@@ -121,6 +121,12 @@ impl EngineInner {
             return;
         }
         if !multi_select {
+            let old_selection = self.players.seats[seat].selection.clone();
+            for old_id in old_selection {
+                if let Some(Entity::Pc(pc)) = self.get_entity_mut(old_id) {
+                    pc.pc.portrait.open = false;
+                }
+            }
             self.players.seats[seat].selection.clear();
         }
         if !self.players.seats[seat].selection.contains(&id) {
@@ -142,6 +148,9 @@ impl EngineInner {
             && let Some(Entity::Pc(pc)) = self.get_entity_mut(id)
         {
             pc.pc.interface_hidden = false;
+        }
+        if let Some(Entity::Pc(pc)) = self.get_entity_mut(id) {
+            pc.pc.portrait.open = !pc.pc.portrait.burned;
         }
         if speak {
             self.hero_speaking(assets, id, crate::engine::melee::HERO_SELECT);
@@ -170,14 +179,25 @@ impl EngineInner {
             .position(|&x| x == id)
         {
             self.players.seats[seat].selection.remove(pos);
+            if let Some(Entity::Pc(pc)) = self.get_entity_mut(id) {
+                pc.pc.portrait.open = false;
+            }
         } else if self.is_pc_selectable(assets, id) {
             self.players.seats[seat].selection.push(id);
+            if let Some(Entity::Pc(pc)) = self.get_entity_mut(id) {
+                pc.pc.portrait.open = !pc.pc.portrait.burned;
+            }
         }
     }
 
     /// Select all playable PCs. Robin is placed at the head of the list;
     /// everyone else preserves `pc_ids` order.
     pub(crate) fn select_all_pcs(&mut self, assets: &LevelAssets, seat: usize) {
+        for pc_id in self.world.pc_ids.clone() {
+            if let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) {
+                pc.pc.portrait.open = false;
+            }
+        }
         self.players.seats[seat].selection.clear();
         let pc_ids: Vec<EntityId> = self.world.pc_ids.clone();
         for &pc_id in &pc_ids {
@@ -192,6 +212,9 @@ impl EngineInner {
                 self.players.seats[seat].selection.insert(0, pc_id);
             } else {
                 self.players.seats[seat].selection.push(pc_id);
+            }
+            if let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) {
+                pc.pc.portrait.open = !pc.pc.portrait.burned;
             }
         }
         // Sherwood: clear the per-PC `interface_hidden` flag on every
@@ -209,6 +232,12 @@ impl EngineInner {
 
     /// Clear the selection.
     pub(crate) fn unselect_all_pcs(&mut self, seat: usize) {
+        let old_selection = self.players.seats[seat].selection.clone();
+        for id in old_selection {
+            if let Some(Entity::Pc(pc)) = self.get_entity_mut(id) {
+                pc.pc.portrait.open = false;
+            }
+        }
         self.players.seats[seat].selection.clear();
     }
 
@@ -219,6 +248,9 @@ impl EngineInner {
     /// selection), and from `PcMessage::DisableCharacter`.
     pub(crate) fn unselect_single_pc(&mut self, id: EntityId) {
         self.players.seats[0].selection.retain(|&x| x != id);
+        if let Some(Entity::Pc(pc)) = self.get_entity_mut(id) {
+            pc.pc.portrait.open = false;
+        }
     }
 
     /// Save the current action on each selected PC.
@@ -331,6 +363,11 @@ impl EngineInner {
         let Some(status_idx) = status_idx else { return };
 
         tracing::info!(entity = ?pc_id, "reset_coma — reviving from coma");
+
+        if let Some(Entity::Pc(pc)) = self.world.entities.get_mut(pc_id) {
+            pc.pc.portrait.burned = false;
+            pc.pc.portrait.open = false;
+        }
 
         // Clear coma in campaign status
         if let Some(campaign) = Some(&mut self.mission_domain.campaign)

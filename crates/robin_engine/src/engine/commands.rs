@@ -1975,6 +1975,11 @@ impl EngineInner {
                 .macro_store
                 .get_or_insert(*id)
                 .begin_recording(slot);
+            let pc = self
+                .get_entity_mut(*id)
+                .and_then(|entity| entity.pc_data_mut())
+                .unwrap_or_else(|| panic!("quick-action recording target {id:?} is not a PC"));
+            pc.portrait.quick_icons[slot as usize] = Default::default();
         }
         self.players.qa_recording_slot = slot;
         self.players.qa_recording_for = targets;
@@ -1990,12 +1995,7 @@ impl EngineInner {
         }
         // End recording on every PC that was armed (the currently-
         // armed set, not the current selection — those can differ).
-        let old = std::mem::take(&mut self.players.qa_recording_for);
-        for id in &old {
-            if let Some(state) = self.players.macro_store.get_mut(*id) {
-                state.stop_recording();
-            }
-        }
+        self.stop_recording_macro();
         // Re-arm on whoever is currently selected.
         let targets: Vec<EntityId> = self.players.seats[seat].selection.clone();
         if targets.is_empty() {
@@ -2006,6 +2006,11 @@ impl EngineInner {
                 .macro_store
                 .get_or_insert(*id)
                 .begin_recording(slot);
+            let pc = self
+                .get_entity_mut(*id)
+                .and_then(|entity| entity.pc_data_mut())
+                .unwrap_or_else(|| panic!("quick-action recording target {id:?} is not a PC"));
+            pc.portrait.quick_icons[slot as usize] = Default::default();
         }
         self.players.qa_recording_slot = slot;
         self.players.qa_recording_for = targets;

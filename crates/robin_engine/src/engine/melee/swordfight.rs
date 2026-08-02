@@ -1505,6 +1505,12 @@ impl EngineInner {
         for slot in 0..crate::macro_store::NUMBER_OF_QA_MEMORY as u8 {
             self.abort_quick_action(pc_id, slot);
         }
+        if let Some(entity) = self.world.entities.get_mut(pc_id)
+            && let Some(pc) = entity.pc_data_mut()
+        {
+            pc.portrait.burned = true;
+            pc.portrait.open = false;
+        }
         // Stop derived live execution state.  Do not rewrite the actor's
         // action state here: Original's RHElementActorPC::GetWounded coma
         // branch calls SetConcussionOfTheBrain (which quits swordfight) and

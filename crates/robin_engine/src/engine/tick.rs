@@ -1480,6 +1480,52 @@ impl EngineInner {
 
         let skip_render = self.tick_camera_display_state();
 
+        // Original's portrait refresh mirrors these fields from canonical
+        // profile/status/interface state. Event-driven open, burn, and
+        // quick-icon fields are intentionally not derived here.
+        let portrait_updates: Vec<_> = self
+            .world
+            .pc_ids
+            .iter()
+            .copied()
+            .map(|pc_id| {
+                let pc = self
+                    .get_entity(pc_id)
+                    .and_then(|entity| entity.pc_data())
+                    .unwrap_or_else(|| panic!("PC list entry {pc_id:?} is not a PC"));
+                let profile = assets
+                    .profile_manager
+                    .get_character(pc.profile_index)
+                    .unwrap_or_else(|| {
+                        panic!("PC {pc_id:?} has missing profile {}", pc.profile_index)
+                    });
+                let description = self
+                    .pc_description_for_pc_data(pc)
+                    .unwrap_or_else(|| panic!("PC {pc_id:?} has no campaign description"));
+                (
+                    pc_id,
+                    profile
+                        .actions
+                        .map(|action| description.status.get_ammo(action)),
+                    profile.actions[2] == crate::profiles::Action::NoAction,
+                    !pc.interface_hidden,
+                    f32::from(pc.life_points),
+                    pc.trumpet_enabled,
+                )
+            })
+            .collect();
+        for (pc_id, quantities, two_buttons, displayed, life, trumpet) in portrait_updates {
+            let pc = self
+                .get_entity_mut(pc_id)
+                .and_then(|entity| entity.pc_data_mut())
+                .unwrap_or_else(|| panic!("PC list entry {pc_id:?} is not a PC"));
+            pc.portrait.quantities = quantities;
+            pc.portrait.two_buttons_mode = two_buttons;
+            pc.portrait.displayed = displayed;
+            pc.portrait.life_level = life;
+            pc.portrait.trumpet_enabled = trumpet;
+        }
+
         // Reset per-frame scroll dedupe after the camera display tick.
         // Host-local viewport scroll is host-side and never enters engine
         // state, so peer-2's held scroll doesn't gate the host's, and vice
@@ -2100,6 +2146,13 @@ impl EngineInner {
                                 .macro_store
                                 .get_or_insert(*pc_id)
                                 .begin_recording(slot);
+                            let pc = self
+                                .get_entity_mut(*pc_id)
+                                .and_then(|entity| entity.pc_data_mut())
+                                .unwrap_or_else(|| {
+                                    panic!("quick-action recording target {pc_id:?} is not a PC")
+                                });
+                            pc.portrait.quick_icons[slot as usize] = Default::default();
                         }
                         self.players.qa_recording_for = targets;
                         // Snapshot the currently-armed action so the
@@ -2111,12 +2164,7 @@ impl EngineInner {
                         // Suppress the post-process restore unless
                         // something was actually recording.
                         let was_recording = !self.players.qa_recording_for.is_empty();
-                        for pc_id in self.players.qa_recording_for.clone() {
-                            if let Some(state) = self.players.macro_store.get_mut(pc_id) {
-                                state.stop_recording();
-                            }
-                        }
-                        self.players.qa_recording_for.clear();
+                        self.stop_recording_macro();
 
                         // Post-process: re-select the action that was
                         // armed before recording started.  Apply the

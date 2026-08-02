@@ -1178,12 +1178,19 @@ impl PcAmmoData {
     }
 }
 
-#[derive(
-    Debug, Clone, Copy, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash,
-)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct PcPortraitQuickIconState {
     pub titbit_id: u32,
     pub running: bool,
+}
+
+impl Default for PcPortraitQuickIconState {
+    fn default() -> Self {
+        Self {
+            titbit_id: u32::MAX,
+            running: false,
+        }
+    }
 }
 
 /// Engine-owned copy of the Original portrait state needed by save adoption.

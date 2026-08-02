@@ -1966,12 +1966,12 @@ impl EngineInner {
         for slot in 0..=2u8 {
             self.abort_quick_action(victim_id, slot);
         }
-
-        // The portrait widget burn is replaced by the
-        // `is_dead || is_coma` derivation in
-        // `crates/robin_rs/src/ui_panel.rs`.  The Human-base portion
-        // of the kill is handled by the surrounding death-path code
-        // (concussion / KO / posture resets at the call site).
+        if let Some(entity) = self.world.entities.get_mut(victim_id)
+            && let Some(pc) = entity.pc_data_mut()
+        {
+            pc.portrait.burned = true;
+            pc.portrait.open = false;
+        }
     }
 
     /// Apply the reciprocal/global relationship work that the original

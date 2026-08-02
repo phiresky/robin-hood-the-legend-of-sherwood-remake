@@ -3452,6 +3452,7 @@ impl EngineInner {
                 saved_pc.quick_action_interactors[index] =
                     saved_pc.quick_action_interactors[index + 1];
                 saved_pc.quick_action_buttons[index] = saved_pc.quick_action_buttons[index + 1];
+                saved_pc.portrait.quick_icons[index] = saved_pc.portrait.quick_icons[index + 1];
             }
             let last = crate::macro_store::NUMBER_OF_QA_MEMORY - 1;
             saved_pc.quick_action_types[last] = crate::element_kinds::QuickAction::None;
@@ -3619,6 +3620,35 @@ impl EngineInner {
     /// Stop the in-progress quick-action macro recording (host-side
     /// portrait-click handler).  Idempotent.
     pub(crate) fn stop_recording_macro(&mut self) {
+        let slot = self.players.qa_recording_slot as usize;
+        let recording = self.players.qa_recording_for.clone();
+        for pc_id in recording {
+            let (has_macro, titbit) = self
+                .players
+                .macro_store
+                .get(pc_id)
+                .map(|state| (state.has_macro(slot), state.get_slot_titbit(slot)))
+                .unwrap_or((false, None));
+            let icon = if has_macro {
+                let titbit = titbit.unwrap_or_else(|| {
+                    panic!("recorded quick-action PC {pc_id:?} slot {slot} has no titbit")
+                });
+                crate::element::PcPortraitQuickIconState {
+                    titbit_id: u32::from(self.feedback.titbit_manager.get_phase(titbit)),
+                    running: self.feedback.titbit_manager.is_running_for_qa(titbit),
+                }
+            } else {
+                Default::default()
+            };
+            if let Some(state) = self.players.macro_store.get_mut(pc_id) {
+                state.stop_recording();
+            }
+            let pc = self
+                .get_entity_mut(pc_id)
+                .and_then(|entity| entity.pc_data_mut())
+                .unwrap_or_else(|| panic!("quick-action recording target {pc_id:?} is not a PC"));
+            pc.portrait.quick_icons[slot] = icon;
+        }
         self.players.qa_recording_for.clear();
     }
 
