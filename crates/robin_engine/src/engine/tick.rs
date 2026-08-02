@@ -1064,8 +1064,18 @@ pub(super) fn classify_live_actor_execute_arm(
 fn specialized_execute_motion(
     sprite_motion: Option<crate::sprite::MotionState>,
     selected_beggar: bool,
+    movement_entity_target_seek: bool,
 ) -> Option<crate::sprite::MotionState> {
     if selected_beggar {
+        Some(crate::sprite::MotionState::InProgress)
+    } else if movement_entity_target_seek
+        && sprite_motion
+            .is_some_and(|motion| !matches!(motion, crate::sprite::MotionState::Terminated))
+    {
+        // Actor::PerformSeek consumes non-terminal sprite results while an
+        // entity target remains live. The surrounding movement Execute arm
+        // observes IN_PROGRESS even though Sprite::PerformMotion recorded a
+        // raw START or DONE edge.
         Some(crate::sprite::MotionState::InProgress)
     } else {
         sprite_motion
@@ -1080,12 +1090,20 @@ mod specialized_execute_motion_tests {
     #[test]
     fn beggar_idle_returns_in_progress_while_retaining_the_sprite_start() {
         assert_eq!(
-            specialized_execute_motion(Some(MotionState::Start), true),
+            specialized_execute_motion(Some(MotionState::Start), true, false),
             Some(MotionState::InProgress)
         );
         assert_eq!(
-            specialized_execute_motion(Some(MotionState::Done), false),
+            specialized_execute_motion(Some(MotionState::Done), false, false),
             Some(MotionState::Done)
+        );
+        assert_eq!(
+            specialized_execute_motion(Some(MotionState::Start), false, true),
+            Some(MotionState::InProgress)
+        );
+        assert_eq!(
+            specialized_execute_motion(Some(MotionState::Terminated), false, true),
+            Some(MotionState::Terminated)
         );
     }
 }
@@ -3315,6 +3333,30 @@ impl EngineInner {
                                     order_id,
                                 })
                         });
+                    let movement_entity_target_seek = movement_selection.is_some_and(|selection| {
+                        self.orders
+                            .sequence_manager
+                            .get_element(selection.seq_id, selection.elem_idx)
+                            .is_some_and(|element| {
+                                let crate::sequence::SequenceElementData::Movement {
+                                    element: target,
+                                    flags,
+                                    ..
+                                } = &element.data
+                                else {
+                                    return false;
+                                };
+                                flags.contains(crate::sequence::MoveFlags::SEEK)
+                                    && target.is_some()
+                                    // RunningUpright's Execute arm applies
+                                    // its state independently and does not
+                                    // expose PerformSeek's wrapper result.
+                                    && element.current_order().is_some_and(|order| {
+                                        order.order_type
+                                            != crate::order::OrderType::RunningUpright
+                                    })
+                            })
+                    });
                     let melee_selection =
                         selected_order.and_then(|(seq_id, elem_idx, order_id)| {
                             let order_type = self
@@ -3414,6 +3456,7 @@ impl EngineInner {
                                     entity.element_data().sprite.last_motion_state
                                 }),
                                 beggar_selection.is_some(),
+                                movement_entity_target_seek,
                             )
                         });
                     if let Some(motion) = specialized_execute_motion {

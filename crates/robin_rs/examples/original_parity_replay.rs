@@ -2139,6 +2139,10 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     // writes. PostInitialize, sound callbacks, and resolved input can enqueue
     // movement before the next PerformHourglass, so this capture deliberately
     // remains active outside the simulation body.
+    // Keep both captures open across the complete recorded-frame boundary.
+    // In particular, queued sound completions run before the simulation body
+    // and may synchronously invoke authoritative AI visibility checks.
+    robin_engine::sight_obstacle::begin_parity_visibility_capture();
     robin_engine::pathfinder::begin_parity_path_capture();
 
     let mut line_index = 0_usize;
@@ -2284,7 +2288,6 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 frame.frame_before, frame.frame_after
             );
         }
-        robin_engine::sight_obstacle::begin_parity_visibility_capture();
         robin_engine::movement_diagnostics::begin_parity_movement_capture();
         let tick_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             engine.perform_hourglass_with_body_gate(
