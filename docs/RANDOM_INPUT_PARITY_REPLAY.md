@@ -3542,6 +3542,22 @@ live principal opponent and performs the Original's per-frame turn during the
 injury animation (`eacbecd25`). The current validated Savegame 051 frontier is
 frame 1,351, in the following projectile flight.
 
+That projectile boundary exposed two independent bow-skill values in
+`RHElementActorHuman::ShootWithBowAt`. Original uses the difficulty- and
+alcohol-adjusted `GetShootingAbility()` for hit chance, but scales a miss with
+the raw `RHHumanStatus::BOW_SKILL` capacity. The supported Original builds also
+evaluate the three `SBGeoVector3D(rand(), rand(), rand())` arguments
+right-to-left, mapping the global draws to Z, Y, then X. Rust now preserves
+both distinctions (`92376506e`), advancing Savegame 051 replay 008 from frame
+1,351 to a new Soldier 59 steering frontier at frame 1,436.
+
+The current frozen runner still reports nicouzouf Savegame 063 replay 001 at
+frame 1,391: Soldier 217 queues a path and enters `MoveWaiting` where Original
+continues with `MoveOk`. A transient pass observed while the release runner was
+being relinked was not accepted as validation; repeated runs of the completed
+runner reproduce the frame-1,391 path-event boundary. This remains an active
+source-level investigation rather than a completed combat-scoring fix.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

@@ -6503,17 +6503,6 @@ impl EngineInner {
             }
         }
 
-        // Process pending civilian panic broadcast.
-        // `nearby_civilians_panic` iterates nearby civilians within
-        // the standard view radius (aspect-ratio box +
-        // `is_detecting_360_degrees`) and dispatches EVENT_PANIC.
-        // Both this enemy-broadcast path and the sword-attack call
-        // site funnel through the same helper, since both use
-        // EVENT_PANIC with the same filter.
-        if effects.broadcast_panic {
-            self.nearby_civilians_panic(sim, assets, npc_id);
-        }
-
         // Process pending launch commands — create and launch
         // sequence elements for commands the AI wants to execute.
         for cmd in effects.launch_commands {
@@ -7248,30 +7237,38 @@ impl EngineInner {
         // live view radius, and opaque 3D LOS.
         let radius_y = view_radius * crate::position_interface::ASPECT_RATIO;
 
-        let (source_pos, source_detection_point) = {
+        let (source_map, source_ground, source_detection_point) = {
             let Some(entity) = self.world.entities.get(source) else {
+                tracing::trace!(target: "parity_nearby_panic", "source missing");
                 return;
             };
             // Source must be IsActiveAndOutsideBuilding for
             // IsDetecting360Degrees to ever return true.
             if !entity.element_data().active {
+                tracing::trace!(target: "parity_nearby_panic", "source inactive");
                 return;
             }
             if self
                 .entity_building_sector(entity.element_data().sector())
                 .is_some()
             {
+                tracing::trace!(target: "parity_nearby_panic", sector = ?entity.element_data().sector(), "source classified in building");
                 return;
             }
             let Some(detection_point) = entity.compute_detection_point() else {
+                tracing::trace!(target: "parity_nearby_panic", "source has no detection point");
                 return;
             };
-            (entity.element_data().position_map(), detection_point)
+            (
+                entity.element_data().position_map(),
+                entity.ground_position(),
+                detection_point,
+            )
         };
 
         let panic_center = crate::ai::Position {
-            x: source_pos.x,
-            y: source_pos.y,
+            x: source_map.x,
+            y: source_map.y,
             sector: None,
             level: 0,
         };
@@ -7301,9 +7298,12 @@ impl EngineInner {
                 if self.entity_building_sector(c.element.sector()).is_some() {
                     continue;
                 }
-                let p = c.element.position_map();
-                let dx = source_pos.x - p.x;
-                let dy = source_pos.y - p.y;
+                // `GetPositionGround()` is the cached world-space X/Y pair,
+                // not map-space X/Y. Elevation therefore contributes to Y
+                // before the aspect-ratio bounding-box test.
+                let p = entity.ground_position();
+                let dx = source_ground.x - p.x;
+                let dy = source_ground.y - p.y;
                 // Aspect-ratio bounding box: |dx| <= r,
                 // |dy| <= r * ASPECT_RATIO.
                 if dx.abs() > view_radius || dy.abs() > radius_y {

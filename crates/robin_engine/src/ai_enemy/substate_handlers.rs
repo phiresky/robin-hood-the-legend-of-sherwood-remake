@@ -1000,7 +1000,8 @@ impl EnemyAi {
                     // and alert them with EventSeesBrawl.
                     self.maybe_officer_sees_me_fighting(ctx, tick);
                     // Broadcast civilian panic for anyone in view
-                    // radius.  Queued via `pending_broadcast_panic`.
+                    // radius. Queued in the owner-work FIFO so surrounding
+                    // synchronous AI calls retain their statement order.
                     self.nearby_civilians_panic();
 
                     // Remove KO'd target from the enemy list.

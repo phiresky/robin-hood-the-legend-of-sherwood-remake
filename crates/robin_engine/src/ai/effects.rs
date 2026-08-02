@@ -104,6 +104,10 @@ pub struct AiReentrantOutbox {
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub enum AiOwnerWork {
     StateChange(AiStateChangeNotification),
+    /// Synchronous `NearbyCiviliansPanic()` engine callback.  It shares the
+    /// owner FIFO because callers can speak or change state immediately
+    /// before/after it and those operations are observably ordered.
+    NearbyCiviliansPanic,
     /// Continue the common `EVENT_REACHPOINT` route handler after its
     /// virtual `SetState` callback has returned and committed.
     ResumeGotoRouteReachPoint {
@@ -270,7 +274,6 @@ pub struct AiActorOutbox {
     /// Preserve the interrupted movement goal across the next Halt because
     /// an AI-issued RaiseShield command immediately takes ownership.
     pub preserve_goal_for_raise_shield: bool,
-    pub broadcast_panic: bool,
     pub blink_all_enemies: bool,
     pub enemy_in_house_alert: bool,
     pub add_detectables: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
@@ -365,7 +368,6 @@ pub(crate) struct AiActorCoreEffects {
     pub unfocus: bool,
     pub set_direction_instantly: Option<i16>,
     pub deactivate: bool,
-    pub broadcast_panic: bool,
     pub launch_commands: Vec<crate::element::Command>,
     pub launch_on_target: Vec<(NpcHandle, crate::element::Command)>,
     pub launch_sequences: Vec<crate::sequence::Sequence>,
@@ -391,7 +393,6 @@ impl AiActorOutbox {
             || self.lower_shield
             || self.deactivate
             || self.halt
-            || self.broadcast_panic
             || self.blink_all_enemies
             || self.enemy_in_house_alert
             || !self.add_detectables.is_empty()
@@ -481,7 +482,6 @@ impl AiActorOutbox {
             unfocus: std::mem::take(&mut self.unfocus),
             set_direction_instantly: self.set_direction_instantly.take(),
             deactivate: std::mem::take(&mut self.deactivate),
-            broadcast_panic: std::mem::take(&mut self.broadcast_panic),
             launch_commands: std::mem::take(&mut self.launch_commands),
             launch_on_target: std::mem::take(&mut self.launch_on_target),
             launch_sequences: std::mem::take(&mut self.launch_sequences),

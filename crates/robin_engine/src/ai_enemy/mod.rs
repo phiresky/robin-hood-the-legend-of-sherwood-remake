@@ -1351,11 +1351,19 @@ impl EnemyAi {
     }
 
     fn nearby_civilians_panic(&mut self) {
-        // The reference iterates nearby entities and calls Panic()
-        // on civilians.  We can't access the entity list from the
-        // AI, so we set a flag for the engine to process after
-        // think().
-        self.base.outbox.actor.broadcast_panic = true;
+        // Original calls every eligible civilian's Think synchronously. Keep
+        // this engine callback in the same FIFO as Say/SetState so a caller
+        // such as BeginSwordfight preserves Panic -> Say statement order.
+        tracing::trace!(
+            target: "parity_nearby_panic",
+            owner = self.base.me,
+            "queue synchronous NearbyCiviliansPanic callback"
+        );
+        self.base
+            .outbox
+            .reentrant
+            .owner_work
+            .push(crate::ai::AiOwnerWork::NearbyCiviliansPanic);
     }
 
     /// Soldier-only; walks same-camp soldiers, finds an officer in

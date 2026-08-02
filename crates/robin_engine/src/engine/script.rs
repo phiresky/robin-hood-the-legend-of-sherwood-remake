@@ -2987,6 +2987,15 @@ impl EngineInner {
 
             let notification = match work {
                 crate::ai::AiOwnerWork::StateChange(notification) => notification,
+                crate::ai::AiOwnerWork::NearbyCiviliansPanic => {
+                    tracing::trace!(
+                        target: "parity_nearby_panic",
+                        owner = owner.index(),
+                        "drain synchronous NearbyCiviliansPanic callback"
+                    );
+                    self.nearby_civilians_panic(sim, assets, owner);
+                    continue;
+                }
                 crate::ai::AiOwnerWork::ResumeGotoRouteReachPoint {
                     owner_boundary_positions,
                 } => {
