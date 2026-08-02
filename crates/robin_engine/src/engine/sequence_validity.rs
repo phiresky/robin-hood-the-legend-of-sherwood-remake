@@ -1082,6 +1082,29 @@ impl EngineInner {
             terminal = ?terminal,
             "pc_execute_validity: PC init-arm validity failed — aborting/terminating"
         );
+
+        // These guards are early returns from RHElementActorPC::Execute, so
+        // Actor::Hourglass observes and serializes their motion result before
+        // it applies the corresponding sequence-state transition.  Merely
+        // terminating the Rust element can leave no selected Execute owner
+        // below, in which case the previous frame's motion would remain
+        // latched indefinitely.
+        let motion = match terminal {
+            ValidityArmTerminal::Aborted => crate::sprite::MotionState::Aborted,
+            ValidityArmTerminal::Terminated
+            | ValidityArmTerminal::TerminatedWithDrop { .. }
+            | ValidityArmTerminal::TerminatedDropCorpseUnlessDrop => {
+                crate::sprite::MotionState::Terminated
+            }
+        };
+        self.world
+            .entities
+            .get_mut(entity_id)
+            .and_then(Entity::actor_data_mut)
+            .expect("PC validity owner disappeared before motion-state latch")
+            .continuation
+            .motion_state = motion;
+
         match terminal {
             ValidityArmTerminal::Aborted => {
                 self.orders
@@ -1584,6 +1607,48 @@ mod tests {
         pc.campaign_description_index = Some(1);
 
         assert!(engine.pc_has_ammo(pc_id, crate::profiles::Action::Eat));
+    }
+
+    #[test]
+    fn invalid_eating_initialization_latches_execute_terminated_motion() {
+        let mut description = crate::campaign::PcDescription::default();
+        description.status.num_rations = 1;
+        let mut campaign = crate::campaign::Campaign::default();
+        campaign.characters.push(description);
+
+        let mut engine = EngineInner::new_with_campaign(campaign);
+        let pc_id = add_pc(&mut engine);
+        let pc = engine
+            .get_entity_mut(pc_id)
+            .and_then(Entity::pc_data_mut)
+            .expect("test PC data");
+        pc.campaign_description_index = Some(0);
+        pc.life_points = crate::pc_status::LIFEPOINTS_PC;
+
+        let mut element = SequenceElement::new_generic(1, Command::EatCmd, Some(pc_id));
+        element.orders.push_back(crate::order::Order::test_new(
+            crate::order::OrderType::Eating,
+            0.0,
+            0.0,
+        ));
+        let sequence = engine.orders.sequence_manager.launch_element(element);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+
+        engine.pre_tick_pc_execute_validity_for(&LevelAssets::new(), pc_id);
+
+        assert_eq!(
+            engine
+                .get_entity(pc_id)
+                .and_then(Entity::actor_data)
+                .expect("test actor data")
+                .continuation
+                .motion_state,
+            crate::sprite::MotionState::Terminated,
+            "PC::Execute returns TERMINATED before Actor::Hourglass retires invalid Eating"
+        );
     }
 
     #[test]
