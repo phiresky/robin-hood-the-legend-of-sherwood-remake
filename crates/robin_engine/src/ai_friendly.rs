@@ -397,6 +397,7 @@ impl FriendlyAi {
 
     pub(crate) fn resolve_alert_request(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         accepted: bool,
         continuation: AlertContinuation,
         ctx: &AiContext,
@@ -436,7 +437,9 @@ impl FriendlyAi {
                             self.base.me, target
                         )
                     })
-                    .forecasted_destination;
+                    .forecasted_destination
+                    .resolve(sim)
+                    .position;
                 self.base
                     .go_near(target_pos, AI_TALK_DISTANCE, GotoFlags::RUN, ctx);
                 self.base.launch_timer(20, ctx.frame);
@@ -896,7 +899,7 @@ impl FriendlyAi {
                                 // arm catches up if the prediction
                                 // was wrong.
                                 self.base.go_near(
-                                    antag_view.forecasted_destination,
+                                    antag_view.forecasted_destination.resolve(sim).position,
                                     AI_TALK_DISTANCE,
                                     GotoFlags::RUN,
                                     ctx,
@@ -1856,7 +1859,11 @@ impl FriendlyAi {
                     }
 
                     if distance < prev_best {
-                        best = Some((handle, distance, view.forecasted_destination));
+                        best = Some((
+                            handle,
+                            distance,
+                            view.forecasted_destination.resolve(sim).position,
+                        ));
                     }
                 }
                 AiState::Attacking | AiState::Menacing | AiState::Fleeing => {
@@ -1947,9 +1954,8 @@ impl FriendlyAi {
         // Run toward the picked soldier's forecasted destination
         // (e.g. the far side of an in-flight door pass) rather
         // than the animated mid-traversal position.  `target_pos`
-        // is sourced from `view.forecasted_destination`, populated
-        // for human actors by `build_entity_views` via
-        // `forecast_destination_for_ia`.
+        // is resolved from `view.forecasted_destination` at this exact
+        // Original call site, so a building-exit choice owns its RNG draw.
         self.base
             .go_near(target_pos, AI_TALK_DISTANCE, GotoFlags::RUN, ctx);
 
@@ -2640,7 +2646,8 @@ mod tests {
                 ai_state: AiState::Default,
                 ai_substate: Substate::DefaultOnPost,
                 script_locked: false,
-                forecasted_destination: enemy_pos,
+                forecasted_destination:
+                    crate::ai::PreparedForecastDestination::fixed(enemy_pos, 0),
                 current_animation: OrderType::WalkingUpright,
                 elevation: 0.0,
                 object_type: crate::element_kinds::ObjectType::None,
@@ -2989,7 +2996,7 @@ mod tests {
             ai_state,
             ai_substate: Substate::DefaultOnPost,
             script_locked: false,
-            forecasted_destination: pos,
+            forecasted_destination: crate::ai::PreparedForecastDestination::fixed(pos, 0),
             current_animation: OrderType::WalkingUpright,
             elevation: 0.0,
             object_type: crate::element_kinds::ObjectType::None,

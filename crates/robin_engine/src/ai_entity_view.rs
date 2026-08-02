@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::ai::{AiState, Position, Substate};
+use crate::ai::{AiState, Position, PreparedForecastDestination, Substate};
 use crate::coordinates::MapPoint;
 use crate::element::{Camp, Entity, Posture};
 use crate::order::OrderType;
@@ -106,13 +106,10 @@ pub struct AiEntityView {
     /// an unrelated civilian alert.  `false` for entities without an
     /// AI brain.
     pub script_locked: bool,
-    /// Predicted destination of the actor when it's mid-door-pass /
-    /// mid-lift / mid-building-traversal.  Falls back to the live
-    /// `position` when the actor isn't traversing anything.
-    /// Pre-computed at view-build time so AI handlers (e.g.
-    /// `AlertSoldier`) can chase where the soldier is going rather
-    /// than where it currently animates.
-    pub forecasted_destination: Position,
+    /// RNG-free alternatives for `ForecastDestinationForIA`. Building-exit
+    /// selection is deliberately deferred until the exact AI routine where
+    /// Original calls that method.
+    pub forecasted_destination: PreparedForecastDestination,
     /// Defaults to [`AiState::default()`] for entities that have no
     /// AI brain.
     pub ai_state: AiState,
@@ -805,11 +802,9 @@ pub fn entity_view_from_entity(
         ai_state,
         ai_substate,
         script_locked,
-        // Set to live position by default; the engine view-builder
-        // (`build_entity_views`) overwrites this for actors mid-
-        // door-pass / mid-lift / mid-building with the result of
-        // `forecast_destination_for_ia`.
-        forecasted_destination: position,
+        // The engine view-builder overwrites this with all authored
+        // door/lift/building alternatives for human actors.
+        forecasted_destination: PreparedForecastDestination::fixed(position, direction),
         current_animation,
         elevation,
         object_type,

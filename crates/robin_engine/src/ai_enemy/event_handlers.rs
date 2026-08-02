@@ -2735,7 +2735,10 @@ mod tests {
             in_building: false,
             building_sector: None,
             script_locked: false,
-            forecasted_destination: Position::default(),
+            forecasted_destination: crate::ai::PreparedForecastDestination::fixed(
+                Position::default(),
+                0,
+            ),
             ai_state: AiState::Default,
             ai_substate: Substate::DefaultOnPost,
             current_animation: OrderType::WaitingUprightBored,

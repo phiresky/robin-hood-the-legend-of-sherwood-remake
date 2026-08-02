@@ -602,8 +602,8 @@ impl EnemyAi {
                             friend.handle
                         )
                     })
-                    .forecasted_destination;
-                let target_position = target.forecasted_destination;
+                    .position;
+                let target_position = target.position;
                 let dx = friend_position.x - target_position.x;
                 let dy = friend_position.y - target_position.y;
                 if dx * dx + dy * dy < my_target_sq {
@@ -1987,7 +1987,7 @@ impl EnemyAi {
                         self.base.primary_target
                     )
                 })
-                .forecasted_destination
+                .position
         };
 
         // This specific Original routine uses the raw map-coordinate norm and
@@ -2940,7 +2940,8 @@ mod tests {
         };
         let mut target_view = pc_view();
         target_view.position = target_position;
-        target_view.forecasted_destination = target_position;
+        target_view.forecasted_destination =
+            crate::ai::PreparedForecastDestination::fixed(target_position, 0);
         let mut views = crate::ai_entity_view::AiEntityViewMap::new();
         views.insert(91, target_view);
         let ctx = AiContext {
@@ -2996,7 +2997,8 @@ mod tests {
         };
         let mut target_view = pc_view();
         target_view.position = target_position;
-        target_view.forecasted_destination = target_position;
+        target_view.forecasted_destination =
+            crate::ai::PreparedForecastDestination::fixed(target_position, 0);
         let mut views = crate::ai_entity_view::AiEntityViewMap::new();
         views.insert(198, target_view);
         let ctx = AiContext {

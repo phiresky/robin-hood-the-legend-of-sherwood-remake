@@ -446,7 +446,9 @@ impl Default for Position {
 // ---------------------------------------------------------------------------
 
 /// Predicted destination of a target actor for AI pursuit.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
 pub struct ForecastedDestination {
     pub position: Position,
     pub direction: u16,
@@ -455,7 +457,7 @@ pub struct ForecastedDestination {
 /// RNG-free destination forecast prepared from live actor/door state.
 /// Building exits remain alternatives until the exact AI consumer resolves
 /// the forecast, preserving Original draw ownership.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct PreparedForecastDestination {
     fallback: ForecastedDestination,
     building_gates: Vec<ForecastedDestination>,

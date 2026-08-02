@@ -1870,7 +1870,9 @@ impl EnemyAi {
                     self.base.me, target
                 )
             })
-            .forecasted_destination;
+            .forecasted_destination
+            .resolve(sim)
+            .position;
         self.base.go_near(
             officer_target_pos,
             parameters_ai::AI_TALK_DISTANCE,
@@ -4167,7 +4169,7 @@ mod tests {
             in_building: false,
             building_sector: None,
             script_locked: false,
-            forecasted_destination: pos,
+            forecasted_destination: crate::ai::PreparedForecastDestination::fixed(pos, 0),
             ai_state: AiState::Default,
             ai_substate: Substate::DefaultOnPost,
             current_animation: OrderType::WaitingUprightBored,

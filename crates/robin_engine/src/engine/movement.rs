@@ -6730,19 +6730,6 @@ impl EngineInner {
                         _ => OrderType::WalkingUpright,
                     },
                 };
-                // `RHElementActorSoldier::Execute` keeps the authored order
-                // unchanged but plays the corresponding alerted sprite
-                // animation while the soldier is attentive.  This applies to
-                // movement orders too: the alerted start/stop transitions have
-                // different frame delays, and WalkingAlerted has different
-                // per-frame distances.  Apply the substitution before lift
-                // translation so ladder/wall selection also sees the effective
-                // upright animation, as in the Original dispatch chain.
-                let base = super::animation::soldier_movement_animation(
-                    base,
-                    soldier_attentive,
-                    action_state,
-                );
                 // DetermineMovementAnimation translates the movement
                 // element's primary distance-producing action while it is
                 // instructed. PostProcessPath runs afterwards and may insert
@@ -6758,7 +6745,9 @@ impl EngineInner {
                 // ladder vector (`pt_low - pt_high`) with the movement
                 // vector. Snapshotted in `lift_translations` so we don't have
                 // to re-borrow the grid or door table mid-loop.
-                if !order_uses_distance_motion(order_action) || is_authored_climb_action(base) {
+                let base = if !order_uses_distance_motion(order_action)
+                    || is_authored_climb_action(base)
+                {
                     // DetermineMovementAnimation rewrites the movement
                     // element once when it is instructed. Every path order
                     // retains that authored climb direction, even if a later
@@ -6778,7 +6767,17 @@ impl EngineInner {
                         }
                         None => base,
                     }
-                }
+                };
+                // RHElementActorSoldier::Execute receives the action after
+                // DetermineMovementAnimation has translated it for the lift,
+                // then substitutes the attentive sprite animation. The order
+                // matters for stairs: translating WalkingStairsAlerted again
+                // would collapse it back to ordinary WalkingStairs.
+                super::animation::soldier_movement_animation(
+                    base,
+                    soldier_attentive,
+                    action_state,
+                )
             };
             // Advance sprite animation and get per-frame distance.
             // PerformMotion sets `row = conversion[anim] + direction`,
