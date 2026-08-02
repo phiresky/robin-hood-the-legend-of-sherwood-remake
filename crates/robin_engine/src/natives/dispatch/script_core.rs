@@ -161,14 +161,22 @@ impl NativeContext<'_, '_> {
 
             // --- actor stop / activation ---
 
-            // Cancels the actor's current sequence element and any
-            // pending sequence elements at script priority.  The
-            // sequence manager lives on the engine, so we queue a
-            // deferred command.
+            // Cancels the actor's current sequence element and any pending
+            // sequence elements at script priority. Original StopActor is
+            // synchronous. Yield to the engine so a subsequent sequence
+            // native cannot mutate the sequence manager ahead of the stop.
             StopActor => {
                 let actor = stack.pop_i32();
                 if self.get_entity(actor).is_some_and(|e| e.is_actor()) {
-                    self.emit_barrier(DeferredCommand::StopActor { actor });
+                    self.pending_yield = Some(crate::interp::NativeYield {
+                        operation: crate::interp::NativeOperation::EngineAction(
+                            crate::interp::SynchronousScriptRequest::StopActor {
+                                actor,
+                                native_return: 0,
+                            },
+                        ),
+                        resume: crate::interp::ResumePolicy::Fixed(0),
+                    });
                 } else {
                     tracing::warn!("StopActor: invalid or non-actor handle {actor}");
                 }

@@ -793,6 +793,15 @@ impl EngineInner {
                 self.relaunch_path_at_new_speed(sim, assets, owner);
                 Ok(0)
             }
+            crate::interp::SynchronousScriptRequest::StopActor { actor, .. } => {
+                let owner = self.entity_id_for_actor_handle(actor).ok_or_else(|| {
+                    format!(
+                        "StopActor owner handle {actor} became stale at its synchronous barrier"
+                    )
+                })?;
+                self.stop_owner(owner, crate::sequence::SequencePriority::Script);
+                Ok(0)
+            }
         }
     }
 

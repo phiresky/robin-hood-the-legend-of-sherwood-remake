@@ -135,6 +135,13 @@ pub enum SynchronousScriptRequest {
         actor: i32,
         native_return: i32,
     },
+    /// Execute `RHScript::StopActor` before the VM invokes its next native.
+    /// Sequence natives mutate the sequence manager synchronously, so a
+    /// queued effect would allow later sequence work to overtake the stop.
+    StopActor {
+        actor: i32,
+        native_return: i32,
+    },
 }
 
 /// One accepted `RHScript::SetAIState` operation. The native validates its
@@ -195,7 +202,8 @@ impl SynchronousScriptRequest {
             | Self::AssignPath { native_return, .. }
             | Self::AssignPost { native_return, .. }
             | Self::SwitchToAlertPath { native_return, .. }
-            | Self::SetPathWalkingStyle { native_return, .. } => native_return,
+            | Self::SetPathWalkingStyle { native_return, .. }
+            | Self::StopActor { native_return, .. } => native_return,
         }
     }
 }
