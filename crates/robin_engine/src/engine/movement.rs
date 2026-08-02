@@ -133,6 +133,12 @@ mod group_move_authorization_tests {
             (false, false, true)
         );
     }
+
+    #[test]
+    fn player_group_move_uses_resolved_upright_click_action() {
+        assert_eq!(player_group_move_action(false), OrderType::WalkingUpright);
+        assert_eq!(player_group_move_action(true), OrderType::RunningUpright);
+    }
 }
 
 /// Apply the lift-sector portion of Original
@@ -1605,11 +1611,16 @@ fn group_move_sector_kinds(sector_type: crate::sector::SectorType) -> (bool, boo
     )
 }
 
-fn force_sword_movement_for_sequence(seq: &mut crate::sequence::Sequence) {
-    for elem in &mut seq.elements {
-        if let crate::sequence::SequenceElementData::Movement { flags, .. } = &mut elem.data {
-            *flags |= crate::sequence::MoveFlags::FORCE_SWORD_MOVEMENT;
-        }
+/// `PerformGroupMove` receives one resolved upright action from the click
+/// dispatcher. It does not infer sword movement from an actor's opponent list;
+/// `DetermineMovementAnimation` performs any live action-state adaptation when
+/// the movement is instructed.
+#[inline]
+fn player_group_move_action(run: bool) -> OrderType {
+    if run {
+        OrderType::RunningUpright
+    } else {
+        OrderType::WalkingUpright
     }
 }
 
@@ -2943,40 +2954,9 @@ impl EngineInner {
                         );
                     }
 
-                    let is_swordfighting = self
-                        .get_entity(*pc_id)
-                        .and_then(|e| e.human_data())
-                        .map(|h| !h.opponents.is_empty())
-                        .unwrap_or(false);
-                    let action = if is_swordfighting {
-                        let want = if run {
-                            OrderType::RunningWithSword
-                        } else {
-                            OrderType::WalkingWithSword
-                        };
-                        let has_sword_row = self
-                            .get_entity(*pc_id)
-                            .map(|e| e.sprite().has_animation(want))
-                            .unwrap_or(false);
-                        if has_sword_row {
-                            want
-                        } else if run {
-                            OrderType::RunningUpright
-                        } else {
-                            OrderType::WalkingUpright
-                        }
-                    } else if run {
-                        OrderType::RunningUpright
-                    } else {
-                        match self.get_entity(*pc_id).map(|e| e.element_data().posture) {
-                            Some(crate::element::Posture::Crouched) => OrderType::WalkingCrouched,
-                            _ => OrderType::WalkingUpright,
-                        }
-                    };
-
                     let mut seq = build_line_jump_click_sequence(
                         *pc_id,
-                        action,
+                        player_group_move_action(run),
                         source_line_idx,
                         &source_line,
                         destination_line_idx,
@@ -2984,9 +2964,6 @@ impl EngineInner {
                         pc_effective_layer,
                         1.0,
                     );
-                    if is_swordfighting {
-                        force_sword_movement_for_sequence(&mut seq);
-                    }
                     let speak = crate::sequence::SequenceElement::new(
                         4,
                         crate::element::Command::SpeakHeroReachDestination,
@@ -3074,62 +3051,18 @@ impl EngineInner {
                 // Normal priority is interrupted by the new Normal Move
                 // via the NEXT_LEVEL cascade, cleanly tearing down the
                 // pickup so it doesn't replay at the new destination.
-                let is_swordfighting = self
-                    .get_entity(*pc_id)
-                    .and_then(|e| e.human_data())
-                    .map(|h| !h.opponents.is_empty())
-                    .unwrap_or(false);
-                let action = if is_swordfighting {
-                    // Sword-variant pick with PC-fallback.  When the
-                    // determined sword animation isn't in the actor's
-                    // sprite profile, fall back to the plain upright
-                    // variant.  PC sprites (e.g. "Robin des bois") ship
-                    // without `WalkingWithSword` / `RunningWithSword`
-                    // rows — the dev-mode assert compiles out in
-                    // release, leaving the upright fallback as the
-                    // shipping behaviour.
-                    let want = if run {
-                        OrderType::RunningWithSword
-                    } else {
-                        OrderType::WalkingWithSword
-                    };
-                    let has_sword_row = self
-                        .get_entity(*pc_id)
-                        .map(|e| e.sprite().has_animation(want))
-                        .unwrap_or(false);
-                    if has_sword_row {
-                        want
-                    } else if run {
-                        OrderType::RunningUpright
-                    } else {
-                        OrderType::WalkingUpright
-                    }
-                } else if run {
-                    OrderType::RunningUpright
-                } else {
-                    match self.get_entity(*pc_id).map(|e| e.element_data().posture) {
-                        Some(crate::element::Posture::Crouched) => OrderType::WalkingCrouched,
-                        _ => OrderType::WalkingUpright,
-                    }
-                };
                 let mut move_elem = crate::sequence::SequenceElement::new_movement(
                     1,
                     crate::element::Command::Move,
                     Some(*pc_id),
-                    action,
+                    player_group_move_action(run),
                 );
                 if let crate::sequence::SequenceElementData::Movement {
-                    destination,
-                    layer,
-                    flags,
-                    ..
+                    destination, layer, ..
                 } = &mut move_elem.data
                 {
                     *destination = snapped;
                     *layer = pc_effective_layer;
-                    if is_swordfighting {
-                        *flags |= crate::sequence::MoveFlags::FORCE_SWORD_MOVEMENT;
-                    }
                 }
 
                 // Append a `SpeakHeroReachDestination` element after
@@ -3344,23 +3277,10 @@ impl EngineInner {
                         gate_steps,
                         goal_shape,
                         pc_effective_layer,
-                        if run {
-                            OrderType::RunningUpright
-                        } else {
-                            OrderType::WalkingUpright
-                        },
+                        player_group_move_action(run),
                         door_goal.is_none(),
                         1.0,
-                        if self
-                            .get_entity(*pc_id)
-                            .and_then(|e| e.human_data())
-                            .map(|h| !h.opponents.is_empty())
-                            .unwrap_or(false)
-                        {
-                            crate::sequence::MoveFlags::FORCE_SWORD_MOVEMENT
-                        } else {
-                            crate::sequence::MoveFlags::empty()
-                        },
+                        crate::sequence::MoveFlags::empty(),
                         Vec::new(),
                         Vec::new(),
                         true,
@@ -11495,48 +11415,6 @@ mod line_jump_tests {
             }
             other => panic!("expected final movement element, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn force_sword_movement_marks_all_movement_elements() {
-        let owner = EntityId::Pc(crate::entity_id::PcId(7));
-        let source_idx = crate::jump_line::JumpLineIndex::new(2).unwrap();
-        let dest_idx = crate::jump_line::JumpLineIndex::new(3).unwrap();
-        let source_line = crate::jump_line::JumpLine::new(
-            crate::coordinates::map_pt(10.0, 20.0),
-            crate::coordinates::map_pt(30.0, 20.0),
-            0.0,
-            0.0,
-        );
-
-        let mut seq = build_line_jump_click_sequence(
-            owner,
-            OrderType::WalkingUpright,
-            source_idx,
-            &source_line,
-            dest_idx,
-            crate::coordinates::map_pt(90.0, 120.0),
-            5,
-            1.0,
-        );
-
-        force_sword_movement_for_sequence(&mut seq);
-
-        let movement_flags: Vec<_> = seq
-            .elements
-            .iter()
-            .filter_map(|elem| match &elem.data {
-                SequenceElementData::Movement { flags, .. } => Some(*flags),
-                _ => None,
-            })
-            .collect();
-
-        assert_eq!(movement_flags.len(), 2);
-        assert!(
-            movement_flags
-                .iter()
-                .all(|flags| flags.contains(MoveFlags::FORCE_SWORD_MOVEMENT))
-        );
     }
 
     #[test]
