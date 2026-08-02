@@ -2727,6 +2727,23 @@ adopts old-save values into those same fields instead of a legacy-only
 sidecar. Cache v28 remains compatible with older raw traces by removing only
 the named additive order keys when they are absent from the recording.
 
+### Schema-v29 dynamic serialized subtype frontier
+
+Active projectile, arrow, net, purse, coin, wasp, wasp-nest, scroll, and
+target entities now expose their source-confirmed serialized leaf state under
+`entities[].runtime.subtype`. References use semantic entity/sector identities;
+trajectory positions and movement vectors retain exact float bits. The
+Original now initializes every trajectory point's dormant bounce/material
+members deterministically, so recording never depends on allocator residue.
+
+Rust loaded-save adoption retains the same state in live runtime fields rather
+than a replay-only sidecar. Fresh trajectory generation still reports missing
+per-point bounce/material mirrors as explicit `null` values; schema-v29 traces
+therefore identify every construction path that must populate those fields
+without inventing defaults. Older raw traces remain supported by removing only
+the absent top-level `subtype` projection. Presence is otherwise strict. The
+native replay cache version and suffix are v29.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,
