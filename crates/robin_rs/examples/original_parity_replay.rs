@@ -1466,7 +1466,7 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
 }
 
 const TRACE_CACHE_VERSION: u32 = 53;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v45.native-bincode.zst";
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v53.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -6358,6 +6358,14 @@ fn compare_point_with_absolute_tolerance(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_cache_suffix_tracks_binary_header_version() {
+        assert!(
+            TRACE_CACHE_SUFFIX.contains(&format!("-v{TRACE_CACHE_VERSION}.")),
+            "native parity-cache suffix {TRACE_CACHE_SUFFIX:?} does not identify header version {TRACE_CACHE_VERSION}"
+        );
+    }
 
     fn valid_initial_save_with_profile(source_profile: TraceSaveSourceProfile) -> TraceInitialSave {
         let mut bytes = Vec::from(*source_profile.expected_magic());
