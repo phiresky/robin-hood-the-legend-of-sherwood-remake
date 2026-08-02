@@ -739,6 +739,16 @@ pub struct LevelGrid {
     /// Indexed by `sector_indices` in grid blocks and layers.
     pub sectors: Vec<GridSector>,
 
+    /// Immutable door endpoints indexed by the canonical door index.
+    ///
+    /// The Original's `RHArtificialIntelligence::PositionToPoint3D` uses a
+    /// building sector's ordered gate list to find the door whose inside
+    /// endpoint is near the requested position, then samples elevation at
+    /// that door's outside endpoint. Keep this geometry beside
+    /// `GridSector::gate_indices` so borrow-broken AI contexts can perform
+    /// the same lookup without retaining mutable door state.
+    pub door_projection_infos: Vec<DoorProjectionInfo>,
+
     /// All sprite-occlusion masks stored in the grid (flat arena).
     /// Indexed by `mask_indices` in grid blocks and layers.
     pub masks: Vec<crate::mask::RuntimeMask>,
@@ -775,6 +785,17 @@ pub struct LevelGrid {
     /// Fully recomputed on each level load and serialized with the rest of
     /// the level-derived engine state.
     pub shadow_data: std::collections::HashMap<u32, crate::sector::ShadowData>,
+}
+
+/// Static subset of a door required for building-sector elevation lookup.
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct DoorProjectionInfo {
+    pub point_in: MapPoint,
+    pub point_out: MapPoint,
+    pub sector_out: crate::sector::SectorNumber,
+    pub layer_out: u16,
 }
 
 // ─── Per-lift runtime state ──────────────────────────────────────

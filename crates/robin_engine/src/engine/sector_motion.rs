@@ -92,30 +92,60 @@ impl EngineInner {
                     .sector_number_map
                     .get(&sn)
                     .copied();
-                let is_motion = grid_idx.is_some_and(|gi| {
-                    self.world
-                        .fast_grid
-                        .level
-                        .sectors
-                        .get(gi)
-                        .is_some_and(|gs| gs.sector_type.is_motion())
-                });
+                let grid_sector =
+                    grid_idx.and_then(|gi| self.world.fast_grid.level.sectors.get(gi));
+                let is_motion = grid_sector.is_some_and(|gs| gs.sector_type.is_motion());
                 if grid_idx.is_some() && !is_motion {
                     panic!(
                         "position_to_point_3d: sector {} is not a motion sector",
                         handle.get()
                     );
                 }
+                let (projection_sector, projection_layer, projection_point) = if grid_sector
+                    .is_some_and(|sector| sector.sector_type.is_building())
+                {
+                    let sector = grid_sector.expect("building sector disappeared");
+                    let door = sector
+                            .gate_indices
+                            .iter()
+                            .filter_map(|index| {
+                                self.world
+                                    .fast_grid
+                                    .level
+                                    .door_projection_infos
+                                    .get(index.0 as usize)
+                            })
+                            .find(|door| {
+                                (door.point_in.x - x)
+                                    .abs()
+                                    .max((door.point_in.y - y).abs())
+                                    < 20.0
+                            })
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "position_to_point_3d: building sector {} has no door near ({x}, {y})",
+                                    handle.get()
+                                )
+                            });
+                    (u16::from(door.sector_out), door.layer_out, door.point_out)
+                } else {
+                    (handle.get(), layer, crate::coordinates::MapPoint::new(x, y))
+                };
                 match self.get_projection_area_index(
                     assets,
-                    handle.get(),
-                    layer,
-                    crate::coordinates::MapPoint::new(x, y),
+                    projection_sector,
+                    projection_layer,
+                    projection_point,
                 ) {
                     Some(obs_idx) => self
                         .sight_obstacles(assets)
                         .get(obs_idx as usize)
-                        .map(|obs| obs.compute_top_z_from_projection(x, y))
+                        .map(|obs| {
+                            obs.compute_top_z_from_projection(
+                                projection_point.x,
+                                projection_point.y,
+                            )
+                        })
                         .unwrap_or(0.0),
                     None => 0.0,
                 }

@@ -337,13 +337,8 @@ impl AiContext {
                     .sector_number_map
                     .get(&sector_number)
                     .copied();
-                let is_motion = grid_idx.is_some_and(|idx| {
-                    self.fast_grid
-                        .level
-                        .sectors
-                        .get(idx)
-                        .is_some_and(|sector| sector.sector_type.is_motion())
-                });
+                let grid_sector = grid_idx.and_then(|idx| self.fast_grid.level.sectors.get(idx));
+                let is_motion = grid_sector.is_some_and(|sector| sector.sector_type.is_motion());
                 if grid_idx.is_some() && !is_motion {
                     panic!(
                         "position_to_point_3d: sector {} is not a motion sector",
@@ -351,19 +346,55 @@ impl AiContext {
                     );
                 }
 
-                let point = MapPoint::new(position.x, position.y);
+                // Building motion sectors have no projection area of their
+                // own. Original `PositionToPoint3D` walks the sector's gates
+                // in order, finds the first door whose inside point is within
+                // MaxNorm < 20, and samples the outside sector at PointOut.
+                let (projection_sector, projection_layer, point) = if grid_sector
+                    .is_some_and(|sector| sector.sector_type.is_building())
+                {
+                    let sector = grid_sector.expect("building sector disappeared");
+                    let door = sector
+                            .gate_indices
+                            .iter()
+                            .filter_map(|index| {
+                                self.fast_grid
+                                    .level
+                                    .door_projection_infos
+                                    .get(index.0 as usize)
+                            })
+                            .find(|door| {
+                                (door.point_in.x - position.x)
+                                    .abs()
+                                    .max((door.point_in.y - position.y).abs())
+                                    < 20.0
+                            })
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "position_to_point_3d: building sector {} has no door near ({}, {})",
+                                    handle.get(), position.x, position.y
+                                )
+                            });
+                    (u16::from(door.sector_out), door.layer_out, door.point_out)
+                } else {
+                    (
+                        handle.get(),
+                        position.level,
+                        MapPoint::new(position.x, position.y),
+                    )
+                };
                 let mut best: Option<(f32, f32)> = None;
                 for (_, obstacle) in self.sight_obstacles.list().iter_indexed() {
                     if !obstacle.is_projection_area()
-                        || obstacle.sector != handle.get()
-                        || obstacle.layer != position.level
+                        || obstacle.sector != projection_sector
+                        || obstacle.layer != projection_layer
                         || !obstacle.box_projection.contains_point(point)
                         || !obstacle.contains_point_projection(point)
                     {
                         continue;
                     }
                     let z_max = obstacle.box_3d_max[2];
-                    let z = obstacle.compute_top_z_from_projection(position.x, position.y);
+                    let z = obstacle.compute_top_z_from_projection(point.x, point.y);
                     match best {
                         None => best = Some((z_max, z)),
                         Some((prev_z_max, _)) if z_max > prev_z_max => best = Some((z_max, z)),

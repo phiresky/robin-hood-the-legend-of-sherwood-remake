@@ -1134,6 +1134,94 @@ fn position_to_point_3d_uses_waypoint_sector_layer_projection() {
 }
 
 #[test]
+fn position_to_point_3d_uses_building_door_outside_projection() {
+    use crate::fast_find_grid::{DoorProjectionInfo, GridSector};
+    use crate::sector::{SectorNumber, SectorType};
+
+    let mut level = crate::fast_find_grid::LevelGrid::default();
+    let building_number = SectorNumber::new(7);
+    level.sector_number_map.insert(building_number, 0);
+    level.sectors.push(GridSector {
+        sector_type: SectorType::AREA | SectorType::MOTION | SectorType::BUILDING,
+        sector_number: building_number,
+        gate_indices: vec![crate::gate::DoorIndex(0)],
+        ..GridSector::default()
+    });
+    level.door_projection_infos.push(DoorProjectionInfo {
+        point_in: MapPoint::new(50.0, 50.0),
+        point_out: MapPoint::new(45.0, 55.0),
+        sector_out: SectorNumber::new(8),
+        layer_out: 2,
+    });
+
+    let mut obstacle = crate::sight_obstacle::SightObstacle::default();
+    obstacle.obstacle_type = crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA;
+    obstacle.box_projection = crate::coordinates::MapBBox {
+        min: MapPoint::new(0.0, 0.0),
+        max: MapPoint::new(100.0, 100.0),
+    };
+    obstacle.points = vec![
+        crate::sight_obstacle::ObstaclePoint {
+            x: 0.0,
+            y: 0.0,
+            z_bottom: 0.0,
+            z_top: 20.0,
+        },
+        crate::sight_obstacle::ObstaclePoint {
+            x: 100.0,
+            y: 0.0,
+            z_bottom: 0.0,
+            z_top: 20.0,
+        },
+        crate::sight_obstacle::ObstaclePoint {
+            x: 100.0,
+            y: 100.0,
+            z_bottom: 0.0,
+            z_top: 20.0,
+        },
+        crate::sight_obstacle::ObstaclePoint {
+            x: 0.0,
+            y: 100.0,
+            z_bottom: 0.0,
+            z_top: 20.0,
+        },
+    ];
+    obstacle.layer = 2;
+    obstacle.sector = 8;
+    obstacle.top_plane_points = [[0.0, 0.0, 20.0], [100.0, 0.0, 20.0], [0.0, 100.0, 20.0]];
+    obstacle.bottom_plane_points = [[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [0.0, 100.0, 0.0]];
+    obstacle.rebuild_geometry();
+
+    let ctx = AiContext {
+        fast_grid: crate::fast_find_grid::FastFindGrid {
+            level: std::sync::Arc::new(level),
+            line_active: Vec::new(),
+            sector_active: vec![true],
+            mask_active: Vec::new(),
+            lift_state: std::collections::BTreeMap::new(),
+            sector_type_overlay: std::collections::BTreeMap::new(),
+        },
+        sight_obstacles: crate::sight_obstacle::SharedSightObstacles {
+            static_obstacles: std::sync::Arc::new(vec![obstacle]),
+            dynamic_obstacles: std::sync::Arc::new(Vec::new()),
+            static_active: std::sync::Arc::new(vec![true]),
+        },
+        ..AiContext::default()
+    };
+
+    let point = ctx.position_to_point_3d(Position {
+        x: 50.0,
+        y: 50.0,
+        sector: SectorHandle::new(7),
+        level: 9,
+    });
+
+    assert_eq!(point.x, 50.0);
+    assert_eq!(point.y, 70.0);
+    assert_eq!(point.z, 20.0);
+}
+
+#[test]
 fn is_detecting_point_360_uses_current_eye_point() {
     let ctx = AiContext {
         position: Position {

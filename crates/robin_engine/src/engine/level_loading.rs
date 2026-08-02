@@ -3419,6 +3419,19 @@ impl EngineInner {
             return;
         }
 
+        self.world.fast_grid.level_mut().door_projection_infos = self
+            .script_domains
+            .interactables
+            .doors
+            .iter()
+            .map(|door| crate::fast_find_grid::DoorProjectionInfo {
+                point_in: door.point_in,
+                point_out: door.point_out,
+                sector_out: door.sector_out,
+                layer_out: door.layer_out,
+            })
+            .collect();
+
         // Snapshot door endpoints so the grid can be borrowed mutably below.
         let endpoints: Vec<(u32, crate::sector::SectorNumber)> = self
             .script_domains
