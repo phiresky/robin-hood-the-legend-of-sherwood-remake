@@ -2430,13 +2430,19 @@ impl EnemyAi {
             who_tells_me: self.base.me,
         };
 
-        for (&handle, view) in ctx.entity_views.iter() {
-            if handle == self.base.me {
-                continue;
-            }
-            if !view.is_soldier() || view.camp != my_camp {
-                continue;
-            }
+        // GetSoldier(camp, index) walks the Original engine's camp registry in
+        // construction order. HashMap iteration would permute synchronous
+        // CALL_LOOKTHERE delivery, so materialize that same stable order.
+        let mut friends: Vec<_> = ctx
+            .entity_views
+            .iter()
+            .filter(|(handle, view)| {
+                **handle != self.base.me && view.is_soldier() && view.camp == my_camp
+            })
+            .collect();
+        friends.sort_by_key(|(_, view)| view.original_creation_order);
+
+        for (&handle, view) in friends {
             // Filter `friend.ai_state`: DEFAULT or WONDERING, or
             // SEEKING with substate SeekingJustWatching /
             // SeekingJustWatchingSidewards.  Deliberately do NOT gate
