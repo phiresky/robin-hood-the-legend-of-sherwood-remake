@@ -3714,6 +3714,15 @@ ordinary forward cone. The periodic visibility query now uses the literal
 forest-and-camp predicate for every Royalist; a focused regression keeps rider
 state out of that decision entirely.
 
+NPC blip detection also has its own authoritative PC traversal order.
+Original loops `RHEngine::GetPC(i)`, backed by `marrayActorsPC`; `AddElement`
+appends PCs there in engine creation order. Rust's `world.pc_ids` is sorted by
+profile priority for portrait presentation, which is a different order and
+made the same blipped NPC cast otherwise identical sight rays toward different
+heroes. The blip arm now sorts a local copy by Original creation order while
+leaving the portrait registry untouched. This fixes Savegame 063's repeated
+`A,B,C,D` versus `B,D,A,C` visibility-query permutation.
+
 The specialized 180-degree query also follows its own Original geometry. Its
 forward and very-near side tests use the actor's body `GetDirectionVector`, not
 the independently animated look/stare cone direction. Only after the

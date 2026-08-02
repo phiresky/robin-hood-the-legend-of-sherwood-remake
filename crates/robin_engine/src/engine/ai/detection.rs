@@ -103,6 +103,18 @@ fn accumulate_detection_sharpness(sum: u16, sharpness: u16) -> u16 {
     sum.wrapping_add(sharpness)
 }
 
+fn original_engine_pc_order(
+    pc_ids: impl IntoIterator<Item = EntityId>,
+    mut creation_order: impl FnMut(EntityId) -> u32,
+) -> Vec<EntityId> {
+    let mut ordered: Vec<_> = pc_ids.into_iter().collect();
+    // Original's marrayActorsPC is populated by AddElement::InsertLast while
+    // elements are created in creation-order sequence.  This registry is not
+    // the priority-sorted portrait bar.
+    ordered.sort_by_key(|&pc_id| creation_order(pc_id));
+    ordered
+}
+
 fn visibility_world_point(
     projected: MapPoint,
     ground_z: f32,
@@ -840,7 +852,10 @@ impl EngineInner {
         };
 
         let mut detecting_pc = None;
-        for &pc_id in &self.world.pc_ids {
+        let pc_ids = original_engine_pc_order(self.world.pc_ids.iter().copied(), |pc_id| {
+            self.world.original_creation_order(pc_id)
+        });
+        for pc_id in pc_ids {
             let pc_entity = self.world.entities.get(pc_id).unwrap_or_else(|| {
                 panic!(
                     "PC {} disappeared from the live PC list during NPC blip detection",
@@ -4124,6 +4139,23 @@ struct ViewContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn npc_blip_pc_scan_uses_engine_insertion_not_portrait_priority_order() {
+        let pc_a = EntityId::Pc(crate::entity_id::PcId(10));
+        let pc_b = EntityId::Pc(crate::entity_id::PcId(11));
+        let pc_c = EntityId::Pc(crate::entity_id::PcId(12));
+        let priority_order = [pc_b, pc_c, pc_a];
+
+        let ordered = original_engine_pc_order(priority_order, |pc_id| match pc_id {
+            id if id == pc_a => 100,
+            id if id == pc_b => 101,
+            id if id == pc_c => 102,
+            _ => unreachable!(),
+        });
+
+        assert_eq!(ordered, vec![pc_a, pc_b, pc_c]);
+    }
 
     #[test]
     fn detection_sharpness_accumulation_wraps_as_uword() {
