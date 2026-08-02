@@ -2856,6 +2856,22 @@ additive keys; explicit null reservations and every present scalar/slot remain
 strict. The full patrol stimulus is the final mapped enemy serializer slice.
 The native cache version and suffix are v36.
 
+### Schema-v37 final enemy patrol stimulus
+
+The final mapped `RHArtificialMalignity` field is now authoritative: the last
+stimulus dispatched to the patrol includes its event and info discriminants,
+semantic owner, whole-patrol latch, and every source-serialized payload variant
+(noise, position, human/object, hint, stolen object, combat, door combat, and
+index). Positions use canonical sectors and all element pointers use the
+runtime isomorphism. Rust-only or invalid active variants fail loudly.
+
+Original's constructed no-event/none/null-owner/default-latch stimulus and
+Rust's `None` representation are canonically the same absent remembered event,
+so both project as explicit null. This is a representation isomorphism, not a
+fabricated payload; any non-default stimulus remains fully strict. Schema-v37
+therefore completes the gameplay-semantic projection of every field written by
+`SerializeExactlyThisAI` for current v48 saves. The native cache is v37.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,

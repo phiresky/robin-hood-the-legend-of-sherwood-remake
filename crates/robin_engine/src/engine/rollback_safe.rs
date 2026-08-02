@@ -496,6 +496,96 @@ impl Engine {
                 }
             }
         };
+        let patrol_stimulus = |stimulus: Option<&crate::ai::Stimulus>| -> Value {
+            use crate::ai::{StimulusInfo, StimulusType};
+            let Some(stimulus) = stimulus else {
+                return Value::Null;
+            };
+            let is_default = stimulus.stimulus_type == StimulusType::NoEvent
+                && matches!(
+                    stimulus.info,
+                    StimulusInfo::None | StimulusInfo::LegacyInvalidType(_)
+                )
+                && stimulus.owner == 0
+                && !stimulus.to_whole_patrol;
+            if is_default {
+                return Value::Null;
+            }
+            assert_ne!(
+                stimulus.stimulus_type,
+                StimulusType::ForceBattleDecision,
+                "parity enemy patrol stimulus contains Rust-only non-serializable type",
+            );
+            let (info_type, info) = match stimulus.info {
+                StimulusInfo::None => (0, json!({ "kind": "none" })),
+                StimulusInfo::Noise(noise) => (
+                    1,
+                    json!({
+                        "kind": "noise", "origin": ai_position(noise.origin),
+                        "noise_type": noise.noise_type as u32,
+                        "volume": noise.volume, "elevation": noise.elevation,
+                    }),
+                ),
+                StimulusInfo::Position(position) => (
+                    2,
+                    json!({
+                        "kind": "position", "position": ai_position(position),
+                    }),
+                ),
+                StimulusInfo::Human(entity) => (
+                    3,
+                    json!({
+                        "kind": "human", "entity": resolve_ai_handle(entity),
+                    }),
+                ),
+                StimulusInfo::Hint(hint) => (
+                    4,
+                    json!({
+                        "kind": "hint", "position": ai_position(hint.seek_point),
+                        "teller": resolve_ai_handle(hint.who_tells_me), "seek_flags": hint.seek_flags,
+                    }),
+                ),
+                StimulusInfo::Object(entity) => (
+                    5,
+                    json!({
+                        "kind": "object", "entity": resolve_ai_handle(entity),
+                    }),
+                ),
+                StimulusInfo::Stolen(stolen) => (
+                    6,
+                    json!({
+                        "kind": "stolen", "object": resolve_ai_handle(stolen.object),
+                        "thief": resolve_ai_handle(stolen.thief),
+                    }),
+                ),
+                StimulusInfo::Combat(combat) => (
+                    7,
+                    json!({
+                        "kind": "combat", "actor": resolve_ai_handle(combat.actor_npc),
+                        "enemy_position": ai_position(combat.enemy_position),
+                    }),
+                ),
+                StimulusInfo::DoorCombat(combat) => (
+                    8,
+                    json!({
+                        "kind": "door_combat", "delay": combat.delay, "direction": combat.direction,
+                        "goal": ai_position(combat.goal),
+                        "adversary": resolve_ai_handle(combat.adversary),
+                    }),
+                ),
+                StimulusInfo::Index(value) => (9, json!({ "kind": "index", "value": value })),
+                StimulusInfo::LegacyInvalidType(raw) => {
+                    panic!("parity enemy patrol stimulus retains active invalid type word {raw}")
+                }
+            };
+            json!({
+                "stimulus_type": stimulus.stimulus_type as u32,
+                "info_type": info_type,
+                "owner": resolve_ai_handle(stimulus.owner),
+                "to_whole_patrol": stimulus.to_whole_patrol,
+                "info": info,
+            })
+        };
         let npc_ai = entity.npc_data().and_then(|npc| {
 			let ai = npc.ai_brain.base()?;
 			let handles = |values: &[u32]| {
@@ -700,6 +790,7 @@ impl Engine {
 						known_strike_command(enemy.known_enemy_strike_2),
 						known_strike_command(enemy.known_enemy_strike_3),
 					],
+					"last_stimulus_dispatched_to_patrol": patrol_stimulus(enemy.last_stimulus_dispatched_to_patrol.as_ref()),
 					}).as_object().expect("parity enemy archery continuation must be an object").clone());
 					Some(subclass)
 				},

@@ -1452,8 +1452,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 36;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v36.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 37;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v37.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -5081,6 +5081,7 @@ fn retain_recorded_entity_runtime_coverage(
             "enemy_seen_below",
             "enemy_had_this_elevation",
             "known_enemy_strike_commands",
+            "last_stimulus_dispatched_to_patrol",
         ] {
             if !expected_subclass.contains_key(field) {
                 actual_subclass.remove(field);
@@ -6647,7 +6648,7 @@ mod tests {
     }
 
     #[test]
-    fn old_enemy_snapshots_skip_only_absent_additive_v36_state() {
+    fn old_enemy_snapshots_skip_only_absent_additive_v37_state() {
         let expected = serde_json::json!({
             "npc_ai": {
                 "state": 3,
@@ -6721,7 +6722,8 @@ mod tests {
                     "archery_point_increment": 0,
                     "enemy_seen_below": false,
                     "enemy_had_this_elevation": 0,
-                    "known_enemy_strike_commands": [0, 0, 0]
+                    "known_enemy_strike_commands": [0, 0, 0],
+                    "last_stimulus_dispatched_to_patrol": null
                 }
             }
         });
