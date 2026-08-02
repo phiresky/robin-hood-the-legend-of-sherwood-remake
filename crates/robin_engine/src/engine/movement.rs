@@ -403,6 +403,19 @@ fn is_fast_climb_action(action: OrderType) -> bool {
     )
 }
 
+/// Fast ladder/wall Execute arms return immediately when their first
+/// `PerformMotion` call terminates. `RunningStairs` also executes two motion
+/// calls per tick, but its loop deliberately has no such early return.
+fn fast_climb_stops_after_first_termination(action: OrderType) -> bool {
+    matches!(
+        action,
+        OrderType::ClimbingWallUpFast
+            | OrderType::ClimbingWallDownFast
+            | OrderType::ClimbingLadderUpFast
+            | OrderType::ClimbingLadderDownFast
+    )
+}
+
 fn is_authored_climb_action(action: OrderType) -> bool {
     matches!(
         action,
@@ -6834,6 +6847,9 @@ impl EngineInner {
             // semantics from the sequence order itself.
             let fast_climb_motion =
                 is_fast_climb_action(order_action) || is_fast_climb_action(anim);
+            let fast_climb_stops_after_first_termination =
+                fast_climb_stops_after_first_termination(order_action)
+                    || fast_climb_stops_after_first_termination(anim);
             let motion_method = if is_transition_anim {
                 MotionMethod::TillLastFrame
             } else if fast_sword_motion {
@@ -6995,15 +7011,18 @@ impl EngineInner {
             let first_frame_dist_raw = frame_dist_raw;
             let first_direction_differs_from_goal =
                 sprite.position_iface.get_direction() != sprite.position_iface.get_direction_goal();
-            // Fast climb Execute contains two literal PerformMotion calls, but
-            // returns immediately when the first one reaches the order goal.
+            // Fast ladder/wall Execute contains two literal PerformMotion
+            // calls, but returns immediately when the first one reaches the
+            // order goal. RunningStairs has the same two-call loop without
+            // that early return, so its terminal tick still advances the
+            // sprite in the second call.
             // Project that first call through the same anti-collision query
             // used by the committed movement below.  Deferring all position
             // work until after both sprite calls otherwise advances the
             // animation counter once too often on a terminal first call; the
             // next climb order can then move one simulation frame early.
             let first_fast_call_terminates = if !tolerance_arrival
-                && fast_climb_motion
+                && fast_climb_stops_after_first_termination
                 && motion_state != MotionState::Terminated
             {
                 let first_speed = scaled_motion_distance(

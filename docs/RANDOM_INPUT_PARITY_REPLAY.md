@@ -3422,6 +3422,23 @@ query on ability and state. Missed-member re-acquisition now preserves the
 source evaluation order while retaining the inactive-actor short circuit. A
 regression verifies that visibility runs before both later rejection gates.
 
+### Fast stairs retain their terminal second animation step
+
+Fifteen Savegame 072 random-input traces first diverged at frame 38854 with
+Soldier 162 on the final step of a `RunningStairs` door passage. Position,
+direction, action, row, and order identity matched, but Original had advanced
+the walking-stairs sprite to frame 5 while Rust stopped at frame 4.
+
+The fast stairs, ladder, and wall dispatches all call ordinary
+`PerformMotion` twice per simulation frame, but their terminal control flow is
+not identical. The fast ladder/wall Execute arms explicitly return when the
+first call reports `TERMINATED`; the `RHNONANIMATION_RUNNING_STAIRS` loop has
+no such switch or early return and always makes its second call. Rust had
+shared the ladder/wall projected-terminal guard with stairs. The guard is now
+restricted to fast ladder/wall actions, so running stairs keep their second
+animation advance even when the first motion call reaches and snaps to the
+endpoint.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
