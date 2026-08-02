@@ -4947,24 +4947,28 @@ impl SequenceManager {
 
     /// Resolve "next element in chain" for
     /// [`Self::is_next_movement`]/`is_next_movement_or_jump`. Follows the
-    /// simple case: same sequence, next index, owner must match.
+    /// exact loaded v48 following pointer when present; runtime-authored
+    /// sequences use append order. The next owner must match.
     ///
-    /// Post-seek sequences are stored as separate `Sequence`s
-    /// registered with the manager; walking them here would
-    /// double-count elements that the manager already sees.  Keep
-    /// this simple positional walk; the post-seek chain walkers above
-    /// traverse the full tree when callers need it.
+    /// Post-seek sequences are stored as separate `Sequence`s registered with
+    /// the manager; they are not an implicit following edge. A loaded
+    /// `mpsqeNextSequenceElement`, however, is authoritative even when null or
+    /// non-adjacent.
     fn next_element_in_chain(
         &self,
         seq_id: SequenceId,
         elem_idx: usize,
     ) -> Option<(SequenceId, usize)> {
-        let seq = self.get_sequence(seq_id)?;
-        let this = seq.elements.get(elem_idx)?;
-        let next_idx = elem_idx + 1;
-        let next = seq.elements.get(next_idx)?;
+        let this = self.get_element(seq_id, elem_idx)?;
+        let (next_seq, next_idx) = if let Some(legacy) = &this.legacy_v48 {
+            let next = legacy.next?;
+            (next.sequence_id, next.element_index)
+        } else {
+            (seq_id, elem_idx + 1)
+        };
+        let next = self.get_element(next_seq, next_idx)?;
         if this.owner == next.owner {
-            Some((seq_id, next_idx))
+            Some((next_seq, next_idx))
         } else {
             None
         }
@@ -4985,9 +4989,9 @@ impl SequenceManager {
         {
             return false;
         }
-        let mut cur = elem_idx;
+        let mut cur = (seq_id, elem_idx);
         loop {
-            let Some((next_seq, next_idx)) = self.next_element_in_chain(seq_id, cur) else {
+            let Some((next_seq, next_idx)) = self.next_element_in_chain(cur.0, cur.1) else {
                 return true;
             };
             let Some(next_elem) = self.get_element(next_seq, next_idx) else {
@@ -4995,7 +4999,7 @@ impl SequenceManager {
             };
             match next_elem.command {
                 Command::Wait | Command::AssertPosition => {
-                    cur = next_idx;
+                    cur = (next_seq, next_idx);
                     continue;
                 }
                 _ => return false,
@@ -6363,6 +6367,24 @@ mod tests {
         SequenceElement::new_movement(1, Command::Move, Some(owner), action)
     }
 
+    fn loaded_v48_state(next: Option<SequenceElementRef>) -> LegacyV48SequenceElementState {
+        LegacyV48SequenceElementState {
+            deleted: false,
+            script_driven: false,
+            raw_dormant_posture_after_transition: None,
+            raw_dormant_action_state_after_transition: None,
+            next,
+            postponed: None,
+            mummy: None,
+            linked_seek: None,
+            damage_arrow: None,
+            raw_sword_strike: None,
+            raw_dormant_movement_action: None,
+            order_state: Vec::new(),
+            generic_raw_unions: Vec::new(),
+        }
+    }
+
     #[test]
     fn make_fast_rewrites_walking_orders_to_running() {
         let mut elem = movement_elem(
@@ -6965,6 +6987,42 @@ mod tests {
         assert!(!mgr.is_next_movement(seq_id, 1)); // next is Jump (Simple) — not movement
         assert!(mgr.is_next_movement_or_jump(seq_id, 1));
         assert!(!mgr.is_next_movement(seq_id, 2)); // last element — nothing next
+    }
+
+    #[test]
+    fn loaded_v48_null_next_overrides_physical_adjacency() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(1));
+        let mut mgr = SequenceManager::new();
+        let mut sequence = Sequence::new();
+        sequence.append_element(SequenceElement::new(1, Command::Generic, Some(owner)));
+        sequence.append_element(movement_elem(owner, OrderType::WalkingUpright));
+        let sequence_id = mgr.launch_sequence(sequence);
+        mgr.get_element_mut(sequence_id, 0)
+            .expect("loaded first element exists")
+            .legacy_v48 = Some(loaded_v48_state(None));
+
+        assert!(!mgr.is_next_movement(sequence_id, 0));
+        assert!(mgr.is_last_real_action(sequence_id, 0));
+    }
+
+    #[test]
+    fn loaded_v48_nonadjacent_next_is_authoritative() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(1));
+        let mut mgr = SequenceManager::new();
+        let mut sequence = Sequence::new();
+        sequence.append_element(SequenceElement::new(1, Command::Generic, Some(owner)));
+        sequence.append_element(SequenceElement::new(2, Command::Generic, Some(owner)));
+        sequence.append_element(movement_elem(owner, OrderType::WalkingUpright));
+        let sequence_id = mgr.launch_sequence(sequence);
+        mgr.get_element_mut(sequence_id, 0)
+            .expect("loaded first element exists")
+            .legacy_v48 = Some(loaded_v48_state(Some(SequenceElementRef::new(
+            sequence_id,
+            2,
+        ))));
+
+        assert!(mgr.is_next_movement(sequence_id, 0));
+        assert!(!mgr.is_last_real_action(sequence_id, 0));
     }
 
     #[test]
