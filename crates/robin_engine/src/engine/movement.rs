@@ -1415,16 +1415,22 @@ impl<'a> MovementContext<'a> {
             return;
         }
 
-        let waypoints = self.world.pathfinder.find_path(
-            assets.pathfinder_graph.as_ref(),
-            &self.world.fast_grid,
-            request.layer,
-            request.sector,
-            request.half_diagonal_idx,
-            request.source,
-            request.dest,
-            request.use_first_point,
-        );
+        // Original FindPathNodes observes mbIgnoreNextPath and exits before
+        // expanding its first node. The retained head therefore delivers an
+        // invalid completion with an empty raw path; it must not calculate a
+        // route merely because Rust runs pathfinding synchronously.
+        let waypoints = retained_cancelled_path_result(retained_cancelled_head).or_else(|| {
+            self.world.pathfinder.find_path(
+                assets.pathfinder_graph.as_ref(),
+                &self.world.fast_grid,
+                request.layer,
+                request.sector,
+                request.half_diagonal_idx,
+                request.source,
+                request.dest,
+                request.use_first_point,
+            )
+        });
         self.orders
             .pending_path_requests
             .set_in_flight(request, waypoints);
@@ -1476,6 +1482,11 @@ impl<'a> MovementContext<'a> {
 #[inline]
 fn path_request_occupies_result_slot(still_live: bool, retained_cancelled_head: bool) -> bool {
     still_live || retained_cancelled_head
+}
+
+#[inline]
+fn retained_cancelled_path_result(retained_cancelled_head: bool) -> Option<Vec<MapPoint>> {
+    retained_cancelled_head.then(Vec::new)
 }
 
 /// Outcome of [`EngineInner::try_dispatch_move_path`], the unified
@@ -11268,7 +11279,10 @@ mod path_request_timing_tests {
             false,
             queue.ignore_next_path
         ));
-        queue.set_in_flight(retained, Some(Vec::new()));
+        let cancelled_result = retained_cancelled_path_result(queue.ignore_next_path)
+            .expect("cancelled path search exits with an empty raw path");
+        assert!(cancelled_result.is_empty());
+        queue.set_in_flight(retained, Some(cancelled_result));
 
         let (completed, valid) = queue
             .take_completed()
