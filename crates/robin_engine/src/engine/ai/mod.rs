@@ -1189,20 +1189,16 @@ pub(super) fn build_my_exit_door_info(
 /// normal `IsDetecting(human)` ignores activity in its same-building arm;
 /// inactive bonuses and projectile entities remain excluded.
 pub(super) fn build_entity_views(
-    sim: &crate::sim_rng::SimulationContext,
     engine: &EngineInner,
 ) -> AiEntityViewMap {
-    build_entity_views_inner(Some(sim), engine)
+    build_entity_views_inner(engine)
 }
 
 fn build_entity_views_without_forecast(engine: &EngineInner) -> AiEntityViewMap {
-    build_entity_views_inner(None, engine)
+    build_entity_views_inner(engine)
 }
 
-fn build_entity_views_inner(
-    sim: Option<&crate::sim_rng::SimulationContext>,
-    engine: &EngineInner,
-) -> AiEntityViewMap {
+fn build_entity_views_inner(engine: &EngineInner) -> AiEntityViewMap {
     // Scratch views are also built by empty/pre-script engine fixtures.  Door
     // state is intentionally unavailable during that phase; `init_ai` emits a
     // warning when a real level reaches AI initialization without a script.
@@ -1310,27 +1306,21 @@ fn build_entity_views_inner(
             view.covering_nets = nets;
         }
 
-        // Pre-compute the destination the actor is heading toward so
-        // AI handlers (e.g. `AlertSoldier`) can chase it directly
-        // rather than re-querying mid-think.  Only meaningful for
-        // human actors with a door-pass / lift / building traversal
-        // in flight; falls back to the live position for everyone
-        // else, which is what `extract_forecast_input` returns and
-        // `forecast_destination_for_ia` propagates.
+        // Prepare the destination alternatives without drawing RNG. Original
+        // calls ForecastDestinationForIA only from specific AI statements;
+        // eagerly resolving every human here made unrelated building transit
+        // consume BuildingExitGate draws once per scratch rebuild.
         if matches!(
             entity,
             Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_)
-        ) && let Some(sim) = sim
-            && let Some(input) = extract_forecast_input(entity)
+        ) && let Some(input) = extract_forecast_input(entity)
         {
-            let forecast = crate::ai::forecast_destination_for_ia(
-                sim,
+            view.forecasted_destination = crate::ai::prepare_forecast_destination_for_ia(
                 &input,
                 doors_ref,
                 &engine.world.fast_grid.level.sectors,
                 &engine.world.fast_grid.level.sector_number_map,
             );
-            view.forecasted_destination = forecast.position;
         }
 
         // AI handle == entity slot index (see `FighterSnapshot.handle =
@@ -1411,11 +1401,11 @@ impl EngineInner {
 
     pub(crate) fn build_sim_scratch(
         &self,
-        sim: &crate::sim_rng::SimulationContext,
+        _sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) -> SimScratch {
         let scratch = SimScratch {
-            ai_entity_views: std::sync::Arc::new(build_entity_views(sim, self)),
+            ai_entity_views: std::sync::Arc::new(build_entity_views(self)),
             ai_sight_obstacles: self.build_ai_sight_obstacles(assets),
         };
         scratch
@@ -10816,7 +10806,7 @@ impl EngineInner {
                     .unwrap_or_else(|| {
                         panic!("civilian CALL_ALERT caller {caller} lost its FriendlyAi")
                     })
-                    .resolve_alert_request(accepted, continuation, &source_ctx),
+                    .resolve_alert_request(sim, accepted, continuation, &source_ctx),
                 crate::ai::AlertContinuation::SoldierSawOfficer => self
                     .world
                     .entities
