@@ -5491,6 +5491,17 @@ impl EngineInner {
             // that can discard the just-postponed low-priority Wait. For an
             // unselected PC, SelectAction only stores the action and the Wait
             // survives. Preserve that general message behavior and ordering.
+            // WAIT-priority `RHSequenceElement::Go()` is synchronous in
+            // Original. Close that registration boundary before forwarding
+            // the following message: for a selected PC the message's Stop()
+            // must be able to see and interrupt this newly-postponed Wait
+            // through the transition's postponed pointer.
+            self.drain_script_registration_inline_actions(sim, assets, &mut Vec::new())
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "beggar transition Wait registration failed before action message for {pc_id:?}: {error:?}"
+                    )
+                });
             if entering {
                 self.set_pc_action_from_message(assets, 0, pc_id, crate::profiles::Action::Beggar);
             } else if self.players.seats[0].selection.contains(&pc_id) {
