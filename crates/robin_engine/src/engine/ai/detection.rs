@@ -1191,6 +1191,11 @@ impl EngineInner {
             // human pointers. Rebuild the target records at this creation
             // slot, but let the NPC's detectable list dictate scan order.
             let enemy_targets = self.tick_enemy_ai_build_live_enemy_optical_targets(world);
+            // Original caches ComputeViewRadius for this viewer/frame: one
+            // ground entry plus one entry on each projection obstacle. Enemy
+            // and the later detectable-type buckets share the same cache
+            // during this contiguous RefreshDetection call.
+            let view_radius_cache = OwnerViewRadiusCache::default();
             let think_input = self.tick_enemy_ai_refresh_detection_for_npc(
                 npc_id,
                 assets,
@@ -1199,6 +1204,7 @@ impl EngineInner {
                 universal_frame,
                 golden_eye,
                 is_forest_level,
+                &view_radius_cache,
             );
             // Enemy HandlePredetection may already have queued shadows. Append
             // the ordered Enemy VIEW / OUTOFVIEW block now, before later
@@ -1253,6 +1259,7 @@ impl EngineInner {
                 &object_targets,
                 universal_frame,
                 golden_eye,
+                &view_radius_cache,
             );
 
             let has_pending_stimuli = self
@@ -1483,6 +1490,7 @@ impl EngineInner {
         universal_frame: u32,
         golden_eye: bool,
         is_forest_level: bool,
+        view_radius_cache: &OwnerViewRadiusCache,
     ) -> Option<(Vec<crate::ai::Stimulus>, AiPerTickData)> {
         use crate::ai::AiState;
         use crate::element::{ActionState, Posture};
@@ -1761,9 +1769,16 @@ impl EngineInner {
                     // raycast itself is still 2D until sight-obstacle
                     // data carries Z.
                     //
-                    let target_obstacle = target
-                        .obstacle_idx
-                        .and_then(|h| sight_obstacles.get(usize::from(h)));
+                    let target_obstacle_handle = target.obstacle_idx;
+                    let target_obstacle = target_obstacle_handle.map(|handle| {
+                        sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
+                            panic!(
+                                "Enemy visibility target {} requires missing obstacle {}",
+                                target_id.index(),
+                                u16::from(handle)
+                            )
+                        })
+                    });
                     let q = ai_vision::VisibilityQuery {
                         viewer_los: eye,
                         viewer_world: visibility_world_point(eye, ground_z, eye_z),
@@ -1815,16 +1830,19 @@ impl EngineInner {
                     let effective_view_radius = std::cell::Cell::new(None);
                     let visibility =
                         ai_vision::compute_visibility_with_effective_radius(&q, || {
-                            let radius = ai_vision::compute_view_radius(
-                                q.viewer_world,
-                                view_radius,
-                                view_forward,
-                                real_half_aperture,
-                                is_night_or_fog,
-                                &self.world.fast_grid.level,
-                                sight_obstacles,
-                                target_obstacle,
-                            );
+                            let radius =
+                                view_radius_cache.get_or_compute(target_obstacle_handle, || {
+                                    ai_vision::compute_view_radius(
+                                        q.viewer_world,
+                                        view_radius,
+                                        view_forward,
+                                        real_half_aperture,
+                                        is_night_or_fog,
+                                        &self.world.fast_grid.level,
+                                        sight_obstacles,
+                                        target_obstacle,
+                                    )
+                                });
                             effective_view_radius.set(Some(radius));
                             radius
                         });
@@ -3076,6 +3094,7 @@ impl EngineInner {
         object_targets: &std::collections::HashMap<EntityId, ObjectTarget>,
         universal_frame: u32,
         golden_eye: bool,
+        view_radius_cache: &OwnerViewRadiusCache,
     ) {
         use crate::ai::AiState;
 
@@ -3198,6 +3217,7 @@ impl EngineInner {
                 viewer_building_sector,
                 is_night_or_fog,
                 level: &self.world.fast_grid.level,
+                view_radius_cache,
                 eye_status,
                 view_speed,
                 modified_frame,
@@ -3234,6 +3254,7 @@ impl EngineInner {
                 viewer_building_sector,
                 is_night_or_fog,
                 level: &self.world.fast_grid.level,
+                view_radius_cache,
                 eye_status,
                 view_speed,
                 modified_frame,
@@ -3278,6 +3299,7 @@ impl EngineInner {
                 viewer_building_sector,
                 is_night_or_fog,
                 level: &self.world.fast_grid.level,
+                view_radius_cache,
                 eye_status,
                 view_speed,
                 modified_frame,
@@ -3319,6 +3341,7 @@ impl EngineInner {
                 viewer_building_sector,
                 is_night_or_fog,
                 level: &self.world.fast_grid.level,
+                view_radius_cache,
                 eye_status,
                 view_speed,
                 modified_frame,
@@ -3373,6 +3396,7 @@ impl EngineInner {
                 viewer_building_sector,
                 is_night_or_fog,
                 level: &self.world.fast_grid.level,
+                view_radius_cache,
                 eye_status,
                 view_speed,
                 modified_frame,
@@ -3467,9 +3491,19 @@ impl EngineInner {
                 let target_in_same_building = ctx.viewer_in_building
                     && ctx.viewer_building_sector == target.building_sector
                     && !target.unconscious;
-                let target_obstacle = target
-                    .obstacle_idx
-                    .and_then(|handle| ctx.sight_obstacles.get(usize::from(handle)));
+                let target_obstacle_handle = target.obstacle_idx;
+                let target_obstacle = target_obstacle_handle.map(|handle| {
+                    ctx.sight_obstacles
+                        .get(usize::from(handle))
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "{:?} visibility target {} requires missing obstacle {}",
+                                det_type,
+                                target_id.index(),
+                                u16::from(handle)
+                            )
+                        })
+                });
                 let q = ai_vision::VisibilityQuery {
                     viewer_los: ctx.eye,
                     viewer_world: visibility_world_point(ctx.eye, ctx.ground_z, ctx.eye_z),
@@ -3510,16 +3544,19 @@ impl EngineInner {
                 };
                 factor
                     * ai_vision::compute_visibility_with_effective_radius(&q, || {
-                        ai_vision::compute_view_radius(
-                            q.viewer_world,
-                            ctx.view_radius,
-                            ctx.view_forward,
-                            ctx.real_half_aperture,
-                            ctx.is_night_or_fog,
-                            ctx.level,
-                            *ctx.sight_obstacles,
-                            target_obstacle,
-                        )
+                        ctx.view_radius_cache
+                            .get_or_compute(target_obstacle_handle, || {
+                                ai_vision::compute_view_radius(
+                                    q.viewer_world,
+                                    ctx.view_radius,
+                                    ctx.view_forward,
+                                    ctx.real_half_aperture,
+                                    ctx.is_night_or_fog,
+                                    ctx.level,
+                                    *ctx.sight_obstacles,
+                                    target_obstacle,
+                                )
+                            })
                     })
             } else {
                 det.last_visibility
@@ -3838,6 +3875,28 @@ impl EngineInner {
     }
 }
 
+#[derive(Default)]
+struct OwnerViewRadiusCache {
+    values: std::cell::RefCell<
+        std::collections::HashMap<Option<crate::position_interface::ObstacleHandle>, f32>,
+    >,
+}
+
+impl OwnerViewRadiusCache {
+    fn get_or_compute(
+        &self,
+        obstacle: Option<crate::position_interface::ObstacleHandle>,
+        compute: impl FnOnce() -> f32,
+    ) -> f32 {
+        if let Some(radius) = self.values.borrow().get(&obstacle).copied() {
+            return radius;
+        }
+        let radius = compute();
+        self.values.borrow_mut().insert(obstacle, radius);
+        radius
+    }
+}
+
 /// Read-only NPC view-state bundled for one tick of the per-type
 /// detection passes (Body / Friend / MissedFriend / Beggar / Object).
 /// Avoids passing 18+ args to each helper.  All fields are derived
@@ -3856,6 +3915,7 @@ struct ViewContext<'a> {
     viewer_building_sector: Option<crate::position_interface::SectorHandle>,
     is_night_or_fog: bool,
     level: &'a crate::fast_find_grid::LevelGrid,
+    view_radius_cache: &'a OwnerViewRadiusCache,
     eye_status: crate::element::EyeStatus,
     view_speed: u16,
     modified_frame: u32,
@@ -3870,6 +3930,26 @@ mod tests {
     use super::*;
     use crate::ai::{Position, Substate};
     use crate::element::Posture;
+
+    #[test]
+    fn owner_view_radius_cache_computes_once_per_ground_or_obstacle_key() {
+        let cache = OwnerViewRadiusCache::default();
+        let calls = std::cell::Cell::new(0_u32);
+        let compute = || {
+            calls.set(calls.get() + 1);
+            321.0
+        };
+
+        assert_eq!(cache.get_or_compute(None, compute), 321.0);
+        assert_eq!(cache.get_or_compute(None, compute), 321.0);
+        assert_eq!(calls.get(), 1);
+
+        let obstacle = crate::position_interface::ObstacleHandle::new(1)
+            .expect("test obstacle handle should be representable");
+        assert_eq!(cache.get_or_compute(Some(obstacle), compute), 321.0);
+        assert_eq!(cache.get_or_compute(Some(obstacle), compute), 321.0);
+        assert_eq!(calls.get(), 2);
+    }
 
     #[test]
     fn listen_distance_uses_world_y_before_isometric_stretch() {
