@@ -3017,7 +3017,9 @@ pub(crate) fn make_arrow_falling_down(
 
     let (falling_direction, velocity) = if thrown_away_by_shield {
         let direction = (sector + 4) & 15;
-        let (dx, dy) = crate::element::direction_vector_16(direction);
+        let (dx, dy) = crate::element::direction_vector_16(
+            i16::try_from(direction).expect("arrow direction sector fits in i16"),
+        );
         (
             direction as u16,
             WorldVec3D {
@@ -3028,7 +3030,9 @@ pub(crate) fn make_arrow_falling_down(
         )
     } else {
         let direction = sector ^ 8;
-        let (dx, dy) = crate::element::direction_vector_16(direction);
+        let (dx, dy) = crate::element::direction_vector_16(
+            i16::try_from(direction).expect("arrow direction sector fits in i16"),
+        );
         (
             direction as u16,
             WorldVec3D {
