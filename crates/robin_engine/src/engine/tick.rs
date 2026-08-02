@@ -4092,6 +4092,14 @@ impl EngineInner {
                             .expect("arrow owner changed concrete entity kind");
                         if flying {
                             self.tick_existing_projectile(sim, assets, id);
+                        } else if let Some(Entity::Projectile(projectile)) =
+                            self.world.entities.get_mut(id)
+                        {
+                            // RHElementProjectile::Hourglass calls NewMove
+                            // before testing mbFlying. Active stopped arrows
+                            // therefore settle old=current on every owner tick
+                            // until the later Refresh retires them.
+                            projectile.element.sprite.position_iface.new_move();
                         }
                     }
                     base_active

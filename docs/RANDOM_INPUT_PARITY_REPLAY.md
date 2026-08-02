@@ -2411,6 +2411,25 @@ Adding `engine_state.pc_registry` changes the native parity cache to version
 24. Older schema-13 frames are rejected rather than compared without this
 authoritative registry order.
 
+### Lift occupancy and traversal cooldowns
+
+Schema 13 now records every lift sector's five serialized runtime fields:
+PC occupant count, total occupant count, upward and downward occupancy flags,
+and wait time. Original's upward/downward authorization checks decrement the
+wait time as a side effect and deny traversal while it is nonzero. Once the
+cooldown expires, the counts and direction flags decide whether another actor
+may enter, so this state is directly authoritative for path execution.
+
+Lift entries retain mission sector order and carry semantic sector numbers.
+The comparator maps those sector identities through the existing topology
+isomorphism before comparing the exact fields. Rust's sparse lift-state map is
+projected as default state for an authored lift with no materialized entry,
+matching Original's constructor state without weakening the comparison.
+
+Adding `engine_state.world_interactables.lifts` changes the native parity cache
+to version 25. Older schema-13 frames are rejected rather than compared without
+the lift traversal frontier.
+
 ### Sequence-manager and script-VM boundary state
 
 Schema 13 now records the sequence manager's insertion-ordered sequences,
@@ -2499,6 +2518,50 @@ direction from Execute entry while the position interface already contains
 the newly rotated direction at the frame boundary. Rust now preserves that
 ordering for this arm; other turn-driving animations continue to stamp their
 post-turn direction. A focused regression locks both sides of the distinction.
+
+### Projectile hit settlement and listening visuals
+
+Successful projectile-to-human impacts now preserve the complete Original
+terminal boundary: `NewMove` snapshots the current position, the impact path
+rewinds to that snapshot, stops flight, deletes the remaining trajectory, and
+leaves old and current positions equal for the frame before arrow Refresh
+retires the object. Active non-flying arrows also retain the unconditional
+`NewMove` at the start of `RHElementProjectile::Hourglass`.
+
+The Listen ability's simulation timer remains its only completion gate, but
+each nonterminal countdown tick now also performs the `LISTENING` sprite action
+after turning. This matches `RHElementActorPC::Execute`: sprite completion is
+ignored, while its row/frame remains authoritative visible state. The terminal
+timer tick returns before both turning and sprite advancement.
+
+## Incremental long-corpus sweep (`2026-08-02`, schema v24)
+
+The long random-input corpus currently contains 2,988 complete compressed
+traces. The latest incremental snapshot selected the 19 traces added after the
+previous 2,969-trace cutoff and ran them serially with the frozen schema-v24
+release runner at commit `f58424c68`. Artifacts are under
+`output/parity-audits/random-long-after-2988-v24-20260802/`.
+
+All 19 traces reached a first divergence, but they collapse into four shared
+behavior families rather than 19 independent defects:
+
+- Twelve Savegame 008 traces stop at the same projectile boundary. Original
+  clears the consumed arrow trajectory and settles its old/current position;
+  Rust retained the trajectory and previous segment after the human hit.
+- One Continue trace reaches the known Listen countdown presentation boundary:
+  Original stamps the Listening action on every countdown tick even though
+  only the timer can complete the order.
+- Three traces retain a tiny nonzero map-space movement component after
+  Original has published exact zero and completed movement.
+- Two Continue traces differ by one map fixed-point unit while following a
+  path, and one combines that completion residue with the resulting command,
+  motion-state, and animation transition.
+
+The stopped-arrow and Listening diagnoses are source-confirmed against
+`original-code`; fixes and full-EOF validation remain in progress. The
+movement-unit family remains separate until its exact Original arithmetic or
+completion boundary is established. These 19 results are an incremental
+frontier only, not a claim about the already-audited portion of the corpus.
 
 ## Maintenance checklist
 

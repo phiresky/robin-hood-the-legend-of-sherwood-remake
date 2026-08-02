@@ -545,11 +545,11 @@ impl EngineInner {
         // ── Listen ability frame tick. ──────────────────────
         // Each frame a PC is in `ListenPhase::CountingDown`:
         //
-        //  - Call `position_iface.turn()` so the PC can still
-        //    rotate in place.
         //  - Arm `listen_wait_time` to `TIME_LISTEN_WAIT` on the
         //    first observation.
-        //  - Decrement the countdown.  On the frame it reaches 0,
+        //  - Decrement the countdown. On a nonterminal frame, call `Turn()`
+        //    and drive the `LISTENING` sprite while deliberately ignoring its
+        //    completion state. On the frame the countdown reaches 0,
         //    fire the one-shot blip reveal + FX-target `Heard()`
         //    callback (below) and advance the phase to
         //    `ExitTransition` so owner-local `tick_ability` plays the exit
@@ -574,10 +574,6 @@ impl EngineInner {
             if pc.actor.listen_phase != crate::element::ListenPhase::CountingDown {
                 return false;
             }
-            // Advance rotation toward `direction_goal` one step.
-            // PI is the source of truth for direction now — no
-            // element-side sync needed.
-            pc.element.sprite.position_iface.turn();
             if pc.actor.listen_wait_time == 0 {
                 // First frame in the CountingDown phase — arm the
                 // countdown. Original stores this in the actor's single
@@ -591,6 +587,24 @@ impl EngineInner {
                 pc.actor.wait_time -= 1;
             }
             if pc.actor.listen_wait_time != 0 {
+                // RHElementActorPC::Execute performs the visual action only
+                // after the timer's terminal early return. Its sprite result
+                // never advances the sequence; mulWaitTime is authoritative.
+                pc.element.sprite.position_iface.turn();
+                let direction = pc.element.direction() as u16;
+                let order_id = pc
+                    .actor
+                    .active_ability
+                    .order_id
+                    .expect("Listening phase has a current order");
+                let _ignored_motion = pc.element.sprite.perform_action(
+                    sim,
+                    Some(order_id),
+                    crate::order::OrderType::Listening,
+                    direction,
+                    crate::sprite::FrameProgression::Default,
+                    false,
+                );
                 return false;
             }
             // Countdown hit 0 — fire the one-shot reveal and

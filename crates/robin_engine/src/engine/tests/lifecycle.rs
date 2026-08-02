@@ -797,6 +797,24 @@ fn grounded_arrow_exposes_terminal_active_frame_then_refresh_retires_its_slot() 
             ..Default::default()
         },
     }));
+    {
+        let Entity::Projectile(projectile) = engine.get_entity_mut(arrow).unwrap() else {
+            unreachable!()
+        };
+        projectile
+            .element
+            .set_position(crate::coordinates::WorldPoint3D::new(12.0, 8.0, 4.0));
+        projectile
+            .element
+            .sprite
+            .position_iface
+            .set_old_position(crate::coordinates::WorldPoint3D::ZERO);
+        projectile
+            .element
+            .sprite
+            .position_iface
+            .set_old_map_position(crate::coordinates::MapPoint::ZERO);
+    }
     let assets = LevelAssets::new();
 
     engine.tick_projectile_or_net_hourglass(&sim, &assets, arrow);
@@ -806,6 +824,10 @@ fn grounded_arrow_exposes_terminal_active_frame_then_refresh_retires_its_slot() 
     assert!(
         projectile.element.active,
         "Original records terminal Hourglass state before arrow Refresh"
+    );
+    assert!(
+        !projectile.element.sprite.position_iface.is_moving(),
+        "active non-flying Projectile::Hourglass still calls NewMove"
     );
     engine.control.arrow_refresh_pending = true;
     engine.apply_pending_arrow_refresh(&sim);
@@ -821,6 +843,48 @@ fn grounded_arrow_exposes_terminal_active_frame_then_refresh_retires_its_slot() 
     assert!(
         engine.get_entity(arrow).is_some(),
         "inactive arrow must remain as a tombstone"
+    );
+}
+
+#[test]
+fn successful_projectile_human_hit_rewind_settles_and_deletes_trajectory() {
+    use crate::element::{
+        ElementData, ElementKind, ElementProjectile, ObjectData, ObjectType, ProjectileData,
+        TrajectoryPoint,
+    };
+
+    let mut engine = EngineInner::new();
+    let old = crate::coordinates::WorldPoint3D::new(12.0, 8.0, 4.0);
+    let projectile = engine.add_entity(Entity::Projectile(ElementProjectile {
+        element: ElementData {
+            kind: ElementKind::ObjectProjectile,
+            active: true,
+            ..Default::default()
+        },
+        object: ObjectData {
+            object_type: ObjectType::Arrow,
+            ..Default::default()
+        },
+        projectile: ProjectileData {
+            flying: false,
+            trajectory: vec![TrajectoryPoint {
+                position: crate::coordinates::WorldPoint3D::new(20.0, 10.0, 2.0),
+                time: 4,
+            }],
+            ..Default::default()
+        },
+    }));
+
+    engine.rewind_projectile_to_human_hit_old_position(projectile, old);
+    let Entity::Projectile(projectile) = engine.get_entity(projectile).unwrap() else {
+        unreachable!()
+    };
+    assert!(projectile.projectile.trajectory.is_empty());
+    assert_eq!(projectile.element.position(), old);
+    assert!(!projectile.element.sprite.position_iface.is_moving());
+    assert_eq!(
+        projectile.element.position_map(),
+        projectile.element.sprite.position_iface.old_map_position()
     );
 }
 

@@ -2400,7 +2400,7 @@ impl EngineInner {
         entity.element_data_mut().active = false;
     }
 
-    fn rewind_projectile_to_human_hit_old_position(
+    pub(super) fn rewind_projectile_to_human_hit_old_position(
         &mut self,
         projectile: EntityId,
         old_pos: crate::coordinates::WorldPoint3D,
@@ -2412,7 +2412,14 @@ impl EngineInner {
             );
             return;
         };
+        // Successful RHElementProjectile::HitHuman handling rewinds to the
+        // position snapshotted by NewMove, stops flight, and immediately
+        // DeleteTrajectory()s.  Settling both position representations is
+        // observable by the following parity snapshot and lets the subsequent
+        // RHElementArrow::Refresh retire the stationary arrow.
         p.element.set_position(old_pos);
+        p.element.sprite.position_iface.new_move();
+        p.projectile.trajectory.clear();
     }
 
     /// Apple lands on a human.  Apples deal no damage; they only

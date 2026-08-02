@@ -278,6 +278,16 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
                 .order_type,
             OrderType::Listening
         );
+        assert_eq!(
+            owner_driven
+                .get_entity(listener)
+                .unwrap()
+                .element_data()
+                .sprite
+                .last_action,
+            OrderType::Listening,
+            "countdown must keep driving the visual action while ignoring its completion"
+        );
     }
 
     for (case, frozen_all, execution_frozen, fried, expected) in [
