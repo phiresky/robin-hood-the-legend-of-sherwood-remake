@@ -3093,6 +3093,22 @@ updates both controller and selected PCs; the simple reset deliberately updates
 only the controller. `engine_state.messenger_controller.selected_action` makes
 that distinction frame-strict, and the native cache version is v50.
 
+### Schema-v51 early trace compatibility and box selection
+
+Early schema-12 recordings emitted only `state` and `substate` inside each AI
+object. Later controller-lock and contact-list diagnostics remain strict when
+present, but their absence now means "not recorded" rather than inventing a
+false/empty live value. The duplicate schema-11 corpus remains intentionally
+superseded by regenerated schema-12 recordings from the same saves because it
+also predates authoritative speech-resolution events.
+
+Box selection now follows Original's ordered synchronous message path as well:
+an optional unselect-all followed by one select-add-with-echo per intersecting
+PC. This preserves controller-action clearing/restitution, Robin ordering,
+portrait state, and selection barks instead of mutating the Rust vector alone.
+These trace-decoder and selection changes advance the native cache version to
+v51.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,

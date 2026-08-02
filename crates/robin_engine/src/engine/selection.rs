@@ -1117,12 +1117,8 @@ impl EngineInner {
             crate::coordinates::ScreenPoint::new(p1.x.max(p2.x), p1.y.max(p2.y)),
         );
 
-        if !shift_held {
-            self.players.seats[seat].selection.clear();
-        }
-
         let pc_ids: Vec<EntityId> = self.world.pc_ids.clone();
-        let mut newly_selected: Vec<EntityId> = Vec::new();
+        let mut box_selected: Vec<EntityId> = Vec::new();
         for &pc_id in &pc_ids {
             if !self.is_pc_selectable(assets, pc_id) {
                 continue;
@@ -1136,18 +1132,23 @@ impl EngineInner {
                 let sprite_box = entity
                     .sprite()
                     .bounding_box_at(entity.cxx_position_sprite());
-                if (box_multi_selection.is_intersecting(&sprite_box)
-                    || box_multi_selection.contains_point(map_pt))
-                    && !self.players.seats[seat].selection.contains(&pc_id)
+                if box_multi_selection.is_intersecting(&sprite_box)
+                    || box_multi_selection.contains_point(map_pt)
                 {
-                    self.players.seats[seat].selection.push(pc_id);
-                    newly_selected.push(pc_id);
+                    box_selected.push(pc_id);
                 }
             }
         }
 
-        for pc_id in newly_selected {
-            self.hero_speaking(assets, pc_id, crate::engine::melee::HERO_SELECT);
+        // Original sends one synchronous UNSELECT_CHARACTER followed by an
+        // ordered SELECT_ADD_CHARACTER_WITH_ECHO per intersecting PC. Route
+        // through the same helpers so Robin ordering, portraits, barks, and
+        // action restitution/unselection all occur at the same boundaries.
+        if !shift_held {
+            self.unselect_all_pcs(seat);
+        }
+        for pc_id in box_selected {
+            self.select_pc(assets, seat, pc_id, true, true);
         }
 
         input.multi_selection_active = false;
@@ -1202,7 +1203,13 @@ impl EngineInner {
                     .position(|&x| x == pc_id)
             {
                 self.players.seats[seat].selection.remove(idx);
+                if let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) {
+                    pc.pc.portrait.open = false;
+                }
             }
+        }
+        if self.players.seats[seat].selection.is_empty() {
+            self.players.seats[seat].selected_action = Action::NoAction;
         }
 
         input.multi_unselection_active = false;

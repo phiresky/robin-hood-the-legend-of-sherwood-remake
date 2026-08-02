@@ -1219,8 +1219,10 @@ where
 struct TraceAi {
     state: u32,
     substate: u32,
-    script_locked: bool,
-    locked: bool,
+    #[serde(default)]
+    script_locked: Option<bool>,
+    #[serde(default)]
+    locked: Option<bool>,
     #[serde(default)]
     locks: Option<u8>,
     #[serde(default)]
@@ -1239,8 +1241,10 @@ struct TraceAi {
     macro_remaining: Option<u16>,
     #[serde(default)]
     macro_in_progress: Option<bool>,
-    list_us: Vec<TraceEntityId>,
-    list_them: Vec<TraceEntityId>,
+    #[serde(default)]
+    list_us: Option<Vec<TraceEntityId>>,
+    #[serde(default)]
+    list_them: Option<Vec<TraceEntityId>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
@@ -1458,7 +1462,7 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 50;
+const TRACE_CACHE_VERSION: u32 = 51;
 const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v45.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
@@ -5913,20 +5917,24 @@ fn compare_frame(
                 expected_ai.substate,
                 actual_ai.current_substate as u32,
             );
-            compare(
-                &mut differences,
-                id,
-                "ai.script_locked",
-                expected_ai.script_locked,
-                actual_ai.ai_is_script_locked(),
-            );
-            compare(
-                &mut differences,
-                id,
-                "ai.locked",
-                expected_ai.locked,
-                actual_ai.ai_is_locked(),
-            );
+            if let Some(expected) = expected_ai.script_locked {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.script_locked",
+                    expected,
+                    actual_ai.ai_is_script_locked(),
+                );
+            }
+            if let Some(expected) = expected_ai.locked {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.locked",
+                    expected,
+                    actual_ai.ai_is_locked(),
+                );
+            }
             if let Some(expected) = expected_ai.locks {
                 compare(
                     &mut differences,
@@ -6009,57 +6017,47 @@ fn compare_frame(
                     actual_ai.macro_in_progress,
                 );
             }
-            let expected_list_us: Vec<EntityId> = expected_ai
-                .list_us
-                .iter()
-                .copied()
-                .map(|human| entity_map.translate(human))
-                .collect();
-            let actual_list_us: Vec<EntityId> = actual_ai
-                .list_us
-                .iter()
-                .map(|&handle| {
-                    engine.entity_id_for_index(handle).unwrap_or_else(|| {
-                        panic!("AI list_us handle {handle} refers to a vacant entity slot")
-                    })
-                })
-                .collect();
-            compare(
-                &mut differences,
-                id,
-                "ai.list_us",
-                expected_list_us,
-                actual_list_us,
-            );
-            let expected_list_them: Vec<EntityId> = expected_ai
-                .list_them
-                .iter()
-                .copied()
-                .map(|human| entity_map.translate(human))
-                .collect();
-            let actual_list_them: Vec<EntityId> = actual
-                .enemy_ai()
-                .map(|enemy| {
-                    enemy
-                        .list_them
-                        .iter()
-                        .map(|&handle| {
-                            engine.entity_id_for_index(handle).unwrap_or_else(|| {
-                                panic!(
-                                    "AI list_them handle {handle} refers to a vacant entity slot"
-                                )
-                            })
+            if let Some(expected) = &expected_ai.list_us {
+                let expected: Vec<EntityId> = expected
+                    .iter()
+                    .copied()
+                    .map(|human| entity_map.translate(human))
+                    .collect();
+                let actual: Vec<EntityId> = actual_ai
+                    .list_us
+                    .iter()
+                    .map(|&handle| {
+                        engine.entity_id_for_index(handle).unwrap_or_else(|| {
+                            panic!("AI list_us handle {handle} refers to a vacant entity slot")
                         })
-                        .collect()
-                })
-                .unwrap_or_default();
-            compare(
-                &mut differences,
-                id,
-                "ai.list_them",
-                expected_list_them,
-                actual_list_them,
-            );
+                    })
+                    .collect();
+                compare(&mut differences, id, "ai.list_us", expected, actual);
+            }
+            if let Some(expected) = &expected_ai.list_them {
+                let expected: Vec<EntityId> = expected
+                    .iter()
+                    .copied()
+                    .map(|human| entity_map.translate(human))
+                    .collect();
+                let actual: Vec<EntityId> = actual
+                    .enemy_ai()
+                    .map(|enemy| {
+                        enemy
+                            .list_them
+                            .iter()
+                            .map(|&handle| {
+                                engine.entity_id_for_index(handle).unwrap_or_else(|| {
+                                    panic!(
+                                        "AI list_them handle {handle} refers to a vacant entity slot"
+                                    )
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                compare(&mut differences, id, "ai.list_them", expected, actual);
+            }
         }
         if let Some(expected_detection) = &expected.detection {
             let npc = actual
@@ -7204,11 +7202,13 @@ mod tests {
         let ai = element.ai.expect("AI state");
         assert_eq!(ai.macro_cursor, Some(Some(4)));
         assert_eq!(
-            ai.list_them,
-            [TraceEntityId {
-                kind: TraceEntityKind::Pc,
-                index: 2,
-            }]
+            ai.list_them.as_deref(),
+            Some(
+                &[TraceEntityId {
+                    kind: TraceEntityKind::Pc,
+                    index: 2,
+                }][..]
+            )
         );
         let detection = element.detection.expect("detection state");
         assert_eq!(detection.suspects, [1, 2, 3, 4, 5, 6]);
@@ -7237,6 +7237,18 @@ mod tests {
         assert_eq!(ai.macro_cursor, None);
         assert_eq!(ai.macro_remaining, None);
         assert_eq!(ai.macro_in_progress, None);
+        assert_eq!(ai.list_us, Some(Vec::new()));
+        assert_eq!(ai.list_them, Some(Vec::new()));
+
+        let early_schema_twelve: TraceAi = serde_json::from_value(serde_json::json!({
+            "state": 3,
+            "substate": 17
+        }))
+        .expect("early schema-12 AI state with only state/substate remains readable");
+        assert_eq!(early_schema_twelve.script_locked, None);
+        assert_eq!(early_schema_twelve.locked, None);
+        assert_eq!(early_schema_twelve.list_us, None);
+        assert_eq!(early_schema_twelve.list_them, None);
 
         let recorded_null_cursor: TraceAi = serde_json::from_value(serde_json::json!({
             "state": 3,
