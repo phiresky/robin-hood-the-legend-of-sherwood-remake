@@ -303,24 +303,25 @@ pub(crate) fn entity_id_for_occupied_slot(index: u32, entity: &Entity) -> Entity
 
 /// Resolve Original's actor `mpOrder` animation identity.
 ///
-/// The actor latch is authoritative once initialized. In particular, an
-/// incoming sequence element can become selected before its order is
-/// installed; interrupting the outgoing element in that interval does not
-/// clear Original's old `mpOrder`. The sequence-manager value is therefore
-/// only a bootstrap fallback for actors that have never latched an order.
+/// `RHElementActor::Instruct` installs the translated element's first order in
+/// `mpOrder` immediately, so an installed sequence-manager order is
+/// authoritative even before Rust executes and latches it. In the narrow
+/// interval where an incoming element is selected but has no installed order,
+/// interrupting the outgoing element does not clear Original's old `mpOrder`;
+/// the actor latch preserves that value as the fallback.
 fn resolve_actor_order_type(
     latched: Option<crate::order::OrderType>,
     selected: Option<crate::order::OrderType>,
 ) -> Option<crate::order::OrderType> {
-    latched
-        .map(|order_type| {
+    selected.or_else(|| {
+        latched.map(|order_type| {
             if order_type == crate::order::OrderType::Invalid {
                 crate::order::OrderType::NonanimationEnd
             } else {
                 order_type
             }
         })
-        .or(selected)
+    })
 }
 
 #[cfg(test)]
@@ -329,7 +330,18 @@ mod actor_order_type_tests {
     use crate::order::OrderType;
 
     #[test]
-    fn installed_actor_latch_survives_an_incoming_uninstalled_order() {
+    fn installed_incoming_order_overrides_the_stale_actor_latch() {
+        assert_eq!(
+            resolve_actor_order_type(
+                Some(OrderType::WaitingUprightBored),
+                Some(OrderType::TransitionWaitingUprightBoredWaitingUpright),
+            ),
+            Some(OrderType::TransitionWaitingUprightBoredWaitingUpright)
+        );
+    }
+
+    #[test]
+    fn actor_latch_survives_an_incoming_uninstalled_order() {
         assert_eq!(
             resolve_actor_order_type(Some(OrderType::AimingWithBow), None),
             Some(OrderType::AimingWithBow)
@@ -339,7 +351,7 @@ mod actor_order_type_tests {
     #[test]
     fn cleared_actor_latch_exposes_original_nonanimation_sentinel() {
         assert_eq!(
-            resolve_actor_order_type(Some(OrderType::Invalid), Some(OrderType::Special)),
+            resolve_actor_order_type(Some(OrderType::Invalid), None),
             Some(OrderType::NonanimationEnd)
         );
     }
