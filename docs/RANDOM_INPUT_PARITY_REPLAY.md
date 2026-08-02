@@ -3112,6 +3112,19 @@ list; its absence is non-authoritative while recordings containing it remain
 strict. That final structural compatibility update advances the cache version
 to v52.
 
+### Schema-v53 global shield controller
+
+Original serializes the engine-global two-click shield protocol independently
+from the shield links stored on each PC: whether the next click chooses a
+protectee or a danger point, the chosen PC, and the 3D danger point itself.
+Rust already restores and mutates the exact values in `world.shield`, but they
+were absent from the frame projection. The additive
+`engine_state.shield_controller` object now compares all three, canonicalizing
+the protected PC reference. Older traces omit the object; the native cache
+version is v53. Rust's `danger_point_layer` is intentionally excluded because
+Original's corresponding selected-layer scratch is not serialized and is reset
+to zero during load.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,

@@ -1317,6 +1317,31 @@ impl Engine {
         })
     }
 
+    /// Serialized engine-global two-click shield controller. This is separate
+    /// from each PC's active shield links in `pc_tail`.
+    #[doc(hidden)]
+    pub fn parity_shield_controller_state(&self) -> serde_json::Value {
+        use serde_json::{Value, json};
+
+        let entity = |id: EntityId| {
+            let kind = match id.kind() {
+                crate::element::EntityIdKind::Pc => "pc",
+                other => panic!("shield controller protects non-PC entity {other:?}"),
+            };
+            json!({ "kind": kind, "index": id.index() })
+        };
+        let shield = &self.inner.world.shield;
+        json!({
+            "is_protected": shield.is_protected,
+            "protected_pc": shield.protected_pc.map(&entity).unwrap_or(Value::Null),
+            "danger_point": {
+                "x": { "bits": shield.danger_point.x.to_bits() },
+                "y": { "bits": shield.danger_point.y.to_bits() },
+                "z": { "bits": shield.danger_point.z.to_bits() },
+            },
+        })
+    }
+
     /// Canonical manager-insertion-ordered sequence state for schema-13
     /// Original parity. Runtime allocation IDs are deliberately replaced by
     /// `(sequence ordinal, element index)` references.
@@ -3633,6 +3658,31 @@ mod tests {
         );
         assert!(!engine.locker_active());
         assert!(engine.view_locked());
+    }
+
+    #[test]
+    fn parity_shield_controller_preserves_global_protocol_state() {
+        let mut inner = EngineInner::new();
+        inner.world.shield.is_protected = false;
+        inner.world.shield.protected_pc = Some(EntityId::new(7, crate::element::EntityIdKind::Pc));
+        inner.world.shield.danger_point = crate::coordinates::WorldPoint3D {
+            x: 1.25,
+            y: -2.5,
+            z: 3.75,
+        };
+
+        assert_eq!(
+            Engine { inner }.parity_shield_controller_state(),
+            serde_json::json!({
+                "is_protected": false,
+                "protected_pc": { "kind": "pc", "index": 7 },
+                "danger_point": {
+                    "x": { "bits": 1.25_f32.to_bits() },
+                    "y": { "bits": (-2.5_f32).to_bits() },
+                    "z": { "bits": 3.75_f32.to_bits() },
+                },
+            })
+        );
     }
 
     #[test]

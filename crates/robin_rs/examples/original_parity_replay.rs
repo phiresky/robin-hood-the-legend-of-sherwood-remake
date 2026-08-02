@@ -1368,6 +1368,8 @@ struct TraceEngineState {
     game_ui: Option<TraceJsonValue>,
     #[serde(default)]
     messenger_controller: Option<TraceJsonValue>,
+    #[serde(default)]
+    shield_controller: Option<TraceJsonValue>,
     pc_registry: TraceJsonValue,
     lock_engine: bool,
     freeze_all: bool,
@@ -1463,7 +1465,7 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 52;
+const TRACE_CACHE_VERSION: u32 = 53;
 const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v45.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
@@ -5241,6 +5243,16 @@ fn compare_engine_state(
             "frame.engine_state.messenger_controller",
             &expected_controller,
             &actual_controller,
+            differences,
+        );
+    }
+    if let Some(expected_controller) = &expected.shield_controller {
+        let mut expected_controller = expected_controller.to_json();
+        canonicalize_authoritative_snapshot(&mut expected_controller, entity_map);
+        collect_json_differences(
+            "frame.engine_state.shield_controller",
+            &expected_controller,
+            &engine.parity_shield_controller_state(),
             differences,
         );
     }
