@@ -5008,6 +5008,11 @@ fn explicit_quit_dispatch_unlinks_but_defers_state_change_to_lowering_start() {
             .current_element_for_actor(owner),
         Some((sequence, 0))
     );
+    assert_eq!(
+        engine.actor_order_type(owner),
+        Some(OrderType::TransitionLoweringSword),
+        "accepted Instruct must publish the translated order through mpOrder"
+    );
 }
 
 #[test]

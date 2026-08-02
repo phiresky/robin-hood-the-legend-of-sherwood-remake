@@ -1726,6 +1726,13 @@ impl EngineInner {
                 {
                     actor.sequence_element_started = true;
                 }
+                // Actor::Instruct publishes the selected order through
+                // mpOrder before returning.  The prebuilt-order fast path
+                // bypasses the normal InstructOwner dispatcher, so mirror
+                // that publication here as well; same-frame GetAnimation()
+                // calls must see this order even though Execute will not run
+                // it until the actor's next Hourglass slot.
+                self.publish_selected_order_for_instruct_owner(owner);
             }
         }
         (seq_id, instructed)
