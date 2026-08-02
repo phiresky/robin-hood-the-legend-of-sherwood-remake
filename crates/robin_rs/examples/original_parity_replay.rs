@@ -1452,8 +1452,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 39;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v39.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 40;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v40.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -5017,6 +5017,7 @@ fn retain_recorded_entity_runtime_coverage(
             "synchronizing_actors",
             "reconnaissance",
             "path_control",
+            "legacy_continuation",
         ] {
             if !expected_npc_ai.contains_key(field) {
                 actual_npc_ai.remove(field);
@@ -6668,7 +6669,7 @@ mod tests {
     }
 
     #[test]
-    fn old_enemy_snapshots_skip_only_absent_additive_v39_state() {
+    fn old_enemy_snapshots_skip_only_absent_additive_v40_state() {
         let expected = serde_json::json!({
             "npc_ai": {
                 "state": 3,
@@ -6698,6 +6699,13 @@ mod tests {
                         "forward": true, "hiking_path_index": null, "history": []
                     },
                     "has_patrol_path": false, "macro_cursor": null
+                },
+                "legacy_continuation": {
+                    "remaining_tequila_gulps": 0,
+                    "last_hint_actuality": 0,
+                    "last_hint_subject": 1,
+                    "current_door": null,
+                    "looking_for_help_because_enemy_seen": false
                 },
                 "subclass": {
                     "kind": "enemy",

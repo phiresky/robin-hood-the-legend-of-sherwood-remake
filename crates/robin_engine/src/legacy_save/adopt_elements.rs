@@ -14,8 +14,8 @@ use crate::{
     ai::{
         AiController, AiGlobalState, AiLockFlags, AiState, AlertLevel, Attitude, CombatInfo,
         DetachedPatrolPathStatus, DoorCombatInfo, GotoFlags, Hint, Noise, NoiseType,
-        PathHistoryEntry, PathId, PatrolPath, Position, ReconnaissanceReport, Remark, ReportType,
-        Stimulus, StimulusInfo, StimulusType, StolenObject, Substate,
+        PathHistoryEntry, PathId, PatrolPath, Position, Question, ReconnaissanceReport, Remark,
+        ReportType, Stimulus, StimulusInfo, StimulusType, StolenObject, Substate,
     },
     coordinates::{GroundPoint, MapPoint, MapVec},
     element::{
@@ -112,6 +112,15 @@ pub enum LegacyElementAdoptError {
         creation_order: u32,
         field: &'static str,
         index: u16,
+        count: usize,
+    },
+    #[error(
+        "saved NPC creation order {creation_order} field {field} references Original gate slot {index}, but initialized topology has {count} gate slots"
+    )]
+    MissingGate {
+        creation_order: u32,
+        field: &'static str,
+        index: i16,
         count: usize,
     },
     #[error(
@@ -667,6 +676,7 @@ struct ConvertedLocalAiCommon {
     already_turned: bool,
     likes_to_sit_around: bool,
     special_action: bool,
+    remaining_tequila_gulps: u8,
     friends_are_alerted: bool,
     is_stay_at_home: bool,
     locks_flag_field: AiLockFlags,
@@ -674,6 +684,10 @@ struct ConvertedLocalAiCommon {
     script_locked: bool,
     remember_events: bool,
     leave_house_number: u16,
+    last_hint_actuality: u32,
+    last_hint_subject: Question,
+    my_door_index: Option<u32>,
+    looking_for_help_because_enemy_seen: bool,
     forgotten_objects: Vec<u32>,
     object_of_desire: u32,
     checkpoint_charly: u32,
@@ -1918,6 +1932,7 @@ fn convert_local_ai_common(
         already_turned: saved.already_turned,
         likes_to_sit_around: saved.likes_to_sit_around,
         special_action: saved.special_action,
+        remaining_tequila_gulps: saved.remaining_tequila_gulps,
         friends_are_alerted: saved.friends_are_alerted,
         is_stay_at_home: saved.stay_at_home,
         locks_flag_field: AiLockFlags::from_bits(saved.locks_flag_field).ok_or(
@@ -1931,6 +1946,19 @@ fn convert_local_ai_common(
         script_locked: saved.script_locked,
         remember_events: saved.remember_events,
         leave_house_number: saved.leave_house_number,
+        last_hint_actuality: saved.last_hint_actuality,
+        last_hint_subject: question(
+            saved.last_hint_subject,
+            creation_order,
+            "local_ai.last_hint_subject",
+        )?,
+        my_door_index: legacy_door_index(
+            saved.door_index,
+            topology,
+            creation_order,
+            "local_ai.my_door",
+        )?,
+        looking_for_help_because_enemy_seen: saved.looking_for_help_because_enemy_seen,
         forgotten_objects: ai_handle_list(
             &saved.forgotten_objects,
             ReferenceKind::Object,
@@ -2269,6 +2297,7 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.already_turned = saved.already_turned;
     ai.likes_to_sit_around = saved.likes_to_sit_around;
     ai.special_action = saved.special_action;
+    ai.remaining_tequila_gulps = saved.remaining_tequila_gulps;
     ai.friends_are_alerted = saved.friends_are_alerted;
     ai.is_stay_at_home = saved.is_stay_at_home;
     ai.locks_flag_field = saved.locks_flag_field;
@@ -2276,6 +2305,10 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.script_locked = saved.script_locked;
     ai.remember_events = saved.remember_events;
     ai.leave_house_number = saved.leave_house_number;
+    ai.last_hint_actuality = saved.last_hint_actuality;
+    ai.last_hint_subject = saved.last_hint_subject;
+    ai.my_door_index = saved.my_door_index;
+    ai.looking_for_help_because_enemy_seen = saved.looking_for_help_because_enemy_seen;
     ai.forgotten_objects = saved.forgotten_objects;
     ai.object_of_desire = saved.object_of_desire;
     ai.checkpoint_charly = saved.checkpoint_charly;
@@ -2581,6 +2614,50 @@ fn attitude(
         field,
         value: raw,
     })
+}
+
+fn question(
+    value: i32,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<Question, LegacyElementAdoptError> {
+    let raw = u32::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
+        creation_order,
+        field,
+        value: value as u32,
+    })?;
+    Question::try_from(raw).map_err(|_| LegacyElementAdoptError::UnknownEnum {
+        creation_order,
+        field,
+        value: raw,
+    })
+}
+
+fn legacy_door_index(
+    value: Option<i16>,
+    topology: &LegacyPositionTopology,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<Option<u32>, LegacyElementAdoptError> {
+    value
+        .map(|index| {
+            let slot =
+                usize::try_from(index).map_err(|_| LegacyElementAdoptError::MissingGate {
+                    creation_order,
+                    field,
+                    index,
+                    count: topology.doors.len(),
+                })?;
+            topology.doors.get(slot).map(|door| door.0).ok_or(
+                LegacyElementAdoptError::MissingGate {
+                    creation_order,
+                    field,
+                    index,
+                    count: topology.doors.len(),
+                },
+            )
+        })
+        .transpose()
 }
 
 fn goto_flags(

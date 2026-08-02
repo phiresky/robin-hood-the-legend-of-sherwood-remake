@@ -1282,6 +1282,7 @@ impl std::fmt::Display for Remark {
     Hash,
     Serialize,
     Deserialize,
+    num_enum::TryFromPrimitive,
     robin_state_hash_derive::StateHash,
 )]
 #[repr(u32)]

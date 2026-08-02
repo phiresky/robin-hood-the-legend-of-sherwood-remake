@@ -146,6 +146,9 @@ pub struct AiController {
     pub likes_to_sit_around: bool,
     pub special_action: bool,
 
+    /// Remaining servings in the Original tequila-drinking continuation.
+    pub remaining_tequila_gulps: u8,
+
     pub friends_are_alerted: bool,
     pub is_stay_at_home: bool,
 
@@ -158,6 +161,14 @@ pub struct AiController {
 
     // -- House leaving order --
     pub leave_house_number: u16,
+
+    // -- Hint/door/help continuation --
+    pub last_hint_actuality: u32,
+    pub last_hint_subject: Question,
+    /// Canonical Rust runtime door-table index corresponding to Original
+    /// `mpMyDoor` through the retained mixed-gate topology.
+    pub my_door_index: Option<u32>,
+    pub looking_for_help_because_enemy_seen: bool,
 
     // -- Objects --
     pub forgotten_objects: Vec<ObjectHandle>,
@@ -345,6 +356,7 @@ impl Default for AiController {
             already_turned: false,
             likes_to_sit_around: false,
             special_action: false,
+            remaining_tequila_gulps: 0,
             friends_are_alerted: false,
             is_stay_at_home: false,
             locks_flag_field: AiLockFlags::empty(),
@@ -353,6 +365,10 @@ impl Default for AiController {
             script_locked: false,
             remember_events: false,
             leave_house_number: 0,
+            last_hint_actuality: 0,
+            last_hint_subject: Question::ShallIStayOnMyPost,
+            my_door_index: None,
+            looking_for_help_because_enemy_seen: false,
             forgotten_objects: Vec::new(),
             object_of_desire: 0,
             checkpoint_charly: 0,

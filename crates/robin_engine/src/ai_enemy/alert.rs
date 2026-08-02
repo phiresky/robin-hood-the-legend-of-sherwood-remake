@@ -1558,7 +1558,7 @@ impl EnemyAi {
         // my_door = nearest_door — stash the door so the
         // subsequent indoor `AlertSoldiers` formation flow has the
         // right exit-door geometry to project gather slots outside.
-        self.my_door_index = Some(door.door_index.0);
+        self.base.my_door_index = Some(door.door_index.0);
         self.go_to(
             AiState::Fleeing,
             Substate::FleeingRunToAlertSoldiers,

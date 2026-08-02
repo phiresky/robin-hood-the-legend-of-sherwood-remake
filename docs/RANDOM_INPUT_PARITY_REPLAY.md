@@ -2905,6 +2905,22 @@ object. Invalid hiking-path and waypoint references remain hard load errors.
 For older traces only the absent `path_control` key is removed. The native
 cache version and suffix are v39.
 
+### Schema-v40 shared NPC legacy continuation
+
+The final recoverable common-AI serializer tail is now represented directly:
+remaining tequila servings, the last-hint frame and question, the current
+door, and the enemy-seen help-search latch. The current door is compared by
+semantic gate geometry because Original and Rust intentionally construct the
+mixed door/jump-gate array in different orders.
+
+Legacy-save adoption validates the hint question and maps Original's signed
+mixed-gate slot through the retained topology to the canonical Rust door-table
+index; invalid enum values and gate references are hard load errors. Runtime
+door users now share this base-controller field, matching Original ownership,
+and both AI subclasses stamp last-hint actuality at the Original InitOneAI
+boundary. Older traces omit only the absent `legacy_continuation` object. The
+native cache version and suffix are v40.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,

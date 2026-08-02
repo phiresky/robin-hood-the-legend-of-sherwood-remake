@@ -187,10 +187,6 @@ pub struct EnemyAi {
 
     pub return_to_patrol_point: Position,
 
-    /// Index into `AiGlobalState::reinforcement_doors` for the door this
-    /// merry man is fleeing to.
-    pub my_door_index: Option<u32>,
-
     pub fleeing_seen_enemy_counter: u16,
 
     pub last_stimulus_dispatched_to_patrol: Option<Stimulus>,
@@ -359,7 +355,6 @@ impl Default for EnemyAi {
             known_enemy_strike_2: None,
             known_enemy_strike_3: None,
             return_to_patrol_point: Position::default(),
-            my_door_index: None,
             fleeing_seen_enemy_counter: 0,
             last_stimulus_dispatched_to_patrol: None,
             character_id: 0,
@@ -670,7 +665,7 @@ impl EnemyAi {
         // `my_door_index` semantics — a global door-table index — is
         // shared between merry-man flee, RunAndAlertSoldiers, and the
         // AlertSoldiers indoor formation flow.
-        self.my_door_index = Some(door.door_index.0);
+        self.base.my_door_index = Some(door.door_index.0);
 
         // SetState + GoTo + LaunchTimer first.  The `couldnt_reachpoint`
         // check is deliberately *after* the GoTo so that any prior-tick
@@ -4085,6 +4080,9 @@ impl EnemyAi {
             self.base
                 .fire_self_stimulus(crate::ai::StimulusType::EventDone);
         }
+
+        // Original InitOneAI stamps this after all patrol-path setup.
+        self.base.last_hint_actuality = ctx.frame;
 
         fx
     }

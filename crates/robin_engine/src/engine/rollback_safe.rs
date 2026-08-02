@@ -593,6 +593,30 @@ impl Engine {
         };
         let npc_ai = entity.npc_data().and_then(|npc| {
 			let ai = npc.ai_brain.base()?;
+			let ai_door = |index: Option<u32>| -> Value {
+				let Some(index) = index else { return Value::Null };
+				let door = self
+					.inner
+					.script_domains
+					.interactables
+					.doors
+					.get(usize::try_from(index).expect("parity AI door index exceeds usize"))
+					.unwrap_or_else(|| panic!("parity AI references missing door {index}"));
+				let kind = match door.gate_type {
+					crate::gate::GateType::Door => "door",
+					crate::gate::GateType::Jump => "jump",
+					crate::gate::GateType::None => "gate",
+				};
+				json!({
+					"kind": kind,
+					"sector_out": door.sector_out.get(),
+					"sector_in": door.sector_in.get(),
+					"layer_out": door.layer_out,
+					"layer_in": door.layer_in,
+					"point_out": point2(door.point_out.x, door.point_out.y),
+					"point_in": point2(door.point_in.x, door.point_in.y),
+				})
+			};
 			let handles = |values: &[u32]| {
 				values
 					.iter()
@@ -698,6 +722,13 @@ impl Engine {
 				"stimulus_queue": ai.stimulus_queue.iter().map(stimulus_state).collect::<Vec<_>>(),
 				"script_locked": ai.script_locked, "remember_events": ai.remember_events,
 				"leave_house_number": ai.leave_house_number,
+				"legacy_continuation": {
+					"remaining_tequila_gulps": ai.remaining_tequila_gulps,
+					"last_hint_actuality": ai.last_hint_actuality,
+					"last_hint_subject": ai.last_hint_subject as u32,
+					"current_door": ai_door(ai.my_door_index),
+					"looking_for_help_because_enemy_seen": ai.looking_for_help_because_enemy_seen,
+				},
 				"object_memory": {
 					"forgotten": handles(&ai.forgotten_objects),
 					"desire": resolve_ai_handle(ai.object_of_desire),

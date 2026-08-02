@@ -2203,6 +2203,9 @@ impl FriendlyAi {
             self.base.substate_at_last_timer_launch = self.base.current_substate;
         }
 
+        // Original InitOneAI stamps this after all patrol-path setup.
+        self.base.last_hint_actuality = ctx.frame;
+
         fx
     }
 

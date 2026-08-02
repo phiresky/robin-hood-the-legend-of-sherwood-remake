@@ -5867,7 +5867,7 @@ impl EnemyAi {
                             // to exit the map (launches a sequence
                             // element targeting the door's PointOut).
                             self.set_state(AiState::Fleeing, Substate::FleeingMerryManLeaveMap);
-                            if let Some(door_idx) = self.my_door_index {
+                            if let Some(door_idx) = self.base.my_door_index {
                                 // `my_door_index` is a global door-table
                                 // index.  Find the matching reinforcement
                                 // door entry (linear scan; small list)

@@ -1943,7 +1943,7 @@ impl EngineInner {
         // in-building status), so paths that reach the door's
         // point_out through a sequence of substates still see the
         // cached geometry.  No fallback when no door is stashed.
-        let stashed = soldier.npc.ai_brain.enemy().and_then(|e| e.my_door_index);
+        let stashed = soldier.npc.ai_brain.base().and_then(|ai| ai.my_door_index);
         if stashed.is_some() {
             assert!(
                 self.scripts.mission.is_some(),
