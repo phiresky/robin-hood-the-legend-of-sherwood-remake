@@ -1523,6 +1523,21 @@ impl EngineInner {
             door.point_out
         };
         let point = crate::coordinates::MapPoint::new(point.x, point.y);
+        // The final rail order normally reaches and snaps to the exact door
+        // endpoint before PassDoor runs.  C++'s direct PassDoor branch then
+        // changes only topology; it does not recompute any position
+        // representation.  Reconstructing world Y as `map_y + z` and then
+        // deriving map Y again as `world_y - z` is not bitwise idempotent at
+        // every magnitude and can manufacture a one-ULP movement on the next
+        // frame.  Keep the already-authoritative endpoint untouched.  The
+        // fallback below remains necessary for paths whose final rail order
+        // did not itself commit the endpoint.
+        if self
+            .get_entity(entity_id)
+            .is_some_and(|entity| entity.element_data().position_map() == point)
+        {
+            return;
+        }
         let position = if direct {
             // RHElementActor::PassDoor's direct branch changes topology but
             // does not call ComputePositionAll. The preceding door-rail
@@ -2399,6 +2414,50 @@ mod tests {
             entity.element_data().position_map(),
             "the endpoint snap must keep map and world coordinates coherent"
         );
+    }
+
+    #[test]
+    fn direct_door_completion_does_not_reconstruct_an_already_committed_endpoint() {
+        let mut engine = EngineInner::new();
+        let endpoint = MapPoint::new(250.0, 270.0);
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(crate::gate::Door {
+                point_in: endpoint,
+                ..default_door()
+            });
+        let owner = engine.add_entity(make_pc(7));
+
+        // At this magnitude, `(map_y + z) - z` is one ULP below map_y.
+        // That is exactly why C++ direct PassDoor leaves the final rail
+        // position alone instead of recomputing it.
+        let elevation = 244.55569458007812_f32;
+        let ground = crate::coordinates::GroundPoint::from_map_and_z(endpoint, elevation);
+        let world = crate::coordinates::WorldPoint3D::new(ground.x, ground.y, elevation);
+        assert_ne!(world.to_map().y.to_bits(), endpoint.y.to_bits());
+        {
+            let entity = engine.world.entities.get_mut(owner).unwrap();
+            entity.element_data_mut().set_position(world);
+            // Preserve the independently committed C++-style world
+            // representation; map XY is authoritative for movement parity.
+            entity
+                .element_data_mut()
+                .set_position_map_preserving_3d(endpoint);
+        }
+        let before = engine.get_entity(owner).unwrap().element_data().position();
+
+        engine.commit_completed_door_pass_position(
+            &LevelAssets::new(),
+            owner,
+            crate::gate::DoorIndex(0),
+            true,
+        );
+
+        let entity = engine.get_entity(owner).unwrap();
+        assert_eq!(entity.element_data().position_map(), endpoint);
+        assert_eq!(entity.element_data().position(), before);
     }
 
     #[test]

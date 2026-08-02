@@ -263,6 +263,11 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
             .unwrap();
         assert_eq!(owner_actor.listen_wait_time, expected_wait);
         assert_eq!(
+            owner_actor.continuation.motion_state,
+            crate::sprite::MotionState::InProgress,
+            "PC::Execute must expose its Listening wrapper result, not the raw sprite edge"
+        );
+        assert_eq!(
             owner_actor.listen_phase,
             crate::element::ListenPhase::CountingDown,
             "Listening sprite completion must not advance the exit transition"

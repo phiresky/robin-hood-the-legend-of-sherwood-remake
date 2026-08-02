@@ -610,7 +610,12 @@ impl EngineInner {
                 // RHMOTION_IN_PROGRESS on every nonterminal countdown tick.
                 // The actor continuation stores that wrapper result, not the
                 // raw sprite edge.
-                pc.actor.continuation.motion_state = crate::sprite::MotionState::InProgress;
+                // The owner coordinator latches the specialized Execute
+                // result from `last_motion_state` after this helper returns.
+                // Store the PC wrapper's authoritative result there; merely
+                // changing `continuation` here would be overwritten by the
+                // raw sprite START/DONE edge later in the same actor slot.
+                pc.element.sprite.last_motion_state = Some(crate::sprite::MotionState::InProgress);
                 return false;
             }
             // Countdown hit 0 — fire the one-shot reveal and

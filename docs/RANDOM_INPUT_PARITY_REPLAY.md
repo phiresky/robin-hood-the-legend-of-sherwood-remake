@@ -2615,6 +2615,24 @@ are under
 This is progress through the first frontier, not closure of the 19-trace
 increment: 18 traces still require exact EOF validation.
 
+Exact-bit movement dumps identified the zero-residual family as a redundant
+direct-door endpoint reconstruction. The final rail movement had already
+snapped map XY to the authored gate point, after which Rust rebuilt world Y as
+`map_y + z` and derived map Y again as `world_y - z`. That round trip is not
+bitwise idempotent for every pair of `f32` magnitudes and manufactured a one-ULP
+movement on the following frame. Original's direct `PassDoor` changes topology
+without calling `ComputePositionAll`; Rust now likewise leaves an already exact
+rail endpoint untouched, while retaining the fallback endpoint commit for
+paths that have not reached it.
+
+The residual Listening motion state was a publication-order issue rather than
+an ability-timer difference. `RHElementActorPC::Execute` discards the raw
+`PerformAction` START/DONE edge and publishes `IN_PROGRESS` during every
+nonterminal Listening countdown tick. Rust now records that derived wrapper
+result in the sprite motion latch consumed later by the owner coordinator,
+instead of writing the actor continuation early and having it overwritten by
+the raw sprite edge in the same slot.
+
 ### Schema-v24 visibility-call frontier: grid-selected lights and post coordinates
 
 Two visibility-query count divergences exposed general coordinate/spatial-query
