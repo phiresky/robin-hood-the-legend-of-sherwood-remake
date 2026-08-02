@@ -5677,6 +5677,11 @@ fn civilian_enemy_optics_uses_the_common_npc_walk() {
         ai.stimulus_queue[0].info,
         StimulusInfo::Human(pc_id.index())
     );
+    assert_eq!(
+        ai.max_visibility,
+        u32::from(crate::ai_vision::BASE_VIEW_SPEED) * 2,
+        "the shared NPC maximum must be published through FriendlyAi too"
+    );
 }
 
 fn make_discovery_bonus(x: f32) -> Entity {

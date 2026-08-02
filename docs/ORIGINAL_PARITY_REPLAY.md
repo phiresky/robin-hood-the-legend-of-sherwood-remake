@@ -3686,6 +3686,15 @@ backfilled for the corresponding civilian NPCs. Linux3 Profile 001 Savegame
 030 matches through its former frame-30378 divergence and now reaches the next
 independent mismatch at frame 30435.
 
+The per-refresh maximum visibility is shared NPC state as well. Original
+updates `muwMaximalVisibility` while scanning every detectable bucket for any
+NPC subclass; it is not a Lacklandist-only malignity field. Rust now publishes
+the Enemy-bucket maximum through the common controller base before later
+buckets fold in their maxima, including for civilians backed by `FriendlyAi`.
+This fixes the random Savegame 046/073 family where civilian detectables had
+the correct cached visibility and seen latch but reported maximum visibility
+as zero (for example, 8.0 visibility must report 160 sharpness).
+
 ### Worst-detected type resets after every detectable bucket
 
 Original clears `muwWorstDetectedType` only after Enemy, Body, Object, Friend,

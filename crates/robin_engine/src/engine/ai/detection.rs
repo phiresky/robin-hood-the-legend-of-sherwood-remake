@@ -2098,15 +2098,18 @@ impl EngineInner {
             // filter.  Hearing is a shared NPC behaviour, not an
             // enemy-specific one.
 
+            // `muwMaximalVisibility` belongs to RHElementActorNPC, not to
+            // malignity AI. Every NPC observer, including civilians backed by
+            // FriendlyAi, publishes the Enemy-bucket maximum before the later
+            // detectable-type buckets fold in their own sharpness.
+            if let Some(ai) = npc.ai_brain.base_mut() {
+                ai.max_visibility = max_sharpness;
+            }
+
             let my_camp = viewer.camp;
             if viewer.camp == Camp::Lacklandists
                 && let Some(enemy_ai) = npc.ai_brain.enemy_mut()
             {
-                // Maximum-visibility tracker — used by
-                // DefaultLookingShadow to keep watching while the
-                // target is still partially visible.
-                enemy_ai.base.max_visibility = max_sharpness;
-
                 // Pre-resolve target metadata (position, posture,
                 // animation) from the pc_snapshots cache when the
                 // primary target is a PC. Used by
