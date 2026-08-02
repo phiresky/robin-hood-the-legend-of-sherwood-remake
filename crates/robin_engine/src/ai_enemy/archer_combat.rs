@@ -14,10 +14,9 @@ impl EnemyAi {
 
     /// ShootArrowAt.
     ///
-    /// Stops current actions, faces the target, and sets a pending flag
-    /// for the engine to launch a `Command::ShootBow` sequence element
-    /// on the next post-think drain.
-    pub fn shoot_arrow_at(&mut self, enemy: HumanHandle, ctx: &AiContext, tick: &AiPerTickData) {
+    /// Stops current actions and sets a pending flag for the engine to launch
+    /// a `Command::ShootBow` sequence element on the next post-think drain.
+    pub fn shoot_arrow_at(&mut self, enemy: HumanHandle, ctx: &AiContext, _tick: &AiPerTickData) {
         // Asserts: is_archer() && remaining_arrows > 0.
         debug_assert!(self.is_archer_unit, "shoot_arrow_at called on non-archer");
         debug_assert!(
@@ -26,11 +25,6 @@ impl EnemyAi {
         );
 
         self.base.stop_all();
-
-        // Face toward the target before shooting.
-        if let Some(fighter) = self.find_fighter(enemy, tick) {
-            self.base.face_position(fighter.position);
-        }
 
         // Set pending flag — the engine drains this after think() and
         // calls EngineInner::shoot_bow_at to launch the sequence element.
