@@ -3119,6 +3119,61 @@ fn sequence_manager_instruction_rewrites_terminated_motion_to_in_progress() {
 }
 
 #[test]
+fn accepted_empty_generic_latches_motion_before_immediate_completion() {
+    use crate::element::Command;
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let actor = engine.add_entity(make_scripted_soldier(""));
+    let assets = LevelAssets::new();
+    engine
+        .get_entity_mut(actor)
+        .and_then(|entity| entity.actor_data_mut())
+        .expect("sequence-manager actor is typed")
+        .continuation
+        .motion_state = crate::sprite::MotionState::Terminated;
+
+    let sequence = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::Generic, Some(actor)));
+    let mut display = crate::engine::types::HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &assets,
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .expect("completed carrier remains inspectable")
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(actor),
+        None,
+        "empty accepted carrier must complete in the same Instruct call"
+    );
+    assert_eq!(
+        engine
+            .get_entity(actor)
+            .and_then(|entity| entity.actor_data())
+            .expect("sequence-manager actor remains typed")
+            .continuation
+            .motion_state,
+        crate::sprite::MotionState::InProgress,
+        "Original latches mmotionState before its empty-order termination"
+    );
+}
+
+#[test]
 fn turning_selects_sprite_row_after_the_direction_step() {
     use crate::element::Command;
     use crate::order::{Order, OrderType};

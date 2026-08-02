@@ -2046,6 +2046,17 @@ performs that rewrite for elements newly accepted by `InstructOwner`. This
 clears the final LookLeft/LookRight completions and the next en-route walking
 handoff without inventing an eager fallback Wait.
 
+That acceptance write is not conditional on an order existing. Original
+`Actor::Instruct` sets `mmotionState` to InProgress after `Translate` returns,
+then reads the first order; if the list is empty it clears the selected element
+and terminates it while retaining the InProgress motion value. A postponed
+pre-built `Generic` animation carrier can legitimately resume after its order
+has already completed and take this path. Rust now performs the same write
+before terminating that empty accepted carrier. Synchronous translation
+commands such as `AssertPosition` and `ChangePosition`, which change the
+selected element from inside `Translate` and therefore return before Original's
+motion write, remain excluded.
+
 ### Battle-decision visibility timing
 
 The strict schema-12 sweep of Linux profile 1, Savegame 040, replay 013 first
@@ -2127,6 +2138,12 @@ Human non-enemy and Object scans now zero visibility before cadence when eyes
 are closed or dying/unconscious instead of reusing a stale positive sample on
 a closed cadence. Enemy detection already observed this ordering. A focused
 gate regression covers blind, type-blocked, and eligible cases.
+
+MissedFriend and Beggar have an additional target-state rejection before
+their cadence: Original returns zero for either a dead or unconscious human.
+The per-owner human snapshot now retains canonical dead state, and both
+buckets test the dead-or-unconscious pair instead of treating consciousness
+alone as sufficient. A truth-table regression covers both independent flags.
 
 ### Sequence-manager and script-VM boundary state
 

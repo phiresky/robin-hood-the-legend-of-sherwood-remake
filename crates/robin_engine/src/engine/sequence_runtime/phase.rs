@@ -2503,8 +2503,20 @@ impl EngineInner {
                                 // while this element was postponed behind a
                                 // higher-priority command.  There is no
                                 // command-specific Translate body left to
-                                // run, so completion is the correct resumed
-                                // state.
+                                // run. Original Actor::Instruct nevertheless
+                                // writes mmotionState=IN_PROGRESS immediately
+                                // after Translate returns, before discovering
+                                // that GetCurrentOrder() is null and
+                                // terminating the accepted element. Preserve
+                                // that otherwise-invisible acceptance edge
+                                // before SetState clears the selected element.
+                                self.world
+                                    .entities
+                                    .get_mut(owner)
+                                    .and_then(Entity::actor_data_mut)
+                                    .expect("accepted empty Generic lost its actor")
+                                    .continuation
+                                    .motion_state = crate::sprite::MotionState::InProgress;
                                 self.orders
                                     .sequence_manager
                                     .element_terminated(seq_id, elem_idx);
