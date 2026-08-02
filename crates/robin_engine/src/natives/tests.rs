@@ -2237,6 +2237,32 @@ fn current_action_and_frame_queries_read_canonical_runtime_state() {
 }
 
 #[test]
+fn current_action_returns_nonanimation_end_without_an_installed_order() {
+    let pc_id = EntityId::Pc(crate::entity_id::PcId(0));
+    let pc_handle = ScriptHandleCodec::actor_handle(pc_id);
+    let mut host = BoundScriptEffects::new();
+    host.entities
+        .push(Some(native_test_pc(Vec::new(), Vec::new())));
+    let mut sequences = crate::sequence::SequenceManager::new();
+    let mut selected = Vec::new();
+    let mut sounds = crate::sound_source::SoundSourceManager::new();
+    let weather = crate::engine::WeatherState::default();
+    let frame = 123;
+    let mut action = NativeStack::default();
+    action.push_i32(pc_handle);
+
+    assert_eq!(
+        call_host_native_with_queries(
+            &mut host,
+            NativeFn::GetCurrentAction,
+            &mut action,
+            TestQueryViews::new(&mut sequences, &mut selected, &mut sounds, &weather, &frame),
+        ),
+        crate::order::OrderType::NonanimationEnd as i32
+    );
+}
+
+#[test]
 fn canonical_query_views_are_isolated_between_engine_instances() {
     let mut first_sequences = crate::sequence::SequenceManager::new();
     let mut first_selection = vec![EntityId::Pc(crate::entity_id::PcId(0))];

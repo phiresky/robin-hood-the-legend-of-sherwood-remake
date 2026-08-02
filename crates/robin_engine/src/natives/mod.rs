@@ -665,11 +665,19 @@ impl NativeContext<'_, '_> {
             return None;
         }
         let entity_id = self.actor_id(actor)?;
-        let (sequence_id, element_index, order) = self
+        let Some((sequence_id, element_index, order)) = self
             .sequence_manager
             .as_ref()
             .expect("script native requires a live SequenceManager query view")
-            .current_order_for_actor(entity_id)?;
+            .current_order_for_actor(entity_id)
+        else {
+            // RHElementActor::GetAnimation() returns RHNONANIMATION_END when
+            // the actor has no installed RHOrder. Returning zero here makes
+            // scripts mistake an orderless actor for WAITING_UPRIGHT; in
+            // Sherwood that changes which production actions are launched
+            // and therefore changes the global RNG draw stream.
+            return Some(OrderType::NonanimationEnd);
+        };
         let command = self
             .sequence_manager
             .as_ref()
