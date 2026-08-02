@@ -854,23 +854,8 @@ pub fn compute_view_radius(
     // Night/fog light-sector modulation.  Three reference points
     // sample the light field: one along the view forward direction,
     // and two along the left/right cone edges.
-    let (fx, fy) = view_forward;
-    let half_r = 0.5 * base_radius;
-    let mut pt_ref = MapPoint {
-        x: eye_world.x + half_r * fx,
-        y: eye_world.y + half_r * fy,
-    };
-
-    let (lx, ly) = rotate_unit(fx, fy, half_aperture);
-    let (rx, ry) = rotate_unit(fx, fy, -half_aperture);
-    let mut pt_left = MapPoint {
-        x: eye_world.x + half_r * lx,
-        y: eye_world.y + half_r * ly,
-    };
-    let mut pt_right = MapPoint {
-        x: eye_world.x + half_r * rx,
-        y: eye_world.y + half_r * ry,
-    };
+    let [mut pt_ref, mut pt_left, mut pt_right] =
+        night_fog_light_reference_points(eye_world, base_radius, view_forward, half_aperture);
 
     // When the target sits on a projection obstacle, subtract the
     // obstacle's top-plane Z from each reference point's Y.  This is
@@ -962,6 +947,36 @@ pub fn compute_view_radius(
 
     // Blend between base_radius and DEFAULT_VIEW_RADIUS.
     base_radius * (1.0 - factor_result) + DEFAULT_VIEW_RADIUS as f32 * factor_result
+}
+
+/// Original stores the cone sides with their map-space Y compressed by
+/// `ASPECT_RATIO`, while the central view direction remains an ordinary unit
+/// vector. ComputeViewRadius samples exactly those three differently scaled
+/// vectors when looking for a nearby light sector at night or in fog.
+fn night_fog_light_reference_points(
+    eye_world: WorldPoint3D,
+    radius: f32,
+    view_forward: (f32, f32),
+    half_aperture: f32,
+) -> [MapPoint; 3] {
+    let (fx, fy) = view_forward;
+    let half_r = 0.5 * radius;
+    let forward = MapPoint {
+        x: eye_world.x + half_r * fx,
+        y: eye_world.y + half_r * fy,
+    };
+
+    let (lx, ly) = rotate_unit(fx, fy, -half_aperture);
+    let (rx, ry) = rotate_unit(fx, fy, half_aperture);
+    let left = MapPoint {
+        x: eye_world.x + half_r * lx,
+        y: eye_world.y + half_r * ly * ASPECT_RATIO,
+    };
+    let right = MapPoint {
+        x: eye_world.x + half_r * rx,
+        y: eye_world.y + half_r * ry * ASPECT_RATIO,
+    };
+    [forward, left, right]
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -1801,6 +1816,35 @@ mod tests {
             0.0
         );
         assert_eq!(calls.get(), 1, "forward targets compute the radius once");
+    }
+
+    #[test]
+    fn diagonal_night_fog_side_samples_compress_only_their_y_component() {
+        let eye = WorldPoint3D::new(17.0, 29.0, 30.0);
+        let radius = 400.0;
+        let forward = sector_to_forward(2);
+        let aperture = 0.5;
+        let [center, left, right] =
+            night_fog_light_reference_points(eye, radius, forward, aperture);
+        let half_r = radius * 0.5;
+        let (left_x, left_y) = rotate_unit(forward.0, forward.1, -aperture);
+        let (right_x, right_y) = rotate_unit(forward.0, forward.1, aperture);
+
+        assert!((center.x - (eye.x + half_r * forward.0)).abs() < 1e-5);
+        assert!((center.y - (eye.y + half_r * forward.1)).abs() < 1e-5);
+        assert!((left.x - (eye.x + half_r * left_x)).abs() < 1e-5);
+        assert!((left.y - (eye.y + half_r * left_y * ASPECT_RATIO)).abs() < 1e-5);
+        assert!((right.x - (eye.x + half_r * right_x)).abs() < 1e-5);
+        assert!((right.y - (eye.y + half_r * right_y * ASPECT_RATIO)).abs() < 1e-5);
+
+        assert!(
+            (left.y - (eye.y + half_r * left_y)).abs() > 1.0,
+            "diagonal side sample must not retain uncompressed world Y"
+        );
+        assert!(
+            (right.y - (eye.y + half_r * right_y)).abs() > 1.0,
+            "diagonal side sample must not retain uncompressed world Y"
+        );
     }
 
     #[test]

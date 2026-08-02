@@ -3712,6 +3712,13 @@ full-radius and forward gates accept a target does it lazily call
 `ComputeViewRadius`, preserving both night/fog and obstacle-plane radius
 shrinking and the observable owner-local cache-call boundary.
 
+Night/fog light modulation samples the central view direction and both cone
+sides at half radius. Original keeps the central direction in ordinary world
+coordinates but stores each rotated cone side with Y compressed by
+`ASPECT_RATIO`; Rust had used uncompressed Y for all three probes. The side
+reference points now preserve that asymmetric isometric geometry, including
+diagonal views, before testing nearby light-sector barycentres.
+
 ### Legacy AI adoption restores both saved seek positions
 
 Original saves serialize both `mposSeekPosition` and
