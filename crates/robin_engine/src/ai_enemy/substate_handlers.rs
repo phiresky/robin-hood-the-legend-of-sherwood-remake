@@ -5374,6 +5374,14 @@ impl EnemyAi {
                         && self
                             .is_detecting_180_degrees(self.base.primary_target as HumanHandle, ctx)
                     {
+                        // Original restores a still-visible primary target to
+                        // the persistent Them list before making the next
+                        // tactical decision.  The target can have fallen out
+                        // of that list during the retreat; omitting this made
+                        // BattleDecisions take its no-enemy SeekArea branch.
+                        if !self.list_them.contains(&self.base.primary_target) {
+                            self.list_them.push(self.base.primary_target);
+                        }
                         self.battle_decisions(sim, global, ctx, tick, grid);
                     } else {
                         self.get_battle_overview(0, ctx, tick);
