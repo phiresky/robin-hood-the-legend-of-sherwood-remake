@@ -1353,6 +1353,7 @@ struct TraceEngineState {
     chorus_timer: u16,
     force_check: bool,
     men_to_blazon_conversion: bool,
+    pc_registry: TraceJsonValue,
     lock_engine: bool,
     freeze_all: bool,
     locker: bool,
@@ -1445,8 +1446,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 23;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v23.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 24;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v24.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4838,6 +4839,16 @@ fn compare_engine_state(
     field!(quit_interrupted);
     field!(script_globals);
 
+    let mut expected_pc_registry = expected.pc_registry.to_json();
+    canonicalize_authoritative_snapshot(&mut expected_pc_registry, entity_map);
+    let actual_pc_registry = engine.parity_pc_registry_state();
+    collect_json_differences(
+        "frame.engine_state.pc_registry",
+        &expected_pc_registry,
+        &actual_pc_registry,
+        differences,
+    );
+
     let mut expected_sequences = expected.sequence_manager.to_json();
     canonicalize_authoritative_snapshot(&mut expected_sequences, entity_map);
     let actual_sequences = engine.parity_sequence_manager_state();
@@ -6170,6 +6181,7 @@ mod tests {
             "chorus_timer": 0,
             "force_check": false,
             "men_to_blazon_conversion": false,
+            "pc_registry": [],
             "lock_engine": false,
             "freeze_all": false,
             "locker": false,

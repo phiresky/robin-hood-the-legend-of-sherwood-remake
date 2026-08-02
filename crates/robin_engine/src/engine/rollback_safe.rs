@@ -785,6 +785,29 @@ impl Engine {
         })
     }
 
+    /// Exact `RHEngine::marrayActorsPC` order. The portrait bar has a
+    /// different priority-sorted owner and must not stand in for gameplay
+    /// loops that walk Original's PC registry.
+    #[doc(hidden)]
+    pub fn parity_pc_registry_state(&self) -> serde_json::Value {
+        use serde_json::json;
+
+        serde_json::Value::Array(
+            self.inner
+                .world
+                .original_pc_registry_ids
+                .iter()
+                .map(|id| {
+                    let kind = match id.kind() {
+                        crate::element::EntityIdKind::Pc => "pc",
+                        other => panic!("Original PC registry contains non-PC entity {other:?}"),
+                    };
+                    json!({ "kind": kind, "index": id.index() })
+                })
+                .collect(),
+        )
+    }
+
     /// Engine-owned roots serialized outside the element/sequence managers.
     /// References use the same semantic entity and manager-ordinal sequence
     /// forms as the rest of the parity snapshot.
@@ -2461,6 +2484,28 @@ mod tests {
         assert_eq!(state["forbidden_remarks"][0]["bad_guy"], true);
         assert_eq!(state["forbidden_remarks"][0]["forbidden_till_frame"], 1234);
         assert_eq!(state["current_speech_variant"], 2);
+    }
+
+    #[test]
+    fn parity_pc_registry_preserves_original_order_not_portrait_order() {
+        let mut inner = EngineInner::new();
+        let new_pc = || {
+            crate::element::Entity::Pc(crate::element::ActorPc {
+                element: crate::element::ElementData::default(),
+                actor: crate::element::ActorData::default(),
+                human: crate::element::HumanData::default(),
+                pc: crate::element::PcData::default(),
+            })
+        };
+        let first = inner.add_entity(new_pc());
+        let second = inner.add_entity(new_pc());
+        inner.world.pc_ids = vec![first, second];
+        inner.world.original_pc_registry_ids = vec![second, first];
+
+        let state = Engine { inner }.parity_pc_registry_state();
+        assert_eq!(state[0]["kind"], "pc");
+        assert_eq!(state[0]["index"], second.index());
+        assert_eq!(state[1]["index"], first.index());
     }
 
     #[test]

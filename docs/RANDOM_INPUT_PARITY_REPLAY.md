@@ -2392,6 +2392,25 @@ Adding these required fields changes the native parity cache to version 23.
 Older schema-13 frames are rejected rather than compared without the pending
 latches and global speech frontier.
 
+### Original PC registry order
+
+Schema 13 now records `RHEngine::marrayActorsPC` in its exact insertion order.
+This registry is distinct from the priority-sorted PC list used by Rust's
+portrait bar: Original gameplay code walks `marrayActorsPC` directly in many
+places, and some of those loops stop at the first matching hero. Equal PC sets
+with different orders can therefore choose different actors even when the HUD
+looks identical.
+
+The snapshot stores semantic PC references rather than native pointers. The
+comparator maps those references through the existing entity isomorphism and
+then compares the entire ordered array. Rust retains this authoritative order
+separately as `original_pc_registry_ids`; presentation sorting must not mutate
+or replace it.
+
+Adding `engine_state.pc_registry` changes the native parity cache to version
+24. Older schema-13 frames are rejected rather than compared without this
+authoritative registry order.
+
 ### Sequence-manager and script-VM boundary state
 
 Schema 13 now records the sequence manager's insertion-ordered sequences,
