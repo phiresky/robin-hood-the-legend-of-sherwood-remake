@@ -295,6 +295,29 @@ impl EngineInner {
         }
     }
 
+    /// Return the live `RHHumanStatus::BOW_SKILL` capacity used to scale a
+    /// missed arrow's random bias.
+    ///
+    /// This is deliberately distinct from [`Self::bow_profile_and_ability`].
+    /// Original `ShootWithBowAt` passes `GetShootingAbility()` (including
+    /// difficulty and drunkenness modifiers for soldiers) to the hit-chance
+    /// lookup, but scales the miss vector with the unmodified capacity stored
+    /// in the actor's `RHHumanStatus`. Soldier status is initialized from the
+    /// raw profile; PC status aliases its campaign description.
+    fn bow_skill_capacity(&self, assets: &LevelAssets, entity_id: EntityId) -> Option<u32> {
+        match self.get_entity(entity_id)? {
+            Entity::Pc(pc) => self
+                .pc_description_for_pc_data(&pc.pc)
+                .map(|description| description.status.human_status.bow.capacity),
+            Entity::Soldier(soldier) => assets
+                .profile_manager
+                .soldiers
+                .get(usize::from(soldier.soldier.soldier_profile_index))
+                .map(|profile| u32::from(profile.shooting)),
+            _ => None,
+        }
+    }
+
     pub(super) fn selected_bow_order(
         &self,
         owner: EntityId,
@@ -528,8 +551,16 @@ impl EngineInner {
                 100
             };
 
-            // Bow skill capacity for bias scaling.
-            let bow_skill_capacity = shooting_ability;
+            // `RHHumanStatus` capacity, not the difficulty-/alcohol-adjusted
+            // `GetShootingAbility()` value used by the hit-chance lookup.
+            let bow_skill_capacity = self
+                .bow_skill_capacity(assets, result.shooter)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "bow shot shooter {:?} is missing its authoritative bow skill capacity",
+                        result.shooter
+                    )
+                });
 
             if target_is_human
                 && let Some(bias) =

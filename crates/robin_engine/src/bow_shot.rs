@@ -1275,11 +1275,16 @@ pub fn roll_hit_and_compute_bias(
 
     // Miss — compute random bias, scaled by inverse skill.
     let skill_factor = 1.0 - (bow_skill_capacity.min(100) as f32 / 100.0);
-    let bx = (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::BowAccuracy, 0..5) as f32 - 2.0)
+    // Original spells this as `SBGeoVector3D(rand(), rand(), rand())`.
+    // The shipped/compiler-supported builds evaluate those constructor
+    // arguments right-to-left: the first global-stream draw becomes Z and
+    // the last becomes X. Keep the draw order visible here because swapping
+    // it rotates every inaccurate shot while leaving the RNG cursor aligned.
+    let bz = (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::BowAccuracy, 0..5) as f32 - 2.0)
         * skill_factor;
     let by = (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::BowAccuracy, 0..5) as f32 - 2.0)
         * skill_factor;
-    let bz = (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::BowAccuracy, 0..5) as f32 - 2.0)
+    let bx = (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::BowAccuracy, 0..5) as f32 - 2.0)
         * skill_factor;
 
     Some(WorldVec3D {
