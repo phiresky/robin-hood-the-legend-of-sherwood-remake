@@ -1452,8 +1452,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 34;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v34.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 35;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v35.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -5041,6 +5041,38 @@ fn retain_recorded_entity_runtime_coverage(
             "seek_flags",
             "seen_dead_body",
             "seeking_charly",
+            "forced_next_battle_decision",
+            "reset_battle_decision",
+            "synchronize_index",
+            "initial_view_cone",
+            "company_number",
+            "left_combat_neighbour",
+            "right_combat_neighbour",
+            "attentive",
+            "will_be_attentive",
+            "forced_attentive",
+            "guarded_pc",
+            "tower_guard",
+            "combat_trainer",
+            "gather_position",
+            "gather_direction",
+            "gather_position_instructed",
+            "officers_position",
+            "previous_state",
+            "previous_substate",
+            "reported_to_officer",
+            "missed_soldier_timer",
+            "old_money",
+            "other_seen_money",
+            "money_fight_enemies",
+            "money_fight_victims",
+            "archer_behind_me",
+            "shield_bearer_before_me",
+            "already_seen_bodies",
+            "my_line_jump",
+            "shield_bearer_direction",
+            "phalanx_aborted",
+            "changed_to_alert_path",
         ] {
             if !expected_subclass.contains_key(field) {
                 actual_subclass.remove(field);
@@ -6607,7 +6639,7 @@ mod tests {
     }
 
     #[test]
-    fn old_enemy_snapshots_skip_only_absent_additive_v34_state() {
+    fn old_enemy_snapshots_skip_only_absent_additive_v35_state() {
         let expected = serde_json::json!({
             "npc_ai": {
                 "state": 3,
@@ -6641,7 +6673,39 @@ mod tests {
                     "positions_of_beggars_to_control": [],
                     "seek_flags": 0,
                     "seen_dead_body": false,
-                    "seeking_charly": false
+                    "seeking_charly": false,
+                    "forced_next_battle_decision": 0,
+                    "reset_battle_decision": false,
+                    "synchronize_index": 0,
+                    "initial_view_cone": 0,
+                    "company_number": 0,
+                    "left_combat_neighbour": null,
+                    "right_combat_neighbour": null,
+                    "attentive": false,
+                    "will_be_attentive": false,
+                    "forced_attentive": false,
+                    "guarded_pc": null,
+                    "tower_guard": false,
+                    "combat_trainer": false,
+                    "gather_position": {},
+                    "gather_direction": 0,
+                    "gather_position_instructed": false,
+                    "officers_position": {},
+                    "previous_state": 0,
+                    "previous_substate": 0,
+                    "reported_to_officer": false,
+                    "missed_soldier_timer": 0,
+                    "old_money": 0,
+                    "other_seen_money": [],
+                    "money_fight_enemies": [],
+                    "money_fight_victims": [],
+                    "archer_behind_me": null,
+                    "shield_bearer_before_me": null,
+                    "already_seen_bodies": [],
+                    "my_line_jump": null,
+                    "shield_bearer_direction": 0,
+                    "phalanx_aborted": false,
+                    "changed_to_alert_path": false
                 }
             }
         });

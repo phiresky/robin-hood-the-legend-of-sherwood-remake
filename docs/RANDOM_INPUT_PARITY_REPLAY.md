@@ -2823,6 +2823,23 @@ personal-point slot. Older recordings remove only absent additive keys, while
 present values remain strict. Battle decisions, formation/reports, patrol
 stimulus, and archery state remain later slices. The native cache is v34.
 
+### Schema-v35 enemy battle, gathering, and reference continuation
+
+The enemy checkpoint now covers the remainder of the non-archery battle and
+gathering save tail: forced decision and synchronization state, view/attention
+configuration, combat neighbours and guarded PC, gather/officer positions,
+report and money timers, ordered money/body collections, formation partners,
+the jump line, and shield/phalanx/path latches. Entity pointers use the runtime
+isomorphism and the jump-line pointer is compared by exact endpoint geometry,
+not by allocation/index identity.
+
+The raw previous-state/substate words remain authoritative because the
+Original serializes their full enum storage even when dormant. Every ordered
+list rejects impossible null entries in the recorder and retains source order.
+Older raw traces omit only absent additive fields; recorded nulls and values
+are strict. The last patrol stimulus and archery reservation/strike state
+remain independent slices. The native cache version and suffix are v35.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,

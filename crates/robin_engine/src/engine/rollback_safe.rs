@@ -241,6 +241,23 @@ impl Engine {
         let point2 = |x: f32, y: f32| json!({ "x": float(x), "y": float(y) });
         let point3 =
             |x: f32, y: f32, z: f32| json!({ "x": float(x), "y": float(y), "z": float(z) });
+        let jump_line = |index: Option<u32>| -> Value {
+            let Some(index) = index else {
+                return Value::Null;
+            };
+            let line = self
+                .inner
+                .world
+                .fast_grid
+                .level
+                .jump_lines
+                .get(usize::try_from(index).expect("parity enemy jump-line index exceeds usize"))
+                .unwrap_or_else(|| panic!("parity enemy references missing jump line {index}"));
+            json!({
+                "a": point2(line.point_a.x, line.point_a.y),
+                "b": point2(line.point_b.x, line.point_b.y),
+            })
+        };
         let bbox = |bbox: crate::coordinates::MapBBox| match bbox.0 {
             Some(rect) => json!({
                 "min": point2(rect.min().x, rect.min().y),
@@ -566,7 +583,8 @@ impl Engine {
 					"last_talk_partner": resolve_ai_handle(friendly.last_talk_partner),
 					"can_go_away": friendly.can_go_away,
 				})),
-				crate::element::AiBrain::Enemy(enemy) => Some(json!({
+				crate::element::AiBrain::Enemy(enemy) => {
+					let mut subclass = json!({
 					"kind": "enemy",
 					"frame_when_missed_charly": enemy.frame_when_missed_charly,
 					"frame_when_enemy_detected": enemy.base.frame_when_enemy_detected,
@@ -608,7 +626,46 @@ impl Engine {
 					"seek_flags": enemy.seek_flags.bits(),
 					"seen_dead_body": enemy.seen_dead_body,
 					"seeking_charly": enemy.seeking_charly,
-				})),
+					});
+					subclass
+						.as_object_mut()
+						.expect("parity enemy AI state must be an object")
+						.extend(json!({
+					"forced_next_battle_decision": enemy.forced_next_battle_decision as u32,
+					"reset_battle_decision": enemy.reset_battle_decision,
+					"synchronize_index": enemy.base.synchronize_index,
+					"initial_view_cone": enemy.base.initial_view_cone as u32,
+					"company_number": enemy.company_number,
+					"left_combat_neighbour": resolve_ai_handle(enemy.left_combat_neighbour),
+					"right_combat_neighbour": resolve_ai_handle(enemy.right_combat_neighbour),
+					"attentive": enemy.attentive,
+					"will_be_attentive": enemy.will_be_attentive,
+					"forced_attentive": enemy.forced_attentive,
+					"guarded_pc": enemy.guarded_pc.map_or(Value::Null, |id| entity_ref(EntityId::Pc(id))),
+					"tower_guard": enemy.tower_guard,
+					"combat_trainer": enemy.combat_trainer,
+					"gather_position": ai_position(enemy.gather_position),
+					"gather_direction": enemy.gather_direction,
+					"gather_position_instructed": enemy.gather_position_instructed,
+					"officers_position": ai_position(enemy.officers_position),
+					"previous_state": enemy.previous_state,
+					"previous_substate": enemy.previous_substate,
+					"reported_to_officer": enemy.reported_to_officer,
+					"missed_soldier_timer": enemy.missed_soldier_timer,
+					"old_money": enemy.old_money,
+					"other_seen_money": handles(&enemy.other_seen_money),
+					"money_fight_enemies": handles(&enemy.money_fight_enemies),
+					"money_fight_victims": handles(&enemy.money_fight_victims),
+					"archer_behind_me": resolve_ai_handle(enemy.archer_behind_me),
+					"shield_bearer_before_me": resolve_ai_handle(enemy.shield_bearer_before_me),
+					"already_seen_bodies": handles(&enemy.already_seen_bodies),
+					"my_line_jump": jump_line(enemy.my_line_jump),
+					"shield_bearer_direction": enemy.shield_bearer_direction,
+					"phalanx_aborted": enemy.phalanx_aborted,
+					"changed_to_alert_path": enemy.changed_to_alert_path,
+					}).as_object().expect("parity enemy AI continuation must be an object").clone());
+					Some(subclass)
+				},
 				crate::element::AiBrain::None => None,
 			};
 			if let Some(subclass) = subclass {
