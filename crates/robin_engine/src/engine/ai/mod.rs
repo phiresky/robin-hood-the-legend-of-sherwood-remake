@@ -11221,10 +11221,17 @@ impl EngineInner {
             .get_mut(npc_id)
             .and_then(Entity::ai_controller_mut)
         {
-            ai.think_recursion_depth = ai
-                .think_recursion_depth
-                .checked_sub(1)
-                .expect("waypoint-script suspended Think depth underflow");
+            // This is the EndThink of the outer route-arrival Think that was
+            // suspended while the waypoint VM and its recursive
+            // EventAfterScriptGoOn ran.  Merely restoring the depth strands
+            // completion latches produced by the final recursive action
+            // (for example AssignNewPatrolPath(-1) returning to a post at the
+            // actor's current position).  Original consumes those latches
+            // here and recursively dispatches the matching event.
+            assert!(
+                ai.end_think_completion_events(),
+                "waypoint-script suspended Think unexpectedly hit the typed recursion fallback"
+            );
         }
         match result {
             Ok(value) => value,
