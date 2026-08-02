@@ -2489,6 +2489,17 @@ Falling row/frame forcing, its single RNG draw, direction rotation, and
 stationary empty-trajectory retirement all occur only at this deferred
 refresh boundary.
 
+### Attentive turning sprite order
+
+Save024 exposed a one-row disagreement on the first frame where two attentive
+soldiers turned. Original's attentive `RHANIMATION_TURNING` arm calls
+`PerformAction(... RHANIMATION_TURNING_ALERTED)` before `Turn` or `TurnFast`
+(`original-code/RHelementactorsoldier.cpp`), so the sprite row retains the
+direction from Execute entry while the position interface already contains
+the newly rotated direction at the frame boundary. Rust now preserves that
+ordering for this arm; other turn-driving animations continue to stamp their
+post-turn direction. A focused regression locks both sides of the distinction.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

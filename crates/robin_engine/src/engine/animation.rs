@@ -114,6 +114,26 @@ fn pc_beggar_execute_calls_turn(anim: OrderType) -> bool {
     )
 }
 
+/// Select the direction row stamped by an actor action that also turns.
+///
+/// Original's attentive-soldier `TURNING` arm performs
+/// `TURNING_ALERTED` before calling `Turn`/`TurnFast`, unlike the other
+/// turn-driving arms.  Its visible row therefore belongs to the direction at
+/// Execute entry even though the position interface has advanced by the end
+/// of the same simulation frame.
+fn actor_action_row(
+    anim_type: OrderType,
+    effective_anim: OrderType,
+    direction_before_turn: u16,
+    direction_after_turn: u16,
+) -> u16 {
+    if anim_type == OrderType::Turning && effective_anim == OrderType::TurningAlerted {
+        direction_before_turn
+    } else {
+        direction_after_turn
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,6 +152,19 @@ mod tests {
         ));
         assert!(pc_beggar_execute_calls_turn(OrderType::SimulatingBeggar));
         assert!(!pc_beggar_execute_calls_turn(OrderType::Whistling));
+    }
+
+    #[test]
+    fn attentive_turning_stamps_the_pre_turn_direction_row() {
+        assert_eq!(
+            actor_action_row(OrderType::Turning, OrderType::TurningAlerted, 13, 12),
+            13
+        );
+        assert_eq!(
+            actor_action_row(OrderType::Turning, OrderType::Turning, 13, 12),
+            12,
+            "the special ordering belongs only to the attentive soldier arm"
+        );
     }
 
     fn weak_soldier_at_action_done(tiredness: u16) -> Entity {
@@ -4650,6 +4683,7 @@ impl EngineInner {
                         let mut wasp_still_turning = false;
                         let mut pc_taking_still_turning = false;
                         let mut pc_target_still_turning = false;
+                        let direction_before_turn = entity.element_data().direction() as u16;
                         if order_is_initialising
                             && anim_type == OrderType::RaisingShield
                             && let Some(danger) = entity
@@ -4698,7 +4732,12 @@ impl EngineInner {
                                 pc_target_still_turning = still_turning;
                             }
                         }
-                        let row = entity.element_data().direction() as u16;
+                        let row = actor_action_row(
+                            anim_type,
+                            effective_anim,
+                            direction_before_turn,
+                            entity.element_data().direction() as u16,
+                        );
                         let held_weak_sword = hold_weak_sword_at_action_done(entity, anim_type);
                         if held_weak_sword.is_some() {
                             weak_sword_held = true;
