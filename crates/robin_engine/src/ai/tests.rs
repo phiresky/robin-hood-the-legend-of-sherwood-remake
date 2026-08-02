@@ -773,7 +773,11 @@ fn goto_route_turn_lookup_preserves_original_endpoint_direction_flip() {
 
 #[test]
 fn entering_fleeing_hiding_blinks_visible_enemies_for_redetection() {
-    for substate in [Substate::FleeingRunToDoor, Substate::FleeingPanic] {
+    for substate in [
+        Substate::FleeingRunToHide,
+        Substate::FleeingRunToDoor,
+        Substate::FleeingPanic,
+    ] {
         let mut ai = AiController::new(1);
         ai.current_state = AiState::Fleeing;
         ai.current_substate = substate;
@@ -787,6 +791,14 @@ fn entering_fleeing_hiding_blinks_visible_enemies_for_redetection() {
         );
 
         assert_eq!(ai.current_substate, Substate::FleeingHiding);
+        assert!(ai.timer_is_running);
+        assert!(
+            (crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME as u32
+                ..(crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME
+                    + crate::parameters_ai::AI_DELTA_PANIC_HIDING_TIME) as u32)
+                .contains(&ai.when_does_timer_ring),
+            "{substate:?} must use Original's shared 500..1000-frame hiding interval"
+        );
         assert!(
             ai.outbox.actor.blink_all_enemies,
             "Original BlinkEnemy(NULL) is unconditional when {substate:?} enters hiding"

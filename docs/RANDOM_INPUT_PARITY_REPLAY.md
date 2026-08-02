@@ -3239,6 +3239,20 @@ This restores the Original coordinate space generally across elevated terrain;
 the subsequent visibility query still determines whether an admitted target is
 actually visible.
 
+### Every panic-hiding entry uses the shared 500-frame interval
+
+Savegame 063 replay 001 reached an inactive York civilian's hiding timer near
+frame 1058. Rust returned the civilian to duty and drew route/building-wait RNG,
+while Original kept the civilian in `FleeingHiding`.
+
+The run-to-hide/run-to-door completion arm had a stale hard-coded
+`300 + rand() % 200` interval. Original uses
+`AI_MIN_PANIC_HIDING_TIME + rand() % AI_DELTA_PANIC_HIDING_TIME`, whose values
+are 500 and 500, in both that arm and the exhausted-panic arm. Rust already
+used the constants in the latter. Both entry paths now share the Original
+500-through-999-frame interval, preventing civilians and soldiers from
+returning to duty hundreds of frames early.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

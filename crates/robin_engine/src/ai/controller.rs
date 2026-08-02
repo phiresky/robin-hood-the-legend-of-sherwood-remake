@@ -4148,8 +4148,12 @@ impl AiController {
                         sector: None,
                         level: 0,
                     });
-                    let hiding_time =
-                        300 + crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, ..200); // AI_MIN + delta
+                    let hiding_time = crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME as u32
+                        + crate::sim_rng::u32(
+                            sim,
+                            crate::sim_rng::RngSite::AiPanic,
+                            0..crate::parameters_ai::AI_DELTA_PANIC_HIDING_TIME as u32,
+                        );
                     self.launch_timer(hiding_time, ctx.frame);
                 }
             }
