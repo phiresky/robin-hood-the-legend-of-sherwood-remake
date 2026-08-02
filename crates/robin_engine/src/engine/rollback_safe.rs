@@ -1002,6 +1002,46 @@ impl Engine {
                 "pending_shoots": human.pending_shoots.iter().copied().map(sequence_ref).collect::<Vec<_>>(),
             })
         });
+        let pc_core = entity.pc_data().map(|pc| {
+            const ACTIONS: usize = 3;
+            assert_eq!(
+                pc.disabled_actions.len(),
+                ACTIONS,
+                "PC {id:?} parity projection has {} permanent action flags, expected {ACTIONS}",
+                pc.disabled_actions.len()
+            );
+            assert_eq!(
+                pc.disabled_actions_temp.len(),
+                ACTIONS,
+                "PC {id:?} parity projection has {} temporary action flags, expected {ACTIONS}",
+                pc.disabled_actions_temp.len()
+            );
+            let campaign_description_index = pc.campaign_description_index.unwrap_or_else(|| {
+                panic!("PC {id:?} parity projection has no campaign description index")
+            });
+            json!({
+                "work_icon": pc.work_icon as u32,
+                "campaign_description_index": campaign_description_index,
+                "playable": pc.playable,
+                "beam_me_index": pc.beam_me_index,
+                "already_selected": pc.already_selected,
+                "belt_seen": pc.belt_seen,
+                "feet_seen": pc.feet_seen,
+                "head_seen": pc.head_seen,
+                "immortal": pc.immortal,
+                "fried_psykokwack": pc.fried_psykokwack,
+                "list_index": pc.list_index,
+                "teleport_counter": pc.teleport_counter,
+                "current_action": pc.current_action as u32,
+                "saved_action": pc.saved_action as u32,
+                "disabled_actions": pc.disabled_actions,
+                "disabled_actions_temp": pc.disabled_actions_temp,
+                "position_before_teleport": point2(
+                    pc.position_before_teleport.x,
+                    pc.position_before_teleport.y,
+                ),
+            })
+        });
         let pc_qa = entity.pc_data().map(|pc| {
             const QA_SLOTS: usize = crate::macro_store::NUMBER_OF_QA_MEMORY;
             for (name, length) in [
@@ -1190,6 +1230,12 @@ impl Engine {
                 .as_object_mut()
                 .expect("parity entity runtime must be an object")
                 .insert("pc_tail".to_owned(), pc_tail);
+        }
+        if let Some(pc_core) = pc_core {
+            result
+                .as_object_mut()
+                .expect("parity entity runtime must be an object")
+                .insert("pc_core".to_owned(), pc_core);
         }
         if let Some(pc_qa) = pc_qa {
             result

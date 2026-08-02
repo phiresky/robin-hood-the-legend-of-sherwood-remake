@@ -1454,7 +1454,7 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 46;
+const TRACE_CACHE_VERSION: u32 = 47;
 const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v45.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
@@ -5044,6 +5044,13 @@ fn retain_recorded_entity_runtime_coverage(
     {
         actual.remove("pc_portrait");
     }
+    if !expected
+        .as_object()
+        .is_some_and(|object| object.contains_key("pc_core"))
+        && let Some(actual) = actual.as_object_mut()
+    {
+        actual.remove("pc_core");
+    }
     if expected
         .get("npc_ai")
         .and_then(serde_json::Value::as_object)
@@ -6829,6 +6836,13 @@ mod tests {
             }
         });
 
+        retain_recorded_entity_runtime_coverage(&expected, &mut actual);
+        assert_eq!(actual, expected);
+
+        let expected = serde_json::json!({});
+        let mut actual = serde_json::json!({
+            "pc_core": { "current_action": 0, "disabled_actions": [false, false, false] }
+        });
         retain_recorded_entity_runtime_coverage(&expected, &mut actual);
         assert_eq!(actual, expected);
 
