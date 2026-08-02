@@ -3061,6 +3061,22 @@ some of them. Rust already retains and mutates the exact values in
 runtime changes frame-strict. Older traces omit only `game_ui`; the native
 cache version and suffix are v48.
 
+### Schema-v49 messenger view-lock versus camera locker
+
+Original has two independent states: `RHMessenger::mbLockView` controls the
+view cursor, hover-follow, drag suppression, and no-action double-click guard;
+`RHEngine::mbLocker` controls camera following. The messenger flag defaults to
+false, has no runtime writer in shipped source, and is restored independently
+from saves. Rust previously used camera locker state for both jobs, so normal
+follow-camera mode could retarget to the NPC under the mouse and suppress
+otherwise valid input.
+
+Rust now owns and adopts `view_locked` separately and uses it only at the five
+Original-equivalent input sites. Camera follow behavior remains on
+`locker_active`. The additive `engine_state.messenger_controller` projection
+makes the serialized flag strict in new traces; older traces omit it, and the
+native cache version is v49.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,

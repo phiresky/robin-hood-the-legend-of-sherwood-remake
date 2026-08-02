@@ -155,19 +155,28 @@ impl EngineInner {
         if speak {
             self.hero_speaking(assets, id, crate::engine::melee::HERO_SELECT);
         }
-        self.apply_post_select_action_fanout(seat);
+        self.apply_post_select_action_fanout(assets, seat);
     }
 
     /// Post-selection bookkeeping. With >1 PCs selected, each PC's current
-    /// action is cleared. The single-selected action-restitution broadcast
-    /// has no consumer here — the PC's stored `current_action` survives
-    /// selection changes directly — so it is elided.
-    fn apply_post_select_action_fanout(&mut self, seat: usize) {
+    /// action is cleared. With exactly one selected PC, Original forwards
+    /// `MSG_SELECT_ACTION(pc, pc->GetCurrentAction())` even when the stored
+    /// action did not change. That restitution still runs SelectAction's
+    /// stop-in-place and per-action entry hooks, so it cannot be reduced to
+    /// retaining `current_action` in place.
+    fn apply_post_select_action_fanout(&mut self, assets: &LevelAssets, seat: usize) {
         if self.players.seats[seat].selection.len() > 1 {
             let ids = self.players.seats[seat].selection.clone();
             for id in ids {
                 self.unselect_action(id);
             }
+        } else if let Some(&id) = self.players.seats[seat].selection.first() {
+            let action = self
+                .get_entity(id)
+                .and_then(|entity| entity.pc_data())
+                .map(|pc| pc.current_action)
+                .unwrap_or(Action::NoAction);
+            self.set_pc_action_from_message(assets, seat, id, action);
         }
     }
 
@@ -187,6 +196,9 @@ impl EngineInner {
             if let Some(Entity::Pc(pc)) = self.get_entity_mut(id) {
                 pc.pc.portrait.open = !pc.pc.portrait.burned;
             }
+            // Ctrl-click addition routes through SelectPC in Original and
+            // therefore performs the same post-selection action fanout.
+            self.apply_post_select_action_fanout(assets, seat);
         }
     }
 
@@ -227,7 +239,7 @@ impl EngineInner {
                 }
             }
         }
-        self.apply_post_select_action_fanout(seat);
+        self.apply_post_select_action_fanout(assets, seat);
     }
 
     /// Clear the selection.
@@ -1372,5 +1384,53 @@ impl EngineInner {
                 pc.pc.teleport_counter -= 1;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::element::{ActorPc, ElementData, ElementKind, Posture};
+    use crate::sequence::SequenceState;
+
+    #[test]
+    fn single_selection_restitution_replays_current_action_side_effects() {
+        let assets = LevelAssets::default();
+        let mut engine = EngineInner::new();
+        let pc_id = engine.add_entity(Entity::Pc(ActorPc {
+            element: ElementData {
+                active: true,
+                kind: ElementKind::ActorPc,
+                posture: Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: crate::element::PcData {
+                current_action: Action::Shield,
+                ..Default::default()
+            },
+        }));
+
+        let mut shooting = SequenceElement::new(1, Command::ShootBowOnce, Some(pc_id));
+        shooting.priority = SequencePriority::Normal;
+        let sequence_id = engine.orders.sequence_manager.launch_element(shooting);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+
+        engine.select_pc(&assets, 0, pc_id, false, false);
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, 0)
+                .expect("shooting sequence remains inspectable")
+                .state,
+            SequenceState::Interrupted,
+            "reselecting one PC must resend its action and run SelectAction's stop-in-place hook"
+        );
     }
 }

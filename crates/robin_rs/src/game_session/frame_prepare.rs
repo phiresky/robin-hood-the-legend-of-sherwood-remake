@@ -421,7 +421,7 @@ fn dispatch_pre_tick_pointer_commands(
         return;
     };
 
-    if manager.engine.locker_active()
+    if manager.engine.view_locked()
         && let Some(id) =
             manager
                 .engine

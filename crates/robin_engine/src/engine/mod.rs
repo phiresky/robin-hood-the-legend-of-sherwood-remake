@@ -3594,6 +3594,11 @@ impl EngineInner {
         self.players.seats[0].locker_active
     }
 
+    /// Original messenger view-lock, distinct from camera-follow locker mode.
+    pub fn view_locked(&self) -> bool {
+        self.players.view_locked
+    }
+
     /// Whether the player has the engine "user-locked" (alt-lock UI).
     pub fn user_locked(&self) -> bool {
         self.players.user_locked

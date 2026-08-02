@@ -818,7 +818,7 @@ pub fn update_mouse(
     // Locker (follow-cam) mode.  When the messenger's locker flag is
     // set, hovering an NPC lets the player pick the follow target;
     // clicking snaps the camera to track it.
-    if engine.locker_active() {
+    if engine.view_locked() {
         if let Some(id) = engine.find_focusable_npc(assets, mouse_map_pt, Focus::View) {
             host.input.focused_entity_id = Some(id);
         }

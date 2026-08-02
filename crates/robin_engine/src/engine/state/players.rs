@@ -8,6 +8,10 @@ pub(crate) struct PlayerRuntime {
     pub(crate) seats: Vec<SeatState>,
     pub(crate) macro_store: MacroStore,
     pub(crate) user_locked: bool,
+    /// Original `RHMessenger::mbLockView`, independently serialized from the
+    /// engine's camera-follow locker.
+    #[serde(default)]
+    pub(crate) view_locked: bool,
     pub(crate) selection_before_user_lock: Vec<EntityId>,
     pub(crate) qa_recording_for: Vec<EntityId>,
     pub(crate) qa_recording_slot: u8,
@@ -20,6 +24,7 @@ impl PlayerRuntime {
             seats: vec![SeatState::default()],
             macro_store: MacroStore::new(),
             user_locked: false,
+            view_locked: false,
             selection_before_user_lock: Vec::new(),
             qa_recording_for: Vec::new(),
             qa_recording_slot: 0,
@@ -39,6 +44,7 @@ mod tests {
         assert_eq!(players.seats.len(), 1);
         assert!(players.seats[0].selection.is_empty());
         assert!(!players.user_locked);
+        assert!(!players.view_locked);
         assert!(players.qa_recording_for.is_empty());
         assert_eq!(players.qa_recording_slot, 0);
         assert_eq!(players.action_before_recording_macro, Action::NoAction);

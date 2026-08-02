@@ -1308,6 +1308,12 @@ impl Engine {
         })
     }
 
+    /// Serialized messenger controller state that remains gameplay-visible.
+    #[doc(hidden)]
+    pub fn parity_messenger_controller_state(&self) -> serde_json::Value {
+        serde_json::json!({ "view_locked": self.inner.players.view_locked })
+    }
+
     /// Canonical manager-insertion-ordered sequence state for schema-13
     /// Original parity. Runtime allocation IDs are deliberately replaced by
     /// `(sequence ordinal, element index)` references.
@@ -3608,6 +3614,21 @@ mod tests {
                 "quit_mission_enabled": false,
             })
         );
+    }
+
+    #[test]
+    fn parity_messenger_controller_is_independent_of_camera_locker() {
+        let mut inner = EngineInner::new();
+        inner.players.view_locked = true;
+        inner.players.seats[0].locker_active = false;
+
+        let engine = Engine { inner };
+        assert_eq!(
+            engine.parity_messenger_controller_state(),
+            serde_json::json!({ "view_locked": true })
+        );
+        assert!(!engine.locker_active());
+        assert!(engine.view_locked());
     }
 
     #[test]

@@ -191,7 +191,7 @@ pub(super) fn handle_mouse_input(
                             }
                             Action::NoAction
                                 if !host.input.is_alt
-                                    && !engine.locker_active()
+                                    && !engine.view_locked()
                                     && !is_swordfighting =>
                             {
                                 host.input.start_multi_selection(map_pt);
@@ -239,7 +239,7 @@ pub(super) fn handle_mouse_input(
                         && engine.selected_action_for_seat(local_seat)
                             == engine_profiles::Action::NoAction
                         && !host.input.is_alt
-                        && !engine.locker_active()
+                        && !engine.view_locked()
                         && host.input.has_focus;
                     if guard_ok
                         && let Some(map_pt) =
