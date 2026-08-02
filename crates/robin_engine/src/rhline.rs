@@ -280,9 +280,14 @@ pub fn repulsive_point_compute_deviation(
         if dist_origin as f32 - radius - self_radius < 0.0 {
             // Already inside the obstacle
             if (dist_origin as f32) < distance_destination {
-                radius = dist_origin as f32 + 0.99 * movement_mag;
+                // Original's `0.99` is an unsuffixed C++ DOUBLE literal, so
+                // the multiply and add happen in double precision before the
+                // result is stored back into FLOAT `fRadius`.  Performing two
+                // f32 operations here moves crowded avoidance trajectories by
+                // one map-position ULP.
+                radius = (dist_origin + 0.99 * movement_mag as f64) as f32;
             } else {
-                radius = distance_destination + 0.99 * movement_mag;
+                radius = (distance_destination as f64 + 0.99 * movement_mag as f64) as f32;
             }
         } else {
             // Collision
@@ -354,6 +359,33 @@ mod tests {
         assert_eq!(ar, 15.0); // 10 + 5
         assert!((fa - 0.1).abs() < 1e-6); // 1/(15-5) = 0.1
         assert!((fb - (-0.5)).abs() < 1e-6); // -0.1 * 5
+    }
+
+    #[test]
+    fn point_escape_radius_preserves_original_double_expression() {
+        // Save008 replay-009 frame 1068: two upright actors overlap while
+        // turning. RHRepulsivePoint::ComputeDeviation's unsuffixed `0.99`
+        // literal makes the escape-radius expression double precision. The
+        // final f32 vector is sensitive to that single rounding boundary.
+        let movement = Vec2::new(f32::from_bits(3_209_131_520), f32::from_bits(3_218_059_776));
+        let origin = Vec2::new(f32::from_bits(1_136_387_169), f32::from_bits(1_143_137_685));
+        let obstacle = Vec2::new(f32::from_bits(1_136_466_202), f32::from_bits(1_143_023_002));
+        let result = repulsive_point_compute_deviation(
+            movement,
+            origin,
+            f32::from_bits(1_072_064_103),
+            f32::from_bits(1_086_854_588),
+            4.0,
+            obstacle,
+            4.0,
+            16.0,
+            1.0 / 12.0,
+            -1.0 / 3.0,
+        )
+        .expect("overlapping actors must produce an escape deviation");
+
+        assert_eq!(result.x.to_bits(), 3_219_492_766);
+        assert_eq!(result.y.to_bits(), 3_189_581_806);
     }
 
     #[test]
