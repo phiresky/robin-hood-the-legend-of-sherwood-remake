@@ -4585,10 +4585,7 @@ impl EngineInner {
                             .set_map_goal(crate::coordinates::MapPoint::ZERO);
                     }
                     let motion = if is_turn {
-                        // `RHElementActor::Execute(RHANIMATION_TURNING)` calls
-                        // Turn/TurnFast before PerformAction. The sprite row
-                        // therefore uses the newly stepped direction, not the
-                        // direction sampled at Execute entry.
+                        let direction_before_turn = entity.element_data().direction() as u16;
                         let still_turning = if order_is_initialising && defer_initial_turn_step {
                             true
                         } else if cur_command == Some(Command::TurnFast) {
@@ -4598,12 +4595,24 @@ impl EngineInner {
                         };
                         if !globally_frozen {
                             let direction_after_turn = entity.element_data().direction() as u16;
+                            // Base Actor executes Turn before PerformAction,
+                            // but the attentive Soldier override performs
+                            // TURNING_ALERTED first. The explicit row keeps
+                            // that Original ordering visible while the shared
+                            // turn step still updates the position interface
+                            // before this block returns.
+                            let row = actor_action_row(
+                                anim_type,
+                                effective_anim,
+                                direction_before_turn,
+                                direction_after_turn,
+                            );
                             let sprite = &mut entity.element_data_mut().sprite;
                             let _ = sprite.perform_action(
                                 sim,
                                 order_id,
                                 effective_anim,
-                                direction_after_turn,
+                                row,
                                 FrameProgression::Default,
                                 false,
                             );

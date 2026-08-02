@@ -3306,6 +3306,21 @@ rooted at the owner's manager queue entries, preserving the strong attentive
 blockers while interrupting their weaker descendants inside the actor's Halt
 scope. This also avoids broad ownership scans of unrelated stale branches.
 
+### Attentive turning stamps the sprite before rotating the body
+
+Savegame 063 replay 001 then reached Soldier 205's first attentive turn at
+frame 1224. Body direction and all logical state matched, but Original selected
+sprite row 1556 while Rust selected 1555: the adjacent row for the first
+rotation step.
+
+The base actor's `TURNING` handler turns before playing its animation, but the
+attentive Soldier override is deliberately reversed: it calls
+`PerformAction(TURNING_ALERTED)` and only then calls `Turn` or `TurnFast`.
+Rust already encoded this distinction for other turn-driving actions, while
+its dedicated Turning fast path bypassed that row selector. The fast path now
+uses the entry direction for `TURNING_ALERTED` and the updated direction for
+ordinary Turning, preserving both Original handlers.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
