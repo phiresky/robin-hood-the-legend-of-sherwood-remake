@@ -423,7 +423,16 @@ pub fn compute_visibility_with_effective_radius(
         return 0.0;
     }
 
-    let sharpness = distance_sharpness(sqr_distance_3d, view_radius);
+    // Original ComputeVisibility(viewVector3D) chooses its close-distance
+    // sharpness from the stretched XY projection only. Z participates in the
+    // subsequent distance curve, but must not turn a horizontally close actor
+    // into a fractional sighting merely because the two eye points differ in
+    // height.
+    let sharpness = if sqr_distance <= SQR_HALFCIRCLE_VIEW_RADIUS {
+        1.0
+    } else {
+        distance_sharpness(sqr_distance_3d, view_radius)
+    };
 
     // Posture / action-state sharpness modifier.
     if q.target_posture == Posture::Crouched {
@@ -1703,7 +1712,7 @@ mod tests {
     }
 
     #[test]
-    fn vertical_separation_contributes_to_human_distance_sharpness() {
+    fn horizontal_close_range_precedes_vertical_distance_sharpness() {
         let grid = empty_grid();
         let mut q = query(pt(0.0, 0.0), 4, pt(0.0, 0.0), grid);
         q.view_radius = 200;
@@ -1711,10 +1720,7 @@ mod tests {
         q.viewer_world = WorldPoint3D::new(0.0, 0.0, 45.0);
         q.target_world = WorldPoint3D::new(0.0, 0.0, 145.0);
 
-        assert_eq!(
-            compute_visibility(&q),
-            distance_sharpness(100.0 * 100.0, 200.0)
-        );
+        assert_eq!(compute_visibility(&q), 1.0);
     }
 
     #[test]

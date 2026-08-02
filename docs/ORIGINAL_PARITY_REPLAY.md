@@ -3728,6 +3728,15 @@ coordinates but stores each rotated cone side with Y compressed by
 reference points now preserve that asymmetric isometric geometry, including
 diagonal views, before testing nearby light-sector barycentres.
 
+Human distance sharpness has two different dimensional tests. The initial
+20-unit auto-visible test uses the full stretched 3D eye vector, but
+`ComputeVisibility(viewVector3D)` later chooses its 60-unit close-sharpness
+branch from stretched XY alone; only the farther distance curve uses the full
+3D norm. Rust had reused the 3D squared distance for both branches, turning a
+horizontally close target at another eye height into fractional visibility.
+The split now matches Original and fixes Savegame 041's 1.9456216-versus-2.0
+cached visibility (and 38-versus-40 maximum sharpness).
+
 ### Synchronous actor visibility keeps raw geometry separate from AI Position
 
 Original `IsDetecting360Degrees(actor)` admits every active actor outside a
