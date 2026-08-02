@@ -2726,6 +2726,24 @@ ordering, serialized engine state, or authoritative state hashing. The
 instrumentation is generic across missions and replays and remains enabled so
 future script RNG frontiers do not require site-specific tracing patches.
 
+### Synthetic Wait executes synchronously before queued owner work
+
+Savegame 002 exposed a one-frame sprite-only boundary between consecutive
+patrol movements. Original initialized `TRANSITION_WALKING_UPRIGHT_WAITING`
+(frame zero, counter `0xffff`) in the actor's null-order `Wait`, then a patrol
+coordinate command interrupted that transient Wait later in the same frame.
+Rust translated the same three Wait transition orders but deferred their owner
+instruction behind already registered work, leaving the previous walking row
+visible.
+
+Original's call chain is synchronous:
+`RHElementActor::Wait` -> `LaunchSequenceElement` -> `RHSequence::Launch` ->
+`RHSequenceElement::Go` -> `RHElementActor::Instruct`. Rust now drains only the
+newly registered synthetic Wait inside the actor slot while keeping preexisting
+work detached for its later manager/deferred boundary. This preserves the
+transient START visual and still lets the later command win; it applies to all
+actors and commands rather than the recorded patrol member specifically.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

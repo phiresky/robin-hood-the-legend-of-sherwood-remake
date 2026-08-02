@@ -3178,25 +3178,10 @@ impl EngineInner {
                     // initialization and completion callbacks below may drain
                     // only work they synchronously create; they must not steal
                     // a global/later-owner continuation.
-                    let mut preexisting_sequence_work = self
+                    let preexisting_sequence_work = self
                         .orders
                         .sequence_manager
                         .take_pending_synchronous_actions();
-                    let preexisting_owner_instruction =
-                        preexisting_sequence_work.iter().any(|action| {
-                            matches!(
-                                action,
-                                crate::sequence::SequenceAction::InstructOwner { owner, .. }
-                                    | crate::sequence::SequenceAction::ExecuteImmediateOwner {
-                                        owner,
-                                        ..
-                                } if *owner == entity_id
-                            )
-                        });
-                    let preexisting_deferred_owner_instruction = self
-                        .orders
-                        .sequence_manager
-                        .element_is_about_to_be_launched(entity_id, Command::Null);
 
                     // RHElementActor::Hourglass consumes one queued base
                     // position update before it inspects the current
@@ -3211,48 +3196,20 @@ impl EngineInner {
                     // then installs Wait whenever its order is empty. Active
                     // controls world presence/rendering, not sequence time.
                     self.ensure_wait_element(entity_id);
-                    if preexisting_deferred_owner_instruction {
-                        // A normal-priority element registered earlier in
-                        // this element pass lives in the manager's deferred
-                        // FIFO. The synthetic Wait registers through the
-                        // synchronous WAIT Go path, so leaving it there would
-                        // leapfrog that earlier owner instruction. Move only
-                        // the newly-created action to the tail of the deferred
-                        // FIFO; unrelated owners retain their exact positions.
-                        let newly_registered_wait = self
-                            .orders
-                            .sequence_manager
-                            .take_pending_synchronous_actions();
-                        self.orders
-                            .sequence_manager
-                            .append_actions_to_deferred_fifo(newly_registered_wait);
-                    } else if preexisting_owner_instruction {
-                        // `RHElementActor::Wait` only appends its element to
-                        // SequenceManager's FIFO. If an earlier owner already
-                        // registered work for this actor, neither that work
-                        // nor the lazy Wait may be instructed from inside the
-                        // actor slot: the later manager Hourglass processes
-                        // the earlier registration first, followed by Wait.
-                        //
-                        // Draining only the freshly-created Wait here lets it
-                        // leapfrog the detached earlier instruction and can
-                        // execute a transient WaitingSword arm (including
-                        // authoritative RNG) before that earlier command
-                        // replaces it. Preserve both portions for the manager
-                        // in their Original registration order instead.
-                        let newly_registered_wait = self
-                            .orders
-                            .sequence_manager
-                            .take_pending_synchronous_actions();
-                        preexisting_sequence_work.extend(newly_registered_wait);
-                    } else {
-                        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
-                            .unwrap_or_else(|error| {
-                                panic!(
-                                    "actor {entity_id:?} Wait initialization at legacy slot {slot} failed to drain its synchronous sequence work: {error:?}"
-                                )
-                            });
-                    }
+                    // Original Wait -> LaunchSequenceElement ->
+                    // Sequence::Launch -> SequenceElement::Go -> Instruct is
+                    // synchronous. A command registered for later manager or
+                    // deferred processing cannot suppress this transient
+                    // Execute: Wait may publish its START sprite row before
+                    // that later command interrupts it in the same frame.
+                    // Preexisting Rust work is detached above, so this drain
+                    // consumes only the newly launched Wait.
+                    self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+                        .unwrap_or_else(|error| {
+                            panic!(
+                                "actor {entity_id:?} Wait initialization at legacy slot {slot} failed to drain its synchronous sequence work: {error:?}"
+                            )
+                        });
                     #[cfg(test)]
                     observe_actor_animation_boundary(ActorAnimationBoundaryPhase::WaitReady(
                         entity_id,
@@ -6529,12 +6486,40 @@ mod bow_command_body_parity_tests {
     }
 
     #[test]
-    fn lazy_wait_does_not_leapfrog_preexisting_owner_instruction() {
+    fn lazy_wait_publishes_start_before_preexisting_owner_instruction() {
         use crate::sequence::SequenceAction;
 
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::WaitingSword));
+        let mut owner_entity = make_aiming_pc(ActionState::Moving);
+        let mut conversion =
+            vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        conversion[OrderType::TransitionWalkingUprightWaitingUpright as usize] = 0;
+        conversion[OrderType::WalkingUpright as usize] = 1;
+        conversion[OrderType::WaitingUpright as usize] = 2;
+        let script = |action: OrderType| crate::sprite_script::SpriteScript {
+            action_id: action as u16,
+            action_done: 0,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1],
+            delays: vec![0],
+            distances: vec![0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        owner_entity.element_data_mut().sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![
+                script(OrderType::TransitionWalkingUprightWaitingUpright),
+                script(OrderType::WalkingUpright),
+                script(OrderType::WaitingUpright),
+            ]),
+            std::sync::Arc::new(conversion),
+        );
+        owner_entity.element_data_mut().sprite.current_row = 1;
+        owner_entity.element_data_mut().sprite.last_action = OrderType::WalkingUpright;
+        let owner = engine.add_entity(owner_entity);
         let parry_sequence =
             engine.launch_element(SequenceElement::new(1, Command::ParrySword, Some(owner)));
         assert_eq!(
@@ -6550,24 +6535,33 @@ mod bow_command_body_parity_tests {
 
         engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
 
+        let sprite = &engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .element_data()
+            .sprite;
+        assert_eq!(
+            sprite.last_action,
+            OrderType::TransitionWalkingUprightWaitingUpright,
+            "synchronous synthetic Wait must publish its transition START before later owner work"
+        );
+        assert_eq!(sprite.current_row, 0);
+        assert_eq!(sprite.current_frame, 0);
+        assert_eq!(sprite.frame_count, u16::MAX);
         assert!(
             engine
                 .orders
                 .sequence_manager
                 .current_order_for_actor(owner)
-                .is_none(),
-            "the actor slot must not eagerly execute its synthetic Wait while an earlier owner instruction is pending"
-        );
-        assert!(
-            engine
-                .orders
-                .sequence_manager
-                .take_pending_synchronous_actions()
-                .is_empty(),
-            "the synthetic Wait must leave the synchronous queue when an older deferred owner instruction exists"
+                .is_some_and(|(_, _, order)| {
+                    order.order_type == OrderType::TransitionWalkingUprightWaitingUpright
+                }),
+            "the transient Wait remains selected until deferred owner work is processed"
         );
         let pending = engine.orders.sequence_manager.hourglass();
-        assert_eq!(pending.len(), 2);
+        assert_eq!(pending.len(), 1);
         let pending_ids = pending
             .iter()
             .map(|action| match action {
@@ -6580,15 +6574,6 @@ mod bow_command_body_parity_tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(pending_ids[0], parry_sequence);
-        assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .get_element(pending_ids[1], 0)
-                .expect("synthetic Wait remains registered behind ParrySword")
-                .command,
-            Command::Wait
-        );
     }
 
     #[test]
