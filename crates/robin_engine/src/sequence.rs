@@ -4644,22 +4644,11 @@ impl SequenceManager {
     }
 
     /// Apply MakeFast to all active/pending movement elements owned by
-    /// `entity`. Sets the FAST flag, upgrades the element's action from
-    /// walking to running, and rewrites any queued orders whose action
-    /// is a walking / start-walking / stop-walking variant to the
-    /// running equivalent.
+    /// `entity` in its selected element's following/postponed chain. Sets the
+    /// FAST flag, upgrades the element's action from walking to running, and
+    /// rewrites queued walking / start-walking / stop-walking orders.
     pub fn make_fast(&mut self, entity: EntityId) {
-        for seq in self.sequences.values_mut() {
-            if !seq.has_owner(entity) {
-                continue;
-            }
-            for elem in &mut seq.elements {
-                if !Self::should_rewrite(elem, entity) {
-                    continue;
-                }
-                make_fast_element(elem);
-            }
-        }
+        self.rewrite_selected_actor_chain(entity, make_fast_element);
     }
 
     /// Set `action` on the element at `(seq_id, elem_idx)` and on every
@@ -4712,17 +4701,7 @@ impl SequenceManager {
     ///
     /// Symmetric counterpart to [`Self::make_fast`].
     pub fn make_slow(&mut self, entity: EntityId) {
-        for seq in self.sequences.values_mut() {
-            if !seq.has_owner(entity) {
-                continue;
-            }
-            for elem in &mut seq.elements {
-                if !Self::should_rewrite(elem, entity) {
-                    continue;
-                }
-                make_slow_element(elem);
-            }
-        }
+        self.rewrite_selected_actor_chain(entity, make_slow_element);
     }
 
     /// Apply MakeUpright to all active/pending elements owned by
@@ -4730,17 +4709,7 @@ impl SequenceManager {
     /// and cancels pending `CrouchDown` sequence elements (their
     /// command is demoted to `Null`).
     pub fn make_upright(&mut self, entity: EntityId) {
-        for seq in self.sequences.values_mut() {
-            if !seq.has_owner(entity) {
-                continue;
-            }
-            for elem in &mut seq.elements {
-                if !Self::should_rewrite(elem, entity) {
-                    continue;
-                }
-                make_upright_element(elem);
-            }
-        }
+        self.rewrite_selected_actor_chain(entity, make_upright_element);
     }
 
     /// Apply MakeCrouched to all active/pending elements owned by
@@ -4748,15 +4717,63 @@ impl SequenceManager {
     /// upright orders to crouched, and rewrites posture-transition
     /// orders accordingly.
     pub fn make_crouched(&mut self, entity: EntityId) {
-        for seq in self.sequences.values_mut() {
-            if !seq.has_owner(entity) {
+        self.rewrite_selected_actor_chain(entity, make_crouched_element);
+    }
+
+    /// Reproduce `mpSequenceElement->Make*()`: start at the actor's selected
+    /// element and recurse only through same-owner `mpsqeNextSequenceElement`
+    /// and `mpsqePostponedSequenceElement` links. An unrelated queued sequence
+    /// owned by the same actor is not part of that graph and must not change.
+    fn rewrite_selected_actor_chain(
+        &mut self,
+        entity: EntityId,
+        rewrite: fn(&mut SequenceElement),
+    ) {
+        let Some(root) = self.current_element_for_actor(entity) else {
+            return;
+        };
+        let mut pending = vec![root];
+        let mut visited = HashSet::new();
+
+        while let Some((seq_id, elem_idx)) = pending.pop() {
+            if !visited.insert((seq_id, elem_idx)) {
                 continue;
             }
-            for elem in &mut seq.elements {
-                if !Self::should_rewrite(elem, entity) {
-                    continue;
-                }
-                make_crouched_element(elem);
+
+            let Some(element) = self.get_element(seq_id, elem_idx) else {
+                continue;
+            };
+            if !Self::should_rewrite(element, entity) {
+                continue;
+            }
+
+            // Loaded v48 elements retain the exact serialized following
+            // pointer. Runtime-authored sequences use their append order,
+            // which is how RHSequence wires that pointer on insertion.
+            let following = if let Some(legacy) = &element.legacy_v48 {
+                legacy
+                    .next
+                    .map(|next| (next.sequence_id, next.element_index))
+            } else {
+                self.sequences
+                    .get(&seq_id)
+                    .and_then(|sequence| sequence.elements.get(elem_idx + 1))
+                    .map(|_| (seq_id, elem_idx + 1))
+            };
+            let postponed = element
+                .cross_postponed
+                .or_else(|| element.postponed_element_index.map(|idx| (seq_id, idx)));
+
+            rewrite(
+                self.get_element_mut(seq_id, elem_idx)
+                    .expect("selected Make* chain element disappeared"),
+            );
+
+            if let Some(next) = following {
+                pending.push(next);
+            }
+            if let Some(postponed) = postponed {
+                pending.push(postponed);
             }
         }
     }
@@ -6392,6 +6409,46 @@ mod tests {
 
         assert_eq!(elem.orders[0].order_type, OrderType::Turning);
         assert_eq!(elem.orders[1].order_type, OrderType::RunningWithSword);
+    }
+
+    #[test]
+    fn make_fast_rewrites_only_the_selected_elements_linked_chain() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(0));
+        let mut mgr = SequenceManager::new();
+
+        let mut selected = Sequence::new();
+        selected.append_element(movement_elem(owner, OrderType::WalkingUpright));
+        selected.append_element(movement_elem(owner, OrderType::WalkingUpright));
+        let selected_id = mgr.launch_sequence(selected);
+        mgr.element_in_progress(selected_id, 0);
+
+        let mut unrelated = Sequence::new();
+        unrelated.append_element(movement_elem(owner, OrderType::WalkingUpright));
+        let unrelated_id = mgr.launch_sequence(unrelated);
+
+        mgr.make_fast(owner);
+
+        for idx in 0..2 {
+            let SequenceElementData::Movement { action, flags, .. } = &mgr
+                .get_element(selected_id, idx)
+                .expect("selected chain element remains present")
+                .data
+            else {
+                panic!("movement variant");
+            };
+            assert_eq!(*action, OrderType::RunningUpright);
+            assert!(flags.contains(MoveFlags::FAST));
+        }
+
+        let SequenceElementData::Movement { action, flags, .. } = &mgr
+            .get_element(unrelated_id, 0)
+            .expect("unrelated sequence remains present")
+            .data
+        else {
+            panic!("movement variant");
+        };
+        assert_eq!(*action, OrderType::WalkingUpright);
+        assert!(!flags.contains(MoveFlags::FAST));
     }
 
     #[test]
