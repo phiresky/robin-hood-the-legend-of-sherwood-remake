@@ -2188,6 +2188,12 @@ pub struct TrajectoryPoint {
     pub time: u16,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct TrajectoryPointRuntime {
+    pub bounce: bool,
+    pub material: u32,
+}
+
 /// Projectile-level data.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct ProjectileData {
@@ -2205,11 +2211,25 @@ pub struct ProjectileData {
     pub shooter: Option<EntityId>,
     pub frame_count: u16,
     pub flying: bool,
+    /// Original's water/hole landing latch (`mbDive`).
+    #[serde(default)]
+    pub dive: bool,
+    /// Bloodseeker-oil straight-flight latch (`mbMagicBullet`).
+    #[serde(default)]
+    pub magic_bullet: bool,
     pub disappear: bool,
     /// Precomputed trajectory waypoints.  `tick_arrows` pops points
     /// from the front and interpolates position toward each one over
     /// `time` frames.
     pub trajectory: Vec<TrajectoryPoint>,
+    /// Serialized metadata parallel to `trajectory`. Empty for a freshly
+    /// generated trajectory until its collision metadata is materialized.
+    #[serde(default)]
+    pub trajectory_runtime: Vec<TrajectoryPointRuntime>,
+    #[serde(default)]
+    pub trajectory_origin_sector: Option<u16>,
+    #[serde(default)]
+    pub trajectory_origin_layer: u16,
     /// Per-frame position delta for the current trajectory segment.
     /// Recomputed each time a new waypoint is popped.
     pub velocity_increment: WorldVec3D,
@@ -2244,6 +2264,14 @@ pub struct ProjectileData {
     /// Sector (0..15) used by a falling arrow's visual rotation. Cycled by
     /// the deferred `RHElementArrow::Refresh` boundary, not by Hourglass.
     pub falling_direction: u16,
+    /// Arrow-only serialized leaf state. `arrow_bow_profile` distinguishes a
+    /// null bow (`None`) from a present default bow (`Some(None)`).
+    #[serde(default)]
+    pub arrow_bow_profile: Option<Option<u32>>,
+    #[serde(default)]
+    pub arrow_flat_shot: bool,
+    #[serde(default)]
+    pub arrow_play_impact: bool,
     /// Purse / coin back-pointers — populated for `ObjectType::Purse`
     /// and `ObjectType::Coin` projectiles, default for everything else.
     /// See [`PurseData`].
@@ -2265,8 +2293,13 @@ impl Default for ProjectileData {
             shooter: None,
             frame_count: 0,
             flying: false,
+            dive: false,
+            magic_bullet: false,
             disappear: false,
             trajectory: Vec::new(),
+            trajectory_runtime: Vec::new(),
+            trajectory_origin_sector: None,
+            trajectory_origin_layer: 0,
             velocity_increment: WorldVec3D::default(),
             flight_direction: 0,
             launch_segment_start: None,
@@ -2276,6 +2309,9 @@ impl Default for ProjectileData {
             last_orientation_sector: 0,
             last_orientation_azimuth: 0,
             falling_direction: 0,
+            arrow_bow_profile: None,
+            arrow_flat_shot: false,
+            arrow_play_impact: false,
             purse: PurseData::default(),
             wasp: WaspData::default(),
         }
@@ -2290,7 +2326,7 @@ pub struct NetData {
     /// `total_trajectory_frames - 15`.  Decrements during flight;
     /// when it reaches 0 the net switches its sprite animation to
     /// `NetUnfolding` (or `NetUnfoldingCrumpled`).
-    pub time_till_unfolding: i32,
+    pub time_till_unfolding: u32,
     pub crumpled: bool,
     pub was_flying: bool,
     /// IDs of the (up to two) `RepulsivePoint`s registered on
@@ -2356,7 +2392,7 @@ pub struct WaspData {
     /// On a wasp nest: remaining wasps in flight.  Incremented to
     /// `NUMBER_OF_WASPS` on burst, decremented when each wasp dies.
     /// On a wasp: always 0.
-    pub flying_wasp_count: u16,
+    pub flying_wasp_count: u32,
     /// On a wasp nest: true once the nest has burst and the 20 wasps
     /// have been spawned, to prevent re-bursting each tick.  On a
     /// wasp: always false.
@@ -2374,7 +2410,7 @@ pub struct WaspData {
     pub stinging: bool,
     /// On a wasp: frame counter until next direction change (or, while
     /// stinging, until the sting fires).
-    pub timeout: u16,
+    pub timeout: u32,
     /// On a wasp: current per-frame movement vector (3D velocity).
     /// Current per-frame 3D vector in raw world axes.
     pub movement: WorldVec3D,

@@ -159,7 +159,7 @@ impl EngineInner {
             nest.object.animation = Animation::ObjectBursting;
             nest.projectile.flying = false;
             nest.projectile.wasp.burst = true;
-            nest.projectile.wasp.flying_wasp_count = NUMBER_OF_WASPS;
+            nest.projectile.wasp.flying_wasp_count = u32::from(NUMBER_OF_WASPS);
         }
 
         for _ in 0..NUMBER_OF_WASPS {
@@ -209,9 +209,9 @@ impl EngineInner {
                 // 0..3 jitter.
                 let jitter =
                     crate::sim_rng::u32(sim, crate::sim_rng::RngSite::WaspDirectionTimer, 0..3)
-                        as u16;
+                        as u32;
                 if let Some(Entity::Projectile(p)) = self.world.entities.get_mut(wasp_id) {
-                    p.projectile.wasp.timeout = DIRECTION_CHANGE_TIMEOUT + jitter;
+                    p.projectile.wasp.timeout = u32::from(DIRECTION_CHANGE_TIMEOUT) + jitter;
                 }
             } else {
                 // Stinging: if the victim is still a valid target,
@@ -298,8 +298,7 @@ impl EngineInner {
                         sim,
                         crate::sim_rng::RngSite::WaspStingTimer,
                         0..STINGING_MAX_TIMEOUT as u32,
-                    ) as u16
-                        + 1;
+                    ) + 1;
                     if let Some(Entity::Projectile(p)) = self.world.entities.get_mut(wasp_id) {
                         p.projectile.wasp.stinging = true;
                         p.projectile.wasp.timeout = delay;

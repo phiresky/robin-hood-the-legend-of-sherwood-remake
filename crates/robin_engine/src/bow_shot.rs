@@ -2337,7 +2337,7 @@ pub fn spawn_net(
     // counter at spawn.  Time-till-unfolding is `frames_left - 15`,
     // clamped at a minimum of 1.
     let total_trajectory_frames: u32 = trajectory.iter().map(|p| p.time as u32).sum();
-    let time_till_unfolding = (total_trajectory_frames as i32 - 15).max(1);
+    let time_till_unfolding = total_trajectory_frames.saturating_sub(15).max(1) as u32;
 
     let projectile = ProjectileData {
         start: throw_pos,

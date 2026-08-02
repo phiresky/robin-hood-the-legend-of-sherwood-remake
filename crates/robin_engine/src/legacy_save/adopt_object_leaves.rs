@@ -12,7 +12,7 @@ use crate::{
     coordinates::{WorldPoint3D, WorldVec3D},
     element::{
         Entity, EntityId, LegacyV48ObjectRepulsivePointState, ObjectData, ObjectType,
-        ProjectileData, TrajectoryPoint,
+        ProjectileData, TrajectoryPoint, TrajectoryPointRuntime,
     },
     engine::{EngineInner, LevelAssets},
     natives::{ComputedScriptLocation, ScriptHandleCodec},
@@ -102,6 +102,8 @@ pub enum LegacyObjectLeafAdoptError {
     },
     #[error("saved target creation order {creation_order} linked_fxs[{index}] is null")]
     NullLinkedFx { creation_order: u32, index: usize },
+    #[error("saved net creation order {creation_order} victims[{index}] is null")]
+    NullNetVictim { creation_order: u32, index: usize },
     #[error(
         "saved target creation order {creation_order} linked_fxs[{index}] resolves to non-FX entity {entity_id}"
     )]
@@ -219,6 +221,15 @@ enum PlannedLeaf {
         object: PlannedObject,
         projectile: PlannedProjectile,
     },
+    Wasp {
+        entity: EntityId,
+        object: PlannedObject,
+        nest: Option<EntityId>,
+        victim: Option<EntityId>,
+        stinging: bool,
+        timeout: u32,
+        movement: WorldVec3D,
+    },
     Scroll {
         entity: EntityId,
         state: PlannedObject,
@@ -259,6 +270,8 @@ struct PlannedObject {
 #[derive(Debug)]
 struct PlannedProjectile {
     flying: bool,
+    dive: bool,
+    magic_bullet: bool,
     falling: bool,
     falling_direction: u16,
     last_orientation_sector: u16,
@@ -266,12 +279,39 @@ struct PlannedProjectile {
     trajectory_frame_count: u16,
     start_of_trajectory_x: f32,
     start_of_trajectory_y: f32,
+    trajectory_origin_sector: Option<u16>,
+    trajectory_origin_layer: u16,
     flight_direction: u16,
     start: WorldPoint3D,
     end: WorldPoint3D,
     shooter: Option<EntityId>,
     trajectory: Vec<TrajectoryPoint>,
+    trajectory_runtime: Vec<TrajectoryPointRuntime>,
     velocity_increment: WorldVec3D,
+    arrow_bow_profile: Option<Option<u32>>,
+    arrow_flat_shot: bool,
+    arrow_play_impact: bool,
+    leaf: PlannedProjectileLeaf,
+}
+
+#[derive(Debug)]
+enum PlannedProjectileLeaf {
+    Generic,
+    Purse {
+        number_of_coins: u16,
+    },
+    WaspNest {
+        flying_wasp_count: u32,
+    },
+    Coin {
+        source_purse: Option<EntityId>,
+    },
+    Net {
+        victims: Vec<EntityId>,
+        time_till_unfolding: u32,
+        crumpled: bool,
+        was_flying: bool,
+    },
 }
 
 #[derive(Debug)]
@@ -505,6 +545,7 @@ impl LegacyObjectLeafAdoptionPlan {
                     object,
                     projectile,
                 } => {
+                    let PlannedProjectile { leaf, .. } = &projectile;
                     let runtime = engine
                         .world
                         .entities
@@ -516,12 +557,70 @@ impl LegacyObjectLeafAdoptionPlan {
                             .expect("preflighted projectile object leaf changed kind"),
                         object,
                     );
+                    match (&mut *runtime, leaf) {
+                        (Entity::Projectile(_), PlannedProjectileLeaf::Generic) => {}
+                        (
+                            Entity::Projectile(runtime),
+                            PlannedProjectileLeaf::Purse { number_of_coins },
+                        ) => {
+                            runtime.projectile.purse.number_of_coins = *number_of_coins;
+                        }
+                        (
+                            Entity::Projectile(runtime),
+                            PlannedProjectileLeaf::WaspNest { flying_wasp_count },
+                        ) => {
+                            runtime.projectile.wasp.flying_wasp_count = *flying_wasp_count;
+                        }
+                        (
+                            Entity::Projectile(runtime),
+                            PlannedProjectileLeaf::Coin { source_purse },
+                        ) => {
+                            runtime.projectile.purse.source_purse = *source_purse;
+                        }
+                        (
+                            Entity::Net(runtime),
+                            PlannedProjectileLeaf::Net {
+                                victims,
+                                time_till_unfolding,
+                                crumpled,
+                                was_flying,
+                            },
+                        ) => {
+                            runtime.net.victims = victims.clone();
+                            runtime.net.time_till_unfolding = *time_till_unfolding;
+                            runtime.net.crumpled = *crumpled;
+                            runtime.net.was_flying = *was_flying;
+                        }
+                        _ => panic!("preflighted projectile leaf changed kind"),
+                    }
                     let runtime = match runtime {
                         Entity::Projectile(runtime) => &mut runtime.projectile,
                         Entity::Net(runtime) => &mut runtime.projectile,
-                        _ => panic!("preflighted projectile leaf changed kind"),
+                        _ => unreachable!(),
                     };
                     apply_projectile(runtime, projectile);
+                }
+                PlannedLeaf::Wasp {
+                    entity,
+                    object,
+                    nest,
+                    victim,
+                    stinging,
+                    timeout,
+                    movement,
+                } => {
+                    let runtime = engine
+                        .world
+                        .entities
+                        .get_mut(entity)
+                        .and_then(Entity::as_projectile_mut)
+                        .expect("preflighted wasp leaf changed kind");
+                    apply_object(&mut runtime.object, object);
+                    runtime.projectile.wasp.source_nest = nest;
+                    runtime.projectile.wasp.victim = victim;
+                    runtime.projectile.wasp.stinging = stinging;
+                    runtime.projectile.wasp.timeout = timeout;
+                    runtime.projectile.wasp.movement = movement;
                 }
                 PlannedLeaf::Scroll {
                     entity,
@@ -609,12 +708,48 @@ fn preflight_object_item(
     creation_order: u32,
     entities: &LegacyEntityFixups,
 ) -> Result<PlannedLeaf, LegacyObjectLeafAdoptError> {
+    if let LegacyObjectItemPayload::Wasp(payload) = saved {
+        require_kind(
+            runtime,
+            entity_id,
+            creation_order,
+            "wasp",
+            Entity::is_projectile,
+        )?;
+        finite(
+            payload.movement.x,
+            creation_order,
+            "RHElementWasp::mvtMovement.x",
+        )?;
+        finite(
+            payload.movement.y,
+            creation_order,
+            "RHElementWasp::mvtMovement.y",
+        )?;
+        finite(
+            payload.movement.z,
+            creation_order,
+            "RHElementWasp::mvtMovement.z",
+        )?;
+        return Ok(PlannedLeaf::Wasp {
+            entity: entity_id,
+            object: preflight_object(&payload.object, creation_order, entities)?,
+            nest: entities.resolve_element(payload.nest)?,
+            victim: entities.resolve_element(payload.victim)?,
+            stinging: payload.stinging,
+            timeout: payload.timeout,
+            movement: WorldVec3D::new(payload.movement.x, payload.movement.y, payload.movement.z),
+        });
+    }
     let arrow_state = match saved {
         LegacyObjectItemPayload::Arrow(payload) => Some((
             payload.falling,
             u16::from(payload.falling_direction),
             u16::from(payload.last_sector),
             payload.last_azimuth,
+            payload.bow.as_ref().map(|bow| bow.profile),
+            payload.flat_shot,
+            payload.play_impact,
         )),
         _ => None,
     };
@@ -669,9 +804,7 @@ fn preflight_object_item(
             "wasp nest",
             Entity::is_projectile,
         ),
-        LegacyObjectItemPayload::Wasp(payload) => {
-            (&payload.object, None, "wasp", Entity::is_projectile)
-        }
+        LegacyObjectItemPayload::Wasp(_) => unreachable!("wasp handled above"),
         LegacyObjectItemPayload::Coin(payload) => (
             &payload.projectile.object,
             Some(&payload.projectile),
@@ -692,12 +825,48 @@ fn preflight_object_item(
     let object = preflight_object(object, creation_order, entities)?;
     if let Some(projectile) = projectile {
         let mut projectile = preflight_projectile(projectile, creation_order, entities)?;
-        if let Some((falling, falling_direction, last_sector, last_azimuth)) = arrow_state {
+        if let Some((falling, falling_direction, last_sector, last_azimuth, bow, flat, impact)) =
+            arrow_state
+        {
             projectile.falling = falling;
             projectile.falling_direction = falling_direction;
             projectile.last_orientation_sector = last_sector;
             projectile.last_orientation_azimuth = last_azimuth;
+            projectile.arrow_bow_profile = bow;
+            projectile.arrow_flat_shot = flat;
+            projectile.arrow_play_impact = impact;
         }
+        projectile.leaf = match saved {
+            LegacyObjectItemPayload::Purse(payload) => PlannedProjectileLeaf::Purse {
+                number_of_coins: payload.number_of_coins,
+            },
+            LegacyObjectItemPayload::WaspNest(payload) => PlannedProjectileLeaf::WaspNest {
+                flying_wasp_count: payload.flying_wasp_count,
+            },
+            LegacyObjectItemPayload::Coin(payload) => PlannedProjectileLeaf::Coin {
+                source_purse: entities.resolve_element(payload.source_purse)?,
+            },
+            LegacyObjectItemPayload::Net(payload) => PlannedProjectileLeaf::Net {
+                victims: payload
+                    .victims
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .map(|(index, victim)| {
+                        entities.resolve_element(victim)?.ok_or(
+                            LegacyObjectLeafAdoptError::NullNetVictim {
+                                creation_order,
+                                index,
+                            },
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+                time_till_unfolding: payload.time_until_unfolding,
+                crumpled: payload.crumpled,
+                was_flying: payload.was_flying,
+            },
+            _ => PlannedProjectileLeaf::Generic,
+        };
         Ok(PlannedLeaf::Projectile {
             entity: entity_id,
             object,
@@ -747,12 +916,22 @@ fn preflight_projectile(
             })
         })
         .collect::<Result<Vec<_>, LegacyObjectLeafAdoptError>>()?;
+    let trajectory_runtime = saved
+        .trajectory
+        .iter()
+        .map(|saved| TrajectoryPointRuntime {
+            bounce: saved.bounce,
+            material: saved.material,
+        })
+        .collect();
     let increment = point(
         saved.object.element.sprite.position.increment,
         "RHPositionInterface::mIncrement",
     )?;
     Ok(PlannedProjectile {
         flying: saved.flying,
+        dive: saved.dive,
+        magic_bullet: saved.magic_bullet,
         // RHElementProjectile::mbDive is the water/hole landing state.
         // Arrow ricochet state is the derived RHElementArrow::mbFalling
         // field and is overlaid by preflight_object_item above.
@@ -763,17 +942,26 @@ fn preflight_projectile(
         trajectory_frame_count: saved.frame_count,
         start_of_trajectory_x: saved.trajectory_origin_map.x,
         start_of_trajectory_y: saved.trajectory_origin_map.y,
+        trajectory_origin_sector: saved.trajectory_origin_sector.0,
+        trajectory_origin_layer: saved.trajectory_origin_level,
         flight_direction: saved.flight_direction,
         start: point(saved.start, "RHElementProjectile::mptStart")?,
         end: point(saved.end, "RHElementProjectile::mptEnd")?,
         shooter: entities.resolve_element(saved.shooter)?,
         trajectory,
+        trajectory_runtime,
         velocity_increment: WorldVec3D::new(increment.x, increment.y, increment.z),
+        arrow_bow_profile: None,
+        arrow_flat_shot: false,
+        arrow_play_impact: false,
+        leaf: PlannedProjectileLeaf::Generic,
     })
 }
 
 fn apply_projectile(runtime: &mut ProjectileData, saved: PlannedProjectile) {
     runtime.flying = saved.flying;
+    runtime.dive = saved.dive;
+    runtime.magic_bullet = saved.magic_bullet;
     runtime.falling = saved.falling;
     runtime.falling_direction = saved.falling_direction;
     runtime.last_orientation_sector = saved.last_orientation_sector;
@@ -781,12 +969,18 @@ fn apply_projectile(runtime: &mut ProjectileData, saved: PlannedProjectile) {
     runtime.trajectory_frame_count = saved.trajectory_frame_count;
     runtime.start_of_trajectory_x = saved.start_of_trajectory_x;
     runtime.start_of_trajectory_y = saved.start_of_trajectory_y;
+    runtime.trajectory_origin_sector = saved.trajectory_origin_sector;
+    runtime.trajectory_origin_layer = saved.trajectory_origin_layer;
     runtime.flight_direction = saved.flight_direction;
     runtime.start = saved.start;
     runtime.end = saved.end;
     runtime.shooter = saved.shooter;
     runtime.trajectory = saved.trajectory;
+    runtime.trajectory_runtime = saved.trajectory_runtime;
     runtime.velocity_increment = saved.velocity_increment;
+    runtime.arrow_bow_profile = saved.arrow_bow_profile;
+    runtime.arrow_flat_shot = saved.arrow_flat_shot;
+    runtime.arrow_play_impact = saved.arrow_play_impact;
 }
 
 fn preflight_object(
