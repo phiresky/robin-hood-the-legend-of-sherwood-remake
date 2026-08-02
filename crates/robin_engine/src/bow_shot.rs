@@ -1995,14 +1995,29 @@ fn tick_bow_shots_matching(
                 motion,
                 SpriteMotionState::Terminated | SpriteMotionState::Aborted
             ) {
-                let (remaining, bow_remaining) = if let Some(elem) =
+                let (remaining, bow_remaining, installed_order) = if let Some(elem) =
                     sequence_manager.get_element_mut(shot_seq_id, shot_elem_idx)
                 {
                     elem.orders.pop_front();
-                    (elem.orders.is_empty(), has_active_bow_order(elem))
+                    let installed_order =
+                        elem.current_order()
+                            .map(|order| crate::element::InstalledActorOrder {
+                                order_id: order.order_id,
+                                order_type: order.order_type,
+                            });
+                    (
+                        elem.orders.is_empty(),
+                        has_active_bow_order(elem),
+                        installed_order,
+                    )
                 } else {
-                    (true, false)
+                    (true, false, None)
                 };
+                // Actor::Hourglass routes a TERMINATED bow Execute through
+                // DoNextOrder, whose Proceed() result immediately replaces
+                // mpOrder.  This specialized driver pops the same queue
+                // directly, so publish that exact successor (or NULL) here.
+                actor.installed_order = installed_order;
                 if remaining || !bow_remaining {
                     actor.active_shot.clear();
                 }
@@ -2019,14 +2034,27 @@ fn tick_bow_shots_matching(
                 motion,
                 SpriteMotionState::Terminated | SpriteMotionState::Aborted
             ) {
-                let (remaining, bow_remaining) = if let Some(elem) =
+                let (remaining, bow_remaining, installed_order) = if let Some(elem) =
                     sequence_manager.get_element_mut(shot_seq_id, shot_elem_idx)
                 {
                     elem.orders.pop_front();
-                    (elem.orders.is_empty(), has_active_bow_order(elem))
+                    let installed_order =
+                        elem.current_order()
+                            .map(|order| crate::element::InstalledActorOrder {
+                                order_id: order.order_id,
+                                order_type: order.order_type,
+                            });
+                    (
+                        elem.orders.is_empty(),
+                        has_active_bow_order(elem),
+                        installed_order,
+                    )
                 } else {
-                    (true, false)
+                    (true, false, None)
                 };
+                // See the transition branch above: direct retirement must
+                // mirror DoNextOrder's synchronous mpOrder publication.
+                actor.installed_order = installed_order;
                 if remaining || !bow_remaining {
                     actor.active_shot.clear();
                 }
