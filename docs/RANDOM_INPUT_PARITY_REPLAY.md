@@ -3461,6 +3461,42 @@ and all subsequent actor frames remain authoritative. This advances Savegame
 008 replay 004 from frame 175 to frame 705 and Savegame 010 replay 005 from
 frame 182 to frame 913.
 
+### Marker-backed corpus and installed-order follow-up (2026-08-02)
+
+Only `.complete` markers are authoritative when enumerating the growing
+random-save corpora. There are currently 729 completed traces under
+`parity-random-save-replays` and 3,645 under
+`parity-random-save-replays-60s-15x`, for 4,374 eligible traces total. Raw
+`.jsonl.zst` files without a marker are excluded. Commit `0d8fa91a2` adds the
+deterministic marker-to-trace enumerator used to create the next frozen sweep.
+
+The explicit Original `Actor::mpOrder` mirror exposed several real pointer
+publication boundaries which selected-sequence inference could not represent.
+The follow-up fixes now mirror in-place bored/random/PlayAnim/roll rewrites,
+actor-only Instruct publication, `StopMovement` and path-tail rewrites, and
+direct bow-order retirement. The fixes are general C++-source semantics; none
+contains a replay path, frame, or entity ID. The Original was also fixed so
+movement invalidation refreshes its live order pointer instead of retaining a
+dangling allocation.
+
+Fresh release validation after these changes gives the following frontiers:
+
+| Trace | Previous result | Current result |
+|---|---:|---|
+| Static nicouzouf Savegame 071 | Panic at frame 4,505 | **Exact EOF** |
+| randomguy Savegame 046 replay 011 | PC motion-state mismatch at 119,870 | **Exact EOF** |
+| linux3 Savegame 072 replay 001 | stairs/bow animation frontiers at 38,854/38,961 | **Exact EOF** |
+| nicouzouf Savegame 063 replay 001 | installed animation at 1,207 | advanced to independent movement-scoring frontier at 1,320 |
+| SuN1Sh1nE ExQuickSave replay 001 | installed bow animation at 35,563 | advanced to independent Beggar-list frontier at 36,084 |
+| nicouzouf Savegame 051 replay 008 | non-actor Instruct panic at 182 | advanced to waypoint completion frontier at 670 |
+
+The PC initialization-validity path now also latches Original's terminal
+motion result before completing the failed element (`cda87120d`), which is what
+cleared Savegame 046 to EOF. `SeekArea` now performs Original's immediate,
+creation-ordered Beggar detectable rebuild rather than waiting for a later
+detection refresh (`06a3f79e4`); validation of its new frontier is pending the
+next frozen release runner.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
