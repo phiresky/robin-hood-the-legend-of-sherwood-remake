@@ -22,6 +22,10 @@ use super::{
     UNDEFINED_DIRECTION, archer, combat, propose_good_step_back_goal,
 };
 
+fn original_uword_norm(delta: (f32, f32)) -> u16 {
+    (delta.0 * delta.0 + delta.1 * delta.1).sqrt() as u16
+}
+
 fn phalanx_member_detects_360(
     member: &PhalanxMemberThemList,
     target: &PhalanxEnemySnapshot,
@@ -2280,7 +2284,12 @@ impl EnemyAi {
             return;
         };
         let to_target = pos_diff(&primary.position, &ctx.position);
-        let dist_to_target = (to_target.0 * to_target.0 + to_target.1 * to_target.1).sqrt();
+        // Original stores Norm() in a UWORD before every following range
+        // comparison. Preserve that truncation: a target at 90.7 units is
+        // compared as 90, and is therefore still within a 90-unit maximal
+        // range. Keeping the fractional f32 here can spuriously relaunch an
+        // approach instead of reaching ProposeGoodSwordStrike.
+        let dist_to_target = original_uword_norm(to_target);
 
         // Weak-enemy charge: a soldier sprints in if the foe is out of
         // his max range and he has the capacity to charge.
@@ -2294,7 +2303,7 @@ impl EnemyAi {
             .unwrap_or(0);
         if enemy_weak
             && self.get_rank() == ProfileRank::Soldier
-            && dist_to_target > my_max_range
+            && dist_to_target > my_max_range as u16
             && my_fighting_ability >= combat::MIN_CAPACITY_CHARGE_WEAK_ENEMY
         {
             let target_pos = primary.position;
@@ -2362,8 +2371,8 @@ impl EnemyAi {
 
         // Too far? Step in. Uses Norm (Euclidean) instead of squared
         // distance.
-        let primary_max_range = primary.sword_range_maximal as f32;
-        if dist_to_target > my_max_range
+        let primary_max_range = primary.sword_range_maximal;
+        if dist_to_target > my_max_range as u16
             && dist_to_target > primary_max_range
             && self.my_line_jump.is_none()
             && !self.combat_trainer
@@ -3214,5 +3223,12 @@ mod tests {
             vec![RngSite::DrunkCombatFreeze],
             "a successful first gate must preserve Original || short-circuiting"
         );
+    }
+
+    #[test]
+    fn swordfight_range_checks_use_original_uword_truncation() {
+        assert_eq!(original_uword_norm((90.7, 0.0)), 90);
+        assert_eq!(original_uword_norm((91.0, 0.0)), 91);
+        assert!(original_uword_norm((90.7, 0.0)) <= 90);
     }
 }

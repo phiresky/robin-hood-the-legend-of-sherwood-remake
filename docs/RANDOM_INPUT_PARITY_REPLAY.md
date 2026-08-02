@@ -3161,6 +3161,21 @@ at both the warning and completed-hit boundaries; the receiver's
 the frame-714 counter-strike proposal draw and the frame-724
 `ReceiveSwordDamage` protection, bludgeon, and provoke draws.
 
+### Swordfight reconsideration quantizes distance before range gates
+
+Savegame 063 replay 001 next reached Soldier 217's movement-arrival
+`ReconsiderSwordfight` at frame 858. Original consumed the two drunkenness
+draws and immediately entered `ProposeGoodSwordStrike`; Rust instead classified
+the opponent as too far away, relaunched a sword approach, and omitted the
+proposal draw.
+
+Original assigns the Euclidean `Norm()` to a `UWORD` before both the weak-enemy
+charge and ordinary too-far comparisons. At this creation-order owner boundary,
+the later-created PC is 90.7 units away and the soldier's maximal range is 90:
+Original compares 90 and remains in range, while Rust's fractional comparison
+incorrectly treated 90.7 as out of range. Reconsideration now performs the same
+unsigned-integer truncation for every soldier and both range gates.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
