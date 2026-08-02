@@ -59,6 +59,8 @@ struct TraceHeader {
     rng_stream: String,
     visibility_queries: String,
     #[serde(default)]
+    authoritative_state: Option<String>,
+    #[serde(default)]
     random_input_seed: Option<u32>,
     sim_config: TraceSimConfig,
     campaign: TraceCampaign,
@@ -250,9 +252,9 @@ enum TraceStartState {
 }
 
 fn validate_trace_schema(schema: u32) {
-    assert_eq!(
-        schema, 12,
-        "unsupported parity trace schema {schema}; resolved-exclamation schema 12 is required"
+    assert!(
+        matches!(schema, 12 | 13),
+        "unsupported parity trace schema {schema}; schemas 12 and 13 are supported"
     );
 }
 
@@ -274,6 +276,18 @@ fn validate_trace_header(header: &TraceHeader) {
         header.visibility_queries, "opaque_is_reachable",
         "unsupported parity visibility-query contract"
     );
+    match header.schema {
+        12 => assert!(
+            header.authoritative_state.is_none(),
+            "schema-12 trace unexpectedly declares per-frame authoritative state"
+        ),
+        13 => assert_eq!(
+            header.authoritative_state.as_deref(),
+            Some("per_frame_v1"),
+            "unsupported per-frame authoritative-state contract"
+        ),
+        _ => unreachable!(),
+    }
 }
 
 fn decode_and_validate_initial_save(header: &TraceHeader) -> Option<Vec<u8>> {
@@ -282,27 +296,29 @@ fn decode_and_validate_initial_save(header: &TraceHeader) -> Option<Vec<u8>> {
         header.start_state,
         header.initial_save.as_ref(),
     ) {
-        (12, TraceStartState::MissionStart, None) => None,
-        (12, TraceStartState::MissionStart, Some(_)) => {
-            panic!("schema-12 mission_start traces must not contain initial_save")
+        (12 | 13, TraceStartState::MissionStart, None) => None,
+        (12 | 13, TraceStartState::MissionStart, Some(_)) => {
+            panic!("mission_start traces must not contain initial_save")
         }
-        (12, TraceStartState::LoadedSave, None) => {
-            panic!("schema-12 loaded_save traces require initial_save")
+        (12 | 13, TraceStartState::LoadedSave, None) => {
+            panic!("loaded_save traces require initial_save")
         }
-        (12, TraceStartState::LoadedSave, Some(initial_save)) => {
+        (12 | 13, TraceStartState::LoadedSave, Some(initial_save)) => {
             let mission_index = header
                 .campaign
                 .current_mission_index
-                .expect("schema-12 loaded_save campaign has no current mission");
-            let mission = header.campaign.missions.get(mission_index).unwrap_or_else(|| {
-                panic!(
-                    "schema-12 loaded_save current mission index {mission_index} is out of range"
-                )
-            });
+                .expect("loaded_save campaign has no current mission");
+            let mission = header
+                .campaign
+                .missions
+                .get(mission_index)
+                .unwrap_or_else(|| {
+                    panic!("loaded_save current mission index {mission_index} is out of range")
+                });
             Some(
                 initial_save
                     .decode_and_validate(mission.profile_id)
-                    .unwrap_or_else(|error| panic!("invalid schema-12 initial_save: {error}")),
+                    .unwrap_or_else(|error| panic!("invalid initial_save: {error}")),
             )
         }
         (schema, _, _) => unreachable!("schema {schema} was validated before initial_save"),
@@ -1316,6 +1332,10 @@ struct TraceFrame {
     simulation_body_ran: bool,
     commands: Vec<TraceCommand>,
     director_completions: Vec<robin_engine::engine::DirectorCompletion>,
+    #[serde(default)]
+    campaign: Option<TraceCampaign>,
+    #[serde(default)]
+    engine_state: Option<TraceEngineState>,
     selected_pcs: Vec<TraceEntityId>,
     elements: Vec<TraceElement>,
     visibility_queries: Vec<TraceVisibilityQuery>,
@@ -1325,8 +1345,60 @@ struct TraceFrame {
     resolved_exclamations: Vec<TraceResolvedExclamation>,
 }
 
-const TRACE_CACHE_VERSION: u32 = 11;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v11.native-bincode.zst";
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
+struct TraceEngineState {
+    cheat_used_flags: u32,
+    lock_engine: bool,
+    freeze_all: bool,
+    locker: bool,
+    speed: TraceFloat,
+    speed_int: u16,
+    mission_won: bool,
+    mission_won_first_time: bool,
+    quit_won: bool,
+    quit_lost: bool,
+    quit_interrupted: bool,
+    script_globals: Vec<i32>,
+    failed_path_requests: Vec<TraceFailedPathRequest>,
+}
+
+#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[serde(deny_unknown_fields)]
+struct TraceFailedPathRequest {
+    actor: TraceEntityId,
+    antagonist: Option<TraceEntityId>,
+    layer: u16,
+    area: u16,
+    source: TracePoint,
+    goal: TracePoint,
+    half_diagonal_index: u16,
+    half_diagonal: TracePoint,
+    animation: u32,
+    reverse: bool,
+    speed: u8,
+    tolerance: TraceFloat,
+    use_first_point: bool,
+    sector: u16,
+    time: u32,
+}
+
+fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
+    match schema {
+        12 => assert!(
+            frame.campaign.is_none() && frame.engine_state.is_none(),
+            "schema-12 frame unexpectedly contains schema-13 authoritative state"
+        ),
+        13 => assert!(
+            frame.campaign.is_some() && frame.engine_state.is_some(),
+            "schema-13 frame is missing campaign or engine_state"
+        ),
+        _ => unreachable!("trace schema was validated before frame parsing"),
+    }
+}
+
+const TRACE_CACHE_VERSION: u32 = 12;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v12.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -1892,7 +1964,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
     );
     let rewind_loaded_save_rng =
         header.start_state == TraceStartState::LoadedSave && prefix_end == 0;
-    let (mut engine, assets, mut host, background, mission_scb) =
+    let (mut engine, assets, mut host, background, mission_scb, menu_text) =
         initialize_engine(&header, all_rng_draws.clone());
     let mut loaded_save_host = None;
     if let Some(initial_save) = initial_save {
@@ -2017,6 +2089,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             frame.record_type, "frame",
             "invalid parity frame record type"
         );
+        validate_trace_frame_envelope(header.schema, &frame);
         if debug_stage_timing {
             eprintln!(
                 "parity stage: loaded original frame {} -> {}",
@@ -2278,6 +2351,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         differences.extend(compare_frame(
             &engine,
             &assets,
+            &menu_text,
             &frame,
             tick_effects.code as i32,
             map,
@@ -3222,6 +3296,7 @@ fn ensure_binary_trace_cache(trace_path: &std::path::Path) -> PathBuf {
                 panic!("read parity trace record on line {line_number}: {error}")
             });
             if let Some(frame) = parse_trace_frame(&line, line_number) {
+                validate_trace_frame_envelope(header.trace.schema, &frame);
                 write_binary_record(
                     &mut encoder,
                     &BinaryTraceRecord::Frame(frame),
@@ -3716,6 +3791,7 @@ fn initialize_engine(
     Host,
     robin_engine::engine::level_loading::PreDecodedBackground,
     robin_engine::scb::ScbFile,
+    robin_rs::ingame_menu::resources::MenuText,
 ) {
     let mut pm = robin_engine::profiles::ProfileManager::new();
     let mut cpf = robin_engine::sbfile::SbFile::open(
@@ -3755,6 +3831,8 @@ fn initialize_engine(
     (assets.peasant_firstnames, assets.peasant_surnames) =
         robin_rs::game_session::load_peasant_name_pool(&mut text_res);
     assets.fixed_vip_names = robin_rs::game_session::load_fixed_vip_name_map(&mut text_res);
+    let _ = text_res.attach_resource_file("Data/Interface/Start.sxt");
+    let menu_text = robin_rs::ingame_menu::resources::MenuText::load(&mut text_res);
     let mut host = Host::scratch(1024.0, 768.0);
     host.frame_holder_mut()
         .initialize_sprite_bank(".")
@@ -3825,7 +3903,7 @@ fn initialize_engine(
         &profiles,
         "Data/Sounds",
     );
-    (engine, assets, host, background, scb)
+    (engine, assets, host, background, scb, menu_text)
 }
 
 struct EntityMap {
@@ -4471,14 +4549,247 @@ fn compare_path_events(
     differences
 }
 
+fn campaign_comparison_value(
+    campaign: &robin_engine::campaign::Campaign,
+    menu_text: &dyn robin_engine::sherwood_stat::MenuTextLookup,
+) -> serde_json::Value {
+    let mut value = serde_json::to_value(campaign).expect("serialize campaign parity state");
+    let object = value
+        .as_object_mut()
+        .expect("serialized Campaign must be a JSON object");
+
+    // These fields implement Rust host-side restart checkpoints and do not
+    // exist in the Original campaign object. They are verified by Rust's
+    // rollback/restart tests rather than cross-engine parity.
+    for field in [
+        "pre_mission_snapshot",
+        "pre_mission_rng_seed",
+        "pre_mission_sim_config",
+        "pre_mission_was_preselected",
+    ] {
+        object.remove(field);
+    }
+    if let Some(characters) = object.get_mut("characters").and_then(|v| v.as_array_mut()) {
+        assert_eq!(characters.len(), campaign.characters.len());
+        for (character, source) in characters.iter_mut().zip(&campaign.characters) {
+            let status = character
+                .get_mut("status")
+                .and_then(|v| v.as_object_mut())
+                .expect("serialized campaign character status must be an object");
+            status.insert(
+                "name".to_owned(),
+                serde_json::Value::String(source.status.display_name(menu_text).into_owned()),
+            );
+            status.remove("name_override");
+        }
+    }
+    if let Some(sectors) = object
+        .get_mut("production_sectors")
+        .and_then(|v| v.as_array_mut())
+    {
+        for sector in sectors {
+            let sector = sector
+                .as_object_mut()
+                .expect("serialized production sector must be an object");
+            // Runtime geometry attachments are derived from the loaded level;
+            // CampaignSnapshotJson records the mutable production values and
+            // occupants that the Original campaign actually serializes.
+            sector.remove("script_zone");
+            sector.remove("production_points");
+        }
+    }
+    value
+}
+
+fn collect_json_differences(
+    path: &str,
+    expected: &serde_json::Value,
+    actual: &serde_json::Value,
+    differences: &mut Vec<String>,
+) {
+    if differences.len() >= 64 || expected == actual {
+        return;
+    }
+    match (expected, actual) {
+        (serde_json::Value::Array(expected), serde_json::Value::Array(actual)) => {
+            if expected.len() != actual.len() {
+                differences.push(format!(
+                    "{path}.length: original={} rust={}",
+                    expected.len(),
+                    actual.len()
+                ));
+            }
+            for (index, (expected, actual)) in expected.iter().zip(actual).enumerate() {
+                collect_json_differences(
+                    &format!("{path}[{index}]"),
+                    expected,
+                    actual,
+                    differences,
+                );
+            }
+        }
+        (serde_json::Value::Object(expected), serde_json::Value::Object(actual)) => {
+            for key in expected.keys().chain(actual.keys()) {
+                match (expected.get(key), actual.get(key)) {
+                    (Some(expected), Some(actual)) => collect_json_differences(
+                        &format!("{path}.{key}"),
+                        expected,
+                        actual,
+                        differences,
+                    ),
+                    (Some(expected), None) => differences.push(format!(
+                        "{path}.{key}: original={expected:?} rust=<missing>"
+                    )),
+                    (None, Some(actual)) => differences
+                        .push(format!("{path}.{key}: original=<missing> rust={actual:?}")),
+                    (None, None) => unreachable!(),
+                }
+                if differences.len() >= 64 {
+                    break;
+                }
+            }
+            differences.sort();
+            differences.dedup();
+        }
+        _ => differences.push(format!("{path}: original={expected:?} rust={actual:?}")),
+    }
+}
+
+fn compare_engine_state(
+    differences: &mut Vec<String>,
+    expected: &TraceEngineState,
+    engine: &Engine,
+    entity_map: &EntityMap,
+) {
+    let actual = engine.parity_engine_state();
+    macro_rules! field {
+        ($name:ident) => {
+            if expected.$name != actual.$name {
+                differences.push(format!(
+                    "frame.engine_state.{}: original={:?} rust={:?}",
+                    stringify!($name),
+                    expected.$name,
+                    actual.$name
+                ));
+            }
+        };
+    }
+    field!(cheat_used_flags);
+    field!(lock_engine);
+    field!(freeze_all);
+    field!(locker);
+    field!(speed_int);
+    field!(mission_won);
+    field!(mission_won_first_time);
+    field!(quit_won);
+    field!(quit_lost);
+    field!(quit_interrupted);
+    field!(script_globals);
+    if expected.speed.bits != actual.speed.to_bits() {
+        differences.push(format!(
+            "frame.engine_state.speed: original={} (0x{:08x}) rust={} (0x{:08x})",
+            expected.speed.value(),
+            expected.speed.bits,
+            actual.speed,
+            actual.speed.to_bits()
+        ));
+    }
+
+    let actual_failed = engine.parity_failed_path_requests();
+    if expected.failed_path_requests.len() != actual_failed.len() {
+        differences.push(format!(
+            "frame.engine_state.failed_path_requests.length: original={} rust={}",
+            expected.failed_path_requests.len(),
+            actual_failed.len()
+        ));
+    }
+    for (index, (expected, actual)) in expected
+        .failed_path_requests
+        .iter()
+        .zip(&actual_failed)
+        .enumerate()
+    {
+        let prefix = format!("frame.engine_state.failed_path_requests[{index}]");
+        let request = &actual.request;
+        macro_rules! request_field {
+            ($name:expr, $left:expr, $right:expr) => {
+                if $left != $right {
+                    differences.push(format!(
+                        "{}.{}: original={:?} rust={:?}",
+                        prefix, $name, $left, $right
+                    ));
+                }
+            };
+        }
+        request_field!("actor", entity_map.translate(expected.actor), request.actor);
+        request_field!(
+            "antagonist",
+            expected.antagonist.map(|id| entity_map.translate(id)),
+            request.antagonist
+        );
+        request_field!("layer", expected.layer, request.layer);
+        request_field!("area", expected.area, request.area);
+        request_field!(
+            "source.bits",
+            [expected.source.x.bits, expected.source.y.bits],
+            [request.source.x.to_bits(), request.source.y.to_bits()]
+        );
+        request_field!(
+            "goal.bits",
+            [expected.goal.x.bits, expected.goal.y.bits],
+            [request.goal.x.to_bits(), request.goal.y.to_bits()]
+        );
+        request_field!(
+            "half_diagonal_index",
+            expected.half_diagonal_index,
+            request.half_diagonal_index
+        );
+        request_field!(
+            "half_diagonal.bits",
+            [expected.half_diagonal.x.bits, expected.half_diagonal.y.bits],
+            [
+                request.half_diagonal.x.to_bits(),
+                request.half_diagonal.y.to_bits()
+            ]
+        );
+        request_field!("animation", expected.animation, request.animation);
+        request_field!("reverse", expected.reverse, request.reverse);
+        request_field!("speed", expected.speed, request.speed);
+        request_field!(
+            "tolerance.bits",
+            expected.tolerance.bits,
+            request.tolerance.to_bits()
+        );
+        request_field!(
+            "use_first_point",
+            expected.use_first_point,
+            request.use_first_point
+        );
+        request_field!("sector", expected.sector, actual.sector);
+        request_field!("time", expected.time, actual.time);
+    }
+}
+
 fn compare_frame(
     engine: &Engine,
     assets: &LevelAssets,
+    menu_text: &dyn robin_engine::sherwood_stat::MenuTextLookup,
     frame: &TraceFrame,
     actual_game_code: i32,
     entity_map: &EntityMap,
 ) -> Vec<String> {
     let mut differences = Vec::new();
+
+    if let Some(expected_campaign) = &frame.campaign {
+        let restored = restore_campaign(expected_campaign, &assets.profile_manager);
+        let expected = campaign_comparison_value(&restored, menu_text);
+        let actual = campaign_comparison_value(engine.parity_campaign(), menu_text);
+        collect_json_differences("frame.campaign", &expected, &actual, &mut differences);
+    }
+    if let Some(expected) = &frame.engine_state {
+        compare_engine_state(&mut differences, expected, engine, entity_map);
+    }
+
     if frame.game_code != actual_game_code {
         differences.push(format!(
             "frame.game_code: original={} rust={actual_game_code}",
@@ -5427,6 +5738,11 @@ mod tests {
     }
 
     #[test]
+    fn authoritative_state_schema_thirteen_is_accepted() {
+        validate_trace_schema(13);
+    }
+
+    #[test]
     fn initial_save_decodes_and_matches_its_rhsg_envelope() {
         let save = valid_initial_save();
         let decoded = save
@@ -5532,18 +5848,18 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "schema 11; resolved-exclamation schema 12 is required")]
+    #[should_panic(expected = "schemas 12 and 13 are supported")]
     fn schema_eleven_is_rejected() {
         validate_trace_schema(11);
     }
 
-    #[test]
-    fn simulation_body_marker_is_mandatory() {
-        let frame_without_marker = serde_json::json!({
+    fn minimal_frame_json() -> serde_json::Value {
+        serde_json::json!({
             "type": "frame",
             "frame_before": 0,
             "frame_after": 1,
             "game_code": 0,
+            "simulation_body_ran": true,
             "commands": [],
             "director_completions": [],
             "selected_pcs": [],
@@ -5559,7 +5875,71 @@ mod tests {
                 "main_thread": [],
                 "domains": []
             }
+        })
+    }
+
+    #[test]
+    fn schema_twelve_and_thirteen_frame_envelopes_are_distinct() {
+        let schema_twelve: TraceFrame = serde_json::from_value(minimal_frame_json()).unwrap();
+        validate_trace_frame_envelope(12, &schema_twelve);
+        assert!(
+            std::panic::catch_unwind(|| validate_trace_frame_envelope(13, &schema_twelve)).is_err()
+        );
+
+        let mut schema_thirteen_json = minimal_frame_json();
+        schema_thirteen_json["campaign"] = serde_json::json!({
+            "version": 1,
+            "values": [],
+            "ares": -1,
+            "missions": [],
+            "accessible_mission_indices": [],
+            "pending_accessible_mission_indices": [],
+            "last_mission_index": null,
+            "current_mission_index": null,
+            "next_mission_index": null,
+            "blazon_mission_index": null,
+            "last_played_mission_indices": [],
+            "last_pseudo_mission_status": 0,
+            "last_pseudo_mission_id": 0,
+            "characters": [],
+            "gang_indices": [],
+            "reservist_indices": [],
+            "mission_team_indices": [],
+            "peasant_names": [],
+            "reservists_are_back": false,
+            "collected_relics": [],
+            "production_sectors": []
         });
+        schema_thirteen_json["engine_state"] = serde_json::json!({
+            "cheat_used_flags": 0,
+            "lock_engine": false,
+            "freeze_all": false,
+            "locker": false,
+            "speed": {"bits": 1065353216},
+            "speed_int": 1,
+            "mission_won": false,
+            "mission_won_first_time": false,
+            "quit_won": false,
+            "quit_lost": false,
+            "quit_interrupted": false,
+            "script_globals": [],
+            "failed_path_requests": []
+        });
+        let schema_thirteen: TraceFrame = serde_json::from_value(schema_thirteen_json).unwrap();
+        validate_trace_frame_envelope(13, &schema_thirteen);
+        assert!(
+            std::panic::catch_unwind(|| validate_trace_frame_envelope(12, &schema_thirteen))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn simulation_body_marker_is_mandatory() {
+        let mut frame_without_marker = minimal_frame_json();
+        frame_without_marker
+            .as_object_mut()
+            .unwrap()
+            .remove("simulation_body_ran");
 
         let error = serde_json::from_value::<TraceFrame>(frame_without_marker)
             .expect_err("schema 12 frames must report whether the simulation body ran");

@@ -99,6 +99,13 @@ A list of which additional features we have added, which ones we might still wan
   typed entity state using exact floating-point bits. Unsupported legacy
   command values and malformed/non-contiguous traces fail loudly; the first
   divergent frame is reported field-by-field.
+  Newly recorded schema-13 traces additionally snapshot the mutable campaign,
+  mission/global engine flags, script-global array, and ordered failed-path
+  timeout list on every frame. The comparator retains schema-12 ingestion for
+  the existing corpus and enables these comparisons only when the schema-13
+  `per_frame_v1` contract is declared. Rust-only restart checkpoints and
+  level-derived production geometry are intentionally outside the
+  cross-engine campaign payload.
 
 - **Basic multiplayer**. Native host/client networking, wasm WebSocket clients,
   seat IDs, input delay, rollback for late inputs, mission seed sync,

@@ -1680,6 +1680,32 @@ pub(crate) fn build_line_jump_click_sequence(
 }
 
 impl EngineInner {
+    pub(crate) fn parity_failed_path_requests(
+        &self,
+    ) -> Vec<crate::pathfinder::ParityFailedPathRequest> {
+        self.orders
+            .failed_path_requests
+            .iter()
+            .map(|failed| {
+                let request = failed.authoritative_request.as_ref().unwrap_or_else(|| {
+                    panic!(
+                        "failed-path parity snapshot found synthetic Rust-only timeout for {:?}",
+                        failed.owner
+                    )
+                });
+                assert_eq!(
+                    failed.owner, request.owner,
+                    "failed-path timeout owner disagrees with retained request"
+                );
+                crate::pathfinder::ParityFailedPathRequest {
+                    request: parity_path_request_state(&self.world.fast_grid, request),
+                    sector: request.legacy_sector,
+                    time: failed.first_fail_frame,
+                }
+            })
+            .collect()
+    }
+
     /// Rebuild Rust's derived active-movement latch after loading an Original
     /// save. Original keeps the executing movement in `mpSequenceElement`;
     /// Rust additionally caches its sequence identity for owner-local

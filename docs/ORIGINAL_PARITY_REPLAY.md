@@ -4423,6 +4423,31 @@ downstream symptom. New recordings should keep the same resolved-command,
 mission-start, synchronous-path, global-RNG-stream contract unless this document
 explicitly introduces and motivates another profile.
 
+### Schema 13 adds per-frame campaign and engine-global state
+
+Schema 13 is the current writer format and declares
+`authoritative_state: "per_frame_v1"`. Every frame now carries the complete
+portable campaign snapshot already used at startup, the Original's gameplay
+lock/freeze/speed and mission-exit flags, the script-global array, and the
+ordered failed-path timeout list. Failed requests include the same canonical
+actor/antagonist identity and exact request float bits as ordered path events,
+plus their raw sector and failure frame. Rust compares this state at the same
+post-hourglass frame boundary.
+
+The comparator continues to ingest schema 12 while its recorded corpus is
+being cleared. Schema-12 frames must omit the new payload; schema-13 frames
+must contain both `campaign` and `engine_state`, so a partially upgraded
+recording fails at its envelope rather than silently losing coverage.
+
+Campaign comparison excludes only state with no Original counterpart:
+Rust-owned pre-mission restart/RNG checkpoints and level-derived
+production-zone geometry attachments. `PROP_NAME` is compared through each
+status's localized effective name, since Original overwrites its stored string
+while Rust retains the fallback plus a typed override slot. The mutable
+production counters, occupants, inventories, skills, mission lists and all
+other fields emitted by `CampaignSnapshotJson` remain authoritative and are
+compared field-by-field.
+
 ### Runtime entity identity ignores presentation-only constructor gaps
 
 Original's global `gulCreationCounter` is consumed by every `RHElement`

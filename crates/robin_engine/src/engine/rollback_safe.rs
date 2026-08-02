@@ -30,6 +30,25 @@ use crate::element::EntityId;
 use crate::minimap::HitMask;
 use crate::player_command::{PlayerCommand, PlayerInput};
 
+/// Canonical gameplay-authoritative engine scalars emitted by schema-13
+/// Original parity traces. Presentation camera/surface/backend state is
+/// deliberately absent.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct ParityEngineState {
+    pub cheat_used_flags: u32,
+    pub lock_engine: bool,
+    pub freeze_all: bool,
+    pub locker: bool,
+    pub speed: f32,
+    pub speed_int: u16,
+    pub mission_won: bool,
+    pub mission_won_first_time: bool,
+    pub quit_won: bool,
+    pub quit_lost: bool,
+    pub quit_interrupted: bool,
+    pub script_globals: Vec<i32>,
+}
+
 /// Parallel runtime array whose length must match the loaded level geometry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapshotGridComponent {
@@ -186,6 +205,39 @@ pub struct EngineArgs<'a> {
 }
 
 impl Engine {
+    /// Read-only schema-13 parity view of campaign state at a frame boundary.
+    #[doc(hidden)]
+    pub fn parity_campaign(&self) -> &Campaign {
+        &self.inner.mission_domain.campaign
+    }
+
+    /// Read-only schema-13 parity view of gameplay-authoritative global state.
+    #[doc(hidden)]
+    pub fn parity_engine_state(&self) -> ParityEngineState {
+        let mission = &self.inner.mission_domain.state;
+        let seat = &self.inner.players.seats[0];
+        ParityEngineState {
+            cheat_used_flags: self.inner.mission_domain.cheat_used_flags,
+            lock_engine: self.inner.control.simulation_gates.engine_locked(),
+            freeze_all: self.inner.control.simulation_gates.actors_frozen(),
+            locker: seat.locker_active,
+            speed: self.inner.control.speed,
+            speed_int: self.inner.control.speed_int,
+            mission_won: mission.mission_won,
+            mission_won_first_time: mission.mission_won_first_time,
+            quit_won: mission.quit_won,
+            quit_lost: mission.quit_lost,
+            quit_interrupted: mission.quit_interrupted,
+            script_globals: self.inner.scripts.globals.clone(),
+        }
+    }
+
+    /// Read-only schema-13 snapshot of the ordered failed-path timeout list.
+    #[doc(hidden)]
+    pub fn parity_failed_path_requests(&self) -> Vec<crate::pathfinder::ParityFailedPathRequest> {
+        self.inner.parity_failed_path_requests()
+    }
+
     /// Crate-internal access for the validated Original-save adoption
     /// coordinator. Downstream callers cannot bypass `Engine` construction or
     /// replace a partially converted mission.
