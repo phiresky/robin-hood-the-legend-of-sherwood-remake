@@ -2424,6 +2424,11 @@ impl EngineInner {
                 assets,
                 crate::ai::Stimulus::new(crate::ai::StimulusType::EventLoseConsciousness),
             );
+            // StartThink handles EVENT_LOSE_CONSCIOUSNESS by calling
+            // SetViewStatus(EYES_DIE_OR_GET_UNCONSCIOUS) inline.  Rust's AI
+            // borrow boundary represents that write in the recovery outbox,
+            // so consume it before returning from the same synchronous Think.
+            self.tick_ai_pending_resurrection_and_eyes_for_npc(victim_id);
         }
 
         let victim = self
