@@ -1454,8 +1454,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 43;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v43.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 44;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v44.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -5023,6 +5023,13 @@ fn retain_recorded_entity_runtime_coverage(
     {
         actual.remove("pc_tail");
     }
+    if !expected
+        .as_object()
+        .is_some_and(|object| object.contains_key("pc_qa"))
+        && let Some(actual) = actual.as_object_mut()
+    {
+        actual.remove("pc_qa");
+    }
     if expected
         .get("npc_ai")
         .and_then(serde_json::Value::as_object)
@@ -6699,7 +6706,7 @@ mod tests {
     }
 
     #[test]
-    fn old_enemy_snapshots_skip_only_absent_additive_v43_state() {
+    fn old_enemy_snapshots_skip_only_absent_additive_v44_state() {
         let expected = serde_json::json!({
             "npc_ai": {
                 "state": 3,
@@ -6820,6 +6827,11 @@ mod tests {
 
         let expected = serde_json::json!({});
         let mut actual = serde_json::json!({ "pc_tail": { "carried": null } });
+        retain_recorded_entity_runtime_coverage(&expected, &mut actual);
+        assert_eq!(actual, expected);
+
+        let expected = serde_json::json!({});
+        let mut actual = serde_json::json!({ "pc_qa": [] });
         retain_recorded_entity_runtime_coverage(&expected, &mut actual);
         assert_eq!(actual, expected);
     }

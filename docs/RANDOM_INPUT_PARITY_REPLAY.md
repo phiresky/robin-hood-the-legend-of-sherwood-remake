@@ -76,6 +76,15 @@ timing group, and the comparator `other` group.  Direction/position, RNG,
 speech, unsupported resolved commands, and the watchdog trace remain explicit
 follow-up groups rather than being silently folded into those assignments.
 
+### Latest frozen long-set checkpoint
+
+The latest targeted release validations after `5f13`, `4bf52`, `e5a8`, and
+`48fa` leave 12 of the 19 frozen long traces at exact EOF. The remaining seven
+all stop at deterministic state frontiers; none exhausts or disagrees with the
+recorded global RNG stream. This is a checkpoint against the v32 audit corpus
+plus the targeted release validations, not a claim that a new complete corpus
+sweep has been run.
+
 ### Fresh command-lifecycle subgroup ledger
 
 Of the 598 failures, 192 have `actor.command` as their first reported logical
@@ -2973,6 +2982,24 @@ campaign projection already compares its skills, life/coma state, inventory,
 name, and Sherwood index every frame. The separately serialized portrait widget
 and owner-local quick-action sequences are independent coherent slices rather
 than omissions from this gameplay tail.
+
+### Schema-v44 PC quick-action envelope
+
+Every PC now exposes all three serialized owner-local quick-action slots at
+each frame boundary: special-action count, quickito kind, raw titbit ID, mouse
+button, semantic interactor identity, and the presence and element count of
+the ordinary action and optional post-seek sequences. Fresh Rust PCs initialize
+the three slots to the same empty values as Original instead of leaving two
+metadata vectors structurally absent.
+
+Linux-save adoption retains the exact decoded ordinary `Sequence` payloads in
+the macro store and launches copies through the Original validity, swordfight,
+post-seek, posture-recovery, and one-shot consumption rules. This avoids a
+lossy reconstruction through high-level resolved commands. The v44 envelope
+makes presence, cardinality, metadata, and consumption strict; a later
+projection may add element-body diagnostics without changing the retained
+runtime representation. Older traces omit only the absent `pc_qa` member, and
+the native cache version and suffix are v44.
 
 ### Generic script RNG provenance
 

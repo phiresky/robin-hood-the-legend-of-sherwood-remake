@@ -1002,6 +1002,36 @@ impl Engine {
                 "pending_shoots": human.pending_shoots.iter().copied().map(sequence_ref).collect::<Vec<_>>(),
             })
         });
+        let pc_qa = entity.pc_data().map(|pc| {
+            const QA_SLOTS: usize = crate::macro_store::NUMBER_OF_QA_MEMORY;
+            for (name, length) in [
+                ("types", pc.quick_action_types.len()),
+                ("actions", pc.quick_action_sequences.len()),
+                ("seeks", pc.quick_seek_sequences.len()),
+                ("special-counts", pc.quick_action_special_counts.len()),
+                ("buttons", pc.quick_action_buttons.len()),
+                ("interactors", pc.quick_action_interactors.len()),
+                ("titbits", pc.titbits.len()),
+            ] {
+                assert_eq!(
+                    length, QA_SLOTS,
+                    "PC {id:?} parity projection has {length} {name}, expected {QA_SLOTS}"
+                );
+            }
+            (0..QA_SLOTS)
+                .map(|slot| {
+                    json!({
+                        "special_count": pc.quick_action_special_counts[slot],
+                        "quickito": pc.quick_action_types[slot] as u32,
+                        "titbit": pc.titbits[slot],
+                        "button": pc.quick_action_buttons[slot],
+                        "interactor": pc.quick_action_interactors[slot].map_or(Value::Null, entity_ref),
+                        "action_size": pc.quick_action_sequences[slot].as_ref().map(crate::sequence::Sequence::len),
+                        "seek_size": pc.quick_seek_sequences[slot].as_ref().map(crate::sequence::Sequence::len),
+                    })
+                })
+                .collect::<Vec<_>>()
+        });
         let pc_tail = entity.pc_data().map(|pc| {
             json!({
                 "carried": pc.carried.map_or(Value::Null, entity_ref),
@@ -1124,6 +1154,12 @@ impl Engine {
                 .as_object_mut()
                 .expect("parity entity runtime must be an object")
                 .insert("pc_tail".to_owned(), pc_tail);
+        }
+        if let Some(pc_qa) = pc_qa {
+            result
+                .as_object_mut()
+                .expect("parity entity runtime must be an object")
+                .insert("pc_qa".to_owned(), Value::Array(pc_qa));
         }
         result
     }
