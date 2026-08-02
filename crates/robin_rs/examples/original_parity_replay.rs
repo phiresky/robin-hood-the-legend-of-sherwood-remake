@@ -2544,7 +2544,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 "parity terminator final_frame disagrees with its initial frame and frame count"
             );
             assert_eq!(
-                engine.frame_counter(),
+                u64::from(engine.frame_counter()),
                 final_frame,
                 "Rust final frame disagrees with the clean parity terminator"
             );
