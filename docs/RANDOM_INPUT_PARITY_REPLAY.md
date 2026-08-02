@@ -2323,6 +2323,33 @@ Adding `engine_state.repulsive_points` changes the native parity cache to
 version 21. Older schema-13 frames are rejected rather than compared without
 dynamic repulsive-point coverage.
 
+### Persistent creation-order allocator state
+
+Schema 13 records Original's process-global `gulCreationCounter` as
+`engine_state.next_creation_order` and compares it with Rust's retained next
+Original creation order. Existing entities already expose their assigned
+creation order, but that does not determine the next value after deletions or
+save adoption. The allocator frontier must therefore be compared explicitly.
+
+This counter is gameplay-authoritative whenever a dynamic entity is created.
+Its assigned order participates in Original-ordered cross-entity ticking, AI
+detection cadence through `(frame + creation_order)`, parity-sensitive noise
+and remark identity, and later save pointer resolution. Equal live entities
+with different next counters can otherwise diverge only when the next
+projectile, FX, net, or other runtime entity appears.
+
+The engine-global shield two-click scratch is intentionally outside this
+authoritative projection. The replay boundary stores resolved commands:
+`ShieldSelectProtected` carries the chosen PC, and `RaiseShieldWithDanger`
+carries actor, protected PC, danger position, and layer. The inspected global
+shield readers only construct those resolved commands; simulation execution
+does not consult the ambient scratch state. If that boundary changes to raw
+mouse input, the serialized shield mode, point, and pointer must be added.
+
+Adding `engine_state.next_creation_order` changes the native parity cache to
+version 22. Older schema-13 frames are rejected rather than compared without
+the allocator frontier.
+
 ### Sequence-manager and script-VM boundary state
 
 Schema 13 now records the sequence manager's insertion-ordered sequences,

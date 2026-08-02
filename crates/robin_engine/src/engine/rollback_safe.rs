@@ -36,6 +36,7 @@ use crate::player_command::{PlayerCommand, PlayerInput};
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct ParityEngineState {
     pub cheat_used_flags: u32,
+    pub next_creation_order: u32,
     pub lock_engine: bool,
     pub freeze_all: bool,
     pub locker: bool,
@@ -218,6 +219,7 @@ impl Engine {
         let seat = &self.inner.players.seats[0];
         ParityEngineState {
             cheat_used_flags: self.inner.mission_domain.cheat_used_flags,
+            next_creation_order: self.inner.world.next_original_creation_order,
             lock_engine: self.inner.control.simulation_gates.engine_locked(),
             freeze_all: self.inner.control.simulation_gates.actors_frozen(),
             locker: seat.locker_active,
@@ -2314,6 +2316,15 @@ impl Deref for Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parity_engine_state_preserves_next_original_creation_order() {
+        let mut inner = EngineInner::new();
+        inner.world.next_original_creation_order = 417;
+        let state = Engine { inner }.parity_engine_state();
+
+        assert_eq!(state.next_creation_order, 417);
+    }
 
     #[test]
     fn parity_sound_sources_preserves_sparse_slots_and_authoritative_fields() {
