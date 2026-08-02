@@ -858,6 +858,7 @@ pub struct DoorBattlePosition {
 /// localised protection and stunning damage scaled by bludgeon protection,
 /// then averages and applies the from-behind bonus/malus.
 fn estimate_damage(
+    evaluator: HumanHandle,
     cp: &mut CombatPosition,
     all_fighters: &[FighterSnapshot],
     profile_manager: &crate::profiles::ProfileManager,
@@ -895,6 +896,15 @@ fn estimate_damage(
             panic!(
                 "combat position target {} is absent from the per-tick fighter view",
                 cp.target
+            )
+        });
+    let evaluator = all_fighters
+        .iter()
+        .find(|f| f.handle == evaluator)
+        .unwrap_or_else(|| {
+            panic!(
+                "combat position evaluator {} is absent from the per-tick fighter view",
+                evaluator
             )
         });
 
@@ -935,6 +945,14 @@ fn estimate_damage(
                 target.handle, target.hth_weapon_id
             )
         });
+    let evaluator_prof = profile_manager
+        .get_hth_weapon(evaluator.hth_weapon_id)
+        .unwrap_or_else(|| {
+            panic!(
+                "fighter {} requires missing HtH weapon profile {}",
+                evaluator.handle, evaluator.hth_weapon_id
+            )
+        });
     {
         let is_rank_soldier = attacker.rank == ProfileRank::Soldier && !attacker.is_pc;
         // `GetProtection` computes `me_to_him_direction = (him - me).sector_0_to_15()`
@@ -973,7 +991,11 @@ fn estimate_damage(
                 attacker.fighting_ability,
                 is_rank_soldier,
             );
-            let strike_dir = crate::combat::get_strike_direction(att_prof, strike);
+            // Original quirk: EstimateDamage uses `pSword` (the combat
+            // position's attacker) for range/effects, but `mpMe->GetSword()`
+            // (the AI currently evaluating all positions) for strike
+            // direction when querying the defender's local protection.
+            let strike_dir = crate::combat::get_strike_direction(evaluator_prof, strike);
             let protection = crate::combat::get_sword_protection(
                 def_prof,
                 cp.target_direction as i16,
@@ -1021,18 +1043,19 @@ fn estimate_damage(
 /// Evaluates one position by computing damage dealt minus damage
 /// received from targeting enemies.
 fn evaluate_single_position(
+    evaluator: HumanHandle,
     cp: &mut CombatPosition,
     enemy_positions: &mut [CombatPosition],
     all_fighters: &[FighterSnapshot],
     profile_manager: &crate::profiles::ProfileManager,
     iq: u16,
 ) -> i32 {
-    let mut score: i32 = estimate_damage(cp, all_fighters, profile_manager, iq) as i32;
+    let mut score: i32 = estimate_damage(evaluator, cp, all_fighters, profile_manager, iq) as i32;
 
     // Subtract damage from enemies who are targeting me
     for enemy_cp in enemy_positions {
         if enemy_cp.target == cp.attacker {
-            score -= estimate_damage(enemy_cp, all_fighters, profile_manager, iq) as i32;
+            score -= estimate_damage(evaluator, enemy_cp, all_fighters, profile_manager, iq) as i32;
         }
     }
 
@@ -1074,10 +1097,16 @@ pub(super) fn evaluate_combat_position_full(
     };
 
     // My own score: estimated combat value + bonus - distance penalty
-    let my_points =
-        (evaluate_single_position(cp, enemy_positions, all_fighters, profile_manager, iq) as f32
-            + cp.bonus as f32
-            - combat::DISTANCE_MALUS_FACTOR * distance as f32) as i32;
+    let my_points = (evaluate_single_position(
+        me_handle,
+        cp,
+        enemy_positions,
+        all_fighters,
+        profile_manager,
+        iq,
+    ) as f32
+        + cp.bonus as f32
+        - combat::DISTANCE_MALUS_FACTOR * distance as f32) as i32;
 
     // Accumulate friends' scores
     let mut friends_points: i32 = 0;
@@ -1096,8 +1125,14 @@ pub(super) fn evaluate_combat_position_full(
             }
         }
 
-        let friend_score =
-            evaluate_single_position(fp, enemy_positions, all_fighters, profile_manager, iq);
+        let friend_score = evaluate_single_position(
+            me_handle,
+            fp,
+            enemy_positions,
+            all_fighters,
+            profile_manager,
+            iq,
+        );
         friends_points += friend_score;
 
         if friend_score < combat::FRIEND_IN_TROUBLE_LIMIT {
@@ -1331,6 +1366,7 @@ mod required_combat_input_tests {
         let fighters = [fighter(1)];
         let mut position = combat_position();
         estimate_damage(
+            1,
             &mut position,
             &fighters,
             &crate::profiles::ProfileManager::new(),
@@ -1344,6 +1380,7 @@ mod required_combat_input_tests {
         let fighters = [fighter(1), fighter(2)];
         let mut position = combat_position();
         estimate_damage(
+            1,
             &mut position,
             &fighters,
             &crate::profiles::ProfileManager::new(),
@@ -1357,6 +1394,7 @@ mod required_combat_input_tests {
         position.estimated_damage = 123;
         assert_eq!(
             estimate_damage(
+                1,
                 &mut position,
                 &[],
                 &crate::profiles::ProfileManager::new(),
