@@ -19,7 +19,14 @@ use crate::{
 #[derive(Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub(crate) struct WorldState {
     pub(crate) entities: Entities,
+    /// Portrait/UI order, sorted by character-profile priority after loading.
     pub(crate) pc_ids: Vec<EntityId>,
+    /// Exact `RHEngine::marrayActorsPC` insertion order.
+    ///
+    /// Original gameplay loops use this registry independently of the
+    /// priority-sorted portrait bar. Keep it as authoritative hashed state so
+    /// first-match scans and synchronous callbacks survive rollback exactly.
+    pub(crate) original_pc_registry_ids: Vec<EntityId>,
     pub(crate) fast_grid: FastFindGrid,
     pub(crate) pathfinder: PathFinder,
     pub(crate) weather: WeatherState,
@@ -54,6 +61,7 @@ impl WorldState {
         Self {
             entities: Entities::new(),
             pc_ids: Vec::new(),
+            original_pc_registry_ids: Vec::new(),
             fast_grid: FastFindGrid::default(),
             pathfinder: PathFinder::default(),
             weather: WeatherState::new(),
@@ -91,6 +99,18 @@ impl WorldState {
     ) {
         self.original_creation_order_by_entity = creation_order_by_entity;
         self.next_original_creation_order = next_original_creation_order;
+        // Rust constructs authored categories in loader-friendly batches, but
+        // Original AddElement populates marrayActorsPC in construction order.
+        // Normalize the provisional registry once authoritative topology is
+        // installed; subsequent runtime additions retain stable append order.
+        let creation_orders = &self.original_creation_order_by_entity;
+        self.original_pc_registry_ids.sort_by_key(|&entity_id| {
+            creation_orders.get(&entity_id).copied().unwrap_or_else(|| {
+                panic!(
+                    "PC {entity_id} has no authoritative Original creation order while installing the engine PC registry"
+                )
+            })
+        });
     }
 
     pub(crate) fn original_creation_order(&self, entity_id: EntityId) -> u32 {
@@ -213,22 +233,29 @@ impl WorldState {
     }
 
     fn validate_pc_index_inner(&self) -> Result<(), String> {
-        let mut seen = std::collections::HashSet::with_capacity(self.pc_ids.len());
-        for &id in &self.pc_ids {
-            if !seen.insert(id) {
-                return Err(format!("pc_ids contains duplicate entity {id}"));
-            }
-            if !matches!(self.entities.get(id), Some(Entity::Pc(_))) {
-                return Err(format!("pc_ids references missing or non-PC entity {id}"));
-            }
-        }
-
         let entity_pc_count = self.entities.pcs().count();
-        if self.pc_ids.len() != entity_pc_count {
-            return Err(format!(
-                "pc_ids contains {} entries but entity storage contains {entity_pc_count} PCs",
-                self.pc_ids.len(),
-            ));
+        for (name, ids) in [
+            ("pc_ids", self.pc_ids.as_slice()),
+            (
+                "original_pc_registry_ids",
+                self.original_pc_registry_ids.as_slice(),
+            ),
+        ] {
+            let mut seen = std::collections::HashSet::with_capacity(ids.len());
+            for &id in ids {
+                if !seen.insert(id) {
+                    return Err(format!("{name} contains duplicate entity {id}"));
+                }
+                if !matches!(self.entities.get(id), Some(Entity::Pc(_))) {
+                    return Err(format!("{name} references missing or non-PC entity {id}"));
+                }
+            }
+            if ids.len() != entity_pc_count {
+                return Err(format!(
+                    "{name} contains {} entries but entity storage contains {entity_pc_count} PCs",
+                    ids.len(),
+                ));
+            }
         }
         Ok(())
     }
@@ -349,6 +376,26 @@ mod tests {
     fn missing_pc_index_target_fails_loudly() {
         let mut world = WorldState::new();
         world.pc_ids.push(EntityId::Pc(crate::entity_id::PcId(0)));
+        world.validate_level_attachments(&LevelAssets::new(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "original_pc_registry_ids contains 0 entries")]
+    fn missing_original_pc_registry_entry_fails_loudly() {
+        let mut world = WorldState::new();
+        let id = EntityId::Pc(crate::entity_id::PcId(0));
+        world
+            .entities
+            .push(Some(Entity::Pc(crate::element::ActorPc {
+                element: crate::element::ElementData {
+                    kind: crate::element::ElementKind::ActorPc,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: Default::default(),
+                pc: Default::default(),
+            })));
+        world.pc_ids.push(id);
         world.validate_level_attachments(&LevelAssets::new(), 0);
     }
 

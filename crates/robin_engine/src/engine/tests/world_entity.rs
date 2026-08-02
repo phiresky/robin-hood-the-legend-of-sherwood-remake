@@ -1425,6 +1425,30 @@ pub(super) fn make_test_pc(posture: crate::element::Posture) -> Entity {
     })
 }
 
+#[test]
+fn original_pc_registry_is_independent_from_portrait_priority_order() {
+    let mut engine = EngineInner::new();
+    let first = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let second = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+
+    // Authoritative topology can differ from Rust's provisional construction
+    // slots. Installing it establishes Original AddElement order once.
+    engine.world.install_original_creation_orders(
+        std::collections::BTreeMap::from([(first, 101), (second, 100)]),
+        102,
+    );
+    assert_eq!(engine.world.original_pc_registry_ids, vec![second, first]);
+
+    // Portrait sorting is a separate UI concern and must not mutate the
+    // engine registry used by GetPC/marrayActorsPC gameplay loops.
+    engine.world.pc_ids = vec![first, second];
+    assert_eq!(engine.world.original_pc_registry_ids, vec![second, first]);
+
+    engine.remove_entity(second);
+    assert_eq!(engine.world.pc_ids, vec![first]);
+    assert_eq!(engine.world.original_pc_registry_ids, vec![first]);
+}
+
 pub(super) fn install_test_building_sector(engine: &mut EngineInner, raw_sector: u16) {
     let _sector = crate::position_interface::SectorHandle::new(raw_sector)
         .expect("test building sector must be non-zero");

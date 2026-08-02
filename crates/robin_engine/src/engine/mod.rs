@@ -1068,6 +1068,7 @@ impl EngineInner {
         match &entity {
             Entity::Pc(_) => {
                 self.world.pc_ids.push(id);
+                self.world.original_pc_registry_ids.push(id);
             }
             Entity::Soldier(_) => {}
             Entity::Civilian(_) => {}
@@ -3934,6 +3935,7 @@ impl EngineInner {
         self.world.entities.remove(id);
         // Remove from index lists
         self.world.pc_ids.retain(|&i| i != id);
+        self.world.original_pc_registry_ids.retain(|&i| i != id);
         self.players.seats[0].selection.retain(|&i| i != id);
         // Any pending path request for this actor is cancelled when
         // the element tears down.  Entity removal implies all its

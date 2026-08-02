@@ -3720,12 +3720,17 @@ state out of that decision entirely.
 
 NPC blip detection also has its own authoritative PC traversal order.
 Original loops `RHEngine::GetPC(i)`, backed by `marrayActorsPC`; `AddElement`
-appends PCs there in engine creation order. Rust's `world.pc_ids` is sorted by
-profile priority for portrait presentation, which is a different order and
-made the same blipped NPC cast otherwise identical sight rays toward different
-heroes. The blip arm now sorts a local copy by Original creation order while
-leaving the portrait registry untouched. This fixes Savegame 063's repeated
-`A,B,C,D` versus `B,D,A,C` visibility-query permutation.
+appends PCs there in engine creation order. Bonus discovery uses the same
+registry through `GetPC`. Rust's `world.pc_ids` is sorted by profile priority
+for portrait presentation, which is a different order and made those gameplay
+scans cast otherwise identical sight rays toward different heroes. World state
+now retains a separate hashed and serialized Original PC registry. Installing
+authoritative level/save topology establishes its initial creation order;
+runtime AddElement/RemoveElement equivalents append/remove entries without UI
+sorting. NPC blip detection and bonus discovery consume that stable registry,
+while `world.pc_ids` remains the portrait order. This addresses Savegame 063's
+repeated `A,B,C,D` versus `B,D,A,C` visibility-query permutation without a
+trace-specific sort.
 
 The specialized 180-degree query also follows its own Original geometry. Its
 forward and very-near side tests use the actor's body `GetDirectionVector`, not
