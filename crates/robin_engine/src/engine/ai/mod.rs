@@ -1686,6 +1686,8 @@ impl EngineInner {
         // observe an empty list outside swordfight substates.
         tick.nearby_fighters =
             self.build_nearby_fighters_for(npc_id, assets, &scratch.ai_sight_obstacles);
+        tick.reconsider_swordfight_enemies =
+            self.build_reconsider_swordfight_enemies_for(npc_id, assets);
         tick.reconsider_swordfight_friends = self.build_reconsider_swordfight_friends_for(npc_id);
 
         // Phalanx right-chain "them" snapshots — consumed by
@@ -2116,6 +2118,29 @@ impl EngineInner {
         assets: &LevelAssets,
         _sight_obstacles: &crate::sight_obstacle::SharedSightObstacles,
     ) -> Vec<crate::ai_enemy::FighterSnapshot> {
+        self.build_fighter_snapshots_for(npc_id, assets, Some(500.0))
+    }
+
+    /// Original `ReconsiderSwordfight` walks the complete opposing camp
+    /// fighter registry. It deliberately has no `MaxNormDistance < 500`
+    /// gate: `IsDetecting360Degrees` supplies the observer-specific range.
+    fn build_reconsider_swordfight_enemies_for(
+        &self,
+        npc_id: crate::element::EntityId,
+        assets: &LevelAssets,
+    ) -> Vec<crate::ai_enemy::FighterSnapshot> {
+        self.build_fighter_snapshots_for(npc_id, assets, None)
+            .into_iter()
+            .filter(|fighter| !fighter.is_friendly)
+            .collect()
+    }
+
+    fn build_fighter_snapshots_for(
+        &self,
+        npc_id: crate::element::EntityId,
+        assets: &LevelAssets,
+        max_distance: Option<f32>,
+    ) -> Vec<crate::ai_enemy::FighterSnapshot> {
         use crate::ai::Position;
         use crate::ai_enemy::FighterSnapshot;
         use crate::element::Posture;
@@ -2127,16 +2152,8 @@ impl EngineInner {
             return Vec::new();
         };
         let me_pos_pt = soldier.element.position_map();
-        let me_position = Position {
-            x: me_pos_pt.x,
-            y: me_pos_pt.y,
-            sector: soldier.element.sector(),
-            level: soldier.element.layer(),
-        };
         let my_camp = soldier.soldier.cached_camp;
         let me_handle = enemy_ai.base.me;
-
-        const SWORDFIGHT_RADIUS: f32 = 500.0;
 
         // Build a friendly soldier snapshot for `handle` (which may be self).
         // The original fighter registry retains inactive and out-of-order
@@ -2393,37 +2410,31 @@ impl EngineInner {
             panic!("enemy AI self {me_handle} is absent from the fighter registry")
         }));
 
-        // All live soldiers in the same combat radius. Scan the global
-        // camp fighter registries when rebuilding the us/them lists;
-        // using the persisted per-AI lists here made combat-position
-        // cleanup blind to same-camp fighters and allowed dogpiles.
-        for (other_id, s) in self.world.entities.soldiers() {
-            if other_id.index() == me_handle {
+        // Walk entity slots so each camp's fighter order matches Original's
+        // append-only registry even when PCs and soldiers are interleaved.
+        // Friendly scans still put `mpMe` first, as
+        // `FillListWithAllNearFighters` does explicitly.
+        for (id, entity) in self.world.entities.occupied() {
+            if id.index() == me_handle {
                 continue;
             }
-            let p = s.element.position_map();
-            let dx = p.x - me_pos_pt.x;
-            let dy = (p.y - me_pos_pt.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-            if dx.abs().max(dy.abs()) > SWORDFIGHT_RADIUS {
+            let (position, snapshot) = match entity {
+                Entity::Soldier(soldier) => (
+                    soldier.element.position_map(),
+                    build_soldier(id.index(), true),
+                ),
+                Entity::Pc(pc) if my_camp != Camp::Royalists => {
+                    (pc.element.position_map(), build_pc(id.index()))
+                }
+                _ => continue,
+            };
+            let dx = position.x - me_pos_pt.x;
+            let dy = (position.y - me_pos_pt.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+            if max_distance.is_some_and(|radius| dx.abs().max(dy.abs()) > radius) {
                 continue;
             }
-            if let Some(snap) = build_soldier(other_id.index(), true) {
-                out.push(snap);
-            }
-        }
-
-        // PCs are royalist fighters from the enemy AI's perspective.
-        if my_camp != Camp::Royalists {
-            for (pc_id, pc) in self.world.entities.pcs() {
-                let p = pc.element.position_map();
-                let dx = p.x - me_pos_pt.x;
-                let dy = (p.y - me_pos_pt.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-                if dx.abs().max(dy.abs()) > SWORDFIGHT_RADIUS {
-                    continue;
-                }
-                if let Some(snap) = build_pc(pc_id.index()) {
-                    out.push(snap);
-                }
+            if let Some(snapshot) = snapshot {
+                out.push(snapshot);
             }
         }
 

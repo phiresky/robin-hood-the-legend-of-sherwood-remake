@@ -530,6 +530,10 @@ pub struct AiPerTickData {
     pub simple_soldiers_near: bool,
     pub primary_target_multiplicity: Vec<(HumanHandle, u32)>,
     pub nearby_fighters: Vec<crate::ai_enemy::FighterSnapshot>,
+    /// Complete opposing-camp fighter registry for `ReconsiderSwordfight`.
+    /// Original applies no 500-unit prefilter here; each entry is admitted
+    /// by `IsDetecting360Degrees`, whose radius depends on the observer.
+    pub reconsider_swordfight_enemies: Vec<crate::ai_enemy::FighterSnapshot>,
     /// Complete same-camp, actively swordfighting registry scan for
     /// `ReconsiderSwordfight`. Unlike `nearby_fighters`, its radius uses 3D
     /// world positions and does not apply `IsAbleToFight`.
@@ -766,6 +770,7 @@ impl AiPerTickData {
             simple_soldiers_near: false,
             primary_target_multiplicity: Vec::new(),
             nearby_fighters: Vec::new(),
+            reconsider_swordfight_enemies: Vec::new(),
             reconsider_swordfight_friends: Vec::new(),
             camp_soldiers: Vec::new(),
             camp_ko_money_fighters: Vec::new(),

@@ -2206,8 +2206,8 @@ impl EnemyAi {
         }
 
         // Second pass: them list (any able-to-fight enemy that we can see).
-        for f in &tick.nearby_fighters {
-            if f.is_friendly || !f.is_able_to_fight {
+        for f in &tick.reconsider_swordfight_enemies {
+            if !f.is_able_to_fight {
                 continue;
             }
             if !self.is_detecting_360_degrees(f.handle, ctx) {
