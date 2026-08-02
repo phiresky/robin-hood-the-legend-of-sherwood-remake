@@ -664,6 +664,60 @@ impl Engine {
         json!({ "frame": frame, "entries": entries })
     }
 
+    /// Sparse, serialized sound-source manager state. Host channels and
+    /// backend playback queues are deliberately absent; these are the source
+    /// fields that survive Original save/load and feed later simulation.
+    // TODO(parity-sound): Rust's deterministic `playing_sources` finish queue
+    // has no isomorphic serialized Original field. If source-completion timing
+    // reaches a replay frontier, record the Original completion boundary as an
+    // ordered external event rather than comparing host channel deadlines.
+    #[doc(hidden)]
+    pub fn parity_sound_sources_state(&self) -> serde_json::Value {
+        use serde_json::{Value, json};
+
+        let float = |value: f32| json!({ "bits": value.to_bits(), "value": value });
+        let sources = &self.inner.feedback.sound_sim.sources;
+        let mut result = Vec::with_capacity(sources.num_sources());
+        for index in 0..sources.num_sources() {
+            let Some(source) = sources.get(index) else {
+                result.push(Value::Null);
+                continue;
+            };
+            let kind = match source.source_kind {
+                crate::sound_source::SoundSourceKind::Single => 0,
+                crate::sound_source::SoundSourceKind::Looped => 1,
+                crate::sound_source::SoundSourceKind::Delayed => 2,
+                crate::sound_source::SoundSourceKind::Volatile => 3,
+            };
+            let altitude = match source.altitude {
+                crate::sound_geometry::SoundSourceAltitude::Ground => 0,
+                crate::sound_geometry::SoundSourceAltitude::Middle => 1,
+                crate::sound_geometry::SoundSourceAltitude::Top => 2,
+                crate::sound_geometry::SoundSourceAltitude::NoAltitude => 3,
+            };
+            result.push(json!({
+                "kind": kind,
+                "id": source.id,
+                "global": source.is_global,
+                "inner_distance": source.inner_distance,
+                "outer_distance": source.outer_distance,
+                "noise_covering_distance": source.noise_covering_distance,
+                "inner_volume": source.inner_volume,
+                "outer_volume": source.outer_volume,
+                "shape": source.shape.iter().map(|point| json!({
+                    "x": float(point.x), "y": float(point.y)
+                })).collect::<Vec<_>>(),
+                "altitude": altitude,
+                "min_delay": source.min_delay,
+                "max_delay": source.max_delay,
+                "delay_stepping": source.delay_stepping,
+                "timer": source.timer,
+                "active": source.active,
+            }));
+        }
+        Value::Array(result)
+    }
+
     /// Persistent mission-VM state at a quiescent frame boundary. VM native
     /// handles are decoded to their semantic table kind/index; raw process or
     /// Rust handle encodings never enter the trace.
@@ -1947,6 +2001,41 @@ impl Deref for Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parity_sound_sources_preserves_sparse_slots_and_authoritative_fields() {
+        let mut inner = EngineInner::new();
+        inner.feedback.sound_sim.sources.sources_push_none();
+        let mut source = crate::sound_source::SoundSource::new();
+        source.source_kind = crate::sound_source::SoundSourceKind::Delayed;
+        source.id = 73;
+        source.inner_distance = 12;
+        source.outer_distance = 34;
+        source.noise_covering_distance = 56;
+        source.inner_volume = 78;
+        source.outer_volume = 9;
+        source
+            .shape
+            .push(crate::coordinates::MapPoint::new(1.5, -2.0));
+        source.altitude = crate::sound_geometry::SoundSourceAltitude::Top;
+        source.min_delay = 4;
+        source.max_delay = 18;
+        source.delay_stepping = 5;
+        source.timer = 11;
+        source.active = true;
+        inner.feedback.sound_sim.sources.sources_push_some(source);
+        let engine = Engine { inner };
+
+        let state = engine.parity_sound_sources_state();
+        assert!(state[0].is_null());
+        assert_eq!(state[1]["kind"], 2);
+        assert_eq!(state[1]["id"], 73);
+        assert_eq!(state[1]["noise_covering_distance"], 56);
+        assert_eq!(state[1]["shape"][0]["x"]["bits"], 1.5f32.to_bits());
+        assert_eq!(state[1]["altitude"], 2);
+        assert_eq!(state[1]["timer"], 11);
+        assert_eq!(state[1]["active"], true);
+    }
 
     #[test]
     fn diagnostic_snapshot_omits_only_nonserializable_original_rng_replay() {

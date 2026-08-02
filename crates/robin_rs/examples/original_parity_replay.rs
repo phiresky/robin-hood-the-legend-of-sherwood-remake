@@ -1364,6 +1364,7 @@ struct TraceEngineState {
     script_runtime: TraceJsonValue,
     pathfinder: TraceJsonValue,
     view_radius_cache: TraceJsonValue,
+    sound_sources: TraceJsonValue,
     failed_path_requests: Vec<TraceFailedPathRequest>,
 }
 
@@ -1435,8 +1436,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 15;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v15.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 16;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v16.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4847,6 +4848,15 @@ fn compare_engine_state(
         differences,
     );
 
+    let expected_sound_sources = expected.sound_sources.to_json();
+    let actual_sound_sources = engine.parity_sound_sources_state();
+    collect_json_differences(
+        "frame.engine_state.sound_sources",
+        &expected_sound_sources,
+        &actual_sound_sources,
+        differences,
+    );
+
     if expected.speed.bits != actual.speed.to_bits() {
         differences.push(format!(
             "frame.engine_state.speed: original={} (0x{:08x}) rust={} (0x{:08x})",
@@ -6095,6 +6105,7 @@ mod tests {
                 "requests": []
             },
             "view_radius_cache": {"frame": 0, "entries": []},
+            "sound_sources": [],
             "failed_path_requests": []
         });
         let schema_thirteen: TraceFrame = serde_json::from_value(schema_thirteen_json).unwrap();

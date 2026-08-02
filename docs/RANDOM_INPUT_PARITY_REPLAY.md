@@ -2181,6 +2181,26 @@ capture/comparison fails. Geometry, diagnostic query caches, and presentation
 state remain outside this snapshot. Adding this required structured state
 changes the native parity cache to version 15.
 
+### Persistent sound-source manager state
+
+Schema 13 now records the sound-source manager's sparse slot array in exact
+slot order. Every logical field that Original serializes is compared: source
+kind and sample ID, global/local mode, inner/outer/noise-covering ranges,
+inner/outer volumes, ordered shape points, altitude, delayed-source minimum,
+maximum, stepping and current timer, and the active flag. Deleted slots remain
+explicit nulls because script handles use the stable manager index.
+
+This state is simulation-authoritative even with audio disabled. Active source
+geometry contributes noise-covering volume to NPC deafness, while delayed
+timers and source kind determine later activation, deletion, and timer-reset
+boundaries. Host mixer channels, stream positions, backend pending lists, and
+presentation volume/panning are excluded. Rust's frame-based source-finish
+queue is also not compared as a raw deadline: Original has no isomorphic
+serialized field and completes playback through host channels. If that timing
+becomes a replay frontier it must be captured as an ordered external completion
+event, not equated to a host timestamp. Adding the source table changes the
+native parity cache to version 16.
+
 ### Sequence-manager and script-VM boundary state
 
 Schema 13 now records the sequence manager's insertion-ordered sequences,
