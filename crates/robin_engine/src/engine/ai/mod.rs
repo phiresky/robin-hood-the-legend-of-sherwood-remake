@@ -4620,8 +4620,13 @@ impl EngineInner {
             let own_world = entity.position_iface().get_position();
             let pos = crate::coordinates::GroundPoint::new(own_world.x, own_world.y);
 
+            // RHElement::IsActiveAndOutsideBuilding is deliberately narrower
+            // than IsInsideBuilding: it only inspects the current sector's
+            // BUILDING flag. A sprite door pointer makes IsInsideBuilding
+            // true while traversing an outdoor approach rail, but RefreshView
+            // must still follow the actor's turning body on that rail.
             let is_active_and_outside_building =
-                edata.active && !self.entity_data_inside_building(edata);
+                edata.active && self.entity_building_sector(edata.sector()).is_none();
 
             let animation = self
                 .orders
