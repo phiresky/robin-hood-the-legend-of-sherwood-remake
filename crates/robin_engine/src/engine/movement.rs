@@ -960,6 +960,14 @@ struct ProcessedPathRequest {
     waypoints: Option<Vec<MapPoint>>,
 }
 
+pub(crate) struct ParityPendingPathRequest {
+    pub(crate) request: crate::pathfinder::ParityPathRequest,
+    pub(crate) sequence_id: crate::sequence::SequenceId,
+    pub(crate) element_index: usize,
+    pub(crate) in_flight: bool,
+    pub(crate) waypoints: Option<Vec<MapPoint>>,
+}
+
 /// Legacy path-request ordering plus the pathfinder's in-flight result.
 ///
 /// `RHPathFinder::AddPathRequest` leaves queues of length zero or one alone.
@@ -999,6 +1007,31 @@ impl PendingPathRequestQueue {
 
     pub(crate) fn has_in_flight(&self) -> bool {
         self.in_flight.is_some()
+    }
+
+    pub(crate) fn parity_state(
+        &self,
+        fast_grid: &crate::fast_find_grid::FastFindGrid,
+    ) -> (bool, Vec<ParityPendingPathRequest>) {
+        let mut requests =
+            Vec::with_capacity(self.waiting.len() + usize::from(self.in_flight.is_some()));
+        if let Some(processed) = &self.in_flight {
+            requests.push(ParityPendingPathRequest {
+                request: parity_path_request_state(fast_grid, &processed.request),
+                sequence_id: processed.request.seq_id,
+                element_index: processed.request.elem_idx,
+                in_flight: true,
+                waypoints: Some(processed.waypoints.clone().unwrap_or_default()),
+            });
+        }
+        requests.extend(self.waiting.iter().map(|request| ParityPendingPathRequest {
+            request: parity_path_request_state(fast_grid, request),
+            sequence_id: request.seq_id,
+            element_index: request.elem_idx,
+            in_flight: false,
+            waypoints: None,
+        }));
+        (self.ignore_next_path, requests)
     }
 
     fn enqueue(&mut self, request: PendingPathRequest) {
@@ -11139,6 +11172,37 @@ mod path_request_timing_tests {
 
         let next = queue.pop_to_start().expect("successor remains queued");
         assert_eq!(next.owner, successor);
+    }
+
+    #[test]
+    fn parity_snapshot_keeps_ready_head_before_waiting_fifo() {
+        let ready_owner = EntityId::Pc(PcId(3));
+        let waiting_owner = EntityId::Soldier(SoldierId(4));
+        let mut queue = PendingPathRequestQueue::default();
+        queue.enqueue(request(
+            ready_owner,
+            crate::pathfinder::PathFinderSpeed::Fast,
+        ));
+        queue.enqueue(request(
+            waiting_owner,
+            crate::pathfinder::PathFinderSpeed::Medium,
+        ));
+        let ready = queue.pop_to_start().expect("head starts synchronously");
+        queue.set_in_flight(ready, None);
+        queue.cancel_for_owner(ready_owner);
+
+        let mut grid = crate::fast_find_grid::FastFindGrid::new();
+        grid.add_move_box_half_diagonal(crate::coordinates::MoveBoxHalfDiagonal::new(1.0, 1.0));
+        let (ignored, snapshot) = queue.parity_state(&grid);
+
+        assert!(ignored);
+        assert_eq!(snapshot.len(), 2);
+        assert!(snapshot[0].in_flight);
+        assert_eq!(snapshot[0].request.actor, ready_owner);
+        assert_eq!(snapshot[0].waypoints, Some(Vec::new()));
+        assert!(!snapshot[1].in_flight);
+        assert_eq!(snapshot[1].request.actor, waiting_owner);
+        assert_eq!(snapshot[1].waypoints, None);
     }
 
     #[test]

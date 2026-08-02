@@ -492,6 +492,95 @@ impl Engine {
         })
     }
 
+    /// Persistent Original-compatible pathfinder state at a stable frame
+    /// boundary. Synchronous A* scratch is deliberately absent; a computed
+    /// READY head remains authoritative until the next scheduling barrier.
+    #[doc(hidden)]
+    pub fn parity_pathfinder_state(&self) -> serde_json::Value {
+        use serde_json::{Value, json};
+
+        let float = |value: f32| json!({ "bits": value.to_bits() });
+        let point = |point: crate::coordinates::MapPoint| json!({ "x": float(point.x), "y": float(point.y) });
+        let entity = |id: EntityId| {
+            let kind = match id.kind() {
+                crate::element::EntityIdKind::Pc => "pc",
+                crate::element::EntityIdKind::Soldier => "soldier",
+                crate::element::EntityIdKind::Civilian => "civilian",
+                crate::element::EntityIdKind::Fx => "fx",
+                crate::element::EntityIdKind::Target => "target",
+                crate::element::EntityIdKind::Bonus => "bonus",
+                crate::element::EntityIdKind::Scroll => "scroll",
+                crate::element::EntityIdKind::Projectile => "projectile",
+                crate::element::EntityIdKind::Net => "net",
+            };
+            json!({ "kind": kind, "index": id.index() })
+        };
+
+        let manager = &self.inner.orders.sequence_manager;
+        let sequence_ordinals: std::collections::BTreeMap<_, _> = manager
+            .sequences_iter()
+            .enumerate()
+            .map(|(ordinal, sequence)| (sequence.id, ordinal))
+            .collect();
+        let reference = |id: crate::sequence::SequenceId, element: usize| {
+            let sequence = sequence_ordinals.get(&id).copied().unwrap_or_else(|| {
+                panic!("pathfinder request references unmanaged sequence {id:?}/{element}")
+            });
+            json!({ "sequence": sequence, "element": element })
+        };
+
+        let (ignore_next_path, pending) = self
+            .inner
+            .orders
+            .pending_path_requests
+            .parity_state(&self.inner.world.fast_grid);
+        let ready = pending.first().is_some_and(|entry| entry.in_flight);
+        if pending.iter().skip(1).any(|entry| entry.in_flight) {
+            panic!("pathfinder snapshot contains more than one in-flight request");
+        }
+        let requests = pending
+            .into_iter()
+            .map(|entry| {
+                let request = entry.request;
+                let waypoints = entry
+                    .waypoints
+                    .map(|points| Value::Array(points.into_iter().map(point).collect()))
+                    .unwrap_or(Value::Null);
+                json!({
+                    "request": {
+                        "actor": entity(request.actor),
+                        "antagonist": request.antagonist.map(&entity).unwrap_or(Value::Null),
+                        "layer": request.layer,
+                        "area": request.area,
+                        "source": point(request.source),
+                        "goal": point(request.goal),
+                        "half_diagonal_index": request.half_diagonal_index,
+                        "half_diagonal": {
+                            "x": float(request.half_diagonal.x),
+                            "y": float(request.half_diagonal.y),
+                        },
+                        "animation": request.animation,
+                        "reverse": request.reverse,
+                        "speed": request.speed,
+                        "tolerance": float(request.tolerance),
+                        "use_first_point": request.use_first_point,
+                    },
+                    "element": reference(entry.sequence_id, entry.element_index),
+                    "in_flight": entry.in_flight,
+                    "waypoints": waypoints,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        json!({
+            "status": if ready { "ready" } else { "waiting" },
+            "ignore_next_path": ignore_next_path,
+            "number_of_attempts": self.inner.world.pathfinder.number_of_attempts,
+            "area_states": &self.inner.world.pathfinder.states,
+            "requests": requests,
+        })
+    }
+
     /// Persistent mission-VM state at a quiescent frame boundary. VM native
     /// handles are decoded to their semantic table kind/index; raw process or
     /// Rust handle encodings never enter the trace.

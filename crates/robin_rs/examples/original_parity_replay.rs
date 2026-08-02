@@ -1362,6 +1362,7 @@ struct TraceEngineState {
     script_globals: Vec<i32>,
     sequence_manager: TraceJsonValue,
     script_runtime: TraceJsonValue,
+    pathfinder: TraceJsonValue,
     failed_path_requests: Vec<TraceFailedPathRequest>,
 }
 
@@ -1433,8 +1434,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 13;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v13.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 14;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v14.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4758,7 +4759,7 @@ fn canonicalize_authoritative_snapshot(value: &mut serde_json::Value, entity_map
 
             for (key, child) in object {
                 canonicalize_authoritative_snapshot(child, entity_map);
-                if matches!(key.as_str(), "sector" | "sector_in" | "sector_out")
+                if matches!(key.as_str(), "area" | "sector" | "sector_in" | "sector_out")
                     && let Some(original) = child.as_i64()
                     && original >= 0
                 {
@@ -4824,6 +4825,16 @@ fn compare_engine_state(
         differences,
     );
 
+    let mut expected_pathfinder = expected.pathfinder.to_json();
+    canonicalize_authoritative_snapshot(&mut expected_pathfinder, entity_map);
+    let actual_pathfinder = engine.parity_pathfinder_state();
+    collect_json_differences(
+        "frame.engine_state.pathfinder",
+        &expected_pathfinder,
+        &actual_pathfinder,
+        differences,
+    );
+
     if expected.speed.bits != actual.speed.to_bits() {
         differences.push(format!(
             "frame.engine_state.speed: original={} (0x{:08x}) rust={} (0x{:08x})",
@@ -4867,7 +4878,12 @@ fn compare_engine_state(
             request.antagonist
         );
         request_field!("layer", expected.layer, request.layer);
-        request_field!("area", expected.area, request.area);
+        if !entity_map.sectors_equivalent(expected.area, request.area) {
+            differences.push(format!(
+                "{prefix}.area: original={} rust={}",
+                expected.area, request.area
+            ));
+        }
         request_field!(
             "source.bits",
             [expected.source.x.bits, expected.source.y.bits],
@@ -6058,6 +6074,13 @@ mod tests {
             },
             "script_runtime": {
                 "static_words": [], "instances": [], "computed_locations": []
+            },
+            "pathfinder": {
+                "status": "waiting",
+                "ignore_next_path": false,
+                "number_of_attempts": 1,
+                "area_states": [],
+                "requests": []
             },
             "failed_path_requests": []
         });
