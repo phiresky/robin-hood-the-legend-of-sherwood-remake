@@ -2534,7 +2534,6 @@ impl EnemyAi {
         //     `primary_target_multiplicity` is not radius-filtered; the
         //     reference's count is restricted to fighters within
         //     `MAX_SWORDFIGHT_CONSIDERATION_RADIUS`.
-        let saved_primary = self.base.primary_target;
         self.list_them.clear();
         let max_radius = parameters_ai::MAX_SWORDFIGHT_CONSIDERATION_RADIUS as f32;
         let me_pos = ctx.position;
@@ -2554,13 +2553,6 @@ impl EnemyAi {
             self.list_them.push(f.handle);
             local_mult.insert(f.handle, 0);
         }
-        // Carry across the previous primary target if the snapshot dropped
-        // it for a frame (mirrors the comment on `reinitialize_them_list`).
-        if saved_primary != 0 && !self.list_them.contains(&saved_primary) {
-            self.list_them.push(saved_primary);
-            local_mult.entry(saved_primary).or_insert(0);
-        }
-
         // (3) Rebuild list_us (self first), bump
         //     multiplicity for same-camp soldiers actively in any swordfight
         //     substate against a primary target.
