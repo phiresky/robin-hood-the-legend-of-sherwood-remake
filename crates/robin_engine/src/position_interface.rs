@@ -2014,7 +2014,11 @@ pub fn vector_to_sector_0_to_15_iso(x: f32, y: f32) -> i16 {
 /// Isometric-space 2D vector squared-norm: `X² + (Y / ASPECT_RATIO)²`.
 #[inline]
 pub fn vector_square_norm_iso(x: f32, y: f32) -> f32 {
-    let yi = y * INVERSE_ASPECT_RATIO;
+    // SBGeoVector2D::SquareNorm/Norm divides by the supplied aspect ratio.
+    // Multiplying by the precomputed reciprocal is algebraically equivalent
+    // but not bit-equivalent in binary32, and the one-ULP difference feeds
+    // directly into AI retreat/combat destinations.
+    let yi = y / ASPECT_RATIO;
     x * x + yi * yi
 }
 
