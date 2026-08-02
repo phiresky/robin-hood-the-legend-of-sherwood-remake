@@ -2472,6 +2472,23 @@ fn compute_border_point_cardinal_directions() {
 // ── Direct campaign-owner side effects ────────────────────────────
 
 #[test]
+fn compute_border_point_matches_original_rounded_half_line_arithmetic() {
+    use crate::coordinates::MapBBox;
+
+    // H12's Knight03 RecordEnterGame exposed the difference between the
+    // Original geometry library's rounded-float half-line plus DOUBLE line
+    // equation and a direct f32 ray parameterization. Keep the exact result
+    // as a general regression for large-coordinate diagonal entries.
+    let map_bbox = MapBBox::from_coords(0.0, 0.0, 3000.0, 4000.0);
+    let (border, outside) = compute_border_point_bbox(map_bbox, (8.0, 2272.0), 5);
+
+    assert_eq!(border.0.to_bits(), 0.0f32.to_bits());
+    assert_eq!(border.1.to_bits(), 2268.687_3f32.to_bits());
+    assert_eq!(outside.0.to_bits(), (-55.432_774f32).to_bits());
+    assert_eq!(outside.1.to_bits(), 2245.725_8f32.to_bits());
+}
+
+#[test]
 fn direct_owner_add_campaign_value_ransom_credits_stat_and_queues_jingle() {
     let mut host = ScriptEffects::new();
     let mut campaign = crate::campaign::Campaign::default();

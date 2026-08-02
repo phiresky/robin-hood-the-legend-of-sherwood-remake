@@ -1619,9 +1619,13 @@ pub(crate) fn compute_border_point_bbox(
 
     // The half-line starts at `inside` and goes in the `-direction`
     // direction.  (The actor will walk into the map in `+direction`.)
+    // Preserve the rounded second point used by
+    // `SBGeoHalfLine2D(ptInside, ptInside - vDirection)`: Original's
+    // intersection code promotes those two stored float points to double,
+    // rather than promoting the unrounded direction vector directly.
     let (dx, dy) = crate::element::direction_vector_16(direction);
-    let hx = -dx;
-    let hy = -dy;
+    let half_b = (inside.0 - dx, inside.1 - dy);
+    let hx = half_b.0 - inside.0;
 
     let x_min = map_bbox.x_min();
     let x_max = map_bbox.x_max();
@@ -1640,44 +1644,59 @@ pub(crate) fn compute_border_point_bbox(
         }
     };
 
-    // Intersect half-line with each of the four map edges.
-    // `t > 0` keeps only the forward direction.
-    let eps = 1.0e-6_f32;
-    if hy.abs() > eps {
-        // Top edge (y = y_min).
-        let t = (y_min - iy) / hy;
-        if t > 0.0 {
-            let x = ix + t * hx;
-            if (x_min..=x_max).contains(&x) {
-                try_edge(x, y_min);
-            }
+    // `SBGeoSegment2D ^ SBGeoHalfLine2D` delegates to the geometry
+    // library's line intersection. It calculates line slopes/intercepts in
+    // DOUBLE, casts the resulting point back to GEOTYPE/FLOAT, and tests the
+    // four edges in top/right/bottom/left order. This arithmetic order is
+    // authoritative: an all-f32 `t = delta / direction` formulation differs
+    // by several ULPs for large map coordinates.
+    let line_dx = f64::from(half_b.0) - f64::from(ix);
+    let line_dy = f64::from(half_b.1) - f64::from(iy);
+    let line_slope = (line_dx != 0.0).then(|| line_dy / line_dx);
+    let line_intercept = line_slope.map(|slope| f64::from(iy) - f64::from(ix) * slope);
+
+    let half_line_contains = |x: f32, y: f32| {
+        if hx != 0.0 {
+            if half_b.0 > ix { x >= ix } else { x <= ix }
+        } else if half_b.1 > iy {
+            y >= iy
+        } else {
+            y <= iy
         }
-        // Bottom edge (y = y_max).
-        let t = (y_max - iy) / hy;
-        if t > 0.0 {
-            let x = ix + t * hx;
-            if (x_min..=x_max).contains(&x) {
-                try_edge(x, y_max);
+    };
+
+    let horizontal_intersection = |y: f32| {
+        let x = match line_slope {
+            Some(0.0) => return None,
+            Some(slope) => {
+                let intercept = line_intercept.expect("non-vertical half-line has an intercept");
+                // Horizontal edge: line1a=0, line1b=y in the Original
+                // formula.
+                ((intercept - f64::from(y)) / -slope) as f32
             }
-        }
-    }
-    if hx.abs() > eps {
-        // Left edge (x = x_min).
-        let t = (x_min - ix) / hx;
-        if t > 0.0 {
-            let y = iy + t * hy;
-            if (y_min..=y_max).contains(&y) {
-                try_edge(x_min, y);
-            }
-        }
-        // Right edge (x = x_max).
-        let t = (x_max - ix) / hx;
-        if t > 0.0 {
-            let y = iy + t * hy;
-            if (y_min..=y_max).contains(&y) {
-                try_edge(x_max, y);
-            }
-        }
+            None => ix,
+        };
+        ((x_min..=x_max).contains(&x) && half_line_contains(x, y)).then_some((x, y))
+    };
+
+    let vertical_intersection = |x: f32| {
+        let slope = line_slope?;
+        let intercept = line_intercept.expect("non-vertical half-line has an intercept");
+        let y = (slope * f64::from(x) + intercept) as f32;
+        ((y_min..=y_max).contains(&y) && half_line_contains(x, y)).then_some((x, y))
+    };
+
+    // Preserve ComputeBorderPoint's segment order.
+    for candidate in [
+        horizontal_intersection(y_min),
+        vertical_intersection(x_max),
+        horizontal_intersection(y_max),
+        vertical_intersection(x_min),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        try_edge(candidate.0, candidate.1);
     }
 
     let (_, bx, by) = best.expect("compute_border_point: no map-edge intersection");
@@ -1687,8 +1706,10 @@ pub(crate) fn compute_border_point_bbox(
     // sprite bounding box centred on the outside point no longer
     // touches the map box.  The sprite box `(-50, -70, 50, 20)` is a
     // conservative estimate of actor silhouette size.
-    let shift_x = hx * 10.0;
-    let shift_y = hy * 10.0;
+    // `vShift = vDirection; vShift *= -10.f` uses the original direction
+    // vector, not the rounded half-line delta above.
+    let shift_x = -dx * 10.0;
+    let shift_y = -dy * 10.0;
     let sprite_x_min = -50.0_f32;
     let sprite_y_min = -70.0_f32;
     let sprite_x_max = 50.0_f32;

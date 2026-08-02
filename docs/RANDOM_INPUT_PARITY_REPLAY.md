@@ -2760,6 +2760,22 @@ work detached for its later manager/deferred boundary. This preserves the
 transient START visual and still lets the later command win; it applies to all
 actors and commands rather than the recorded patrol member specifically.
 
+### Enter-game border intersections preserve legacy mixed precision
+
+H12 Continue replays converged on a four-ULP `movement_map.y` difference when
+message 777 brought Knight03 back through `RecordEnterGame`. This was not the
+initially suspected unauthorized-move-box extraction: the generic extraction
+trace was empty. The message handler immediately computes the actor's outside
+spawn point from location `(8, 2272)` and direction 5.
+
+Original constructs a float `SBGeoHalfLine2D` second point first, then its
+geometry library promotes those rounded endpoints to `DOUBLE` for the line
+slope/intercept intersection and casts the result back to float. Rust had used
+a direct all-f32 ray parameter. `compute_border_point_bbox` now preserves the
+Original top/right/bottom/left edge order and mixed-precision arithmetic for
+all enter/leave-game border computations. The H12 result is now exactly
+`(-55.43277359008789, 2245.725830078125)`.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
