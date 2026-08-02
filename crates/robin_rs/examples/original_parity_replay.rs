@@ -1260,7 +1260,7 @@ struct TraceDetectable {
     last_visibility: TraceFloat,
 }
 
-#[derive(Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
+#[derive(Clone, Debug, Deserialize, Serialize, bincode::Encode, bincode::Decode)]
 struct TraceVisibilityQuery {
     origin: TracePoint3,
     destination: TracePoint3,
