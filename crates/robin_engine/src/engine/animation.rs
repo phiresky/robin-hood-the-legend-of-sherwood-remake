@@ -1179,6 +1179,43 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_bored_cycle_forwards_only_its_start_edge() {
+        let sim = crate::sim_rng::test_context();
+        let (mut sequence_manager, seq_id) = sequence_with_order(OrderType::WaitingUprightBored);
+        let mut next_order_id = 9;
+        let mut side_outcomes = ExecuteSideOutcomes::default();
+        let mut ctx = ArmCtx {
+            entity_id: EntityId::Soldier(crate::entity_id::SoldierId(7)),
+            is_npc: true,
+            is_unconscious: false,
+            seq_id,
+            elem_idx: 0,
+            sequence_manager: &mut sequence_manager,
+            next_order_id: &mut next_order_id,
+            side_outcomes: &mut side_outcomes,
+        };
+
+        assert!(matches!(
+            dispatch_arm_completion(
+                &sim,
+                OrderType::WaitingUprightBored,
+                MotionState::Start,
+                &mut ctx,
+            ),
+            ExecuteOutcome::Forward(MotionState::Start)
+        ));
+        assert!(matches!(
+            dispatch_arm_completion(
+                &sim,
+                OrderType::WaitingUprightBoredRandom,
+                MotionState::Start,
+                &mut ctx,
+            ),
+            ExecuteOutcome::Consumed
+        ));
+    }
+
+    #[test]
     fn bored_cycle_rolls_for_non_timer_commands_and_skips_wait_timer() {
         fn consumes_draw(command: Command) -> bool {
             let sim = crate::sim_rng::test_context();
@@ -3384,6 +3421,13 @@ fn dispatch_arm_completion(
         if matches!(ctx.entity_id, EntityId::Civilian(_)) {
             return ExecuteOutcome::Forward(motion);
         }
+        if anim_type == OT::WaitingUprightBored && motion == MS::Start {
+            // Base Actor preserves the first-entry edge for the ordinary
+            // bored loop after applying its Bored action state. Every other
+            // result, and every BoredRandom result, is consumed as
+            // InProgress.
+            return ExecuteOutcome::Forward(MS::Start);
+        }
         if matches!(motion, MS::Terminated) {
             let is_wait_timer = ctx
                 .sequence_manager
@@ -4463,26 +4507,10 @@ impl EngineInner {
                             .set_map_goal(crate::coordinates::MapPoint::ZERO);
                     }
                     let motion = if is_turn {
-                        // Play the turn sprite animation (alerted
-                        // variant for attentive soldiers) at the
-                        // current direction row, then step the body
-                        // rotation via `turn_fast()`.  Resulting motion
-                        // state is Terminated iff the rotation reached
-                        // its goal this tick.
-                        if !globally_frozen {
-                            let sprite = &mut entity.element_data_mut().sprite;
-                            let _ = sprite.perform_action(
-                                sim,
-                                order_id,
-                                effective_anim,
-                                direction,
-                                FrameProgression::Default,
-                                false,
-                            );
-                        }
                         // `RHElementActor::Execute(RHANIMATION_TURNING)` calls
-                        // Turn/TurnFast before PerformAction even on the first
-                        // execution of a newly initialized order.
+                        // Turn/TurnFast before PerformAction. The sprite row
+                        // therefore uses the newly stepped direction, not the
+                        // direction sampled at Execute entry.
                         let still_turning = if order_is_initialising && defer_initial_turn_step {
                             true
                         } else if cur_command == Some(Command::TurnFast) {
@@ -4490,6 +4518,18 @@ impl EngineInner {
                         } else {
                             entity.position_iface_mut().turn()
                         };
+                        if !globally_frozen {
+                            let direction_after_turn = entity.element_data().direction() as u16;
+                            let sprite = &mut entity.element_data_mut().sprite;
+                            let _ = sprite.perform_action(
+                                sim,
+                                order_id,
+                                effective_anim,
+                                direction_after_turn,
+                                FrameProgression::Default,
+                                false,
+                            );
+                        }
                         // PI is the single source of truth for direction —
                         // no sync needed now that `ElementData.direction`
                         // is gone.

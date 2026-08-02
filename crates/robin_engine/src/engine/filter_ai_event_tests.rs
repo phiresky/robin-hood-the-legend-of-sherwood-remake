@@ -2982,6 +2982,18 @@ fn terminating_animation_promotes_next_order_before_same_actor_action_change() {
         OrderType::Searching,
         "retention must store the promoted live order"
     );
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(actor)
+            .and_then(|entity| entity.actor_data())
+            .expect("terminating actor remains typed")
+            .continuation
+            .motion_state,
+        crate::sprite::MotionState::InProgress,
+        "DoNextOrder must rewrite serialized mmotionState when Proceed promotes a successor"
+    );
 }
 
 #[test]
@@ -3053,6 +3065,63 @@ fn wait_timer_zero_completes_after_execute_and_before_action_change() {
             .last_action,
         OrderType::WaitingUprightBored,
         "WAIT_TIMER zero still performs Execute before forcing Terminated"
+    );
+}
+
+#[test]
+fn turning_selects_sprite_row_after_the_direction_step() {
+    use crate::element::Command;
+    use crate::order::{Order, OrderType};
+    use crate::position_interface::Direction;
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let actor = engine.add_entity(make_scripted_civilian(""));
+    let assets = LevelAssets::new();
+    bind_test_actor_animations(&mut engine, actor, &[OrderType::Turning]);
+
+    let order = Order::new(
+        OrderType::Turning,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    );
+    let order_id = order.order_id;
+    let mut element = SequenceElement::new(1, Command::Turn, Some(actor));
+    element.orders.push_back(order);
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    let _ = engine
+        .orders
+        .sequence_manager
+        .take_pending_synchronous_actions();
+
+    {
+        let entity = engine
+            .get_entity_mut(actor)
+            .expect("turning civilian remains installed");
+        entity
+            .position_iface_mut()
+            .set_direction_instantly(Direction::from_raw(0));
+        entity
+            .position_iface_mut()
+            .set_direction(Direction::from_raw(14));
+        entity.sprite_mut().last_processed_order_id = order_id.get();
+    }
+
+    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+
+    let entity = engine
+        .get_entity(actor)
+        .expect("turning civilian survives its actor slot");
+    assert_eq!(u8::from(entity.position_iface().get_direction()), 15);
+    assert_eq!(
+        entity.sprite().current_row,
+        15,
+        "Original Turn() advances direction 0->15 before PerformAction selects the directional row"
     );
 }
 

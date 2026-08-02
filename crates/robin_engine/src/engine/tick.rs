@@ -3363,6 +3363,30 @@ impl EngineInner {
                         ability_selection,
                         beggar_selection,
                     );
+                    let specialized_execute_motion = selected_owner_family
+                        .filter(|family| *family != ExecuteOwnerFamily::GenericAnimation)
+                        .and_then(|_| {
+                            self.world
+                                .entities
+                                .get(entity_id)
+                                .and_then(|entity| entity.element_data().sprite.last_motion_state)
+                        });
+                    if let Some(motion) = specialized_execute_motion {
+                        // Movement/combat/ability owners are derived Execute
+                        // arms just like the generic animation switch below.
+                        // Their sprite result is therefore the initial value
+                        // assigned to Actor::mmotionState before Hourglass
+                        // applies Done/DoNextOrder handling.
+                        self.world
+                            .entities
+                            .get_mut(entity_id)
+                            .and_then(Entity::actor_data_mut)
+                            .expect(
+                                "specialized Execute owner disappeared before motion-state latch",
+                            )
+                            .continuation
+                            .motion_state = motion;
+                    }
                     if selected_owner_family.is_some()
                         && self.world.entities.get(entity_id).is_some_and(|entity| {
                             entity.element_data().sprite.last_motion_state
@@ -3513,6 +3537,49 @@ impl EngineInner {
                                 "actor {entity_id:?} completion at legacy slot {slot} failed to drain synchronous sequence work: {error:?}"
                             )
                         });
+                    let selected_specialized_order_advanced = specialized_execute_motion.is_some()
+                        && selected_order.is_some_and(|(entry_seq, entry_idx, entry_order)| {
+                            !self
+                                .orders
+                                .sequence_manager
+                                .current_order_for_actor(entity_id)
+                                .is_some_and(|(live_seq, live_idx, live_order)| {
+                                    live_seq == entry_seq
+                                        && live_idx == entry_idx
+                                        && live_order.order_id == entry_order
+                                })
+                        });
+                    let live_successor_exists = self
+                        .orders
+                        .sequence_manager
+                        .current_order_for_actor(entity_id)
+                        .is_some();
+                    if let Some(actor) = self
+                        .world
+                        .entities
+                        .get_mut(entity_id)
+                        .and_then(Entity::actor_data_mut)
+                    {
+                        // Actor::DoNextOrder overwrites a TERMINATED Execute
+                        // result with IN_PROGRESS when Proceed exposes another
+                        // order.  Instruct does the same when terminating the
+                        // old element synchronously installs a successor.
+                        // Specialized owners retire their order internally,
+                        // so an entry-identity change is their equivalent of
+                        // the base Hourglass TERMINATED branch even when the
+                        // last raw sprite edge was START/DONE/IN_PROGRESS.
+                        if live_successor_exists
+                            && (actor.continuation.motion_state
+                                == crate::sprite::MotionState::Terminated
+                                || selected_specialized_order_advanced)
+                        {
+                            actor.continuation.motion_state =
+                                crate::sprite::MotionState::InProgress;
+                        } else if selected_specialized_order_advanced {
+                            actor.continuation.motion_state =
+                                crate::sprite::MotionState::Terminated;
+                        }
+                    }
                     // DoNextOrder may synchronously expose a real postponed
                     // successor through SetState/Ready. If it does not,
                     // Original leaves mpOrder null for the rest of this
