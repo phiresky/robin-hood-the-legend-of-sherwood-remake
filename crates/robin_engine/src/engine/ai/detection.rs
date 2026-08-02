@@ -161,7 +161,6 @@ struct SoldierSightContext {
     blipped: bool,
     position_map: MapPoint,
     camp: Camp,
-    is_rider: bool,
     ignore_bodies: bool,
 }
 
@@ -175,19 +174,21 @@ fn lacklandist_visibility_refresh_always(
     ) || view_alert_status != crate::ai::AlertLevel::Green
 }
 
+/// Original's forest-wide rear-view exception is camp-based. Mounted
+/// Royalists take the same 180-degree detection path as every other Royalist.
+fn forest_180_degree_view_enabled(is_forest_level: bool, viewer_camp: Camp) -> bool {
+    is_forest_level && viewer_camp == Camp::Royalists
+}
+
 impl SoldierSightContext {
     fn from_npc_viewer(
         npc_id: EntityId,
         entity: &Entity,
         viewer_building_sector: Option<crate::position_interface::SectorHandle>,
     ) -> Option<Self> {
-        let (npc, camp, is_rider) = match entity {
-            Entity::Soldier(soldier) => (
-                &soldier.npc,
-                soldier.soldier.cached_camp,
-                soldier.soldier.rider,
-            ),
-            Entity::Civilian(civilian) => (&civilian.npc, civilian.civilian.cached_camp, false),
+        let (npc, camp) = match entity {
+            Entity::Soldier(soldier) => (&soldier.npc, soldier.soldier.cached_camp),
+            Entity::Civilian(civilian) => (&civilian.npc, civilian.civilian.cached_camp),
             _ => return None,
         };
         // RefreshDetection's optical gate is narrower than its entry gate:
@@ -261,7 +262,6 @@ impl SoldierSightContext {
             blipped: entity.element_data().blipped,
             position_map,
             camp,
-            is_rider,
             ignore_bodies,
         })
     }
@@ -1865,9 +1865,10 @@ impl EngineInner {
                         real_half_aperture,
                         viewer_in_building,
                         target_in_same_building,
-                        forest_180_degree_view: viewer.camp == Camp::Royalists
-                            && is_forest_level
-                            && !viewer.is_rider,
+                        forest_180_degree_view: forest_180_degree_view_enabled(
+                            is_forest_level,
+                            viewer.camp,
+                        ),
                         golden_eye_mode: golden_eye,
                         // Resolved lazily below at Original's
                         // ComputeViewRadius call site.
@@ -4451,5 +4452,12 @@ mod tests {
             EyeStatus::Stare,
             AlertLevel::Green,
         ));
+    }
+
+    #[test]
+    fn forest_180_degree_view_depends_only_on_level_and_royalist_camp() {
+        assert!(forest_180_degree_view_enabled(true, Camp::Royalists));
+        assert!(!forest_180_degree_view_enabled(false, Camp::Royalists));
+        assert!(!forest_180_degree_view_enabled(true, Camp::Lacklandists));
     }
 }

@@ -3686,6 +3686,15 @@ backfilled for the corresponding civilian NPCs. Linux3 Profile 001 Savegame
 030 matches through its former frame-30378 divergence and now reaches the next
 independent mismatch at frame 30435.
 
+### Forest rear-view detection includes mounted Royalists
+
+Original's forest-level 180-degree detection exception depends only on the
+level being a forest and the observer belonging to the Royalist camp. Rust had
+invented a rider exclusion, so mounted Royalists incorrectly fell back to the
+ordinary forward cone. The periodic visibility query now uses the literal
+forest-and-camp predicate for every Royalist; a focused regression keeps rider
+state out of that decision entirely.
+
 ### Legacy AI adoption restores both saved seek positions
 
 Original saves serialize both `mposSeekPosition` and
