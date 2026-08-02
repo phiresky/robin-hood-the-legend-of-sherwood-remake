@@ -349,9 +349,10 @@ fn refresh_detection_scans_target(
 
 fn non_enemy_visibility_blocked_before_cadence(
     eye_status: crate::element::EyeStatus,
+    viewer_camp: Camp,
     type_gate_blocked: bool,
 ) -> bool {
-    eye_status.is_blind() || type_gate_blocked
+    eye_status.is_blind() || viewer_camp != Camp::Lacklandists || type_gate_blocked
 }
 
 fn missed_friend_or_beggar_target_blocked(dead: bool, unconscious: bool) -> bool {
@@ -3155,20 +3156,16 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
-            // RefreshDetection runs the per-type loop for both
-            // camps.  Restrict to Lacklandists for now — the audit
-            // notes Royalist body/object reactions have no consumer
-            // wired in the Rust AI layer yet, and exposing the loop
-            // there would create dead stimuli with no handlers.
+            // RefreshDetection runs the per-type loop for both camps.
+            // Royalist wrappers return zero for every non-Enemy type, but
+            // cleanup, outer scan bookkeeping, latches, and suspect decay
+            // still execute.
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let Some(viewer) =
                 SoldierSightContext::from_npc_viewer(npc_id, entity, building_sector)
             else {
                 return;
             };
-            if viewer.camp != Camp::Lacklandists {
-                return;
-            }
             (
                 viewer,
                 self.entity_data_inside_building(entity.element_data()),
@@ -3262,6 +3259,7 @@ impl EngineInner {
             ViewContext {
                 position_map: viewer.position_map,
                 viewer_inside_building,
+                camp: viewer.camp,
                 eye,
                 eye_z,
                 ground_z,
@@ -3301,6 +3299,7 @@ impl EngineInner {
             ViewContext {
                 position_map: viewer.position_map,
                 viewer_inside_building,
+                camp: viewer.camp,
                 eye,
                 eye_z,
                 ground_z,
@@ -3348,6 +3347,7 @@ impl EngineInner {
             ViewContext {
                 position_map: viewer.position_map,
                 viewer_inside_building,
+                camp: viewer.camp,
                 eye,
                 eye_z,
                 ground_z,
@@ -3392,6 +3392,7 @@ impl EngineInner {
             ViewContext {
                 position_map: viewer.position_map,
                 viewer_inside_building,
+                camp: viewer.camp,
                 eye,
                 eye_z,
                 ground_z,
@@ -3449,6 +3450,7 @@ impl EngineInner {
             ViewContext {
                 position_map: viewer.position_map,
                 viewer_inside_building,
+                camp: viewer.camp,
                 eye,
                 eye_z,
                 ground_z,
@@ -3554,6 +3556,7 @@ impl EngineInner {
             }
             let visibility: f32 = if non_enemy_visibility_blocked_before_cadence(
                 ctx.eye_status,
+                ctx.camp,
                 extra_gate_blocks_visibility
                     || ctx.viewer_in_building
                     || !target_pre_filter(target),
@@ -3643,9 +3646,10 @@ impl EngineInner {
             }
 
             det.seen_now = is_visible;
-            if gate_open {
-                det.last_visibility = visibility;
-            }
+            // The outer RefreshDetection loop writes the wrapper result on
+            // every scanned entry. Closed cadence reuses the same value;
+            // blind/type/camp rejections must overwrite a stale sample with 0.
+            det.last_visibility = visibility;
         }
 
         // `muwMaximalVisibility` spans the complete outer detectable-type
@@ -3857,6 +3861,7 @@ impl EngineInner {
             }
             let visibility: f32 = if non_enemy_visibility_blocked_before_cadence(
                 ctx.eye_status,
+                ctx.camp,
                 ctx.viewer_in_building,
             ) {
                 0.0
@@ -3889,9 +3894,8 @@ impl EngineInner {
                 sum_of_sharpnesses = sum_of_sharpnesses.saturating_add(sharpness);
             }
             det.seen_now = is_visible;
-            if gate_open {
-                det.last_visibility = visibility;
-            }
+            // Match the unconditional outer-loop SetLastVisibility write.
+            det.last_visibility = visibility;
         }
 
         if let Some(ai) = npc.ai_brain.base_mut() {
@@ -4026,6 +4030,7 @@ struct ViewContext<'a> {
     /// Original `IsInsideBuilding`: building sector or active door transit.
     /// Used only by RefreshDetection's outer scan-entry alternative.
     viewer_inside_building: bool,
+    camp: Camp,
     eye: MapPoint,
     eye_z: f32,
     ground_z: f32,
@@ -4063,17 +4068,25 @@ mod tests {
     }
 
     #[test]
-    fn blind_non_enemy_visibility_is_blocked_before_closed_cadence_reuse() {
+    fn blind_type_gate_and_royalist_block_non_enemy_visibility_before_cadence() {
         assert!(non_enemy_visibility_blocked_before_cadence(
             crate::element::EyeStatus::Closed,
+            Camp::Lacklandists,
             false,
         ));
         assert!(non_enemy_visibility_blocked_before_cadence(
             crate::element::EyeStatus::LookForward,
+            Camp::Lacklandists,
             true,
+        ));
+        assert!(non_enemy_visibility_blocked_before_cadence(
+            crate::element::EyeStatus::LookForward,
+            Camp::Royalists,
+            false,
         ));
         assert!(!non_enemy_visibility_blocked_before_cadence(
             crate::element::EyeStatus::LookForward,
+            Camp::Lacklandists,
             false,
         ));
     }

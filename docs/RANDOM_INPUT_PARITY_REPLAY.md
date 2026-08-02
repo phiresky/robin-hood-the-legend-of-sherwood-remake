@@ -2145,6 +2145,14 @@ The per-owner human snapshot now retains canonical dead state, and both
 buckets test the dead-or-unconscious pair instead of treating consciousness
 alone as sufficient. A truth-table regression covers both independent flags.
 
+Royalist NPCs do not skip the remaining detectable buckets wholesale.
+Original still performs cleanup, the outer box decision, zero-result latch
+maintenance, suspect decay, and maximal/worst-type bookkeeping; only the
+Royalist detectable wrapper forces Body, Object, Friend, MissedFriend, and
+Beggar visibility to zero before cadence. Rust now walks those buckets with a
+camp-aware pre-cadence zero gate, so stale non-enemy state cannot survive a
+camp transition or save load. The shared gate regression includes Royalists.
+
 ### Sequence-manager and script-VM boundary state
 
 Schema 13 now records the sequence manager's insertion-ordered sequences,
