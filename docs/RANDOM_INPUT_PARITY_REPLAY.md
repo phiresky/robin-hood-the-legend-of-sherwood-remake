@@ -2111,13 +2111,15 @@ the lazy path. A counter regression proves early-rejected and very-close
 targets never request a radius, while an eligible target requests it exactly
 once.
 
-The lazy computation retains Original's same-viewer/same-frame cache: Enemy,
-Body, Friend, MissedFriend, and Beggar buckets share one owner-local ground
-entry and one entry per projection obstacle for the contiguous
-`RefreshDetection` call. Thus the first eligible target performs the shadow
-LOS work and later targets on the same surface reuse it without appending
-duplicate parity queries. A focused cache regression covers both ground and
-obstacle keys.
+The lazy computation retains Original's surface-owned same-viewer/same-frame
+cache. Each ground or projection surface stores one last viewer, universal
+frame, and radius; a different viewer overwrites that surface. Enemy, Body,
+Friend, MissedFriend, and Beggar buckets therefore share the first eligible
+result across the contiguous `RefreshDetection` call, and later synchronous AI
+`IsDetecting` or script-native `Sees` calls in the same frame reuse or update
+the same engine-owned state. Zero remains Original's miss sentinel and is
+recomputed. Focused regressions cover ground/obstacle keys, exact frame and
+viewer matching, last-writer replacement, and zero misses.
 
 `RefreshDetection` also has an outer scan gate before detectable-type cadence
 and `ComputeVisibility`: an entry is evaluated only when its previous
@@ -2161,6 +2163,23 @@ than preserving the pre-disguise sample. Rust now writes every final Enemy
 wrapper result, preventing the old visibility from reappearing if the PC
 changes order before the next cadence. A focused regression feeds reused
 visibility through resting and transition beggar orders.
+
+### Persistent view-radius cache boundary state
+
+Schema 13 records the behaviorally reusable portion of the view-radius cache
+at every stable frame boundary. The snapshot emits the current universal
+frame followed by ground first and then authored projection surfaces in their
+projection-array order. Viewer pointers are emitted as entity references and
+mapped through the construction-order isomorphism; Rust obstacle handles are
+translated back to the same filtered projection ordinal, so runtime allocation
+IDs are not compared.
+
+Stale entries and zero-radius writes are deliberately omitted because
+Original's getter treats both as cache misses. A current nonzero entry must
+reference a live viewer, a real projection surface, and a finite radius or
+capture/comparison fails. Geometry, diagnostic query caches, and presentation
+state remain outside this snapshot. Adding this required structured state
+changes the native parity cache to version 15.
 
 ### Sequence-manager and script-VM boundary state
 
