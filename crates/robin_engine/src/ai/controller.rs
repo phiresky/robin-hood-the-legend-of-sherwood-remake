@@ -1241,12 +1241,17 @@ impl AiController {
     /// * When `target` is zero, zero `sorrow_level` and enqueue a
     ///   second delete (belt-and-braces).
     ///
-    /// The engine drains `pending_delete_detectables` before
-    /// `pending_add_detectables` in [`EngineInner::tick_ai_pending_*`],
-    /// so a non-zero call correctly clears the list then re-adds the
-    /// target.
+    /// Detectable effects are drained after the synchronous AI call returns.
+    /// Every invocation therefore removes an earlier queued MissedFriend add:
+    /// Original executes each clear/add pair immediately, so consecutive calls
+    /// have last-call-wins semantics (`A -> null` leaves none, `A -> B` leaves
+    /// only B).
     pub fn set_checkpoint_charly(&mut self, target: NpcHandle) {
         use crate::element::DetectableType;
+        self.outbox
+            .actor
+            .add_detectables
+            .retain(|(_, kind)| *kind != DetectableType::MissedFriend);
         self.outbox
             .actor
             .delete_detectables
@@ -4440,6 +4445,28 @@ impl ConsiderationAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_checkpoint_charly_calls_preserve_immediate_original_order() {
+        use crate::element::{DetectableType, EntityId};
+        use crate::entity_id::SoldierId;
+
+        let mut cleared = AiController::new(17);
+        cleared.set_checkpoint_charly(10);
+        cleared.set_checkpoint_charly(0);
+        assert!(cleared.outbox.actor.add_detectables.is_empty());
+
+        let mut replaced = AiController::new(17);
+        replaced.set_checkpoint_charly(10);
+        replaced.set_checkpoint_charly(11);
+        assert_eq!(
+            replaced.outbox.actor.add_detectables,
+            vec![(
+                EntityId::Soldier(SoldierId(11)),
+                DetectableType::MissedFriend,
+            )]
+        );
+    }
 
     #[test]
     fn relative_synchronize_indices_narrow_like_original_uword() {

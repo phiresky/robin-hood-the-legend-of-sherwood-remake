@@ -3768,6 +3768,16 @@ world Y with the target ground Z, and then raises only world Z by one unit.
 Copying projected map Y directly into the world endpoint introduced a false
 elevation-sized diagonal in every raised-object sight ray.
 
+`SetCheckpointCharly` performs its detectable-list changes immediately in
+Original: clear MissedFriend, optionally add the new checkpoint, and a null
+checkpoint clears again. Rust queues actor effects until the AI borrow is
+released, and the generic drain groups every clear before every add. Two calls
+in one stack therefore used to turn `A -> null` into a stale A and `A -> B`
+into both A and B. Each call now supersedes any earlier queued MissedFriend add
+before recording its final target. This fixes Savegame 068's pure CheckForSync
+path, which installs its synchronization target and immediately clears the
+temporary checkpoint in the same macro command.
+
 ### Synchronous actor visibility keeps raw geometry separate from AI Position
 
 Original `IsDetecting360Degrees(actor)` admits every active actor outside a
