@@ -4979,18 +4979,17 @@ impl SequenceManager {
     /// element finishes.  `Wait` and `AssertPosition` are skipped
     /// (treated as non-actions).
     pub fn is_last_real_action(&self, seq_id: SequenceId, elem_idx: usize) -> bool {
-        // A queued postponed element counts as a pending real action.
-        // Both the intra-sequence hold (`postponed_element_index`) and
-        // the cross-sequence hand-off (`cross_postponed`) are released
-        // when this element terminates, so either form means "real
-        // action coming" and we must report not-last.
-        if let Some(this) = self.get_element(seq_id, elem_idx)
-            && (this.postponed_element_index.is_some() || this.cross_postponed.is_some())
-        {
-            return false;
-        }
         let mut cur = (seq_id, elem_idx);
         loop {
+            // Original recursively calls IsLastRealAction for every skipped
+            // Wait/AssertPosition, and each invocation checks that node's
+            // postponed pointer before following `next` again.
+            let Some(this) = self.get_element(cur.0, cur.1) else {
+                return true;
+            };
+            if this.postponed_element_index.is_some() || this.cross_postponed.is_some() {
+                return false;
+            }
             let Some((next_seq, next_idx)) = self.next_element_in_chain(cur.0, cur.1) else {
                 return true;
             };
@@ -7023,6 +7022,29 @@ mod tests {
 
         assert!(mgr.is_next_movement(sequence_id, 0));
         assert!(!mgr.is_last_real_action(sequence_id, 0));
+    }
+
+    #[test]
+    fn last_real_action_checks_postponed_on_each_skipped_follower() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(1));
+        for skipped_command in [Command::Wait, Command::AssertPosition] {
+            let mut mgr = SequenceManager::new();
+            let mut primary = Sequence::new();
+            primary.append_element(SequenceElement::new(1, Command::Generic, Some(owner)));
+            primary.append_element(SequenceElement::new(2, skipped_command, Some(owner)));
+            let primary_id = mgr.launch_sequence(primary);
+
+            let postponed_id =
+                mgr.launch_element(SequenceElement::new(1, Command::Generic, Some(owner)));
+            mgr.get_element_mut(primary_id, 1)
+                .expect("skipped follower exists")
+                .cross_postponed = Some((postponed_id, 0));
+
+            assert!(
+                !mgr.is_last_real_action(primary_id, 0),
+                "{skipped_command:?} follower's postponed action must count as real"
+            );
+        }
     }
 
     #[test]
