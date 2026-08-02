@@ -283,9 +283,55 @@ fn primary_target_lift_approach(
     }))
 }
 
+/// Preserve `InitializePatrol`'s left-to-right C++ `&&` evaluation.
+///
+/// The visibility operand precedes the member-state predicates, so an active
+/// outdoor member can emit an authoritative LOS query even when it is not in
+/// `STATE_DEFAULT` and will therefore not be admitted.
+fn patrol_member_admitted(
+    both_active: bool,
+    detect_360: impl FnOnce() -> bool,
+    ai_state: crate::ai::AiState,
+    is_civilian: bool,
+    is_able_to_fight: bool,
+) -> bool {
+    let detected = both_active && detect_360();
+    detected && ai_state == crate::ai::AiState::Default && (is_civilian || is_able_to_fight)
+}
+
 #[cfg(test)]
 mod parity_tests {
     use super::*;
+
+    #[test]
+    fn patrol_visibility_precedes_member_admission_predicates() {
+        let calls = std::cell::Cell::new(0);
+        let admitted = patrol_member_admitted(
+            true,
+            || {
+                calls.set(calls.get() + 1);
+                true
+            },
+            crate::ai::AiState::Attacking,
+            false,
+            false,
+        );
+        assert!(!admitted);
+        assert_eq!(calls.get(), 1, "visibility must run before state rejection");
+
+        let admitted = patrol_member_admitted(
+            false,
+            || {
+                calls.set(calls.get() + 1);
+                true
+            },
+            crate::ai::AiState::Default,
+            false,
+            true,
+        );
+        assert!(!admitted);
+        assert_eq!(calls.get(), 1, "inactive actors return before LOS");
+    }
 
     fn lift_grid(lift_type: crate::sector::LiftType) -> crate::fast_find_grid::FastFindGrid {
         let mut grid = crate::fast_find_grid::FastFindGrid::new();
@@ -8431,33 +8477,35 @@ impl EngineInner {
                         // is_able_to_fight())`.  Members failing the
                         // gate but still alive flow into the missed
                         // list for later re-acquisition.
-                        let mut admit = snap.is_active
-                            && snap.is_alive
-                            && snap.ai_state == AiState::Default
-                            && (snap.is_civilian || snap.is_able_to_fight);
-                        if admit {
-                            // `IsDetecting360Degrees(RHElementActorHuman*)`
-                            // uses the chief's upright eye point and the
-                            // member's posture-dependent detection point for
-                            // both its 3-D distance and opaque-obstacle ray.
-                            // A projected 2-D polygon test is not equivalent:
-                            // low obstacles can cross the ground segment while
-                            // remaining below both endpoints' sight line.
-                            admit = crate::ai_enemy::soldier_detects_target_360(
-                                chief_snap.position,
-                                chief_snap.ground_z,
-                                chief_snap.is_rider,
-                                chief_snap.real_view_radius,
-                                chief_snap.in_building,
-                                snap.position,
-                                snap.ground_z,
-                                snap.posture,
-                                snap.is_rider,
-                                snap.direction as i16,
-                                snap.in_building,
-                                obstacles,
-                            );
-                        }
+                        // `IsDetecting360Degrees(RHElementActorHuman*)`
+                        // is the first operand in Original's admission chain.
+                        // It uses the chief's upright eye point and the
+                        // member's posture-dependent detection point for both
+                        // its 3-D distance and opaque-obstacle ray. Preserve
+                        // that call before the state/fighting predicates so
+                        // rejected active members still produce the same LOS.
+                        let admit = patrol_member_admitted(
+                            chief_snap.is_active && snap.is_active,
+                            || {
+                                crate::ai_enemy::soldier_detects_target_360(
+                                    chief_snap.position,
+                                    chief_snap.ground_z,
+                                    chief_snap.is_rider,
+                                    chief_snap.real_view_radius,
+                                    chief_snap.in_building,
+                                    snap.position,
+                                    snap.ground_z,
+                                    snap.posture,
+                                    snap.is_rider,
+                                    snap.direction as i16,
+                                    snap.in_building,
+                                    obstacles,
+                                )
+                            },
+                            snap.ai_state,
+                            snap.is_civilian,
+                            snap.is_able_to_fight,
+                        );
                         if admit {
                             ai.patrol.push(member);
                             chief_assigns.push((member, npc_id));
@@ -11474,26 +11522,34 @@ impl EngineInner {
                 continue;
             }
             let snap = snapshot(member);
-            let mut admit = snap.is_active
-                && snap.is_alive
-                && snap.ai_state == crate::ai::AiState::Default
-                && (snap.is_civilian || snap.is_able_to_fight);
-            if admit {
-                admit = crate::ai_enemy::soldier_detects_target_360(
-                    chief_snap.position,
-                    chief_snap.ground_z,
-                    chief_snap.is_rider,
-                    chief_real_view_radius,
-                    chief_snap.in_building,
-                    snap.position,
-                    snap.ground_z,
-                    snap.posture,
-                    snap.is_rider,
-                    snap.direction as i16,
-                    snap.in_building,
-                    obstacles,
-                );
-            }
+            // Original evaluates IsDetecting360Degrees first in the `&&`
+            // chain. An active, outdoor member therefore emits its LOS query
+            // even when its later AI-state / able-to-fight gate rejects it.
+            // Pre-gating visibility on those later predicates loses the
+            // chief-to-member prefix and lets ReturnToDutyCommonStuff's
+            // reciprocal member queries appear first in the frame trace.
+            let admit = patrol_member_admitted(
+                chief_snap.is_active && snap.is_active,
+                || {
+                    crate::ai_enemy::soldier_detects_target_360(
+                        chief_snap.position,
+                        chief_snap.ground_z,
+                        chief_snap.is_rider,
+                        chief_real_view_radius,
+                        chief_snap.in_building,
+                        snap.position,
+                        snap.ground_z,
+                        snap.posture,
+                        snap.is_rider,
+                        snap.direction as i16,
+                        snap.in_building,
+                        obstacles,
+                    )
+                },
+                snap.ai_state,
+                snap.is_civilian,
+                snap.is_able_to_fight,
+            );
             if admit {
                 patrol.push((member, snap));
             } else if snap.is_alive {
