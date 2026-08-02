@@ -151,14 +151,20 @@ impl EnemyAi {
             self.base
                 .outbox
                 .actor
+                .add_detectables
+                .retain(|(_, detectable_type)| *detectable_type != DetectableType::Beggar);
+            self.base
+                .outbox
+                .actor
                 .delete_detectables
                 .push(DetectableType::Beggar);
             let mut beggars: Vec<_> = ctx
                 .entity_views
                 .iter()
                 .filter_map(|(&handle, view)| {
-                    let is_true_or_false_beggar =
-                        view.is_beggar || (view.is_pc && view.posture == Posture::SimulatingBeggar);
+                    let is_true_or_false_beggar = (view.is_civilian() && view.is_beggar)
+                        || ((view.is_pc || view.is_soldier())
+                            && view.posture == Posture::SimulatingBeggar);
                     is_true_or_false_beggar.then(|| {
                         (
                             view.original_creation_order,
