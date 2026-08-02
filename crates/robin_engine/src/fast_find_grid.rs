@@ -2599,6 +2599,19 @@ impl FastFindGrid {
         let mut result = Vec::new();
         for cy in y_min..=y_max {
             for cx in x_min..=x_max {
+                let block_bbox = MapBBox::from_coords(
+                    f32::from(cx) * GRID_CELL_SIZE_F,
+                    f32::from(cy) * GRID_CELL_SIZE_F,
+                    f32::from(cx) * GRID_CELL_SIZE_F + GRID_CELL_SIZE_F,
+                    f32::from(cy) * GRID_CELL_SIZE_F + GRID_CELL_SIZE_F,
+                );
+                let movement_touches_block = block_bbox.0.is_some_and(|rect| {
+                    use geo::Intersects;
+                    rect.intersects(&movement)
+                });
+                if !movement_touches_block {
+                    continue;
+                }
                 let block_idx = self.block_index_from_cell(cx, cy, layer);
                 if block_idx >= self.level.blocks.len() {
                     continue;
