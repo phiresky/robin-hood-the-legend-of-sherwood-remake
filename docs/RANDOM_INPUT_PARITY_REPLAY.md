@@ -3407,6 +3407,21 @@ on that layer it considers all projection obstacles, matching the Original's
 layer-0 plane registration. Human and other ordinary visibility destinations
 remain fully 3D.
 
+### Missed-patrol visibility precedes the ability gate
+
+All fifteen Linux3 Savegame 030 random traces first diverged at frame 30264
+because Original emitted one more visibility query. The query was patrol chief
+Civilian 120 checking missed patrol member Civilian 121; all later queries
+aligned after that missing prefix.
+
+Original `RefreshPatrol` evaluates
+`IsDetecting360Degrees(member) && member->IsAbleToHelp() && state == DEFAULT`
+from left to right. A civilian's default `IsAbleToHelp` returns false, but only
+after the authoritative distance/opaque-LOS check has run. Rust pre-gated the
+query on ability and state. Missed-member re-acquisition now preserves the
+source evaluation order while retaining the inactive-actor short circuit. A
+regression verifies that visibility runs before both later rejection gates.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

@@ -299,6 +299,21 @@ fn patrol_member_admitted(
     detected && ai_state == crate::ai::AiState::Default && (is_civilian || is_able_to_fight)
 }
 
+/// Preserve `RefreshPatrol`'s missed-member `&&` evaluation order.
+///
+/// Original calls `IsDetecting360Degrees` before `IsAbleToHelp` and the AI
+/// state check. A visible civilian therefore emits the LOS query even though
+/// its default `IsAbleToHelp` implementation rejects re-acquisition.
+fn missed_patrol_member_reacquired(
+    both_active: bool,
+    detect_360: impl FnOnce() -> bool,
+    is_able_to_help: bool,
+    ai_state: crate::ai::AiState,
+) -> bool {
+    let detected = both_active && detect_360();
+    detected && is_able_to_help && ai_state == crate::ai::AiState::Default
+}
+
 #[cfg(test)]
 mod parity_tests {
     use super::*;
@@ -330,6 +345,38 @@ mod parity_tests {
             true,
         );
         assert!(!admitted);
+        assert_eq!(calls.get(), 1, "inactive actors return before LOS");
+    }
+
+    #[test]
+    fn missed_patrol_visibility_precedes_ability_and_state_predicates() {
+        let calls = std::cell::Cell::new(0);
+        let reacquired = missed_patrol_member_reacquired(
+            true,
+            || {
+                calls.set(calls.get() + 1);
+                true
+            },
+            false,
+            crate::ai::AiState::Attacking,
+        );
+        assert!(!reacquired);
+        assert_eq!(
+            calls.get(),
+            1,
+            "visibility must run before ability rejection"
+        );
+
+        let reacquired = missed_patrol_member_reacquired(
+            false,
+            || {
+                calls.set(calls.get() + 1);
+                true
+            },
+            true,
+            crate::ai::AiState::Default,
+        );
+        assert!(!reacquired);
         assert_eq!(calls.get(), 1, "inactive actors return before LOS");
     }
 
@@ -8685,26 +8732,28 @@ impl EngineInner {
             let obstacles = obstacles_owned.list();
             for (i, &member) in missed.iter().enumerate() {
                 if let (Some(chief_s), Some(member_s)) = (chief_snap, snaps.get(&member))
-                    && member_s.is_active
-                    && member_s.is_able_to_help
-                    && member_s.ai_state == AiState::Default
+                    && missed_patrol_member_reacquired(
+                        chief_s.is_active && member_s.is_active,
+                        || {
+                            crate::ai_enemy::soldier_detects_target_360(
+                                chief_s.position,
+                                chief_s.ground_z,
+                                chief_s.is_rider,
+                                chief_s.real_view_radius,
+                                chief_s.in_building,
+                                member_s.position,
+                                member_s.ground_z,
+                                member_s.posture,
+                                member_s.is_rider,
+                                member_s.direction as i16,
+                                member_s.in_building,
+                                obstacles,
+                            )
+                        },
+                        member_s.is_able_to_help,
+                        member_s.ai_state,
+                    )
                 {
-                    if !crate::ai_enemy::soldier_detects_target_360(
-                        chief_s.position,
-                        chief_s.ground_z,
-                        chief_s.is_rider,
-                        chief_s.real_view_radius,
-                        chief_s.in_building,
-                        member_s.position,
-                        member_s.ground_z,
-                        member_s.posture,
-                        member_s.is_rider,
-                        member_s.direction as i16,
-                        member_s.in_building,
-                        obstacles,
-                    ) {
-                        continue;
-                    }
                     reacquired.push(i);
                     ai.patrol.push(member);
                     chief_assigns.push((member, npc_id));
