@@ -232,7 +232,7 @@ impl Engine {
             };
             json!({ "kind": kind, "index": id.index() })
         };
-        let entity = self.inner.entities.get(id).unwrap_or_else(|| {
+        let entity = self.inner.world.entities.get(id).unwrap_or_else(|| {
             panic!("parity runtime projection references missing entity {id:?}")
         });
         let sprite = &entity.element_data().sprite;
