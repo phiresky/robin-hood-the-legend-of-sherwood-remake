@@ -1383,6 +1383,13 @@ impl PositionInterface {
         self.door
     }
     #[inline]
+    pub(crate) fn set_door(&mut self, door: DoorHandle, direction: bool) {
+        self.door = door;
+        if !door.is_null() {
+            self.door_direction = direction;
+        }
+    }
+    #[inline]
     pub(crate) fn clear_door(&mut self) {
         self.door = DoorHandle::NULL;
     }

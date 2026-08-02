@@ -1025,6 +1025,8 @@ impl PassDoorLaunchContext<'_> {
         tolerance: f32,
         active_door_pass: ActiveDoorPass,
     ) {
+        let door_handle = crate::position_interface::DoorHandle(active_door_pass.door_index.0);
+        let door_direction = active_door_pass.direct;
         let order_id = crate::order::alloc_order_id(self.next_order_id);
         let mut order = crate::order::Order::new(action, destination.x, destination.y, order_id);
         order.reverse = reverse;
@@ -1032,15 +1034,23 @@ impl PassDoorLaunchContext<'_> {
         order.tolerance = tolerance;
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
 
-        let actor = self
-            .entities
-            .get_mut(entity_id)
-            .and_then(crate::element::Entity::actor_data_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "PassDoor initial walk for {entity_id:?} at {seq_id:?}/{elem_idx} lost its actor"
-                )
-            });
+        let entity = self.entities.get_mut(entity_id).unwrap_or_else(|| {
+            panic!(
+                "PassDoor initial walk for {entity_id:?} at {seq_id:?}/{elem_idx} lost its actor"
+            )
+        });
+        // Original Translate installs the door pointer before constructing
+        // the translated order chain. IsInsideBuilding observes that pointer
+        // throughout the pre-trigger rail movement, even while the actor's
+        // sector still names the outdoor side.
+        entity
+            .position_iface_mut()
+            .set_door(door_handle, door_direction);
+        let actor = entity.actor_data_mut().unwrap_or_else(|| {
+            panic!(
+                "PassDoor initial walk for {entity_id:?} at {seq_id:?}/{elem_idx} lost its actor"
+            )
+        });
         actor.active_movement = crate::movement::ActiveMovement::new(seq_id, elem_idx);
         actor.passing_door_directly = active_door_pass.position_direct;
         actor.active_door_pass = Some(active_door_pass);
@@ -1335,6 +1345,10 @@ impl EngineInner {
         elem.set_sector(crate::position_interface::SectorHandle::new(u16::from(
             target_sector_num,
         )));
+        // RHElementActor::PassDoor consumes the sprite door pointer on the
+        // first PassingDoor callback. A later callback only restores
+        // anti-collision and must continue to observe a null door.
+        elem.sprite.position_iface.clear_door();
         tracing::debug!(
             entity_id = ?entity_id,
             layer = target_layer,
@@ -2132,6 +2146,15 @@ mod tests {
             assert_eq!((order.target_x, order.target_y), (20.0, 30.0));
             let entity = engine.world.entities.get(owner).unwrap();
             assert!(!entity.position_iface().is_anti_collision_on());
+            assert_eq!(
+                entity.position_iface().get_door(),
+                crate::position_interface::DoorHandle(0),
+                "translated door movement must expose Original's sprite door pointer"
+            );
+            assert_eq!(
+                entity.position_iface().get_door_direction(),
+                expected_direct
+            );
             let pass = entity
                 .actor_data()
                 .unwrap()
