@@ -80,6 +80,32 @@ mod group_move_authorization_tests {
     }
 
     #[test]
+    fn mercenary_box_preserves_original_float_operation_order() {
+        // Savegame_032/replay-006 exposed this exact boundary: collapsing
+        // `(box - center) + click` into `box + (click - center)` rounds the
+        // final X coordinate down by one ULP.
+        let actor_x = f32::from_bits(1_151_945_109);
+        let click_x = f32::from_bits(1_124_501_081);
+        let actor = MapPoint::new(actor_x, 688.9211);
+        let click = MapPoint::new(click_x, 489.68);
+        let live_box =
+            MapBBox::from_coords(actor.x - 6.0, actor.y - 4.0, actor.x + 6.0, actor.y + 4.0);
+
+        let source_order = group_move_mercenary_box(
+            live_box,
+            MoveBox::from_coords(-6.0, -4.0, 6.0, 4.0),
+            actor,
+            actor,
+            click,
+            false,
+        );
+        let collapsed = live_box.translated(click - actor);
+
+        assert_eq!(source_order.center().x.to_bits(), 1_124_501_081);
+        assert_eq!(collapsed.center().x.to_bits(), 1_124_501_080);
+    }
+
+    #[test]
     fn lift_formation_uses_upright_zero_centered_box() {
         let bbox = group_move_candidate_box(
             MapBBox::from_coords(90.0, 90.0, 110.0, 110.0),
@@ -1545,6 +1571,32 @@ fn group_move_candidate_box(
     }
 }
 
+/// Build a compact-group formation box in the same sequence of floating-point
+/// operations as `RHEngine::PerformGroupMove`:
+///
+/// * ordinary: `GetMoveBoxMap() - vectorCenter + pointDestination`
+/// * lift: `GetMoveBox(Upright) + actorPosition - vectorCenter + pointDestination`
+///
+/// These translations must not be algebraically collapsed. The intermediate
+/// rounding is observable in the path goal recorded by the Original engine.
+fn group_move_mercenary_box(
+    live_move_box_map: MapBBox,
+    upright_move_box: crate::coordinates::MoveBox,
+    actor_position: MapPoint,
+    center: MapPoint,
+    click: MapPoint,
+    is_lift: bool,
+) -> MapBBox {
+    let centered = if is_lift {
+        upright_move_box
+            .translated(actor_position)
+            .translated(MapVec::new(-center.x, -center.y))
+    } else {
+        live_move_box_map.translated(MapVec::new(-center.x, -center.y))
+    };
+    centered.translated(MapVec::new(click.x, click.y))
+}
+
 fn group_move_sector_kinds(sector_type: crate::sector::SectorType) -> (bool, bool, bool) {
     (
         sector_type.is_lift(),
@@ -2731,11 +2783,25 @@ impl EngineInner {
         // If the group is compact enough, use mercenary formation
         // (preserve relative positions).  Otherwise use circular
         // dispatch (arrange in a circle around click).
-        let pc_positions: Vec<MapPoint> = positions.iter().map(|(_, p, _, _)| *p).collect();
-        let dests = {
+        let pc_positions: Vec<MapPoint> = positions
+            .iter()
+            .map(|(pc_id, _, _, _)| {
+                self.get_entity(*pc_id)
+                    .unwrap_or_else(|| panic!("selected group-move actor {pc_id:?} is missing"))
+                    .element_data()
+                    .position_map()
+            })
+            .collect();
+        let (mercenary_center, dests) = {
             let n = pc_positions.len() as f32;
-            let cx = pc_positions.iter().map(|p| p.x).sum::<f32>() / n;
-            let cy = pc_positions.iter().map(|p| p.y).sum::<f32>() / n;
+            let mut cx = pc_positions.iter().map(|p| p.x).sum::<f32>();
+            let mut cy = pc_positions.iter().map(|p| p.y).sum::<f32>();
+            // Original multiplies the accumulated vector by the reciprocal;
+            // preserve that operation rather than compiling this as two
+            // divisions with potentially different rounding.
+            let reciprocal = 1.0f32 / n;
+            cx *= reciprocal;
+            cy *= reciprocal;
             let max_sq_dist = pc_positions
                 .iter()
                 .map(|p| {
@@ -2745,9 +2811,15 @@ impl EngineInner {
                 })
                 .fold(0.0f32, f32::max);
             if max_sq_dist <= GROUP_LIMIT_MAX * GROUP_LIMIT_MAX {
-                mercenary_formation_destinations(&pc_positions, effective_click)
+                (
+                    Some(MapPoint::new(cx, cy)),
+                    mercenary_formation_destinations(&pc_positions, effective_click),
+                )
             } else {
-                circular_dispatch_destinations(&pc_positions, effective_click)
+                (
+                    None,
+                    circular_dispatch_destinations(&pc_positions, effective_click),
+                )
             }
         };
 
@@ -2755,7 +2827,47 @@ impl EngineInner {
         // For each PC, decide between:
         //   1. Same-sector: simple MOVE
         //   2. Cross-sector (door/lift): gate-A* sequence
-        for ((pc_id, _, pc_src_layer, src_sector), dest) in positions.iter().zip(dests.iter()) {
+        for ((pc_id, _, pc_src_layer, src_sector), formation_dest) in
+            positions.iter().zip(dests.iter())
+        {
+            // Compact-group placement is authorized exactly once, before
+            // PerformMove, using the box produced by Original's ordered
+            // `box - center + click` translations. Reconstructing a point
+            // first and then translating the box is algebraically equivalent
+            // but changes f32 rounding at path-goal boundaries.
+            let mercenary_dest;
+            let dest = if let Some(center) = mercenary_center {
+                let Some(entity) = self.get_entity(*pc_id) else {
+                    panic!("selected group-move actor {pc_id:?} is missing");
+                };
+                let position = entity.position_iface();
+                let mut bbox = group_move_mercenary_box(
+                    *position.get_move_box_map(),
+                    *position.get_move_box(),
+                    entity.element_data().position_map(),
+                    center,
+                    effective_click,
+                    is_lift_click,
+                );
+                if !is_door_click
+                    && !self.world.fast_grid.find_authorized_position_toward(
+                        &mut bbox,
+                        effective_click,
+                        effective_layer,
+                    )
+                {
+                    self.hero_speaking(
+                        assets,
+                        *pc_id,
+                        crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+                    );
+                    continue;
+                }
+                mercenary_dest = bbox.center();
+                &mercenary_dest
+            } else {
+                formation_dest
+            };
             let mut pc_goal_sector = goal_sector;
             let mut pc_effective_layer = effective_layer;
             if is_jump_click {
@@ -2765,13 +2877,18 @@ impl EngineInner {
                 // apply that same move-box authorization here; the coarse
                 // nearest-walkable fallback is not equivalent near a jump
                 // landing boundary.
-                let Some(resolved_jump_dest) = self.authorize_group_move_destination(
-                    *pc_id,
-                    *dest,
-                    effective_click,
-                    pc_effective_layer,
-                    is_lift_click,
-                ) else {
+                let resolved_jump_dest = if mercenary_center.is_some() {
+                    Some(*dest)
+                } else {
+                    self.authorize_group_move_destination(
+                        *pc_id,
+                        *dest,
+                        effective_click,
+                        pc_effective_layer,
+                        is_lift_click,
+                    )
+                };
+                let Some(resolved_jump_dest) = resolved_jump_dest else {
                     self.hero_speaking(
                         assets,
                         *pc_id,
@@ -2922,7 +3039,7 @@ impl EngineInner {
                     }))
             {
                 // Door clicks skip the walkable snap entirely.
-                let snap_res = if is_door_click {
+                let snap_res = if is_door_click || mercenary_center.is_some() {
                     Some(*dest)
                 } else {
                     self.authorize_group_move_destination(
@@ -3051,7 +3168,7 @@ impl EngineInner {
             // This is also required for a single PC clicking a lift: the
             // authored click can be shifted slightly so the upright move box
             // fits inside the narrow wall/ladder rail.
-            let resolved_dest = if is_door_click {
+            let resolved_dest = if is_door_click || mercenary_center.is_some() {
                 *dest
             } else {
                 let Some(resolved) = self.authorize_group_move_destination(
