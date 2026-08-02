@@ -1124,12 +1124,12 @@ impl EngineInner {
     /// `check_sequence_element_validity` arms that need to re-gate a
     /// queued command against the PC's current ability to execute,
     /// plus any future per-action enable predicate.
-    /// Reads the PC's ammo counter from
-    /// `campaign.characters[profile_index].status` since `PcData` does
-    /// not store ammo directly (it lives on the campaign-level
-    /// `PcStatus` shared with the save system).  Returns `false` if
-    /// the actor isn't a PC, the campaign isn't loaded, or the PC
-    /// description isn't found.
+    /// Reads the PC's ammo counter from its exact campaign description since
+    /// `PcData` does not store authoritative ammo independently (it lives on
+    /// the campaign-level `PcStatus` shared with the save system). Character
+    /// profiles are not unique in the campaign table, so `profile_index`
+    /// cannot identify this status. Returns `false` if the actor isn't a PC
+    /// or its serialized campaign-description identity cannot be resolved.
     fn pc_has_ammo(&self, pc_id: EntityId, action: crate::profiles::Action) -> bool {
         let Some(entity) = self.get_entity(pc_id) else {
             return false;
@@ -1137,12 +1137,7 @@ impl EngineInner {
         let Some(pc) = entity.pc_data() else {
             return false;
         };
-        let Some(campaign) = Some(&self.mission_domain.campaign) else {
-            return false;
-        };
-        campaign
-            .characters
-            .get(usize::from(pc.profile_index))
+        self.pc_description_for_pc_data(pc)
             .map(|d| d.status.get_ammo(action) > 0)
             .unwrap_or(false)
     }
@@ -1562,6 +1557,33 @@ mod tests {
                 "PC TAKE should still accept {object_type:?}"
             );
         }
+    }
+
+    #[test]
+    fn pc_ammo_validity_uses_campaign_description_identity_not_profile_index() {
+        let mut campaign = crate::campaign::Campaign::default();
+        let mut wrong_character = crate::campaign::PcDescription {
+            character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
+            ..Default::default()
+        };
+        wrong_character.status.num_rations = 0;
+        let mut actual_character = crate::campaign::PcDescription {
+            character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
+            ..Default::default()
+        };
+        actual_character.status.num_rations = 3;
+        campaign.characters = vec![wrong_character, actual_character];
+
+        let mut engine = EngineInner::new_with_campaign(campaign);
+        let pc_id = add_pc(&mut engine);
+        let pc = engine
+            .get_entity_mut(pc_id)
+            .and_then(Entity::pc_data_mut)
+            .expect("test PC data");
+        pc.profile_index = crate::profiles::CharacterProfileIdx(0);
+        pc.campaign_description_index = Some(1);
+
+        assert!(engine.pc_has_ammo(pc_id, crate::profiles::Action::Eat));
     }
 
     #[test]

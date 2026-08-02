@@ -2776,6 +2776,21 @@ Original top/right/bottom/left edge order and mixed-precision arithmetic for
 all enter/leave-game border computations. The H12 result is now exactly
 `(-55.43277359008789, 2245.725830078125)`.
 
+### PC validity resolves the exact campaign character
+
+Sherwood Savegame 008 replay 001 reached `EatCmd` for Much Little with three
+rations and 66 life points. Its eating order was translated correctly, but
+Rust's init-validity pre-pass terminated it before the first Eating frame. The
+helper had indexed `campaign.characters` with sprite `profile_index` 9 and
+therefore read a different character using the same profile, Harold Tanner,
+whose status had zero rations and full health.
+
+Original `RHElementActorPC` retains a serialized description/status pointer;
+Rust represents its stable identity as `campaign_description_index`. Ammo
+validity now resolves that exact description through the shared checked
+helper, matching the other ability paths and supporting duplicate profile
+indices throughout the campaign rather than special-casing Eat or this PC.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
