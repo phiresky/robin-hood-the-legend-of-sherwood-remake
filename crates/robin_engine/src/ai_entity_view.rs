@@ -26,7 +26,7 @@ use std::sync::Arc;
 use crate::ai::{AiState, Position, Substate};
 use crate::element::{Camp, Entity, Posture};
 use crate::order::OrderType;
-use crate::position_interface::MapPoint;
+use crate::coordinates::MapPoint;
 
 /// Snapshot of a single entity's AI-facing state at the top of the
 /// current tick.
