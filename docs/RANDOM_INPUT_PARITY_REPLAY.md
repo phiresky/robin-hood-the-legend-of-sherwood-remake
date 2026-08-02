@@ -2633,6 +2633,15 @@ result in the sprite motion latch consumed later by the owner coordinator,
 instead of writing the actor continuation early and having it overwritten by
 the raw sprite edge in the same slot.
 
+The frozen schema-v28 rerun is under
+`output/parity-audits/random-long-after-2988-v28-20260802/`. Two of the 19
+traces now reach exact EOF. The direct-door endpoint repair clears all eight
+former exact-zero residue boundaries, and the corrected Listen publication
+clears that frontier as well. Three Continue traces now meet at the separate
+unauthorized move-box extraction arithmetic boundary. The other 14 failures
+are later command, motion, sprite, path-event, and ScriptRand frontiers; none
+regress to projectile settlement or door-endpoint state.
+
 ### Schema-v24 visibility-call frontier: grid-selected lights and post coordinates
 
 Two visibility-query count divergences exposed general coordinate/spatial-query
@@ -2674,6 +2683,13 @@ admission/sort/pairing helper against that owner's captured position views, and
 resumes the common tail immediately. This preserves the Original call boundary
 and query order without using replay IDs or recorded results. Other explicit
 patrol initialization sites retain their own source-defined boundaries.
+
+The admission predicate also preserves C++ left-to-right evaluation:
+`IsDetecting360Degrees(member)` runs before checking `STATE_DEFAULT` and combat
+ability. Active outdoor members rejected by those later predicates still emit
+the chief-to-member LOS call in Original. Both synchronous and deferred patrol
+initialization now retain that call order rather than pre-filtering members and
+silently dropping the visibility prefix.
 
 ### Schema-v27 serialized entity runtime frontier
 
