@@ -2957,6 +2957,23 @@ folded into this geometry slice. Its authoritative semantic representation and
 adoption must be handled separately instead of treating uninitialized or
 constructor-derived bytes as stable game state.
 
+### Schema-v43 PC post-human runtime tail
+
+The gameplay-bearing tail serialized after `RHElementActorHuman` is now strict
+per-frame state for every PC. It covers carried-human identity and posture,
+shield danger geometry and protected/protector identities, the assigned guard,
+reinforcement countdown, and the complete last-ammo-drop continuation. Entity
+references use parity identities and all geometry retains exact float bits.
+Linux-save adoption already restores every field in this slice; schema v43
+makes that restoration observable. Recordings predating the additive `pc_tail`
+object remain readable, and the native cache version and suffix are v43.
+
+The `RHPCStatus` payload is not duplicated here because the authoritative
+campaign projection already compares its skills, life/coma state, inventory,
+name, and Sherwood index every frame. The separately serialized portrait widget
+and owner-local quick-action sequences are independent coherent slices rather
+than omissions from this gameplay tail.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,

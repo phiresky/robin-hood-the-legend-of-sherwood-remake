@@ -1002,6 +1002,28 @@ impl Engine {
                 "pending_shoots": human.pending_shoots.iter().copied().map(sequence_ref).collect::<Vec<_>>(),
             })
         });
+        let pc_tail = entity.pc_data().map(|pc| {
+            json!({
+                "carried": pc.carried.map_or(Value::Null, entity_ref),
+                "carried_posture": pc.carried_posture,
+                "shield_danger_point": point3(
+                    pc.shield_danger_point.x,
+                    pc.shield_danger_point.y,
+                    pc.shield_danger_point.z,
+                ),
+                "shield_protected": pc.shield_protected.map_or(Value::Null, entity_ref),
+                "shield_protector": pc.shield_protector.map_or(Value::Null, entity_ref),
+                "guard": pc.guard.map_or(Value::Null, entity_ref),
+                "time_till_reinforcement": pc.time_till_reinforcement,
+                "last_ammo_dropping_position": point2(
+                    pc.last_ammo_dropping_position.x,
+                    pc.last_ammo_dropping_position.y,
+                ),
+                "last_dropped_ammo": pc.last_dropped_ammo.map_or(Value::Null, entity_ref),
+                "update_last_dropped_ammo": pc.update_last_dropped_ammo,
+                "last_dropping_direction": pc.last_dropping_direction,
+            })
+        });
         let subtype = if entity.element_data().active {
             match entity {
                 crate::element::Entity::Target(target) => Some(json!({
@@ -1096,6 +1118,12 @@ impl Engine {
                 .as_object_mut()
                 .expect("parity entity runtime must be an object")
                 .insert("human_structure".to_owned(), human_structure);
+        }
+        if let Some(pc_tail) = pc_tail {
+            result
+                .as_object_mut()
+                .expect("parity entity runtime must be an object")
+                .insert("pc_tail".to_owned(), pc_tail);
         }
         result
     }
