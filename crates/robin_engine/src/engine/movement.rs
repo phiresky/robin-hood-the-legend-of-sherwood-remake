@@ -1971,11 +1971,8 @@ impl EngineInner {
                     .compute_increment_all(compute_direction);
             }
         }
-        if is_pc {
-            self.check_for_patch_line_crossing(sim, assets, entity_id, old_pos, new_pos, layer);
-        }
-        self.check_for_script_line_crossing(sim, assets, entity_id, old_pos, new_pos, layer);
-        self.check_for_sound_line_crossing(assets, entity_id, old_pos, new_pos, layer);
+        let _ = is_pc;
+        self.check_for_non_elevation_line_crossing(sim, assets, entity_id, old_pos, new_pos, layer);
     }
 
     /// Match `RHSectorBuilding::IsAuthorized()` for gate pathfinding.
@@ -5996,23 +5993,10 @@ impl EngineInner {
         // Each entry is `(entity_id, old_pos, new_pos, layer)` in projected
         // map coordinates. Geometry queries convert at the call boundary.
         let mut line_cross_checks: Vec<(EntityId, MapPoint, MapPoint, u16)> = Vec::new();
-        // Patch-line (`LINE_PATCH`) crossings detected for PC actors.
-        // Dispatched after the entity loop so
-        // `check_for_patch_line_crossing` can borrow `self` for the
-        // per-patch `enter`/`leave`/`apply` state mutation and effect
-        // processing.  Covers the `LINE_PATCH` PC-only crossing arm.
-        let mut patch_cross_checks: Vec<(EntityId, MapPoint, MapPoint, u16)> = Vec::new();
-        // Sound-line (`LINE_SOUND`) crossings detected for any actor.
-        // Dispatched after the entity loop so
-        // `check_for_sound_line_crossing` can borrow `self` for the
-        // material refresh.  Covers the `LINE_SOUND` crossing arm
-        // (single-line and multi-line).  Unlike LINE_PATCH this fires
-        // for every actor (PC, NPC, soldier) — the SOUND arm is not
-        // gated on PC.
-        let mut sound_cross_checks: Vec<(EntityId, MapPoint, MapPoint, u16)> = Vec::new();
-        // Script-sector callbacks are line-crossing effects in the Original,
-        // not a global per-frame polygon reconciliation.
-        let mut script_cross_checks: Vec<(EntityId, MapPoint, MapPoint, u16)> = Vec::new();
+        // Original collects all non-elevation LINE_CROSS kinds together,
+        // sorts once by travel distance, then checks patch/script/sound flags
+        // on each line in that order.
+        let mut non_elevation_cross_checks: Vec<(EntityId, MapPoint, MapPoint, u16)> = Vec::new();
         // Seek elements whose end-of-walk arrival put a
         // transition-to-waiting animation in line as the next order
         // while the live target had drifted beyond
@@ -7545,11 +7529,7 @@ impl EngineInner {
                     let new_pos = entity.element_data().position_map();
                     if self.world.fast_grid.level.map_bbox.contains_point(new_pos) {
                         line_cross_checks.push((entity_id, old_pos, new_pos, layer));
-                        if is_pc {
-                            patch_cross_checks.push((entity_id, old_pos, new_pos, layer));
-                        }
-                        script_cross_checks.push((entity_id, old_pos, new_pos, layer));
-                        sound_cross_checks.push((entity_id, old_pos, new_pos, layer));
+                        non_elevation_cross_checks.push((entity_id, old_pos, new_pos, layer));
                     }
                 }
                 let transition_effect_motion = movement_execute_visible_motion(
@@ -8593,16 +8573,7 @@ impl EngineInner {
             if eligible_for_crossing {
                 if new_position_in_bounds {
                     line_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
-                    if entity.is_pc() {
-                        patch_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
-                    }
-                    script_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
-                    // LINE_SOUND crossing is not gated on PC — every
-                    // moving actor refreshes its `material` on
-                    // crossing a sound-material boundary so footstep
-                    // sound playback picks the right per-frame
-                    // material.
-                    sound_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
+                    non_elevation_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
                 }
             }
             // Order pops are drained after all actors so the current order is
@@ -8734,14 +8705,10 @@ impl EngineInner {
             }
         }
 
-        // Dispatch patch-line (LINE_PATCH) crossings for PCs.  On
-        // crossing a LINE_PATCH line, route the PC's new position
-        // through the patch's Enter/Leave + auto-Apply flow.
-        for (entity_id, old_pos, new_pos, layer) in patch_cross_checks {
-            self.check_for_patch_line_crossing(sim, assets, entity_id, old_pos, new_pos, layer);
-        }
-        for (entity_id, old_pos, new_pos, layer) in script_cross_checks {
-            self.check_for_script_line_crossing(sim, assets, entity_id, old_pos, new_pos, layer);
+        for (entity_id, old_pos, new_pos, layer) in non_elevation_cross_checks {
+            self.check_for_non_elevation_line_crossing(
+                sim, assets, entity_id, old_pos, new_pos, layer,
+            );
         }
 
         // Dispatch transition-animation seek refreshes detected
@@ -8799,15 +8766,6 @@ impl EngineInner {
                     new_target_pos,
                 );
             }
-        }
-
-        // Dispatch sound-line (LINE_SOUND) crossings for every actor.
-        // On crossing a LINE_SOUND line, refresh the actor's
-        // `material` from the new SECTOR_SOUND polygon containment
-        // (or fall back to the obstacle / default material).  Drives
-        // footstep sound playback parity.
-        for (entity_id, old_pos, new_pos, layer) in sound_cross_checks {
-            self.check_for_sound_line_crossing(assets, entity_id, old_pos, new_pos, layer);
         }
 
         // These calls are inside the Human/PC sword movement Execute arms,
@@ -9900,6 +9858,73 @@ impl EngineInner {
         true
     }
 
+    /// Dispatch the Original actor `CheckForLineCrossing` non-elevation tail.
+    ///
+    /// Patch, script, and sound lines share one candidate list and one stable
+    /// distance sort. For each line the Original checks those flags in that
+    /// order, so callbacks from different boundary kinds remain interleaved
+    /// by the actor's travel order rather than grouped by kind.
+    pub(super) fn check_for_non_elevation_line_crossing(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        old_pos: MapPoint,
+        new_pos: MapPoint,
+        layer: u16,
+    ) {
+        if old_pos == new_pos {
+            return;
+        }
+        let indices = self
+            .world
+            .fast_grid
+            .get_actor_non_elevation_crossing_line_indices(layer, old_pos, new_pos);
+        if indices.is_empty() {
+            return;
+        }
+
+        let movement = crate::geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
+        let mut crossed: Vec<(f32, crate::fast_find_grid::LineIndex)> = indices
+            .into_iter()
+            .filter_map(|line_index| {
+                let line = &self.world.fast_grid.level.lines[usize::from(line_index)];
+                let old_dx = old_pos.x - line.a.x;
+                let old_dy = old_pos.y - line.a.y;
+                let line_dx = line.b.x - line.a.x;
+                let line_dy = line.b.y - line.a.y;
+                if line_dx * old_dy - line_dy * old_dx == 0.0 {
+                    return None;
+                }
+                let point = crate::geo2d::segment_intersection(movement, line.segment()).point()?;
+                let dx = point.x - old_pos.x;
+                let dy = point.y - old_pos.y;
+                Some((dx * dx + dy * dy, line_index))
+            })
+            .collect();
+        crossed.sort_by(|(left, _), (right, _)| left.total_cmp(right));
+
+        let is_pc = self
+            .get_entity(entity_id)
+            .unwrap_or_else(|| panic!("line-crossing actor {entity_id} is missing"))
+            .is_pc();
+        for (_, line_index) in crossed {
+            let (is_patch, is_script, is_sound) = {
+                let line = &self.world.fast_grid.level.lines[usize::from(line_index)];
+                (line.is_patch, line.is_script, line.is_sound)
+            };
+            if is_patch && is_pc {
+                self.dispatch_patch_line_crossing(sim, assets, entity_id, new_pos, line_index);
+            }
+            if is_script {
+                self.dispatch_script_line_crossing(sim, assets, entity_id, new_pos, line_index);
+            }
+            if is_sound {
+                self.dispatch_sound_line_crossing(assets, entity_id, new_pos, line_index);
+            }
+        }
+    }
+
     /// Per-tick `LINE_PATCH` crossing dispatch for a PC.
     ///
     /// On crossing a LINE_PATCH line:
@@ -9920,35 +9945,22 @@ impl EngineInner {
     /// just left it.  Patch state machine, FX entity, sight obstacles,
     /// grid sectors, and door rights are updated via
     /// `process_patch_effects`.
-    pub(super) fn check_for_patch_line_crossing(
+    fn dispatch_patch_line_crossing(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
-        old_pos: MapPoint,
         new_pos: MapPoint,
-        layer: u16,
+        line_index: crate::fast_find_grid::LineIndex,
     ) {
-        if (old_pos.x - new_pos.x).abs() < 1e-4 && (old_pos.y - new_pos.y).abs() < 1e-4 {
-            return;
-        }
-
-        let indices = self
-            .world
-            .fast_grid
-            .get_crossing_patch_line_indices(layer, old_pos, new_pos);
-        if indices.is_empty() {
-            return;
-        }
-
         let occupant = crate::patch::OccupantId(entity_id.index());
 
         // `Patch::enter` / `leave` recurse onto the actor's carried
         // entity when the actor is a PC and is currently carrying
         // someone.  Resolve that here once (same entity for every
         // crossed patch this tick) so each per-patch Enter/Leave can
-        // mirror the recursion.  `patch_cross_checks` only collects
-        // PCs.
+        // mirror the recursion. The combined dispatcher gates this arm to
+        // PCs, matching CheckForLineCrossing.
         let carried_occupant = self
             .get_entity(entity_id)
             .and_then(|e| match e {
@@ -9957,124 +9969,71 @@ impl EngineInner {
             })
             .map(|cid| crate::patch::OccupantId(cid.index()));
 
-        // Actor::CheckForLineCrossing removes only boundaries on which the
-        // old position lies, sorts the remaining non-elevation lines by
-        // intersection distance, and invokes the LINE_PATCH branch once per
-        // line.  Do not collapse two edges of one polygon at a vertex: the
-        // Original repeats Enter/Leave (including its script-visible side
-        // effects) for both RHLine objects.
-        let movement = crate::geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
-        let mut crossed: Vec<(f32, crate::fast_find_grid::LineIndex)> = indices
-            .into_iter()
-            .filter_map(|line_index| {
-                let line = &self.world.fast_grid.level.lines[usize::from(line_index)];
-                let old_dx = old_pos.x - line.a.x;
-                let old_dy = old_pos.y - line.a.y;
-                let line_dx = line.b.x - line.a.x;
-                let line_dy = line.b.y - line.a.y;
-                if line_dx * old_dy - line_dy * old_dx == 0.0 {
-                    return None;
-                }
-                let point = crate::geo2d::segment_intersection(movement, line.segment()).point()?;
-                let dx = point.x - old_pos.x;
-                let dy = point.y - old_pos.y;
-                Some((dx * dx + dy * dy, line_index))
-            })
-            .collect();
-        crossed.sort_by(|(left, _), (right, _)| left.total_cmp(right));
+        let patch_index = self.world.fast_grid.level.lines[usize::from(line_index)]
+            .patch_index
+            .unwrap_or_else(|| panic!("LINE_PATCH {line_index:?} has no owning patch"));
+        // Snapshot the apply-sector polygon test result + active state before
+        // mutating the patch, preserving is_active → is_inside → Enter/Leave
+        // → conditional Apply.
+        let patch_usize = patch_index.get() as usize;
+        let Some(patch) = self.script_domains.interactables.patches.get(patch_usize) else {
+            return;
+        };
+        if !patch.is_active() {
+            return;
+        }
+        let Some(apply_sector_idx) = patch.apply_sector_index else {
+            tracing::warn!(
+                patch = %patch_index,
+                "LINE_PATCH crossing on patch with no apply sector — skipping",
+            );
+            return;
+        };
+        let Some(apply_sector) = self
+            .world
+            .fast_grid
+            .level
+            .sectors
+            .get(apply_sector_idx as usize)
+        else {
+            return;
+        };
+        let inside_apply = apply_sector.contains_point(new_pos);
 
-        for (_, line_index) in crossed {
-            let patch_index = self.world.fast_grid.level.lines[usize::from(line_index)]
-                .patch_index
-                .unwrap_or_else(|| panic!("LINE_PATCH {line_index:?} has no owning patch"));
-            // Snapshot the apply-sector polygon test result + active
-            // state + applied state + occupant emptiness *before*
-            // mutating the patch, so the action decision keeps the
-            // strict order: is_active → is_inside → Enter/Leave →
-            // conditional Apply.
-            let patch_usize = patch_index.get() as usize;
-
-            let (is_active, apply_sector_idx) = {
-                if self.scripts.mission.is_none() {
-                    return;
-                }
-                let Some(patch) = self.script_domains.interactables.patches.get(patch_usize) else {
-                    continue;
-                };
-                (patch.is_active(), patch.apply_sector_index)
-            };
-            if !is_active {
-                continue;
-            }
-            let apply_sector_idx = match apply_sector_idx {
-                Some(i) => i,
-                None => {
-                    // No apply polygon declared — treat as "always
-                    // outside" safety net and log once.
-                    tracing::warn!(
-                        patch = %patch_index,
-                        "LINE_PATCH crossing on patch with no apply sector — skipping",
-                    );
-                    continue;
-                }
-            };
-            let Some(apply_sector) = self
-                .world
-                .fast_grid
-                .level
-                .sectors
-                .get(apply_sector_idx as usize)
+        let effects = {
+            let Some(patch) = self
+                .script_domains
+                .interactables
+                .patches
+                .get_mut(patch_usize)
             else {
-                continue;
+                return;
             };
-            let inside_apply = apply_sector.contains_point(new_pos);
-
-            let effects = {
-                if self.scripts.mission.is_none() {
-                    return;
+            if inside_apply {
+                patch.enter(occupant);
+                if let Some(carried) = carried_occupant {
+                    patch.enter(carried);
                 }
-                let Some(patch) = self
-                    .script_domains
-                    .interactables
-                    .patches
-                    .get_mut(patch_usize)
-                else {
-                    continue;
-                };
-                if inside_apply {
-                    // Entering the apply region.  `patch.enter`
-                    // already logs and bails when the occupant is
-                    // already in the list, so repeated single-tick
-                    // crossings don't double-insert.
-                    patch.enter(occupant);
-                    // Carried-actor recursion: runs unconditionally
-                    // after the warn/insert branch.
-                    if let Some(carried) = carried_occupant {
-                        patch.enter(carried);
-                    }
-                    if !patch.is_applied() {
-                        patch.apply()
-                    } else {
-                        Vec::new()
-                    }
+                if !patch.is_applied() {
+                    patch.apply()
                 } else {
-                    patch.leave(occupant);
-                    // Carried-actor recursion: runs unconditionally
-                    // after the find/remove branch.
-                    if let Some(carried) = carried_occupant {
-                        patch.leave(carried);
-                    }
-                    if patch.is_applied() && patch.any_occupant().is_none() {
-                        patch.apply()
-                    } else {
-                        Vec::new()
-                    }
+                    Vec::new()
                 }
-            };
-
-            if !effects.is_empty() {
-                self.process_patch_effects(sim, assets, patch_index, effects);
+            } else {
+                patch.leave(occupant);
+                if let Some(carried) = carried_occupant {
+                    patch.leave(carried);
+                }
+                if patch.is_applied() && patch.any_occupant().is_none() {
+                    patch.apply()
+                } else {
+                    Vec::new()
+                }
             }
+        };
+
+        if !effects.is_empty() {
+            self.process_patch_effects(sim, assets, patch_index, effects);
         }
     }
 
@@ -10090,26 +10049,13 @@ impl EngineInner {
     /// Updates both `ElementData::material` (read by footstep sound
     /// playback) and the actor's `PositionInterface` material so
     /// subsequent reads match.
-    pub(super) fn check_for_sound_line_crossing(
+    fn dispatch_sound_line_crossing(
         &mut self,
         assets: &LevelAssets,
         entity_id: EntityId,
-        old_pos: MapPoint,
         new_pos: MapPoint,
-        layer: u16,
+        line_index: crate::fast_find_grid::LineIndex,
     ) {
-        if (old_pos.x - new_pos.x).abs() < 1e-4 && (old_pos.y - new_pos.y).abs() < 1e-4 {
-            return;
-        }
-
-        let indices = self
-            .world
-            .fast_grid
-            .get_crossing_sound_line_indices(layer, old_pos, new_pos);
-        if indices.is_empty() {
-            return;
-        }
-
         let obstacle_material = self
             .get_entity(entity_id)
             .and_then(|e| e.element_data().obstacle_index())
@@ -10128,55 +10074,21 @@ impl EngineInner {
             .map(|raw| crate::element::GameMaterial::from_u32(raw as u32))
             .unwrap_or(assets.material_sectors.default_material);
 
-        // Original sorts non-elevation crossings by intersection distance
-        // from the old actor position, then processes each crossed line's
-        // exact owning material sector. The last processed line wins.
-        let movement = crate::geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
-        let mut crossed: Vec<(f32, crate::fast_find_grid::LineIndex)> = indices
-            .into_iter()
-            .filter_map(|line_index| {
-                let line = &self.world.fast_grid.level.lines[usize::from(line_index)];
-                let old_dx = old_pos.x - line.a.x;
-                let old_dy = old_pos.y - line.a.y;
-                let line_dx = line.b.x - line.a.x;
-                let line_dy = line.b.y - line.a.y;
-                // Original removes crossings whose old position lies exactly
-                // on the line to avoid processing the same boundary twice.
-                if line_dx * old_dy - line_dy * old_dx == 0.0 {
-                    return None;
-                }
-                let point = crate::geo2d::segment_intersection(movement, line.segment()).point()?;
-                let dx = point.x - old_pos.x;
-                let dy = point.y - old_pos.y;
-                Some((dx * dx + dy * dy, line_index))
-            })
-            .collect();
-        crossed.sort_by(|(left, _), (right, _)| left.total_cmp(right));
-        let crossing_count = crossed.len();
-
-        let mut new_material = None;
-        for (_, line_index) in crossed {
-            let line = &self.world.fast_grid.level.lines[usize::from(line_index)];
-            let raw_index = line.sound_material_sector_index.unwrap_or_else(|| {
-                panic!("LINE_SOUND {line_index:?} has no owning material sector")
+        let line = &self.world.fast_grid.level.lines[usize::from(line_index)];
+        let raw_index = line
+            .sound_material_sector_index
+            .unwrap_or_else(|| panic!("LINE_SOUND {line_index:?} has no owning material sector"));
+        let sector = assets
+            .all_material_sectors
+            .get(usize::from(raw_index))
+            .and_then(Option::as_ref)
+            .unwrap_or_else(|| {
+                panic!("LINE_SOUND {line_index:?} references missing material sector {raw_index}")
             });
-            let sector = assets
-                .all_material_sectors
-                .get(usize::from(raw_index))
-                .and_then(Option::as_ref)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "LINE_SOUND {line_index:?} references missing material sector {raw_index}"
-                    )
-                });
-            new_material = Some(if sector.contains(new_pos) {
-                sector.material
-            } else {
-                obstacle_material
-            });
-        }
-        let Some(new_material) = new_material else {
-            return;
+        let new_material = if sector.contains(new_pos) {
+            sector.material
+        } else {
+            obstacle_material
         };
 
         if let Some(entity) = self.get_entity_mut(entity_id) {
@@ -10189,8 +10101,8 @@ impl EngineInner {
                     ?entity_id,
                     ?prev,
                     ?new_material,
-                    crossings = crossing_count,
-                    "check_for_sound_line_crossing: refreshed material"
+                    ?line_index,
+                    "dispatch_sound_line_crossing: refreshed material"
                 );
             }
         }

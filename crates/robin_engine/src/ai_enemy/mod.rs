@@ -144,7 +144,7 @@ pub struct EnemyAi {
     pub money_fight_enemies: Vec<NpcHandle>,
     pub money_fight_victims: Vec<NpcHandle>,
 
-    // Archer / shield bearer (non-serialized pointers)
+    // Archer / shield bearer (serialized by semantic entity reference)
     pub archer_behind_me: NpcHandle,
     pub shield_bearer_before_me: NpcHandle,
 

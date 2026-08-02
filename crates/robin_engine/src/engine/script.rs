@@ -2396,79 +2396,33 @@ impl EngineInner {
         );
     }
 
-    /// Dispatch script-sector transitions for the `LINE_SCRIPT` boundaries
-    /// crossed by one actor move.
-    ///
-    /// This is the ordinary-movement counterpart of the Original's
-    /// `RHElementActor::CheckForLineCrossing`. Polygon-wide reconciliation is
-    /// reserved for exceptional relocation paths such as the post-flight
-    /// update.
-    pub(super) fn check_for_script_line_crossing(
+    /// Dispatch one already ordered `LINE_SCRIPT` candidate from the actor's
+    /// combined non-elevation crossing stream.
+    pub(super) fn dispatch_script_line_crossing(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: crate::entity_id::EntityId,
-        old_pos: crate::coordinates::MapPoint,
         new_pos: crate::coordinates::MapPoint,
-        layer: u16,
+        line_index: crate::fast_find_grid::LineIndex,
     ) {
-        if old_pos == new_pos {
+        let Some(zone_idx) = self.world.fast_grid.level.lines[usize::from(line_index)]
+            .script_zone_index
+            .map(usize::from)
+        else {
+            // RHLineScript::Cross is intentionally empty in the Original.
+            return;
+        };
+        if self.script_domains.zones.scripts[zone_idx].transformed_to_apex {
             return;
         }
-        let indices = self
-            .world
-            .fast_grid
-            .get_crossing_script_line_indices(layer, old_pos, new_pos);
-        if indices.is_empty() {
-            return;
-        }
-
-        // Original removes a boundary when the actor's old position lies
-        // exactly on it, then orders all remaining non-elevation crossings
-        // by their intersection distance from the old position. Process every
-        // crossed edge: unlike a net polygon-membership reconciliation,
-        // RHElementActor::CheckForLineCrossing invokes Enter/Leave once per
-        // LINE_SCRIPT object.
-        let movement = crate::geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
-        let mut crossed: Vec<(f32, crate::fast_find_grid::LineIndex)> = indices
-            .into_iter()
-            .filter_map(|line_index| {
-                let line = &self.world.fast_grid.level.lines[usize::from(line_index)];
-                let old_dx = old_pos.x - line.a.x;
-                let old_dy = old_pos.y - line.a.y;
-                let line_dx = line.b.x - line.a.x;
-                let line_dy = line.b.y - line.a.y;
-                if line_dx * old_dy - line_dy * old_dx == 0.0 {
-                    return None;
-                }
-                let point = crate::geo2d::segment_intersection(movement, line.segment()).point()?;
-                let dx = point.x - old_pos.x;
-                let dy = point.y - old_pos.y;
-                Some((dx * dx + dy * dy, line_index))
-            })
-            .collect();
-        crossed.sort_by(|(left, _), (right, _)| left.total_cmp(right));
-
-        for (_, line_index) in crossed {
-            let Some(zone_idx) = self.world.fast_grid.level.lines[usize::from(line_index)]
-                .script_zone_index
-                .map(usize::from)
-            else {
-                // RHLineScript::Cross is intentionally empty in the Original.
-                continue;
-            };
-            if self.script_domains.zones.scripts[zone_idx].transformed_to_apex {
-                continue;
-            }
-            let grid_idx = *assets
-                .scripts
-                .zone_grid_indices
-                .get(zone_idx)
-                .unwrap_or_else(|| panic!("script line references missing zone {zone_idx}"));
-            let inside =
-                self.world.fast_grid.level.sectors[grid_idx as usize].contains_point(new_pos);
-            self.dispatch_script_zone_crossing(sim, assets, zone_idx, entity_id, inside);
-        }
+        let grid_idx = *assets
+            .scripts
+            .zone_grid_indices
+            .get(zone_idx)
+            .unwrap_or_else(|| panic!("script line references missing zone {zone_idx}"));
+        let inside = self.world.fast_grid.level.sectors[grid_idx as usize].contains_point(new_pos);
+        self.dispatch_script_zone_crossing(sim, assets, zone_idx, entity_id, inside);
     }
 
     fn dispatch_script_zone_crossing(
