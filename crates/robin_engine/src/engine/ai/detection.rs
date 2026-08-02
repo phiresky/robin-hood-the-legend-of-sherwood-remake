@@ -3201,8 +3201,8 @@ impl EngineInner {
             // viewer_in_building.
             ignore_bodies,
             human_targets,
-            // Per-target pre-filter — Body has no extra check beyond
-            // the layer match enforced by the helper.
+            // Per-target pre-filter — Body has no extra check. Original
+            // compares the full 3D eye/detection points across layers.
             |_t| true,
             ViewContext {
                 eye,
@@ -3476,12 +3476,6 @@ impl EngineInner {
                 det.last_visibility = 0.0;
                 continue;
             };
-            if target.layer != ctx.layer {
-                det.seen_now = false;
-                det.last_visibility = 0.0;
-                continue;
-            }
-
             let visibility: f32 = if extra_gate_blocks_visibility
                 || ctx.viewer_in_building
                 || !target_pre_filter(target)
@@ -3772,11 +3766,6 @@ impl EngineInner {
                 det.last_visibility = 0.0;
                 continue;
             };
-            if object.layer != ctx.layer {
-                det.seen_now = false;
-                det.last_visibility = 0.0;
-                continue;
-            }
             let visibility: f32 = if ctx.viewer_in_building {
                 0.0
             } else if gate_open {
