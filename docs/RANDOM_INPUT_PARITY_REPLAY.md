@@ -2968,6 +2968,20 @@ movement step. Orders that begin at their goal still terminate normally but
 preserve the existing coordinates. This is general movement lifecycle parity,
 not a replay- or actor-specific position exception.
 
+### Beggar idle reports the derived Execute result
+
+Savegame 008 replay 011 entered Stutely's `SimulatingBeggar` idle. Rust
+correctly selected and started the sprite action, but latched its raw `START`
+result into the actor continuation. Original's PC override calls `Turn`,
+`PerformAction`, applies the start posture, bids for money, and then explicitly
+returns `RHMOTION_IN_PROGRESS` regardless of the sprite result.
+
+The specialized-owner motion latch now substitutes `InProgress` for every
+selected beggar-idle Execute while retaining the raw sprite result on the
+sprite itself. Other movement, melee, bow, and ability owners continue to
+forward their own effective results. This matches the general PC beggar arm,
+not the recorded actor or frame.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

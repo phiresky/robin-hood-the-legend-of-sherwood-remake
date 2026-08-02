@@ -1056,6 +1056,40 @@ pub(super) fn classify_live_actor_execute_arm(
         .find_map(|override_kind| classify_actor_execute_arm(*override_kind, order))
 }
 
+/// Motion state returned by a specialized derived Execute arm.
+///
+/// Most specialized owners forward the sprite result. The PC beggar idle is
+/// an explicit exception: `RHElementActorPC::Execute` performs the sprite
+/// action and side effects, then always returns `RHMOTION_IN_PROGRESS`.
+fn specialized_execute_motion(
+    sprite_motion: Option<crate::sprite::MotionState>,
+    selected_beggar: bool,
+) -> Option<crate::sprite::MotionState> {
+    if selected_beggar {
+        Some(crate::sprite::MotionState::InProgress)
+    } else {
+        sprite_motion
+    }
+}
+
+#[cfg(test)]
+mod specialized_execute_motion_tests {
+    use super::specialized_execute_motion;
+    use crate::sprite::MotionState;
+
+    #[test]
+    fn beggar_idle_returns_in_progress_while_retaining_the_sprite_start() {
+        assert_eq!(
+            specialized_execute_motion(Some(MotionState::Start), true),
+            Some(MotionState::InProgress)
+        );
+        assert_eq!(
+            specialized_execute_motion(Some(MotionState::Done), false),
+            Some(MotionState::Done)
+        );
+    }
+}
+
 #[cfg(test)]
 pub(super) fn assert_execute_owner_handler_is_linked(family: ExecuteOwnerFamily) {
     match family {
@@ -3375,10 +3409,12 @@ impl EngineInner {
                     let specialized_execute_motion = selected_owner_family
                         .filter(|family| *family != ExecuteOwnerFamily::GenericAnimation)
                         .and_then(|_| {
-                            self.world
-                                .entities
-                                .get(entity_id)
-                                .and_then(|entity| entity.element_data().sprite.last_motion_state)
+                            specialized_execute_motion(
+                                self.world.entities.get(entity_id).and_then(|entity| {
+                                    entity.element_data().sprite.last_motion_state
+                                }),
+                                beggar_selection.is_some(),
+                            )
                         });
                     if let Some(motion) = specialized_execute_motion {
                         // Movement/combat/ability owners are derived Execute
