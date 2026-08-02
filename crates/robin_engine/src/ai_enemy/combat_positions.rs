@@ -166,7 +166,10 @@ impl EnemyAi {
         handle: HumanHandle,
         tick: &'a AiPerTickData,
     ) -> Option<&'a FighterSnapshot> {
-        tick.nearby_fighters.iter().find(|f| f.handle == handle)
+        tick.nearby_fighters
+            .iter()
+            .find(|f| f.handle == handle)
+            .or_else(|| tick.fighter_registry.iter().find(|f| f.handle == handle))
     }
 
     /// IsAllowedToAttack — VIP / mission rules.
@@ -3222,5 +3225,29 @@ mod tests {
         assert_eq!(original_uword_norm((90.7, 0.0)), 90);
         assert_eq!(original_uword_norm((91.0, 0.0)), 91);
         assert!(original_uword_norm((90.7, 0.0)) <= 90);
+    }
+
+    #[test]
+    fn direct_fighter_lookup_reaches_beyond_nearby_radius_snapshot() {
+        let ai = EnemyAi::default();
+        let mut tick = AiPerTickData::stub();
+        tick.nearby_fighters.push(FighterSnapshot {
+            handle: 1,
+            ..FighterSnapshot::default()
+        });
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 2,
+            ..FighterSnapshot::default()
+        });
+
+        assert_eq!(
+            ai.find_fighter(1, &tick).map(|fighter| fighter.handle),
+            Some(1)
+        );
+        assert_eq!(
+            ai.find_fighter(2, &tick).map(|fighter| fighter.handle),
+            Some(2)
+        );
+        assert!(ai.find_fighter(3, &tick).is_none());
     }
 }

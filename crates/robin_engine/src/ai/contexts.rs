@@ -529,6 +529,15 @@ pub struct AiPerTickData {
     /// True if any friend in `list_us` has RANK_SOLDIER.
     pub simple_soldiers_near: bool,
     pub primary_target_multiplicity: Vec<(HumanHandle, u32)>,
+    /// Complete fighter-registry snapshot for direct pointer dereferences.
+    ///
+    /// Original AI lists (`mlistUs`, `mlistThem`, primary targets, etc.) hold
+    /// pointers into the level-wide camp fighter arrays. Those lists can
+    /// legitimately contain a fighter outside the 500-unit radius used by
+    /// `FillListWithAllNearFighters`, especially after `BattleDecisions` uses
+    /// the owner's larger 360-degree detection radius. Keep this separate
+    /// from `nearby_fighters` so radius-based scans retain their exact domain.
+    pub fighter_registry: Vec<crate::ai_enemy::FighterSnapshot>,
     pub nearby_fighters: Vec<crate::ai_enemy::FighterSnapshot>,
     /// Complete opposing-camp fighter registry for `ReconsiderSwordfight`.
     /// Original applies no 500-unit prefilter here; each entry is admitted
@@ -769,6 +778,7 @@ impl AiPerTickData {
             has_officer_nearby: false,
             simple_soldiers_near: false,
             primary_target_multiplicity: Vec::new(),
+            fighter_registry: Vec::new(),
             nearby_fighters: Vec::new(),
             reconsider_swordfight_enemies: Vec::new(),
             reconsider_swordfight_friends: Vec::new(),

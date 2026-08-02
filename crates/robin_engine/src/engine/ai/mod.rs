@@ -1733,8 +1733,13 @@ impl EngineInner {
         // observe an empty list outside swordfight substates.
         tick.nearby_fighters =
             self.build_nearby_fighters_for(npc_id, assets, &scratch.ai_sight_obstacles);
-        tick.reconsider_swordfight_enemies =
-            self.build_reconsider_swordfight_enemies_for(npc_id, assets);
+        tick.fighter_registry = self.build_fighter_snapshots_for(npc_id, assets, None);
+        tick.reconsider_swordfight_enemies = tick
+            .fighter_registry
+            .iter()
+            .filter(|fighter| !fighter.is_friendly)
+            .cloned()
+            .collect();
         tick.reconsider_swordfight_friends = self.build_reconsider_swordfight_friends_for(npc_id);
 
         // Phalanx right-chain "them" snapshots — consumed by
@@ -2168,20 +2173,6 @@ impl EngineInner {
         self.build_fighter_snapshots_for(npc_id, assets, Some(500.0))
     }
 
-    /// Original `ReconsiderSwordfight` walks the complete opposing camp
-    /// fighter registry. It deliberately has no `MaxNormDistance < 500`
-    /// gate: `IsDetecting360Degrees` supplies the observer-specific range.
-    fn build_reconsider_swordfight_enemies_for(
-        &self,
-        npc_id: crate::element::EntityId,
-        assets: &LevelAssets,
-    ) -> Vec<crate::ai_enemy::FighterSnapshot> {
-        self.build_fighter_snapshots_for(npc_id, assets, None)
-            .into_iter()
-            .filter(|fighter| !fighter.is_friendly)
-            .collect()
-    }
-
     fn build_fighter_snapshots_for(
         &self,
         npc_id: crate::element::EntityId,
@@ -2355,7 +2346,9 @@ impl EngineInner {
             })
         };
 
-        // Build an enemy PC snapshot for `handle`.
+        // Build a PC snapshot for `handle`. PCs belong to the Royalist camp,
+        // so they are enemies for Lackland soldiers and friends for friendly
+        // forest soldiers.
         let build_pc = |handle: u32| -> Option<FighterSnapshot> {
             let pc = self.world.entities.get_pc(PcId(handle))?;
             if !pc.element.active || pc.pc.life_points <= 0 {
@@ -2406,7 +2399,7 @@ impl EngineInner {
                     level: pc.element.layer(),
                 },
                 direction: pc.element.direction() as u16,
-                is_friendly: false,
+                is_friendly: my_camp == Camp::Royalists,
                 is_swordfighting: !pc.human.opponents.is_empty(),
                 is_able_to_fight: alive
                     && !matches!(pc.element.posture, Posture::Tree | Posture::Spy),
@@ -2468,11 +2461,15 @@ impl EngineInner {
             let (position, snapshot) = match entity {
                 Entity::Soldier(soldier) => (
                     soldier.element.position_map(),
-                    build_soldier(id.index(), true),
+                    // Radius-limited snapshots model
+                    // FillListWithAllNearFighters and therefore exclude
+                    // unable fighters. The complete registry is the backing
+                    // store for already-held Original pointers, which remain
+                    // dereferenceable while their owner decides how to prune
+                    // them.
+                    build_soldier(id.index(), max_distance.is_some()),
                 ),
-                Entity::Pc(pc) if my_camp != Camp::Royalists => {
-                    (pc.element.position_map(), build_pc(id.index()))
-                }
+                Entity::Pc(pc) => (pc.element.position_map(), build_pc(id.index())),
                 _ => continue,
             };
             let dx = position.x - me_pos_pt.x;
