@@ -2642,6 +2642,17 @@ unauthorized move-box extraction arithmetic boundary. The other 14 failures
 are later command, motion, sprite, path-event, and ScriptRand frontiers; none
 regress to projectile settlement or door-endpoint state.
 
+The frozen schema-v29 rerun is under
+`output/parity-audits/random-long-after-2988-v29-20260802/`. Eight of the 19
+traces now reach exact EOF. The campaign-identity ammo fix eliminates the
+shared Eat frontiers, and the mixed-precision enter/leave-game border fix
+clears the old one-unit initial-post mismatch. Ten traces stop at later state
+boundaries and one at the known ScriptRand/script-zone membership boundary.
+The remaining first-state groups are four Continue command/motion frontiers,
+five Savegame 008 movement/command/path frontiers, and one AI visibility/list
+frontier. No trace regresses to any eliminated projectile, door, Listen,
+border, or campaign-identity boundary.
+
 ### Schema-v24 visibility-call frontier: grid-selected lights and post coordinates
 
 Two visibility-query count divergences exposed general coordinate/spatial-query
