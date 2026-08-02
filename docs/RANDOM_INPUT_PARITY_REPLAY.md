@@ -2350,6 +2350,38 @@ Adding `engine_state.next_creation_order` changes the native parity cache to
 version 22. Older schema-13 frames are rejected rather than compared without
 the allocator frontier.
 
+### Pending frame latches and global speech state
+
+Schema 13 now records three small engine/game scalars whose effects can cross
+a frame boundary. `chorus_timer` suppresses ordinary hero speech until its
+frame countdown expires. `force_check` retains a script-requested victory or
+defeat check until the next engine hourglass boundary consumes it.
+`men_to_blazon_conversion` changes selection, VIP eligibility, and campaign
+conversion behavior even though part of its visible effect lives in the HUD.
+The latter is serialized by Original; the first two are nonserialized runtime
+latches, but all three are simulation-authoritative at the per-frame replay
+boundary.
+
+The global AI projection also preserves the ordered forbidden-remark list and
+the shared cycle-of-three speech variant. Every forbidden entry retains the
+exact Original fields: remark, target flags, speech profile ID, guy creation
+order, soldier/civilian side, and expiry frame. Original scans and lazily
+deletes this list in order, so neither ordering nor expired later entries may
+be normalized away. The current speech variant advances even for some speech
+attempts that are subsequently rejected, which makes its frame-boundary value
+authoritative as well.
+
+`guy_index` deliberately remains the raw stored `UWORD` rather than being
+rewritten to a semantic entity reference. Original stores `GetCreationOrder()`
+in this field; comparing the scalar exposes an implementation that incorrectly
+stores a runtime entity slot instead of concealing that behavioral mismatch.
+Screen remarks and the unused fixed remark-expiry array are excluded as
+presentation-only and dead state respectively.
+
+Adding these required fields changes the native parity cache to version 23.
+Older schema-13 frames are rejected rather than compared without the pending
+latches and global speech frontier.
+
 ### Sequence-manager and script-VM boundary state
 
 Schema 13 now records the sequence manager's insertion-ordered sequences,

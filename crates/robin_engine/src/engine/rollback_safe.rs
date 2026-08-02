@@ -37,6 +37,9 @@ use crate::player_command::{PlayerCommand, PlayerInput};
 pub struct ParityEngineState {
     pub cheat_used_flags: u32,
     pub next_creation_order: u32,
+    pub chorus_timer: u16,
+    pub force_check: bool,
+    pub men_to_blazon_conversion: bool,
     pub lock_engine: bool,
     pub freeze_all: bool,
     pub locker: bool,
@@ -220,6 +223,13 @@ impl Engine {
         ParityEngineState {
             cheat_used_flags: self.inner.mission_domain.cheat_used_flags,
             next_creation_order: self.inner.world.next_original_creation_order,
+            chorus_timer: self.inner.control.chorus_timer,
+            force_check: self.inner.script_domains.mission_ui.force_check,
+            men_to_blazon_conversion: self
+                .inner
+                .script_domains
+                .mission_ui
+                .men_to_blazon_conversion_mode,
             lock_engine: self.inner.control.simulation_gates.engine_locked(),
             freeze_all: self.inner.control.simulation_gates.actors_frozen(),
             locker: seat.locker_active,
@@ -760,6 +770,18 @@ impl Engine {
             "overall_alert_status": global.overall_alert_status as u32,
             "overall_villain_alert_status": global.overall_villain_alert_status as u32,
             "saved_random_seed": global.saved_random_seed,
+            "forbidden_remarks": global.forbidden_remarks.iter().map(|entry| json!({
+                "remark": entry.remark as u32,
+                "flags": entry.flags,
+                "speech_id": entry.speech_id,
+                // This is deliberately the stored scalar, not a normalized
+                // entity reference. Original stores GetCreationOrder() here;
+                // parity must expose any slot-vs-creation-order divergence.
+                "guy_index": entry.guy_index,
+                "bad_guy": entry.bad_guy,
+                "forbidden_till_frame": entry.forbidden_till_frame,
+            })).collect::<Vec<_>>(),
+            "current_speech_variant": global.current_speech_variant,
         })
     }
 
@@ -2321,9 +2343,18 @@ mod tests {
     fn parity_engine_state_preserves_next_original_creation_order() {
         let mut inner = EngineInner::new();
         inner.world.next_original_creation_order = 417;
+        inner.control.chorus_timer = 23;
+        inner.script_domains.mission_ui.force_check = true;
+        inner
+            .script_domains
+            .mission_ui
+            .men_to_blazon_conversion_mode = true;
         let state = Engine { inner }.parity_engine_state();
 
         assert_eq!(state.next_creation_order, 417);
+        assert_eq!(state.chorus_timer, 23);
+        assert!(state.force_check);
+        assert!(state.men_to_blazon_conversion);
     }
 
     #[test]
@@ -2371,6 +2402,19 @@ mod tests {
         inner.ai.global.overall_alert_status = crate::ai::AlertLevel::Yellow;
         inner.ai.global.overall_villain_alert_status = crate::ai::AlertLevel::Red;
         inner.ai.global.saved_random_seed = -73;
+        inner.ai.global.current_speech_variant = 2;
+        inner
+            .ai
+            .global
+            .forbidden_remarks
+            .push(crate::ai::ForbiddenRemark {
+                remark: crate::ai::Remark::Warcry,
+                flags: crate::ai::RemarkTargetFlags::THIS_GUY.bits(),
+                speech_id: 91,
+                guy_index: 47,
+                bad_guy: true,
+                forbidden_till_frame: 1234,
+            });
         let mut seek = crate::ai::SeekPoint::from_position(
             &crate::sim_rng::SimulationContext::with_seed(1),
             crate::ai::Position::default(),
@@ -2410,6 +2454,13 @@ mod tests {
         assert_eq!(state["overall_alert_status"], 1);
         assert_eq!(state["overall_villain_alert_status"], 2);
         assert_eq!(state["saved_random_seed"], -73);
+        assert_eq!(state["forbidden_remarks"][0]["remark"], 9);
+        assert_eq!(state["forbidden_remarks"][0]["flags"], 8);
+        assert_eq!(state["forbidden_remarks"][0]["speech_id"], 91);
+        assert_eq!(state["forbidden_remarks"][0]["guy_index"], 47);
+        assert_eq!(state["forbidden_remarks"][0]["bad_guy"], true);
+        assert_eq!(state["forbidden_remarks"][0]["forbidden_till_frame"], 1234);
+        assert_eq!(state["current_speech_variant"], 2);
     }
 
     #[test]

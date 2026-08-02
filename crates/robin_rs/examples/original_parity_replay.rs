@@ -1350,6 +1350,9 @@ struct TraceFrame {
 struct TraceEngineState {
     cheat_used_flags: u32,
     next_creation_order: u32,
+    chorus_timer: u16,
+    force_check: bool,
+    men_to_blazon_conversion: bool,
     lock_engine: bool,
     freeze_all: bool,
     locker: bool,
@@ -1442,8 +1445,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 22;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v22.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 23;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v23.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4805,6 +4808,9 @@ fn compare_engine_state(
     }
     field!(cheat_used_flags);
     field!(next_creation_order);
+    field!(chorus_timer);
+    field!(force_check);
+    field!(men_to_blazon_conversion);
     field!(lock_engine);
     field!(freeze_all);
     field!(locker);
@@ -6145,6 +6151,9 @@ mod tests {
         schema_thirteen_json["engine_state"] = serde_json::json!({
             "cheat_used_flags": 0,
             "next_creation_order": 31,
+            "chorus_timer": 0,
+            "force_check": false,
+            "men_to_blazon_conversion": false,
             "lock_engine": false,
             "freeze_all": false,
             "locker": false,
@@ -6180,7 +6189,9 @@ mod tests {
                 "red_alert_soldiers": 0,
                 "overall_alert_status": 0,
                 "overall_villain_alert_status": 0,
-                "saved_random_seed": 0
+                "saved_random_seed": 0,
+                "forbidden_remarks": [],
+                "current_speech_variant": 0
             },
             "engine_runtime_roots": {
                 "timer_elements": [],
