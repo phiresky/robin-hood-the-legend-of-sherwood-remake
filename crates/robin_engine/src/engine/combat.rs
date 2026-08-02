@@ -2006,7 +2006,7 @@ mod tests {
             shooter,
             crate::element::Command::ReceiveArrowDamage,
             40,
-            40,
+            0,
             Some(shooter),
         );
 
@@ -2035,7 +2035,7 @@ mod tests {
                 origin: Some(origin),
                 projectile: Some(projectile),
                 damage: 40,
-                concussion: 40,
+                concussion: 0,
                 ..
             } if origin == shooter && projectile == shooter
         ));
@@ -2337,7 +2337,11 @@ impl EngineInner {
                             shooter,
                             Command::ReceiveArrowDamage,
                             damage,
-                            damage,
+                            // The arrow-specific Original
+                            // RHSequenceElementDamage constructor stores
+                            // `muwConcussion = 0`; only generic/stone damage
+                            // accepts an independent concussion payload.
+                            0,
                             Some(result.arrow),
                         );
                         tracing::debug!(
