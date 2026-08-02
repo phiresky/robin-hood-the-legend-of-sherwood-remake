@@ -229,8 +229,12 @@ impl NativeContext<'_, '_> {
                     );
                     return 0;
                 }
-                self.zone_occupant_handles(loc)
-                    .map_or(0, |occ| occ.len() as i32)
+                let occupants = self.zone_occupant_handles(loc).unwrap_or_default();
+                if let Some(vm) = &self.script_vm_diagnostic {
+                    self.simulation
+                        .record_script_zone_query(vm, loc, occupants.clone());
+                }
+                occupants.len() as i32
             }
             GetActorInSector => {
                 // Same sector-handle type guard as

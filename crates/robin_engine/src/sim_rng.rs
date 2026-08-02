@@ -95,6 +95,36 @@ pub struct OriginalRngReplay {
     draws: Vec<u32>,
     cursor: usize,
     sites: Vec<RngSite>,
+    script_rand_contexts: Vec<Option<ScriptVmDiagnosticContext>>,
+    script_zone_queries: Vec<ScriptZoneQueryDiagnostic>,
+}
+
+/// Non-authoritative provenance for script-native parity diagnostics.
+///
+/// This deliberately uses display strings instead of engine-owned VM types so
+/// the simulation RNG remains independent of the script driver's internals.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ScriptVmDiagnosticContext {
+    pub vm_key: String,
+    pub class_name: String,
+    pub method_name: String,
+    pub native_max: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ScriptZoneQueryDiagnostic {
+    /// RNG cursor at the instant the query ran. This associates a query with
+    /// the ScriptRand draw it can conditionally enable without consuming RNG.
+    pub rng_cursor: usize,
+    pub vm: ScriptVmDiagnosticContext,
+    pub location_handle: i32,
+    pub occupant_handles: Vec<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct OriginalRngDiagnostics {
+    pub script_rand_contexts: Vec<Option<ScriptVmDiagnosticContext>>,
+    pub script_zone_queries: Vec<ScriptZoneQueryDiagnostic>,
 }
 
 impl OriginalRngReplay {
@@ -103,6 +133,8 @@ impl OriginalRngReplay {
             draws,
             cursor: 0,
             sites: Vec::new(),
+            script_rand_contexts: Vec::new(),
+            script_zone_queries: Vec::new(),
         }
     }
 
@@ -121,6 +153,24 @@ impl OriginalRngReplay {
             .to_vec()
     }
 
+    pub fn diagnostics(&self, range: std::ops::Range<usize>) -> OriginalRngDiagnostics {
+        let script_rand_contexts = self
+            .script_rand_contexts
+            .get(range.clone())
+            .unwrap_or_else(|| panic!("RNG diagnostic history does not contain {range:?}"))
+            .to_vec();
+        let script_zone_queries = self
+            .script_zone_queries
+            .iter()
+            .filter(|query| (range.start..=range.end).contains(&query.rng_cursor))
+            .cloned()
+            .collect();
+        OriginalRngDiagnostics {
+            script_rand_contexts,
+            script_zone_queries,
+        }
+    }
+
     fn draw(&mut self, site: RngSite) -> u32 {
         let index = self.cursor;
         let value = *self.draws.get(index).unwrap_or_else(|| {
@@ -128,7 +178,29 @@ impl OriginalRngReplay {
         });
         self.cursor += 1;
         self.sites.push(site);
+        self.script_rand_contexts.push(None);
         value
+    }
+
+    fn attach_script_rand_context(&mut self, context: ScriptVmDiagnosticContext) {
+        self.script_rand_contexts
+            .last_mut()
+            .expect("ScriptRand diagnostic recorded before its RNG draw")
+            .replace(context);
+    }
+
+    fn record_script_zone_query(
+        &mut self,
+        vm: ScriptVmDiagnosticContext,
+        location_handle: i32,
+        occupant_handles: Vec<i32>,
+    ) {
+        self.script_zone_queries.push(ScriptZoneQueryDiagnostic {
+            rng_cursor: self.cursor,
+            vm,
+            location_handle,
+            occupant_handles,
+        });
     }
 
     pub(crate) fn state_hash<H: std::hash::Hasher>(&self, hasher: &mut H) {
@@ -136,6 +208,22 @@ impl OriginalRngReplay {
         std::hash::Hash::hash(&self.cursor, hasher);
         for site in &self.sites {
             std::hash::Hash::hash(&std::mem::discriminant(site), hasher);
+        }
+    }
+}
+
+impl SimulationContext {
+    pub(crate) fn record_script_zone_query(
+        &self,
+        vm: &ScriptVmDiagnosticContext,
+        location_handle: i32,
+        occupant_handles: Vec<i32>,
+    ) {
+        if let Some(replay) = &self.original_replay {
+            replay
+                .lock()
+                .expect("original RNG replay mutex poisoned")
+                .record_script_zone_query(vm.clone(), location_handle, occupant_handles);
         }
     }
 }
@@ -505,6 +593,29 @@ pub fn script_rand(
     Ok(i32(context, site, 0..max))
 }
 
+pub fn script_rand_with_context(
+    context: &SimulationContext,
+    site: RngSite,
+    max: i32,
+    mut diagnostic: ScriptVmDiagnosticContext,
+) -> Result<i32, ScriptRandError> {
+    if max <= 0 {
+        return Err(ScriptRandError::NonPositiveMaximum(max));
+    }
+    diagnostic.native_max = Some(max);
+    if let Some(raw) = original_draw(context, site) {
+        context
+            .original_replay
+            .as_ref()
+            .expect("Original draw lost its replay owner")
+            .lock()
+            .expect("original RNG replay mutex poisoned")
+            .attach_script_rand_context(diagnostic);
+        return Ok((raw % max as u32) as i32);
+    }
+    Ok(with_rng(context, site, |rng| rng.i32(0..max)))
+}
+
 /// `serde` adapters for `fastrand::Rng`.
 ///
 /// Use with `#[serde(with = "crate::sim_rng::serde_rng")]` on any
@@ -727,6 +838,35 @@ mod tests {
             assert_eq!(result, Err(ScriptRandError::NonPositiveMaximum(invalid)));
             assert!(trace.is_empty(), "invalid Rand must not consume a draw");
         }
+    }
+
+    #[test]
+    fn original_replay_diagnostics_do_not_affect_authoritative_hash() {
+        use std::hash::Hasher;
+
+        let vm = ScriptVmDiagnosticContext {
+            vm_key: "Global".into(),
+            class_name: "StartUp".into(),
+            method_name: "Hourglass".into(),
+            native_max: Some(3),
+        };
+        let mut plain = OriginalRngReplay::new(vec![5]);
+        let mut diagnosed = plain.clone();
+        assert_eq!(plain.draw(RngSite::ScriptRand), 5);
+        assert_eq!(diagnosed.draw(RngSite::ScriptRand), 5);
+        diagnosed.attach_script_rand_context(vm.clone());
+        diagnosed.record_script_zone_query(vm.clone(), 17, vec![4, 9]);
+
+        let diagnostics = diagnosed.diagnostics(0..1);
+        assert_eq!(diagnostics.script_rand_contexts, vec![Some(vm.clone())]);
+        assert_eq!(diagnostics.script_zone_queries.len(), 1);
+        assert_eq!(diagnostics.script_zone_queries[0].occupant_handles, [4, 9]);
+
+        let mut plain_hash = std::collections::hash_map::DefaultHasher::new();
+        let mut diagnosed_hash = std::collections::hash_map::DefaultHasher::new();
+        plain.state_hash(&mut plain_hash);
+        diagnosed.state_hash(&mut diagnosed_hash);
+        assert_eq!(plain_hash.finish(), diagnosed_hash.finish());
     }
 
     #[test]

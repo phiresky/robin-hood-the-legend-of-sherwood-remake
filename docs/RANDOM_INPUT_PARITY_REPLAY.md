@@ -2693,6 +2693,21 @@ complete order, and short-briefing frontiers remain explicitly queued as
 separate additive increments so this capture does not block existing parity
 validation with a partially implemented aggregate schema.
 
+### Generic script RNG provenance
+
+Strict Original-RNG replay diagnostics now attach the persistent VM key,
+script class, active callback method, and native `Rand(max)` bound to every
+script draw. They also retain ordered `GetNumberOfActorsInSector` calls with
+the queried location handle and the complete occupant-handle list at that
+instant. The strict-RNG panic and automatic/manual JSON engine dumps expose
+both streams, allowing conditional script draws to be traced back to the
+specific zone whose decoded or simulated membership enabled them.
+
+These records are diagnostic-only: they do not alter draw values, cursor
+ordering, serialized engine state, or authoritative state hashing. The
+instrumentation is generic across missions and replays and remains enabled so
+future script RNG frontiers do not require site-specific tracing patches.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

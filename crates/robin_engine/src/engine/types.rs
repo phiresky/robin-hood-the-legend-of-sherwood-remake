@@ -134,6 +134,18 @@ impl SimulationRng {
         })
     }
 
+    pub(crate) fn original_replay_diagnostics(
+        &self,
+        range: std::ops::Range<usize>,
+    ) -> Option<crate::sim_rng::OriginalRngDiagnostics> {
+        self.original_replay.as_ref().map(|replay| {
+            replay
+                .lock()
+                .expect("original RNG replay mutex poisoned")
+                .diagnostics(range)
+        })
+    }
+
     /// Clone the normal PRNG state while deliberately omitting the
     /// non-serializable Original parity draw stream.
     ///
@@ -1492,6 +1504,16 @@ impl MissionScript {
         script_domains: &mut super::ScriptDomains,
         capabilities: &crate::natives::NativeSessionCapabilities<'_>,
     ) -> crate::interp::StopReason {
+        let class_idx = self
+            .script_instance(key)
+            .expect("script VM vanished while preparing native diagnostics")
+            .class_idx();
+        let diagnostic = crate::sim_rng::ScriptVmDiagnosticContext {
+            vm_key: format!("{key:?}"),
+            class_name: self.manager.scb().classes[class_idx].class_name.clone(),
+            method_name: fn_name.to_owned(),
+            native_max: None,
+        };
         let MissionScript {
             manager,
             state,
@@ -1531,6 +1553,7 @@ impl MissionScript {
             capabilities,
             frame,
         );
+        context.script_vm_diagnostic = Some(diagnostic);
         instance.poll_activation_with_host(manager, activation, 10_000_000, fn_name, &mut context)
     }
 

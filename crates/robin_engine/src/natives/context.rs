@@ -312,6 +312,7 @@ pub struct NativeContext<'ctx, 'owners: 'ctx> {
     pub(crate) weather: Option<&'owners crate::engine::WeatherState>,
     pub(crate) frame_counter: Option<&'owners u32>,
     pub(crate) call_frame: ScriptCallFrame,
+    pub(crate) script_vm_diagnostic: Option<crate::sim_rng::ScriptVmDiagnosticContext>,
     pub(crate) pending_yield: Option<crate::interp::NativeYield>,
 }
 
@@ -343,6 +344,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             weather: capabilities.weather_option(),
             frame_counter: capabilities.frame_counter_option(),
             call_frame: ScriptCallFrame::default(),
+            script_vm_diagnostic: None,
             pending_yield: None,
         }
     }
@@ -375,6 +377,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             weather: capabilities.weather_option(),
             frame_counter: capabilities.frame_counter_option(),
             call_frame: ScriptCallFrame::default(),
+            script_vm_diagnostic: None,
             pending_yield: None,
         }
     }
@@ -408,6 +411,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             weather: capabilities.weather_option(),
             frame_counter: capabilities.frame_counter_option(),
             call_frame,
+            script_vm_diagnostic: None,
             pending_yield: None,
         }
     }

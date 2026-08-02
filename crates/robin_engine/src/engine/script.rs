@@ -98,6 +98,15 @@ impl From<&str> for ScriptDriverError {
 /// synchronously re-enter script dispatch while the canonical VM remains in
 /// `ScriptRuntime`; no engine state or script owner is parked elsewhere.
 impl EngineInner {
+    /// Script-native provenance for a selected Original RNG draw interval.
+    /// This is diagnostic-only and is excluded from authoritative state hashes.
+    pub fn original_rng_replay_diagnostics(
+        &self,
+        range: std::ops::Range<usize>,
+    ) -> Option<crate::sim_rng::OriginalRngDiagnostics> {
+        self.control.rng.original_replay_diagnostics(range)
+    }
+
     /// Run one callback to completion, servicing every VM yield before the
     /// caller regains control. This is the sole engine-owned yield/resume
     /// boundary for all persistent script-instance kinds.

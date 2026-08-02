@@ -306,11 +306,19 @@ impl NativeContext<'_, '_> {
             }
             Rand => {
                 let max = stack.pop_i32();
-                crate::sim_rng::script_rand(
-                    self.simulation,
-                    crate::sim_rng::RngSite::ScriptRand,
-                    max,
-                )
+                match self.script_vm_diagnostic.clone() {
+                    Some(diagnostic) => crate::sim_rng::script_rand_with_context(
+                        self.simulation,
+                        crate::sim_rng::RngSite::ScriptRand,
+                        max,
+                        diagnostic,
+                    ),
+                    None => crate::sim_rng::script_rand(
+                        self.simulation,
+                        crate::sim_rng::RngSite::ScriptRand,
+                        max,
+                    ),
+                }
                 .unwrap_or_else(|error| panic!("{error}"))
             }
             PrintConsole => {
