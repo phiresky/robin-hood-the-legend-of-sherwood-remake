@@ -517,6 +517,31 @@ impl EngineInner {
         pc_id: EntityId,
         action: Action,
     ) {
+        self.set_pc_action_inner(assets, Some(input), seat, pc_id, action);
+    }
+
+    /// Deliver a simulation-originated `MSG_SELECT_ACTION` when no mutable
+    /// host input borrow is available. The gameplay mutations are identical
+    /// to [`Self::set_pc_action`]; host-only rubber-band cleanup is emitted as
+    /// a side effect for the host to consume after the tick.
+    pub(crate) fn set_pc_action_from_message(
+        &mut self,
+        assets: &LevelAssets,
+        seat: usize,
+        pc_id: EntityId,
+        action: Action,
+    ) {
+        self.set_pc_action_inner(assets, None, seat, pc_id, action);
+    }
+
+    fn set_pc_action_inner(
+        &mut self,
+        assets: &LevelAssets,
+        input: Option<&mut InputState>,
+        seat: usize,
+        pc_id: EntityId,
+        action: Action,
+    ) {
         let parity_debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
         if parity_debug_stage_timing {
             eprintln!(
@@ -647,15 +672,24 @@ impl EngineInner {
         }
 
         // Hide the drag-box immediately when an action is picked.
-        input.multi_selection_active = false;
-        input.multi_unselection_active = false;
-        input.draw_multi_selection = false;
+        if let Some(input) = input {
+            input.multi_selection_active = false;
+            input.multi_unselection_active = false;
+            input.draw_multi_selection = false;
 
-        // Set `next_left_double_is_simple` so the first click after picking
-        // an action is not interpreted as the first half of a double-click
-        // — otherwise a quick action-button tap would immediately fire the
-        // action on the nearest target via the double-click repeat path.
-        input.ignore_mouse_event(false, false, true);
+            // Set `next_left_double_is_simple` so the first click after
+            // picking an action is not interpreted as the first half of a
+            // double-click — otherwise a quick action-button tap would
+            // immediately fire the action on the nearest target via the
+            // double-click repeat path.
+            input.ignore_mouse_event(false, false, true);
+        } else {
+            self.feedback.pending_side_effects.cancel_multi_selection = true;
+            // TODO(input): expose the third IgnoreMouseEvent argument as a
+            // host side effect too. Resolved-command replay is independent
+            // of this raw double-click latch, but live simulation-originated
+            // SelectAction messages should preserve it exactly.
+        }
         if parity_debug_stage_timing {
             eprintln!("parity action: set_pc_action exit pc={pc_id:?} action={action:?}");
         }

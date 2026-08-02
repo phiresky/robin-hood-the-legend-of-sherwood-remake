@@ -5477,15 +5477,36 @@ impl EngineInner {
             );
         }
 
+        for (pc_id, entering) in sides.beggar_wait_handoffs {
+            // RHElementActorPC::Execute calls Wait() inside both beggar
+            // transition DONE arms. This occurs in the actor's live legacy
+            // slot, before base Actor completion and the later
+            // SequenceManager::Hourglass drain. Keep it as a fresh launch:
+            // ensure_wait_element intentionally suppresses a wait while the
+            // finishing transition is still current.
+            self.actor_wait(pc_id);
+            // The next Original statement forwards MSG_SELECT_ACTION(BEGGAR).
+            // When this PC is selected, RHEngine::SelectAction calls Stop at
+            // Normal priority even if Beggar was already the current action;
+            // that can discard the just-postponed low-priority Wait. For an
+            // unselected PC, SelectAction only stores the action and the Wait
+            // survives. Preserve that general message behavior and ordering.
+            if entering {
+                self.set_pc_action_from_message(assets, 0, pc_id, crate::profiles::Action::Beggar);
+            } else if self.players.seats[0].selection.contains(&pc_id) {
+                // Leaving forwards MSG_UNSELECT_ACTION(BEGGAR) for a
+                // selected PC; after SetStates has made it Upright, the
+                // UnSelectAction cleanup only clears the stored action.
+                self.unselect_action(pc_id);
+            } else if let Some(pc) = self
+                .get_entity_mut(pc_id)
+                .and_then(|entity| entity.pc_data_mut())
+            {
+                pc.current_action = crate::profiles::Action::NoAction;
+            }
+        }
+
         for (pc_id, enabled) in sides.beggar_coin_flags {
-            // TODO(parity): Original also calls the PC's explicit Wait() on
-            // this DONE edge. Its actor slot runs after SequenceManager's
-            // Hourglass, so releasing that postponed Wait cannot Instruct it
-            // until the next frame. Rust currently runs its manager phase
-            // later and would consume the released Wait in this frame,
-            // publishing SIMULATING_BEGGAR one frame early. Restore the
-            // source-level Wait once manager registrations carry their
-            // Original phase generation.
             super::beggar::set_flags_of_near_coins_on_ground(
                 &mut self.world.entities,
                 pc_id,

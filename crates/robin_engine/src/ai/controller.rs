@@ -2289,16 +2289,20 @@ impl AiController {
                         if ctx.self_rank == crate::profiles::ProfileRank::Officer {
                             self.say(Remark::OfficerStartsPatrol);
                         }
-                        // Also calls `InitializePatrol()` here. Raise
-                        // the one-shot flag so
-                        // `tick_patrol_coordination` Phase 3 clears +
-                        // rebuilds the minion list on its next pass;
-                        // the local `patrol.clear()` keeps the current
-                        // frame's coordinate dispatch from referencing
-                        // a stale list before the rebuild.
-                        self.patrol.clear();
-                        self.needs_patrol_reinit = true;
-                        continue 'vm;
+                        // Original calls InitializePatrol synchronously before
+                        // ExecuteNextMacroCommand. Patrol admission needs the
+                        // engine's entity table, so suspend the macro at the
+                        // owner boundary and resume it after the inline rebuild.
+                        self.outbox.reentrant.owner_work.push(
+                            AiOwnerWork::ResumeMacroAfterPatrolInit {
+                                owner_boundary_positions: ctx
+                                    .entity_views
+                                    .iter()
+                                    .map(|(&handle, view)| (handle, view.position))
+                                    .collect(),
+                            },
+                        );
+                        return;
                     }
                 }
             } else {
