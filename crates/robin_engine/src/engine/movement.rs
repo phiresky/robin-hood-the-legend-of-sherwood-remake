@@ -2392,6 +2392,18 @@ impl EngineInner {
                     .expect("validated rider charge order disappeared before rewrite");
                 current.order_type = OrderType::RunningUpright;
                 current.order_id = fresh_id;
+                // Rider Execute mutates mpOrder->action and calls NewID on
+                // the last charge frame; update the explicit pointer mirror
+                // with that same in-place object mutation.
+                self.world.entities[rider_id]
+                    .as_mut()
+                    .expect("rider disappeared before charge order publication")
+                    .actor_data_mut()
+                    .expect("RiderCharging soldier must have actor data")
+                    .installed_order = Some(crate::element::InstalledActorOrder {
+                    order_id: fresh_id,
+                    order_type: OrderType::RunningUpright,
+                });
             }
             self.world.entities[rider_id]
                 .as_mut()

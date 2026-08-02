@@ -5201,6 +5201,36 @@ impl EngineInner {
                     };
                     let outcome =
                         motion.map(|m| dispatch_arm_completion(sim, anim_type, m, &mut arm_ctx));
+                    // These Execute arms mutate the live RHOrder in place and
+                    // call NewID rather than selecting another order. Mirror
+                    // the changed object after the arm runs; manager
+                    // selection alone cannot update the explicit mpOrder
+                    // snapshot.
+                    let mutated_installed_order = matches!(
+                        anim_type,
+                        OrderType::WaitingUprightBored
+                            | OrderType::WaitingUprightBoredRandom
+                            | OrderType::LyingStuckUnderNet
+                            | OrderType::WriggleUnderNet
+                    )
+                    .then(|| {
+                        arm_ctx
+                            .sequence_manager
+                            .get_element(seq_id, elem_idx)
+                            .and_then(|element| element.current_order())
+                            .map(|order| crate::element::InstalledActorOrder {
+                                order_id: order.order_id,
+                                order_type: order.order_type,
+                            })
+                    })
+                    .flatten();
+                    drop(arm_ctx);
+                    if let Some(installed_order) = mutated_installed_order {
+                        entity
+                            .actor_data_mut()
+                            .expect("in-place order mutation owner lost actor data")
+                            .installed_order = Some(installed_order);
+                    }
                     let effective_motion = match outcome.unwrap_or_else(|| {
                         panic!(
                             "actor {entity_id:?} {anim_type:?} produced no Execute motion at {seq_id:?}/{elem_idx}"

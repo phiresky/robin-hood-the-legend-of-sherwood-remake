@@ -800,6 +800,17 @@ impl TargetAnimationContext<'_> {
             order.compute_direction = false;
             self.sequence_manager.push_order_on(seq_id, elem_idx, order);
             self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            // Actor::Instruct publishes the translated first order through
+            // mpOrder before returning. This branch returns Skip to the outer
+            // dispatcher, so it must perform that publication locally.
+            self.entities
+                .get_mut(owner)
+                .and_then(crate::element::Entity::actor_data_mut)
+                .expect("human PlayAnim owner lost actor data")
+                .installed_order = Some(crate::element::InstalledActorOrder {
+                order_id: id,
+                order_type: wrapper,
+            });
             return OwnerActionBarrier::Skip;
         }
 
