@@ -4564,41 +4564,62 @@ impl SequenceManager {
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
     ) {
-        let mut to_remove = Vec::new();
+        // Work from the same roots as Original's
+        // StopNotYetLaunchedSequenceElements: entries currently registered in
+        // the manager's to-go list for this owner. A root can be too strong to
+        // stop while still owning a postponed pointer; RHSequenceElement::Stop
+        // follows that pointer unconditionally, so retain the cross-sequence
+        // targets returned by Rust's split-storage representation.
+        let mut targets = self
+            .elements_to_go
+            .iter()
+            .copied()
+            .filter(|(seq_id, elem_idx)| {
+                self.get_element(*seq_id, *elem_idx)
+                    .is_some_and(|element| element.owner == Some(owner))
+            })
+            .collect::<VecDeque<_>>();
+        let mut visited = HashSet::new();
 
-        for i in 0..self.elements_to_go.len() {
-            let (seq_id, elem_idx) = self.elements_to_go[i];
+        while let Some((seq_id, elem_idx)) = targets.pop_front() {
+            if !visited.insert((seq_id, elem_idx)) {
+                continue;
+            }
             let Some(seq) = self.sequences.get(&seq_id) else {
                 continue;
             };
             if elem_idx >= seq.elements.len() {
                 continue;
             }
-            if seq.elements[elem_idx].owner != Some(owner) {
-                continue;
-            }
+            assert_eq!(
+                seq.elements[elem_idx].owner,
+                Some(owner),
+                "pending postponed graph crosses owners at {seq_id:?}/{elem_idx}"
+            );
 
-            // Try to stop it
-            let effects_vec = self
+            let (effects_vec, cross_targets) = self
                 .sequences
                 .get_mut(&seq_id)
-                .map(|seq| seq.stop_element(elem_idx, stop_priority, resolver))
+                .map(|seq| seq.stop_element_with_cross_targets(elem_idx, stop_priority, resolver))
                 .unwrap_or_default();
+            for target in cross_targets {
+                if !visited.contains(&target) {
+                    targets.push_back(target);
+                }
+            }
             for effects in effects_vec {
                 self.process_effects(seq_id, effects);
             }
-
-            if let Some(seq) = self.sequences.get(&seq_id)
-                && seq.elements[elem_idx].state == SequenceState::Interrupted
-            {
-                to_remove.push(i);
-            }
         }
 
-        // Remove stopped elements from the to-go list (in reverse to preserve indices)
-        for &idx in to_remove.iter().rev() {
-            self.elements_to_go.remove(idx);
-        }
+        self.elements_to_go.retain(|(seq_id, elem_idx)| {
+            self.sequences.get(seq_id).is_none_or(|sequence| {
+                sequence
+                    .elements
+                    .get(*elem_idx)
+                    .is_none_or(|element| element.state != SequenceState::Interrupted)
+            })
+        });
         self.clear_terminal_cross_postponed_links();
     }
 
@@ -5984,6 +6005,57 @@ mod tests {
         );
         assert_eq!(
             mgr.get_element(middle_seq, 0).unwrap().cross_postponed,
+            None
+        );
+    }
+
+    #[test]
+    fn stop_owner_walks_postponed_graph_from_pending_strong_blocker() {
+        let mut mgr = SequenceManager::new();
+        let owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
+
+        let mut turn = make_simple_element(1, Command::Turn, Some(owner));
+        turn.priority = SequencePriority::Normal;
+        let turn_seq = mgr.launch_element(turn);
+        mgr.postpone_element(turn_seq, 0);
+
+        let mut attentive = make_simple_element(1, Command::EnterAttentiveMode, Some(owner));
+        attentive.priority = SequencePriority::PostponeEverythingButInjuries;
+        let attentive_seq = mgr.launch_element(attentive);
+        mgr.postpone_element(attentive_seq, 0);
+        mgr.get_element_mut(attentive_seq, 0)
+            .unwrap()
+            .cross_postponed = Some((turn_seq, 0));
+
+        let mut leave_attentive = make_simple_element(1, Command::LeaveAttentiveMode, Some(owner));
+        leave_attentive.priority = SequencePriority::PostponeEverythingButInjuries;
+        let leave_seq = mgr.launch_element(leave_attentive);
+        mgr.get_element_mut(leave_seq, 0).unwrap().cross_postponed = Some((attentive_seq, 0));
+
+        assert_eq!(
+            mgr.current_element_for_actor(owner),
+            None,
+            "Todo manager entries are not the actor's current element"
+        );
+
+        mgr.stop_owner(owner, SequencePriority::Preference, &|element| {
+            element.priority
+        });
+
+        for sequence in [leave_seq, attentive_seq] {
+            assert_ne!(
+                mgr.get_element(sequence, 0).unwrap().state,
+                SequenceState::Interrupted,
+                "StopAll must preserve attentive-mode blockers"
+            );
+        }
+        assert_eq!(
+            mgr.get_element(turn_seq, 0).unwrap().state,
+            SequenceState::Interrupted,
+            "Original Stop follows a pending blocker's postponed pointer even when the blocker is too strong to stop"
+        );
+        assert_eq!(
+            mgr.get_element(attentive_seq, 0).unwrap().cross_postponed,
             None
         );
     }

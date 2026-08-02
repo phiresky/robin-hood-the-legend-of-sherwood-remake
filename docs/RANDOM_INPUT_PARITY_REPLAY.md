@@ -3289,6 +3289,23 @@ an active motion line with no sight obstacles and verifies that the 3D sight
 ray is clear while the dedicated movement-impact query still reports the
 crossing.
 
+### StopAll follows postponed work below queued attentive-mode blockers
+
+Savegame 063 replay 001 next reached Soldier 218's visual reaction at frame
+1223. The new target correctly changed the soldier from
+`SeekingHeardstepsReactiontime` to `AttackingReactiontimeTurning`, but a stale
+postponed `Turn` then completed and advanced Rust immediately to
+`AttackingReactiontime`.
+
+Original's `StopNotYetLaunchedSequenceElements` calls `Stop` on each queued
+owner element. `RHSequenceElement::Stop` preserves a blocker stronger than the
+requested stop priority, but still unconditionally follows its postponed
+pointer. Rust found the equivalent cross-sequence pointer but discarded it in
+the pending-element path. Pending stop now walks only the postponed graphs
+rooted at the owner's manager queue entries, preserving the strong attentive
+blockers while interrupting their weaker descendants inside the actor's Halt
+scope. This also avoids broad ownership scans of unrelated stale branches.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
