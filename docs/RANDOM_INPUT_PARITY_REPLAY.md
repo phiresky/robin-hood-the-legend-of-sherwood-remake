@@ -3001,6 +3001,24 @@ projection may add element-body diagnostics without changing the retained
 runtime representation. Older traces omit only the absent `pc_qa` member, and
 the native cache version and suffix are v44.
 
+### Schema-v45 exact Quickitos and PC interface state
+
+Linux-save adoption now retains the Original's three non-sequence Quickito
+variants as typed slot payloads. Go-up and go-down call the actor posture
+operations directly. Interact retains the exact Human interactor and saved
+single- or double-click button; replay re-enters the target's state-driven
+virtual-click ladder, including the Original manager-hourglass boundary before
+double-click acceleration, instead of guessing a high-level command. Invalid
+kind/sequence combinations and invalid Interact metadata fail save preflight
+loudly. Abort, successful consumption, and tetris keep the retained PC arrays
+and the runtime macro store synchronized.
+
+The additive `pc_interface` projection compares PC playability and live
+portrait visibility. Save preflight also requires the two separately
+serialized Original visibility values (`RHElementActorPC` and its portrait
+widget) to agree before adoption. Older traces omit only this additive object;
+the native cache version and suffix are v45.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,

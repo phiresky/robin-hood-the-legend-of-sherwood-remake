@@ -1032,6 +1032,12 @@ impl Engine {
                 })
                 .collect::<Vec<_>>()
         });
+        let pc_interface = entity.pc_data().map(|pc| {
+            json!({
+                "playable": pc.playable,
+                "displayed": !pc.interface_hidden,
+            })
+        });
         let pc_tail = entity.pc_data().map(|pc| {
             json!({
                 "carried": pc.carried.map_or(Value::Null, entity_ref),
@@ -1160,6 +1166,12 @@ impl Engine {
                 .as_object_mut()
                 .expect("parity entity runtime must be an object")
                 .insert("pc_qa".to_owned(), Value::Array(pc_qa));
+        }
+        if let Some(pc_interface) = pc_interface {
+            result
+                .as_object_mut()
+                .expect("parity entity runtime must be an object")
+                .insert("pc_interface".to_owned(), pc_interface);
         }
         result
     }

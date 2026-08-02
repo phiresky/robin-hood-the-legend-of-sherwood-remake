@@ -1439,6 +1439,12 @@ impl EngineInner {
         slot: u8,
     ) {
         if self
+            .replay_legacy_quickito(sim, display, assets, pc, slot)
+            .is_some()
+        {
+            return;
+        }
+        if self
             .replay_legacy_sequence_macro(assets, pc, slot)
             .is_some()
         {
@@ -1675,6 +1681,106 @@ impl EngineInner {
         if let Some(state) = self.players.macro_store.get_mut(pc) {
             state.clear_slot(slot as usize);
         }
+    }
+
+    /// Replay the three non-sequence quick-action variants serialized by
+    /// `RHElementActorPC`. Interact deliberately re-enters the target's
+    /// state-driven click ladder instead of guessing a resolved command from
+    /// the saved target kind.
+    fn replay_legacy_quickito(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        display: &mut HostDisplayState,
+        assets: &LevelAssets,
+        pc: EntityId,
+        slot: u8,
+    ) -> Option<bool> {
+        let quickito = self
+            .players
+            .macro_store
+            .get(pc)?
+            .slot(slot as usize)?
+            .legacy_quickito()?;
+        let succeeded = match quickito.kind {
+            crate::element_kinds::QuickAction::None => {
+                panic!("legacy Quickito slot contains QuickAction::None")
+            }
+            crate::element_kinds::QuickAction::GoDown => {
+                self.actor_make_crouched(sim, pc);
+                true
+            }
+            crate::element_kinds::QuickAction::GoUp => {
+                self.actor_make_upright(sim, pc);
+                true
+            }
+            crate::element_kinds::QuickAction::Interact => {
+                let target = quickito
+                    .interactor
+                    .unwrap_or_else(|| panic!("legacy Interact Quickito has no interactor"));
+                let succeeded = self.legacy_human_mouse_clicked(sim, assets, pc, target, false);
+                if succeeded && quickito.button == 0x0008 {
+                    // Original inserts a literal SequenceManager::Hourglass
+                    // between the synthetic leading single-click and the
+                    // saved double-click. At this input boundary no entity
+                    // phase work remains; the normal sequence phase drains
+                    // precisely the newly registered click sequence.
+                    self.hourglass_phase_sequences(sim, display, assets);
+                    self.actor_make_fast(sim, pc);
+                }
+                succeeded
+            }
+        };
+        if !succeeded {
+            return Some(false);
+        }
+
+        self.remove_quick_action_titbits_for(pc, slot);
+        self.players
+            .macro_store
+            .get_mut(pc)
+            .expect("legacy Quickito macro state disappeared")
+            .clear_slot(slot as usize);
+        let saved_pc = self
+            .get_entity_mut(pc)
+            .and_then(|entity| entity.pc_data_mut())
+            .unwrap_or_else(|| panic!("legacy Quickito owner {pc:?} is not a PC"));
+        saved_pc.quick_action_types[slot as usize] = crate::element_kinds::QuickAction::None;
+        saved_pc.quick_action_buttons[slot as usize] = 0;
+        saved_pc.quick_action_interactors[slot as usize] = None;
+        Some(true)
+    }
+
+    /// Dedicated virtual-click equivalent for saved `QUICKITOS_INTERRACT`.
+    /// The Original recorder only creates this variant for Human targets.
+    fn legacy_human_mouse_clicked(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        pc: EntityId,
+        target: EntityId,
+        running: bool,
+    ) -> bool {
+        let target_entity = self
+            .get_entity(target)
+            .unwrap_or_else(|| panic!("legacy Quickito interactor {target:?} is missing"));
+        assert!(
+            target_entity.is_human(),
+            "legacy Quickito interactor {target:?} is not Human"
+        );
+        let has_scroll = match target_entity {
+            crate::element::Entity::Soldier(soldier) => soldier.npc.attached_scroll.is_some(),
+            crate::element::Entity::Civilian(civilian) => civilian.npc.attached_scroll.is_some(),
+            _ => false,
+        };
+        if has_scroll {
+            self.apply_scroll_read_with_seek(sim, pc, target, running);
+            return true;
+        }
+        let Some(command) = determine_use_command(self, assets, pc, target) else {
+            return false;
+        };
+        self.apply_interaction_with_seek(sim, pc, target, command, running);
+        true
     }
 
     /// Launch an exact owner-local quick-action sequence restored from an

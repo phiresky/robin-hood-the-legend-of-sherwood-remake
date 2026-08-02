@@ -124,6 +124,24 @@ pub enum LegacyPcHumanAdoptError {
         portrait: bool,
     },
     #[error(
+        "saved PC creation order {creation_order} quick-action slot {slot} combines Quickito {quickito:?} with an inline sequence"
+    )]
+    QuickitoSequenceConflict {
+        creation_order: u32,
+        slot: usize,
+        quickito: QuickAction,
+    },
+    #[error(
+        "saved PC creation order {creation_order} Quickito slot {slot} has invalid interactor/button metadata for {quickito:?}: interactor={interactor:?}, button={button}"
+    )]
+    InvalidQuickitoMetadata {
+        creation_order: u32,
+        slot: usize,
+        quickito: QuickAction,
+        interactor: Option<EntityId>,
+        button: u16,
+    },
+    #[error(
         "saved Human creation order {creation_order} shoot-list entry {index} does not reference an Interaction element"
     )]
     ShootNotInteraction { creation_order: u32, index: usize },
@@ -334,21 +352,31 @@ impl LegacyPcHumanAdoptionPlan {
                 // the campaign stream read immediately beforehand.
                 campaign_character.status = saved.status;
                 for slot in 0..saved.quick_action_sequences.len() {
-                    let Some(action) = saved.quick_action_sequences[slot].clone() else {
-                        continue;
-                    };
                     let titbit = saved
                         .titbits
                         .get(slot)
                         .copied()
                         .and_then(crate::titbit::TitbitId::new);
-                    engine.players.macro_store.adopt_legacy_sequence_slot(
-                        record.entity_id,
-                        slot,
-                        action,
-                        saved.quick_seek_sequences[slot].clone(),
-                        titbit,
-                    );
+                    if let Some(action) = saved.quick_action_sequences[slot].clone() {
+                        engine.players.macro_store.adopt_legacy_sequence_slot(
+                            record.entity_id,
+                            slot,
+                            action,
+                            saved.quick_seek_sequences[slot].clone(),
+                            titbit,
+                        );
+                    } else if saved.quick_action_types[slot] != QuickAction::None {
+                        engine.players.macro_store.adopt_legacy_quickito_slot(
+                            record.entity_id,
+                            slot,
+                            crate::macro_store::LegacyQuickito {
+                                kind: saved.quick_action_types[slot],
+                                interactor: saved.quick_action_interactors[slot],
+                                button: saved.quick_action_buttons[slot],
+                            },
+                            titbit,
+                        );
+                    }
                 }
             }
         }
@@ -583,8 +611,37 @@ fn convert_pc(
     let mut quick_action_buttons = Vec::with_capacity(3);
     let mut quick_action_interactors = Vec::with_capacity(3);
     let mut titbits = Vec::with_capacity(3);
-    for action in &saved.pre_human.quick_actions {
-        quick_action_types.push(quick_action(action.metadata.quickito, creation_order)?);
+    for (slot, action) in saved.pre_human.quick_actions.iter().enumerate() {
+        let quickito = quick_action(action.metadata.quickito, creation_order)?;
+        let interactor = entities.resolve_element(action.metadata.interactor)?;
+        if quickito != QuickAction::None
+            && (action.sequences.action.is_some() || action.sequences.seek.is_some())
+        {
+            return Err(LegacyPcHumanAdoptError::QuickitoSequenceConflict {
+                creation_order,
+                slot,
+                quickito,
+            });
+        }
+        let valid_metadata = match quickito {
+            QuickAction::None => true,
+            QuickAction::GoDown | QuickAction::GoUp => {
+                interactor.is_none() && action.metadata.button == 0
+            }
+            QuickAction::Interact => {
+                interactor.is_some() && matches!(action.metadata.button, 0x0001 | 0x0008)
+            }
+        };
+        if !valid_metadata {
+            return Err(LegacyPcHumanAdoptError::InvalidQuickitoMetadata {
+                creation_order,
+                slot,
+                quickito,
+                interactor,
+                button: action.metadata.button,
+            });
+        }
+        quick_action_types.push(quickito);
         quick_action_sequences.push(
             action
                 .sequences
@@ -603,7 +660,7 @@ fn convert_pc(
         );
         quick_action_special_counts.push(action.metadata.number_of_special_quick_actions);
         quick_action_buttons.push(action.metadata.button);
-        quick_action_interactors.push(entities.resolve_element(action.metadata.interactor)?);
+        quick_action_interactors.push(interactor);
         titbits.push(action.metadata.titbit);
     }
     let status = pc_status(&saved.post_human.status);

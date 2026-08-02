@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::coordinates::MapPoint;
 use crate::element::{Command, EntityId};
+use crate::element_kinds::QuickAction;
 use crate::profiles::Action;
 use crate::sequence::{Field, Sequence};
 
@@ -188,6 +189,17 @@ pub struct QuickActionSlot {
     /// commands, so playback launches copies of the retained payloads.
     legacy_action_sequence: Option<Sequence>,
     legacy_seek_sequence: Option<Sequence>,
+    /// Exact non-sequence quick action restored from an Original save.
+    legacy_quickito: Option<LegacyQuickito>,
+}
+
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, robin_state_hash_derive::StateHash,
+)]
+pub(crate) struct LegacyQuickito {
+    pub kind: QuickAction,
+    pub interactor: Option<EntityId>,
+    pub button: u16,
 }
 
 impl PartialEq for QuickActionSlot {
@@ -201,25 +213,35 @@ impl PartialEq for QuickActionSlot {
                 .expect("serialize legacy QA seek for equality")
                 == serde_json::to_value(&other.legacy_seek_sequence)
                     .expect("serialize legacy QA seek for equality")
+            && self.legacy_quickito == other.legacy_quickito
     }
 }
 
 impl QuickActionSlot {
     pub fn is_empty(&self) -> bool {
-        self.steps.is_empty() && self.legacy_action_sequence.is_none()
+        self.steps.is_empty()
+            && self.legacy_action_sequence.is_none()
+            && self.legacy_quickito.is_none()
     }
     pub fn len(&self) -> usize {
-        self.steps.len().max(
-            self.legacy_action_sequence
-                .as_ref()
-                .map_or(0, Sequence::len),
-        )
+        self.steps
+            .len()
+            .max(
+                self.legacy_action_sequence
+                    .as_ref()
+                    .map_or(0, Sequence::len),
+            )
+            .max(usize::from(self.legacy_quickito.is_some()))
     }
 
     pub(crate) fn legacy_sequences(&self) -> Option<(&Sequence, Option<&Sequence>)> {
         self.legacy_action_sequence
             .as_ref()
             .map(|action| (action, self.legacy_seek_sequence.as_ref()))
+    }
+
+    pub(crate) fn legacy_quickito(&self) -> Option<LegacyQuickito> {
+        self.legacy_quickito
     }
 }
 
@@ -309,6 +331,7 @@ impl PcMacroState {
         self.slots[slot_idx as usize].steps.clear();
         self.slots[slot_idx as usize].legacy_action_sequence = None;
         self.slots[slot_idx as usize].legacy_seek_sequence = None;
+        self.slots[slot_idx as usize].legacy_quickito = None;
         self.maul_titbits[slot_idx as usize] = None;
         self.recording_slot = Some(slot_idx);
     }
@@ -333,6 +356,7 @@ impl PcMacroState {
             s.steps.clear();
             s.legacy_action_sequence = None;
             s.legacy_seek_sequence = None;
+            s.legacy_quickito = None;
         }
         if let Some(cell) = self.maul_titbits.get_mut(slot_idx) {
             *cell = None;
@@ -431,6 +455,27 @@ impl MacroStore {
         state.slots[slot].steps.clear();
         state.slots[slot].legacy_action_sequence = Some(action);
         state.slots[slot].legacy_seek_sequence = seek;
+        state.slots[slot].legacy_quickito = None;
+        state.maul_titbits[slot] = titbit;
+    }
+
+    pub(crate) fn adopt_legacy_quickito_slot(
+        &mut self,
+        pc: EntityId,
+        slot: usize,
+        quickito: LegacyQuickito,
+        titbit: Option<crate::titbit::TitbitId>,
+    ) {
+        assert!(
+            slot < NUMBER_OF_QA_MEMORY,
+            "legacy Quickito slot {slot} is out of range"
+        );
+        assert_ne!(quickito.kind, QuickAction::None, "empty legacy Quickito");
+        let state = self.get_or_insert(pc);
+        state.slots[slot].steps.clear();
+        state.slots[slot].legacy_action_sequence = None;
+        state.slots[slot].legacy_seek_sequence = None;
+        state.slots[slot].legacy_quickito = Some(quickito);
         state.maul_titbits[slot] = titbit;
     }
 
@@ -502,6 +547,41 @@ mod tests {
             .expect("adopted PC macro state")
             .clear_slot(1);
         assert!(!store.get(pc).expect("adopted PC macro state").has_macro(1));
+    }
+
+    #[test]
+    fn adopted_legacy_quickito_is_a_live_macro_and_clears_atomically() {
+        let pc = EntityId::new(8, crate::element::EntityIdKind::Pc);
+        let target = EntityId::new(9, crate::element::EntityIdKind::Soldier);
+        let mut store = MacroStore::new();
+        store.adopt_legacy_quickito_slot(
+            pc,
+            2,
+            LegacyQuickito {
+                kind: QuickAction::Interact,
+                interactor: Some(target),
+                button: 0x0008,
+            },
+            None,
+        );
+
+        let state = store.get(pc).expect("adopted PC macro state");
+        assert!(state.has_macro(2));
+        assert_eq!(state.slot(2).expect("slot").len(), 1);
+        assert_eq!(
+            state.slot(2).expect("slot").legacy_quickito(),
+            Some(LegacyQuickito {
+                kind: QuickAction::Interact,
+                interactor: Some(target),
+                button: 0x0008,
+            })
+        );
+
+        store
+            .get_mut(pc)
+            .expect("adopted PC macro state")
+            .clear_slot(2);
+        assert!(!store.get(pc).expect("adopted PC macro state").has_macro(2));
     }
 
     #[test]

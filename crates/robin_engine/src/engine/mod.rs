@@ -3405,8 +3405,6 @@ impl EngineInner {
     /// the slot's recorded steps + stored titbit id.  Returns `true` iff
     /// the slot had a macro before the call.
     ///
-    /// The legacy "quickitos" (posture-toggle / interactor) QA path is
-    /// not modelled here — every QA in this port is sequence-driven.
     pub fn abort_quick_action(&mut self, pc: EntityId, slot: u8) -> bool {
         if !self.has_quick_action(pc, slot) {
             return false;
@@ -3415,6 +3413,18 @@ impl EngineInner {
         if let Some(state) = self.players.macro_store.get_mut(pc) {
             state.clear_slot(slot as usize);
         }
+        let saved_pc = self
+            .get_entity_mut(pc)
+            .and_then(|entity| entity.pc_data_mut())
+            .unwrap_or_else(|| panic!("quick-action owner {pc:?} is not a PC"));
+        let slot = slot as usize;
+        saved_pc.quick_action_types[slot] = crate::element_kinds::QuickAction::None;
+        saved_pc.quick_action_sequences[slot] = None;
+        saved_pc.quick_seek_sequences[slot] = None;
+        saved_pc.quick_action_special_counts[slot] = 0;
+        saved_pc.quick_action_buttons[slot] = 0;
+        saved_pc.quick_action_interactors[slot] = None;
+        saved_pc.titbits[slot] = u32::MAX;
         true
     }
 
@@ -3427,6 +3437,29 @@ impl EngineInner {
             if let Some(state) = self.players.macro_store.get_mut(pc) {
                 state.do_tetris(slot as usize);
             }
+            let saved_pc = self
+                .get_entity_mut(pc)
+                .and_then(|entity| entity.pc_data_mut())
+                .unwrap_or_else(|| panic!("quick-action owner {pc:?} is not a PC"));
+            let first = slot as usize;
+            for index in first..crate::macro_store::NUMBER_OF_QA_MEMORY - 1 {
+                saved_pc.quick_action_types[index] = saved_pc.quick_action_types[index + 1];
+                saved_pc.quick_action_sequences[index] =
+                    saved_pc.quick_action_sequences[index + 1].clone();
+                saved_pc.quick_seek_sequences[index] =
+                    saved_pc.quick_seek_sequences[index + 1].clone();
+                saved_pc.titbits[index] = saved_pc.titbits[index + 1];
+                saved_pc.quick_action_interactors[index] =
+                    saved_pc.quick_action_interactors[index + 1];
+                saved_pc.quick_action_buttons[index] = saved_pc.quick_action_buttons[index + 1];
+            }
+            let last = crate::macro_store::NUMBER_OF_QA_MEMORY - 1;
+            saved_pc.quick_action_types[last] = crate::element_kinds::QuickAction::None;
+            saved_pc.quick_action_sequences[last] = None;
+            saved_pc.quick_seek_sequences[last] = None;
+            saved_pc.titbits[last] = u32::MAX;
+            saved_pc.quick_action_interactors[last] = None;
+            saved_pc.quick_action_buttons[last] = 0;
         }
         display.rearm_macro_tetris(&self.world.pc_ids, &self.players.macro_store, slot as usize);
     }
