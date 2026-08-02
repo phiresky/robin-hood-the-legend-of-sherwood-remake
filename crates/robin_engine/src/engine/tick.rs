@@ -5477,6 +5477,16 @@ impl EngineInner {
             );
         }
 
+        for pc_id in sides.beggar_wait_handoffs {
+            // RHElementActorPC::Execute calls Wait() before the select-action
+            // message and coin/AI side effects in both beggar transition DONE
+            // arms. A fresh priority-Wait must therefore arbitrate while the
+            // transition element is still live; ensure_wait_element would
+            // incorrectly suppress it because that helper is only for the
+            // next-frame null-order fallback.
+            self.actor_wait(pc_id);
+        }
+
         for (pc_id, enabled) in sides.beggar_coin_flags {
             super::beggar::set_flags_of_near_coins_on_ground(
                 &mut self.world.entities,

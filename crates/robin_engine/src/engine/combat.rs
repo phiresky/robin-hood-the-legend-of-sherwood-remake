@@ -3939,6 +3939,14 @@ impl EngineInner {
                     seq_id,
                     elem_idx,
                 } => {
+                    // RHElementActorPC::Execute launches Wait() synchronously
+                    // on the DONE edge of
+                    // TRANSITION_LISTENING_WAITING_UPRIGHT.  This is an
+                    // explicit priority-Wait launch, not the null-order
+                    // fallback installed at the start of the next actor
+                    // Hourglass: it must already be available when the exit
+                    // transition terminates and sends its consolation card.
+                    self.actor_wait(actor_id);
                     // Exit transition animation finished.  Forward
                     // PcMessage::UnselectAction(Listen) to clear the
                     // HUD active state.

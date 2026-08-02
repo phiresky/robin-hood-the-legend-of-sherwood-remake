@@ -1655,6 +1655,10 @@ pub(super) struct ExecuteSideOutcomes {
     /// PC beggar transitions whose DONE edge toggles nearby ground-coin
     /// eligibility. `true` enters the disguise; `false` leaves it.
     pub beggar_coin_flags: Vec<(EntityId, bool)>,
+    /// PCs whose beggar transition reached DONE. Original calls the PC's
+    /// explicit `Wait()` from both transition Execute arms before returning
+    /// the DONE motion result.
+    pub beggar_wait_handoffs: Vec<EntityId>,
     /// PCs whose crouch posture transition reached DONE or TERMINATED.
     /// Original forwards the unparameterized stature-change notification
     /// from both terminal switch arms.
@@ -4932,12 +4936,20 @@ impl EngineInner {
                                         .execute_sides
                                         .beggar_coin_flags
                                         .push((entity_id, true));
+                                    completion_outcomes
+                                        .execute_sides
+                                        .beggar_wait_handoffs
+                                        .push(entity_id);
                                 }
                                 OrderType::TransitionSimulatingBeggarWaitingUpright => {
                                     completion_outcomes
                                         .execute_sides
                                         .beggar_coin_flags
                                         .push((entity_id, false));
+                                    completion_outcomes
+                                        .execute_sides
+                                        .beggar_wait_handoffs
+                                        .push(entity_id);
                                 }
                                 _ => {}
                             }
