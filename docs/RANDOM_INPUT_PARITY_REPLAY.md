@@ -2937,6 +2937,26 @@ recordings can expose fresh-runtime drift as well as save-load drift. Older
 traces omit only the additive `human_continuation` object. The native cache
 version and suffix are v41.
 
+### Schema-v42 human structural and geometry continuation
+
+The remaining serialized human structure is now compared semantically on every
+frame: swordfight opponents are paired in list order with their jump-line
+geometry, pending shots use sequence construction ordinals, and building
+membership uses the sector projection rather than process-local pointers. The
+repulsive point, shield planes/polygons/bounds, and in-flight sword-sweep
+victims and angles retain their exact serialized values. Linux-save adoption
+already restored each of these fields; schema v42 makes that restoration
+observable and strict while retaining compatibility only for recordings that
+predate the additive `human_structure` member. The cache version and suffix are
+v42.
+
+`RHElementActorHuman` also serializes a produced-noise member through an
+accidental wire shape: the legacy stream invokes the noise constructor while
+reading and writes only a subset of the logical object. It is intentionally not
+folded into this geometry slice. Its authoritative semantic representation and
+adoption must be handled separately instead of treating uninitialized or
+constructor-derived bytes as stable game state.
+
 ### Generic script RNG provenance
 
 Strict Original-RNG replay diagnostics now attach the persistent VM key,

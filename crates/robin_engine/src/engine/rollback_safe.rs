@@ -919,6 +919,89 @@ impl Engine {
                 },
             })
         });
+        let human_structure = entity.human_data().map(|human| {
+            assert_eq!(
+                human.opponents.len(),
+                human.opponent_jump_lines.len(),
+                "parity human opponent and jump-line arrays differ in length"
+            );
+            let opponents = human
+                .opponents
+                .iter()
+                .copied()
+                .zip(human.opponent_jump_lines.iter().copied())
+                .map(|(opponent, line)| json!({
+                    "entity": entity_ref(opponent), "jump_line": jump_line(line.map(u32::from)),
+                }))
+                .collect::<Vec<_>>();
+            let repulsive = &human.repulsive_point;
+            let shield = &human.shield;
+            let plane = |value: &crate::element::HumanPlaneState| json!({
+                "a": point3(value.a.x, value.a.y, value.a.z),
+                "b": point3(value.b.x, value.b.y, value.b.z),
+                "normal": point3(value.normal.x, value.normal.y, value.normal.z),
+                "origin": point3(value.origin.x, value.origin.y, value.origin.z),
+                "u": point3(value.u.x, value.u.y, value.u.z),
+                "v": point3(value.v.x, value.v.y, value.v.z),
+                "az": float(value.az), "bz": float(value.bz),
+                "dz": float(value.dz), "d": float(value.d),
+            });
+            let box2_state = |value: crate::element::HumanBoundingBox2State| json!({
+                "top_left": point2(value.top_left.x, value.top_left.y),
+                "bottom_right": point2(value.bottom_right.x, value.bottom_right.y),
+                "bounds_are_set": value.bounds_are_set,
+            });
+            let sequence_ordinals: std::collections::BTreeMap<_, _> = self
+                .inner
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .enumerate()
+                .map(|(ordinal, sequence)| (sequence.id, ordinal))
+                .collect();
+            let sequence_ref = |value: crate::sequence::SequenceElementRef| {
+                let sequence = sequence_ordinals.get(&value.sequence_id).copied().unwrap_or_else(|| {
+                    panic!("parity human pending shoot points outside sequence manager: {value:?}")
+                });
+                json!({ "sequence": sequence, "element": value.element_index })
+            };
+            json!({
+                "opponents": opponents,
+                "repulsive_point": {
+                    "position": point2(repulsive.position.x, repulsive.position.y),
+                    "concave": repulsive.concave,
+                    "limit_left": point2(repulsive.limit_left.x, repulsive.limit_left.y),
+                    "limit_right": point2(repulsive.limit_right.x, repulsive.limit_right.y),
+                    "action_radius": float(repulsive.action_radius),
+                    "force_a": float(repulsive.force_a), "force_b": float(repulsive.force_b),
+                    "radius": float(repulsive.radius), "id": repulsive.id,
+                    "affects_pcs": repulsive.affects_pcs,
+                    "affects_soldiers": repulsive.affects_soldiers,
+                    "affects_civilians": repulsive.affects_civilians,
+                    "affects_animals": repulsive.affects_animals,
+                },
+                "building": sector(human.building_sector),
+                "shield": {
+                    "points": shield.points.iter().map(|value| json!({
+                        "obstacle": value.obstacle.map(float),
+                        "polygon": point2(value.polygon.x, value.polygon.y),
+                    })).collect::<Vec<_>>(),
+                    "top_plane": plane(&shield.top_plane),
+                    "bottom_plane": plane(&shield.bottom_plane),
+                    "box_3d": shield.box_3d.map(float),
+                    "ground_box": box2_state(shield.ground_box),
+                    "screen_box": box2_state(shield.screen_box),
+                    "on_ground": shield.on_ground,
+                },
+                "sword_sweep": {
+                    "victims": human.sword_sweep.victims.iter().copied().map(entity_ref).collect::<Vec<_>>(),
+                    "initial_angle": float(human.sword_sweep.initial_angle),
+                    "current_angle": float(human.sword_sweep.current_angle),
+                    "final_angle": float(human.sword_sweep.final_angle),
+                },
+                "pending_shoots": human.pending_shoots.iter().copied().map(sequence_ref).collect::<Vec<_>>(),
+            })
+        });
         let subtype = if entity.element_data().active {
             match entity {
                 crate::element::Entity::Target(target) => Some(json!({
@@ -1007,6 +1090,12 @@ impl Engine {
                 .as_object_mut()
                 .expect("parity entity runtime must be an object")
                 .insert("human_continuation".to_owned(), human_continuation);
+        }
+        if let Some(human_structure) = human_structure {
+            result
+                .as_object_mut()
+                .expect("parity entity runtime must be an object")
+                .insert("human_structure".to_owned(), human_structure);
         }
         result
     }
