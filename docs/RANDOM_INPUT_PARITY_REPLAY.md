@@ -2201,6 +2201,28 @@ becomes a replay frontier it must be captured as an ordered external completion
 event, not equated to a host timestamp. Adding the source table changes the
 native parity cache to version 16.
 
+### Persistent global AI-manager state
+
+Schema 13 now records the mutable state owned by Original's global AI
+manager. The snapshot preserves the mission-defined seek-point order and each
+point's full-interest frame, last calculated interest, and lock flag; it also
+preserves archery-sector order, each sector's owner count, and every ordered
+waypoint owner. Soldier owners use the normal entity isomorphism rather than
+raw allocation IDs.
+
+The same projection includes the stupid-soldiers cheat, green/yellow/red
+soldier counts, both overall alert enums, and the saved deterministic RNG
+seed. These values are simulation-authoritative: seek locks and interest steer
+investigations, archery reservations choose later combat positions, and alert
+counters/status change AI behavior. Mission-static seek directions, positions,
+archery polygons, and waypoint geometry are excluded because Original's
+`SerializeAllAI` does not persist them; identical mission content reconstructs
+them before applying the recorded statuses.
+
+Adding this required manager snapshot changes the native parity cache to
+version 17. Recordings without `engine_state.ai_global` are intentionally
+rejected instead of silently omitting global AI coverage.
+
 ### Sequence-manager and script-VM boundary state
 
 Schema 13 now records the sequence manager's insertion-ordered sequences,

@@ -1365,6 +1365,7 @@ struct TraceEngineState {
     pathfinder: TraceJsonValue,
     view_radius_cache: TraceJsonValue,
     sound_sources: TraceJsonValue,
+    ai_global: TraceJsonValue,
     failed_path_requests: Vec<TraceFailedPathRequest>,
 }
 
@@ -1436,8 +1437,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 16;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v16.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 17;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v17.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -4857,6 +4858,16 @@ fn compare_engine_state(
         differences,
     );
 
+    let mut expected_ai_global = expected.ai_global.to_json();
+    canonicalize_authoritative_snapshot(&mut expected_ai_global, entity_map);
+    let actual_ai_global = engine.parity_ai_global_state();
+    collect_json_differences(
+        "frame.engine_state.ai_global",
+        &expected_ai_global,
+        &actual_ai_global,
+        differences,
+    );
+
     if expected.speed.bits != actual.speed.to_bits() {
         differences.push(format!(
             "frame.engine_state.speed: original={} (0x{:08x}) rust={} (0x{:08x})",
@@ -6106,6 +6117,17 @@ mod tests {
             },
             "view_radius_cache": {"frame": 0, "entries": []},
             "sound_sources": [],
+            "ai_global": {
+                "stupid_soldiers_cheat": false,
+                "seek_points": [],
+                "archery_sectors": [],
+                "green_alert_soldiers": 0,
+                "yellow_alert_soldiers": 0,
+                "red_alert_soldiers": 0,
+                "overall_alert_status": 0,
+                "overall_villain_alert_status": 0,
+                "saved_random_seed": 0
+            },
             "failed_path_requests": []
         });
         let schema_thirteen: TraceFrame = serde_json::from_value(schema_thirteen_json).unwrap();

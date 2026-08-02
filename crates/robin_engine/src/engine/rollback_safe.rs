@@ -718,6 +718,49 @@ impl Engine {
         Value::Array(result)
     }
 
+    /// Serialized global AI-manager state. Mission-static seek/archery
+    /// geometry is intentionally absent; Original persists only these ordered
+    /// mutable statuses, reservations, counters, alerts, and saved RNG seed.
+    #[doc(hidden)]
+    pub fn parity_ai_global_state(&self) -> serde_json::Value {
+        use serde_json::{Value, json};
+
+        let entity = |id: EntityId| {
+            let kind = match id.kind() {
+                crate::element::EntityIdKind::Pc => "pc",
+                crate::element::EntityIdKind::Soldier => "soldier",
+                crate::element::EntityIdKind::Civilian => "civilian",
+                crate::element::EntityIdKind::Fx => "fx",
+                crate::element::EntityIdKind::Target => "target",
+                crate::element::EntityIdKind::Bonus => "bonus",
+                crate::element::EntityIdKind::Scroll => "scroll",
+                crate::element::EntityIdKind::Projectile => "projectile",
+                crate::element::EntityIdKind::Net => "net",
+            };
+            json!({ "kind": kind, "index": id.index() })
+        };
+        let global = &self.inner.ai.global;
+        json!({
+            "stupid_soldiers_cheat": global.stupid_soldiers_cheat,
+            "seek_points": global.seek_points.iter().map(|point| json!({
+                "frame_when_full_interest": point.frame_when_full_interest,
+                "last_calculated_interest": point.last_calculated_interest,
+                "locked": point.locked,
+            })).collect::<Vec<_>>(),
+            "archery_sectors": global.archery_sectors.iter().map(|sector| json!({
+                "num_owners": sector.num_owners,
+                "point_owners": sector.points.iter().map(|point| point.owner
+                    .map(&entity).unwrap_or(Value::Null)).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+            "green_alert_soldiers": global.green_alert_soldiers,
+            "yellow_alert_soldiers": global.yellow_alert_soldiers,
+            "red_alert_soldiers": global.red_alert_soldiers,
+            "overall_alert_status": global.overall_alert_status as u32,
+            "overall_villain_alert_status": global.overall_villain_alert_status as u32,
+            "saved_random_seed": global.saved_random_seed,
+        })
+    }
+
     /// Persistent mission-VM state at a quiescent frame boundary. VM native
     /// handles are decoded to their semantic table kind/index; raw process or
     /// Rust handle encodings never enter the trace.
@@ -2035,6 +2078,57 @@ mod tests {
         assert_eq!(state[1]["altitude"], 2);
         assert_eq!(state[1]["timer"], 11);
         assert_eq!(state[1]["active"], true);
+    }
+
+    #[test]
+    fn parity_ai_global_preserves_ordered_statuses_reservations_and_alerts() {
+        let mut inner = EngineInner::new();
+        inner.ai.global.stupid_soldiers_cheat = true;
+        inner.ai.global.green_alert_soldiers = 3;
+        inner.ai.global.yellow_alert_soldiers = 4;
+        inner.ai.global.red_alert_soldiers = 5;
+        inner.ai.global.overall_alert_status = crate::ai::AlertLevel::Yellow;
+        inner.ai.global.overall_villain_alert_status = crate::ai::AlertLevel::Red;
+        inner.ai.global.saved_random_seed = -73;
+        let mut seek = crate::ai::SeekPoint::from_position(
+            &crate::sim_rng::SimulationContext::with_seed(1),
+            crate::ai::Position::default(),
+        );
+        seek.frame_when_full_interest = 99;
+        seek.last_calculated_interest = 41;
+        seek.locked = true;
+        inner.ai.global.seek_points.push(seek);
+        inner
+            .ai
+            .global
+            .archery_sectors
+            .push(crate::ai::SectorArchery {
+                points: vec![crate::ai::PointArchery {
+                    position: crate::ai::Position::default(),
+                    direction: 7,
+                    is_shooting_point: true,
+                    sector_index: crate::sector::SectorNumber(2),
+                    owner: None,
+                }],
+                polygon: Vec::new(),
+                layer: 0,
+                index_first_shooting_point: Some(crate::sector::ArcheryPointIdx(0)),
+                index_last_shooting_point: Some(crate::sector::ArcheryPointIdx(0)),
+                num_shooting_points: 1,
+                num_owners: 0,
+            });
+        let engine = Engine { inner };
+
+        let state = engine.parity_ai_global_state();
+        assert_eq!(state["stupid_soldiers_cheat"], true);
+        assert_eq!(state["seek_points"][0]["frame_when_full_interest"], 99);
+        assert_eq!(state["seek_points"][0]["last_calculated_interest"], 41);
+        assert_eq!(state["seek_points"][0]["locked"], true);
+        assert_eq!(state["archery_sectors"][0]["num_owners"], 0);
+        assert!(state["archery_sectors"][0]["point_owners"][0].is_null());
+        assert_eq!(state["overall_alert_status"], 1);
+        assert_eq!(state["overall_villain_alert_status"], 2);
+        assert_eq!(state["saved_random_seed"], -73);
     }
 
     #[test]
