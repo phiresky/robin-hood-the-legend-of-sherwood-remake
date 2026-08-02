@@ -354,6 +354,10 @@ fn non_enemy_visibility_blocked_before_cadence(
     eye_status.is_blind() || type_gate_blocked
 }
 
+fn missed_friend_or_beggar_target_blocked(dead: bool, unconscious: bool) -> bool {
+    dead || unconscious
+}
+
 /// Original `RHElementActorNPC::HandlePredetection` shadow-edge update.
 ///
 /// The shadow threshold is tested against the suspect accumulator as it stood
@@ -3384,7 +3388,7 @@ impl EngineInner {
             false,
             human_targets,
             // Per-target pre-filter: skip dead / unconscious targets.
-            |t| !t.unconscious,
+            |t| !missed_friend_or_beggar_target_blocked(t.dead, t.unconscious),
             ViewContext {
                 position_map: viewer.position_map,
                 viewer_inside_building,
@@ -3441,7 +3445,7 @@ impl EngineInner {
             false,
             human_targets,
             // Per-target pre-filter: skip dead / unconscious targets.
-            |t| !t.unconscious,
+            |t| !missed_friend_or_beggar_target_blocked(t.dead, t.unconscious),
             ViewContext {
                 position_map: viewer.position_map,
                 viewer_inside_building,
@@ -4049,6 +4053,14 @@ mod tests {
     use super::*;
     use crate::ai::{Position, Substate};
     use crate::element::Posture;
+
+    #[test]
+    fn missed_friend_and_beggar_reject_dead_or_unconscious_before_cadence() {
+        assert!(!missed_friend_or_beggar_target_blocked(false, false));
+        assert!(missed_friend_or_beggar_target_blocked(true, false));
+        assert!(missed_friend_or_beggar_target_blocked(false, true));
+        assert!(missed_friend_or_beggar_target_blocked(true, true));
+    }
 
     #[test]
     fn blind_non_enemy_visibility_is_blocked_before_closed_cadence_reuse() {

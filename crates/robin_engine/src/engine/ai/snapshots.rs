@@ -297,6 +297,9 @@ pub(super) struct HumanTarget {
     pub(super) direction: i16,
     pub(super) action_state: crate::element::ActionState,
     pub(super) building_sector: Option<crate::position_interface::SectorHandle>,
+    /// Canonical `RHElementActorHuman::IsDead()` state. MissedFriend and
+    /// Beggar reject dead targets before their per-type cadence decision.
+    pub(super) dead: bool,
     pub(super) unconscious: bool,
     pub(super) active: bool,
     pub(super) is_pc: bool,
@@ -1041,6 +1044,7 @@ impl EngineInner {
                 panic!("human detectable target {} has no human data", id.index())
             });
             let action_state = actor.action_state;
+            let dead = entity.is_dead();
             let unconscious = human.unconscious;
             let active = entity.element_data().active;
             let passing_door = actor.active_door_pass.is_some();
@@ -1102,6 +1106,7 @@ impl EngineInner {
                     direction,
                     action_state,
                     building_sector,
+                    dead,
                     unconscious,
                     active,
                     is_pc,
