@@ -67,7 +67,7 @@ pub struct AiContext {
     /// Original `RHElement::GetCreationOrder()` for the evaluating actor.
     /// This is distinct from the Rust entity-table slot and is required by
     /// `ForbidRemark(..., THIS_GUY)` identity checks.
-    pub original_creation_order: u32,
+    pub original_creation_order: Option<u32>,
     pub position: Position,
     pub frame: u32,
     pub direction: u16,

@@ -403,6 +403,12 @@ mod parity_tests {
     }
 
     #[test]
+    fn generic_owner_zero_context_may_lack_an_ai_entity_view() {
+        let views = std::sync::Arc::new(crate::ai_entity_view::AiEntityViewMap::new());
+        assert_eq!(context_original_creation_order(0, &views), None);
+    }
+
+    #[test]
     #[should_panic(expected = "has no authored entry doors")]
     fn non_stairs_lift_does_not_fake_a_missing_entry() {
         let grid = lift_grid(crate::sector::LiftType::Ladder);
@@ -567,15 +573,8 @@ pub(super) fn build_ai_context_from_entity(
     difficulty: crate::player_profile::DifficultyLevel,
 ) -> AiContext {
     let elem = entity.element_data();
-    let original_creation_order = entity_views
-        .get(&(elem.index_in_elements_list as u32))
-        .unwrap_or_else(|| {
-            panic!(
-                "AI owner {} is missing its authoritative entity view",
-                elem.index_in_elements_list
-            )
-        })
-        .original_creation_order;
+    let original_creation_order =
+        context_original_creation_order(elem.index_in_elements_list as u32, entity_views);
     let camp = match entity {
         Entity::Soldier(s) => s.soldier.cached_camp,
         Entity::Civilian(c) => c.civilian.cached_camp,
@@ -822,6 +821,15 @@ pub(super) fn build_ai_context_from_entity(
         hiking_paths: hiking_paths.clone(),
         all_soldier_handles: all_soldier_handles.clone(),
     }
+}
+
+fn context_original_creation_order(
+    entity_index: u32,
+    entity_views: &SharedAiEntityViews,
+) -> Option<u32> {
+    entity_views
+        .get(&entity_index)
+        .map(|view| view.original_creation_order)
 }
 
 /// Look up the live metadata for an enemy's `primary_target` from the

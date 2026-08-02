@@ -2381,6 +2381,10 @@ the stored `UWORD` against the full creation order. This preserves Original's
 otherwise surprising C++ conversion behavior: insertion narrows the `ULONG`
 creation order to 16 bits, while lookup promotes that stored value before the
 comparison, so a creation order above 65535 cannot match a `THIS_GUY` entry.
+Generic engine contexts may legitimately have no AI entity-view snapshot (in
+particular the owner-zero save-adoption path), so the context carries this
+identity as optional and requires it only when executing the actual
+`ForbidRemark` consumer. No placeholder creation order is manufactured.
 Screen remarks and the unused fixed remark-expiry array are excluded as
 presentation-only and dead state respectively.
 

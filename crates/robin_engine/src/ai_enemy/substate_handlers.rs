@@ -3187,7 +3187,8 @@ impl EnemyAi {
                         30,
                         crate::ai::RemarkTargetFlags::THIS_GUY.bits(),
                         0,
-                        ctx.original_creation_order,
+                        ctx.original_creation_order
+                            .expect("ForbidRemark requires the AI owner's Original creation order"),
                         ctx.frame,
                     );
                     self.seek_area(
