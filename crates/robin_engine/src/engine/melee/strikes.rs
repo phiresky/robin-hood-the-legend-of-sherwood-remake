@@ -1730,13 +1730,28 @@ impl EngineInner {
     /// animation.
     pub(crate) fn update_roll_after_crossing(&mut self, assets: &LevelAssets, entity_id: EntityId) {
         // Cheap early-out: only act while the actor is rolling.
-        let is_rolling = self
+        let Some((roll_seq_id, roll_elem_idx, roll_command)) = self
             .orders
             .sequence_manager
             .current_order_for_actor(entity_id)
-            .map(|(_, _, o)| o.order_type == OrderType::Rolling)
-            .unwrap_or(false);
-        if !is_rolling {
+            .and_then(|(seq_id, elem_idx, order)| {
+                (order.order_type == OrderType::Rolling).then(|| {
+                    let command = self
+                        .orders
+                        .sequence_manager
+                        .get_element(seq_id, elem_idx)
+                        .expect("current rolling element disappeared")
+                        .command;
+                    (seq_id, elem_idx, command)
+                })
+            })
+        else {
+            return;
+        };
+
+        // RHCOMMAND_ROLL owns its authored destination. Original UpdateRoll
+        // returns before inspecting the crossed obstacle for that command.
+        if roll_command == Command::Roll {
             return;
         }
 
@@ -1798,6 +1813,31 @@ impl EngineInner {
             if let Some(facing) = new_facing {
                 entity.element_data_mut().set_direction_instantly(facing);
             }
+        }
+
+        if let Some(dest) = new_dest {
+            // UpdateRoll changes the live mpOrder destination and calls
+            // NewID. Retargeting only active_flight leaves both the sequence
+            // order and the explicit mpOrder mirror stale.
+            let fresh_id = self.orders.allocate_order_id();
+            let current = self
+                .orders
+                .sequence_manager
+                .get_element_mut(roll_seq_id, roll_elem_idx)
+                .and_then(|element| element.orders.front_mut())
+                .expect("rolling order disappeared before UpdateRoll rewrite");
+            current.target_x = dest.x;
+            current.target_y = dest.y;
+            current.order_id = fresh_id;
+            self.world.entities[entity_id]
+                .as_mut()
+                .expect("rolling actor disappeared before UpdateRoll publication")
+                .actor_data_mut()
+                .expect("Rolling owner must have actor data")
+                .installed_order = Some(crate::element::InstalledActorOrder {
+                order_id: fresh_id,
+                order_type: OrderType::Rolling,
+            });
         }
     }
 
