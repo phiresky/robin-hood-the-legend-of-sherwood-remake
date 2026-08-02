@@ -1536,6 +1536,47 @@ impl EngineInner {
                     ) as i16
                 });
 
+            // RHElementActorHuman::ProposeGoodSwordStrike always limits a
+            // reactive counter-strike by the principal opponent's remaining
+            // strike time. Without this deadline a warned PC can choose a
+            // counter-strike that cannot land before the incoming blow, where
+            // Original rejects every strike and falls back to ParrySword.
+            let target_id_for_nearby = principal_opponent.unwrap_or(attacker_id);
+            let opponent_time_limit = {
+                let opponent = self.get_entity(target_id_for_nearby).unwrap_or_else(|| {
+                    panic!(
+                        "WarnForStrike PC {victim_id:?} references missing principal opponent {target_id_for_nearby:?}"
+                    )
+                });
+                opponent.actor_data().unwrap_or_else(|| {
+                    panic!(
+                        "WarnForStrike PC {victim_id:?} principal opponent {target_id_for_nearby:?} is not an actor"
+                    )
+                });
+                let sprite = &opponent.element_data().sprite;
+                use crate::order::OrderType as OT;
+                let in_active_strike = matches!(
+                    self.live_actor_animation(target_id_for_nearby),
+                    Some(
+                        OT::StrikingStraightSword
+                            | OT::StrikingStraightStrongSword
+                            | OT::StrikingRightSword
+                            | OT::StrikingLeftSword
+                            | OT::StrikingRoundRightSword
+                            | OT::StrikingRoundLeftSword
+                            | OT::StrikingSemiroundRightSword
+                            | OT::StrikingSemiroundLeftSword
+                            | OT::StrikingDownSword
+                    )
+                );
+                if !in_active_strike {
+                    Some(1000i16)
+                } else {
+                    let frames = sprite.frames_from_now_till_action_done();
+                    Some(if frames == -1 { 1000 } else { frames })
+                }
+            };
+
             // Build nearby victims so circle/push/round strike scoring can
             // see adjacent enemies — same shape as the strike-launcher and
             // PC strike-propose paths.
@@ -1545,7 +1586,6 @@ impl EngineInner {
                 dynamic_obstacles: &self.world.dynamic_sight_obstacles,
                 static_active: &self.world.static_sight_obstacle_active,
             };
-            let target_id_for_nearby = principal_opponent.unwrap_or(attacker_id);
             let nearby: Vec<crate::combat::NearbyVictim> = self
                 .world
                 .entities
@@ -1610,7 +1650,7 @@ impl EngineInner {
                 attacker_elevation: pc_elevation,
                 attacker_camp: pc_camp,
                 is_swordfighting: true,
-                opponent_time_limit: None,
+                opponent_time_limit,
                 strike_startup_frames: pc_sprite_frames,
                 parry_startup_frames: pc_parry_startup,
                 is_npc: false, // PC path — different skill gate
@@ -1653,7 +1693,7 @@ impl EngineInner {
                     // the incoming attacker when there's no current
                     // opponent.
                     let counter_cmd = counter_strike.to_command();
-                    let target = principal_opponent.unwrap_or(attacker_id);
+                    let target = target_id_for_nearby;
                     let mut seq = crate::sequence::Sequence::new();
                     let strike_elem = crate::sequence::SequenceElement::new_interaction(
                         1,

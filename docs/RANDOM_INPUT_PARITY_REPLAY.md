@@ -3351,6 +3351,24 @@ receives the active simulation and level context and calls the shared
 regression verifies that the visible lowering remains queued while both sides'
 opponent lists are already empty when transition generation returns.
 
+### Reactive PC strikes obey the incoming strike deadline
+
+The long random-input ExQuickSave replay first diverged at frame 35582 while
+PC 342 reacted to Soldier 97's newly installed sword strike. Original selected
+`ParrySword`; Rust selected `SwordstrikeThrustE` from the same global RNG draw.
+
+Original `RHElementActorPC::WarnForStrike` calls
+`RHElementActorHuman::ProposeGoodSwordStrike(true)`. That proposal derives a
+time limit from the principal opponent's current strike and remaining sprite
+frames, rejects every counter-strike whose startup plus two frames cannot beat
+the incoming blow, and only then falls back to parrying. Rust's reactive-PC
+path supplied no opponent deadline, which the shared selector deliberately
+interprets as the permissive 1000-frame non-strike case. Reactive PCs now use
+the principal opponent's installed animation and remaining action time, just
+like the existing proactive-PC and NPC parade paths. The change applies to all
+PC auto-parry/counter-strike decisions and contains no replay-specific IDs,
+frames, commands, or RNG values.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
