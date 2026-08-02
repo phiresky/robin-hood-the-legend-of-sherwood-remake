@@ -836,16 +836,6 @@ impl NativeContext<'_, '_> {
                         .ambiance,
                     crate::engine::Ambiance::Night | crate::engine::Ambiance::Fog
                 );
-                let effective_view_radius = crate::ai_vision::compute_view_radius(
-                    viewer_eye_3d,
-                    view_radius,
-                    view_forward,
-                    real_half_aperture,
-                    is_night_or_fog,
-                    &self.fast_grid.level,
-                    sight_obstacle_list,
-                    target_obstacle,
-                );
                 let forest_180_degree_view = self
                     .weather
                     .expect("script native requires a live WeatherState query view")
@@ -866,7 +856,7 @@ impl NativeContext<'_, '_> {
                     target_in_same_building,
                     forest_180_degree_view,
                     golden_eye_mode,
-                    effective_view_radius,
+                    effective_view_radius: view_radius as f32,
                     target_is_active_and_outside_building: tgt_active && !tgt_in_building,
                     target_los: target_point,
                     target_world: tgt_detection_3d,
@@ -879,7 +869,19 @@ impl NativeContext<'_, '_> {
                     target_unconscious: tgt_unconscious,
                     target_passing_door: tgt_passing_door,
                 };
-                if crate::ai_vision::compute_visibility(&q) > 0.0 {
+                if crate::ai_vision::compute_visibility_with_effective_radius(&q, || {
+                    crate::ai_vision::compute_view_radius(
+                        viewer_eye_3d,
+                        view_radius,
+                        view_forward,
+                        real_half_aperture,
+                        is_night_or_fog,
+                        &self.fast_grid.level,
+                        sight_obstacle_list,
+                        target_obstacle,
+                    )
+                }) > 0.0
+                {
                     1
                 } else {
                     0

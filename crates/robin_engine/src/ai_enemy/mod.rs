@@ -1783,22 +1783,7 @@ impl EnemyAi {
                 panic!("is_detecting: target {target} requires missing sight obstacle {handle}")
             })
         });
-        let effective_view_radius = crate::ai_vision::compute_view_radius(
-            crate::coordinates::WorldPoint3D::new(
-                ctx.self_eye_position.x,
-                ctx.self_eye_position.y + ctx.elevation,
-                ctx.self_eye_z,
-            ),
-            ctx.self_view_radius,
-            (ctx.self_view_direction[0], ctx.self_view_direction[1]),
-            ctx.self_real_half_aperture,
-            ctx.is_night_or_fog,
-            &ctx.fast_grid.level,
-            sight_obstacles,
-            target_obstacle,
-        );
-
-        crate::ai_vision::compute_visibility(&crate::ai_vision::VisibilityQuery {
+        let q = crate::ai_vision::VisibilityQuery {
             viewer_los: ctx.self_eye_position,
             viewer_world: crate::coordinates::WorldPoint3D::new(
                 ctx.self_eye_position.x,
@@ -1815,7 +1800,7 @@ impl EnemyAi {
             forest_180_degree_view: ctx.is_forest_level
                 && ctx.camp == crate::element::Camp::Royalists,
             golden_eye_mode: false,
-            effective_view_radius,
+            effective_view_radius: ctx.self_view_radius as f32,
             target_is_active_and_outside_building: view.active && view.building_sector.is_none(),
             target_los: target_detection_xy,
             target_world: crate::coordinates::WorldPoint3D::new(
@@ -1831,6 +1816,18 @@ impl EnemyAi {
             layer: ctx.position.level,
             target_unconscious: view.is_unconscious,
             target_passing_door: view.passing_door,
+        };
+        crate::ai_vision::compute_visibility_with_effective_radius(&q, || {
+            crate::ai_vision::compute_view_radius(
+                q.viewer_world,
+                ctx.self_view_radius,
+                (ctx.self_view_direction[0], ctx.self_view_direction[1]),
+                ctx.self_real_half_aperture,
+                ctx.is_night_or_fog,
+                &ctx.fast_grid.level,
+                sight_obstacles,
+                target_obstacle,
+            )
         }) > 0.0
     }
 

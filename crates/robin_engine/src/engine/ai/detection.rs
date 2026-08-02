@@ -1527,28 +1527,9 @@ impl EngineInner {
         // when the viewer is indoors.
         let viewer_building_sector = self.entity_building_sector(entity_sector);
 
-        // Compute effective view radius accounting for eye height
-        // and night/fog light modulation.  Computed once per NPC
-        // (the ground path is cached as a last-viewed-radius
-        // ground value).
         let is_night_or_fog = matches!(
             self.world.weather.ambiance,
             crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
-        );
-        // Once-per-viewer base call — the ground (no-obstacle) radius.
-        // Used as the fast-path for any target that is not standing on
-        // a projection obstacle.  Targets with `obstacle_idx = Some`
-        // get a per-target re-call below, so the night/fog modulation
-        // accounts for the target's elevation.
-        let effective_view_radius_ground = ai_vision::compute_view_radius(
-            visibility_world_point(eye, ground_z, eye_z),
-            view_radius,
-            view_forward,
-            real_half_aperture,
-            is_night_or_fog,
-            &self.world.fast_grid.level,
-            self.sight_obstacles(assets),
-            None,
         );
         // Per-NPC frame-counter phase offset so not every NPC re-runs
         // detection on the same tick. The Original keys this with the
@@ -1780,26 +1761,9 @@ impl EngineInner {
                     // raycast itself is still 2D until sight-obstacle
                     // data carries Z.
                     //
-                    // Per-target effective view radius accounts for
-                    // the target's projection obstacle (e.g. roof /
-                    // ledge).  Ground targets reuse the hoisted
-                    // `effective_view_radius_ground`.
-                    let effective_view_radius = target
+                    let target_obstacle = target
                         .obstacle_idx
-                        .and_then(|h| sight_obstacles.get(usize::from(h)))
-                        .map(|obs| {
-                            ai_vision::compute_view_radius(
-                                visibility_world_point(eye, ground_z, eye_z),
-                                view_radius,
-                                view_forward,
-                                real_half_aperture,
-                                is_night_or_fog,
-                                &self.world.fast_grid.level,
-                                sight_obstacles,
-                                Some(obs),
-                            )
-                        })
-                        .unwrap_or(effective_view_radius_ground);
+                        .and_then(|h| sight_obstacles.get(usize::from(h)));
                     let q = ai_vision::VisibilityQuery {
                         viewer_los: eye,
                         viewer_world: visibility_world_point(eye, ground_z, eye_z),
@@ -1814,7 +1778,9 @@ impl EngineInner {
                             && is_forest_level
                             && !viewer.is_rider,
                         golden_eye_mode: golden_eye,
-                        effective_view_radius,
+                        // Resolved lazily below at Original's
+                        // ComputeViewRadius call site.
+                        effective_view_radius: view_radius as f32,
                         target_is_active_and_outside_building: target.active
                             && target.building_sector.is_none(),
                         target_los: crate::stealth::detection_point_xy(
@@ -1846,12 +1812,27 @@ impl EngineInner {
                         target_unconscious: target.unconscious,
                         target_passing_door: target.passing_door,
                     };
-                    let visibility = ai_vision::compute_visibility(&q);
+                    let effective_view_radius = std::cell::Cell::new(None);
+                    let visibility =
+                        ai_vision::compute_visibility_with_effective_radius(&q, || {
+                            let radius = ai_vision::compute_view_radius(
+                                q.viewer_world,
+                                view_radius,
+                                view_forward,
+                                real_half_aperture,
+                                is_night_or_fog,
+                                &self.world.fast_grid.level,
+                                sight_obstacles,
+                                target_obstacle,
+                            );
+                            effective_view_radius.set(Some(radius));
+                            radius
+                        });
                     tracing::trace!(
                         observer = ?npc_id,
                         target = ?target_id,
                         modified_frame,
-                        effective_view_radius,
+                        effective_view_radius = ?effective_view_radius.get(),
                         visibility,
                         viewer_x = q.viewer_world.x,
                         viewer_y = q.viewer_world.y,
@@ -3146,43 +3127,6 @@ impl EngineInner {
             self.world.weather.ambiance,
             crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
         );
-        let effective_view_radius_ground = ai_vision::compute_view_radius(
-            visibility_world_point(eye, ground_z, eye_z),
-            view_radius,
-            view_forward,
-            real_half_aperture,
-            is_night_or_fog,
-            &self.world.fast_grid.level,
-            self.sight_obstacles(assets),
-            None,
-        );
-        // Per-target obstacle-aware re-call.  Pre-computed across
-        // the union of human targets so the Body / Friend /
-        // MissedFriend / Beggar passes (each going through
-        // `run_human_detectable_pass`) all share the same map.
-        // Targets without a projection obstacle are absent and fall
-        // back to `effective_view_radius_ground` inside the helper.
-        let per_target_view_radius: std::collections::HashMap<EntityId, f32> = {
-            let obstacles = self.sight_obstacles(assets);
-            human_targets
-                .iter()
-                .filter_map(|(id, t)| {
-                    let h = t.obstacle_idx?;
-                    let obs = obstacles.get(usize::from(h))?;
-                    let r = ai_vision::compute_view_radius(
-                        visibility_world_point(eye, ground_z, eye_z),
-                        view_radius,
-                        view_forward,
-                        real_half_aperture,
-                        is_night_or_fog,
-                        &self.world.fast_grid.level,
-                        obstacles,
-                        Some(obs),
-                    );
-                    Some((*id, r))
-                })
-                .collect()
-        };
         // Per-NPC frame phase offset.
         let modified_frame =
             universal_frame.wrapping_add(self.original_static_creation_order(npc_id));
@@ -3252,8 +3196,8 @@ impl EngineInner {
                 real_half_aperture,
                 viewer_in_building,
                 viewer_building_sector,
-                effective_view_radius_ground,
-                per_target_view_radius: &per_target_view_radius,
+                is_night_or_fog,
+                level: &self.world.fast_grid.level,
                 eye_status,
                 view_speed,
                 modified_frame,
@@ -3288,8 +3232,8 @@ impl EngineInner {
                 real_half_aperture,
                 viewer_in_building,
                 viewer_building_sector,
-                effective_view_radius_ground,
-                per_target_view_radius: &per_target_view_radius,
+                is_night_or_fog,
+                level: &self.world.fast_grid.level,
                 eye_status,
                 view_speed,
                 modified_frame,
@@ -3332,8 +3276,8 @@ impl EngineInner {
                 real_half_aperture,
                 viewer_in_building,
                 viewer_building_sector,
-                effective_view_radius_ground,
-                per_target_view_radius: &per_target_view_radius,
+                is_night_or_fog,
+                level: &self.world.fast_grid.level,
                 eye_status,
                 view_speed,
                 modified_frame,
@@ -3373,8 +3317,8 @@ impl EngineInner {
                 real_half_aperture,
                 viewer_in_building,
                 viewer_building_sector,
-                effective_view_radius_ground,
-                per_target_view_radius: &per_target_view_radius,
+                is_night_or_fog,
+                level: &self.world.fast_grid.level,
                 eye_status,
                 view_speed,
                 modified_frame,
@@ -3427,8 +3371,8 @@ impl EngineInner {
                 real_half_aperture,
                 viewer_in_building,
                 viewer_building_sector,
-                effective_view_radius_ground,
-                per_target_view_radius: &per_target_view_radius,
+                is_night_or_fog,
+                level: &self.world.fast_grid.level,
                 eye_status,
                 view_speed,
                 modified_frame,
@@ -3523,14 +3467,9 @@ impl EngineInner {
                 let target_in_same_building = ctx.viewer_in_building
                     && ctx.viewer_building_sector == target.building_sector
                     && !target.unconscious;
-                // Per-target effective view radius.  Targets
-                // without an obstacle reuse the once-per-viewer
-                // ground value.
-                let effective_view_radius = ctx
-                    .per_target_view_radius
-                    .get(&target_id)
-                    .copied()
-                    .unwrap_or(ctx.effective_view_radius_ground);
+                let target_obstacle = target
+                    .obstacle_idx
+                    .and_then(|handle| ctx.sight_obstacles.get(usize::from(handle)));
                 let q = ai_vision::VisibilityQuery {
                     viewer_los: ctx.eye,
                     viewer_world: visibility_world_point(ctx.eye, ctx.ground_z, ctx.eye_z),
@@ -3543,7 +3482,7 @@ impl EngineInner {
                     target_in_same_building,
                     forest_180_degree_view: false,
                     golden_eye_mode: ctx.golden_eye,
-                    effective_view_radius,
+                    effective_view_radius: ctx.view_radius as f32,
                     target_is_active_and_outside_building: target.active
                         && target.building_sector.is_none(),
                     target_los: crate::stealth::detection_point_xy(
@@ -3569,7 +3508,19 @@ impl EngineInner {
                     target_unconscious: target.unconscious,
                     target_passing_door: target.passing_door,
                 };
-                factor * ai_vision::compute_visibility(&q)
+                factor
+                    * ai_vision::compute_visibility_with_effective_radius(&q, || {
+                        ai_vision::compute_view_radius(
+                            q.viewer_world,
+                            ctx.view_radius,
+                            ctx.view_forward,
+                            ctx.real_half_aperture,
+                            ctx.is_night_or_fog,
+                            ctx.level,
+                            *ctx.sight_obstacles,
+                            target_obstacle,
+                        )
+                    })
             } else {
                 det.last_visibility
             };
@@ -3903,12 +3854,8 @@ struct ViewContext<'a> {
     real_half_aperture: f32,
     viewer_in_building: bool,
     viewer_building_sector: Option<crate::position_interface::SectorHandle>,
-    /// Hoisted once-per-viewer ground-radius — used as the fast path
-    /// for any target that is not standing on a projection obstacle.
-    effective_view_radius_ground: f32,
-    /// Per-target obstacle-aware override.  Targets absent from
-    /// this map fall back to `effective_view_radius_ground`.
-    per_target_view_radius: &'a std::collections::HashMap<EntityId, f32>,
+    is_night_or_fog: bool,
+    level: &'a crate::fast_find_grid::LevelGrid,
     eye_status: crate::element::EyeStatus,
     view_speed: u16,
     modified_frame: u32,

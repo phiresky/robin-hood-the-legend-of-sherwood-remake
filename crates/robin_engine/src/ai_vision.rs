@@ -233,6 +233,19 @@ pub struct VisibilityQuery<'a> {
 /// caller multiplies this by `BASE_VIEW_SPEED` and accumulates into
 /// the NPC's `detection_suspects[ENEMY]`.
 pub fn compute_visibility(q: &VisibilityQuery<'_>) -> f32 {
+    compute_visibility_with_effective_radius(q, || q.effective_view_radius)
+}
+
+/// Run the human visibility pipeline with a call-site-owned effective-radius
+/// calculation. Original `ComputeVisibility(human)` calls `ComputeViewRadius`
+/// only after all cheap semantic/range exits and the very-close auto-visible
+/// branch. Keeping the calculation behind `FnOnce` preserves that observable
+/// LOS/cache timing while the fixed-radius wrapper above remains convenient
+/// for unit tests and callers without light-sector modulation.
+pub fn compute_visibility_with_effective_radius(
+    q: &VisibilityQuery<'_>,
+    effective_view_radius: impl FnOnce() -> f32,
+) -> f32 {
     // Golden-eye cheat: blind to PCs only.
     if q.golden_eye_mode && q.target_is_pc {
         return 0.0;
@@ -315,7 +328,8 @@ pub fn compute_visibility(q: &VisibilityQuery<'_>) -> f32 {
     // [`compute_view_radius`].  Callers pass the per-target effective
     // radius, including ground/obstacle sphere projection and
     // night/fog light-sector modulation.
-    let sqr_effective = q.effective_view_radius * q.effective_view_radius;
+    let effective_view_radius = effective_view_radius();
+    let sqr_effective = effective_view_radius * effective_view_radius;
     if sqr_distance > sqr_effective {
         return 0.0;
     }
@@ -1515,6 +1529,34 @@ mod tests {
         let grid = empty_grid();
         let q = query(pt(0.0, 0.0), 4, pt(10.0, 0.0), grid);
         assert_eq!(compute_visibility(&q), 1.0);
+    }
+
+    #[test]
+    fn effective_radius_is_requested_only_after_original_early_exits() {
+        let calls = std::cell::Cell::new(0_u32);
+        let radius = || {
+            calls.set(calls.get() + 1);
+            DEFAULT_VIEW_RADIUS as f32
+        };
+
+        let mut disguised = query(pt(0.0, 0.0), 4, pt(100.0, 0.0), empty_grid());
+        disguised.target_posture = Posture::Spy;
+        assert_eq!(
+            compute_visibility_with_effective_radius(&disguised, radius),
+            0.0
+        );
+        assert_eq!(calls.get(), 0);
+
+        let close = query(pt(0.0, 0.0), 4, pt(10.0, 0.0), empty_grid());
+        assert_eq!(
+            compute_visibility_with_effective_radius(&close, radius),
+            1.0
+        );
+        assert_eq!(calls.get(), 0);
+
+        let eligible = query(pt(0.0, 0.0), 4, pt(100.0, 0.0), empty_grid());
+        assert!(compute_visibility_with_effective_radius(&eligible, radius) > 0.0);
+        assert_eq!(calls.get(), 1);
     }
 
     #[test]
