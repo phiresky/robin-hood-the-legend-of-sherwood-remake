@@ -1252,6 +1252,21 @@ impl EngineInner {
             .installed_order = installed_order;
     }
 
+    /// Apply Actor::Instruct's `mpOrder` publication only when the instructed
+    /// owner actually uses the Actor implementation. `InstructOwner` also
+    /// carries valid non-actor owners, whose Original classes have no
+    /// `mpOrder`; a missing owner remains an invariant failure.
+    pub(crate) fn publish_selected_order_for_instruct_owner(&mut self, owner: EntityId) {
+        let is_actor = self
+            .get_entity(owner)
+            .unwrap_or_else(|| panic!("InstructOwner publication owner {owner:?} vanished"))
+            .actor_data()
+            .is_some();
+        if is_actor {
+            self.publish_selected_order_as_installed(owner);
+        }
+    }
+
     /// Original `RHElementActor::GetAnimation()`: the live sequence order,
     /// falling back to the sprite-driven animation while no order is selected.
     ///

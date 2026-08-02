@@ -2556,7 +2556,7 @@ impl EngineInner {
                     // current order through mpOrder. Keep this write at the
                     // dispatch boundary rather than inferring it later from
                     // whichever element happens to be selected.
-                    self.publish_selected_order_as_installed(owner);
+                    self.publish_selected_order_for_instruct_owner(owner);
                 }
                 crate::sequence::SequenceAction::ExecuteImmediateOwner {
                     owner,
