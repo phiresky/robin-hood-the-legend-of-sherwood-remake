@@ -9936,25 +9936,36 @@ impl EngineInner {
             })
             .map(|cid| crate::patch::OccupantId(cid.index()));
 
-        // Collect unique patches crossed this frame — one PC step can
-        // intersect multiple boundary edges of the same apply polygon
-        // (e.g. clipping a corner), and only the net Enter/Leave
-        // decision matters, which is independent of edge count.
-        let mut seen: Vec<crate::patch::PatchIndex> = Vec::new();
-        for &line_idx in &indices {
-            let Some(line) = self.world.fast_grid.level.lines.get(usize::from(line_idx)) else {
-                continue;
-            };
-            let Some(patch_index) = line.patch_index else {
-                continue;
-            };
-            if seen.contains(&patch_index) {
-                continue;
-            }
-            seen.push(patch_index);
-        }
+        // Actor::CheckForLineCrossing removes only boundaries on which the
+        // old position lies, sorts the remaining non-elevation lines by
+        // intersection distance, and invokes the LINE_PATCH branch once per
+        // line.  Do not collapse two edges of one polygon at a vertex: the
+        // Original repeats Enter/Leave (including its script-visible side
+        // effects) for both RHLine objects.
+        let movement = crate::geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
+        let mut crossed: Vec<(f32, crate::fast_find_grid::LineIndex)> = indices
+            .into_iter()
+            .filter_map(|line_index| {
+                let line = &self.world.fast_grid.level.lines[usize::from(line_index)];
+                let old_dx = old_pos.x - line.a.x;
+                let old_dy = old_pos.y - line.a.y;
+                let line_dx = line.b.x - line.a.x;
+                let line_dy = line.b.y - line.a.y;
+                if line_dx * old_dy - line_dy * old_dx == 0.0 {
+                    return None;
+                }
+                let point = crate::geo2d::segment_intersection(movement, line.segment()).point()?;
+                let dx = point.x - old_pos.x;
+                let dy = point.y - old_pos.y;
+                Some((dx * dx + dy * dy, line_index))
+            })
+            .collect();
+        crossed.sort_by(|(left, _), (right, _)| left.total_cmp(right));
 
-        for patch_index in seen {
+        for (_, line_index) in crossed {
+            let patch_index = self.world.fast_grid.level.lines[usize::from(line_index)]
+                .patch_index
+                .unwrap_or_else(|| panic!("LINE_PATCH {line_index:?} has no owning patch"));
             // Snapshot the apply-sector polygon test result + active
             // state + applied state + occupant emptiness *before*
             // mutating the patch, so the action decision keeps the

@@ -2386,9 +2386,12 @@ impl FastFindGrid {
                     if !line.is_patch || !self.is_line_active(line_idx) {
                         continue;
                     }
-                    // Same `is_crossed` guard as elevation crossings —
-                    // patches sit on the same crossing code path.
-                    if geo2d::is_crossed(line.segment(), movement) {
+                    // Actor::CheckForLineCrossing uses GetLines, whose final
+                    // filter is RHLine::IsIntersecting.  Its old-position
+                    // guard is applied later, after all LINE_CROSS kinds have
+                    // been collected.  In particular, keep a segment that
+                    // passes exactly through a boundary endpoint here.
+                    if geo2d::segments_intersect(line.segment(), movement) {
                         result.push(line_idx);
                     }
                 }
@@ -2507,7 +2510,7 @@ impl FastFindGrid {
                     if !line.is_sound || !self.is_line_active(line_idx) {
                         continue;
                     }
-                    if geo2d::is_crossed(line.segment(), movement) {
+                    if geo2d::segments_intersect(line.segment(), movement) {
                         result.push(line_idx);
                     }
                 }
@@ -2557,7 +2560,7 @@ impl FastFindGrid {
                     if !line.is_script || !self.is_line_active(line_idx) {
                         continue;
                     }
-                    if geo2d::is_crossed(line.segment(), movement) {
+                    if geo2d::segments_intersect(line.segment(), movement) {
                         result.push(line_idx);
                     }
                 }
@@ -3850,6 +3853,47 @@ mod tests {
         grid.size_map(8, 8);
         grid.allocate_layers(layers);
         grid
+    }
+
+    #[test]
+    fn actor_crossing_queries_keep_boundary_vertex_intersections() {
+        let mut grid = make_empty_grid(1);
+        let script_line = grid.add_line(
+            GridLine::new_script(MapPoint::new(64.0, 64.0), MapPoint::new(64.0, 128.0), 0),
+            0,
+        );
+        let patch_line = grid.add_line(
+            GridLine::new_patch(
+                MapPoint::new(64.0, 64.0),
+                MapPoint::new(64.0, 128.0),
+                crate::patch::PatchIndex::new(0).unwrap(),
+            ),
+            0,
+        );
+        let sound_line = grid.add_line(
+            GridLine::new_sound(MapPoint::new(64.0, 64.0), MapPoint::new(64.0, 128.0), 0),
+            0,
+        );
+
+        // The movement passes exactly through the line's first endpoint.
+        // RHLine::IsCrossed rejects this because its second determinant is
+        // zero, but Actor::CheckForLineCrossing does not call IsCrossed: it
+        // calls GetLines/IsIntersecting and subsequently removes only lines
+        // on which the actor's *old* position lies.
+        let old_pos = MapPoint::new(0.0, 0.0);
+        let new_pos = MapPoint::new(128.0, 128.0);
+        assert_eq!(
+            grid.get_crossing_script_line_indices(0, old_pos, new_pos),
+            vec![script_line]
+        );
+        assert_eq!(
+            grid.get_crossing_patch_line_indices(0, old_pos, new_pos),
+            vec![patch_line]
+        );
+        assert_eq!(
+            grid.get_crossing_sound_line_indices(0, old_pos, new_pos),
+            vec![sound_line]
+        );
     }
 
     fn horizontal_motion_line_impact_ratio(line_a_x: f32, line_b_x: f32) -> Option<f32> {
