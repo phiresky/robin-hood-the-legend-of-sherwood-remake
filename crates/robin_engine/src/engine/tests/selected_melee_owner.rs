@@ -327,6 +327,40 @@ fn eligible_principal_is_warned_once_on_start_and_not_again_in_progress() {
 }
 
 #[test]
+fn straight_start_warns_principal_without_common_victim_filter() {
+    let mut engine = EngineInner::new();
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let principal = engine.add_entity(make_test_pc(Posture::Upright));
+    set_map_position(&mut engine, attacker, 0.0, 0.0);
+    set_map_position(&mut engine, principal, 20.0, 0.0);
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents
+        .push(principal);
+
+    // GetPossibleVictimsOfStraightSwordStrike is deliberately unlike the
+    // other strike collectors: Original considers the principal opponent and
+    // distance only. In particular it does not call
+    // IsPossibleSwordStrikeVictim, whose first state guard rejects inactive
+    // actors. WarnForStrike applies its own downstream state rules.
+    engine
+        .get_entity_mut(principal)
+        .unwrap()
+        .element_data_mut()
+        .active = false;
+    bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
+    install_selected_melee(&mut engine, attacker, principal);
+
+    let (_, warnings) = super::super::melee::capture_strike_warnings(|| {
+        run_owner_walk(&mut engine, &straight_warning_assets(10, 50))
+    });
+    assert_eq!(warnings, vec![(attacker, principal)]);
+}
+
+#[test]
 fn same_owner_replacement_after_selection_cancels_melee_execute_arm() {
     let mut engine = EngineInner::new();
     let attacker = engine.add_entity(make_test_pc(Posture::Upright));

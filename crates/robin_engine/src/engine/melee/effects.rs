@@ -142,17 +142,6 @@ impl EngineInner {
                         "sword-strike warning collector attacker {attacker_id:?} has missing principal opponent {principal_id:?}"
                     );
                 };
-                if !is_possible_sword_strike_victim(
-                    &self.world.entities,
-                    attacker_id,
-                    principal,
-                    principal_id,
-                    &assets.profile_manager,
-                    &self.world.fast_grid,
-                    obstacles,
-                ) {
-                    return Vec::new();
-                }
                 let principal_pos = principal.element_data().position_map();
                 let dx = attacker_pos.x - principal_pos.x;
                 let dy = (attacker_pos.y - principal_pos.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO;

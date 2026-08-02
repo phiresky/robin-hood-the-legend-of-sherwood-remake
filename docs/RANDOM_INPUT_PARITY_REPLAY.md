@@ -3112,6 +3112,23 @@ sprite itself. Other movement, melee, bow, and ability owners continue to
 forward their own effective results. This matches the general PC beggar arm,
 not the recorded actor or frame.
 
+### Straight-strike warnings bypass the common victim predicate
+
+Savegame 063 replay 001 reached Soldier 217's strong straight-strike start at
+frame 714. Original warned its principal opponent, PC 297, which synchronously
+entered `ProposeGoodSwordStrike` and consumed the frame's final RNG draw. Rust
+omitted that warning because its straight-strike collector additionally called
+the common `IsPossibleSwordStrikeVictim` predicate.
+
+Both the current C++ source and the exact recording binary's disassembly show
+that `GetPossibleVictimsOfStraightSwordStrike` checks only whether a principal
+swordfight opponent exists and lies within the stretched strike distance.
+Unlike the other relevant strike collectors, it does not apply activity,
+posture, VIP, or solid-obstacle gates. Rust now preserves that dedicated rule;
+the receiver's `WarnForStrike` path remains responsible for its own state
+guards. The replay advances from frame 714 to the independent frame-724 sword
+damage RNG frontier.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed
