@@ -1968,10 +1968,11 @@ impl Sequence {
             }
 
             SequenceState::Interrupted => {
-                // Release cross-sequence postponed successor, if any.
-                if let Some(cross) = self.elements[elem_idx].cross_postponed.take() {
-                    effects.resume_cross_postponed = Some(cross);
-                }
+                // Original SetState(RHSEQ_INTERRUPTED) deliberately does not
+                // call StartPostponedSequenceElement. Instruct arbitration
+                // transfers the postponed pointer to the replacement before
+                // interrupting the old element; a generic interruption must
+                // neither start nor detach either representation here.
                 // Clear orders
                 self.elements[elem_idx].orders.clear();
                 // Notify owner
@@ -2139,7 +2140,27 @@ impl Sequence {
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
     ) -> Vec<StateChangeEffects> {
-        self.stop_element_with_debug_depth(elem_idx, stop_priority, resolver, 0)
+        self.stop_element_with_cross_targets(elem_idx, stop_priority, resolver)
+            .0
+    }
+
+    /// Stop one Original linked graph and also return cross-sequence
+    /// postponed edges encountered at nodes actually visited by `Stop`.
+    fn stop_element_with_cross_targets(
+        &mut self,
+        elem_idx: usize,
+        stop_priority: SequencePriority,
+        resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
+    ) -> (Vec<StateChangeEffects>, Vec<(SequenceId, usize)>) {
+        let mut cross_targets = Vec::new();
+        let effects = self.stop_element_with_debug_depth(
+            elem_idx,
+            stop_priority,
+            resolver,
+            0,
+            &mut cross_targets,
+        );
+        (effects, cross_targets)
     }
 
     fn stop_element_with_debug_depth(
@@ -2148,6 +2169,7 @@ impl Sequence {
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
         depth: usize,
+        cross_targets: &mut Vec<(SequenceId, usize)>,
     ) -> Vec<StateChangeEffects> {
         let parity_debug_stage_timing =
             std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some() && depth <= 64;
@@ -2159,6 +2181,15 @@ impl Sequence {
             );
         }
         let mut all_effects: Vec<StateChangeEffects> = Vec::new();
+
+        // Original handles this node's postponed pointer unconditionally at
+        // the end of Stop. Same-sequence postponed edges recurse below;
+        // report split-storage edges to SequenceManager's owner worklist.
+        if let Some(cross) = self.elements[elem_idx].cross_postponed
+            && !cross_targets.contains(&cross)
+        {
+            cross_targets.push(cross);
+        }
 
         // Determine priority if not yet set: ask the owning actor's
         // priority resolver and promote `None` to `Normal` so the stop
@@ -2235,6 +2266,7 @@ impl Sequence {
                     stop_priority,
                     resolver,
                     depth + 1,
+                    cross_targets,
                 );
                 all_effects.extend(sub);
                 if parity_debug_stage_timing {
@@ -2270,6 +2302,7 @@ impl Sequence {
                 stop_priority,
                 resolver,
                 depth + 1,
+                cross_targets,
             );
             all_effects.extend(sub);
             if parity_debug_stage_timing {
@@ -4280,7 +4313,7 @@ impl SequenceManager {
         // observably different after loading: stale non-selected branches can
         // form a large shared next/postponed graph, so recursively stopping
         // each node as a fresh root repeats that graph exponentially.
-        let mut targets = Vec::new();
+        let mut targets = VecDeque::new();
         if let Some(current) = self.current_element_for_actor(owner)
             && self.get_element(current.0, current.1).is_some_and(|elem| {
                 !(elem.command == Command::Wait && elem.priority == SequencePriority::Wait)
@@ -4291,18 +4324,7 @@ impl SequenceManager {
                     "parity stop: manager stop_owner current owner={owner:?} priority={stop_priority:?} current={current:?}"
                 );
             }
-            targets.push(current);
-
-            // A cross-sequence postponed link represents Original's direct
-            // `mpsqePostponedSequenceElement` pointer. Sequence::stop_element
-            // follows same-sequence links itself; only this split-storage edge
-            // needs a second manager-level root.
-            if let Some(cross) = self
-                .get_element(current.0, current.1)
-                .and_then(|elem| elem.cross_postponed)
-            {
-                targets.push(cross);
-            }
+            targets.push_back(current);
         }
         if parity_debug_stage_timing && targets.is_empty() {
             eprintln!(
@@ -4310,17 +4332,37 @@ impl SequenceManager {
             );
         }
         let mut stopped = Vec::new();
-        for (seq_id, elem_idx) in targets {
+        let mut visited = HashSet::new();
+        while let Some((seq_id, elem_idx)) = targets.pop_front() {
+            if !visited.insert((seq_id, elem_idx)) {
+                continue;
+            }
+            let target_owner = self
+                .get_element(seq_id, elem_idx)
+                .unwrap_or_else(|| {
+                    panic!("Stop postponed graph references missing {seq_id:?}/{elem_idx}")
+                })
+                .owner;
+            assert_eq!(
+                target_owner,
+                Some(owner),
+                "Stop postponed graph crosses owners at {seq_id:?}/{elem_idx}"
+            );
             if parity_debug_stage_timing {
                 eprintln!(
                     "parity stop: manager before stop_element owner={owner:?} seq={seq_id:?} idx={elem_idx}"
                 );
             }
-            let effects_vec = self
+            let (effects_vec, cross_targets) = self
                 .sequences
                 .get_mut(&seq_id)
-                .map(|seq| seq.stop_element(elem_idx, stop_priority, resolver))
+                .map(|seq| seq.stop_element_with_cross_targets(elem_idx, stop_priority, resolver))
                 .unwrap_or_default();
+            for cross in cross_targets {
+                if !visited.contains(&cross) {
+                    targets.push_back(cross);
+                }
+            }
             if parity_debug_stage_timing {
                 eprintln!(
                     "parity stop: manager after stop_element owner={owner:?} seq={seq_id:?} idx={elem_idx} effects={} ",
@@ -5405,6 +5447,32 @@ mod tests {
     }
 
     #[test]
+    fn state_change_interrupted_does_not_resume_postponed_elements() {
+        let mut seq = Sequence::new();
+        seq.append_element(make_simple_element(
+            1,
+            Command::Move,
+            Some(EntityId::Pc(crate::entity_id::PcId(0))),
+        ));
+        seq.append_element(make_simple_element(
+            1,
+            Command::Wait,
+            Some(EntityId::Pc(crate::entity_id::PcId(0))),
+        ));
+        seq.elements[0].postponed_element_index = Some(1);
+        let cross = (SequenceId(91), 3);
+        seq.elements[0].cross_postponed = Some(cross);
+
+        let effects = seq.set_element_state(0, SequenceState::Interrupted, CascadeFlags::empty());
+
+        assert_eq!(effects.start_postponed, None);
+        assert_eq!(effects.resume_cross_postponed, None);
+        assert_eq!(seq.elements[0].postponed_element_index, Some(1));
+        assert_eq!(seq.elements[0].cross_postponed, Some(cross));
+        assert_eq!(seq.elements[1].state, SequenceState::Todo);
+    }
+
+    #[test]
     fn manager_launch_and_hourglass() {
         let mut mgr = SequenceManager::new();
 
@@ -5789,6 +5857,54 @@ mod tests {
             mgr.get_element(injury_seq, 0).unwrap().cross_postponed,
             None,
             "the injury must not retain a resumable link to stopped actor work"
+        );
+    }
+
+    #[test]
+    fn stop_owner_walks_nested_cross_postponed_graph() {
+        let mut mgr = SequenceManager::new();
+        let owner = EntityId::Soldier(crate::entity_id::SoldierId(8));
+
+        let mut deepest = make_simple_element(1, Command::ParrySword, Some(owner));
+        deepest.priority = SequencePriority::Preference;
+        let deepest_seq = mgr.launch_element(deepest);
+        mgr.postpone_element(deepest_seq, 0);
+
+        let mut middle = make_simple_element(1, Command::EnterSwordfight, Some(owner));
+        middle.priority = SequencePriority::Preference;
+        let middle_seq = mgr.launch_element(middle);
+        mgr.postpone_element(middle_seq, 0);
+        mgr.get_element_mut(middle_seq, 0).unwrap().cross_postponed = Some((deepest_seq, 0));
+
+        let mut injury = make_simple_element(1, Command::ReceiveSwordDamage, Some(owner));
+        injury.priority = SequencePriority::Injury;
+        let injury_seq = mgr.launch_element(injury);
+        let _ = mgr.hourglass();
+        mgr.element_in_progress(injury_seq, 0);
+        mgr.get_element_mut(injury_seq, 0).unwrap().cross_postponed = Some((middle_seq, 0));
+
+        mgr.stop_owner(owner, SequencePriority::Preference, &|element| {
+            element.priority
+        });
+
+        assert_eq!(
+            mgr.get_element(injury_seq, 0).unwrap().state,
+            SequenceState::InProgress
+        );
+        for sequence in [middle_seq, deepest_seq] {
+            assert_eq!(
+                mgr.get_element(sequence, 0).unwrap().state,
+                SequenceState::Interrupted,
+                "every recursively postponed actor action must be stopped"
+            );
+        }
+        assert_eq!(
+            mgr.get_element(injury_seq, 0).unwrap().cross_postponed,
+            None
+        );
+        assert_eq!(
+            mgr.get_element(middle_seq, 0).unwrap().cross_postponed,
+            None
         );
     }
 
