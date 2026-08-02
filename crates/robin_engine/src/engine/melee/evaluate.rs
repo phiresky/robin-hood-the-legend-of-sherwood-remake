@@ -1501,10 +1501,14 @@ impl EngineInner {
                     .map(|h| h.sword_strike_boredom.clone())
                     .unwrap_or_default();
                 let pos = entity.element_data().position_map();
-                let principal = match entity {
-                    Entity::Pc(pc) => pc.pc.melee_target,
-                    _ => None,
-                };
+                // RHElementActorPC::WarnForStrike launches a counter-strike
+                // against GetPrincipalOpponent(), i.e. the first entry in
+                // the live ordered opponent list.  The UI-facing PC
+                // `melee_target` cache can lag behind a same-frame principal
+                // reshuffle and must not drive combat selection.
+                let principal = entity
+                    .human_data()
+                    .and_then(|human| human.opponents.first().copied());
                 (wid, camp, dir, elev, boredom, (pos.x, pos.y), principal)
             };
 
