@@ -3253,6 +3253,23 @@ used the constants in the latter. Both entry paths now share the Original
 500-through-999-frame interval, preventing civilians and soldiers from
 returning to duty hundreds of frames early.
 
+### Three-dimensional reachability tests only sight obstacles
+
+Savegame 063 replay 001 reached Soldier 217's lateral strike against PC 297
+at frame 1190. Original admitted the PC to the pending sweep and damaged him
+on the following in-progress effect. Rust initialized an empty sweep because
+its 3D solid-reachability helper also rejected rays crossing a 2D motion-grid
+line.
+
+Original's `RHFastFindGrid::IsReachable(origin3d, destination3d, type)`
+overload gathers only sight obstacles of the requested type and calls the 3D
+obstacle test with ground testing disabled. Motion-grid lines belong to the
+separate 2D movement overloads. Rust's 3D helper now has those exact semantics;
+movement impact and pathfinding queries remain unchanged. A regression crosses
+an active motion line with no sight obstacles and verifies that the 3D sight
+ray is clear while the dedicated movement-impact query still reports the
+crossing.
+
 ## Maintenance checklist
 
 - Update the available/completed/audited totals only from complete compressed

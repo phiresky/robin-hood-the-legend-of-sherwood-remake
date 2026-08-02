@@ -3067,29 +3067,23 @@ impl FastFindGrid {
         }
     }
 
-    /// Boolean 3D reachability check for callers that do not need an
-    /// impact point.
+    /// Boolean 3D sight-obstacle reachability check matching Original's
+    /// `RHFastFindGrid::IsReachable(origin3d, destination3d, type)` overload.
     ///
-    /// The sight-obstacle side can early-return on the first blocker
-    /// instead of computing the nearest impact ratio for every candidate.
+    /// Motion-grid lines are deliberately not consulted here. They belong to
+    /// the separate 2D movement overloads; the Original 3D overload gathers
+    /// only sight obstacles of `type_filter` and tests the ray against them.
     pub fn is_reachable_3d(
         &self,
         origin: crate::coordinates::WorldPoint3D,
         destination: crate::coordinates::WorldPoint3D,
-        layer: u16,
+        _layer: u16,
         type_filter: u32,
         obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) -> bool {
         let origin_arr = [origin.x, origin.y, origin.z];
         let dest_arr = [destination.x, destination.y, destination.z];
-        if !crate::sight_obstacle::is_reachable_3d(obstacles, origin_arr, dest_arr, type_filter) {
-            return false;
-        }
-
-        let origin_2d = MapPoint::new(origin.x, origin.y);
-        let dest_2d = MapPoint::new(destination.x, destination.y);
-        self.impact_intersection_ratio(origin_2d, dest_2d, layer)
-            .is_none()
+        crate::sight_obstacle::is_reachable_3d(obstacles, origin_arr, dest_arr, type_filter)
     }
 
     /// Find the earliest intersection ratio along a trajectory segment
@@ -3630,6 +3624,28 @@ mod tests {
         let line = GridLine::new(MapPoint::new(0.0, 128.0), MapPoint::new(256.0, 128.0), true);
         grid.add_line(line, 0);
         grid
+    }
+
+    #[test]
+    fn three_dimensional_sight_reachability_ignores_motion_grid_lines() {
+        let grid = make_grid_with_line();
+
+        assert!(grid.is_reachable_3d(
+            crate::coordinates::WorldPoint3D::new(64.0, 96.0, 20.0),
+            crate::coordinates::WorldPoint3D::new(64.0, 160.0, 20.0),
+            0,
+            crate::sight_obstacle::SIGHTOBSTACLE_SOLID,
+            crate::sight_obstacle::ObstacleList::empty(),
+        ));
+        assert!(
+            grid.impact_intersection_ratio(
+                MapPoint::new(64.0, 96.0),
+                MapPoint::new(64.0, 160.0),
+                0,
+            )
+            .is_some(),
+            "the fixture must still cross an active motion line"
+        );
     }
 
     #[test]
