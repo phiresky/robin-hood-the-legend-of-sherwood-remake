@@ -341,7 +341,7 @@ fn order_turns_before_motion(order: OrderType) -> bool {
 /// minimum useful step. Direct transition orders call `PerformMotion` without
 /// the element speed factor, while seek transitions route through
 /// `RHElementActor::PerformSeek`, which passes the element factor explicitly.
-fn scaled_motion_distance(
+pub(super) fn scaled_motion_distance(
     frame_distance: f32,
     speed_factor: f32,
     apply_speed_factor: bool,

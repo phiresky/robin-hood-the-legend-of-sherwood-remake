@@ -1084,22 +1084,17 @@ impl EngineInner {
                     current_anim,
                     OrderType::TransitionWaitingUprightJumpingUp
                         | OrderType::TransitionWaitingCrouchedJumpingDown
-                        | OrderType::TransitionWaitingUprightJumpingLong
-                        | OrderType::TransitionWaitingSwordJumpingLongSword
                 )
             {
                 // These Execute arms apply flight state on
                 // RHMOTION_TERMINATED. Jump stepping precedes the owner
                 // animation pass, so expose it once the authored duration
-                // elapsed on the preceding frames.
+                // elapsed on the preceding frames. The long take-off arms
+                // instead terminate from their own sprite motion inside the
+                // owner slot, which applies the same state there.
                 entity.set_posture(Posture::Flying);
                 if let Some(actor) = entity.actor_data_mut() {
-                    actor.action_state =
-                        if current_anim == OrderType::TransitionWaitingSwordJumpingLongSword {
-                            ActionState::MovingSword
-                        } else {
-                            ActionState::Moving
-                        };
+                    actor.action_state = ActionState::Moving;
                 }
                 force_advance.push(entity_id.into());
             }
@@ -1204,7 +1199,7 @@ impl EngineInner {
         };
 
         // Take the completed step out of the jump state.
-        let (finished, next_anim, landing_finalize, jump_completion) = {
+        let (finished, next_anim, landing_finalize, jump_completion, next_step_publish) = {
             let Some(actor) = entity.actor_data_mut() else {
                 return None;
             };
@@ -1223,7 +1218,26 @@ impl EngineInner {
                     let jump_completion = next_anim
                         .is_none()
                         .then_some((jump.sequence_id, jump.element_index));
-                    (s, next_anim, landing_finalize, jump_completion)
+                    // Retiring an order makes the following one current in the
+                    // same frame: the actor's order pointer never reads the
+                    // exhausted animation once its motion terminated. The step
+                    // itself does not begin until the next frame, so only the
+                    // order is authored here.
+                    let next_step_publish = jump.steps.front().map(|step| {
+                        let target_map = step
+                            .target_3d
+                            .filter(|_| !step.airborne)
+                            .map(crate::coordinates::WorldPoint3D::to_map)
+                            .unwrap_or_default();
+                        (jump.sequence_id, jump.element_index, step.anim, target_map)
+                    });
+                    (
+                        s,
+                        next_anim,
+                        landing_finalize,
+                        jump_completion,
+                        next_step_publish,
+                    )
                 }
                 None => return None,
             }
@@ -1334,6 +1348,32 @@ impl EngineInner {
             None
         };
         // `entity` borrow ends here so `self` can be re-borrowed below.
+        if let Some((sequence_id, element_index, anim, target_map)) = next_step_publish {
+            let order_id = self.orders.allocate_order_id();
+            let mut order = crate::order::Order::new(anim, target_map.x, target_map.y, order_id);
+            order.compute_direction = false;
+            order.completion = crate::order::OrderCompletion::NextJumpStep;
+            if let Some(elem) = self
+                .orders
+                .sequence_manager
+                .get_element_mut(sequence_id, element_index)
+            {
+                elem.orders.clear();
+                elem.orders.push_back(order);
+            }
+            // Retiring an order republishes the actor's order pointer within
+            // the same slot, so it already names the following animation
+            // before the frame ends. The step itself still begins next frame.
+            self.world
+                .entities
+                .get_mut(entity_id)
+                .and_then(crate::element::Entity::actor_data_mut)
+                .expect("jump step owner disappeared before its next order was published")
+                .installed_order = Some(crate::element::InstalledActorOrder {
+                order_id,
+                order_type: anim,
+            });
+        }
         if is_landing_pc {
             let force_crouched = landing_sector
                 .map(|n| self.sector_forces_crouch(n))
@@ -1423,18 +1463,9 @@ fn start_step(
             source_direction_goal.into(),
         ));
         position_iface.set_anti_collision_on(false);
-
-        // Only the upright/sword long-jump transitions use PerformMotion to
-        // approach their authored take-off point. The shoulders and vertical
-        // take-off arms use PerformAction even where an order carries a point.
-        if matches!(
-            step.anim,
-            OrderType::TransitionWaitingUprightJumpingLong
-                | OrderType::TransitionWaitingSwordJumpingLongSword
-        ) && let Some(target) = step.target_3d
-        {
-            position_iface.set_map_goal(target.to_map());
-        }
+        // The take-off arms that move toward their authored point initialize
+        // their motion order inside the shared sprite motion path, which is
+        // what seeds both the goal and its increment.
         position_iface.turn();
 
         // Shoulder-assisted take-offs establish flight on START. The other
@@ -1542,6 +1573,16 @@ fn start_step(
         .map(crate::coordinates::WorldPoint3D::to_map)
         .unwrap_or_default();
     let mut order = crate::order::Order::new(step.anim, target_map.x, target_map.y, order_id);
+    tracing::trace!(
+        ?entity_id,
+        anim = ?step.anim,
+        airborne = step.airborne,
+        order_id = order_id.get(),
+        reused_order_id = prev_anim.is_some_and(|(a, _)| a == step.anim),
+        total_frames,
+        target = ?target_map,
+        "jump step started"
+    );
     // Every order authored by Original's TranslateJump explicitly disables
     // generic movement-direction computation. Jump initiation sets its
     // source-line-normal facing above; airborne and landing orders retain it.
@@ -1585,6 +1626,89 @@ fn start_airborne_jump_motion(entity: &mut crate::element::Entity, step: &JumpSt
     }
 }
 
+/// Ground transition steps whose Execute arm drives the sprite through
+/// `PerformMotion` with `MotionMethod::TillLastFrame` instead of the plain
+/// action path: they initialize a real motion order (goal + increment) and
+/// advance the animation once on their START tick.
+///
+/// Every other jump step plays its animation in place, even where the
+/// authored order carries a 2D destination.
+pub(crate) fn jump_step_uses_perform_motion(anim: OrderType) -> bool {
+    matches!(
+        anim,
+        OrderType::TransitionWaitingUprightJumpingLong
+            | OrderType::TransitionWaitingSwordJumpingLongSword
+            | OrderType::TransitionJumpingUpWaitingCrouched
+    )
+}
+
+/// Run one tick of a ground transition step through the shared sprite motion
+/// path and commit the resulting displacement.
+///
+/// These arms disable anti-collision before their first motion tick, so the
+/// per-frame distance goes straight onto the map position. On reaching the
+/// goal the motion stops and snaps exactly onto it.
+pub(crate) fn perform_jump_ground_motion(
+    entity: &mut crate::element::Entity,
+    sim: &crate::sim_rng::SimulationContext,
+    motion_order: crate::sprite::MotionOrderContext,
+    anim: OrderType,
+    row: u16,
+) -> crate::sprite::MotionState {
+    let sprite = &mut entity.element_data_mut().sprite;
+    let (state, frame_distance) = sprite.perform_motion(
+        sim,
+        Some(motion_order),
+        anim,
+        row,
+        crate::sprite::FrameProgression::Default,
+        false,
+        crate::sprite::MotionMethod::TillLastFrame,
+        false,
+    );
+
+    let pi = &mut sprite.position_iface;
+    if pi.is_anti_collision_on() {
+        tracing::warn!(
+            ?anim,
+            "jump ground transition executed with anti-collision still enabled"
+        );
+    }
+    tracing::trace!(
+        ?anim,
+        order_id = motion_order.order_id.get(),
+        ?state,
+        frame_distance,
+        current_frame = sprite.current_frame,
+        frame_count = sprite.frame_count,
+        pos = ?pi.map_position(),
+        goal = ?pi.map_goal(),
+        increment = ?pi.get_increment_map(),
+        "jump ground transition motion tick"
+    );
+    let distance = super::movement::scaled_motion_distance(
+        frame_distance,
+        1.0,
+        false,
+        pi.get_direction() != pi.get_direction_goal(),
+    );
+    if distance != 0.0 {
+        pi.update_position_map_scaled(distance);
+
+        let increment = pi.get_increment_map();
+        if (increment.x != 0.0 || increment.y != 0.0) && pi.is_goal_reached_undeviated() {
+            pi.zero_all_increments();
+            if pi.get_tolerance() == 0.0 {
+                let goal = pi.map_goal();
+                pi.set_map_position(goal);
+            }
+        }
+        entity.element_data_mut().update_grid_cell();
+    }
+
+    state
+}
+
 fn jump_step_turns(anim: OrderType) -> bool {
     matches!(
         anim,
@@ -1620,12 +1744,12 @@ fn jump_airborne_speed(anim: OrderType) -> f32 {
     }
 }
 
-/// Per-frame position interpolation for the in-progress step.
+/// Per-frame position interpolation for the in-progress airborne step.
 ///
-/// Advances the actor by the sprite's per-frame distance along a
-/// fixed direction vector.  Airborne steps move in absolute 3D, like
-/// the original C++ jump orders; ground target steps keep using the
-/// projected map-space sprite distance table.
+/// Flight advances in absolute 3D at the animation's fixed speed, matching
+/// the jump Execute arms that set a 3D increment and call UpdatePosition
+/// every tick. Ground steps are driven by the sprite motion path instead and
+/// only carry their frame counter here.
 fn advance_step_interpolation(entity: &mut crate::element::Entity) {
     let (target_3d, airborne, mut state) = {
         let Some(actor) = entity.actor_data() else {
@@ -1646,8 +1770,8 @@ fn advance_step_interpolation(entity: &mut crate::element::Entity) {
 
     state.frames_elapsed = state.frames_elapsed.saturating_add(1);
 
-    if let Some(target) = target_3d {
-        if airborne {
+    if airborne {
+        if let Some(target) = target_3d {
             let full_dx = target.x - state.start_x;
             let full_dy = target.y - state.start_y;
             let full_dz = target.z - state.start_z;
@@ -1677,76 +1801,13 @@ fn advance_step_interpolation(entity: &mut crate::element::Entity) {
                     });
                 }
             }
-
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.jump_z_offset = 0.0;
-                actor.wait_time = actor.wait_time.saturating_sub(1);
-            }
-
-            if let Some(actor) = entity.actor_data_mut()
-                && let Some(jump) = actor.active_jump.as_mut()
-            {
-                jump.current = Some(state);
-            }
-            return;
+        } else {
+            tracing::warn!(?state.step.anim, "airborne jump step missing 3D target");
         }
 
-        let target_map = target.to_map();
-        let full_dx = target.x - state.start_x;
-        let full_dy = target_map.y - state.start_y;
-        let full_dist = (full_dx * full_dx + full_dy * full_dy).sqrt();
-
-        // Read this frame's distance from the sprite's distance table.
-        // 0 on non-first ticks of a frame.
-        let frame_dist = entity.element_data().sprite.current_frame_distance();
-
-        if full_dist > f32::EPSILON && frame_dist > 0.0 {
-            let dir_x = full_dx / full_dist;
-            let dir_y = full_dy / full_dist;
-            let elem = entity.element_data_mut();
-            let new_x = elem.position_map().x + dir_x * frame_dist;
-            let new_y = elem.position_map().y + dir_y * frame_dist;
-            // Don't overshoot the target along the direction axis.
-            // Projecting `(new - start) · dir` measures travelled
-            // distance; clamp to `full_dist`.
-            let travelled_new = (new_x - state.start_x) * dir_x + (new_y - state.start_y) * dir_y;
-            if travelled_new >= full_dist {
-                elem.set_position_map(crate::coordinates::MapPoint {
-                    x: target_map.x,
-                    y: target_map.y,
-                });
-            } else {
-                elem.set_position_map(crate::coordinates::MapPoint { x: new_x, y: new_y });
-            }
-        }
-
-        // `jump_z_offset` uses the ratio of *travelled* distance to
-        // full distance, so the vertical lift tracks the sprite's
-        // encoded motion profile instead of wall-clock frames.
-        let pos = entity.element_data().position_map();
-        let travelled = if full_dist > f32::EPSILON {
-            let px = pos.x - state.start_x;
-            let py = pos.y - state.start_y;
-            ((px * full_dx + py * full_dy) / full_dist).clamp(0.0, full_dist)
-        } else {
-            full_dist
-        };
-        let ratio = if full_dist > f32::EPSILON {
-            (travelled / full_dist).clamp(0.0, 1.0)
-        } else {
-            // No horizontal distance (pure z-motion, e.g. vertical
-            // jump-up apex) — fall back to frame-count ratio.
-            (state.frames_elapsed as f32 / state.total_frames.max(1) as f32).clamp(0.0, 1.0)
-        };
-
-        if airborne {
-            let nz = state.start_z + (target.z - state.start_z) * ratio;
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.jump_z_offset = nz;
-            }
-        } else if let Some(actor) = entity.actor_data_mut() {
-            // Ground step — ease jump_z_offset back to zero.
-            actor.jump_z_offset = state.start_z * (1.0 - ratio);
+        if let Some(actor) = entity.actor_data_mut() {
+            actor.jump_z_offset = 0.0;
+            actor.wait_time = actor.wait_time.saturating_sub(1);
         }
     }
 
