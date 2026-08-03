@@ -3711,10 +3711,17 @@ frontiers are still being investigated:
   live successor. Savegame 074 replay 003 consequently advances through its
   frame-74,018 motion-state boundary to exact EOF; the sibling replay 001/002
   frame-73,901 interruption remains a separate open issue.
-- new-order `PerformAction` now initializes `PositionGoalMap` from the order
-  target, while replacement/postponement carries the currently selected
-  movement goal through a retained transition (`09878be5f`). This clears
-  Savegame 073 replay 007's frame-25, 484, 700, 720, and 733 goal boundaries.
+- replacement/postponement carries the currently selected movement goal
+  through a retained transition (`09878be5f`). This clears Savegame 073
+  replay 007's frame-25, 484, 700, 720, and 733 goal boundaries. The same
+  commit's other half — seeding `PositionGoalMap` from every new order's
+  target at `PerformAction` — was an invention: the Original's
+  `PerformAction` never writes the map goal (its five real writers are the
+  motion path, the door-pass and ladder arms, the roll, and the condolence
+  clear). Stationary orders carry destination (0,0), so the seeding zeroed
+  retained goals across the 178-member `position_goal_map` group; it was
+  removed by `31ec5c6bc`, and the replay 007 frames above still pass
+  without it.
   Zero-frame Parry/StopParry translation now also remains inside Original's
   incoming-element instruction scope, so its synchronous condolence clears
   the selected goal before postponed work resumes (`712887772`). The same
