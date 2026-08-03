@@ -1246,6 +1246,7 @@ impl EngineInner {
                 order_id: order.order_id,
                 order_type: order.order_type,
             });
+        tracing::trace!(?actor, ?installed_order, "publishing installed order");
         self.get_entity_mut(actor)
             .and_then(Entity::actor_data_mut)
             .expect("mpOrder publication owner lost actor data")

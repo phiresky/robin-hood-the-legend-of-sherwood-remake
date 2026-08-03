@@ -575,13 +575,30 @@ impl EngineInner {
             .sequence_manager
             .current_element_for_actor(owner);
         // `was_selected` is captured at SetState, the exact Original
-        // SendCondolationCard boundary. Rust dispatches the card later, after
-        // a Wait or recursive successor may already be selected, so checking
-        // selection again here would reinterpret history and strand the old
-        // movement goal. Replacement arbitration explicitly records
-        // `was_selected = false` when Original installs the incoming element
-        // before interrupting the outgoing one.
-        let detaches_selected_order = was_selected;
+        // boundary at which the card's element is compared against the
+        // actor's selection. Rust dispatches the card later, so replacing it
+        // with a fresh selection lookup would reinterpret history and strand
+        // the old movement goal: by the time the card runs, the terminal
+        // element is no longer registered as selected even though it still
+        // was when it left `InProgress`.
+        let detaches_selected_goal = was_selected;
+        // The order pointer needs a stricter gate than the goal. Original
+        // clears goal and order together, at an instant when no successor can
+        // yet be selected — the successor republishes both strictly
+        // afterwards. Rust preserves that ordering for the goal, which is
+        // still installed late by the movement instruction, but publishes the
+        // order pointer eagerly at instruct time. A card deferred past an
+        // incoming element — a lazily installed Wait, or a recursive
+        // successor — would therefore clear a pointer the newcomer has
+        // already published, leaving the actor orderless mid-action. Detach
+        // only the terminal element's own leftovers.
+        //
+        // Replacement arbitration covers the narrower case where the incoming
+        // element is selected before the outgoing one is interrupted, and
+        // explicitly records `was_selected = false` for it.
+        let successor_already_selected =
+            selected_element.is_some_and(|selected| selected != (seq_id, usize::from(elem_idx)));
+        let detaches_selected_order = detaches_selected_goal && !successor_already_selected;
         let mut cleared_selected_goal = false;
         if let Some(entity) = self.world.entities.get_mut(owner) {
             let active_movement_matches = entity.actor_data().is_some_and(|actor| {
@@ -593,7 +610,7 @@ impl EngineInner {
             // `mpSequenceElement`, independently of whether that element is
             // tracked as movement. A synchronous AssertPosition can select
             // and terminate without ever becoming `active_movement`.
-            if detaches_selected_order || (active_movement_matches && selected_element.is_none()) {
+            if detaches_selected_goal || (active_movement_matches && selected_element.is_none()) {
                 entity
                     .position_iface_mut()
                     .set_map_goal(crate::coordinates::MapPoint::ZERO);
@@ -605,6 +622,15 @@ impl EngineInner {
             // condolence callback, so every recursive Think must observe
             // NONANIMATION_END rather than the completed sprite transition.
             if detaches_selected_order && let Some(actor) = entity.actor_data_mut() {
+                tracing::trace!(
+                    ?owner,
+                    ?seq_id,
+                    elem_idx,
+                    ?command,
+                    ?selected_element,
+                    detached = ?actor.installed_order,
+                    "condolation card detaching installed order"
+                );
                 actor.installed_order = None;
             }
 
