@@ -3094,6 +3094,7 @@ impl FastFindGrid {
     /// Motion-grid lines are deliberately not consulted here. They belong to
     /// the separate 2D movement overloads; the Original 3D overload gathers
     /// only sight obstacles of `type_filter` and tests the ray against them.
+    #[track_caller]
     pub fn is_reachable_3d(
         &self,
         origin: crate::coordinates::WorldPoint3D,

@@ -229,6 +229,13 @@ pub struct ParityVisibilityQuery {
     pub origin: [f32; 3],
     pub destination: [f32; 3],
     pub result: bool,
+    /// Call site that issued the query. Recorder-side only — never compared
+    /// against the Original, but it is what makes an ordered query-stream
+    /// divergence attributable to a caller.
+    #[serde(skip_deserializing)]
+    pub caller_file: &'static str,
+    #[serde(skip_deserializing)]
+    pub caller_line: u32,
 }
 
 thread_local! {
@@ -266,6 +273,7 @@ fn record_parity_visibility_query(
     destination: [f32; 3],
     type_mask: u32,
     result: bool,
+    caller: &'static std::panic::Location<'static>,
 ) {
     if type_mask != SIGHTOBSTACLE_OPAQUE {
         return;
@@ -276,6 +284,8 @@ fn record_parity_visibility_query(
                 origin,
                 destination,
                 result,
+                caller_file: caller.file(),
+                caller_line: caller.line(),
             });
         }
     });
@@ -1055,15 +1065,17 @@ impl RayZEquation {
 /// SIGHTOBSTACLE_OPAQUE` for general sight checks).
 ///
 /// Returns `true` if the path is clear, `false` if blocked.
+#[track_caller]
 pub fn is_reachable_3d(
     obstacles: ObstacleList<'_>,
     origin: [f32; 3],
     destination: [f32; 3],
     type_mask: u32,
 ) -> bool {
+    let caller = std::panic::Location::caller();
     // Reject rays that cross through the ground.
     if (origin[2] > 0.0 && destination[2] < 0.0) || (origin[2] < 0.0 && destination[2] > 0.0) {
-        record_parity_visibility_query(origin, destination, type_mask, false);
+        record_parity_visibility_query(origin, destination, type_mask, false, caller);
         return false;
     }
 
@@ -1083,12 +1095,12 @@ pub fn is_reachable_3d(
                 type_mask,
                 "3D sight ray blocked"
             );
-            record_parity_visibility_query(origin, destination, type_mask, false);
+            record_parity_visibility_query(origin, destination, type_mask, false, caller);
             return false;
         }
     }
 
-    record_parity_visibility_query(origin, destination, type_mask, true);
+    record_parity_visibility_query(origin, destination, type_mask, true, caller);
     true
 }
 
@@ -2020,20 +2032,19 @@ mod tests {
             SIGHTOBSTACLE_OPAQUE,
         ));
 
+        let captured = take_parity_visibility_capture();
         assert_eq!(
-            take_parity_visibility_capture(),
+            captured
+                .iter()
+                .map(|q| (q.origin, q.destination, q.result))
+                .collect::<Vec<_>>(),
             [
-                ParityVisibilityQuery {
-                    origin: [1.0, 2.0, 3.0],
-                    destination: [4.0, 5.0, 6.0],
-                    result: true,
-                },
-                ParityVisibilityQuery {
-                    origin: [13.0, 14.0, 1.0],
-                    destination: [15.0, 16.0, -1.0],
-                    result: false,
-                },
+                ([1.0, 2.0, 3.0], [4.0, 5.0, 6.0], true),
+                ([13.0, 14.0, 1.0], [15.0, 16.0, -1.0], false),
             ]
         );
+        // The call site travels with each query so an ordered divergence can
+        // be attributed without re-instrumenting.
+        assert!(captured.iter().all(|q| q.caller_file.ends_with(".rs")));
     }
 }

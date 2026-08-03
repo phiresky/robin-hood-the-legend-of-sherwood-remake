@@ -277,6 +277,7 @@ pub struct CampSoldierInfo {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[track_caller]
 pub(crate) fn soldier_detects_target_360(
     viewer_position: Position,
     viewer_ground_z: f32,

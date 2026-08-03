@@ -26,6 +26,7 @@ fn original_uword_norm(delta: (f32, f32)) -> u16 {
     (delta.0 * delta.0 + delta.1 * delta.1).sqrt() as u16
 }
 
+#[track_caller]
 fn phalanx_member_detects_360(
     member: &PhalanxMemberThemList,
     target: &PhalanxEnemySnapshot,
@@ -65,6 +66,7 @@ fn phalanx_member_detects_360(
     )
 }
 
+#[track_caller]
 fn phalanx_member_detects_180(
     member: &PhalanxMemberThemList,
     target: &PhalanxEnemySnapshot,
