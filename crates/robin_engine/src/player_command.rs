@@ -227,6 +227,13 @@ pub enum PlayerCommand {
     TogglePcSelection {
         pc_id: EntityId,
     },
+    /// Drop one specific PC from the selection.  Unlike
+    /// [`Self::TogglePcSelection`] this never adds: a PC that is not
+    /// currently selected is left alone and the selection-change
+    /// follow-ups are skipped entirely.
+    UnselectPc {
+        pc_id: EntityId,
+    },
     BoxSelect {
         pt1: MapPoint,
         pt2: MapPoint,

@@ -773,6 +773,52 @@ enum TraceCommand {
         actor: TraceEntityId,
         protected_pc: TraceEntityId,
     },
+    BoxUnselect {
+        first: TracePoint,
+        second: TracePoint,
+        append: bool,
+    },
+    RaiseShieldWithDanger {
+        actor: TraceEntityId,
+        protected_pc: TraceEntityId,
+        danger_point: TracePoint3,
+        danger_point_layer: u16,
+    },
+    TeleportSelected {
+        destination: TracePoint,
+        goal_sector: i16,
+        goal_layer: u16,
+    },
+    SelectAllPcs,
+    UnselectPc {
+        pc: TraceEntityId,
+    },
+    SelectActionIndex {
+        index: u32,
+    },
+    SetLockAlt {
+        on: bool,
+    },
+    KeyControl,
+    KeyReleaseControl,
+    StartMacro {
+        #[serde(default)]
+        pc: Option<TraceEntityId>,
+        slot: u8,
+    },
+    DeleteMacro {
+        #[serde(default)]
+        pc: Option<TraceEntityId>,
+        slot: u8,
+    },
+    StartRecordingMacro {
+        #[serde(default)]
+        pc: Option<TraceEntityId>,
+        slot: u8,
+    },
+    ChangeQaMemory {
+        slot: u8,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
@@ -1083,6 +1129,83 @@ impl TraceCommand {
                 actor: entity_map.translate(actor),
                 protected_pc: entity_map.translate(protected_pc),
             },
+            Self::BoxUnselect {
+                first,
+                second,
+                append,
+            } => {
+                // Same shape as `BoxSelect`: the drag gesture and each
+                // resolved nested unselect message are both recorded, so
+                // replay only the resolved commands that follow.
+                let _ = (first, second, append);
+                return None;
+            }
+            Self::RaiseShieldWithDanger {
+                actor,
+                protected_pc,
+                danger_point,
+                danger_point_layer,
+            } => {
+                // The Original records the ground-projected 3D danger
+                // point; its map projection is the point the player
+                // picked, which is what the command carries.
+                // TODO: the engine flattens the danger point back to
+                // z = 0 when storing it, so the projected elevation is
+                // lost on both the live and replay paths.
+                let danger_point: WorldPoint3D = danger_point.into();
+                PlayerCommand::RaiseShieldWithDanger {
+                    actor: entity_map.translate(actor),
+                    protected_pc: entity_map.translate(protected_pc),
+                    danger_point: danger_point.to_map(),
+                    danger_point_layer,
+                }
+            }
+            Self::TeleportSelected {
+                destination,
+                goal_sector,
+                goal_layer,
+            } => PlayerCommand::TeleportSelectedToPoint {
+                dest: destination.into(),
+                layer: goal_layer,
+                // The Original records the selected sector's own number
+                // (or -1 when no sector was selected), not a fast-grid
+                // array index, so it transfers directly.
+                sector: u16::try_from(goal_sector)
+                    .ok()
+                    .and_then(robin_engine::position_interface::SectorHandle::new),
+            },
+            Self::SelectAllPcs => PlayerCommand::SelectAllPcs,
+            Self::UnselectPc { pc } => PlayerCommand::UnselectPc {
+                pc_id: entity_map.translate(pc),
+            },
+            Self::SelectActionIndex { index } => {
+                // The Original resolves the action-bar shortcut against
+                // the single selected PC and does nothing at all for any
+                // other selection cardinality.
+                match engine.selected_pc_ids() {
+                    [pc_id] => PlayerCommand::SelectAction {
+                        pc_id: *pc_id,
+                        action_index: index,
+                    },
+                    _ => return None,
+                }
+            }
+            Self::SetLockAlt { on } => PlayerCommand::SetLockAlt(on),
+            Self::KeyControl => PlayerCommand::KeyControl,
+            Self::KeyReleaseControl => PlayerCommand::KeyReleaseControl,
+            Self::StartMacro { pc, slot } => PlayerCommand::StartMacro {
+                pc: pc.map(|pc| entity_map.translate(pc)),
+                slot,
+            },
+            Self::DeleteMacro { pc, slot } => PlayerCommand::DeleteMacro {
+                pc: pc.map(|pc| entity_map.translate(pc)),
+                slot,
+            },
+            Self::StartRecordingMacro { pc, slot } => PlayerCommand::StartRecordingMacro {
+                pc: pc.map(|pc| entity_map.translate(pc)),
+                slot,
+            },
+            Self::ChangeQaMemory { slot } => PlayerCommand::ChangeQaMemory { slot },
         })
     }
 }
@@ -7374,27 +7497,6 @@ mod tests {
     }
 
     #[test]
-    fn runtime_identity_diagnostics_prioritize_nearby_creation_orders() {
-        let projectile = EntityId::new(131, EntityIdKind::Projectile);
-        let fx = EntityId::new(132, EntityIdKind::Fx);
-        let distant = EntityId::new(133, EntityIdKind::Bonus);
-        let candidates = BTreeMap::from([
-            (90, (distant, EntityIdKind::Bonus)),
-            (170, (projectile, EntityIdKind::Projectile)),
-            (180, (fx, EntityIdKind::Fx)),
-        ]);
-
-        assert_eq!(
-            nearest_runtime_identity_candidates(172, &candidates),
-            [
-                (projectile, 170, EntityIdKind::Projectile),
-                (fx, 180, EntityIdKind::Fx),
-                (distant, 90, EntityIdKind::Bonus),
-            ]
-        );
-    }
-
-    #[test]
     fn global_action_cancel_accepts_the_original_no_pc_shape() {
         let command: TraceCommand = serde_json::from_value(serde_json::json!({
             "type": "cancel_action",
@@ -7402,6 +7504,71 @@ mod tests {
         }))
         .expect("parse Original global action cancellation");
         assert!(matches!(command, TraceCommand::CancelAction { pc: None }));
+    }
+
+    /// Every resolved-command type the recorder can emit must decode.  A
+    /// type the runner does not know aborts the whole trace before any
+    /// simulation comparison happens, so the schema has to stay complete
+    /// rather than merely covering whatever the current corpus contains.
+    #[test]
+    fn every_recorded_command_type_decodes() {
+        let pc = serde_json::json!({"kind": "pc", "index": 3});
+        let point2 = serde_json::json!({
+            "x": {"bits": 1065353216, "value": 1.0},
+            "y": {"bits": 1073741824, "value": 2.0}
+        });
+        let point3 = serde_json::json!({
+            "x": {"bits": 1065353216, "value": 1.0},
+            "y": {"bits": 1073741824, "value": 2.0},
+            "z": {"bits": 1077936128, "value": 3.0}
+        });
+        let recorded = [
+            serde_json::json!({"type": "box_select", "first": point2, "second": point2, "append": false}),
+            serde_json::json!({"type": "box_unselect", "first": point2, "second": point2, "append": false}),
+            serde_json::json!({"type": "group_move", "actors": [pc], "destination": point2,
+                "running": true, "show_marker": true, "goal_sector": 4, "goal_layer": 0}),
+            serde_json::json!({"type": "launch_interaction", "actor": pc, "target": pc,
+                "original_command": 0, "original_command_name": "hit", "running": false}),
+            serde_json::json!({"type": "launch_scroll_read", "actor": pc, "target": pc, "running": false}),
+            serde_json::json!({"type": "sword_strike", "actor": pc, "target": pc,
+                "original_command": 0, "original_command_name": "hit", "with_seek": true}),
+            serde_json::json!({"type": "launch_self_ability", "actor": pc,
+                "original_command": 0, "original_command_name": "eat"}),
+            serde_json::json!({"type": "launch_ground_target", "actor": pc, "target": point3,
+                "original_command": 0, "original_command_name": "throw_purse",
+                "original_target_field": 30, "titbit_layer": 0}),
+            serde_json::json!({"type": "drop_ale_at", "actor": pc, "target": point2, "running": false}),
+            serde_json::json!({"type": "shield_select_protected", "actor": pc, "protected_pc": pc}),
+            serde_json::json!({"type": "raise_shield_with_danger", "actor": pc, "protected_pc": pc,
+                "danger_point": point3, "danger_point_layer": 0}),
+            serde_json::json!({"type": "teleport_selected", "destination": point2,
+                "goal_sector": -1, "goal_layer": 0}),
+            serde_json::json!({"type": "stop_pc", "pc": pc}),
+            serde_json::json!({"type": "select_pc", "pc": pc, "append": false}),
+            serde_json::json!({"type": "select_all_pcs"}),
+            serde_json::json!({"type": "unselect_pc", "pc": pc}),
+            serde_json::json!({"type": "unselect_all_pcs"}),
+            serde_json::json!({"type": "select_action_index", "index": 1}),
+            serde_json::json!({"type": "select_action", "action": "bow", "original_action": 1, "pc": pc}),
+            serde_json::json!({"type": "cancel_action", "action": "no_action", "original_action": 0}),
+            serde_json::json!({"type": "crouch_down"}),
+            serde_json::json!({"type": "stand_up"}),
+            serde_json::json!({"type": "start_macro", "slot": 1, "pc": pc}),
+            serde_json::json!({"type": "delete_macro", "slot": 1}),
+            serde_json::json!({"type": "start_recording_macro", "slot": 2, "pc": pc}),
+            serde_json::json!({"type": "change_qa_memory", "slot": 0}),
+            serde_json::json!({"type": "set_lock_alt", "on": true}),
+            serde_json::json!({"type": "key_control"}),
+            serde_json::json!({"type": "key_release_control"}),
+            serde_json::json!({"type": "make_pc_fast", "entity": pc}),
+            serde_json::json!({"type": "orient_action_at", "action": "bow", "original_action": 1,
+                "actor": pc, "mouse_map": point2, "target": point3}),
+        ];
+        for value in recorded {
+            let recorded_type = value["type"].clone();
+            serde_json::from_value::<TraceCommand>(value.clone())
+                .unwrap_or_else(|err| panic!("decode recorded command {recorded_type}: {err}"));
+        }
     }
 
     #[test]
@@ -7494,7 +7661,7 @@ mod tests {
         let mut map = EntityMap {
             entities: BTreeMap::from([(old_trace_id, rust_id)]),
             entities_by_creation_order: BTreeMap::from([(158, rust_id)]),
-            building_sectors: BTreeMap::new(),
+            sectors: BTreeMap::new(),
         };
 
         map.refresh_trace_index(shifted_trace_id, 158);

@@ -300,6 +300,34 @@ traces decode and advance beyond their former parse boundary: 3 reach exact EOF
 and 12 expose later independent state, RNG, or speech boundaries.  No command
 is skipped or substituted to obtain alignment.
 
+The decoder was then closed against the whole recorder schema instead of only
+the two types that happened to appear.  The recorder can emit thirty-one
+resolved command types; the decoder previously understood eighteen.  Thirty of
+those names appear as literals in the recorder's own queue calls, but
+`make_pc_fast` is emitted through a generic entity-command helper that takes
+the type name as an argument, so enumerating literals alone undercounts the
+schema by one.  The remaining thirteen are now translated as well:
+`box_unselect`, `raise_shield_with_danger`,
+`teleport_selected`, `select_all_pcs`, `unselect_pc`, `select_action_index`,
+`set_lock_alt`, `key_control`, `key_release_control`, `start_macro`,
+`delete_macro`, `start_recording_macro`, and `change_qa_memory`.  Three of
+those needed a decision rather than a direct mapping:
+
+- `box_unselect` is the drag gesture, and the Original separately records each
+  resolved nested unselect message.  It is dropped for the same reason
+  `box_select` is, so the selection is not applied twice.
+- `select_action_index` carries no actor.  The Original resolves the shortcut
+  against the sole selected PC and does nothing for any other selection
+  cardinality, so the decoder reads the live selection and drops the command
+  unless exactly one PC is selected.
+- `unselect_pc` had no command-pipeline entry point.  `TogglePcSelection` is
+  not a substitute — it would *select* a PC that is already unselected — so
+  `PlayerCommand::UnselectPc` was added, gated on the PC actually being in the
+  selection to match the Original messenger's early return.
+
+A decoder unit test asserts that every recorded command type parses, so a new
+recorder type cannot silently reach a sweep as a whole-trace parse abort.
+
 ### Resolved-speech FIFO subgroup
 
 The initial short-corpus sweep stopped six traces at the authoritative sound
