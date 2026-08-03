@@ -1409,6 +1409,12 @@ impl PositionInterface {
         self.directional_tolerance = directional;
     }
 
+    #[inline]
+    #[must_use]
+    pub fn get_tolerance(&self) -> f32 {
+        self.tolerance
+    }
+
     // Forecasted movement
     #[inline]
     pub fn get_forecasted_movement(&self) -> WorldVec3D {
@@ -1605,6 +1611,18 @@ impl PositionInterface {
         } else {
             self.directional_goal_check(map, goal, im)
         }
+    }
+
+    /// Goal test for motion whose anti-collision is disabled, and which can
+    /// therefore never be deviated. Equivalent to [`Self::is_goal_reached`]
+    /// without needing a grid: only the deviated branch consults one.
+    #[must_use]
+    pub fn is_goal_reached_undeviated(&self) -> bool {
+        debug_assert!(
+            !self.deviated,
+            "is_goal_reached_undeviated called on a deviated position interface"
+        );
+        self.directional_goal_check(self.position_map, self.goal_map, self.increment_map)
     }
 
     fn directional_goal_check(&self, map: MapPoint, goal: MapPoint, im: MapVec) -> bool {

@@ -4530,6 +4530,14 @@ impl EngineInner {
                     };
                     let mut weak_sword_held = false;
                     let owner_is_pc = entity.is_pc();
+                    // Jump steps whose Execute arm calls PerformMotion rather
+                    // than PerformAction: they approach an authored map point
+                    // while their transition animation plays.
+                    let actor_in_jump = entity
+                        .actor_data()
+                        .is_some_and(|actor| actor.active_jump.is_some());
+                    let jump_ground_motion_step =
+                        super::jump::jump_step_uses_perform_motion(anim_type) && actor_in_jump;
                     let order_is_initialising = actor.execute_order_initialising;
                     if let Some(direction) = waiting_sword_direction_goal {
                         entity.element_data_mut().set_direction_goal(direction);
@@ -4945,13 +4953,46 @@ impl EngineInner {
                                     FrameProgression::Default,
                                 )
                             };
+                            if jump_ground_motion_step {
+                                // This take-off / landing transition runs its
+                                // sprite through the shared motion path, which
+                                // seeds the goal and its increment itself.
+                                let order_id = order_id.unwrap_or_else(|| {
+                                    panic!(
+                                        "jump transition {anim_type:?} for {entity_id:?} has no order id"
+                                    )
+                                });
+                                let motion_order = crate::sprite::MotionOrderContext {
+                                    order_id,
+                                    destination: order_target,
+                                    reverse: false,
+                                    tolerance: order_tolerance,
+                                    directional_tolerance: false,
+                                    compute_direction: false,
+                                    next_destination_same_action: None,
+                                };
+                                return Some(super::jump::perform_jump_ground_motion(
+                                    entity,
+                                    sim,
+                                    motion_order,
+                                    played,
+                                    row,
+                                ));
+                            }
+                            let elem = entity.element_data_mut();
+                            let sprite = &mut elem.sprite;
                             if !element_retains_movement_goal
+                                && !actor_in_jump
                                 && order_id
                                     .is_some_and(|id| sprite.last_processed_order_id != id.get())
                             {
                                 // Match RHSprite::PerformAction's new-order
                                 // PositionGoalMap initialization. This is
                                 // observable even for stationary animations.
+                                // Jump orders are exempt: their Execute arms
+                                // only ever set a goal through the motion path
+                                // taken above, so the take-off goal stays
+                                // observable across the flight orders.
                                 sprite.position_iface.set_map_goal(order_target);
                             }
                             Some(sprite.perform_action(
