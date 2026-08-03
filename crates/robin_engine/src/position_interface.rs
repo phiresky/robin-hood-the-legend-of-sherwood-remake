@@ -2053,10 +2053,13 @@ pub fn vector_normalize_iso(x: f32, y: f32) -> [f32; 2] {
 /// `false` the right.
 #[inline]
 pub fn vector_normal_iso(x: f32, y: f32, direct: bool) -> [f32; 2] {
+    // `SBGeoVector2D::GetNormal` divides by the aspect ratio here.  Using
+    // `INVERSE_ASPECT_RATIO` is algebraically equivalent but can differ by
+    // one ULP in binary32, which changes authoritative AI destinations.
     if direct {
-        [-y * INVERSE_ASPECT_RATIO, x * ASPECT_RATIO]
+        [-y / ASPECT_RATIO, x * ASPECT_RATIO]
     } else {
-        [y * INVERSE_ASPECT_RATIO, -x * ASPECT_RATIO]
+        [y / ASPECT_RATIO, -x * ASPECT_RATIO]
     }
 }
 
