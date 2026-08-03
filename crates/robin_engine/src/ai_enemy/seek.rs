@@ -317,11 +317,18 @@ impl EnemyAi {
                     * parameters_ai::AI_MIN_LOOKFORHELPFLAG_SEEK_POINT_FACTOR)
                     as u16;
 
-                expected_points = crate::sim_rng::u16(
-                    sim,
-                    crate::sim_rng::RngSite::SeekPointSelection,
-                    min..=expected_points,
-                );
+                // Original `RandomValue(P_RECTANGLE, min, max)` returns
+                // `min + rand() % (max - min)`: the upper bound is excluded,
+                // and an empty span returns `min` without consuming RNG.
+                expected_points = if min == expected_points {
+                    min
+                } else {
+                    crate::sim_rng::u16(
+                        sim,
+                        crate::sim_rng::RngSite::SeekPointSelection,
+                        min..expected_points,
+                    )
+                };
             }
 
             // ── Phase 4: select points by interest (randomised order) ──
