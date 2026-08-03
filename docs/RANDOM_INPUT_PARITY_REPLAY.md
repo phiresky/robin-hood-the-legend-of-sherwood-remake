@@ -389,6 +389,23 @@ those needed a decision rather than a direct mapping:
 A decoder unit test asserts that every recorded command type parses, so a new
 recorder type cannot silently reach a sweep as a whole-trace parse abort.
 
+Re-running the fifteen affected short-corpus traces, five now match every
+recorded frame and ten advance to a later boundary that is independent of
+command decoding: soldier direction and `direction_goal`, PC animation,
+`ai.substate` and `detection.view_status`, `visibility_queries`, and two
+simulation-RNG draw-count mismatches.  Two of the ten stop on
+`actor.command: original=DropAle rust=Wait`, which is the first genuine look
+at the ale-drop mechanic now that the command reaches the engine at all,
+rather than a decoding problem.
+
+Ten pass-group controls were re-run alongside them; eight still pass and two
+(`Savegame_Cyrdach/Profile_156/Restart/replay-003`,
+`Savegame_SuN1Sh1nE/Profile_004/Savegame_039/replay-003`) fail on
+`actor.motion_state`.  None of the ten controls contains any of the thirteen
+newly translated command types, so the decoder cannot execute a new path on
+them and those two failures are baseline drift from simulation work that
+landed between the recorded audit and this branch, not a regression here.
+
 ### Resolved-speech FIFO subgroup
 
 The initial short-corpus sweep stopped six traces at the authoritative sound
