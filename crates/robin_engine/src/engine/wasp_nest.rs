@@ -776,7 +776,10 @@ mod tests {
             // No hostile soldiers: the 20 wasps should survive Phase 3
             // because ChangeDirection's reachability check passes on an
             // empty obstacle list, so flying_wasp_count remains 20.
-            assert_eq!(nest.projectile.wasp.flying_wasp_count, NUMBER_OF_WASPS);
+            assert_eq!(
+                nest.projectile.wasp.flying_wasp_count,
+                u32::from(NUMBER_OF_WASPS)
+            );
             assert_eq!(nest.object.animation, Animation::ObjectBursting);
             assert!(!nest.projectile.flying);
 
@@ -822,7 +825,8 @@ mod tests {
                     _ => panic!("same-frame wasp {wasp_id:?} missing"),
                 };
                 assert!(
-                    (DIRECTION_CHANGE_TIMEOUT..=DIRECTION_CHANGE_TIMEOUT + 2).contains(&timeout),
+                    (u32::from(DIRECTION_CHANGE_TIMEOUT)..=u32::from(DIRECTION_CHANGE_TIMEOUT) + 2)
+                        .contains(&timeout),
                     "same-frame wasp {wasp_id:?} did not run its first Hourglass"
                 );
             }

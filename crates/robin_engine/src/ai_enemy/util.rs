@@ -277,6 +277,7 @@ pub struct CampSoldierInfo {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[track_caller]
 pub(crate) fn soldier_detects_target_360(
     viewer_position: Position,
     viewer_ground_z: f32,
@@ -854,6 +855,31 @@ pub struct DoorBattlePosition {
 // when called from &mut self methods that also mutate CombatPositions.)
 // ---------------------------------------------------------------------------
 
+/// The fighters a combat-position evaluation may refer to.
+///
+/// The us/them lists that seed the friend and enemy position lists are
+/// membership-tested against detection and swordfight state, not against the
+/// radius-limited per-tick neighbour snapshot: an enemy can be visible (and
+/// therefore listed) while standing outside that radius, and a listed friend
+/// can stop being able to fight without leaving the list. Evaluation must be
+/// able to read every fighter those lists can name, so it resolves through the
+/// neighbour snapshot first and falls back to the full registry — the same
+/// order the list-building code uses.
+#[derive(Clone, Copy)]
+pub(super) struct FighterView<'a> {
+    pub near: &'a [FighterSnapshot],
+    pub registry: &'a [FighterSnapshot],
+}
+
+impl<'a> FighterView<'a> {
+    fn get(&self, handle: HumanHandle) -> Option<&'a FighterSnapshot> {
+        self.near
+            .iter()
+            .find(|f| f.handle == handle)
+            .or_else(|| self.registry.iter().find(|f| f.handle == handle))
+    }
+}
+
 /// Estimates damage the attacker can deal to the target in the
 /// given combat position.
 ///
@@ -864,7 +890,7 @@ pub struct DoorBattlePosition {
 fn estimate_damage(
     evaluator: HumanHandle,
     cp: &mut CombatPosition,
-    all_fighters: &[FighterSnapshot],
+    all_fighters: FighterView<'_>,
     profile_manager: &crate::profiles::ProfileManager,
     iq: u16,
 ) -> i16 {
@@ -884,33 +910,24 @@ fn estimate_damage(
     // live fighter pointers and dereferences both combatants' `mpSword`.
     // A selected combat position without either fighter is corrupt input, not
     // a harmless zero-damage position.
-    let attacker = all_fighters
-        .iter()
-        .find(|f| f.handle == cp.attacker)
-        .unwrap_or_else(|| {
-            panic!(
-                "combat position attacker {} is absent from the per-tick fighter view",
-                cp.attacker
-            )
-        });
-    let target = all_fighters
-        .iter()
-        .find(|f| f.handle == cp.target)
-        .unwrap_or_else(|| {
-            panic!(
-                "combat position target {} is absent from the per-tick fighter view",
-                cp.target
-            )
-        });
-    let evaluator = all_fighters
-        .iter()
-        .find(|f| f.handle == evaluator)
-        .unwrap_or_else(|| {
-            panic!(
-                "combat position evaluator {} is absent from the per-tick fighter view",
-                evaluator
-            )
-        });
+    let attacker = all_fighters.get(cp.attacker).unwrap_or_else(|| {
+        panic!(
+            "combat position attacker {} is absent from the per-tick fighter view",
+            cp.attacker
+        )
+    });
+    let target = all_fighters.get(cp.target).unwrap_or_else(|| {
+        panic!(
+            "combat position target {} is absent from the per-tick fighter view",
+            cp.target
+        )
+    });
+    let evaluator = all_fighters.get(evaluator).unwrap_or_else(|| {
+        panic!(
+            "combat position evaluator {} is absent from the per-tick fighter view",
+            evaluator
+        )
+    });
 
     // Vector from attacker to target.  `dy_iso` applies the isometric
     // Y-stretch for Euclidean distance math; `dy_raw` stays raw for the
@@ -1054,7 +1071,7 @@ fn evaluate_single_position(
     evaluator: HumanHandle,
     cp: &mut CombatPosition,
     enemy_positions: &mut [CombatPosition],
-    all_fighters: &[FighterSnapshot],
+    all_fighters: FighterView<'_>,
     profile_manager: &crate::profiles::ProfileManager,
     iq: u16,
 ) -> i32 {
@@ -1080,7 +1097,7 @@ pub(super) fn evaluate_combat_position_full(
     cp: &mut CombatPosition,
     friend_positions: &mut [CombatPosition],
     enemy_positions: &mut [CombatPosition],
-    all_fighters: &[FighterSnapshot],
+    all_fighters: FighterView<'_>,
     profile_manager: &crate::profiles::ProfileManager,
     iq: u16,
 ) -> i32 {
@@ -1368,6 +1385,13 @@ mod required_combat_input_tests {
         }
     }
 
+    fn view(fighters: &[FighterSnapshot]) -> FighterView<'_> {
+        FighterView {
+            near: fighters,
+            registry: &[],
+        }
+    }
+
     #[test]
     #[should_panic(expected = "combat position target 2 is absent")]
     fn damage_evaluation_rejects_a_missing_selected_target() {
@@ -1376,7 +1400,7 @@ mod required_combat_input_tests {
         estimate_damage(
             1,
             &mut position,
-            &fighters,
+            view(&fighters),
             &crate::profiles::ProfileManager::new(),
             50,
         );
@@ -1390,7 +1414,28 @@ mod required_combat_input_tests {
         estimate_damage(
             1,
             &mut position,
-            &fighters,
+            view(&fighters),
+            &crate::profiles::ProfileManager::new(),
+            50,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "fighter 1 requires missing HtH weapon profile 1")]
+    fn damage_evaluation_resolves_combatants_through_the_full_registry() {
+        // Attacker 1 stands outside the neighbour radius but is still named by
+        // the us/them lists, so evaluation must reach it through the registry
+        // and get as far as the weapon lookup.
+        let near = [fighter(2)];
+        let registry = [fighter(1), fighter(2)];
+        let mut position = combat_position();
+        estimate_damage(
+            1,
+            &mut position,
+            FighterView {
+                near: &near,
+                registry: &registry,
+            },
             &crate::profiles::ProfileManager::new(),
             50,
         );
@@ -1404,7 +1449,7 @@ mod required_combat_input_tests {
             estimate_damage(
                 1,
                 &mut position,
-                &[],
+                view(&[]),
                 &crate::profiles::ProfileManager::new(),
                 50,
             ),
@@ -1432,7 +1477,7 @@ mod required_combat_input_tests {
                 &mut position,
                 &mut friends,
                 &mut enemies,
-                &[],
+                view(&[]),
                 &crate::profiles::ProfileManager::new(),
                 50,
             ),

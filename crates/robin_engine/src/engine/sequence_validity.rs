@@ -1023,7 +1023,13 @@ impl EngineInner {
         let actor = entity
             .actor_data()
             .expect("PC Execute validity owner must retain actor data");
-        if entity.element_data().posture.is_dead() || !entity.is_active() {
+        // Inactive (off-map roster) PCs still run Execute and its
+        // init-time validity guards: a self-ability launched on a
+        // parked PC selects its element, fails the init validity
+        // check on the next Execute, and terminates without playing
+        // any animation.  Skipping the pre-pass for inactive PCs let
+        // the transition play instead, so no active gate here.
+        if entity.element_data().posture.is_dead() {
             return;
         }
         // PC override `Execute` opens with

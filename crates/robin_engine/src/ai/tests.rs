@@ -1145,7 +1145,19 @@ fn position_to_point_3d_uses_building_door_outside_projection() {
         sector_type: SectorType::AREA | SectorType::MOTION | SectorType::BUILDING,
         sector_number: building_number,
         gate_indices: vec![crate::gate::DoorIndex(0)],
-        ..GridSector::default()
+        points: Vec::new(),
+        bounding_box: crate::coordinates::MapBBox::new(),
+        layer: 0,
+        door_index: None,
+        lift_type: None,
+        lift_direction: 0,
+        force_crouched: false,
+        building_index: None,
+        low_exit_point: None,
+        high_exit_point: None,
+        lowest_door_index: None,
+        jump_line_indices: Vec::new(),
+        underlying_sector: None,
     });
     level.door_projection_infos.push(DoorProjectionInfo {
         point_in: MapPoint::new(50.0, 50.0),
@@ -1154,13 +1166,14 @@ fn position_to_point_3d_uses_building_door_outside_projection() {
         layer_out: 2,
     });
 
-    let mut obstacle = crate::sight_obstacle::SightObstacle::default();
-    obstacle.obstacle_type = crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA;
-    obstacle.box_projection = crate::coordinates::MapBBox {
-        min: MapPoint::new(0.0, 0.0),
-        max: MapPoint::new(100.0, 100.0),
-    };
-    obstacle.points = vec![
+    let mut obstacle = crate::sight_obstacle::SightObstacle::new(
+        0,
+        crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
+    );
+    obstacle.box_projection = crate::coordinates::MapBBox::from_geo(
+        crate::geo2d::BBox2D::from_coords(0.0, 0.0, 100.0, 100.0),
+    );
+    obstacle.obstacle_points = vec![
         crate::sight_obstacle::ObstaclePoint {
             x: 0.0,
             y: 0.0,

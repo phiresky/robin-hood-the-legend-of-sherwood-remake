@@ -1544,7 +1544,7 @@ impl EngineInner {
         fx
     }
 
-    fn apply_pending_arrow_refresh(&mut self, sim: &crate::sim_rng::SimulationContext) {
+    pub(crate) fn apply_pending_arrow_refresh(&mut self, sim: &crate::sim_rng::SimulationContext) {
         if !std::mem::take(&mut self.control.arrow_refresh_pending) {
             return;
         }

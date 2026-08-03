@@ -4083,16 +4083,12 @@ impl EnemyAi {
             self.base
                 .fire_self_stimulus(crate::ai::StimulusType::EventReachPoint);
         }
-        if self.base.couldnt_reachpoint {
-            self.base.couldnt_reachpoint = false;
-            self.base
-                .fire_self_stimulus(crate::ai::StimulusType::EventCouldntReachPoint);
-        }
-        if self.base.already_turned {
-            self.base.already_turned = false;
-            self.base
-                .fire_self_stimulus(crate::ai::StimulusType::EventDone);
-        }
+        // A failed GoTo and a no-op FaceTo raise their latches unconditionally,
+        // with no outside-Think delivery path of their own. Outside a Think the
+        // next Think entry simply discards them, so drop them here rather than
+        // inventing completions the actor never receives.
+        self.base.couldnt_reachpoint = false;
+        self.base.already_turned = false;
 
         // Original InitOneAI stamps this after all patrol-path setup.
         self.base.last_hint_actuality = ctx.frame;

@@ -690,6 +690,7 @@ fn is_detecting_cone_and_los(
     }
 }
 
+#[track_caller]
 fn los_clear_for_detection(
     viewer: MapPoint,
     target: MapPoint,

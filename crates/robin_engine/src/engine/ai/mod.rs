@@ -8978,7 +8978,7 @@ impl EngineInner {
 
     // ─── One-shot noise broadcast ──────────────────────────────────
 
-    fn one_shot_noise_listener_ids(&self) -> Vec<EntityId> {
+    pub(crate) fn one_shot_noise_listener_ids(&self) -> Vec<EntityId> {
         let mut npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         // `RHEngine::GetNPC(i)` follows the Original registration array.
         // Rust's typed arena order is not authoritative after save adoption,
@@ -8987,7 +8987,7 @@ impl EngineInner {
         npc_ids
     }
 
-    fn one_shot_noise(
+    pub(crate) fn one_shot_noise(
         &self,
         noise_type: crate::ai::NoiseType,
         origin: crate::coordinates::MapPoint,
@@ -9038,7 +9038,7 @@ impl EngineInner {
     /// `Noise` calls `GetHearVolume` immediately before that listener's
     /// synchronous `Think`, so earlier listeners may alter world state before
     /// this method is called for the next registration-array entry.
-    fn subjective_one_shot_noise_for(
+    pub(crate) fn subjective_one_shot_noise_for(
         &mut self,
         npc_id: EntityId,
         noise: crate::ai::Noise,
@@ -10009,26 +10009,27 @@ impl EngineInner {
                     npc_id.index()
                 )
             });
-        if ai.couldnt_reachpoint {
-            ai.couldnt_reachpoint = false;
-            ai.outbox
-                .reentrant
-                .self_stimuli
-                .push(crate::ai::StimulusType::EventCouldntReachPoint);
-        }
-        if ai.already_on_point {
-            ai.already_on_point = false;
-            ai.outbox
-                .reentrant
-                .self_stimuli
-                .push(crate::ai::StimulusType::EventReachPoint);
-        }
-        if ai.already_turned {
-            ai.already_turned = false;
-            ai.outbox
-                .reentrant
-                .self_stimuli
-                .push(crate::ai::StimulusType::EventDone);
+        // Only an EndThink delivers these latches, so one whose operation ran
+        // outside a Think is discarded exactly as the next Think entry would.
+        // Dispatching a completion also re-enters Think, whose entry gate
+        // clears all three latches before the nested handler runs, so a single
+        // boundary surfaces at most one event even when several were set.
+        let event = if !ai.completion_latch_inside_think {
+            None
+        } else if ai.couldnt_reachpoint {
+            Some(crate::ai::StimulusType::EventCouldntReachPoint)
+        } else if ai.already_on_point {
+            Some(crate::ai::StimulusType::EventReachPoint)
+        } else if ai.already_turned {
+            Some(crate::ai::StimulusType::EventDone)
+        } else {
+            None
+        };
+        ai.couldnt_reachpoint = false;
+        ai.already_on_point = false;
+        ai.already_turned = false;
+        if let Some(event) = event {
+            ai.outbox.reentrant.self_stimuli.push(event);
         }
     }
 

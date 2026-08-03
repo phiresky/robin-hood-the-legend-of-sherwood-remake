@@ -141,6 +141,12 @@ pub struct AiController {
     pub couldnt_reachpoint: bool,
     pub already_on_point: bool,
     pub already_turned: bool,
+    /// Whether a Think enclosed the operation that raised the completion
+    /// latches above. Only an `EndThink` ever delivers them, so a latch
+    /// raised outside a Think is discarded rather than dispatched. Rust
+    /// needs this recorded because path construction — and therefore the
+    /// failure verdict — happens after the typed AI borrow is released.
+    pub completion_latch_inside_think: bool,
 
     // -- Sitting around --
     pub likes_to_sit_around: bool,
@@ -354,6 +360,7 @@ impl Default for AiController {
             couldnt_reachpoint: false,
             already_on_point: false,
             already_turned: false,
+            completion_latch_inside_think: false,
             likes_to_sit_around: false,
             special_action: false,
             remaining_tequila_gulps: 0,
@@ -1714,26 +1721,25 @@ impl AiController {
             self.think_recursion_depth -= 1;
             return true;
         }
-        if self.couldnt_reachpoint {
-            self.couldnt_reachpoint = false;
-            self.outbox
-                .reentrant
-                .self_stimuli
-                .push(StimulusType::EventCouldntReachPoint);
-        }
-        if self.already_on_point {
-            self.already_on_point = false;
-            self.outbox
-                .reentrant
-                .self_stimuli
-                .push(StimulusType::EventReachPoint);
-        }
-        if self.already_turned {
-            self.already_turned = false;
-            self.outbox
-                .reentrant
-                .self_stimuli
-                .push(StimulusType::EventDone);
+        // Dispatching a completion event re-enters Think, and Think's entry
+        // gate unconditionally clears all three latches before the nested
+        // handler runs. The remaining latches are therefore already gone by
+        // the time control returns here, so an EndThink emits at most one
+        // completion event no matter how many latches were set.
+        let event = if self.couldnt_reachpoint {
+            Some(StimulusType::EventCouldntReachPoint)
+        } else if self.already_on_point {
+            Some(StimulusType::EventReachPoint)
+        } else if self.already_turned {
+            Some(StimulusType::EventDone)
+        } else {
+            None
+        };
+        self.couldnt_reachpoint = false;
+        self.already_on_point = false;
+        self.already_turned = false;
+        if let Some(event) = event {
+            self.outbox.reentrant.self_stimuli.push(event);
         }
         self.think_recursion_depth -= 1;
         true
@@ -2849,6 +2855,7 @@ impl AiController {
     fn finish_already_on_point(&mut self) {
         if self.think_recursion_depth > 0 {
             self.already_on_point = true;
+            self.completion_latch_inside_think = self.think_recursion_depth > 0;
         } else {
             self.fire_self_stimulus(StimulusType::EventReachPoint);
         }
@@ -2868,6 +2875,10 @@ impl AiController {
         self.last_goto_destination = destination;
         self.last_goto_flags = flags;
         self.couldnt_reachpoint = false;
+        // Remember the enclosing-Think context now: the engine finishes path
+        // construction after this borrow ends, and only an EndThink delivers
+        // the resulting failure.
+        self.completion_latch_inside_think = self.think_recursion_depth > 0;
 
         // Civilians must not be issued combat / rider-charge flags.
         // Mask `FORBIDDEN_CIVILIANS` silently — civilians hitting one
@@ -3008,6 +3019,10 @@ impl AiController {
         self.last_goto_destination = destination;
         self.last_goto_flags = flags;
         self.couldnt_reachpoint = false;
+        // Remember the enclosing-Think context now: the engine finishes path
+        // construction after this borrow ends, and only an EndThink delivers
+        // the resulting failure.
+        self.completion_latch_inside_think = self.think_recursion_depth > 0;
         // This is the same Original GoTo overload as the default-speed
         // wrapper. Its close-point shortcut is legal only from one of the
         // idle animations; a running patrol member may pass within five
@@ -3041,6 +3056,7 @@ impl AiController {
         self.last_goto_destination = destination;
         self.last_goto_flags = GotoFlags::RUN;
         self.couldnt_reachpoint = false;
+        self.completion_latch_inside_think = self.think_recursion_depth > 0;
 
         let mut order = Self::make_move_order(&destination, GotoFlags::RUN);
         // This is deliberately a local RHMOVE_MAP element, not the full
@@ -3087,6 +3103,7 @@ impl AiController {
         self.last_goto_destination = destination;
         self.last_goto_flags = flags | GotoFlags::NEAR;
         self.couldnt_reachpoint = false;
+        self.completion_latch_inside_think = self.think_recursion_depth > 0;
 
         let same_layer = destination.level == ctx.position.level;
         if same_layer && self.check_already_near(&destination, effective_distance as f32, ctx) {
@@ -3150,6 +3167,7 @@ impl AiController {
         );
         if target_dir as u16 == ctx.direction && may_short_circuit {
             self.already_turned = true;
+            self.completion_latch_inside_think = self.think_recursion_depth > 0;
             return;
         }
         let mut intent = AiOrderIntent::face_direction(target_dir);
@@ -3263,6 +3281,7 @@ impl AiController {
     pub fn face_direction(&mut self, direction: u16, ctx: &AiContext) {
         if direction == ctx.direction && Self::face_to_same_direction_can_short_circuit(ctx) {
             self.already_turned = true;
+            self.completion_latch_inside_think = self.think_recursion_depth > 0;
             return;
         }
         self.launch_turn_direction_unconditionally(direction);
@@ -4404,6 +4423,7 @@ impl AiController {
             // move.
             if path.size <= 1 {
                 self.already_on_point = true;
+                self.completion_latch_inside_think = self.think_recursion_depth > 0;
                 return;
             }
             path.advance();
