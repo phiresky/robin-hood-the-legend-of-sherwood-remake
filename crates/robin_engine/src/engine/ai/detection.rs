@@ -2519,6 +2519,7 @@ impl EngineInner {
                         .camp_soldiers
                         .push(crate::ai_enemy::CampSoldierInfo {
                             handle: ss.id.index(),
+                            active: ss.active,
                             position: ss_position,
                             direction: ss.direction,
                             rank: ss.rank,

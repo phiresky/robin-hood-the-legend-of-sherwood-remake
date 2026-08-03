@@ -5010,6 +5010,7 @@ mod tests {
     fn officer_detection_uses_officer_facing() {
         let officer = CampSoldierInfo {
             handle: 2,
+            active: true,
             position: Position {
                 x: 0.0,
                 y: 0.0,

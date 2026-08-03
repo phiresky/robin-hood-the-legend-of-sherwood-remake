@@ -1206,11 +1206,11 @@ impl EnemyAi {
         let max_sq = (max_radius as f32) * (max_radius as f32);
         let mut best: Option<(NpcHandle, f32)> = None;
         for cs in &tick.camp_soldiers {
-            // Exclude self + dead/unconscious; require active.
-            // `camp_soldiers` is already built from active, non-self
-            // soldiers, and `is_able_to_help` covers alive+conscious
-            // plus the narrower state/substate gates.
-            if !cs.is_able_to_help {
+            // GetNearestFighter's general gates are distinct from the global
+            // camp registry used by CreateListOfSoldiersYouCanAlert: the
+            // registry includes inactive and unconscious soldiers, while this
+            // scan rejects inactive plus dead/unconscious candidates.
+            if !cs.active || !cs.is_able_to_help {
                 continue;
             }
             // Rank check (only set when caller passes a specific rank).

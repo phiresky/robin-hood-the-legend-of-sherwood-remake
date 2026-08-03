@@ -171,6 +171,10 @@ const NOT_YET_COMPUTED: i16 = 6666;
 #[derive(Debug, Clone)]
 pub struct CampSoldierInfo {
     pub handle: NpcHandle,
+    /// Raw `RHElement::IsActive()` state. Global camp registries retain
+    /// inactive soldiers, but candidate scans such as `GetNearestFighter`
+    /// reject them explicitly.
+    pub active: bool,
     pub position: Position,
     pub direction: u16,
     pub rank: ProfileRank,

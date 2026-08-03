@@ -2023,7 +2023,12 @@ impl EngineInner {
             if other_id == npc_id {
                 continue;
             }
-            if s.soldier.cached_camp != my_camp || s.human.unconscious {
+            // GetNumberOfSoldiers(camp) includes unconscious and inactive
+            // soldiers. Individual Original consumers apply their own gates:
+            // CreateListOfSoldiersYouCanAlert retains everyone of the allowed
+            // rank, while GetNearestFighter rejects dead, unconscious, and
+            // inactive candidates.
+            if s.soldier.cached_camp != my_camp {
                 continue;
             }
             let able_to_fight = crate::element::Human::is_able_to_fight(s);
@@ -2096,6 +2101,7 @@ impl EngineInner {
             let eye_blind = s.npc.eye_status.is_blind();
             camp_soldiers.push(crate::ai_enemy::CampSoldierInfo {
                 handle: other_id.index(),
+                active: s.element.active,
                 position: cs_position,
                 direction: s.element.direction() as u16,
                 rank: enemy_ai.soldier_profile_rank,
