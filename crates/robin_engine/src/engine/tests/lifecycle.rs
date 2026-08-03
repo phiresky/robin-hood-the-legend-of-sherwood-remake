@@ -3792,11 +3792,7 @@ fn ration_set_path_updates_eat_or_guzzle_slot_without_out_of_ammo_speech() {
         std::sync::Arc::make_mut(&mut assets.profile_manager)
             .characters
             .push(CharacterProfile {
-                actions: [
-                    action,
-                    Action::NoAction,
-                    Action::NoAction,
-                ],
+                actions: [action, Action::NoAction, Action::NoAction],
                 ..Default::default()
             });
 
@@ -4670,6 +4666,83 @@ fn enter_helping_climb_from_tree_retains_exit_prefix_until_animation_done() {
     assert_eq!(
         element.current_order().map(|order| order.order_type),
         Some(crate::order::OrderType::TransitionWaitingHiddenWaitingUpright)
+    );
+}
+
+#[test]
+fn enter_helping_climb_on_inactive_pc_terminates_at_init_validity() {
+    // A self-ability launched on an inactive (off-map roster) PC still
+    // selects its element and reaches the Execute init-time validity
+    // check, which terminates it before any animation plays.  The PC
+    // stays Upright/Waiting with no selected element afterwards.
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    let mut assets = LevelAssets::new();
+    let mut profiles = crate::profiles::ProfileManager::new();
+    profiles.characters.push(crate::profiles::CharacterProfile {
+        actions: [
+            crate::profiles::Action::HelpToClimb,
+            crate::profiles::Action::NoAction,
+            crate::profiles::Action::NoAction,
+        ],
+        ..Default::default()
+    });
+    assets.profile_manager = std::sync::Arc::new(profiles);
+    let mut engine = EngineInner::new();
+
+    let pc_id = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::ActorPc,
+            active: false,
+            posture: crate::element::Posture::Upright,
+            ..Default::default()
+        },
+        actor: crate::element::ActorData {
+            action_state: crate::element::ActionState::Waiting,
+            ..Default::default()
+        },
+        human: Default::default(),
+        pc: crate::element::PcData {
+            life_points: 50,
+            // The helping-climb toolbar action is disabled, so the
+            // init-time validity check fails and the element must
+            // terminate even though the owner is inactive.
+            disabled_actions: vec![true, false, false],
+            ..Default::default()
+        },
+    }));
+
+    let elem = crate::sequence::SequenceElement::new(
+        1,
+        crate::element::Command::EnterHelpingClimb,
+        Some(pc_id),
+    );
+    engine.launch_element(elem);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    // First hourglass selects the element and queues the transition
+    // order; the init validity pre-pass must terminate it no later
+    // than the next hourglass.
+    for _ in 0..2 {
+        let result = engine
+            .perform_hourglass(&mut display, &assets, &mut dev)
+            .code;
+        assert_eq!(result, GameCode::LevelInProgress);
+    }
+
+    let pc = engine.get_entity(pc_id).expect("pc still exists");
+    assert_eq!(
+        pc.element_data().posture,
+        crate::element::Posture::Upright,
+        "terminated enter-helping-climb must not change posture"
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(pc_id)
+            .is_none(),
+        "inactive PC's invalid helping-climb element must be terminated at init"
     );
 }
 
