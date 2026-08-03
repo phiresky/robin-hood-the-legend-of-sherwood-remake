@@ -1282,10 +1282,7 @@ impl EngineInner {
                     None => crate::ai::Stimulus::new(crate::ai::StimulusType::EventGotHit),
                 };
                 self.dispatch_synchronous_ai_think_preserving_detection_fifo(
-                    sim,
-                    victim_id,
-                    assets,
-                    stimulus,
+                    sim, victim_id, assets, stimulus,
                 );
             }
         }

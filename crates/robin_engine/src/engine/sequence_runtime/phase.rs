@@ -228,6 +228,23 @@ impl EngineInner {
                         self.start_post_seek_sequence(owner, None);
                         return;
                     }
+                    // Translate(SEEK) initializes these actor fields before
+                    // entering RefreshSeek. RefreshSeek can deliberately
+                    // return without building orders while the target passes
+                    // a door (or while both actors share a building), but the
+                    // 25-frame legacy wait value and seek distance are already
+                    // observable at that point.
+                    let seek_distance = tolerance.max(4.0);
+                    if let Some(actor) = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(|entity| entity.actor_data_mut())
+                    {
+                        actor.seek_distance = seek_distance;
+                        actor.wait_time = 25;
+                        actor.seek_refresh_wait = 25;
+                    }
                     if self.try_handle_same_sector_actor_seek_wait(
                         owner,
                         sequence_id,
@@ -235,9 +252,30 @@ impl EngineInner {
                         target,
                         flags,
                     ) {
+                        // Original resumes Translate after RefreshSeek's
+                        // no-order return, rewrites SEEK to MOVE, and then
+                        // Instruct immediately terminates the empty element.
+                        // That selected MOVE condolence is authoritative for
+                        // NPC EventReachPoint (notably return-to-post facing).
+                        if let Some(element) = self
+                            .orders
+                            .sequence_manager
+                            .get_element_mut(sequence_id, element_index)
+                            .filter(|element| {
+                                matches!(
+                                    element.state,
+                                    crate::sequence::SequenceState::Todo
+                                        | crate::sequence::SequenceState::Postponed
+                                )
+                            })
+                        {
+                            element.command = Command::Move;
+                            self.orders
+                                .sequence_manager
+                                .element_terminated(sequence_id, element_index);
+                        }
                         return;
                     }
-                    let seek_distance = tolerance.max(4.0);
                     let target_position = self
                         .get_entity(target)
                         .unwrap_or_else(|| {
@@ -255,7 +293,6 @@ impl EngineInner {
                     {
                         actor.seek_target = Some(target);
                         actor.last_seek_target_position = target_position;
-                        actor.seek_distance = seek_distance;
                         // Original uses the single `mulWaitTime` field for
                         // both ordinary waits and the seek refresh countdown.
                         // Keep the split Rust fields identical at the launch

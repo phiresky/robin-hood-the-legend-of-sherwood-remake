@@ -971,11 +971,7 @@ mod tests {
             assert_eq!(bootstrap.identity.mission_id, header.mission_id);
             assert_eq!(
                 Some(bootstrap.identity.campaign_mission_index),
-                campaigns
-                    .live
-                    .campaign
-                    .current_mission
-                    .map(usize::from)
+                campaigns.live.campaign.current_mission.map(usize::from)
             );
             assert!(!bootstrap.identity.proto_level_filename.is_empty());
             assert!(!bootstrap.identity.mission_filename.is_empty());

@@ -1008,12 +1008,7 @@ pub fn gather_level_repulsive_lines(
 }
 
 fn repulsive_line_from_grid(g: &crate::fast_find_grid::GridLine) -> RepulsiveLine {
-    let mut line = RepulsiveLine::new(
-        g.a,
-        g.b,
-        RADIUS_OBSTACLE_LINE,
-        ACTIONRADIUS_OBSTACLE,
-    );
+    let mut line = RepulsiveLine::new(g.a, g.b, RADIUS_OBSTACLE_LINE, ACTIONRADIUS_OBSTACLE);
     // `RHRepulsiveLine::InitializeNormal` points AREA-sector boundaries
     // opposite to solid-obstacle boundaries. `GridLine` already retained
     // that authoritative oriented normal when the motion sector was

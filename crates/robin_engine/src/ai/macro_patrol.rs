@@ -446,9 +446,7 @@ impl Default for Position {
 // ---------------------------------------------------------------------------
 
 /// Predicted destination of a target actor for AI pursuit.
-#[derive(
-    Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash,
-)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct ForecastedDestination {
     pub position: Position,
     pub direction: u16,

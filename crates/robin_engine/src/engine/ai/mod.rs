@@ -250,9 +250,7 @@ fn primary_target_lift_approach(
     // the high-door type assertion is deliberately commented out in the
     // Original. This matters for shipped sector 77, whose two endpoints are
     // both tagged `DOOR_LIFT_LOW` even though their geometry is unambiguous.
-    let mut endpoints = doors
-        .iter()
-        .filter(|door| door.sector_in == sector_number);
+    let mut endpoints = doors.iter().filter(|door| door.sector_in == sector_number);
     let first = endpoints.next().unwrap_or_else(|| {
         panic!("non-stairs lift sector {sector_number} has no authored entry doors")
     });
@@ -1188,9 +1186,7 @@ pub(super) fn build_my_exit_door_info(
 /// pickup-style bonus entity. Human views include inactive actors because
 /// normal `IsDetecting(human)` ignores activity in its same-building arm;
 /// inactive bonuses and projectile entities remain excluded.
-pub(super) fn build_entity_views(
-    engine: &EngineInner,
-) -> AiEntityViewMap {
+pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
     build_entity_views_inner(engine)
 }
 
@@ -10726,13 +10722,7 @@ impl EngineInner {
             // Say, and timer work emitted there must therefore close before
             // the next queued group member is called (and certainly before
             // this source owner's Hourglass slot returns).
-            self.drain_ai_owner_work_for_mode(
-                sim,
-                assets,
-                source_id,
-                true,
-                defer_turn_instruction,
-            );
+            self.drain_ai_owner_work_for_mode(sim, assets, source_id, true, defer_turn_instruction);
         }
     }
 

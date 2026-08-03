@@ -220,6 +220,11 @@ A list of which additional features we have added, which ones we might still wan
   player name. Timestamp should be shown as relative time too (`x hours ago`).
 - Add autosave support.
 - trading: if you over produce an item, maybe you can sell it for money?
+- unbind - after you have tied up an enemy you should be able to untie them
+- throw something skill that makes a noise somewhere else so guards run there
+- cloaking - the ability to put the cloak back on (as you have at the start of many levels) so you are invisible but maybe only to certain enemies
+- timed mission - you only have a certain time limit to finish the mission. ambience transition - mission moves from day to night to fog to day after time
+- improvements to quick actions: shift-click should queue an action
 
 ### Code Quality
 

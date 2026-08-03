@@ -195,8 +195,7 @@ pub fn repulsive_line_compute_deviation(
             // only its assignment target is DOUBLE. Preserve that f32
             // evaluation boundary before continuing with the double-width
             // distance update.
-            let coeff =
-                ((distance_destination - radius) * self_force_a + self_force_b) as f64;
+            let coeff = ((distance_destination - radius) * self_force_a + self_force_b) as f64;
             dist_origin -= coeff * dd + (1.0 - coeff) * dist_origin;
         } else {
             return None; // too far
@@ -226,8 +225,7 @@ pub fn repulsive_line_compute_deviation(
                 dist_origin += total_radius;
             }
         } else if -dd < (radius + self_action_radius) as f64 {
-            let coeff =
-                ((-distance_destination - radius) * self_force_a + self_force_b) as f64;
+            let coeff = ((-distance_destination - radius) * self_force_a + self_force_b) as f64;
             dist_origin -= coeff * dd + (1.0 - coeff) * dist_origin;
         } else {
             return None;
@@ -303,8 +301,7 @@ pub fn repulsive_point_compute_deviation(
         // The coefficient is a FLOAT expression assigned to DOUBLE in the
         // C++ routine. Promoting its individual operands changes crowded
         // anti-collision trajectories even though the final vector is f32.
-        let coeff =
-            ((distance_destination - radius) * self_force_a + self_force_b) as f64;
+        let coeff = ((distance_destination - radius) * self_force_a + self_force_b) as f64;
         radius = (coeff * distance_destination as f64 + (1.0 - coeff) * dist_origin) as f32;
     } else {
         return None; // too far

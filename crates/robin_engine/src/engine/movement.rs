@@ -9433,13 +9433,30 @@ impl EngineInner {
                         if !intent.no_halt {
                             self.halt_actor(entity_id);
                         }
+                        // FaceTo's Halt has now synchronously performed any
+                        // selected element's Actor condolence.  Whatever map
+                        // goal remains after that callback is the value the
+                        // ensuing Turn observes: RHSprite::PerformAction does
+                        // not overwrite PositionGoalMap for an animation
+                        // order.  Carry it on the deferred element so Rust's
+                        // staged Turn initialization does not mistake the
+                        // animation order's zero destination for a movement
+                        // goal.  This also covers FaceTo launched from an
+                        // EventReachPoint callback after an empty SEEK was
+                        // rewritten to MOVE and terminated without becoming
+                        // the actor's selected element.
+                        let retained_goal = self
+                            .world
+                            .entities
+                            .get(entity_id)
+                            .map(|entity| entity.position_iface().map_goal());
                         self.launch_turn_sequence_deferred_no_transitions(
                             entity_id,
                             turn_command,
                             direction,
                             intent.target_x,
                             intent.target_y,
-                            None,
+                            retained_goal,
                         );
                     }
                 }
@@ -10321,8 +10338,19 @@ impl EngineInner {
             }
             _ => {}
         }
-        move_action =
-            self.determine_lift_movement_animation(owner, posture_after, move_action, dest);
+        // RHElementActorHuman::DetermineMovementAnimation handles upright
+        // sword states in the derived override and deliberately does not call
+        // RHElementActor's base implementation.  The logical sword token is
+        // therefore authoritative even in a lift sector (the Human Execute
+        // override chooses the concrete combat row later).  This matters when
+        // a postponed combat approach resumes on stairs: RUNNING_WITH_SWORD
+        // must not collapse to the lift's ordinary WalkingStairs row.  Base
+        // lift translation still applies to non-sword and authored climb
+        // movement.
+        if !sword_movement_context {
+            move_action =
+                self.determine_lift_movement_animation(owner, posture_after, move_action, dest);
+        }
         // Write the rewritten action back onto the movement sequence
         // element so downstream consumers (refresh-seek, post-process,
         // NPC AI re-reads) see it.  Apply both the action rewrite and

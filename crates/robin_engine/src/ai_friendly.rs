@@ -2646,8 +2646,7 @@ mod tests {
                 ai_state: AiState::Default,
                 ai_substate: Substate::DefaultOnPost,
                 script_locked: false,
-                forecasted_destination:
-                    crate::ai::PreparedForecastDestination::fixed(enemy_pos, 0),
+                forecasted_destination: crate::ai::PreparedForecastDestination::fixed(enemy_pos, 0),
                 current_animation: OrderType::WalkingUpright,
                 elevation: 0.0,
                 object_type: crate::element_kinds::ObjectType::None,

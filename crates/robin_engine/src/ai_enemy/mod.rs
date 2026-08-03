@@ -1425,10 +1425,7 @@ impl EnemyAi {
                     && officer.is_able_to_fight
                     && !ctx.in_building
                     && crate::ai_vision::is_detecting_target(
-                        crate::coordinates::MapPoint::new(
-                            officer.position.x,
-                            officer.position.y,
-                        ),
+                        crate::coordinates::MapPoint::new(officer.position.x, officer.position.y),
                         crate::coordinates::GroundPoint::new(
                             officer.position.x,
                             officer.position.y + officer_view.elevation,

@@ -2757,11 +2757,8 @@ mod sequence_phase_context_tests {
         damage.priority = crate::sequence::SequencePriority::Injury;
         let damage_sequence = orders.sequence_manager.launch_element(damage);
 
-        let mut enter = crate::sequence::SequenceElement::new_generic(
-            1,
-            Command::EnterSwordfight,
-            Some(owner),
-        );
+        let mut enter =
+            crate::sequence::SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
         enter.priority = crate::sequence::SequencePriority::PostponeEverythingButInjuries;
         orders.sequence_manager.launch_element(enter);
 
@@ -2774,9 +2771,11 @@ mod sequence_phase_context_tests {
                 ..
             }) if sequence_id == damage_sequence
         ));
-        assert!(orders
-            .sequence_manager
-            .element_is_about_to_be_launched(owner, Command::EnterSwordfight));
+        assert!(
+            orders
+                .sequence_manager
+                .element_is_about_to_be_launched(owner, Command::EnterSwordfight)
+        );
     }
 
     #[test]
