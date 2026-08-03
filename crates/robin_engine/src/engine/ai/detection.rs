@@ -1644,7 +1644,7 @@ impl EngineInner {
 
         let pc_snapshots = world.pcs.as_slice();
         let soldier_snapshots = world.soldiers.as_slice();
-        let ko_money_fight_soldiers = world.ko_money_fight_soldiers.as_slice();
+        let unconscious_soldiers = world.unconscious_soldiers.as_slice();
         let primary_target_multiplicity = &world.primary_target_multiplicity;
         let npc_jump_lines = &world.npc_jump_lines;
 
@@ -2506,12 +2506,17 @@ impl EngineInner {
                 // of all same-camp soldiers (any distance).  The alert
                 // functions do their own distance filtering.
                 tick_data.camp_soldiers.clear();
-                tick_data.camp_ko_money_fighters.clear();
-                for (ko_id, ko_camp) in ko_money_fight_soldiers {
+                tick_data.camp_unconscious_soldiers.clear();
+                for (ko_id, ko_camp, knocked_out_in_money_fight) in unconscious_soldiers {
                     if *ko_id == npc_id || *ko_camp != my_camp {
                         continue;
                     }
-                    tick_data.camp_ko_money_fighters.push(ko_id.index());
+                    tick_data.camp_unconscious_soldiers.push(
+                        crate::ai_enemy::CampUnconsciousSoldierInfo {
+                            handle: ko_id.index(),
+                            knocked_out_in_money_fight: *knocked_out_in_money_fight,
+                        },
+                    );
                 }
                 // Visibility between the owner and these soldiers is
                 // intentionally not part of the snapshot. Original queries
@@ -2539,6 +2544,7 @@ impl EngineInner {
                             ai_state: ss.ai_state,
                             ai_substate: ss.ai_substate,
                             is_able_to_fight: ss.able_to_fight,
+                            is_dead: ss.is_dead,
                             primary_target: ss.primary_target,
                             pride: ss.pride,
                             is_able_to_help: ss.able_to_help,

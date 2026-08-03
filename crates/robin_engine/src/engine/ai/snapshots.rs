@@ -169,6 +169,10 @@ pub(super) struct SoldierSnapshot {
     /// opponent list.
     pub(super) opponent_handles: Vec<u32>,
     pub(super) able_to_fight: bool,
+    /// `RHElementActorHuman::IsDead()` — life points exhausted.  Kept
+    /// separate from `able_to_fight`, which folds in several further
+    /// conditions; the money-fight scans gate on death alone.
+    pub(super) is_dead: bool,
     pub(super) able_to_help: bool,
     /// Current music alert level.  Used by seek-area friend
     /// coordination to count friends in alert > Green.
@@ -371,7 +375,7 @@ pub(super) struct AiWorldView {
     pub(super) primary_target_multiplicity: std::collections::BTreeMap<EntityId, u32>,
     pub(super) npc_jump_lines: std::collections::HashMap<EntityId, Option<u32>>,
     pub(super) soldiers: Vec<SoldierSnapshot>,
-    pub(super) ko_money_fight_soldiers: Vec<(EntityId, Camp)>,
+    pub(super) unconscious_soldiers: Vec<(EntityId, Camp, bool)>,
 }
 
 impl EngineInner {
@@ -411,13 +415,13 @@ impl EngineInner {
         let primary_target_multiplicity = self.tick_enemy_ai_build_primary_target_multiplicity();
         let npc_jump_lines = self.tick_enemy_ai_build_jump_lines(assets);
         let soldiers = self.tick_enemy_ai_build_soldier_snapshots(assets, owner_boundary);
-        let ko_money_fight_soldiers = self.tick_enemy_ai_build_ko_money_fight_soldiers();
+        let unconscious_soldiers = self.tick_enemy_ai_build_unconscious_soldiers();
         AiWorldView {
             pcs,
             primary_target_multiplicity,
             npc_jump_lines,
             soldiers,
-            ko_money_fight_soldiers,
+            unconscious_soldiers,
         }
     }
 
@@ -675,6 +679,7 @@ impl EngineInner {
                 continue;
             }
             let able_to_fight = s.is_able_to_fight();
+            let is_dead = s.npc.life_points <= 0;
             // Original: every `RHElementActorSoldier` owns
             // `RHArtificialMalignity`; its Hourglass calls soldier-only AI
             // methods unconditionally. A soldier without EnemyAi is an
@@ -857,6 +862,7 @@ impl EngineInner {
                 principal_opponent: s.human.opponents.first().map(|id| id.index()).unwrap_or(0),
                 opponent_handles: s.human.opponents.iter().map(|id| id.index()).collect(),
                 able_to_fight,
+                is_dead,
                 able_to_help,
                 alert_status,
                 seek_flag_look_for_help,
@@ -948,12 +954,14 @@ impl EngineInner {
         soldier_snapshots
     }
 
-    /// P2d — collect unconscious same-camp soldiers KO'd in a money
-    /// fight.  `SoldierSnapshot` filters out unconscious soldiers,
-    /// but `wants_to_continue_money_fight` needs to count them, so
-    /// we keep this side-list separate.
-    pub(super) fn tick_enemy_ai_build_ko_money_fight_soldiers(&self) -> Vec<(EntityId, Camp)> {
-        let mut ko_money_fight_soldiers: Vec<(EntityId, Camp)> =
+    /// P2d — collect unconscious-but-alive soldiers.  `SoldierSnapshot`
+    /// filters out unconscious soldiers, but the money-fight scans walk
+    /// the whole camp registry including sleepers, so this parallel list
+    /// carries them.  The `knocked_out_in_money_fight` flag rides along
+    /// because only the victim scan filters on it; the morale scan
+    /// merely classifies with it.
+    pub(super) fn tick_enemy_ai_build_unconscious_soldiers(&self) -> Vec<(EntityId, Camp, bool)> {
+        let mut unconscious_soldiers: Vec<(EntityId, Camp, bool)> =
             Vec::with_capacity(self.world.entities.soldiers().count());
         for (npc_id, s) in self.world.entities.soldiers() {
             if !s.element.active {
@@ -965,18 +973,19 @@ impl EngineInner {
             if !s.human.unconscious {
                 continue;
             }
-            if !s
+            let knocked_out_in_money_fight = s
                 .npc
                 .ai_brain
                 .base()
                 .map(|ai| ai.knocked_out_in_money_fight)
-                .unwrap_or(false)
-            {
-                continue;
-            }
-            ko_money_fight_soldiers.push((npc_id.into(), s.soldier.cached_camp));
+                .unwrap_or(false);
+            unconscious_soldiers.push((
+                npc_id.into(),
+                s.soldier.cached_camp,
+                knocked_out_in_money_fight,
+            ));
         }
-        ko_money_fight_soldiers
+        unconscious_soldiers
     }
 
     /// Snapshot every potential human + object target referenced by one

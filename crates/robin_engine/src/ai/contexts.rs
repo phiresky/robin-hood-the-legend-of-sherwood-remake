@@ -582,12 +582,12 @@ pub struct AiPerTickData {
     /// `alert_soldiers`).  Populated every tick from the engine's soldier
     /// snapshot list, filtered to the evaluating NPC's camp.
     pub camp_soldiers: Vec<crate::ai_enemy::CampSoldierInfo>,
-    /// Same-camp soldiers who are currently unconscious + alive and whose
-    /// `AiBase::knocked_out_in_money_fight` flag is set. Populated
-    /// alongside `camp_soldiers` (`camp_soldiers` skips unconscious
-    /// entries, so this parallel list carries the sleeping money-fight
-    /// victims needed by `WantsToContinueMoneyFight`).
-    pub camp_ko_money_fighters: Vec<NpcHandle>,
+    /// Same-camp soldiers who are currently unconscious + alive.
+    /// Populated alongside `camp_soldiers`, which skips unconscious
+    /// entries; the money-fight scans walk the whole camp registry, so
+    /// they merge this list back into `camp_soldiers` by handle to
+    /// recover registry order.
+    pub camp_unconscious_soldiers: Vec<crate::ai_enemy::CampUnconsciousSoldierInfo>,
     pub visible_seeking_friends: u16,
     pub friend_seek_clears_help_flag: bool,
     /// Pre-computed destination forecast for the primary target.
@@ -814,7 +814,7 @@ impl AiPerTickData {
             reconsider_swordfight_enemies: Vec::new(),
             reconsider_swordfight_friends: Vec::new(),
             camp_soldiers: Vec::new(),
-            camp_ko_money_fighters: Vec::new(),
+            camp_unconscious_soldiers: Vec::new(),
             visible_seeking_friends: 0,
             friend_seek_clears_help_flag: false,
             primary_target_forecast: None,

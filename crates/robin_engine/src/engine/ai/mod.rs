@@ -2104,6 +2104,7 @@ impl EngineInner {
                 ai_state: s.npc.ai_state(),
                 ai_substate: s.npc.ai_substate(),
                 is_able_to_fight: able_to_fight,
+                is_dead: s.npc.life_points <= 0,
                 primary_target: enemy_ai.base.primary_target,
                 pride: enemy_ai.soldier_profile_pride,
                 is_able_to_help: crate::ai_enemy::soldier_is_able_to_help_state(

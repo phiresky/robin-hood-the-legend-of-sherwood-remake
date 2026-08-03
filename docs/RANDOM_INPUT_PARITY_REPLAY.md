@@ -48,6 +48,67 @@ or say that it is provisional.
 7. Periodically build a new frozen release runner and perform a failure-only
    sweep. Run a complete fresh sweep before publishing final totals.
 
+## Complete-corpus sweep (`2026-08-03`)
+
+A complete sweep of all four corpora (5,208 complete compressed traces:
+`parity-save-replays` 445, `parity-save-replays-schema12` 389,
+`parity-random-save-replays` 729, `parity-random-save-replays-60s-15x` 3,645)
+ran on the frozen `e4e874cc9` release runner. Machine-readable results:
+`output/parity-audits/full-sweep-20260803/` (status, logs,
+`classification.json` from `scripts/classify_parity_failures.py`).
+
+- 1,156 traces reached exact EOF.
+- 445 failures are the entire legacy `parity-save-replays` corpus, recorded
+  at schema 11 and rejected by design; they are permanently retired from the
+  actionable universe (superseded by `parity-save-replays-schema12`).
+- Actionable pass rate: 1,156 / 4,763.
+- Largest first-boundary groups: `rng:AiRandomValueRectangle` 527,
+  `visibility_queries.length` 449, `actor.motion_state` 312,
+  `actor.animation` 268, `position_goal_map.x` 178, `ai.substate` 152,
+  `actor.command Wait->Turn` 122, destination-level visibility groups ~280.
+
+Fixes landed against this baseline, all release-validated with pass-group
+controls before merging:
+
+- `040140849` — dropped a Rust-only body-level stealth re-validation kept
+  past the Original's transition-generation gate; closed the residual
+  `EnterBeggar -> Wait` member (Spy-disguise launch) and finished that group.
+- `f6d2d6ef3` — PC Execute init-validity now runs for inactive owners, so a
+  parked PC's helping-climb terminates at init exactly like the Original;
+  closed the residual reversed `Wait -> EnterHelpingClimb` members.
+- `b4f294ecf` — repaired the robin_engine lib-test target (23 mechanical
+  compile errors); `cargo test` runs again (2,468 pass / 157 drifted
+  failures tracked for triage).
+- `58eb5d74f` — combat-position evaluation resolves combatants through the
+  per-tick neighbour snapshot first and the full fighter registry second,
+  matching how the us/them lists were built; clears the 19-trace
+  `ai_enemy/util.rs:891` panic group (strict guards retained).
+- `da3c2e34e` — shadow-sector 3D centroid Z now derives through the shared
+  plane-coefficient sequence instead of an algebraically-equal inline
+  reduction; removes a 4-ULP drift that moved night/fog light-sampling ray
+  endpoints in ~90 traces. Also added permanent `caller_file`/`caller_line`
+  attribution to captured parity visibility queries.
+- `2f0103a49` — the jump translator publishes its first order at instruct
+  time, eliminating the one-frame null installed-order window that accounted
+  for ~50 `actor.animation` members (`rust=283` signature).
+- `c4de5840e` — `EndThink` delivers at most one completion event (entering
+  Think clears all three latches in the Original) and out-of-Think
+  couldnt-reachpoint/already-turned latches are discarded; narrows
+  `042f2c356` without regressing its suspended-waypoint case. Root cause of
+  the 527-trace `AiRandomValueRectangle` cardinality group (the site is
+  `GetBoredTime`; the previously-suspected `76971ea89` SeekArea contract was
+  verified correct and exonerated).
+- `5d70e6caf` — six 360-degree-detection alignments (query-before-gate
+  orderings, a swapped viewer/target in brawl finishing, a non-soldier chief
+  short-circuit, an `IsDetecting` variant in the net-seeking arm) plus
+  `#[track_caller]` gate attribution. The patrol-relay dispatch-order root
+  cause (sender's stimuli complete before the chief's member loops) is
+  diagnosed and in progress separately.
+
+A failure-only re-sweep of the 1,291 likely-fixed traces on the frozen
+`5d70e6caf` runner is recorded under
+`output/parity-audits/resweep-5d70e6caf/`.
+
 ## Fresh release sweep (`2026-08-01`)
 
 The current short-corpus snapshot contains 700 traces.  It was run with the

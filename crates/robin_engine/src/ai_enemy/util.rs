@@ -165,6 +165,16 @@ const NOT_YET_COMPUTED: i16 = 6666;
 
 /// Snapshot of a fighter's state for combat AI evaluation.
 /// The engine populates these before think() for NPCs in swordfight states.
+/// Same-camp soldier who is currently unconscious but alive.  These are
+/// absent from [`CampSoldierInfo`], which skips unconscious entries, so
+/// the money-fight scans merge the two lists by handle to walk the camp
+/// registry in its natural order.
+#[derive(Debug, Clone)]
+pub struct CampUnconsciousSoldierInfo {
+    pub handle: NpcHandle,
+    pub knocked_out_in_money_fight: bool,
+}
+
 /// Lightweight snapshot of a same-camp soldier used by alert functions
 /// (`alert_officer`, `alert_soldiers`).  Populated by the engine each tick
 /// for all soldiers in the same camp, regardless of combat state.
@@ -181,6 +191,10 @@ pub struct CampSoldierInfo {
     pub ai_state: AiState,
     pub ai_substate: Substate,
     pub is_able_to_fight: bool,
+    /// Life points exhausted.  Narrower than `!is_able_to_fight`: the
+    /// money-fight scans reject only the dead, not everyone temporarily
+    /// unable to fight.
+    pub is_dead: bool,
     /// Live primary target used when BattleDecisions merges an attacking
     /// friend's target into its persistent Them list.
     pub primary_target: HumanHandle,

@@ -1909,10 +1909,19 @@ impl EnemyAi {
                             // snapshot in
                             // `CampSoldierInfo::detectable_bodies`.
                             nearby_officer = tick.camp_soldiers.iter().find_map(|cs| {
-                                if cs.rank != ProfileRank::Officer
-                                    || !cs.is_able_to_fight
-                                    || cs.script_locked
-                                {
+                                if cs.rank != ProfileRank::Officer || !cs.is_able_to_fight {
+                                    return None;
+                                }
+                                // The LOS query sits third in the
+                                // predicate chain, ahead of the
+                                // script-lock and detectable-list
+                                // rejections, and its visibility-cache
+                                // side effect happens for every officer
+                                // that reaches this point.
+                                if !self.is_detecting_360_degrees(cs.handle, ctx) {
+                                    return None;
+                                }
+                                if cs.script_locked {
                                     return None;
                                 }
                                 // Officer must have already processed
@@ -1921,11 +1930,7 @@ impl EnemyAi {
                                 if cs.detectable_bodies.contains(&body) {
                                     return None;
                                 }
-                                // Approximate `IsDetecting360Degrees`
-                                // with the standard view-radius square
-                                // (same fallback used by `alert_officer`).
-                                self.is_detecting_360_degrees(cs.handle, ctx)
-                                    .then_some(cs.handle)
+                                Some(cs.handle)
                             });
                         }
                         ProfileRank::Officer => {
@@ -3595,14 +3600,16 @@ impl EnemyAi {
                 StimulusType::EventTimer => {
                     // If detected body is no longer stuck under net
                     // AND I'm detecting them → resurrected,
-                    // ReturnToDuty; else re-arm timer.
+                    // ReturnToDuty; else re-arm timer.  This is the
+                    // cone-and-LOS `IsDetecting`, not the 360° feel
+                    // bubble, and it is short-circuited behind the net
+                    // check so a still-trapped body costs no LOS query.
                     let body_stuck = ctx
                         .entity_view(self.base.detected_body)
                         .map(|v| v.stuck_under_net)
                         .unwrap_or(false);
-                    let detecting =
-                        self.is_detecting_360_degrees(self.base.detected_body as HumanHandle, ctx);
-                    if !body_stuck && detecting {
+                    if !body_stuck && self.is_detecting(self.base.detected_body as HumanHandle, ctx)
+                    {
                         // Resurrected.
                         self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                     } else {

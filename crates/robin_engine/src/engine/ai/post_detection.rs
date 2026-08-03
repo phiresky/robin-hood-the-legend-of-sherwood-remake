@@ -83,7 +83,7 @@ fn overlay_final_detection_scan(
 
     // These are also products of RefreshDetection's completed detectable-list
     // walk rather than properties of the stimulus target.
-    live.camp_ko_money_fighters = aggregate.camp_ko_money_fighters.clone();
+    live.camp_unconscious_soldiers = aggregate.camp_unconscious_soldiers.clone();
 }
 
 fn enemy_detection_handles(
