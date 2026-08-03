@@ -3930,6 +3930,7 @@ mod tests {
 
         let restored = convert_patrol_path(&saved, 31, &topology, &paths)
             .unwrap()
+            .0
             .unwrap();
         assert_eq!(restored.hiking_path_index.get(), 0);
         assert_eq!(restored.current_waypoint_index, 1);
@@ -3966,6 +3967,7 @@ mod tests {
 
         let restored = convert_patrol_path(&saved, 145, &topology, &paths)
             .unwrap()
+            .0
             .unwrap();
 
         assert_eq!(restored.current_waypoint_index, 0);

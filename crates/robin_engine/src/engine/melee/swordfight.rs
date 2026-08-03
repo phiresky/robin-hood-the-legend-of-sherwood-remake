@@ -29,7 +29,7 @@ impl EngineInner {
     /// (`enter_swordfight` / `take_smalltalk_initiative`) because
     /// they need access to `&mut self` and the asset profile manager
     /// that this helper, scoped over the entity slice, can't reach.
-    pub(super) fn add_opponent(
+    pub(crate) fn add_opponent(
         entities: &mut crate::entities::Entities,
         entity_id: EntityId,
         opponent_id: EntityId,

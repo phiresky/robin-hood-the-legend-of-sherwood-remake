@@ -8978,7 +8978,7 @@ impl EngineInner {
 
     // ─── One-shot noise broadcast ──────────────────────────────────
 
-    fn one_shot_noise_listener_ids(&self) -> Vec<EntityId> {
+    pub(crate) fn one_shot_noise_listener_ids(&self) -> Vec<EntityId> {
         let mut npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         // `RHEngine::GetNPC(i)` follows the Original registration array.
         // Rust's typed arena order is not authoritative after save adoption,
@@ -8987,7 +8987,7 @@ impl EngineInner {
         npc_ids
     }
 
-    fn one_shot_noise(
+    pub(crate) fn one_shot_noise(
         &self,
         noise_type: crate::ai::NoiseType,
         origin: crate::coordinates::MapPoint,
@@ -9038,7 +9038,7 @@ impl EngineInner {
     /// `Noise` calls `GetHearVolume` immediately before that listener's
     /// synchronous `Think`, so earlier listeners may alter world state before
     /// this method is called for the next registration-array entry.
-    fn subjective_one_shot_noise_for(
+    pub(crate) fn subjective_one_shot_noise_for(
         &mut self,
         npc_id: EntityId,
         noise: crate::ai::Noise,

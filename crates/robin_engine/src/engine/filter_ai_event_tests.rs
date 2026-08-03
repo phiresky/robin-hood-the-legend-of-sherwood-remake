@@ -3092,7 +3092,7 @@ fn sequence_manager_instruction_rewrites_terminated_motion_to_in_progress() {
         engine.orders.allocate_order_id(),
     ));
     let successor = engine.orders.sequence_manager.launch_element(element);
-    let mut display = crate::engine::types::HostDisplayState::default();
+    let mut display = crate::engine::HostDisplayState::default();
     engine.hourglass_phase_sequences(&crate::sim_rng::test_context(), &mut display, &assets);
 
     assert_eq!(
@@ -3133,7 +3133,7 @@ fn accepted_empty_generic_latches_motion_before_immediate_completion() {
         .orders
         .sequence_manager
         .launch_element(SequenceElement::new(1, Command::Generic, Some(actor)));
-    let mut display = crate::engine::types::HostDisplayState::default();
+    let mut display = crate::engine::HostDisplayState::default();
     engine.hourglass_phase_sequences(&crate::sim_rng::test_context(), &mut display, &assets);
 
     assert_eq!(
