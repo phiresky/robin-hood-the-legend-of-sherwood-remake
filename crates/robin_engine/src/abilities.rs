@@ -1026,6 +1026,7 @@ pub fn begin_whistle(
     // `SetStates` boundary.  `mulWaitTime` is the actor's single serialized
     // countdown, so keep the renderer-only mirror synchronized with it.
     actor.wait_time = TIME_LISTEN_WAIT;
+    actor.seek_refresh_wait = TIME_LISTEN_WAIT;
     actor.whistle_wait_time = TIME_LISTEN_WAIT;
 
     let mut order = Order::new(OrderType::Whistling, 0.0, 0.0, order_id);
@@ -1325,6 +1326,7 @@ pub fn begin_listen(
     // serialized `mulWaitTime` immediately.  The transition animation owns
     // the sprite independently of that logical state.
     actor.wait_time = TIME_LISTEN_WAIT;
+    actor.seek_refresh_wait = TIME_LISTEN_WAIT;
     actor.listen_phase = ListenPhase::EnterTransition;
     actor.listen_wait_time = 0;
 
@@ -2340,6 +2342,7 @@ pub fn tick_ability(
         if actor.wait_time != 0 {
             actor.wait_time -= 1;
         }
+        actor.seek_refresh_wait = actor.wait_time;
     }
 
     // Only act on completion states.

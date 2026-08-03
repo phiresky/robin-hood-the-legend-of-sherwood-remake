@@ -582,11 +582,13 @@ impl EngineInner {
                 // Rust control-flow mirror and must remain synchronized.
                 pc.actor.listen_wait_time = TIME_LISTEN_WAIT;
                 pc.actor.wait_time = TIME_LISTEN_WAIT;
+                pc.actor.seek_refresh_wait = TIME_LISTEN_WAIT;
             }
             pc.actor.listen_wait_time -= 1;
             if pc.actor.wait_time != 0 {
                 pc.actor.wait_time -= 1;
             }
+            pc.actor.seek_refresh_wait = pc.actor.wait_time;
             if pc.actor.listen_wait_time != 0 {
                 // RHElementActorPC::Execute performs the visual action only
                 // after the timer's terminal early return. Its sprite result
