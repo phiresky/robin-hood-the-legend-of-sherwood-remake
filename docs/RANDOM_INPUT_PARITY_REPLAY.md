@@ -3597,6 +3597,22 @@ Two later long-trace timing frontiers were also fixed and release-validated:
   exposing a raw nonterminal sprite result. This clears Savegame 074's
   frame-73,857 motion-state boundary.
 
+Two additional Original-backed cleanups are landed while the later long-trace
+frontiers are still being investigated:
+
+- `SeekArea` point selection now mirrors Original `RandomValue(P_RECTANGLE)`:
+  each non-empty axis uses a half-open interval and a zero-width axis consumes
+  no RNG draw (`76971ea89`). This corrects the generic draw contract, although
+  the SuN ExQuickSave frame-36,793 trace still shows that Rust omits an entire
+  `SeekPointSelection` call on one state-transition path.
+- the Rust-only pre-transition seek-target drift heuristic was removed
+  (`17871857e`). Original refreshes this target on `PerformSeek` entry when its
+  countdown expires, or after the final order completes; it has no equivalent
+  distance check before a transition. Removing it is correct simplification,
+  but release validation established that the branch was not active at the
+  remaining Savegame 074 frame-73,901 frontier, so that interruption is still
+  open.
+
 Two previously active reports are now classified as stale recordings rather
 than Rust fixes:
 
