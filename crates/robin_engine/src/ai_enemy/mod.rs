@@ -1222,6 +1222,18 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
+        tracing::trace!(
+            target: "patrol_relay",
+            frame = ctx.frame,
+            me = self.base.me as i32,
+            stimulus_type = ?stimulus.stimulus_type,
+            to_whole_patrol = stimulus.to_whole_patrol,
+            state = ?self.base.current_state,
+            substate = ?self.base.current_substate,
+            chief = ?self.base.patrol_chief.map(|c| c.index()),
+            patrol_size = self.base.patrol.len(),
+            "dispatch enter"
+        );
         // Already dispatched to whole patrol — skip
         if stimulus.to_whole_patrol {
             return false;
@@ -1238,6 +1250,11 @@ impl EnemyAi {
         ) && let Some(ref last) = self.last_stimulus_dispatched_to_patrol
             && last.is_similar(stimulus)
         {
+            tracing::trace!(
+                target: "patrol_relay",
+                me = self.base.me as i32,
+                "dispatch dedup hit"
+            );
             return true;
         }
 
@@ -1277,6 +1294,12 @@ impl EnemyAi {
                         stimulus_type: stimulus.stimulus_type,
                         info: stimulus.info,
                     });
+                tracing::trace!(
+                    target: "patrol_relay",
+                    me = self.base.me as i32,
+                    chief,
+                    "dispatch relay to chief"
+                );
                 return true;
             }
         }
@@ -1293,6 +1316,15 @@ impl EnemyAi {
         if self.base.patrol.is_empty() {
             return false;
         }
+
+        // Snapshot the patrol before the self-call below: the broadcast walks
+        // this copy even if the cascade adds or drops members.
+        let members: Vec<NpcHandle> = self
+            .base
+            .patrol
+            .iter()
+            .map(|member_id| member_id.index())
+            .collect();
 
         // `think(stimulus_for_whole_patrol)` — the chief feeds the
         // stimulus back into its own Think *before* relaying to
@@ -1320,38 +1352,24 @@ impl EnemyAi {
         }
         self.think(sim, &forwarded_stimulus, global, ctx, tick, grid);
 
-        // Forward to patrol members that are soldiers and within
-        // 360° detection range — non-soldier or out-of-LOS members
-        // are skipped.  Filter first into a local Vec because
-        // `is_detecting_360_degrees` borrows `self` immutably and
-        // the push borrows `self.base` mutably.
-        let members: Vec<NpcHandle> = self
-            .base
-            .patrol
-            .iter()
-            .copied()
-            .filter_map(|member_id| {
-                let member = member_id.index();
-                (ctx.entity_view(member)
-                    .map(|v| v.is_soldier())
-                    .unwrap_or(false)
-                    && self.is_detecting_360_degrees(member as HumanHandle, ctx))
-                .then_some(member)
-            })
-            .collect();
-        for member in members {
-            self.base
-                .outbox
-                .reentrant
-                .cross_npc_actions
-                .push(CrossNpcAction::SendStimulus {
-                    fallback_to_sender: None,
-                    to_whole_patrol: true,
-                    target: member,
-                    stimulus_type: forwarded_stimulus.stimulus_type,
-                    info: forwarded_stimulus.info,
-                });
-        }
+        // Forward to patrol members that are soldiers and within 360°
+        // detection range. Queue the walk as one action rather than resolving
+        // it here: the detection gate for each member belongs immediately
+        // before that member's `think`, after the self-call above has finished
+        // cascading.
+        tracing::trace!(
+            target: "patrol_relay",
+            me = self.base.me as i32,
+            members = ?members,
+            "dispatch queue relay to members"
+        );
+        self.base.outbox.reentrant.cross_npc_actions.push(
+            CrossNpcAction::RelayStimulusToPatrolMembers {
+                members,
+                stimulus_type: forwarded_stimulus.stimulus_type,
+                info: forwarded_stimulus.info,
+            },
+        );
 
         true
     }
@@ -1765,6 +1783,20 @@ impl EnemyAi {
             "is_detecting_360_degrees"
         );
         los_clear
+    }
+
+    /// Admission gate for one member of a whole-patrol broadcast: a
+    /// non-soldier member short-circuits before the detection query, so it
+    /// costs no visibility traffic.
+    ///
+    /// The broadcast walk runs in the engine, which owns both the chief and
+    /// the member, so the gate is evaluated through this accessor immediately
+    /// before the member's `think`.
+    pub(crate) fn detects_patrol_member_360(&self, member: NpcHandle, ctx: &AiContext) -> bool {
+        ctx.entity_view(member)
+            .map(|v| v.is_soldier())
+            .unwrap_or(false)
+            && self.is_detecting_360_degrees(member as HumanHandle, ctx)
     }
 
     /// Reverse of [`Self::is_detecting_360_degrees`]: does `viewer`

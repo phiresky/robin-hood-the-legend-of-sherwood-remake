@@ -1446,6 +1446,26 @@ pub enum CrossNpcAction {
         /// unbounded chief↔member ping-pong loop.
         to_whole_patrol: bool,
     },
+    /// Broadcast a whole-patrol stimulus from a chief to its subordinates.
+    ///
+    /// The chief feeds the stimulus back into its own `think` first, and that
+    /// self-call may cascade arbitrarily far (a standard-procedure handler can
+    /// call a subordinate, who relays back to the chief, who broadcasts again).
+    /// Only once that cascade has fully drained does the chief walk its
+    /// members, and each member's 360-degree detection gate is evaluated
+    /// immediately before that member's own `think`. Both effects are
+    /// observable in the visibility-query stream, so the member walk cannot be
+    /// resolved into per-member `SendStimulus` entries at push time: the
+    /// detection queries would run before the self-call's cascade instead of
+    /// interleaved with the member dispatches.
+    ///
+    /// `members` is the chief's patrol snapshot taken before the self-call, so
+    /// a cascade that changes patrol membership does not alter this broadcast.
+    RelayStimulusToPatrolMembers {
+        members: Vec<NpcHandle>,
+        stimulus_type: StimulusType,
+        info: StimulusInfo,
+    },
     /// Set the target NPC's left combat neighbour link (one-way).
     /// Bare setter, no reciprocal cleanup. Use
     /// [`Self::UpdateLeftCombatNeighbour`] for the full semantics
