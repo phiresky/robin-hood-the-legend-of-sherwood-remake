@@ -1422,7 +1422,10 @@ pub enum CrossNpcAction {
     },
     /// Propagate break-phalanx to target: clear their combat neighbours,
     /// set `phalanx_aborted = true`, and trigger `BattleDecisions`.
-    BreakPhalanx { target: NpcHandle },
+    BreakPhalanx {
+        target: NpcHandle,
+        refresh_them_list: bool,
+    },
     /// Deliver a stimulus to the target NPC (e.g. `CALL_COORDINATE`).
     SendStimulus {
         target: NpcHandle,

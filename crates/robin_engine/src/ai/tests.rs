@@ -1443,7 +1443,10 @@ fn clear_all_pending_clears_every_outbox_barrier() {
     ai.outbox
         .reentrant
         .cross_npc_actions
-        .push(CrossNpcAction::BreakPhalanx { target: 8 });
+        .push(CrossNpcAction::BreakPhalanx {
+            target: 8,
+            refresh_them_list: false,
+        });
     ai.outbox
         .reentrant
         .self_stimuli

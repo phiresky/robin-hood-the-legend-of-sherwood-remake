@@ -1097,6 +1097,7 @@ impl AiController {
                     | CrossNpcAction::ConsiderReport { .. }
                     | CrossNpcAction::FinalizeAlertSoldiers { .. }
                     | CrossNpcAction::InstructGatherPosition { .. }
+                    | CrossNpcAction::BreakPhalanx { .. }
                     | CrossNpcAction::Say { .. }
             ) {
                 synchronous.push(action);

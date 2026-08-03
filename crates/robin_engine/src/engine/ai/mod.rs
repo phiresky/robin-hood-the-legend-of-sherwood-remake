@@ -9368,46 +9368,11 @@ impl EngineInner {
                     );
                 }
 
-                crate::ai::CrossNpcAction::BreakPhalanx { target } => {
-                    let target_id = EntityId::Soldier(SoldierId(target));
-                    let ctx = {
-                        let Some(entity @ Entity::Soldier(_)) =
-                            self.world.entities.get_mut(target_id)
-                        else {
-                            continue;
-                        };
-                        let ctx = build_ai_context_from_entity(
-                            entity,
-                            frame,
-                            None,
-                            self.world.weather.is_forest_level,
-                            self.world.weather.ambiance,
-                            self.ai.standard_view_polygon_radius,
-                            &scratch.ai_entity_views,
-                            &scratch.ai_sight_obstacles,
-                            &self.world.fast_grid,
-                            &assets.hiking_paths,
-                            &self.ai.global.all_soldier_handles,
-                            self.control.sim_config.difficulty,
-                        );
-                        let Entity::Soldier(s) = entity else {
-                            unreachable!()
-                        };
-                        if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
-                            enemy_ai.left_combat_neighbour = 0;
-                            enemy_ai.right_combat_neighbour = 0;
-                            enemy_ai.phalanx_aborted = true;
-                        }
-                        ctx
-                    };
-                    // CrossNpcAction::BreakPhalanx: target is an
-                    // enemy soldier breaking formation — ReturnToDuty
-                    // may route through BattleDecisions.
-                    let tick_data = self.build_npc_tick_data(sim, target_id, &scratch, assets);
-                    let stimulus = crate::ai::Stimulus::new(StimulusType::EventReturnToDuty);
-                    self.dispatch_filtered_stimulus(
-                        sim, assets, target_id, &stimulus, &ctx, &tick_data,
-                    );
+                crate::ai::CrossNpcAction::BreakPhalanx {
+                    target,
+                    refresh_them_list,
+                } => {
+                    self.process_synchronous_break_phalanx(sim, target, refresh_them_list, assets);
                 }
 
                 crate::ai::CrossNpcAction::SendStimulus {
@@ -10149,6 +10114,15 @@ impl EngineInner {
                             );
                         }
                     }
+                    crate::ai::CrossNpcAction::BreakPhalanx {
+                        target,
+                        refresh_them_list,
+                    } => self.process_synchronous_break_phalanx(
+                        sim,
+                        target,
+                        refresh_them_list,
+                        assets,
+                    ),
                     crate::ai::CrossNpcAction::ConsiderReport {
                         target,
                         report,
@@ -10272,6 +10246,58 @@ impl EngineInner {
             .reentrant
             .cross_npc_actions
             .push(action);
+    }
+
+    /// Execute one member of Original's recursive
+    /// `RHArtificialMalignity::BreakPhalanx` call. Every neighbour clears its
+    /// links and immediately runs `BattleDecisions`; delaying this to the
+    /// global cross-NPC batch moves swordfight entry and panic RNG by a frame.
+    fn process_synchronous_break_phalanx(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        target: u32,
+        refresh_them_list: bool,
+        assets: &LevelAssets,
+    ) {
+        let target_id = EntityId::Soldier(SoldierId(target));
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let Some(entity @ Entity::Soldier(_)) = self.world.entities.get(target_id) else {
+            return;
+        };
+        let ctx = build_ai_context_from_entity(
+            entity,
+            self.control.frame_counter,
+            None,
+            self.world.weather.is_forest_level,
+            self.world.weather.ambiance,
+            self.ai.standard_view_polygon_radius,
+            &scratch.ai_entity_views,
+            &scratch.ai_sight_obstacles,
+            &self.world.fast_grid,
+            &assets.hiking_paths,
+            &self.ai.global.all_soldier_handles,
+            self.control.sim_config.difficulty,
+        );
+        let tick_data = self.build_npc_tick_data(sim, target_id, &scratch, assets);
+        {
+            let ai_global = &mut self.ai.global;
+            let grid = &self.world.fast_grid;
+            let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(target_id) else {
+                return;
+            };
+            let Some(enemy_ai) = soldier.npc.ai_brain.enemy_mut() else {
+                return;
+            };
+            enemy_ai.break_phalanx_from_neighbour(
+                sim,
+                ai_global,
+                &ctx,
+                &tick_data,
+                Some(grid),
+                refresh_them_list,
+            );
+        }
+        self.drain_direct_ai_owner_boundary(sim, target_id, assets);
     }
 
     fn process_synchronous_consider_report(

@@ -1269,31 +1269,25 @@ impl EnemyAi {
     /// processes these after our think() returns.
     fn break_phalanx(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        global: &mut AiGlobalState,
+        _sim: &crate::sim_rng::SimulationContext,
+        _global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
-        // Leftmost guy reinitializes the them-list one last time before
-        // breaking, so all members have fresh enemy data for solo AI.
-        if self.left_combat_neighbour == 0 {
-            self.phalanx_reinitialize_them_list(&ctx.position, ctx, tick);
-        }
-
-        // Propagate left
+        // Original recursively descends all the way left and runs each
+        // member's BattleDecisions while unwinding, then does the same on the
+        // right, and only finally handles the initiating member. Queue that
+        // exact depth-first tail order; the engine drains these actions before
+        // the current owner boundary closes.
+        let mut left = Vec::new();
         if self.left_combat_neighbour != 0 {
-            // Walk left to leftmost, telling each to break
             let mut current = self.left_combat_neighbour;
             for _ in 0..16 {
                 if current == 0 {
                     break;
                 }
-                self.base
-                    .outbox
-                    .reentrant
-                    .cross_npc_actions
-                    .push(CrossNpcAction::BreakPhalanx { target: current });
+                left.push(current);
                 let Some(snap) = self.find_fighter(current, tick) else {
                     break;
                 };
@@ -1304,19 +1298,31 @@ impl EnemyAi {
                 current = next;
             }
         }
+        let has_left_neighbour = !left.is_empty();
+        for (index, target) in left.into_iter().rev().enumerate() {
+            self.base
+                .outbox
+                .reentrant
+                .cross_npc_actions
+                .push(CrossNpcAction::BreakPhalanx {
+                    target,
+                    refresh_them_list: index == 0,
+                });
+        }
+        if !has_left_neighbour {
+            // We are already the leftmost member. Original refreshes the
+            // shared list before recursing to the right.
+            self.phalanx_reinitialize_them_list(&ctx.position, ctx, tick);
+        }
 
-        // Propagate right
+        let mut right = Vec::new();
         if self.right_combat_neighbour != 0 {
             let mut current = self.right_combat_neighbour;
             for _ in 0..16 {
                 if current == 0 {
                     break;
                 }
-                self.base
-                    .outbox
-                    .reentrant
-                    .cross_npc_actions
-                    .push(CrossNpcAction::BreakPhalanx { target: current });
+                right.push(current);
                 let Some(snap) = self.find_fighter(current, tick) else {
                     break;
                 };
@@ -1327,13 +1333,50 @@ impl EnemyAi {
                 current = next;
             }
         }
+        for target in right.into_iter().rev() {
+            self.base
+                .outbox
+                .reentrant
+                .cross_npc_actions
+                .push(CrossNpcAction::BreakPhalanx {
+                    target,
+                    refresh_them_list: false,
+                });
+        }
+        self.base
+            .outbox
+            .reentrant
+            .cross_npc_actions
+            .push(CrossNpcAction::BreakPhalanx {
+                target: self.base.me,
+                refresh_them_list: false,
+            });
+    }
 
-        // Clear our own links
+    /// Apply the local half of a neighbouring member's recursive
+    /// `BreakPhalanx` call.
+    ///
+    /// Original `RHArtificialMalignity::BreakPhalanx` walks the neighbour
+    /// chain recursively. Every visited member clears both links, marks the
+    /// formation abandoned, and calls `BattleDecisions` before returning.
+    /// The originating Rust member has already enumerated the chain into
+    /// `CrossNpcAction::BreakPhalanx`, so this entry point must not propagate
+    /// again; it performs exactly the per-member tail of that recursion.
+    pub(crate) fn break_phalanx_from_neighbour(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        refresh_them_list: bool,
+    ) {
+        if refresh_them_list {
+            self.phalanx_reinitialize_them_list(&ctx.position, ctx, tick);
+        }
         self.left_combat_neighbour = 0;
         self.right_combat_neighbour = 0;
         self.phalanx_aborted = true;
-
-        // Go on with single-fighter AI
         self.battle_decisions(sim, global, ctx, tick, grid);
     }
 
