@@ -669,40 +669,38 @@ impl FriendlyAi {
         // legacy implementation: <100 queues the follow-up, 100..=110 bails to
         // `ReturnToDuty`, 111+ drops it silently.
 
-        if self.base.couldnt_reachpoint {
+        if self.base.think_recursion_depth < 100 {
+            // Dispatching a completion re-enters Think, and Think's entry gate
+            // clears all three latches before the nested handler runs. Only
+            // the first set latch can therefore survive to be dispatched.
+            let event = if self.base.couldnt_reachpoint {
+                Some(StimulusType::EventCouldntReachPoint)
+            } else if self.base.already_on_point {
+                Some(StimulusType::EventReachPoint)
+            } else if self.base.already_turned {
+                Some(StimulusType::EventDone)
+            } else {
+                None
+            };
             self.base.couldnt_reachpoint = false;
-            if self.base.think_recursion_depth < 100 {
-                self.base
-                    .outbox
-                    .reentrant
-                    .self_stimuli
-                    .push(StimulusType::EventCouldntReachPoint);
-            } else if self.base.think_recursion_depth < 111 {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx);
-            }
-        }
-        if self.base.already_on_point {
             self.base.already_on_point = false;
-            if self.base.think_recursion_depth < 100 {
-                self.base
-                    .outbox
-                    .reentrant
-                    .self_stimuli
-                    .push(StimulusType::EventReachPoint);
-            } else if self.base.think_recursion_depth < 111 {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx);
-            }
-        }
-        if self.base.already_turned {
             self.base.already_turned = false;
-            if self.base.think_recursion_depth < 100 {
-                self.base
-                    .outbox
-                    .reentrant
-                    .self_stimuli
-                    .push(StimulusType::EventDone);
-            } else if self.base.think_recursion_depth < 111 {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx);
+            if let Some(event) = event {
+                self.base.outbox.reentrant.self_stimuli.push(event);
+            }
+        } else {
+            // The deep-recursion fallback runs `ReturnToDuty` instead of a
+            // nested Think, so it never clears the sibling latches and each
+            // one falls back independently.
+            let couldnt_reachpoint = std::mem::take(&mut self.base.couldnt_reachpoint);
+            let already_on_point = std::mem::take(&mut self.base.already_on_point);
+            let already_turned = std::mem::take(&mut self.base.already_turned);
+            if self.base.think_recursion_depth < 111 {
+                for pending in [couldnt_reachpoint, already_on_point, already_turned] {
+                    if pending {
+                        self.return_to_duty(sim, DutyFlags::empty(), ctx);
+                    }
+                }
             }
         }
         self.base.think_recursion_depth = self.base.think_recursion_depth.saturating_sub(1);
@@ -2181,16 +2179,12 @@ impl FriendlyAi {
                 self.base
                     .fire_self_stimulus(crate::ai::StimulusType::EventReachPoint);
             }
-            if self.base.couldnt_reachpoint {
-                self.base.couldnt_reachpoint = false;
-                self.base
-                    .fire_self_stimulus(crate::ai::StimulusType::EventCouldntReachPoint);
-            }
-            if self.base.already_turned {
-                self.base.already_turned = false;
-                self.base
-                    .fire_self_stimulus(crate::ai::StimulusType::EventDone);
-            }
+            // A failed GoTo and a no-op FaceTo raise their latches
+            // unconditionally, with no outside-Think delivery path of their
+            // own. Outside a Think the next Think entry simply discards them,
+            // so drop them here instead of inventing completions.
+            self.base.couldnt_reachpoint = false;
+            self.base.already_turned = false;
         } else if go_to_duty {
             // Civilians without a patrol path and `go_to_duty=true`
             // get the authored "first look" randomised delay.
