@@ -756,6 +756,12 @@ impl EngineInner {
                     .frames_from_now_till_action_done()
                     <= 0;
             if hold_true_sweep {
+                // The rotation phase runs no Sprite method and reports
+                // IN_PROGRESS outright. Latch that here: without it the arm
+                // leaves the previous tick's one-shot DONE as the actor's
+                // motion state for every frame of the sweep.
+                entity.element_data_mut().sprite.last_motion_state =
+                    Some(crate::sprite::MotionState::InProgress);
                 tracing::trace!(
                     "tick_melee_strikes: entity={} order_id={} strike={:?} holding true-circle sweep",
                     entity_id.index(),
