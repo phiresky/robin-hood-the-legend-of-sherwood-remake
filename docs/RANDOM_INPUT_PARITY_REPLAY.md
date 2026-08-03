@@ -3487,7 +3487,10 @@ Fresh release validation after these changes gives the following frontiers:
 | randomguy Savegame 046 replay 011 | PC motion-state mismatch at 119,870 | **Exact EOF** |
 | linux3 Savegame 072 replay 001 | stairs/bow animation frontiers at 38,854/38,961 | **Exact EOF** |
 | nicouzouf Savegame 063 replay 001 | installed animation at 1,207 | advanced to independent movement-scoring frontier at 1,320 |
-| SuN1Sh1nE ExQuickSave replay 001 | installed bow animation at 35,563 | advanced to independent Beggar-list frontier at 36,084 |
+| SuN1Sh1nE ExQuickSave replay 001 | installed bow animation at 35,563 | **Exact EOF** after deferred nested AI completion fix `042f2c356` |
+| linux3 Savegame 073 replay 007 | retained movement-goal chain through frame 733 | advanced through frames 830 and 1,088 to postponed-publication frontier at 1,207 |
+| linux3 Savegame 074 replay 003 | motion-state mismatch at 74,018 | **Exact EOF** |
+| linux3 Savegame 074 replay 001/002 | five-field civilian mismatch at 73,901 | localized to ordered script-built Seek instruction; final retained-goal difference still open |
 | nicouzouf Savegame 051 replay 008 | non-actor Instruct panic at 182 | advanced to waypoint completion frontier at 670 |
 
 The PC initialization-validity path now also latches Original's terminal
@@ -3602,9 +3605,10 @@ frontiers are still being investigated:
 
 - `SeekArea` point selection now mirrors Original `RandomValue(P_RECTANGLE)`:
   each non-empty axis uses a half-open interval and a zero-width axis consumes
-  no RNG draw (`76971ea89`). This corrects the generic draw contract, although
-  the SuN ExQuickSave frame-36,793 trace still shows that Rust omits an entire
-  `SeekPointSelection` call on one state-transition path.
+  no RNG draw (`76971ea89`). This corrects the generic draw contract. A later
+  trace-era binary disassembly proved that the superficially related SuN
+  ExQuickSave frame-36,793 draw was actually `GetBoredTime`, not
+  `SeekPointSelection`.
 - the Rust-only pre-transition seek-target drift heuristic was removed
   (`17871857e`). Original refreshes this target on `PerformSeek` entry when its
   countdown expires, or after the final order completes; it has no equivalent
@@ -3623,9 +3627,27 @@ frontiers are still being investigated:
   target, while replacement/postponement carries the currently selected
   movement goal through a retained transition (`09878be5f`). This clears
   Savegame 073 replay 007's frame-25, 484, 700, 720, and 733 goal boundaries.
-  Frame 830 remains open: experiments that cleared or rebuilt every resumed
-  movement goal were rejected because later direct sword-movement and
-  step-back cases require different Original ordering.
+  Zero-frame Parry/StopParry translation now also remains inside Original's
+  incoming-element instruction scope, so its synchronous condolence clears
+  the selected goal before postponed work resumes (`712887772`). The same
+  commit resolves `Position(actor)` through the destination-side gate point
+  during an active door pass instead of using the actor's literal coordinates.
+  Replay 007 consequently clears frames 830 and 1,088 and now reaches an
+  independent postponed-publication frontier at frame 1,207.
+- direct AI-owner drains now surface deferred `couldnt_reachpoint`,
+  `already_on_point`, and `already_turned` completions at Original's nested
+  boundary (`042f2c356`). In the SuN ExQuickSave trace this preserves the
+  `ReachPoint`/`SetAIState(DEFAULT)` completion before `AfterScriptGoOn`, so
+  soldier 102 performs both authoritative `GetBoredTime` draws. The complete
+  affected replay now matches every recorded frame.
+
+The remaining Savegame 074 replay 001/002 frame-73,901 frontier is localized
+to ordered instruction of a script-built `RecordSeekActorMessage` sequence.
+Original selects the incoming Seek before interrupting the old `MoveOk` and
+continues its translation; Rust's outgoing-mechanics teardown can instead
+leave the wrapper todo and drop to Wait. The current source-backed candidate
+reduces the five-field divergence to only the retained map goal, but remains
+uncommitted until that last difference is resolved and release-validated.
 
 Two previously active reports are now classified as stale recordings rather
 than Rust fixes:
