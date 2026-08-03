@@ -3758,7 +3758,7 @@ impl EngineInner {
                             )
                         });
                         let selected_specialized_order_advanced = specialized_execute_motion
-                            .is_some()
+                            .is_some_and(|motion| motion != crate::sprite::MotionState::Aborted)
                             && selected_order.is_some_and(|(entry_seq, entry_idx, entry_order)| {
                                 !self
                                     .orders

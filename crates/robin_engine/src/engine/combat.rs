@@ -4510,6 +4510,22 @@ impl EngineInner {
         elem_idx: usize,
         order_id: Option<std::num::NonZeroU32>,
     ) {
+        // Every caller reaches this helper because the selected derived
+        // Execute arm returned RHMOTION_ABORTED. Publish that raw result for
+        // the actor-owner envelope as well. In particular, Tie deliberately
+        // fails validity one frame after DONE changed its victim from Lying
+        // to Tied; without replacing the sprite's previous-frame DONE latch,
+        // the envelope records DONE even though the element is made
+        // impossible in this frame.
+        if let Some(entity) = self.get_entity_mut(actor_id) {
+            entity.element_data_mut().sprite.last_motion_state =
+                Some(crate::sprite::MotionState::Aborted);
+            entity
+                .actor_data_mut()
+                .expect("ability owner must retain actor state during abort cleanup")
+                .continuation
+                .motion_state = crate::sprite::MotionState::Aborted;
+        }
         if let Some(actor) = self
             .get_entity_mut(actor_id)
             .and_then(Entity::actor_data_mut)
