@@ -608,7 +608,12 @@ impl EngineInner {
                         // command boundary.
                         ai.script_lock(false, true);
                         stop_for_lock = true;
-                    } else if ai.script_locked {
+                    } else {
+                        // Original ScriptUnlockAI is deliberately not
+                        // conditional on mbScriptLocked. A repeated authored
+                        // UnlockAi still clears detections and synchronously
+                        // runs EVENT_RETURN_TO_DUTY, which can replace the
+                        // actor's current movement with a fresh GoTo order.
                         ai.script_unlock(unconscious);
                     }
                 }

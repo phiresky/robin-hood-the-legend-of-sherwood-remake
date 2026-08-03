@@ -1668,7 +1668,11 @@ impl EngineInner {
             let Some(other_ai) = other.npc.ai_brain.enemy() else {
                 continue;
             };
-            if other_ai.base.current_music_alert_status == crate::ai::AlertLevel::Green {
+            // Original `RHElementActorNPC::GetAlertStatus()` reads
+            // `mViewParameters.ubAlertStatus`, not the independently tracked
+            // music alert. Forced-attentive and music-only transitions can
+            // deliberately make those values differ.
+            if other_ai.base.view_alert_status == crate::ai::AlertLevel::Green {
                 continue;
             }
             let delta = other.element.position_map() - me_pos;

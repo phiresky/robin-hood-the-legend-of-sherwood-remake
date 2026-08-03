@@ -569,11 +569,10 @@ impl EngineInner {
                             owner.index()
                         )
                     })?;
-                if ai.script_locked {
-                    ai.script_unlock(unconscious);
-                } else {
-                    tracing::warn!(owner = owner.index(), "UnlockAI: NPC is not script-locked");
-                }
+                // RHArtificialIntelligence::ScriptUnlockAI does not test
+                // mbScriptLocked. Even a redundant native UnlockAI must
+                // blink detections and re-enter Think(EVENT_RETURN_TO_DUTY).
+                ai.script_unlock(unconscious);
                 // ScriptUnlockAI synchronously re-enters
                 // Think(EVENT_RETURN_TO_DUTY). Finish that owner-local call,
                 // then materialize any resulting GoTo before resuming the VM.
