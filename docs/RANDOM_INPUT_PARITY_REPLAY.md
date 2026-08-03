@@ -3612,6 +3612,13 @@ frontiers are still being investigated:
   but release validation established that the branch was not active at the
   remaining Savegame 074 frame-73,901 frontier, so that interruption is still
   open.
+- pre-motion entity-seek tolerance now latches `PerformSeek`'s explicit
+  wrapper result even though that branch never invokes the sprite
+  (`f70f8eee8`). Specialized-owner completion also treats a terminal selected
+  element as retired without mistaking its retained diagnostic order for a
+  live successor. Savegame 074 replay 003 consequently advances through its
+  frame-74,018 motion-state boundary to exact EOF; the sibling replay 001/002
+  frame-73,901 interruption remains a separate open issue.
 
 Two previously active reports are now classified as stale recordings rather
 than Rust fixes:
