@@ -705,6 +705,7 @@ impl NativeContext<'_, '_> {
                     );
                     return 0;
                 };
+                let mut appended_len = None;
                 if let Some(entity) = self.get_entity_mut(actor)
                     && let Some(ai) = entity.ai_controller_mut()
                 {
@@ -722,13 +723,23 @@ impl NativeContext<'_, '_> {
                         ai.patrol.clear();
                         ai.missed_patrol_members.clear();
                         ai.needs_patrol_reinit = true;
+                        appended_len = Some(ai.theoretical_patrol.len());
                     }
                 }
-                // Original AddPatrolMember invokes InitializePatrol before
-                // returning to the mission script. Yield through the typed
-                // engine barrier so subsequent natives (notably UnlockAI)
-                // observe the subordinate's freshly assigned patrol chief.
-                self.emit_barrier(DeferredCommand::AddAsSubordinateInitialize { chief: actor });
+                // AddPatrolMember only re-initializes the patrol when the
+                // member was actually new, and it does so before returning to
+                // the mission script. Yield through the typed engine barrier
+                // so subsequent natives (notably UnlockAI) observe the
+                // subordinate's freshly assigned patrol chief. The roster
+                // length is captured here because the barrier drains after the
+                // whole script chunk, by which point later appends would
+                // otherwise widen this pass beyond what it saw.
+                if let Some(member_count) = appended_len {
+                    self.emit_barrier(DeferredCommand::AddAsSubordinateInitialize {
+                        chief: actor,
+                        member_count,
+                    });
+                }
                 0
             }
             RemoveAllSubordinates => {

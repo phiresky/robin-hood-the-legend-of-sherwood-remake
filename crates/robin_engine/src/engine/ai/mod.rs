@@ -11595,6 +11595,33 @@ impl EngineInner {
         chief_id: EntityId,
         views: &crate::ai_entity_view::AiEntityViewMap,
     ) {
+        let theoretical = self
+            .world
+            .entities
+            .get(chief_id)
+            .and_then(Entity::ai_controller)
+            .unwrap_or_else(|| {
+                panic!(
+                    "synchronous patrol initialization owner {} has no AI",
+                    chief_id.index()
+                )
+            })
+            .theoretical_patrol
+            .clone();
+        self.initialize_patrol_for_npc_over_members(assets, chief_id, views, &theoretical);
+    }
+
+    /// `InitializePatrol` restricted to an explicit slice of theoretical
+    /// members. `AddPatrolMember` runs one initialization per appended
+    /// member, so each of its passes sees only the prefix of the theoretical
+    /// list that existed at that point.
+    pub(super) fn initialize_patrol_for_npc_over_members(
+        &mut self,
+        assets: &LevelAssets,
+        chief_id: EntityId,
+        views: &crate::ai_entity_view::AiEntityViewMap,
+        theoretical: &[EntityId],
+    ) {
         #[derive(Clone, Copy)]
         struct PatrolSnap {
             position: crate::ai::Position,
@@ -11609,20 +11636,6 @@ impl EngineInner {
             is_civilian: bool,
             is_able_to_fight: bool,
         }
-
-        let theoretical = self
-            .world
-            .entities
-            .get(chief_id)
-            .and_then(Entity::ai_controller)
-            .unwrap_or_else(|| {
-                panic!(
-                    "synchronous patrol initialization owner {} has no AI",
-                    chief_id.index()
-                )
-            })
-            .theoretical_patrol
-            .clone();
 
         let chief_entity = self.world.entities.get(chief_id).unwrap_or_else(|| {
             panic!(
@@ -11695,7 +11708,7 @@ impl EngineInner {
         let mut patrol = Vec::new();
         let mut missed = Vec::new();
 
-        for member in theoretical {
+        for &member in theoretical {
             if member == chief_id {
                 continue;
             }
