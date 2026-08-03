@@ -1604,62 +1604,23 @@ impl StealthCommandContext<'_> {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
-        use crate::element::ActionState;
-
         let Some(entity) = self.entities.get(owner) else {
             self.sequence_manager.element_terminated(seq_id, elem_idx);
             return OwnerActionBarrier::Reach;
         };
         let live_posture = entity.element_data().posture;
-        let live_action_state = entity
-            .actor_data()
-            .map(|actor| actor.action_state)
-            .unwrap_or(ActionState::Waiting);
-        // Translate runs after GenerateTransition has already appended the
-        // exit-action/posture prefix.  The command body's initialization
-        // therefore validates against the state at the end of that prefix,
-        // not the actor's still-visible state.  This distinction is
-        // observable when a posture command interrupts a Bored animation:
-        // Original first plays BORED->WAITING, then initializes the command
-        // transition on a Waiting actor.
-        let (posture, action_state) = self
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .map(|element| {
-                (
-                    element.posture_after_transition,
-                    element.action_state_after_transition,
-                )
-            })
-            .unwrap_or((live_posture, live_action_state));
-        let is_swordfighting = action_state.is_sword();
 
-        // PC::Translate(ENTER_HELPING_CLIMB) unconditionally appends its
-        // body order after GenerateTransition. In particular, Original's
-        // Tree -> Upright prefix deliberately leaves the element's saved
-        // posture-after-transition as Tree, even though the prefix animation
-        // makes the actor upright before the body executes. Re-applying the
-        // body's live-posture precondition here therefore rejects a valid
-        // authored transition. CheckSequenceElementValidity remains the
-        // authoritative Execute-time gate, as in Original.
-        if command != Command::EnterHelpingClimb
-            && !crate::stealth::can_execute_stealth_command(
-                command,
-                posture,
-                action_state,
-                is_swordfighting,
-            )
-        {
-            tracing::debug!(
-                ?owner,
-                ?command,
-                ?posture,
-                ?action_state,
-                "stealth command rejected: preconditions not met"
-            );
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
-            return OwnerActionBarrier::Reach;
-        }
+        // Command translation appends the stance body order
+        // unconditionally.  Admission gating happened earlier: the
+        // transition-generation pass either produced a valid
+        // exit-action/posture prefix or marked the element Impossible,
+        // and Execute-time sequence validity remains the authoritative
+        // per-frame gate.  Re-validating the body against the element's
+        // saved post-prefix state here would wrongly reject prefixes
+        // that deliberately retain a masking posture: leaving the spy
+        // cape, tree hide, or anonymous-archer disguise keeps the saved
+        // posture on the element even though the prefix animation makes
+        // the actor upright before the body executes.
 
         let Some(transition) = crate::stealth::stealth_transition(command) else {
             self.sequence_manager.element_terminated(seq_id, elem_idx);

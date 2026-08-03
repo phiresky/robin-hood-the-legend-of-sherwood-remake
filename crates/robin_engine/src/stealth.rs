@@ -283,29 +283,6 @@ pub fn leave_disguise(posture: Posture) -> Option<StealthTransition> {
     }
 }
 
-// ─── Stealth command validation ────────────────────────────────────
-
-/// Check whether a stealth command can be executed given the current
-/// entity state.  Returns `true` if the command is valid.
-pub fn can_execute_stealth_command(
-    command: Command,
-    posture: Posture,
-    action_state: ActionState,
-    is_swordfighting: bool,
-) -> bool {
-    match command {
-        Command::CrouchDown => can_crouch_down(posture, action_state, is_swordfighting),
-        Command::CrouchUp => can_crouch_up(posture, action_state, is_swordfighting),
-        Command::EnterBeggar => can_enter_beggar(posture, action_state),
-        Command::LeaveBeggar => can_leave_beggar(posture, action_state),
-        Command::EnterHelpingClimb => can_enter_helping_climb(posture, action_state),
-        Command::LeaveHelpingClimb => can_leave_helping_climb(posture, action_state),
-        Command::LeaveSpy => can_leave_spy(posture, action_state),
-        Command::LeaveTree => can_leave_tree(posture, action_state),
-        _ => false,
-    }
-}
-
 /// Get the transition for a stealth command, if the command is a
 /// stealth command.  Returns `None` for non-stealth commands.
 pub fn stealth_transition(command: Command) -> Option<StealthTransition> {
