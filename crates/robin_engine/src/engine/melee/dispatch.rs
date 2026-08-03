@@ -470,9 +470,21 @@ impl EngineInner {
             // Original terminates either parry command immediately when any
             // parade is already active. It does not append another hold
             // order, even when the requested low/normal variant differs.
+            // Actor::Instruct has already assigned this incoming element to
+            // mpSequenceElement while Translate performs that zero-frame
+            // termination. Keep the same selected identity through the
+            // synchronous condolence snapshot so Actor::SendCondolationCard
+            // clears the selected order and PositionGoalMap before releasing
+            // any postponed predecessor.
+            self.orders
+                .sequence_manager
+                .begin_instruct_callback(owner, seq_id, elem_idx);
             self.orders
                 .sequence_manager
                 .element_terminated(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .end_instruct_callback(owner, seq_id, elem_idx);
             return;
         }
 
@@ -527,9 +539,18 @@ impl EngineInner {
             actor.action_state,
             ActionState::ParryingSword | ActionState::ParryingSwordLow
         ) {
+            // As in the ParrySword early-exit above, Translate terminates the
+            // already-selected incoming element rather than an unrelated
+            // queued command.
+            self.orders
+                .sequence_manager
+                .begin_instruct_callback(owner, seq_id, elem_idx);
             self.orders
                 .sequence_manager
                 .element_terminated(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .end_instruct_callback(owner, seq_id, elem_idx);
             return;
         }
 

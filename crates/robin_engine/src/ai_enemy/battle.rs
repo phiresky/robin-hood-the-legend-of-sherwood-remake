@@ -1551,10 +1551,28 @@ impl EnemyAi {
                     let target =
                         self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
                     self.base.primary_target = target;
-                    let target_pos = self
-                        .find_fighter(target, tick)
-                        .map(|f| f.position)
-                        .unwrap_or(ctx.position);
+                    // Original calls Position(mpPrimaryTarget), whose actor
+                    // semantics differ from the literal fighter position: a
+                    // target currently passing a door resolves to the
+                    // committed destination-side gate point.  Prefer the
+                    // full Position() snapshot when target selection retained
+                    // the target for which this tick was built.  A target
+                    // selected synchronously during this decision has no
+                    // equivalent door snapshot yet, so use its live entity
+                    // view rather than silently substituting our own point.
+                    let target_pos = if target == tick.primary_target_snapshot_handle {
+                        tick.primary_target_position.unwrap_or_else(|| {
+                            panic!("TooProudToAttack target {target} has no Position() snapshot")
+                        })
+                    } else {
+                        ctx.entity_view(target)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "TooProudToAttack newly selected target {target} disappeared"
+                                )
+                            })
+                            .position
+                    };
                     let d = pos_diff(&target_pos, &ctx.position);
                     let distance = iso_norm(d, ASPECT_RATIO);
 
