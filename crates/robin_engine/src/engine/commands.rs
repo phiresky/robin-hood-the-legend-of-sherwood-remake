@@ -614,6 +614,13 @@ impl EngineInner {
                 self.toggle_pc_selection(assets, seat, *pc_id);
                 self.update_recording_after_selection_change();
             }
+            UnselectPc { pc_id } => {
+                if self.players.seats[seat].selection.contains(pc_id) {
+                    self.unselect_single_pc(*pc_id);
+                    self.update_recording_after_selection_change();
+                    self.emit_character_selection_followups();
+                }
+            }
             BoxSelect { pt1, pt2, shift } => {
                 self.apply_box_select(assets, input, seat, *pt1, *pt2, *shift);
                 self.update_recording_after_selection_change();
