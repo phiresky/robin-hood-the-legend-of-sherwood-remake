@@ -3586,9 +3586,36 @@ seek-refresh field (`37abbfa52`). Savegame 051 replay 004 advances from the
 frame-1,013 Whistle launch through its frame-1,059 completion to a separate
 one-ULP combat-sidestep destination at frame 1,079.
 
+Two later long-trace timing frontiers were also fixed and release-validated:
+
+- `RefreshDetection` now truncates `universal frame + creation order` through
+  Original's 16-bit `UWORD` before every blip, sound, and optical modulo gate
+  (`c9a6c587f`). This clears the post-frame-65,535 detection cadence
+  divergences independently observed in Savegame 069 and Savegame 074.
+- entity-target `RunningUpright | SEEK` now preserves `PerformSeek`'s wrapper
+  motion result exactly like the walking arm (`e11c451f2`), rather than
+  exposing a raw nonterminal sprite result. This clears Savegame 074's
+  frame-73,857 motion-state boundary.
+
 Two previously active reports are now classified as stale recordings rather
 than Rust fixes:
 
+- All fifteen
+  `Savegame_nicouzouf/Profile_001/Savegame_051/replay-{001..015}` traces are
+  stale-authority recordings. They were written from 2026-08-02 06:21:59
+  through 06:27:05, before Original commit `5736d9e2` at 06:45:27 corrected
+  enemy save deserialization. The old loader cleared the global
+  `marrayAmbushPoints` definitions while reading each enemy's parallel status
+  array instead of clearing that enemy's `marrayAmbushPointStatus`; subsequent
+  enemies therefore ran from corrupted ambush topology/status state. Replay
+  001's apparent frame-784 phalanx difference (`Soldier 61 list_them [PC 81]`
+  versus `[PC 81, PC 83, PC 84]`) is downstream of that corruption: a current
+  C++ run from the same Savegame 051 fixture with RNG seed 1 and random-input
+  seed 9001 already has a different authoritative Think sequence at frames
+  782--784 and does not execute the recorded Soldier 61 reinitialization at
+  frame 784. Current source geometry also admits PCs 83/84 for the recorded
+  actor state. Matching the old list would preserve pre-fix corrupted C++
+  behavior, so the whole fifteen-trace family requires regeneration.
 - Savegame 063 replay 001 frame 1,391 predates Original commit `5736d9e2`, the
   save-deserialization correction. Current C++ does not reproduce the queued
   path, and the Rust/C++ thick-reachability geometry agrees.
