@@ -180,8 +180,11 @@ pub enum SoundCommand {
 pub enum DeferredCommand {
     /// Complete `RHArtificialIntelligence::AddPatrolMember` by running the
     /// chief's virtual `InitializePatrol` synchronously at the script-native
-    /// boundary. The native has already appended the theoretical member.
-    AddAsSubordinateInitialize { chief: i32 },
+    /// boundary. The native has already appended the theoretical member;
+    /// `member_count` is the chief's theoretical-patrol length right after
+    /// that append, so the barrier initializes over the same prefix the
+    /// append saw rather than over the roster's final state.
+    AddAsSubordinateInitialize { chief: i32, member_count: usize },
     /// Execute `RHArtificialIntelligence::ClearPatrol` at the engine-owned
     /// script barrier. Clearing the chief and each member pointer is
     /// synchronous, and every default-state member immediately runs

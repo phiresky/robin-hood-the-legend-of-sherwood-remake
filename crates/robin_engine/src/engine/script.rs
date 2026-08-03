@@ -1409,17 +1409,47 @@ impl EngineInner {
             // have released all temporary borrows.
             for cmd in deferred {
                 match cmd {
-                    crate::natives::DeferredCommand::AddAsSubordinateInitialize { chief } => {
-                        let chief = self.entity_id_for_actor_handle(chief).unwrap_or_else(|| {
+                    crate::natives::DeferredCommand::AddAsSubordinateInitialize {
+                        chief,
+                        member_count,
+                    } => {
+                        let chief_id = self.entity_id_for_actor_handle(chief).unwrap_or_else(|| {
                             panic!(
                                 "AddAsSubordinate lost its validated chief handle {chief} at the script barrier"
                             )
                         });
+                        // Each append initializes over the theoretical list as
+                        // it stood at that append, so a chunk adding several
+                        // members runs growing passes instead of repeating the
+                        // final roster once per member.
+                        let theoretical = self
+                            .world
+                            .entities
+                            .get(chief_id)
+                            .and_then(crate::element::Entity::ai_controller)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "AddAsSubordinate chief {} lost its AI at the script barrier",
+                                    chief_id.index()
+                                )
+                            })
+                            .theoretical_patrol
+                            .clone();
+                        if member_count > theoretical.len() {
+                            tracing::warn!(
+                                "AddAsSubordinate barrier for chief {} expected at least {} theoretical members but found {}; the patrol was rewritten before the barrier drained",
+                                chief_id.index(),
+                                member_count,
+                                theoretical.len()
+                            );
+                        }
+                        let end = member_count.min(theoretical.len());
                         let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                        self.initialize_patrol_for_npc_from_owner_views(
+                        self.initialize_patrol_for_npc_over_members(
                             assets,
-                            chief,
+                            chief_id,
                             &scratch.ai_entity_views,
+                            &theoretical[..end],
                         );
                     }
                     crate::natives::DeferredCommand::RemoveAllSubordinates { actor } => {
