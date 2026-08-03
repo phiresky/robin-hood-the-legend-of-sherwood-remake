@@ -918,6 +918,37 @@ impl EngineInner {
             return false;
         }
 
+        // The jump translator authors the whole order list before Instruct
+        // reads the element's current order, so the actor's order pointer is
+        // already the first jump order on the frame the command is accepted.
+        // Rust drives the steps from `ActiveJump` and republishes one order
+        // per step as it starts; author the head order here so the pointer is
+        // live immediately instead of one frame later. `start_step` reuses an
+        // order id whose animation already matches, so the head order keeps
+        // its identity when the first step actually begins.
+        let first_step_order = {
+            let step = &steps[0];
+            let target_map = step
+                .target_3d
+                .filter(|_| !step.airborne)
+                .map(crate::coordinates::WorldPoint3D::to_map)
+                .unwrap_or_default();
+            let order_id = self.orders.allocate_order_id();
+            let mut order =
+                crate::order::Order::new(step.anim, target_map.x, target_map.y, order_id);
+            order.compute_direction = false;
+            order.completion = crate::order::OrderCompletion::NextJumpStep;
+            order
+        };
+        if let Some(elem) = self
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
+        {
+            elem.orders.clear();
+            elem.orders.push_back(first_step_order);
+        }
+
         let active = ActiveJump {
             steps: steps.into(),
             current: None,
