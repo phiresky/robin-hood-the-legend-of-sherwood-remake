@@ -3479,14 +3479,7 @@ impl EngineInner {
                                             return false;
                                         };
                                         flags.contains(crate::sequence::MoveFlags::SEEK)
-                                    && target.is_some()
-                                    // RunningUpright's Execute arm applies
-                                    // its state independently and does not
-                                    // expose PerformSeek's wrapper result.
-                                    && element.current_order().is_some_and(|order| {
-                                        order.order_type
-                                            != crate::order::OrderType::RunningUpright
-                                    })
+                                            && target.is_some()
                                     })
                             });
                         let melee_selection =
