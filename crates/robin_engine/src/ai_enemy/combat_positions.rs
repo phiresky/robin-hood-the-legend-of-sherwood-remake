@@ -11,7 +11,7 @@ use crate::parameters_ai;
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 
 use super::util::{
-    calculate_opponent_nearest_to_rene, check_straight_movement, det2, dot2,
+    FighterView, calculate_opponent_nearest_to_rene, check_straight_movement, det2, dot2,
     evaluate_combat_position_full, get_normal, get_normal_iso, get_normal_right,
     is_any_swordfight_substate, is_observing_combat_substate, is_walking_running_charging_substate,
     iso_norm, iso_normalize, max_norm, pos_diff, sector_to_vector, square_norm, vec_to_sector,
@@ -3034,7 +3034,10 @@ impl EnemyAi {
                 cp,
                 &mut friends_positions,
                 &mut enemies_positions,
-                &tick.nearby_fighters,
+                FighterView {
+                    near: &tick.nearby_fighters,
+                    registry: &tick.fighter_registry,
+                },
                 tick.required_profile_manager(),
                 iq,
             );
