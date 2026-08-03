@@ -3750,24 +3750,53 @@ impl EngineInner {
                                 "actor {entity_id:?} completion at legacy slot {slot} failed to drain synchronous sequence work: {error:?}"
                             )
                         });
+                        let selected_element_retired =
+                            selected_order.is_some_and(|(entry_seq, entry_idx, _)| {
+                                self.orders
+                                    .sequence_manager
+                                    .get_element(entry_seq, entry_idx)
+                                    .is_none_or(|element| {
+                                        !matches!(
+                                            element.state,
+                                            crate::sequence::SequenceState::Todo
+                                                | crate::sequence::SequenceState::InProgress
+                                                | crate::sequence::SequenceState::Postponed
+                                        )
+                                    })
+                            });
                         let selected_specialized_order_advanced = specialized_execute_motion
                             .is_some_and(|motion| motion != crate::sprite::MotionState::Aborted)
                             && selected_order.is_some_and(|(entry_seq, entry_idx, entry_order)| {
-                                !self
-                                    .orders
-                                    .sequence_manager
-                                    .current_order_for_actor(entity_id)
-                                    .is_some_and(|(live_seq, live_idx, live_order)| {
-                                        live_seq == entry_seq
-                                            && live_idx == entry_idx
-                                            && live_order.order_id == entry_order
-                                    })
+                                selected_element_retired
+                                    || !self
+                                        .orders
+                                        .sequence_manager
+                                        .current_order_for_actor(entity_id)
+                                        .is_some_and(|(live_seq, live_idx, live_order)| {
+                                            live_seq == entry_seq
+                                                && live_idx == entry_idx
+                                                && live_order.order_id == entry_order
+                                        })
                             });
+                        // Terminal sequence elements retain their allocated
+                        // orders for diagnostics/save parity. Do not mistake
+                        // that same retired entry order for a successor, while
+                        // still accepting a distinct order installed by a
+                        // synchronous condolence-card callback.
                         let live_successor_exists = self
                             .orders
                             .sequence_manager
                             .current_order_for_actor(entity_id)
-                            .is_some();
+                            .is_some_and(|(live_seq, live_idx, live_order)| {
+                                !selected_order.is_some_and(
+                                    |(entry_seq, entry_idx, entry_order)| {
+                                        selected_element_retired
+                                            && live_seq == entry_seq
+                                            && live_idx == entry_idx
+                                            && live_order.order_id == entry_order
+                                    },
+                                )
+                            });
                         if let Some(actor) = self
                             .world
                             .entities

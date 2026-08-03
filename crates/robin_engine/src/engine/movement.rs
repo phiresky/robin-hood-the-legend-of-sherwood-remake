@@ -7022,6 +7022,15 @@ impl EngineInner {
                     dest_already_at_pos,
                 )
             };
+            if tolerance_arrival {
+                // This PerformSeek branch returns before calling any Sprite
+                // method. Preserve the wrapper's authoritative Execute result
+                // for Actor::Hourglass just as the non-sprite movement arms
+                // above do. Leaving the prior sprite DONE latched causes the
+                // successful StartPostSeekSequence termination to be hidden as
+                // IN_PROGRESS by the generic entity-seek projection.
+                sprite.last_motion_state = Some(motion_state);
+            }
             let first_frame_dist_raw = frame_dist_raw;
             let first_direction_differs_from_goal =
                 sprite.position_iface.get_direction() != sprite.position_iface.get_direction_goal();
