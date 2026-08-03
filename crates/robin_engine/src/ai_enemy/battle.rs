@@ -43,6 +43,7 @@ fn enough_nearer_friends_to_observe(
         >= visible_enemies + visible_enemies * (0.045_f32 * f32::from(courage))
 }
 
+#[track_caller]
 fn battle_friend_detected_360(
     ctx: &AiContext,
     friend_position: Position,
@@ -65,6 +66,7 @@ fn battle_friend_detected_360(
     )
 }
 
+#[track_caller]
 fn sleeping_enemy_detected_360(
     ctx: &AiContext,
     enemy: &SleepingEnemyInfo,

@@ -7354,6 +7354,8 @@ mod tests {
             origin: [f32::from_bits(1), f32::from_bits(2), f32::from_bits(3)],
             destination: [f32::from_bits(4), f32::from_bits(5), f32::from_bits(6)],
             result: false,
+            caller_file: file!(),
+            caller_line: line!(),
         };
         assert!(compare_visibility_queries(std::slice::from_ref(&query), &[actual]).is_empty());
         let mismatched = robin_engine::sight_obstacle::ParityVisibilityQuery {

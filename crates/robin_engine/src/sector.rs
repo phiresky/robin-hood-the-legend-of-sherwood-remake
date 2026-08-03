@@ -670,33 +670,13 @@ impl ShadowData {
                 self.barycentre_3d_z = 0.0;
             }
             Some(points) => {
-                // Derive the plane coefficients from the 3 top-plane
-                // points.  The plane is `z = A*x + B*y + D`, so from
-                // the normal (nx, ny, nz) = v1 × v2:
-                //   A = -nx/nz, B = -ny/nz,
-                //   D = p0z + (nx*p0x + ny*p0y)/nz.
-                let [p0, p1, p2] = *points;
-                let v1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
-                let v2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
-                let nx = v1[1] * v2[2] - v1[2] * v2[1];
-                let ny = v1[2] * v2[0] - v1[0] * v2[2];
-                let nz = v1[0] * v2[1] - v1[1] * v2[0];
-                if nz.abs() < 1e-9 {
-                    // Degenerate plane — fall back to flat.
-                    self.barycentre_3d_x = bx;
-                    self.barycentre_3d_y = by;
-                    self.barycentre_3d_z = 0.0;
-                    return;
-                }
-                let fa = -nx / nz;
-                let fb = -ny / nz;
-                let fd = p0[2] + (nx * p0[0] + ny * p0[1]) / nz;
-                let denom = 1.0 - fb;
-                let z = if denom.abs() < 1e-9 {
-                    0.0
-                } else {
-                    0.1 + (fb * by + fa * bx + fd) / denom
-                };
+                // Use the shared plane-coefficient derivation so the shadow
+                // centroid sees bit-identical `az`/`bz`/`dz` to every other
+                // consumer of a top plane. Reducing the ratios algebraically
+                // here instead moved the centroid Z by a few ULP, which is
+                // enough to change a visibility ray's endpoint.
+                let coeffs = crate::position_interface::PlaneZCoeffs::from_plane_points(points);
+                let z = 0.1 + coeffs.compute_z(bx, by);
                 self.barycentre_3d_z = z;
                 // Iso projection: screen-space Y is world Y + Z.
                 self.barycentre_3d_y = by + z;
