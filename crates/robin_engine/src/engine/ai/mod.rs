@@ -9904,7 +9904,7 @@ impl EngineInner {
             // into a global batch or strand in the outbox.
             self.launch_pending_orders_for_npc_mode(sim, assets, npc_id, defer_turn_instruction);
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
-            self.surface_synchronous_move_failure_for_owner(npc_id);
+            self.surface_synchronous_completion_events_for_owner(npc_id);
 
             self.process_synchronous_reentrant_actions_for_mode(
                 sim,
@@ -9985,17 +9985,17 @@ impl EngineInner {
         handled
     }
 
-    /// Deliver a path-construction failure at the same `EndThink` boundary as
-    /// the `GoTo` that produced it.
+    /// Deliver completion latches produced after the typed `EndThink` at the
+    /// same logical boundary as the operation that produced them.
     ///
     /// Original `AppendMoveToSequence` performs path construction inline, so
-    /// a failed route sets `mbCouldntReachPoint` before the enclosing
-    /// `EndThink` recursively dispatches `EVENT_COULDNT_REACHPOINT`. Rust
-    /// cannot construct the movement until the controller borrow is released;
-    /// by then the controller-side `end_think` has already run. Synchronous
-    /// Think drains must therefore close that split explicitly after
-    /// constructing the owner's pending move.
-    fn surface_synchronous_move_failure_for_owner(&mut self, npc_id: EntityId) {
+    /// failures and already-at-destination results are visible to the
+    /// enclosing `EndThink`. Rust may discover either result only after the
+    /// controller borrow is released: path construction is engine-owned, and
+    /// owner-work continuations such as patrol initialization resume outside
+    /// the typed Think call. Surface all three `EndThink` latches before a
+    /// sibling synchronous event can enter `StartThink` and clear them.
+    fn surface_synchronous_completion_events_for_owner(&mut self, npc_id: EntityId) {
         let ai = self
             .world
             .entities
@@ -10019,6 +10019,20 @@ impl EngineInner {
                 .reentrant
                 .self_stimuli
                 .push(crate::ai::StimulusType::EventCouldntReachPoint);
+        }
+        if ai.already_on_point {
+            ai.already_on_point = false;
+            ai.outbox
+                .reentrant
+                .self_stimuli
+                .push(crate::ai::StimulusType::EventReachPoint);
+        }
+        if ai.already_turned {
+            ai.already_turned = false;
+            ai.outbox
+                .reentrant
+                .self_stimuli
+                .push(crate::ai::StimulusType::EventDone);
         }
     }
 
@@ -11140,7 +11154,7 @@ impl EngineInner {
             );
             self.launch_pending_orders_for_npc_mode(sim, assets, npc_id, defer_turn_instruction);
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
-            self.surface_synchronous_move_failure_for_owner(npc_id);
+            self.surface_synchronous_completion_events_for_owner(npc_id);
             self.process_synchronous_reentrant_actions_for_mode(
                 sim,
                 npc_id,
@@ -11814,6 +11828,7 @@ impl EngineInner {
             );
             self.launch_pending_orders_for_npc_mode(sim, assets, npc_id, defer_turn_instruction);
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
+            self.surface_synchronous_completion_events_for_owner(npc_id);
             self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
             self.dispatch_condolations_for_npc(sim, npc_id, assets);
             let has_self_stimuli = {
