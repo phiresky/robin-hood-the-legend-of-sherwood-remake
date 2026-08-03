@@ -425,6 +425,15 @@ fn update_predetection_shadow_latch(
     shadow_is_seen && !shadow_was_seen
 }
 
+/// Staggered cadence counter used by `RHElementActorNPC::RefreshDetection`.
+///
+/// Original stores `universal frame + creation order` in a `UWORD` before
+/// applying every blip, sound, and optical modulo gate. The truncation is
+/// observable once a mission's universal frame passes 65535.
+fn refresh_detection_modified_frame(universal_frame: u32, creation_order: u32) -> u32 {
+    universal_frame.wrapping_add(creation_order) as u16 as u32
+}
+
 impl EngineInner {
     /// Return the exact `RHElement::mulCreationOrder` assigned by the
     /// Original-compatible construction stream.
@@ -824,11 +833,11 @@ impl EngineInner {
             || !(elem.active
                 || elem.is_in_door_transit()
                 || self.entity_building_sector(elem.sector()).is_some())
-            || !self
-                .control
-                .frame_counter
-                .wrapping_add(self.original_static_creation_order(npc_id))
-                .is_multiple_of(DETECTION_FREQUENCY_BLIP)
+            || !refresh_detection_modified_frame(
+                self.control.frame_counter,
+                self.original_static_creation_order(npc_id),
+            )
+            .is_multiple_of(DETECTION_FREQUENCY_BLIP)
         {
             return;
         }
@@ -1002,8 +1011,10 @@ impl EngineInner {
         if matches!(current_state, AiState::Attacking) {
             return;
         }
-        let modified_frame =
-            universal_frame.wrapping_add(self.original_static_creation_order(npc_id));
+        let modified_frame = refresh_detection_modified_frame(
+            universal_frame,
+            self.original_static_creation_order(npc_id),
+        );
         if !modified_frame.is_multiple_of(DETECTION_FREQUENCY_SOUNDS) {
             return;
         }
@@ -1678,8 +1689,10 @@ impl EngineInner {
         // Per-NPC frame-counter phase offset so not every NPC re-runs
         // detection on the same tick. The Original keys this with the
         // entity's creation order, not its current marrayElements slot.
-        let modified_frame =
-            universal_frame.wrapping_add(self.original_static_creation_order(npc_id));
+        let modified_frame = refresh_detection_modified_frame(
+            universal_frame,
+            self.original_static_creation_order(npc_id),
+        );
         let alert_status = viewer.alert_status;
         // Lacklandist ComputeVisibility lets Stare / Follow and non-Green
         // alert status bypass the per-entry cadence. Original's Royalist arm
@@ -3298,8 +3311,10 @@ impl EngineInner {
             crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
         );
         // Per-NPC frame phase offset.
-        let modified_frame =
-            universal_frame.wrapping_add(self.original_static_creation_order(npc_id));
+        let modified_frame = refresh_detection_modified_frame(
+            universal_frame,
+            self.original_static_creation_order(npc_id),
+        );
 
         const BODY_DETECTION_FACTOR: f32 = 3.0;
 
