@@ -838,7 +838,8 @@ impl EnemyAi {
         // Each `CALL_FINISH_BRAWL` send is gated on 360-degree
         // detection (radius + opaque LOS), computed lazily here only
         // for soldiers passing the cheap rank/substate filter (eager
-        // pre-compute was O(N²) per tick).
+        // pre-compute was O(N²) per tick).  The brawler is the viewer
+        // and the officer the target, so the ray runs soldier→officer.
         let me = &*self;
         let targets: Vec<NpcHandle> = tick
             .camp_soldiers
@@ -846,7 +847,7 @@ impl EnemyAi {
             .filter(|s| {
                 s.rank == ProfileRank::Soldier
                     && (s.ai_substate.is_take_money() || s.ai_substate.is_fight_for_money())
-                    && me.is_detecting_360_degrees(s.handle, ctx)
+                    && me.is_detected_360_degrees_by(s, ctx)
             })
             .map(|s| s.handle)
             .collect();
@@ -1023,9 +1024,9 @@ impl EnemyAi {
     /// gated on 360° detection, sorted ascending by squared stretch-Y
     /// distance.
     ///
-    /// The engine already materialises the unconscious + alive +
-    /// money-fight filter into `tick.camp_ko_money_fighters`, so we
-    /// walk that instead of iterating all soldiers per call.
+    /// The engine already materialises the unconscious + alive filter
+    /// into `tick.camp_unconscious_soldiers`, so we walk that instead of
+    /// iterating all soldiers per call.
     ///
     /// The comparator reads the locally-computed `sq` so no
     /// per-soldier scratchpad is needed.
@@ -1036,7 +1037,11 @@ impl EnemyAi {
         // Collect (handle, stretched-Y sq_distance) for candidates that
         // pass the 360° detection gate.
         let mut candidates: Vec<(NpcHandle, f32)> = Vec::new();
-        for &handle in tick.camp_ko_money_fighters.iter() {
+        for us in tick.camp_unconscious_soldiers.iter() {
+            if !us.knocked_out_in_money_fight {
+                continue;
+            }
+            let handle = us.handle;
             if handle == self.base.me {
                 continue;
             }
@@ -1258,8 +1263,9 @@ impl EnemyAi {
                 .entity_view(chief)
                 .map(|v| v.is_soldier())
                 .unwrap_or(false);
-            let detects_chief = self.is_detecting_360_degrees(chief as HumanHandle, ctx);
-            if chief_is_soldier && detects_chief {
+            // Short-circuit: a non-soldier chief never reaches the LOS
+            // query, so no visibility-cache traffic is generated for it.
+            if chief_is_soldier && self.is_detecting_360_degrees(chief as HumanHandle, ctx) {
                 self.base
                     .outbox
                     .reentrant
@@ -1535,22 +1541,23 @@ impl EnemyAi {
     /// whose substate is take/fight-for-money.
     ///
     /// Note: `tick.camp_soldiers` is already filtered to conscious +
-    /// alive same-camp soldiers by `engine/ai.rs` (the SoldierSnapshot
-    /// loop skips `!element.active || human.unconscious`), so the
-    /// IsUnconscious / IsDead gate is implicit.
+    /// same-camp soldiers by `engine/ai.rs` (the SoldierSnapshot loop
+    /// skips `!element.active || human.unconscious`), so only the
+    /// IsDead half of the gate needs re-checking here.
+    ///
+    /// The 360° check comes before the substate test: it runs for every
+    /// conscious camp soldier, not just the ones already brawling, and
+    /// each query perturbs the shared visibility cache.
     fn create_new_list_of_money_fight_enemies(&mut self, tick: &AiPerTickData, ctx: &AiContext) {
         self.money_fight_enemies.clear();
         for cs in tick.camp_soldiers.iter() {
-            if cs.handle == self.base.me {
-                continue;
-            }
-            if !cs.is_able_to_fight {
-                continue;
-            }
-            if !(cs.ai_substate.is_take_money() || cs.ai_substate.is_fight_for_money()) {
+            if cs.handle == self.base.me || cs.is_dead {
                 continue;
             }
             if !self.is_detecting_360_degrees(cs.handle as HumanHandle, ctx) {
+                continue;
+            }
+            if !(cs.ai_substate.is_take_money() || cs.ai_substate.is_fight_for_money()) {
                 continue;
             }
             self.money_fight_enemies.push(cs.handle);
@@ -1560,12 +1567,15 @@ impl EnemyAi {
     /// Morale check for whether to keep brawling based on
     /// upright-vs-sleeping money-fighter ratio.
     ///
-    /// Upright same-camp money-fighters come from `tick.camp_soldiers`
-    /// (which only carries conscious entries) filtered by 360° detection
-    /// and take/fight-for-money substate; sleeping KO'd money-fighters
-    /// come from the parallel `tick.camp_ko_money_fighters` list, since
-    /// the SoldierSnapshot builder in `engine/ai.rs` filters unconscious
-    /// soldiers out of `camp_soldiers`.
+    /// This is one scan over every alive same-camp soldier, conscious or
+    /// not, in camp-registry order, with a single 360° query per
+    /// candidate.  The engine hands the two halves over separately
+    /// (`camp_soldiers` carries only conscious entries, and
+    /// `camp_unconscious_soldiers` the sleepers), so they are merged back
+    /// by handle here — both are built in entity-slot order, which is the
+    /// registry order.  Query order matters: each one perturbs the shared
+    /// visibility cache, so splitting the scan into two passes would
+    /// reorder the cache traffic.
     fn wants_to_continue_money_fight(&self, tick: &AiPerTickData, ctx: &AiContext) -> bool {
         // Berserker fast path + drunken override.
         if self.soldier_profile_money == 100 || self.base.blood_alcohol > 0 {
@@ -1575,29 +1585,44 @@ impl EnemyAi {
         let mut upright: u32 = 1; // counts self
         let mut sleeping: u32 = 0;
 
-        for cs in tick.camp_soldiers.iter() {
-            if cs.handle == self.base.me {
-                continue;
-            }
-            if !cs.is_able_to_fight {
-                continue;
-            }
-            if !self.is_detecting_360_degrees(cs.handle as HumanHandle, ctx) {
-                continue;
-            }
-            if cs.ai_substate.is_take_money() || cs.ai_substate.is_fight_for_money() {
-                upright += 1;
-            }
-        }
+        let mut conscious = tick.camp_soldiers.iter().peekable();
+        let mut unconscious = tick.camp_unconscious_soldiers.iter().peekable();
+        loop {
+            // Whichever list holds the lower handle is next in registry
+            // order.
+            let take_conscious = match (conscious.peek(), unconscious.peek()) {
+                (Some(cs), Some(us)) => cs.handle <= us.handle,
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => break,
+            };
 
-        for &handle in tick.camp_ko_money_fighters.iter() {
+            let (handle, is_money_fighter, is_sleeping_money_victim) = if take_conscious {
+                let cs = conscious.next().expect("peeked conscious entry");
+                if cs.is_dead {
+                    continue;
+                }
+                (
+                    cs.handle,
+                    cs.ai_substate.is_take_money() || cs.ai_substate.is_fight_for_money(),
+                    false,
+                )
+            } else {
+                let us = unconscious.next().expect("peeked unconscious entry");
+                (us.handle, false, us.knocked_out_in_money_fight)
+            };
+
             if handle == self.base.me {
                 continue;
             }
             if !self.is_detecting_360_degrees(handle as HumanHandle, ctx) {
                 continue;
             }
-            sleeping += 1;
+            if is_money_fighter {
+                upright += 1;
+            } else if is_sleeping_money_victim {
+                sleeping += 1;
+            }
         }
 
         let total = upright + sleeping;
@@ -1659,6 +1684,10 @@ impl EnemyAi {
     /// Approximation: stretched-Y squared distance ≤ `sq_standard_view_radius`,
     /// plus an `is_reachable` (opaque sight obstacles) LOS check via
     /// `FastFindGrid`.
+    // Forward the caller location into the recorded visibility query so
+    // parity dumps attribute each check to the gate that asked for it,
+    // not to this shared helper.
+    #[track_caller]
     fn is_detecting_360_degrees(&self, target: HumanHandle, ctx: &AiContext) -> bool {
         //   if (!viewer_active_and_outside_building || !target_active_and_outside_building)
         //       return false;
@@ -1736,6 +1765,36 @@ impl EnemyAi {
             "is_detecting_360_degrees"
         );
         los_clear
+    }
+
+    /// Reverse of [`Self::is_detecting_360_degrees`]: does `viewer`
+    /// feel *me*?  The radius belongs to the viewer and the detection
+    /// point to me, so the resulting ray runs viewer→me — call sites
+    /// that ask "can this soldier see me" must not substitute the
+    /// forward check, which would swap the ray's endpoints.
+    #[track_caller]
+    fn is_detected_360_degrees_by(&self, viewer: &CampSoldierInfo, ctx: &AiContext) -> bool {
+        let Some(viewer_view) = ctx.entity_view(viewer.handle as HumanHandle) else {
+            tracing::trace!(
+                viewer = viewer.handle,
+                "is_detected_360_degrees_by: entity_view lookup failed"
+            );
+            return false;
+        };
+        crate::ai_enemy::soldier_detects_target_360(
+            viewer.position,
+            viewer_view.elevation,
+            viewer_view.is_rider,
+            viewer.view_radius,
+            viewer_view.in_building,
+            ctx.position,
+            ctx.elevation,
+            ctx.posture,
+            ctx.self_is_rider,
+            ctx.direction as i16,
+            ctx.in_building,
+            ctx.obstacle_list(),
+        )
     }
 
     /// Normal `RHElementActorNPC::IsDetecting(human)` check used by
@@ -5015,6 +5074,7 @@ mod tests {
             ai_state: AiState::Default,
             ai_substate: Substate::None,
             is_able_to_fight: true,
+            is_dead: false,
             primary_target: 0,
             pride: 0,
             is_able_to_help: true,
@@ -5263,7 +5323,13 @@ mod tests {
             ..AiContext::default()
         };
         let mut tick = AiPerTickData::stub();
-        tick.camp_ko_money_fighters = vec![2, 3];
+        tick.camp_unconscious_soldiers = vec![2, 3]
+            .into_iter()
+            .map(|handle| CampUnconsciousSoldierInfo {
+                handle,
+                knocked_out_in_money_fight: true,
+            })
+            .collect();
         let mut global = AiGlobalState::default();
 
         let stimulus = Stimulus::new(StimulusType::EventDone);
