@@ -3551,12 +3551,54 @@ right-to-left, mapping the global draws to Z, Y, then X. Rust now preserves
 both distinctions (`92376506e`), advancing Savegame 051 replay 008 from frame
 1,351 to a new Soldier 59 steering frontier at frame 1,436.
 
-The current frozen runner still reports nicouzouf Savegame 063 replay 001 at
-frame 1,391: Soldier 217 queues a path and enters `MoveWaiting` where Original
-continues with `MoveOk`. A transient pass observed while the release runner was
-being relinked was not accepted as validation; repeated runs of the completed
-runner reproduce the frame-1,391 path-event boundary. This remains an active
-source-level investigation rather than a completed combat-scoring fix.
+### Savegame 051 follow-up and stale-trace classifications (2026-08-03)
+
+The projectile trace next exposed two ordering/constructor differences. Line
+queries now retain Original's insertion order (`6719ad292`), and arrow damage
+constructs `RHSequenceElementDamage` with zero concussion rather than copying
+the hit-point damage into the concussion field (`e42fb9da9`). Together these
+advance Savegame 051 replay 008 through the frame-1,492 knockout boundary to
+**exact EOF**.
+
+Four further general AI fixes advanced the sibling Savegame 051 traces:
+
+- phalanx entry uses NPC `Focus(target)`, which changes the view cone without
+  physically turning the actor (`c98989c9d`);
+- body discovery uses the context-aware `Face(RHposition)` overload, including
+  its same-direction Waiting/Bored shortcut (`373736415`);
+- `SeekArea` counts nearby friends by the view parameters' alert status, which
+  is what Original `GetAlertStatus()` returns, rather than the music-alert
+  cache (`4b32e66aa`);
+- combat-position cleanup preserves proposal order with stable deletion;
+  Original's strict first-high-score tie handling makes `swap_remove`
+  observably wrong (`177da444f`).
+
+Commit `4b32e66aa` also contains the independently validated unconditional
+`ScriptUnlockAI` completion semantics from `script.rs` and
+`sequence_runtime/immediate.rs`: Original clears detection and synchronously
+dispatches `EVENT_RETURN_TO_DUTY` even when the actor was already unlocked.
+The SuN ExQuickSave trace advanced from frame 36,156 to frame 36,225.
+
+Original's one `mulWaitTime` member is overwritten by Listen and Whistle even
+when an interrupted seek leaves its target and post-seek tail attached. Rust
+now mirrors those writes and every ability countdown into the split
+seek-refresh field (`37abbfa52`). Savegame 051 replay 004 advances from the
+frame-1,013 Whistle launch through its frame-1,059 completion to a separate
+one-ULP combat-sidestep destination at frame 1,079.
+
+Two previously active reports are now classified as stale recordings rather
+than Rust fixes:
+
+- Savegame 063 replay 001 frame 1,391 predates Original commit `5736d9e2`, the
+  save-deserialization correction. Current C++ does not reproduce the queued
+  path, and the Rust/C++ thick-reachability geometry agrees.
+- H07 frame 939 predates Original commit `7243bed9`, which refreshes the actor
+  order after movement invalidation. The old trace observed a freed `mpOrder`
+  allocation and allocator-dependent Sheriff 140 death; current C++ does not
+  reproduce it.
+
+Both require regenerated recordings. No replay-specific exception or Rust
+gameplay workaround was added for either stale trace.
 
 ## Maintenance checklist
 
