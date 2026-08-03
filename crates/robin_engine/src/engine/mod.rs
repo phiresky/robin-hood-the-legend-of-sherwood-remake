@@ -2115,6 +2115,71 @@ impl EngineInner {
             .current_element_for_actor(actor)
     }
 
+    fn preserve_selected_movement_goal_for_replacement(
+        &mut self,
+        owner: EntityId,
+        current_seq: crate::sequence::SequenceId,
+        current_idx: usize,
+        replacement_seq: crate::sequence::SequenceId,
+        replacement_idx: usize,
+        replacement_command: crate::element::Command,
+    ) {
+        let goal = {
+            let mut cursor = (current_seq, current_idx);
+            let mut visited = std::collections::HashSet::new();
+            loop {
+                assert!(
+                    visited.insert(cursor),
+                    "cycle in cross-postponed sequence chain while preserving movement goal"
+                );
+                let Some(element) = self.orders.sequence_manager.get_element(cursor.0, cursor.1)
+                else {
+                    return;
+                };
+                if element.data.is_movement() {
+                    let Some(entity) = self.world.entities.get(owner) else {
+                        return;
+                    };
+                    break entity.position_iface().map_goal();
+                }
+                if let Some(goal) = element.retained_movement_goal {
+                    break goal;
+                }
+                let Some(postponed) = element.cross_postponed else {
+                    return;
+                };
+                cursor = postponed;
+            }
+        };
+        let Some(element) = self
+            .orders
+            .sequence_manager
+            .get_element_mut(replacement_seq, replacement_idx)
+        else {
+            return;
+        };
+        if element.retained_movement_goal.is_some()
+            || element
+                .get_property(crate::sequence::Field::RetainedMovementGoal)
+                .is_some()
+        {
+            return;
+        }
+        element.retained_movement_goal = Some(goal);
+        if matches!(
+            replacement_command,
+            crate::element::Command::Turn | crate::element::Command::TurnFast
+        ) {
+            element.set_property(
+                crate::sequence::Field::RetainedMovementGoal,
+                crate::sequence::FieldValue::GeoPoint2D {
+                    x: goal.x,
+                    y: goal.y,
+                },
+            );
+        }
+    }
+
     /// Arbitrate a new sequence-element dispatch against the actor's
     /// currently-executing element.
     ///
@@ -2370,6 +2435,14 @@ impl EngineInner {
                 // `current.Postpone(new)` — postpone current behind new.
                 // Current is in-progress, so we first tear down its
                 // active machinery before flipping it to Postponed.
+                self.preserve_selected_movement_goal_for_replacement(
+                    owner,
+                    cur_seq,
+                    cur_idx,
+                    new_seq,
+                    new_idx,
+                    new_command,
+                );
                 self.stop_owner_active_mechanics(owner);
                 self.engine_postpone(new_seq, new_idx, cur_seq, cur_idx);
                 true
@@ -2381,43 +2454,24 @@ impl EngineInner {
                         .can_interrupt_now(cur_seq, cur_idx),
                     "Original CanInterruptNow is unconditional"
                 );
-                // In Original, Instruct installs the incoming Turn as
+                // In Original, Instruct installs the incoming element as
                 // `mpSequenceElement` before interrupting the outgoing
                 // movement. Its synchronous condolence therefore sees
                 // that it is no longer selected and leaves the sprite's
                 // movement goal intact. Rust clears active mechanics
-                // before the incoming element begins executing, so carry
-                // that selected-owner fact explicitly to the Turn.
-                if matches!(new_command, Command::Turn | Command::TurnFast)
-                    && self
-                        .orders
-                        .sequence_manager
-                        .get_element(cur_seq, cur_idx)
-                        .is_some_and(|element| element.data.is_movement())
-                {
-                    let retained_goal = self
-                        .world
-                        .entities
-                        .get(owner)
-                        .map(|entity| entity.position_iface().map_goal());
-                    if let (Some(goal), Some(element)) = (
-                        retained_goal,
-                        self.orders
-                            .sequence_manager
-                            .get_element_mut(new_seq, new_idx),
-                    ) && element
-                        .get_property(crate::sequence::Field::RetainedMovementGoal)
-                        .is_none()
-                    {
-                        element.set_property(
-                            crate::sequence::Field::RetainedMovementGoal,
-                            crate::sequence::FieldValue::GeoPoint2D {
-                                x: goal.x,
-                                y: goal.y,
-                            },
-                        );
-                    }
-                }
+                // before the incoming element begins executing. Carry that
+                // selected-owner fact on every replacement element: its
+                // generated movement-to-waiting transition is the same live
+                // transition that Original still drives from the rewritten
+                // outgoing order, regardless of the incoming command.
+                self.preserve_selected_movement_goal_for_replacement(
+                    owner,
+                    cur_seq,
+                    cur_idx,
+                    new_seq,
+                    new_idx,
+                    new_command,
+                );
                 // New takes over current's postponed chain, current
                 // becomes Interrupted.
                 self.orders

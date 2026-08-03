@@ -4320,6 +4320,7 @@ impl EngineInner {
                     order_antagonist,
                     order_completion,
                     order_tolerance,
+                    order_target,
                     defer_initial_turn_step,
                 ) = if let Some((seq_id, elem_idx, order)) = order_snapshot {
                     (
@@ -4329,6 +4330,7 @@ impl EngineInner {
                         order.antagonist,
                         Some(order.completion.clone()),
                         order.tolerance,
+                        crate::coordinates::MapPoint::new(order.target_x, order.target_y),
                         order.defer_initial_turn_step,
                     )
                 } else {
@@ -4339,6 +4341,7 @@ impl EngineInner {
                         None,
                         None,
                         0.0,
+                        crate::coordinates::MapPoint::ZERO,
                         false,
                     )
                 };
@@ -4378,14 +4381,15 @@ impl EngineInner {
                         .get_element(s, e)
                         .is_some_and(|element| element.script_driven)
                 });
-                let turn_retains_movement_goal = order_seq_elem.is_some_and(|(s, e)| {
+                let element_retains_movement_goal = order_seq_elem.is_some_and(|(s, e)| {
                     self.orders
                         .sequence_manager
                         .get_element(s, e)
                         .is_some_and(|element| {
-                            element
-                                .get_property(crate::sequence::Field::RetainedMovementGoal)
-                                .is_some()
+                            element.retained_movement_goal.is_some()
+                                || element
+                                    .get_property(crate::sequence::Field::RetainedMovementGoal)
+                                    .is_some()
                         })
                 });
                 let turn_resumed_from_legacy_save = order_seq_elem.is_some_and(|(s, e)| {
@@ -4595,7 +4599,7 @@ impl EngineInner {
                     });
                     if order_is_initialising
                         && matches!(cur_command, Some(Command::Turn | Command::TurnFast))
-                        && !turn_retains_movement_goal
+                        && !element_retains_movement_goal
                         && !turn_resumed_from_legacy_save
                     {
                         // FaceTo can be instructed re-entrantly after a
@@ -4642,7 +4646,25 @@ impl EngineInner {
                                 direction_before_turn,
                                 direction_after_turn,
                             );
-                            let sprite = &mut entity.element_data_mut().sprite;
+                            let elem = entity.element_data_mut();
+                            if !element_retains_movement_goal
+                                && order_id.is_some_and(|id| {
+                                    elem.sprite.last_processed_order_id != id.get()
+                                })
+                            {
+                                // RHSprite::PerformAction copies every newly
+                                // selected order's pointDestination2D into the
+                                // position interface before returning START,
+                                // including non-moving animation orders whose
+                                // destination is (0, 0). A transition tagged
+                                // RetainedMovementGoal is the staged
+                                // equivalent of Original still driving the
+                                // rewritten outgoing movement order, so its
+                                // live goal deliberately wins for that
+                                // transition.
+                                elem.sprite.position_iface.set_map_goal(order_target);
+                            }
+                            let sprite = &mut elem.sprite;
                             let _ = sprite.perform_action(
                                 sim,
                                 order_id,
@@ -4923,6 +4945,15 @@ impl EngineInner {
                                     FrameProgression::Default,
                                 )
                             };
+                            if !element_retains_movement_goal
+                                && order_id
+                                    .is_some_and(|id| sprite.last_processed_order_id != id.get())
+                            {
+                                // Match RHSprite::PerformAction's new-order
+                                // PositionGoalMap initialization. This is
+                                // observable even for stationary animations.
+                                sprite.position_iface.set_map_goal(order_target);
+                            }
                             Some(sprite.perform_action(
                                 sim,
                                 order_id,
