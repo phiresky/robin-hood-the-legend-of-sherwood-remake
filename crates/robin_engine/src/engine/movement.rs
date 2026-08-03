@@ -5470,6 +5470,16 @@ impl EngineInner {
             return;
         }
         if self.actors_frozen() {
+            // A globally frozen Sprite::PerformMotion returns IN_PROGRESS
+            // before touching any row/frame state, and that is what the
+            // movement Execute arm hands back to the actor. Latch it here:
+            // otherwise the arm runs without a sprite call and the actor
+            // keeps re-reporting whatever edge the last unfrozen frame left
+            // behind, typically a stale START.
+            if let Some(entity) = self.world.entities.get_mut(owner) {
+                entity.element_data_mut().sprite.last_motion_state =
+                    Some(crate::sprite::MotionState::InProgress);
+            }
             let frozen_order = self.execute_globally_frozen_pre_motion_owner(owner, selected);
             // RunningUpright is exceptional among the ordinary movement
             // Execute arms: it calls SetStates(MOVING_FAST) unconditionally

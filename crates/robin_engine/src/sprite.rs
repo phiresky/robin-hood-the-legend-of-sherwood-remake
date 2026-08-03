@@ -1809,6 +1809,23 @@ impl Sprite {
             }
         }
 
+        // Motion evaluates the action-done frame exactly once, after every
+        // frame advance this tick — including the doubled `Fast` step. The
+        // action-tick check inside `perform_action` sees the intermediate
+        // frame instead, so it both reports DONE a step early and misses the
+        // case where the second increment is the one landing on the
+        // action-done frame. Recompute from the final frame position, leaving
+        // START (which outranks DONE here) and the error states alone.
+        if matches!(state, MotionState::Done | MotionState::InProgress) {
+            state = if self.current_frame == self.action_done_frame
+                && self.frame_count == self.action_done_counter
+            {
+                MotionState::Done
+            } else {
+                MotionState::InProgress
+            };
+        }
+
         // `perform_action` records its intermediate result, but movement
         // deliberately overrides that result after initialization (notably
         // DONE -> START when a fresh waypoint begins on the prior action-done

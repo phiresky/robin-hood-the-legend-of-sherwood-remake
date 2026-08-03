@@ -3388,15 +3388,16 @@ fn arm_is_always_consumed(anim_type: OrderType) -> bool {
         anim_type,
         // Idle loops whose derived Execute arms explicitly return
         // InProgress. Plain WaitingUpright is intentionally absent:
-        // RHElementActor::Execute forwards PerformAction's raw motion so a
+        // the base actor Execute forwards PerformAction's raw motion so a
         // Wait transition chain can advance when that animation terminates.
+        // The PC cape/hidden idle loops are absent for the same reason: their
+        // arms play a cyclic PerformAction and return its raw result, so the
+        // first tick of a freshly adopted order must still report Start.
         OT::WaitingCrouched
             | OT::WaitingAlerted
             | OT::WaitingSword
             | OT::WaitingShield
             | OT::WaitingOnShoulders
-            | OT::WaitingCape
-            | OT::WaitingHidden
             | OT::WaitingHelpingClimbing
             | OT::WaitingCarryingOnShoulders
             | OT::WaitingWithCorpse
