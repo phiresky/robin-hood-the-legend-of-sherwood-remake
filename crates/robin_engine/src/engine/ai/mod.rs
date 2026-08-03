@@ -10009,26 +10009,27 @@ impl EngineInner {
                     npc_id.index()
                 )
             });
-        if ai.couldnt_reachpoint {
-            ai.couldnt_reachpoint = false;
-            ai.outbox
-                .reentrant
-                .self_stimuli
-                .push(crate::ai::StimulusType::EventCouldntReachPoint);
-        }
-        if ai.already_on_point {
-            ai.already_on_point = false;
-            ai.outbox
-                .reentrant
-                .self_stimuli
-                .push(crate::ai::StimulusType::EventReachPoint);
-        }
-        if ai.already_turned {
-            ai.already_turned = false;
-            ai.outbox
-                .reentrant
-                .self_stimuli
-                .push(crate::ai::StimulusType::EventDone);
+        // Only an EndThink delivers these latches, so one whose operation ran
+        // outside a Think is discarded exactly as the next Think entry would.
+        // Dispatching a completion also re-enters Think, whose entry gate
+        // clears all three latches before the nested handler runs, so a single
+        // boundary surfaces at most one event even when several were set.
+        let event = if !ai.completion_latch_inside_think {
+            None
+        } else if ai.couldnt_reachpoint {
+            Some(crate::ai::StimulusType::EventCouldntReachPoint)
+        } else if ai.already_on_point {
+            Some(crate::ai::StimulusType::EventReachPoint)
+        } else if ai.already_turned {
+            Some(crate::ai::StimulusType::EventDone)
+        } else {
+            None
+        };
+        ai.couldnt_reachpoint = false;
+        ai.already_on_point = false;
+        ai.already_turned = false;
+        if let Some(event) = event {
+            ai.outbox.reentrant.self_stimuli.push(event);
         }
     }
 
