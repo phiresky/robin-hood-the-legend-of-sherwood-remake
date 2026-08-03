@@ -3619,6 +3619,13 @@ frontiers are still being investigated:
   live successor. Savegame 074 replay 003 consequently advances through its
   frame-74,018 motion-state boundary to exact EOF; the sibling replay 001/002
   frame-73,901 interruption remains a separate open issue.
+- new-order `PerformAction` now initializes `PositionGoalMap` from the order
+  target, while replacement/postponement carries the currently selected
+  movement goal through a retained transition (`09878be5f`). This clears
+  Savegame 073 replay 007's frame-25, 484, 700, 720, and 733 goal boundaries.
+  Frame 830 remains open: experiments that cleared or rebuilt every resumed
+  movement goal were rejected because later direct sword-movement and
+  step-back cases require different Original ordering.
 
 Two previously active reports are now classified as stale recordings rather
 than Rust fixes:
