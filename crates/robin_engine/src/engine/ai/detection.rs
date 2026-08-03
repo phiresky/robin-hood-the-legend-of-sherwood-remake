@@ -1799,6 +1799,15 @@ impl EngineInner {
                     "CleanUpDetectables removed dead Enemy entries"
                 );
             }
+            tracing::trace!(
+                npc = ?npc_id,
+                camp = ?viewer.camp,
+                ?alert_status,
+                ?eye_status,
+                lacklandist_refresh_always,
+                entries = ?detectables.iter().map(|d| d.element).collect::<Vec<_>>(),
+                "Enemy detectable list"
+            );
 
             // Per-target visibility pass.
             //
@@ -1849,6 +1858,16 @@ impl EngineInner {
                     view_radius,
                     target.ground_position,
                 ) {
+                    tracing::trace!(
+                        observer = ?npc_id,
+                        target = ?target_id,
+                        view_radius,
+                        viewer_x = me_ground_position.x,
+                        viewer_y = me_ground_position.y,
+                        target_x = target.ground_position.x,
+                        target_y = target.ground_position.y,
+                        "Enemy detectable outside RefreshDetection box"
+                    );
                     det.seen_now = false;
                     det.last_visibility = 0.0;
                     continue;
@@ -1906,6 +1925,16 @@ impl EngineInner {
                 };
                 let gate_open = modified_frame.is_multiple_of(frequency)
                     || (viewer.camp == Camp::Lacklandists && lacklandist_refresh_always);
+                tracing::trace!(
+                    observer = ?npc_id,
+                    target = ?target_id,
+                    modified_frame,
+                    frequency,
+                    gate_open,
+                    camp = ?viewer.camp,
+                    lacklandist_refresh_always,
+                    "Enemy detection cadence gate"
+                );
 
                 // Only call `ComputeVisibility` when the
                 // detection-frequency gate is open.  On closed-gate
@@ -3673,6 +3702,17 @@ impl EngineInner {
                 det.last_visibility = 0.0;
                 continue;
             }
+            tracing::trace!(
+                observer = ?npc_id,
+                target = ?target_id,
+                ?kind,
+                frequency,
+                modified_frame = ctx.modified_frame,
+                gate_open,
+                viewer_x = ctx.ground_position.x,
+                viewer_y = ctx.ground_position.y,
+                "non-Enemy detectable inside RefreshDetection box"
+            );
             let visibility: f32 = if non_enemy_visibility_blocked_before_cadence(
                 ctx.eye_status,
                 ctx.camp,
