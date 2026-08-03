@@ -5650,9 +5650,8 @@ impl EngineInner {
             shield_destination: Option<MapPoint>,
             /// Snapshot of `ActorData::last_seek_target_position` —
             /// the target position stamped at seek launch / refresh.
-            /// Used by the transition-animation refresh check to
-            /// detect mid-walk target drift before the transition arm
-            /// runs.
+            /// Used by the final-order completion check to distinguish an
+            /// arrival at the sampled target from an exhausted stale path.
             last_seek_target_position: MapPoint,
             /// Whether the actor has a `post_seek_sequence` attached.
             /// Lifts the `is_final_waypoint` gate on tolerance arrival
@@ -6047,15 +6046,10 @@ impl EngineInner {
         // sorts once by travel distance, then checks patch/script/sound flags
         // on each line in that order.
         let mut non_elevation_cross_checks: Vec<(EntityId, MapPoint, MapPoint, u16)> = Vec::new();
-        // Seek elements whose end-of-walk arrival put a
-        // transition-to-waiting animation in line as the next order
-        // while the live target had drifted beyond
-        // `transition_distance + seek_distance × 1.05`.  Seek refresh
-        // aborts the queued transition arm and rebuilds the path; the
-        // Rust port queues these for the existing `tick_refresh_seeks`
-        // machinery to handle right after the per-tick movement loop,
-        // before the sequence manager re-dispatches.  Each entry is
-        // `(owner, seq_id, elem_idx)`.
+        // Final entity-seek orders whose live target no longer matches the
+        // sampled endpoint. Original refreshes these only when the current
+        // order itself terminates; merely exposing a stop-transition as the
+        // next order is not a refresh boundary.
         let mut transition_seek_refreshes: Vec<(EntityId, crate::sequence::SequenceId, usize)> =
             Vec::new();
         // Waypoint arrivals (both intermediate and final) — each
@@ -6773,11 +6767,7 @@ impl EngineInner {
                 // then substitutes the attentive sprite animation. The order
                 // matters for stairs: translating WalkingStairsAlerted again
                 // would collapse it back to ordinary WalkingStairs.
-                super::animation::soldier_movement_animation(
-                    base,
-                    soldier_attentive,
-                    action_state,
-                )
+                super::animation::soldier_movement_animation(base, soldier_attentive, action_state)
             };
             // Advance sprite animation and get per-frame distance.
             // PerformMotion sets `row = conversion[anim] + direction`,
@@ -8043,93 +8033,6 @@ impl EngineInner {
                     }
                     let eid = entity_id;
 
-                    // Transition-animation refresh.  When this arrival
-                    // pop will leave a transition-to-waiting order as the
-                    // next (final) order in the queue AND the seek target
-                    // has drifted since the last refresh AND the new
-                    // distance is greater than `(transition_distance +
-                    // seek_distance) * 1.05`, abort the queued transition
-                    // and call RefreshSeek immediately so the actor
-                    // doesn't play a transition that lands too far from
-                    // the (moved) target.  Computed here using the
-                    // still-live `elem` borrow (sprite + position) before
-                    // the actor mut borrow takes over — NLL would
-                    // otherwise reject the second borrow.
-                    let transition_refresh_target: Option<(
-                        crate::sequence::SequenceId,
-                        usize,
-                        OrderType,
-                        MapPoint,
-                        f32,
-                    )> = if !is_final_waypoint
-                        && !tolerance_arrival
-                        && ft.tol > 0.0
-                        && let Some(target_now) = live_seek_target.map(|(position, _, _)| position)
-                    {
-                        let last = ft.last_seek_target_position;
-                        let drifted = (target_now.x - last.x).abs() > 0.01
-                            || (target_now.y - last.y).abs() > 0.01;
-                        if drifted {
-                            let seq_id = move_seq_id;
-                            let elem_idx = move_elem_idx;
-                            let next_anim = self
-                                .orders
-                                .sequence_manager
-                                .get_element(seq_id, elem_idx)
-                                .and_then(|e| e.orders.get(1).map(|o| o.order_type));
-                            if matches!(
-                                next_anim,
-                                Some(OrderType::TransitionRunningUprightWaitingUpright)
-                                    | Some(OrderType::TransitionWalkingUprightWaitingUpright)
-                                    | Some(OrderType::TransitionWalkingCrouchedWaitingCrouched)
-                            ) {
-                                let next_anim = next_anim.unwrap();
-                                let pos = entity.element_data().position_map();
-                                let dx = target_now.x - pos.x;
-                                let dy = target_now.y - pos.y;
-                                let dy_eff = if ft.directional {
-                                    const INVERSE_ASPECT_RATIO: f32 = 1.743_446_8;
-                                    dy * INVERSE_ASPECT_RATIO
-                                } else {
-                                    dy
-                                };
-                                let sq = dx * dx + dy_eff * dy_eff;
-                                let trans_dist = if entity.sprite().has_animation(next_anim) {
-                                    entity.sprite().distance_for_animation(next_anim) as f32
-                                } else {
-                                    0.0
-                                };
-                                let raw = trans_dist + ft.tol;
-                                let threshold = raw * 1.05;
-                                if sq > threshold * threshold {
-                                    Some((seq_id, elem_idx, next_anim, target_now, sq.sqrt()))
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
-                    if let Some((seq_id, elem_idx, _next_anim, _target, _dist)) =
-                        transition_refresh_target
-                    {
-                        transition_seek_refreshes.push((eid, seq_id, elem_idx));
-                        tracing::trace!(
-                            ?eid,
-                            ?_next_anim,
-                            target_x = _target.x,
-                            target_y = _target.y,
-                            new_dist = _dist,
-                            "tick_move: transition-animation refresh fired (target drifted beyond transition+seek_dist)",
-                        );
-                        continue 'actors;
-                    }
-
                     // A final concrete waypoint is only the position at
                     // which the target was observed when this Seek was
                     // built.  When the walking order terminates, Original
@@ -8786,10 +8689,8 @@ impl EngineInner {
             );
         }
 
-        // Dispatch transition-animation seek refreshes detected
-        // during the per-tick movement loop.  Fires `RefreshSeek`
-        // immediately when a queued transition-to-waiting order would
-        // land too far from a moved target.  Same machinery as
+        // Dispatch final-order seek refreshes detected during the per-tick
+        // movement loop. Same machinery as
         // `tick_refresh_seeks` — re-resolve the seek destination,
         // build a fresh single-element seek sequence, and re-launch
         // via `relaunch_seek_replacement`.  Runs before the LINE_SOUND
@@ -8819,9 +8720,9 @@ impl EngineInner {
                     .get_entity(target)
                     .map(|e| e.element_data().position_map())
                     .unwrap_or_default();
-                // The transition-arrival refresh arms SetMovingActionState
-                // before calling RefreshSeek, just like the ordinary
-                // PerformSeek target-drift branch.
+                // The final-order refresh arms SetMovingActionState before
+                // calling RefreshSeek, like the ordinary PerformSeek
+                // target-drift branch.
                 if let Some(actor) = self
                     .get_entity_mut(owner)
                     .and_then(|entity| entity.actor_data_mut())
