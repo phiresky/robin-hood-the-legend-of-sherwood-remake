@@ -110,6 +110,33 @@ pair as follows:
 | Twelve one-off command pairs | mixed | 12 |
 | **Total** |  | **192** |
 
+#### `Wait -> RaiseBow` ledger row — closed by `ece711a29`, rows are stale
+
+The 45 `Wait -> RaiseBow` rows above are the same traces as the frozen bow
+cohort recorded later in this document. Their classification logs are dated
+2026-08-01 11:44, before `ece711a29` (2026-08-01 19:18) required every
+requested sight-obstacle type bit in line-of-sight queries; the group was
+entirely an artifact of pre-fix logs. The post-fix `r05` sweep plus the
+targeted Savegame 038 validation cleared every member (12 exact EOF, 32
+later independent frontiers, 1 separate runner invariant failure). A fresh
+`e4e874cc9` rerun of three representatives confirms no RaiseBow boundary
+remains; their successor first boundaries are:
+
+- SuN1Sh1nE/Profile_004/Savegame_011/replay-001 (was frame 116): frame-25
+  RNG-order frontier — Rust consumes an extra `AiRandomValueRectangle`
+  draw (99..100) where Original recorded none for the frame.
+- SuN1Sh1nE/Profile_004/Savegame_001/replay-001 (was frame 212): frame-129
+  RNG-order frontier — Rust consumes draws 216..222 (`BoredAnimationChoice`,
+  `AiRandomValueRectangle`, `DefaultPostLook`, `VipIdleRemark`, and two
+  further `AiRandomValueRectangle`); Original ended the frame at draw 221.
+- SuN1Sh1nE/Profile_004/Savegame_016/replay-001 (was frame 173): frame-82
+  state frontier — Soldier 43 `actor.animation` 0 vs 2, `actor.command`
+  `Wait` vs `MoveOk`, `ai.substate` 11 vs 239, and
+  `frame.visibility_queries.length` 0 vs 1.
+
+These successors are recorded only for the next regrouping, not as
+RaiseBow evidence.
+
 The largest concrete cause is the posture-command lifetime shared by the
 `EnterHelpingClimb -> Wait` and `EnterBeggar -> Wait` groups. Original
 `RHElementActor::Instruct` first generates a `Bored -> Waiting` transition;
