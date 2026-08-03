@@ -2031,10 +2031,10 @@ impl EnemyAi {
                         .saturating_sub(combat::BAD_POSITION_MALUS as i16);
                     i += 1;
                 } else {
-                    list.swap_remove(i);
-                    // Note: cleanup is commutative for our scoring
-                    // purposes — swap_remove is fine even though the
-                    // reference's Delete(i)/i-- preserves order.
+                    // Original `SBList::Delete(i)` preserves proposal order.
+                    // Equal scores keep the first candidate, so a swap-remove
+                    // can authoritatively select a different combat position.
+                    list.remove(i);
                 }
             } else {
                 i += 1;
