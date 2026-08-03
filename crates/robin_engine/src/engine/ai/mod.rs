@@ -9317,6 +9317,16 @@ impl EngineInner {
                         "AlertSoldiers finalization for caller {caller} escaped its owner boundary"
                     )
                 }
+                crate::ai::CrossNpcAction::RelayStimulusToPatrolMembers {
+                    stimulus_type,
+                    members,
+                    ..
+                } => {
+                    panic!(
+                        "whole-patrol {stimulus_type:?} broadcast to {} members escaped its owner boundary",
+                        members.len()
+                    )
+                }
                 crate::ai::CrossNpcAction::InstructGatherPosition {
                     target,
                     position,
@@ -10163,6 +10173,15 @@ impl EngineInner {
                             defer_turn_instruction,
                         )
                     }
+                    crate::ai::CrossNpcAction::RelayStimulusToPatrolMembers { .. } => {
+                        self.requeue_isolated_synchronous_action(source_id, action.clone());
+                        self.process_synchronous_patrol_member_relay_for(
+                            sim,
+                            source_id,
+                            assets,
+                            defer_turn_instruction,
+                        )
+                    }
                     crate::ai::CrossNpcAction::RequestAlert { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
                         self.process_synchronous_alert_requests_for(sim, source_id, assets)
@@ -10516,6 +10535,14 @@ impl EngineInner {
             let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
             stimulus.info = info;
             stimulus.to_whole_patrol = to_whole_patrol;
+            tracing::trace!(
+                target: "patrol_relay",
+                source = source_id.index(),
+                target,
+                ?stimulus_type,
+                to_whole_patrol,
+                "synchronous SendStimulus drain"
+            );
             let handled = self.dispatch_think_with_drain_mode(
                 sim,
                 target_id,
@@ -10565,6 +10592,142 @@ impl EngineInner {
                     &stimulus,
                     &sender_ctx,
                     &sender_tick,
+                    assets,
+                    true,
+                    defer_turn_instruction,
+                );
+            }
+        }
+    }
+
+    /// Walk a patrol chief's members, delivering the whole-patrol stimulus to
+    /// each one that the chief currently 360-degree detects.
+    ///
+    /// The detection gate is evaluated inside the loop, immediately before the
+    /// member's own `think`, so a member whose visibility changed because an
+    /// earlier member's dispatch moved somebody is judged on the state that
+    /// dispatch left behind.
+    fn process_synchronous_patrol_member_relay_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        source_id: crate::element::EntityId,
+        assets: &LevelAssets,
+        defer_turn_instruction: bool,
+    ) {
+        let relays = self
+            .world
+            .entities
+            .get_mut(source_id)
+            .and_then(Entity::ai_controller_mut)
+            .map(crate::ai::AiController::take_pending_patrol_member_relays)
+            .unwrap_or_else(|| {
+                panic!(
+                    "patrol broadcast source {} has no AI controller",
+                    source_id.index()
+                )
+            });
+
+        for relay in relays {
+            let crate::ai::CrossNpcAction::RelayStimulusToPatrolMembers {
+                members,
+                stimulus_type,
+                info,
+            } = relay
+            else {
+                unreachable!("patrol-broadcast drain returned a different cross-NPC action")
+            };
+            let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
+            stimulus.info = info;
+            stimulus.to_whole_patrol = true;
+
+            for member in members {
+                let member_id = self.entity_id_for_index(member).unwrap_or_else(|| {
+                    panic!(
+                        "patrol broadcast from chief {} references missing member {member}",
+                        source_id.index()
+                    )
+                });
+
+                let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                let detected = {
+                    let building_sector = self
+                        .world
+                        .entities
+                        .get(source_id)
+                        .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+                        .unwrap_or_else(|| {
+                            panic!("patrol broadcast chief {} disappeared", source_id.index())
+                        });
+                    let entity = self.world.entities.get(source_id).unwrap_or_else(|| {
+                        panic!("patrol broadcast chief {} disappeared", source_id.index())
+                    });
+                    let chief_ctx = build_ai_context_from_entity(
+                        entity,
+                        self.control.frame_counter,
+                        building_sector,
+                        self.world.weather.is_forest_level,
+                        self.world.weather.ambiance,
+                        self.ai.standard_view_polygon_radius,
+                        &scratch.ai_entity_views,
+                        &scratch.ai_sight_obstacles,
+                        &self.world.fast_grid,
+                        &assets.hiking_paths,
+                        &self.ai.global.all_soldier_handles,
+                        self.control.sim_config.difficulty,
+                    );
+                    let chief_ai = entity.enemy_ai().unwrap_or_else(|| {
+                        panic!(
+                            "patrol broadcast chief {} is not an enemy soldier",
+                            source_id.index()
+                        )
+                    });
+                    chief_ai.detects_patrol_member_360(member, &chief_ctx)
+                };
+                tracing::trace!(
+                    target: "patrol_relay",
+                    chief = source_id.index(),
+                    member,
+                    ?stimulus_type,
+                    detected,
+                    "patrol broadcast member gate"
+                );
+                if !detected {
+                    continue;
+                }
+
+                let building_sector = self
+                    .world
+                    .entities
+                    .get(member_id)
+                    .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+                    .unwrap_or_else(|| panic!("patrol broadcast member {member} disappeared"));
+                let ctx = {
+                    let entity =
+                        self.world.entities.get(member_id).unwrap_or_else(|| {
+                            panic!("patrol broadcast member {member} disappeared")
+                        });
+                    build_ai_context_from_entity(
+                        entity,
+                        self.control.frame_counter,
+                        building_sector,
+                        self.world.weather.is_forest_level,
+                        self.world.weather.ambiance,
+                        self.ai.standard_view_polygon_radius,
+                        &scratch.ai_entity_views,
+                        &scratch.ai_sight_obstacles,
+                        &self.world.fast_grid,
+                        &assets.hiking_paths,
+                        &self.ai.global.all_soldier_handles,
+                        self.control.sim_config.difficulty,
+                    )
+                };
+                let tick_data = self.build_npc_tick_data(sim, member_id, &scratch, assets);
+                self.dispatch_think_with_drain_mode(
+                    sim,
+                    member_id,
+                    &stimulus,
+                    &ctx,
+                    &tick_data,
                     assets,
                     true,
                     defer_turn_instruction,

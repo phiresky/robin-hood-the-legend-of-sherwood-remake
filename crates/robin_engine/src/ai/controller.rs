@@ -1098,6 +1098,7 @@ impl AiController {
             if matches!(
                 action,
                 CrossNpcAction::SendStimulus { .. }
+                    | CrossNpcAction::RelayStimulusToPatrolMembers { .. }
                     | CrossNpcAction::RequestAlert { .. }
                     | CrossNpcAction::RequestThinkResult { .. }
                     | CrossNpcAction::ReportBackToOfficer { .. }
@@ -1125,6 +1126,7 @@ impl AiController {
                 matches!(
                     action,
                     CrossNpcAction::SendStimulus { .. }
+                        | CrossNpcAction::RelayStimulusToPatrolMembers { .. }
                         | CrossNpcAction::RequestAlert { .. }
                         | CrossNpcAction::RequestThinkResult { .. }
                         | CrossNpcAction::ReportBackToOfficer { .. }
@@ -1134,6 +1136,23 @@ impl AiController {
                         | CrossNpcAction::Say { .. }
                 )
             })
+    }
+
+    /// Drain only whole-patrol broadcasts, leaving every other queued action
+    /// in place so the broadcast's own member dispatches stay ordered against
+    /// them.
+    pub fn take_pending_patrol_member_relays(&mut self) -> Vec<CrossNpcAction> {
+        let mut relays = Vec::new();
+        let mut deferred = Vec::with_capacity(self.outbox.reentrant.cross_npc_actions.len());
+        for action in self.outbox.reentrant.cross_npc_actions.drain(..) {
+            if matches!(action, CrossNpcAction::RelayStimulusToPatrolMembers { .. }) {
+                relays.push(action);
+            } else {
+                deferred.push(action);
+            }
+        }
+        self.outbox.reentrant.cross_npc_actions = deferred;
+        relays
     }
 
     /// Drain only result-bearing officer reports, leaving ordinary deferred
