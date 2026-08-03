@@ -2208,12 +2208,22 @@ impl EnemyAi {
     ///   4. within 50 units and "beside me" (perpendicular > forward
     ///      component length) → true (no LOS required)
     ///   5. dot(view, forward) < 0 (target is behind me) → false
-    ///   6. full-ray LOS + spherical-radius check → final answer
+    ///   6. beyond the spherical, light-modulated view radius computed
+    ///      on the target's surface → false
+    ///   7. full-ray opaque LOS check → final answer
     ///
-    /// We do not yet have `ComputeViewRadius(positionViewer,
-    /// pActor->GetObstacle())`, so step 6 still uses the live real
-    /// radius as the upper bound before the final opaque LOS test.
+    /// Step 6 is not just a filter: at night and in fog computing the
+    /// radius samples the surrounding shadow-light sectors, and the
+    /// results land in the shared per-surface radius cache, so it has
+    /// to run for exactly the targets that reach it.
     fn is_detecting_180_degrees(&self, target: HumanHandle, ctx: &AiContext) -> bool {
+        tracing::trace!(
+            target,
+            viewer_x = ctx.position.x,
+            viewer_y = ctx.position.y,
+            in_building = ctx.in_building,
+            "is_detecting_180_degrees: entry"
+        );
         // Step 1: viewer in a building — always returns false.
         if ctx.in_building {
             return false;
@@ -2257,6 +2267,17 @@ impl EnemyAi {
         let dy = (target_detection_ground.y - viewer_eye_ground.y)
             * crate::position_interface::INVERSE_ASPECT_RATIO;
         let sq_distance = dx * dx + dy * dy;
+        tracing::trace!(
+            target,
+            viewer_x = viewer_eye_ground.x,
+            viewer_y = viewer_eye_ground.y,
+            viewer_z = viewer_eye_z,
+            target_x = target_detection_ground.x,
+            target_y = target_detection_ground.y,
+            sq_distance,
+            sq_view_radius = ctx.sq_self_view_radius,
+            "is_detecting_180_degrees: geometry"
+        );
         if sq_distance > ctx.sq_self_view_radius {
             return false;
         }
@@ -2283,6 +2304,40 @@ impl EnemyAi {
 
         // Step 5: forward half-plane.
         if dx * fx + dy * fy < 0.0 {
+            return false;
+        }
+
+        // Step 6: second, tighter radius gate against the spherical and
+        // light-modulated radius. At night and in fog this is where the
+        // viewer samples the surrounding shadow-light sectors, so it must
+        // run for every target that survives the gates above — and only for
+        // those, since the sampling is observable through the shared
+        // per-surface radius cache.
+        let sight_obstacles = ctx.obstacle_list();
+        let target_obstacle = view.obstacle_idx.map(|handle| {
+            sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
+                panic!(
+                    "is_detecting_180_degrees: target {target} requires missing sight obstacle {handle}"
+                )
+            })
+        });
+        let effective_view_radius = ctx.compute_view_radius_cached(view.obstacle_idx, || {
+            crate::ai_vision::compute_view_radius(
+                crate::coordinates::WorldPoint3D::new(
+                    viewer_eye_ground.x,
+                    viewer_eye_ground.y,
+                    viewer_eye_z,
+                ),
+                ctx.self_view_radius,
+                (ctx.self_view_direction[0], ctx.self_view_direction[1]),
+                ctx.self_real_half_aperture,
+                ctx.is_night_or_fog,
+                &ctx.fast_grid,
+                sight_obstacles,
+                target_obstacle,
+            )
+        });
+        if sq_distance > effective_view_radius * effective_view_radius {
             return false;
         }
 
