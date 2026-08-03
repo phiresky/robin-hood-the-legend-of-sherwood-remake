@@ -146,59 +146,23 @@ impl EngineInner {
             .map(|(_, _, order)| order.order_type)
     }
 
-    /// A make_* rewrite mutates the live C++ RHOrder action in place.
-    /// RHSprite observes that action change as a fresh animation even though
-    /// the order pointer is unchanged. Rust keys initialization by order ID,
-    /// so reseed a rewritten selected order and keep the lazy door-pass
-    /// mirror on the same action.
+    /// A make_* rewrite retargets the selected order's action in place and
+    /// leaves its identity alone, so the sprite keeps treating the order as
+    /// the one it is already playing: the next motion tick reports
+    /// IN_PROGRESS rather than a fresh START, and the row change alone drives
+    /// the frame reset. Only the lazily materialized door-pass mirror has to
+    /// be pointed at the new action.
     fn synchronize_rewritten_selected_order(
         &mut self,
         entity: EntityId,
         action_before: Option<OrderType>,
     ) {
-        let Some((seq_id, elem_idx, action_after)) = self
-            .orders
-            .sequence_manager
-            .current_order_for_actor(entity)
-            .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_type))
-        else {
+        let Some(action_after) = self.selected_order_action(entity) else {
             return;
         };
         if action_before == Some(action_after) {
             return;
         }
-        // `FaceOpponent` deliberately maps both logical sword tokens to the
-        // same concrete forward/backward/strafe animations; only the motion
-        // method changes between walk and fast. Original mutates the live
-        // order in place, so RHSprite sees the same unique ID and does not
-        // report a fresh START. Reseeding here incorrectly changed
-        // MovingSword to MovingFastSword on the MakeFast input frame.
-        if matches!(
-            (action_before, action_after),
-            (
-                Some(OrderType::WalkingWithSword),
-                OrderType::RunningWithSword
-            ) | (
-                Some(OrderType::RunningWithSword),
-                OrderType::WalkingWithSword
-            )
-        ) {
-            return;
-        }
-
-        let new_order_id = crate::order::alloc_order_id(&mut self.orders.next_order_id);
-        let order = self
-            .orders
-            .sequence_manager
-            .get_element_mut(seq_id, elem_idx)
-            .and_then(|element| element.orders.front_mut())
-            .unwrap_or_else(|| {
-                panic!(
-                    "rewritten selected order for {entity:?} disappeared at {seq_id:?}/{elem_idx}"
-                )
-            });
-        order.reseed_id(new_order_id);
-
         if let Some(actor) = self.get_entity_mut(entity).and_then(|e| e.actor_data_mut())
             && let Some(pass) = actor.active_door_pass.as_mut()
         {
@@ -761,10 +725,10 @@ impl EngineInner {
             }
         }
         if tracing::enabled!(tracing::Level::TRACE) {
-            let pre: Vec<(crate::order::OrderType, f32, f32)> = elem
+            let pre: Vec<(std::num::NonZeroU32, crate::order::OrderType, f32, f32)> = elem
                 .orders
                 .iter()
-                .map(|o| (o.order_type, o.target_x, o.target_y))
+                .map(|o| (o.order_id, o.order_type, o.target_x, o.target_y))
                 .collect();
             tracing::trace!(
                 owner = ?owner,
@@ -825,10 +789,10 @@ impl EngineInner {
         {
             elem.cleanup_duplicate_orders();
             if tracing::enabled!(tracing::Level::TRACE) {
-                let post: Vec<(crate::order::OrderType, f32, f32)> = elem
+                let post: Vec<(std::num::NonZeroU32, crate::order::OrderType, f32, f32)> = elem
                     .orders
                     .iter()
-                    .map(|o| (o.order_type, o.target_x, o.target_y))
+                    .map(|o| (o.order_id, o.order_type, o.target_x, o.target_y))
                     .collect();
                 tracing::trace!(
                     owner = ?owner,
