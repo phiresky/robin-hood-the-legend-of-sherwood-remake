@@ -3923,6 +3923,16 @@ impl EnemyAi {
         // frame-deferred `needs_patrol_reinit` flag. This also lets a patrol
         // member observe the chief assignment written moments earlier and
         // perform its reciprocal member -> chief visibility query in-order.
+        //
+        // Clear the reconnaissance report here rather than leaving it to the
+        // suspended `ReturnToDutyCommonStuff`. Because the whole return runs
+        // synchronously in the reference, callers observe a cleared report
+        // the instant the return completes — `SeekNextPoint` reads it on the
+        // very next statement to decide whether to say "ends search", and
+        // against an unreset report that decision inverts. Only this path is
+        // hoisted: the early returns above never reach the common tail and
+        // must leave the report standing.
+        self.base.my_reconnaissance_report.reset();
         self.base.outbox.reentrant.owner_work.push(
             AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
                 flags,

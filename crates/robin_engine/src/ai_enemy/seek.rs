@@ -594,11 +594,21 @@ impl EnemyAi {
             self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
 
             // Say "ends search" if nothing alarming was found.
-            if self.base.my_reconnaissance_report.report_type <= ReportType::Noise
-                && !self
-                    .seek_flags
-                    .intersects(SeekFlags::REPORT_OFFICER_AFTER | SeekFlags::LOOK_FOR_HELP_AFTER)
-            {
+            let quiet_report = self.base.my_reconnaissance_report.report_type <= ReportType::Noise;
+            let pending_followup = self
+                .seek_flags
+                .intersects(SeekFlags::REPORT_OFFICER_AFTER | SeekFlags::LOOK_FOR_HELP_AFTER);
+            tracing::trace!(
+                target: "robin_engine::ai_enemy::seek",
+                frame = ctx.frame,
+                me = self.base.me,
+                report_type = ?self.base.my_reconnaissance_report.report_type,
+                seek_flags = ?self.seek_flags,
+                quiet_report,
+                pending_followup,
+                "SeekNextPoint: seek list exhausted"
+            );
+            if quiet_report && !pending_followup {
                 self.base.say(Remark::EndsSearch);
             }
             return;

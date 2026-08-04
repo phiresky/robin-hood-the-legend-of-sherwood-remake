@@ -1820,6 +1820,14 @@ impl EnemyAi {
         if !me_snap.map(|f| f.is_shield_bearer).unwrap_or(false) {
             return false;
         }
+        tracing::trace!(
+            target: "robin_engine::ai_enemy::shield",
+            frame = ctx.frame,
+            me = self.base.me,
+            substate = ?self.base.current_substate,
+            from_hourglass = called_from_hourglass,
+            "RefreshArrowProtection: shield bearer passed substate gate"
+        );
 
         // Get nearest enemy
         let nearest_enemy =
@@ -1828,46 +1836,92 @@ impl EnemyAi {
             return false;
         }
 
+        // Both range gates below are `SquareDistance`, which stretches Y by
+        // INVERSE_ASPECT_RATIO before squaring — an isometric squared
+        // distance, not a Euclidean one. Measuring Euclidean here
+        // under-reports how far away a target is along the screen-vertical
+        // axis, which silently shrinks both thresholds.
+        let square_distance_to = |pos: &crate::ai::Position| -> f32 {
+            let v = pos_diff(pos, &ctx.position);
+            square_norm((v.0, v.1 * INVERSE_ASPECT_RATIO))
+        };
+
         // Are we already near enough to fight? (PHALANX_ATTACK_DISTANCE gate)
         if let Some(enemy_snap) = self.find_fighter(nearest_enemy, tick) {
-            let d = pos_diff(&enemy_snap.position, &ctx.position);
             let atk_dist = archer::PHALANX_ATTACK_DISTANCE as f32;
-            if square_norm(d) < atk_dist * atk_dist {
+            if square_distance_to(&enemy_snap.position) < atk_dist * atk_dist {
                 return false;
             }
         }
 
         // Scan all visible enemies for a dangerous one (using a bow).
-        // The reference walks the enemy detectables list
-        // and additionally gates each candidate on
-        // `pDetectable->IsSeenLastFrame() == true` — only enemies the
+        //
+        // This walks the soldier's own enemy detectable list in list
+        // order, gated on the `seen_last_frame` flag: only enemies the
         // soldier currently sees (or saw last frame) count as
         // dangerous, so a bow-armed enemy who is occluded or has
         // slipped out of the cone of vision can't trip a phalanx /
-        // shield-raise.  `tick.seen_last_frame_enemies` mirrors that
+        // shield-raise. `tick.seen_last_frame_enemies` mirrors that
         // flag from this NPC's own detectable list.
+        //
+        // Candidates are resolved through the unfiltered entity-view
+        // map rather than `nearby_fighters`: the latter is a
+        // swordfight-oriented snapshot capped at a 500px radius that
+        // also drops anyone who is not `is_able_to_fight`. Both
+        // exclusions are wrong here — an archer must be at least
+        // MIN_PROTECT_ARROW_DISTANCE away to qualify, and a PC
+        // shooting from a tree is exactly the threat this reaction
+        // exists to answer even though such a posture reads as
+        // "unable to fight".
         let mut dangerous_enemy: HumanHandle = 0;
-        for f in &tick.nearby_fighters {
-            if f.is_friendly || !f.is_able_to_fight {
+        for &handle in &tick.seen_last_frame_enemies {
+            let Some(view) = ctx.entity_view(handle) else {
+                tracing::warn!(
+                    target: "robin_engine::ai_enemy::shield",
+                    frame = ctx.frame,
+                    me = self.base.me,
+                    handle,
+                    "RefreshArrowProtection: enemy detectable has no entity view"
+                );
                 continue;
-            }
-            if !tick.seen_last_frame_enemies.contains(&f.handle) {
-                continue;
-            }
-            let d = pos_diff(&f.position, &ctx.position);
+            };
             let min_dist = archer::MIN_PROTECT_ARROW_DISTANCE as f32;
-            if square_norm(d) < min_dist * min_dist {
+            if square_distance_to(&view.position) < min_dist * min_dist {
                 continue;
             }
-            if f.action_state.is_bow() {
-                dangerous_enemy = f.handle;
+            if view.action_state.is_bow() {
+                dangerous_enemy = handle;
                 break;
             }
         }
+        tracing::trace!(
+            target: "robin_engine::ai_enemy::shield",
+            frame = ctx.frame,
+            me = self.base.me,
+            seen = ?tick.seen_last_frame_enemies,
+            candidates = ?tick
+                .seen_last_frame_enemies
+                .iter()
+                .map(|&h| {
+                    ctx.entity_view(h)
+                        .map(|v| (h, v.action_state, square_distance_to(&v.position)))
+                })
+                .collect::<Vec<_>>(),
+            dangerous_enemy,
+            "RefreshArrowProtection: dangerous-enemy scan"
+        );
 
         if dangerous_enemy == 0 {
             // No dangerous archer — check if friendly archers need protection
-            if self.number_of_nearby_archers_who_need_protection(ctx, tick) <= 0 {
+            let protectable = self.number_of_nearby_archers_who_need_protection(ctx, tick);
+            tracing::trace!(
+                target: "robin_engine::ai_enemy::shield",
+                frame = ctx.frame,
+                me = self.base.me,
+                protectable,
+                "RefreshArrowProtection: no dangerous archer"
+            );
+            if protectable <= 0 {
                 return false;
             }
             self.base.primary_target = nearest_enemy;
@@ -1877,10 +1931,28 @@ impl EnemyAi {
 
         // Focus primary target. Original Focus updates the NPC's view target;
         // it does not turn the actor's body or overwrite direction_goal.
+        // The shield's danger point is the primary target's position. Fall
+        // back to the entity-view map when the target is outside the
+        // `nearby_fighters` snapshot — a dangerous archer is by definition
+        // at least MIN_PROTECT_ARROW_DISTANCE away and may be posturing in
+        // a way that keeps it out of that list entirely.
         let (target_pos, target_elevation) = self
             .find_fighter(self.base.primary_target, tick)
             .map(|f| (f.position, f.elevation as f32))
-            .unwrap_or((ctx.position, ctx.elevation));
+            .or_else(|| {
+                ctx.entity_view(self.base.primary_target)
+                    .map(|v| (v.position, v.elevation))
+            })
+            .unwrap_or_else(|| {
+                tracing::warn!(
+                    target: "robin_engine::ai_enemy::shield",
+                    frame = ctx.frame,
+                    me = self.base.me,
+                    target = self.base.primary_target,
+                    "RefreshArrowProtection: primary target has no position snapshot"
+                );
+                (ctx.position, ctx.elevation)
+            });
         self.base.outbox.actor.set_focus(self.base.primary_target);
 
         // Try to join a phalanx
@@ -1927,6 +1999,14 @@ impl EnemyAi {
             );
         } else {
             // No phalanx slot — raise shield in place
+            tracing::trace!(
+                target: "robin_engine::ai_enemy::shield",
+                frame = ctx.frame,
+                me = self.base.me,
+                dangerous_enemy,
+                substate = ?self.base.current_substate,
+                "RefreshArrowProtection: raising shield in place"
+            );
             self.base.stop_all();
             self.base.raise_shield(target_pos, target_elevation);
 
