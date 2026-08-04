@@ -2441,14 +2441,17 @@ impl EngineInner {
             panic!("enemy AI self {me_handle} is absent from the fighter registry")
         }));
 
-        // Walk entity slots so each camp's fighter order matches Original's
-        // append-only registry even when PCs and soldiers are interleaved.
-        // Friendly scans still put `mpMe` first, as
+        // Walk the registration order so each camp's fighter order matches
+        // Original's append-only registry even when PCs and soldiers are
+        // interleaved. Friendly scans still put `mpMe` first, as
         // `FillListWithAllNearFighters` does explicitly.
-        for (id, entity) in self.world.entities.occupied() {
-            if id.index() == me_handle {
+        for id in self.world.fighter_registry_order() {
+            if id == npc_id {
                 continue;
             }
+            let Some(entity) = self.world.entities.get(id) else {
+                continue;
+            };
             let (position, snapshot) = match entity {
                 Entity::Soldier(soldier) => (
                     soldier.element.position_map(),
@@ -2501,10 +2504,13 @@ impl EngineInner {
         let radius = crate::parameters_ai::MAX_SWORDFIGHT_CONSIDERATION_RADIUS as u16;
         let mut out = Vec::new();
 
-        // Entity slots retain registration order, matching the Original's
-        // append-only camp fighter arrays (including the PC/soldier
-        // interleaving established during level creation).
-        for (id, entity) in self.world.entities.occupied() {
+        // Walk the registration order, matching the Original's append-only
+        // camp fighter arrays (including the PC/soldier interleaving
+        // established during level creation).
+        for id in self.world.fighter_registry_order() {
+            let Some(entity) = self.world.entities.get(id) else {
+                continue;
+            };
             let (handle, world, opponents, same_camp) = match entity {
                 Entity::Soldier(friend) => (
                     id.index(),
