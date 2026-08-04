@@ -3479,8 +3479,18 @@ impl EngineInner {
                                         else {
                                             return false;
                                         };
+                                        // The seek wrapper is chosen per animation
+                                        // arm, not per element: wall and ladder
+                                        // orders keep the SEEK flag while their
+                                        // Execute arms drive the sprite directly
+                                        // and hand the raw START edge back.
                                         flags.contains(crate::sequence::MoveFlags::SEEK)
                                             && target.is_some()
+                                            && element.current_order().is_some_and(|order| {
+                                                super::movement::perform_seek_calls_per_execute(
+                                                    order.order_type,
+                                                ) > 0
+                                            })
                                     })
                             });
                         let melee_selection =
@@ -5146,11 +5156,6 @@ impl EngineInner {
                 // of the latch sees the teleported point: the 3D position is
                 // still the pre-teleport one when the latch happens and is
                 // re-derived from the map afterwards.
-                //
-                // TODO: this branch also owes an increment recompute against
-                // the standing map goal after the teleport; nothing observable
-                // depends on it yet because the successor order installs its
-                // own increment.
                 let pre_teleport_position = self
                     .get_entity(entity_id)
                     .map(|entity| entity.position_iface().get_position());
@@ -5177,6 +5182,10 @@ impl EngineInner {
                     if let Some(dir) = lift_direction {
                         elem.set_direction_instantly(dir);
                     }
+                    // The teleported position is re-aimed at the map goal the
+                    // actor was already standing on; the direction is the one
+                    // just latched from the lift, so it is not recomputed.
+                    elem.sprite.position_iface.compute_increment_all(false);
                 }
             }
             OT::TransitionClimbingWallUpWaitingCrouched => {
