@@ -122,6 +122,30 @@ impl WorldState {
             })
     }
 
+    /// Actor ids in the order `AddElement` appended them to the engine's
+    /// camp fighter arrays.
+    ///
+    /// Every scan that models `GetFighter(camp, i)` must visit actors in this
+    /// order. Entity slots are allocated per kind and PC slots follow the
+    /// character roster rather than construction, so slot order is not a
+    /// substitute: a save can leave the four PCs in slots whose relative
+    /// order differs from the order the engine registered them.
+    pub(crate) fn fighter_registry_order(&self) -> Vec<EntityId> {
+        let mut ids: Vec<EntityId> = self
+            .entities
+            .occupied()
+            .filter(|(_, entity)| {
+                matches!(
+                    entity,
+                    crate::element::Entity::Pc(_) | crate::element::Entity::Soldier(_)
+                )
+            })
+            .map(|(id, _)| id)
+            .collect();
+        ids.sort_by_key(|&id| self.original_creation_order(id));
+        ids
+    }
+
     /// Reattach immutable level topology and sprite runtimes after decoding.
     ///
     /// The caller must first run `preflight_level_assets` across the
