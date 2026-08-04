@@ -1646,7 +1646,7 @@ impl FriendlyAi {
                 self.base
                     .my_reconnaissance_report
                     .update(ReportType::Enemy, seek_pos);
-                self.base.face_position(seek_pos);
+                self.base.face_position_3d_with_ctx(seek_pos, ctx);
                 self.base.launch_timer(30, ctx.frame);
             }
         }
@@ -1667,7 +1667,11 @@ impl FriendlyAi {
                 self.base.set_emoticon(EmoticonType::QuestionMark);
                 self.set_state(AiState::Wondering, Substate::WonderingWatchingWhistling);
                 self.base.seek_position = noise.origin;
-                self.base.face_position(noise.origin);
+                self.base.face_position_at_elevation_with_ctx(
+                    noise.origin,
+                    noise.elevation as f32,
+                    ctx,
+                );
                 self.base.launch_timer(70, ctx.frame);
             }
             NoiseType::Aaargh => {
@@ -1707,7 +1711,7 @@ impl FriendlyAi {
         self.base
             .my_reconnaissance_report
             .update(ReportType::Body, seek_pos);
-        self.base.face_position(seek_pos);
+        self.base.face_position_3d_with_ctx(seek_pos, ctx);
         self.base.launch_timer(AI_FIRST_LOOK_TIME as u32, ctx.frame);
     }
 
