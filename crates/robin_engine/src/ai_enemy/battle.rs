@@ -46,21 +46,20 @@ fn enough_nearer_friends_to_observe(
 #[track_caller]
 fn battle_friend_detected_360(
     ctx: &AiContext,
-    friend_position: Position,
+    friend_position_world: crate::coordinates::WorldPoint3D,
     friend_direction: u16,
     target: &crate::ai_entity_view::AiEntityView,
 ) -> bool {
-    super::soldier_detects_target_360(
-        ctx.position,
-        ctx.elevation,
-        ctx.self_is_rider,
+    super::soldier_detects_detection_point_360(
+        ctx.self_upright_eye_world,
         ctx.self_view_radius,
         ctx.in_building,
-        friend_position,
-        target.elevation,
-        target.posture,
-        target.is_rider,
-        friend_direction as i16,
+        crate::stealth::detection_point_world(
+            friend_position_world,
+            target.posture,
+            friend_direction as i16,
+            target.is_rider,
+        ),
         target.in_building,
         ctx.obstacle_list(),
     )
@@ -478,7 +477,7 @@ impl EnemyAi {
                     friend.handle
                 )
             });
-            if !battle_friend_detected_360(ctx, friend.position, friend.direction, target) {
+            if !battle_friend_detected_360(ctx, friend.position_world, friend.direction, target) {
                 continue;
             }
             self.base.list_us.push(friend.handle);
@@ -2931,6 +2930,7 @@ mod tests {
     fn battle_friend_visibility_is_evaluated_at_the_decision_call_site() {
         let mut target = pc_view();
         target.position.x = 100.0;
+        target.detection_position_world.x = 100.0;
         let ctx = AiContext {
             self_view_radius: 500,
             ..AiContext::default()
@@ -2938,7 +2938,7 @@ mod tests {
 
         assert!(battle_friend_detected_360(
             &ctx,
-            target.position,
+            target.detection_position_world,
             target.direction,
             &target,
         ));
@@ -2946,7 +2946,7 @@ mod tests {
         target.in_building = true;
         assert!(!battle_friend_detected_360(
             &ctx,
-            target.position,
+            target.detection_position_world,
             target.direction,
             &target,
         ));

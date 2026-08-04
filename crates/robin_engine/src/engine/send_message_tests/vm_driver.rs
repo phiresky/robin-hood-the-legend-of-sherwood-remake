@@ -77,7 +77,7 @@ fn animated_bonus(object_type: crate::element::ObjectType, active: bool) -> Enti
 
 fn empty_positions(
     engine: &EngineInner,
-) -> crate::entities::EntitySlots<Option<crate::coordinates::MapPoint>> {
+) -> crate::entities::EntitySlots<Option<crate::entities::BoundaryPosition>> {
     crate::entities::EntitySlots::filled(engine.world.entities.len(), None)
 }
 

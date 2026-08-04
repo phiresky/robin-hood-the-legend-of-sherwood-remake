@@ -1745,16 +1745,16 @@ impl EnemyAi {
         // kneeling target on the ground).
         let viewer_eye = ctx.self_upright_eye_world;
         let viewer_eye_z = viewer_eye.z;
-        let target_eye_z =
-            view.elevation + crate::stealth::detection_z_for_posture(view.posture, view.is_rider);
-        let target_detection_xy = crate::stealth::detection_point_xy(
-            view.detection_position,
+        let target_detection = crate::stealth::detection_point_world(
+            view.detection_position_world,
             view.posture,
             view.direction as i16,
+            view.is_rider,
         );
+        let target_eye_z = target_detection.z;
         let viewer_eye_ground = crate::coordinates::GroundPoint::new(viewer_eye.x, viewer_eye.y);
         let target_detection_ground =
-            crate::coordinates::GroundPoint::from_map_and_z(target_detection_xy, view.elevation);
+            crate::coordinates::GroundPoint::new(target_detection.x, target_detection.y);
         let dx = target_detection_ground.x - viewer_eye_ground.x;
         let dy = (target_detection_ground.y - viewer_eye_ground.y)
             * crate::position_interface::INVERSE_ASPECT_RATIO;
@@ -1870,8 +1870,12 @@ impl EnemyAi {
             view.posture,
             view.direction as i16,
         );
-        let target_eye_z =
-            view.elevation + crate::stealth::detection_z_for_posture(view.posture, view.is_rider);
+        let target_detection = crate::stealth::detection_point_world(
+            view.detection_position_world,
+            view.posture,
+            view.direction as i16,
+            view.is_rider,
+        );
         let sight_obstacles = ctx.obstacle_list();
         let target_obstacle = view.obstacle_idx.map(|handle| {
             sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
@@ -1898,11 +1902,7 @@ impl EnemyAi {
             effective_view_radius: ctx.self_view_radius as f32,
             target_is_active_and_outside_building: view.active && view.building_sector.is_none(),
             target_los: target_detection_xy,
-            target_world: crate::coordinates::WorldPoint3D::new(
-                target_detection_xy.x,
-                target_detection_xy.y + view.elevation,
-                target_eye_z,
-            ),
+            target_world: target_detection,
             target_posture: view.posture,
             target_action_state: view.action_state,
             target_is_pc: view.is_pc,
@@ -4399,6 +4399,7 @@ mod tests {
             original_creation_order: 41,
             position: pos,
             detection_position: crate::coordinates::MapPoint::new(pos.x, pos.y),
+            detection_position_world: crate::coordinates::WorldPoint3D::new(pos.x, pos.y, 0.0),
             direction: 0,
             posture: Posture::Upright,
             camp: Camp::Royalists,
@@ -4497,6 +4498,7 @@ mod tests {
             // actor position near the observer.
             let mut target = soldier_view(test_position(900.0, 0.0));
             target.detection_position = MapPoint::new(20.0, 0.0);
+            target.detection_position_world = crate::coordinates::WorldPoint3D::new(20.0, 0.0, 0.0);
             target.posture = posture;
             target.is_unconscious = unconscious;
             target.is_able_to_fight = false;
@@ -4552,6 +4554,7 @@ mod tests {
         let ai = EnemyAi::new(1);
         let mut target = soldier_view(test_position(900.0, 0.0));
         target.detection_position = MapPoint::new(100.0, 0.0);
+        target.detection_position_world = crate::coordinates::WorldPoint3D::new(100.0, 0.0, 0.0);
         target.passing_door = true;
         let mut views = AiEntityViewMap::new();
         views.insert(2, target);
@@ -5259,6 +5262,7 @@ mod tests {
                 sector: None,
                 level: 0,
             },
+            position_world: crate::coordinates::WorldPoint3D::ZERO,
             direction: 4,
             rank: ProfileRank::Officer,
             ai_state: AiState::Default,

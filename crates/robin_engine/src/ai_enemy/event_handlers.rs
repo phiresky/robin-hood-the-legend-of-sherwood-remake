@@ -2785,6 +2785,7 @@ mod tests {
                 level: 0,
             },
             detection_position: crate::coordinates::MapPoint::new(10.0, 20.0),
+            detection_position_world: crate::coordinates::WorldPoint3D::new(10.0, 20.0, 0.0),
             direction: 0,
             posture: Posture::Upright,
             camp: Camp::default(),

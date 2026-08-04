@@ -45,6 +45,8 @@ struct EnemyOpticalTarget {
     /// incomplete non-detectable fixture posture. A live list entry must have
     /// this and fails contextually at the visibility read when it does not.
     eye_z: Option<f32>,
+    /// `ComputeDetectionPoint` in world space. Absent alongside `eye_z`.
+    detection_point: Option<crate::coordinates::WorldPoint3D>,
     ground_z: f32,
     /// 16-sector facing.  Only used for `LeaningOut`: the detection
     /// point projects `direction × 40` forward.
@@ -68,11 +70,19 @@ struct EnemyOpticalTarget {
     blipped: bool,
 }
 
-pub(super) fn human_eye_point_for_visibility(entity: &Entity) -> (MapPoint, f32) {
+/// Eye point of a human, in both spaces the visibility code needs: the
+/// projected map point used by the cone / spatial LOS tests, and the
+/// world-space `ComputeEyesPoint` result the 3D opaque-reachability query
+/// takes verbatim. The world point is returned rather than rebuilt from the
+/// projection because projecting and un-projecting is not an exact round trip
+/// in binary32, and the query endpoints are compared bit for bit.
+pub(super) fn human_eye_point_for_visibility(
+    entity: &Entity,
+) -> (MapPoint, crate::coordinates::WorldPoint3D) {
     let Some(eye) = entity.compute_eyes_point(None) else {
         let position = entity.element_data().position();
         let position_map = entity.element_data().position_map();
-        return (position_map, position.z);
+        return (position_map, position);
     };
     let ground_z = entity.element_data().position().z;
     // `compute_eyes_point` returns world-space 3D, where the feet point is
@@ -87,7 +97,7 @@ pub(super) fn human_eye_point_for_visibility(entity: &Entity) -> (MapPoint, f32)
     // Those spaces diverge when viewer and target ground elevations differ;
     // split the query into LOS points and world-horizontal points before
     // changing this established projection invariant.
-    (visibility_eye_xy(eye, ground_z), eye.z)
+    (visibility_eye_xy(eye, ground_z), eye)
 }
 
 fn visibility_eye_xy(eye: crate::coordinates::WorldPoint3D, ground_z: f32) -> MapPoint {
@@ -102,14 +112,6 @@ fn detection_sharpness(view_speed: u16, visibility: f32) -> u16 {
 #[inline]
 fn accumulate_detection_sharpness(sum: u16, sharpness: u16) -> u16 {
     sum.wrapping_add(sharpness)
-}
-
-fn visibility_world_point(
-    projected: MapPoint,
-    ground_z: f32,
-    point_z: f32,
-) -> crate::coordinates::WorldPoint3D {
-    crate::coordinates::WorldPoint3D::new(projected.x, projected.y + ground_z, point_z)
 }
 
 /// Exact range half of `RHElementActorPC::SeesBlip`.
@@ -155,8 +157,9 @@ fn listen_distance_squared(
 
 struct SoldierSightContext {
     eye: MapPoint,
-    eye_z: f32,
-    ground_z: f32,
+    /// World-space `ComputeEyesPoint` result, used verbatim as the origin of
+    /// opaque-reachability queries.
+    eye_world: crate::coordinates::WorldPoint3D,
     dir: i16,
     layer: u16,
     view_radius: u16,
@@ -253,13 +256,11 @@ impl SoldierSightContext {
                 | crate::ai::Substate::SeekingOfficerGetAlertingReportFromSoldier
         );
         let ground_position = entity.ground_position();
-        let ground_z = entity.element_data().position().z;
-        let (eye, eye_z) = human_eye_point_for_visibility(entity);
+        let (eye, eye_world) = human_eye_point_for_visibility(entity);
 
         Some(Self {
             eye,
-            eye_z,
-            ground_z,
+            eye_world,
             dir: entity.element_data().direction(),
             layer: entity.element_data().layer(),
             view_radius: npc.view_radius,
@@ -853,9 +854,7 @@ impl EngineInner {
             return;
         }
 
-        let blip_ground_z = elem.position().z;
-        let (blip_eye_xy, blip_eye_z) = human_eye_point_for_visibility(entity);
-        let blip_eye_world = visibility_world_point(blip_eye_xy, blip_ground_z, blip_eye_z);
+        let (_blip_eye_xy, blip_eye_world) = human_eye_point_for_visibility(entity);
         let standard_radius = if self.ai.standard_view_polygon_radius > 0 {
             self.ai.standard_view_polygon_radius as f32
         } else {
@@ -898,8 +897,7 @@ impl EngineInner {
             {
                 continue;
             }
-            let (pc_eye_xy, pc_eye_z) = human_eye_point_for_visibility(pc_entity);
-            let pc_eye_world = visibility_world_point(pc_eye_xy, pc.element.position().z, pc_eye_z);
+            let (_pc_eye_xy, pc_eye_world) = human_eye_point_for_visibility(pc_entity);
             let super_detection = if pc.element.posture == Posture::OnShoulders {
                 BLIP_SUPER_DETECTION * BLIP_ON_SHOULDERS_FACTOR
             } else {
@@ -1252,7 +1250,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         world: &AiWorldView,
-        positions_before_movement: Option<&EntitySlots<Option<MapPoint>>>,
+        positions_before_movement: Option<&EntitySlots<Option<crate::entities::BoundaryPosition>>>,
         owner: Option<EntityId>,
         owner_tail_animation: Option<crate::order::OrderType>,
         dispatch_legacy_test_wakes: bool,
@@ -1452,7 +1450,7 @@ impl EngineInner {
     fn prepare_detection_forecasts_for_owner(
         &self,
         npc_id: EntityId,
-        positions_before_movement: Option<&EntitySlots<Option<MapPoint>>>,
+        positions_before_movement: Option<&EntitySlots<Option<crate::entities::BoundaryPosition>>>,
         tick_data: &mut AiPerTickData,
     ) {
         let forecast = |target_id: EntityId| {
@@ -1559,7 +1557,7 @@ impl EngineInner {
         &self,
         npc_id: EntityId,
         target_id: Option<EntityId>,
-        positions_before_movement: &EntitySlots<Option<MapPoint>>,
+        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
         tick_data: &mut AiPerTickData,
     ) {
         if let Some(target_id) = target_id {
@@ -1659,8 +1657,7 @@ impl EngineInner {
             )
         };
         let eye = viewer.eye;
-        let eye_z = viewer.eye_z;
-        let ground_z = viewer.ground_z;
+        let eye_world = viewer.eye_world;
         let dir = viewer.dir;
         let layer = viewer.layer;
         let view_radius = viewer.view_radius;
@@ -1976,7 +1973,7 @@ impl EngineInner {
                     });
                     let q = ai_vision::VisibilityQuery {
                         viewer_los: eye,
-                        viewer_world: visibility_world_point(eye, ground_z, eye_z),
+                        viewer_world: eye_world,
                         viewer_direction: dir,
                         view_forward,
                         view_radius,
@@ -1999,21 +1996,13 @@ impl EngineInner {
                             target.posture,
                             target.direction,
                         ),
-                        target_world: visibility_world_point(
-                            crate::stealth::detection_point_xy(
-                                target.position,
-                                target.posture,
-                                target.direction,
-                            ),
-                            target.ground_z,
-                            target.eye_z.unwrap_or_else(|| {
-                                panic!(
-                                    "live Enemy target {} for NPC {} has no detection Z",
-                                    target_id.index(),
-                                    npc_id.index()
-                                )
-                            }),
-                        ),
+                        target_world: target.detection_point.unwrap_or_else(|| {
+                            panic!(
+                                "live Enemy target {} for NPC {} has no detection point",
+                                target_id.index(),
+                                npc_id.index()
+                            )
+                        }),
                         target_posture: target.posture,
                         target_action_state: target.action_state,
                         target_is_pc: target.is_pc,
@@ -2568,6 +2557,7 @@ impl EngineInner {
                             handle: ss.id.index(),
                             active: ss.active,
                             position: ss_position,
+                            position_world: ss.position_world,
                             direction: ss.direction,
                             rank: ss.rank,
                             ai_state: ss.ai_state,
@@ -3150,6 +3140,14 @@ impl EngineInner {
                         eye_z: (!dead).then(|| {
                             ground_z + crate::stealth::detection_z_for_posture(posture, false)
                         }),
+                        detection_point: (!dead).then(|| {
+                            crate::stealth::detection_point_world(
+                                snapshot.position_world,
+                                posture,
+                                pc.element.direction(),
+                                false,
+                            )
+                        }),
                         ground_z,
                         direction: pc.element.direction(),
                         active: pc.element.active,
@@ -3172,11 +3170,11 @@ impl EngineInner {
                     let posture = soldier.element.posture;
                     let is_rider = soldier.soldier.rider;
                     let dead = soldier.npc.life_points <= 0;
-                    let position = world
+                    let (position, position_world) = world
                         .soldiers
                         .iter()
                         .find(|snapshot| snapshot.id == entity_id)
-                        .map(|snapshot| snapshot.position)
+                        .map(|snapshot| (snapshot.position, snapshot.position_world))
                         .unwrap_or_else(|| {
                             assert!(
                                 dead || !soldier.element.active || soldier.human.unconscious,
@@ -3187,7 +3185,10 @@ impl EngineInner {
                             // participate in the globally batched movement
                             // slice, so their live position is also their
                             // owner-boundary position.
-                            soldier.element.position_map()
+                            (
+                                soldier.element.position_map(),
+                                soldier.element.position(),
+                            )
                         });
                     Some(EnemyOpticalTarget {
                         id: entity_id,
@@ -3204,6 +3205,14 @@ impl EngineInner {
                         eye_z: (!dead).then(|| {
                             soldier.element.position().z
                                 + crate::stealth::detection_z_for_posture(posture, is_rider)
+                        }),
+                        detection_point: (!dead).then(|| {
+                            crate::stealth::detection_point_world(
+                                position_world,
+                                posture,
+                                soldier.element.direction(),
+                                is_rider,
+                            )
                         }),
                         ground_z: soldier.element.position().z,
                         direction: soldier.element.direction(),
@@ -3291,14 +3300,17 @@ impl EngineInner {
         };
         let target_element = target.element_data();
         let target_posture = target_element.posture;
-        let target_ground_z = target_element.position().z;
         let target_is_rider = matches!(target, Entity::Soldier(soldier) if soldier.soldier.rider);
         let target_position = target_element.position_map();
         let target_direction = target_element.direction();
         let target_los =
             crate::stealth::detection_point_xy(target_position, target_posture, target_direction);
-        let target_eye_z = target_ground_z
-            + crate::stealth::detection_z_for_posture(target_posture, target_is_rider);
+        let target_detection = crate::stealth::detection_point_world(
+            target_element.position(),
+            target_posture,
+            target_direction,
+            target_is_rider,
+        );
         let target_obstacle_handle = target_element.obstacle_index();
         let target_building_sector = self.entity_building_sector(target_element.sector());
         let target_active = target_element.active;
@@ -3336,7 +3348,7 @@ impl EngineInner {
 
         let q = ai_vision::VisibilityQuery {
             viewer_los: viewer.eye,
-            viewer_world: visibility_world_point(viewer.eye, viewer.ground_z, viewer.eye_z),
+            viewer_world: viewer.eye_world,
             viewer_direction: viewer.dir,
             view_forward: viewer.view_forward,
             view_radius: viewer.view_radius,
@@ -3353,7 +3365,7 @@ impl EngineInner {
             target_is_active_and_outside_building: target_active
                 && target_building_sector.is_none(),
             target_los,
-            target_world: visibility_world_point(target_los, target_ground_z, target_eye_z),
+            target_world: target_detection,
             target_posture,
             target_action_state,
             target_is_pc,
@@ -3485,8 +3497,7 @@ impl EngineInner {
             )
         };
         let eye = viewer.eye;
-        let eye_z = viewer.eye_z;
-        let ground_z = viewer.ground_z;
+        let eye_world = viewer.eye_world;
         let dir = viewer.dir;
         let layer = viewer.layer;
         let view_radius = viewer.view_radius;
@@ -3576,8 +3587,7 @@ impl EngineInner {
                 viewer_inside_building,
                 camp: viewer.camp,
                 eye,
-                eye_z,
-                ground_z,
+                eye_world,
                 dir,
                 layer,
                 view_forward,
@@ -3616,8 +3626,7 @@ impl EngineInner {
                 viewer_inside_building,
                 camp: viewer.camp,
                 eye,
-                eye_z,
-                ground_z,
+                eye_world,
                 dir,
                 layer,
                 view_forward,
@@ -3664,8 +3673,7 @@ impl EngineInner {
                 viewer_inside_building,
                 camp: viewer.camp,
                 eye,
-                eye_z,
-                ground_z,
+                eye_world,
                 dir,
                 layer,
                 view_forward,
@@ -3709,8 +3717,7 @@ impl EngineInner {
                 viewer_inside_building,
                 camp: viewer.camp,
                 eye,
-                eye_z,
-                ground_z,
+                eye_world,
                 dir,
                 layer,
                 view_forward,
@@ -3767,8 +3774,7 @@ impl EngineInner {
                 viewer_inside_building,
                 camp: viewer.camp,
                 eye,
-                eye_z,
-                ground_z,
+                eye_world,
                 dir,
                 layer,
                 view_forward,
@@ -3912,7 +3918,7 @@ impl EngineInner {
                 });
                 let q = ai_vision::VisibilityQuery {
                     viewer_los: ctx.eye,
-                    viewer_world: visibility_world_point(ctx.eye, ctx.ground_z, ctx.eye_z),
+                    viewer_world: ctx.eye_world,
                     viewer_direction: ctx.dir,
                     view_forward: ctx.view_forward,
                     view_radius: ctx.view_radius,
@@ -3930,15 +3936,7 @@ impl EngineInner {
                         target.posture,
                         target.direction,
                     ),
-                    target_world: visibility_world_point(
-                        crate::stealth::detection_point_xy(
-                            target.position,
-                            target.posture,
-                            target.direction,
-                        ),
-                        target.ground_z,
-                        target.eye_z,
-                    ),
+                    target_world: target.detection_point,
                     target_posture: target.posture,
                     target_action_state: target.action_state,
                     target_is_pc: target.is_pc,
@@ -4202,7 +4200,7 @@ impl EngineInner {
             } else if gate_open {
                 let q = ai_vision::ObjectVisibilityQuery {
                     viewer_los: ctx.eye,
-                    viewer_world: visibility_world_point(ctx.eye, ctx.ground_z, ctx.eye_z),
+                    viewer_world: ctx.eye_world,
                     viewer_direction: ctx.dir,
                     view_forward: ctx.view_forward,
                     view_radius: ctx.view_radius,
@@ -4365,8 +4363,7 @@ struct ViewContext<'a> {
     viewer_inside_building: bool,
     camp: Camp,
     eye: MapPoint,
-    eye_z: f32,
-    ground_z: f32,
+    eye_world: crate::coordinates::WorldPoint3D,
     dir: i16,
     layer: u16,
     view_forward: (f32, f32),
@@ -4587,7 +4584,6 @@ mod tests {
             eye.to_map(),
             "eye height must not be projected into the LOS point"
         );
-        assert_eq!(visibility_world_point(projected, 30.0, eye.z), eye);
     }
 
     #[test]

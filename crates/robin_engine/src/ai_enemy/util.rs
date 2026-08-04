@@ -186,6 +186,9 @@ pub struct CampSoldierInfo {
     /// reject them explicitly.
     pub active: bool,
     pub position: Position,
+    /// The same snapshot position in stored 3D world coordinates, which is
+    /// what `ComputeDetectionPoint` builds on.
+    pub position_world: crate::coordinates::WorldPoint3D,
     pub direction: u16,
     pub rank: ProfileRank,
     pub ai_state: AiState,
@@ -292,6 +295,35 @@ pub struct CampSoldierInfo {
 
 #[allow(clippy::too_many_arguments)]
 #[track_caller]
+/// The world-space half of `IsDetecting360Degrees`: the Original passes
+/// `ComputeEyesPoint(UPRIGHT)` and `ComputeDetectionPoint` straight into the
+/// distance test and the opaque ray, so callers holding those stored 3D points
+/// must not route them through the map projection and back.
+pub(crate) fn soldier_detects_detection_point_360(
+    viewer_eye: crate::coordinates::WorldPoint3D,
+    viewer_radius: u16,
+    viewer_in_building: bool,
+    target_detection: crate::coordinates::WorldPoint3D,
+    target_in_building: bool,
+    obstacles: crate::sight_obstacle::ObstacleList<'_>,
+) -> bool {
+    if viewer_in_building || target_in_building {
+        return false;
+    }
+    let dx = target_detection.x - viewer_eye.x;
+    let dy = (target_detection.y - viewer_eye.y) * INVERSE_ASPECT_RATIO;
+    let dz = target_detection.z - viewer_eye.z;
+    if dx * dx + dy * dy + dz * dz > (viewer_radius as f32).powi(2) {
+        return false;
+    }
+    crate::sight_obstacle::is_reachable_3d(
+        obstacles,
+        [viewer_eye.x, viewer_eye.y, viewer_eye.z],
+        [target_detection.x, target_detection.y, target_detection.z],
+        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+    )
+}
+
 pub(crate) fn soldier_detects_target_360(
     viewer_position: Position,
     viewer_ground_z: f32,

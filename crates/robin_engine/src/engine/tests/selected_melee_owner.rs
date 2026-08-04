@@ -32,10 +32,12 @@ fn set_map_position(engine: &mut EngineInner, actor: EntityId, x: f32, y: f32) {
         .set_position_map(MapPoint::new(x, y));
 }
 
-fn positions(engine: &EngineInner) -> crate::entities::EntitySlots<Option<MapPoint>> {
+fn positions(
+    engine: &EngineInner,
+) -> crate::entities::EntitySlots<Option<crate::entities::BoundaryPosition>> {
     let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
     for (id, entity) in engine.world.entities.occupied() {
-        positions[id] = Some(entity.element_data().position_map());
+        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
     }
     positions
 }

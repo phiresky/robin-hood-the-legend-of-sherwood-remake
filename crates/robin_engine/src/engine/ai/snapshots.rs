@@ -37,6 +37,9 @@ pub(super) struct PcSnapshot {
     /// optical targets but cannot reveal an NPC blip through `SeesBlip`.
     pub(super) playable: bool,
     pub(super) position: MapPoint,
+    /// The same boundary position in stored 3D world coordinates, which is
+    /// what `ComputeDetectionPoint` builds on.
+    pub(super) position_world: crate::coordinates::WorldPoint3D,
     /// PC viewer eye-point XY. Differs from feet position for
     /// LeaningOut and lying/dead postures, matching C++
     /// `ComputeEyesPoint` in `SeesBlip` / bonus discovery.
@@ -153,6 +156,8 @@ pub(super) struct SoldierSnapshot {
     /// retain their original active gates through `able_to_fight`.
     pub(super) active: bool,
     pub(super) position: MapPoint,
+    /// The same boundary position in stored 3D world coordinates.
+    pub(super) position_world: crate::coordinates::WorldPoint3D,
     pub(super) layer: u16,
     pub(super) camp: Camp,
     pub(super) ai_state: crate::ai::AiState,
@@ -299,6 +304,9 @@ pub(super) struct HumanTarget {
     pub(super) sector: Option<crate::position_interface::SectorHandle>,
     pub(super) layer: u16,
     pub(super) eye_z: f32,
+    /// `ComputeDetectionPoint` in world space, taken verbatim as the endpoint
+    /// of opaque-reachability queries.
+    pub(super) detection_point: crate::coordinates::WorldPoint3D,
     /// Exact ground Z for projected-map to world-horizontal conversion.
     pub(super) ground_z: f32,
     pub(super) posture: crate::element::Posture,
@@ -356,11 +364,9 @@ pub(super) struct ObjectTarget {
 }
 
 fn object_detection_world_position(
-    position: MapPoint,
-    ground_z: f32,
+    position: crate::coordinates::WorldPoint3D,
 ) -> crate::coordinates::WorldPoint3D {
-    let ground = crate::coordinates::GroundPoint::from_map_and_z(position, ground_z);
-    crate::coordinates::WorldPoint3D::new(ground.x, ground.y, ground_z + 1.0)
+    crate::coordinates::WorldPoint3D::new(position.x, position.y, position.z + 1.0)
 }
 
 /// Immutable start-of-tick PC and combat view consumed by AI phases.
@@ -409,7 +415,10 @@ impl EngineInner {
     pub(super) fn tick_enemy_ai_build_world_view(
         &mut self,
         assets: &LevelAssets,
-        owner_boundary: Option<(EntityId, &EntitySlots<Option<MapPoint>>)>,
+        owner_boundary: Option<(
+            EntityId,
+            &EntitySlots<Option<crate::entities::BoundaryPosition>>,
+        )>,
     ) -> AiWorldView {
         let pcs = self.tick_enemy_ai_build_pc_snapshots(assets, owner_boundary);
         let primary_target_multiplicity = self.tick_enemy_ai_build_primary_target_multiplicity();
@@ -432,7 +441,10 @@ impl EngineInner {
     pub(super) fn tick_enemy_ai_build_pc_snapshots(
         &mut self,
         assets: &LevelAssets,
-        owner_boundary: Option<(EntityId, &EntitySlots<Option<MapPoint>>)>,
+        owner_boundary: Option<(
+            EntityId,
+            &EntitySlots<Option<crate::entities::BoundaryPosition>>,
+        )>,
     ) -> Vec<PcSnapshot> {
         use crate::element::Posture;
 
@@ -454,12 +466,11 @@ impl EngineInner {
             // Eye-point XY: shift the eye 40 units forward along the
             // facing vector for LeaningOut.  Every other posture uses
             // the feet position — the Z offset is layered on below.
+            let boundary = owner_boundary
+                .map(|(owner, positions)| self.boundary_position(pc_id, owner, positions, true))
+                .unwrap_or_else(|| crate::entities::BoundaryPosition::of(&pc.element));
             let pos = {
-                let mut p = owner_boundary
-                    .map(|(owner, positions)| {
-                        self.position_at_owner_boundary(pc_id, owner, positions, true)
-                    })
-                    .unwrap_or_else(|| pc.element.position_map());
+                let mut p = boundary.map;
                 if pc.element.posture == Posture::LeaningOut {
                     let (dx, dy) = crate::element::direction_vector_16(pc.element.direction());
                     p.x += 40.0 * dx;
@@ -556,6 +567,7 @@ impl EngineInner {
                 active: element_active,
                 playable: pc.pc.playable,
                 position: pos,
+                position_world: boundary.world,
                 eye_position,
                 layer,
                 posture: pc.element.posture,
@@ -670,7 +682,10 @@ impl EngineInner {
     pub(super) fn tick_enemy_ai_build_soldier_snapshots(
         &mut self,
         assets: &LevelAssets,
-        owner_boundary: Option<(EntityId, &EntitySlots<Option<MapPoint>>)>,
+        owner_boundary: Option<(
+            EntityId,
+            &EntitySlots<Option<crate::entities::BoundaryPosition>>,
+        )>,
     ) -> Vec<SoldierSnapshot> {
         let mut soldier_snapshots: Vec<SoldierSnapshot> =
             Vec::with_capacity(self.world.entities.soldiers().count());
@@ -842,14 +857,17 @@ impl EngineInner {
                 s.npc.ai_substate(),
             );
 
+            let boundary = owner_boundary
+                .map(|(owner, positions)| {
+                    self.boundary_position(npc_id.into(), owner, positions, true)
+                })
+                .unwrap_or_else(|| crate::entities::BoundaryPosition::of(&s.element));
+
             soldier_snapshots.push(SoldierSnapshot {
                 id: npc_id.into(),
                 active: s.element.active,
-                position: owner_boundary
-                    .map(|(owner, positions)| {
-                        self.position_at_owner_boundary(npc_id.into(), owner, positions, true)
-                    })
-                    .unwrap_or_else(|| s.element.position_map()),
+                position: boundary.map,
+                position_world: boundary.world,
                 layer: s.element.layer(),
                 camp: s.soldier.cached_camp,
                 ai_state: s.npc.ai_state(),
@@ -1010,7 +1028,7 @@ impl EngineInner {
     pub(super) fn tick_enemy_ai_build_human_object_targets_for_npc(
         &self,
         npc_id: EntityId,
-        positions_before_movement: Option<&EntitySlots<Option<MapPoint>>>,
+        positions_before_movement: Option<&EntitySlots<Option<crate::entities::BoundaryPosition>>>,
     ) -> (
         std::collections::HashMap<EntityId, HumanTarget>,
         std::collections::HashMap<EntityId, ObjectTarget>,
@@ -1055,9 +1073,10 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(id) else {
                 continue;
             };
-            let position = positions_before_movement
-                .map(|positions| self.position_at_owner_boundary(id, npc_id, positions, true))
-                .unwrap_or_else(|| entity.element_data().position_map());
+            let boundary = positions_before_movement
+                .map(|positions| self.boundary_position(id, npc_id, positions, true))
+                .unwrap_or_else(|| crate::entities::BoundaryPosition::of(entity.element_data()));
+            let position = boundary.map;
             let layer = entity.element_data().layer();
             let posture = entity.element_data().posture;
             // These IDs came from a human-typed detectable list. Original
@@ -1087,6 +1106,8 @@ impl EngineInner {
             let ground_position = GroundPoint::from_map_and_z(position, ground_z);
             let eye_z = ground_z + crate::stealth::detection_z_for_posture(posture, is_rider);
             let direction = entity.element_data().direction();
+            let detection_point =
+                crate::stealth::detection_point_world(boundary.world, posture, direction, is_rider);
             let is_pc = matches!(entity, Entity::Pc(_));
             // Only PCs carry a guard; everything else is unguarded
             // by definition.
@@ -1130,6 +1151,7 @@ impl EngineInner {
                     sector: entity.element_data().sector(),
                     layer,
                     eye_z,
+                    detection_point,
                     ground_z,
                     posture,
                     direction,
@@ -1154,11 +1176,11 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(id) else {
                 continue;
             };
-            let position = positions_before_movement
-                .map(|positions| self.position_at_owner_boundary(id, npc_id, positions, true))
-                .unwrap_or_else(|| entity.element_data().position_map());
-            let world_position =
-                object_detection_world_position(position, entity.element_data().position().z);
+            let boundary = positions_before_movement
+                .map(|positions| self.boundary_position(id, npc_id, positions, true))
+                .unwrap_or_else(|| crate::entities::BoundaryPosition::of(entity.element_data()));
+            let position = boundary.map;
+            let world_position = object_detection_world_position(boundary.world);
             let ground_position = GroundPoint::new(world_position.x, world_position.y);
             let layer = entity.element_data().layer();
             let active = entity.element_data().active;
@@ -1200,9 +1222,9 @@ mod tests {
     }
 
     #[test]
-    fn object_detection_reconstructs_world_y_before_raising_the_ray() {
+    fn object_detection_raises_the_ray_above_the_stored_position() {
         assert_eq!(
-            object_detection_world_position(crate::coordinates::MapPoint::new(10.0, 18.0), 7.0),
+            object_detection_world_position(crate::coordinates::WorldPoint3D::new(10.0, 25.0, 7.0)),
             crate::coordinates::WorldPoint3D::new(10.0, 25.0, 8.0)
         );
     }

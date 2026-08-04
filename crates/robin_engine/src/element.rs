@@ -3563,24 +3563,16 @@ impl Entity {
         Some(belt)
     }
 
-    /// Live base 3D feet point for a Human actor:
-    /// `(map.x, map.y + elevation, elevation)`.  Y carries the
-    /// elevation so the codebase-wide invariant
-    /// `position.y = map.y + position.z` (set in
-    /// `position_interface::position_3d_from_map`) holds for every
-    /// `compute_*_point` output.
-    fn human_feet_point_3d_with_elevation(e: &ElementData, elevation: f32) -> WorldPoint3D {
-        WorldPoint3D {
-            x: e.position_map().x,
-            y: e.position_map().y + elevation,
-            z: elevation,
-        }
-    }
-
-    /// Shorthand that reads elevation from the position interface.
+    /// Live base 3D point every `compute_*_point` posture switch starts from:
+    /// the actor's stored 3D position.
+    ///
+    /// It satisfies `y = map.y + z`, but only the stored value is the numeric
+    /// contract. Recomputing it as `map.y + elevation` lands one bit away
+    /// whenever the map coordinates were themselves projected down from a
+    /// 3D-authoritative position, which then shows up in the endpoints of
+    /// opaque-reachability queries.
     fn human_feet_point_3d(&self) -> WorldPoint3D {
-        let elevation = self.position_iface().get_elevation();
-        Self::human_feet_point_3d_with_elevation(self.element_data(), elevation)
+        self.element_data().position()
     }
 
     /// Compute the hand point of a human actor.

@@ -2622,6 +2622,11 @@ mod tests {
                 original_creation_order: 41,
                 position: enemy_pos,
                 detection_position: MapPoint::new(enemy_pos.x, enemy_pos.y),
+                detection_position_world: crate::coordinates::WorldPoint3D::new(
+                    enemy_pos.x,
+                    enemy_pos.y,
+                    0.0,
+                ),
                 direction: 0,
                 posture: Posture::Upright,
                 camp: Camp::Lacklandists, // different from default (Royalists)
@@ -2971,6 +2976,7 @@ mod tests {
             original_creation_order: 41,
             position: pos,
             detection_position: MapPoint::new(pos.x, pos.y),
+            detection_position_world: crate::coordinates::WorldPoint3D::new(pos.x, pos.y, 0.0),
             direction: 0,
             posture: Posture::Upright,
             camp,

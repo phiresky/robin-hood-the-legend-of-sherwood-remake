@@ -513,6 +513,32 @@ pub fn detection_point_xy(ground: MapPoint, posture: Posture, direction: i16) ->
     MapPoint::new(ground.x + sx, ground.y + sy)
 }
 
+/// World-space detection point of a human actor.
+///
+/// `ComputeDetectionPoint` seeds its output with the actor's stored 3D
+/// position and then adds the posture offsets to it. Rebuilding that world Y
+/// as `map.y + elevation` is algebraically the same but not bit-identical:
+/// once a 3D-authoritative position has been projected to map coordinates
+/// (`map.y = world.y - z`), adding the elevation back rounds to a neighbouring
+/// float. The stored 3D position is the shared numeric contract, so callers
+/// that feed an opaque-reachability query must start from it.
+pub fn detection_point_world(
+    position: crate::coordinates::WorldPoint3D,
+    posture: Posture,
+    direction: i16,
+    is_rider: bool,
+) -> crate::coordinates::WorldPoint3D {
+    let mut point = position;
+    if posture == Posture::LeaningOut {
+        let (dx, dy) = crate::element_kinds::direction_vector_16(direction);
+        let (sx, sy) = leaning_out_xy_offset(dx, dy * crate::position_interface::ASPECT_RATIO);
+        point.x += sx;
+        point.y += sy;
+    }
+    point.z += detection_z_for_posture(posture, is_rider);
+    point
+}
+
 /// Apply the posture-dependent eye-point XY shift to a ground-plane
 /// position. This is the XY half of C++ `ComputeEyesPoint`.
 pub fn eye_point_xy(

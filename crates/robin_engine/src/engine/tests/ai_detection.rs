@@ -545,7 +545,7 @@ fn pc_noise_is_live_at_the_following_npc_slot_only() {
         complete_test_runtime_fixture(&mut engine, &mut assets);
         let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
         for (id, entity) in engine.world.entities.occupied() {
-            positions[id] = Some(entity.element_data().position_map());
+            positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
         }
         crate::sim_rng::with_seed(0xA013_0015, |sim| {
             engine.tick_actor_owner_envelopes(sim, &assets, &positions)
@@ -668,7 +668,7 @@ fn fused_owner_gates_keep_fried_frozen_and_inactive_original_boundaries() {
         .endurance = 100;
     let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
     for (id, entity) in engine.world.entities.occupied() {
-        positions[id] = Some(entity.element_data().position_map());
+        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
     }
 
     let (_, trace) = capture_actor_owner_envelope(|| {
@@ -797,7 +797,7 @@ fn patrol_member_thinks_before_the_chief_applies_its_direction() {
     engine.control.frame_counter = 0;
     let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
     for (id, entity) in engine.world.entities.occupied() {
-        positions[id] = Some(entity.element_data().position_map());
+        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
     }
 
     crate::sim_rng::with_seed(0xA013_7A70, |sim| {
@@ -897,7 +897,7 @@ fn patrol_refresh_uses_owner_relative_member_positions_and_spawn_fallback() {
         complete_test_runtime_fixture(&mut engine, &mut assets);
         let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
         for (id, entity) in engine.world.entities.occupied() {
-            positions[id] = Some(entity.element_data().position_map());
+            positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
         }
         let member = initial_member
             .unwrap_or_else(|| engine.add_entity(make_test_ai_soldier(Camp::Lacklandists)));
@@ -923,7 +923,10 @@ fn patrol_refresh_uses_owner_relative_member_positions_and_spawn_fallback() {
             MapPoint::new(50.0, 0.0)
         };
         if positions.get(member).is_some() {
-            positions[member] = Some(member_before);
+            positions[member] = Some(crate::entities::BoundaryPosition {
+                map: member_before,
+                world: crate::coordinates::WorldPoint3D::new(member_before.x, member_before.y, 0.0),
+            });
         }
         engine
             .get_entity_mut(member)
@@ -993,7 +996,7 @@ fn inactive_dead_patrol_chief_still_records_eligible_history() {
     engine.control.frame_counter = 1;
     let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
     for (id, entity) in engine.world.entities.occupied() {
-        positions[id] = Some(entity.element_data().position_map());
+        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
     }
 
     crate::sim_rng::with_seed(0xA013_DEAD, |sim| {
@@ -1065,7 +1068,7 @@ fn npc_post_detection_tail_is_wholly_creation_ordered_even_without_detection() {
 
     let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
     for (id, entity) in engine.world.entities.occupied() {
-        positions[id] = Some(entity.element_data().position_map());
+        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
     }
     let (_, trace) = capture_npc_post_detection_tail_phases(|| {
         crate::sim_rng::with_seed(0xA013_7A11, |sim| {
@@ -1125,7 +1128,7 @@ fn locked_owner_stops_at_gate_without_blocking_later_unlocked_owner() {
 
     let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
     for (id, entity) in engine.world.entities.occupied() {
-        positions[id] = Some(entity.element_data().position_map());
+        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
     }
     let (_, trace) = capture_npc_post_detection_tail_phases(|| {
         crate::sim_rng::with_seed(0xA013_10CC, |sim| {
@@ -1952,7 +1955,8 @@ fn npc_body_broadcast_respects_swapped_creation_order_boundary() {
         let mut positions_before_movement =
             crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
         for (entity_id, entity) in engine.world.entities.occupied() {
-            positions_before_movement[entity_id] = Some(entity.element_data().position_map());
+            positions_before_movement[entity_id] =
+                Some(crate::entities::BoundaryPosition::of(entity.element_data()));
         }
 
         crate::sim_rng::with_seed(0xA013_0B0D, |sim| {
@@ -2060,7 +2064,7 @@ fn inline_npc_recovery_precedes_simultaneous_body_inform_and_view() {
 
     let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
     for (id, entity) in engine.world.entities.occupied() {
-        positions[id] = Some(entity.element_data().position_map());
+        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
     }
     crate::sim_rng::with_seed(0xA013_5A6, |sim| {
         engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
@@ -2162,7 +2166,7 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
 
         let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
         for (id, entity) in engine.world.entities.occupied() {
-            positions[id] = Some(entity.element_data().position_map());
+            positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
         }
         crate::sim_rng::with_seed(0xA013_1007, |sim| {
             if receiver_before_source {
@@ -2310,7 +2314,7 @@ fn queued_fit_again_dispatches_at_owner_slot_for_soldiers_and_civilians() {
 
         let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
         for (id, entity) in engine.world.entities.occupied() {
-            positions[id] = Some(entity.element_data().position_map());
+            positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
         }
         crate::sim_rng::with_seed(0xA013_F17, |sim| {
             engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
@@ -2385,7 +2389,7 @@ fn frozen_all_does_not_defer_fit_again_recovery_effects() {
     engine.set_actors_frozen(true);
     let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
     for (id, entity) in engine.world.entities.occupied() {
-        positions[id] = Some(entity.element_data().position_map());
+        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
     }
     crate::sim_rng::with_seed(0xA013_F20, |sim| {
         engine.tick_actor_owner_envelopes(sim, &assets, &positions)
@@ -2438,7 +2442,7 @@ fn optical_detection_uses_owner_relative_positions_and_spawned_current_fallback(
         complete_test_runtime_fixture(&mut engine, &mut assets);
         let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
         for (id, entity) in engine.world.entities.occupied() {
-            positions[id] = Some(entity.element_data().position_map());
+            positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
         }
         let target_id =
             initial_target.unwrap_or_else(|| engine.add_entity(make_test_pc(Posture::Upright)));
@@ -2483,7 +2487,10 @@ fn optical_detection_uses_owner_relative_positions_and_spawned_current_fallback(
             MapPoint::new(5_000.0, 0.0)
         };
         if positions.get(target_id).is_some() {
-            positions[target_id] = Some(before);
+            positions[target_id] = Some(crate::entities::BoundaryPosition {
+                map: before,
+                world: crate::coordinates::WorldPoint3D::new(before.x, before.y, 0.0),
+            });
         }
         let Entity::Pc(target) = engine.get_entity_mut(target_id).unwrap() else {
             unreachable!()
@@ -2679,7 +2686,7 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
 
         let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
         for (id, entity) in engine.world.entities.occupied() {
-            positions[id] = Some(entity.element_data().position_map());
+            positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
         }
         crate::sim_rng::with_seed(0xA013_B12, |sim| {
             engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
@@ -2829,7 +2836,7 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
 
         let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
         for (id, entity) in engine.world.entities.occupied() {
-            positions[id] = Some(entity.element_data().position_map());
+            positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
         }
         crate::sim_rng::with_seed(0xA013, |sim| {
             engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
@@ -5818,7 +5825,7 @@ fn make_blipped_non_bonus(kind: crate::element::ElementKind) -> Entity {
 fn run_owner_envelopes(engine: &mut EngineInner, assets: &LevelAssets) {
     let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
     for (id, entity) in engine.world.entities.occupied() {
-        positions[id] = Some(entity.element_data().position_map());
+        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
     }
     crate::sim_rng::with_seed(0xB0A0_0013, |sim| {
         engine.tick_actor_owner_envelopes(sim, assets, &positions);
@@ -5987,7 +5994,7 @@ fn bonus_refresh_discovered_observes_owner_callback_order_and_spawned_later_slot
         complete_test_runtime_fixture(&mut engine, &mut assets);
         let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
         for (id, entity) in engine.world.entities.occupied() {
-            positions[id] = Some(entity.element_data().position_map());
+            positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
         }
         let mut spawned = None;
         crate::sim_rng::with_seed(0xB0A0_0CB, |sim| {

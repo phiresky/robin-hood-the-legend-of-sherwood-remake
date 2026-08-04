@@ -504,7 +504,7 @@ impl EngineInner {
         npc_id: EntityId,
         assets: &LevelAssets,
         mut enemy_detection_tick_data: Option<PendingEnemyDetectionTickData>,
-        positions_before_movement: Option<&EntitySlots<Option<MapPoint>>>,
+        positions_before_movement: Option<&EntitySlots<Option<crate::entities::BoundaryPosition>>>,
     ) {
         let stimuli = {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {

@@ -9,7 +9,7 @@ fn tick_production_owner_coordinator(
 ) {
     let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
     for (id, entity) in engine.world.entities.occupied() {
-        positions[id] = Some(entity.element_data().position_map());
+        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
     }
     engine.tick_actor_owner_envelopes(sim, assets, &positions);
 }
@@ -1763,7 +1763,8 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
         let mut positions_before_movement =
             crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
         for (entity_id, entity) in engine.world.entities.occupied() {
-            positions_before_movement[entity_id] = Some(entity.element_data().position_map());
+            positions_before_movement[entity_id] =
+                Some(crate::entities::BoundaryPosition::of(entity.element_data()));
         }
 
         // This mutation is the smallest deterministic stand-in for the

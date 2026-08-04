@@ -1821,13 +1821,9 @@ fn bound_bow_transition_advances_through_production_owner_coordinator() {
         shoot_mode: Some(ShootMode::Normal),
     };
     let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-    positions[owner] = Some(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .element_data()
-            .position_map(),
-    );
+    positions[owner] = Some(crate::entities::BoundaryPosition::of(
+        engine.get_entity(owner).unwrap().element_data(),
+    ));
 
     engine.tick_actor_owner_envelopes(
         &crate::sim_rng::test_context(),
@@ -1884,13 +1880,9 @@ fn unbound_bow_transition_still_uses_generic_execute() {
         .sequence_manager
         .element_in_progress(sequence, 0);
     let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-    positions[owner] = Some(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .element_data()
-            .position_map(),
-    );
+    positions[owner] = Some(crate::entities::BoundaryPosition::of(
+        engine.get_entity(owner).unwrap().element_data(),
+    ));
 
     engine.tick_actor_owner_envelopes(
         &crate::sim_rng::test_context(),
@@ -3592,7 +3584,8 @@ fn production_throw_apple_owner_emits_terminal_projectile_effect() {
         let mut positions_before_movement =
             crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
         for (entity_id, entity) in engine.world.entities.occupied() {
-            positions_before_movement[entity_id] = Some(entity.element_data().position_map());
+            positions_before_movement[entity_id] =
+                Some(crate::entities::BoundaryPosition::of(entity.element_data()));
         }
         let mut display = HostDisplayState::default();
         engine.tick_actor_owner_envelopes_with_display(
