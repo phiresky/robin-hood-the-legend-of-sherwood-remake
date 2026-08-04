@@ -5392,6 +5392,13 @@ impl EngineInner {
         })() else {
             return;
         };
+        tracing::trace!(
+            ?entity_id,
+            ?action,
+            ?snap_point,
+            ?posture,
+            "door transition completion side effects"
+        );
         if let Some(snap_point) = snap_point {
             self.set_transition_position_map_and_compute_position_all(
                 assets,

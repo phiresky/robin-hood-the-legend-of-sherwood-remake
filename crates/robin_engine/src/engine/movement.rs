@@ -6058,13 +6058,17 @@ impl EngineInner {
         // Elevation-line crossings detected during this tick. Dispatched
         // after the entity loop so `check_for_line_crossing` can borrow
         // `self` for the fast-grid query and obstacle swap.
-        // Each entry is `(entity_id, old_pos, new_pos, layer)` in projected
-        // map coordinates. Geometry queries convert at the call boundary.
-        let mut line_cross_checks: Vec<(EntityId, MapPoint, MapPoint, u16)> = Vec::new();
+        // Each entry is `(entity_id, old_pos, layer)` in projected map
+        // coordinates; the segment endpoint is resolved from the actor's
+        // live position when the checks are dispatched, because
+        // CheckForLineCrossing runs after the whole Execute arm and some
+        // arms reposition the actor in their completion branch. Geometry
+        // queries convert at the call boundary.
+        let mut line_cross_checks: Vec<(EntityId, MapPoint, u16)> = Vec::new();
         // Original collects all non-elevation LINE_CROSS kinds together,
         // sorts once by travel distance, then checks patch/script/sound flags
         // on each line in that order.
-        let mut non_elevation_cross_checks: Vec<(EntityId, MapPoint, MapPoint, u16)> = Vec::new();
+        let mut non_elevation_cross_checks: Vec<(EntityId, MapPoint, u16)> = Vec::new();
         // Final entity-seek orders whose live target no longer matches the
         // sampled endpoint. Original refreshes these only when the current
         // order itself terminates; merely exposing a stop-transition as the
@@ -7605,6 +7609,14 @@ impl EngineInner {
                     let should_snap =
                         !entity.position_iface().is_deviated() && order_tolerance == 0.0;
                     entity.position_iface_mut().zero_all_increments();
+                    tracing::trace!(
+                        ?entity_id,
+                        ?anim,
+                        ?goal,
+                        should_snap,
+                        from = ?entity.element_data().position_map(),
+                        "transition goal reached"
+                    );
                     if should_snap {
                         entity.element_data_mut().set_position_map(goal);
                     }
@@ -7613,17 +7625,15 @@ impl EngineInner {
                     }
                 }
                 // Actor::Hourglass runs CheckForLineCrossing after Execute
-                // returns, so use the final post-arrival position here. A
-                // TillLastFrame step may overshoot and snap back to its goal;
-                // the discarded overshoot must not trigger a boundary.
+                // returns, so the segment endpoint is resolved from the live
+                // position at dispatch time. A TillLastFrame step may
+                // overshoot and snap back to its goal; the discarded
+                // overshoot must not trigger a boundary.
                 if let Some((old_pos, layer, eligible)) = transition_crossing_start
                     && eligible
                 {
-                    let new_pos = entity.element_data().position_map();
-                    if self.world.fast_grid.level.map_bbox.contains_point(new_pos) {
-                        line_cross_checks.push((entity_id, old_pos, new_pos, layer));
-                        non_elevation_cross_checks.push((entity_id, old_pos, new_pos, layer));
-                    }
+                    line_cross_checks.push((entity_id, old_pos, layer));
+                    non_elevation_cross_checks.push((entity_id, old_pos, layer));
                 }
                 let transition_effect_motion = movement_execute_visible_motion(
                     order_action,
@@ -8610,10 +8620,8 @@ impl EngineInner {
                 "considered queuing elevation crossing"
             );
             if eligible_for_crossing {
-                if new_position_in_bounds {
-                    line_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
-                    non_elevation_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
-                }
+                line_cross_checks.push((entity_id, old_pos, entity_layer));
+                non_elevation_cross_checks.push((entity_id, old_pos, entity_layer));
             }
             // Order pops are drained after all actors so the current order is
             // still physically at the front here. Treat an already-queued
@@ -8708,6 +8716,31 @@ impl EngineInner {
         for entity_id in door_pass_transition_completion_effects {
             self.apply_door_pass_transition_completion_side_effects(assets, entity_id);
         }
+        // Resolve every queued crossing segment against the actor's live
+        // position now that all Execute-arm completion branches have run.
+        // CheckForLineCrossing samples GetPositionMap() at this point and
+        // gathers the crossed lines once; the elevation swap and the
+        // patch/script/sound tail then both work off that single segment,
+        // so the endpoint must not be re-sampled between the two passes.
+        // The in-bounds guard is the Original's GetBoxMap().IsInside early
+        // return, likewise evaluated on the live position.
+        let resolve_cross_checks = |engine: &Self, queued: Vec<(EntityId, MapPoint, u16)>| {
+            queued
+                .into_iter()
+                .filter_map(|(entity_id, old_pos, layer)| {
+                    let new_pos = engine.get_entity(entity_id)?.element_data().position_map();
+                    engine
+                        .world
+                        .fast_grid
+                        .level
+                        .map_bbox
+                        .contains_point(new_pos)
+                        .then_some((entity_id, old_pos, new_pos, layer))
+                })
+                .collect::<Vec<_>>()
+        };
+        let line_cross_checks = resolve_cross_checks(self, line_cross_checks);
+        let non_elevation_cross_checks = resolve_cross_checks(self, non_elevation_cross_checks);
         // Dispatch elevation-line crossings detected during the loop.
         // Runs as a post-pass after the per-actor movement update.
         // When a human actor crosses an elevation line, we also fire
