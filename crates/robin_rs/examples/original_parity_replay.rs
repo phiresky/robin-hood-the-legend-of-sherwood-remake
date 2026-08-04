@@ -2422,6 +2422,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
                 frame.frame_before, frame.frame_after
             );
         }
+        print_debug_element("before", &engine, &frame);
         robin_engine::movement_diagnostics::begin_parity_movement_capture();
         let tick_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             engine.perform_hourglass_with_body_gate(
@@ -2457,6 +2458,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         if debug_stage_timing {
             eprintln!("parity stage: completed Rust frame {}", frame.frame_after);
         }
+        print_debug_element("after", &engine, &frame);
         map.extend_runtime_entities(&engine, &frame);
         if debug_stage_timing {
             eprintln!(
@@ -4464,6 +4466,68 @@ impl From<TraceEntityKind> for EntityIdKind {
             TraceEntityKind::Net => Self::Net,
         }
     }
+}
+
+/// Dumps the order/sprite motion bookkeeping of one actor around a frame
+/// boundary. Selected with `PARITY_DEBUG_ELEMENT=<kind>:<index>`, where kind is
+/// `pc`, `soldier` or `civilian` and index is the Rust entity index — the same
+/// pair the divergence report prints as `Pc(PcId(103))`. The window is
+/// `PARITY_DEBUG_FROM`..=`PARITY_DEBUG_UNTIL`.
+fn print_debug_element(label: &str, engine: &Engine, frame: &TraceFrame) {
+    let Some(spec) = std::env::var_os("PARITY_DEBUG_ELEMENT") else {
+        return;
+    };
+    let frame_bound = |name: &str, fallback: u64| {
+        std::env::var(name)
+            .map(|value| {
+                value
+                    .parse::<u64>()
+                    .unwrap_or_else(|_| panic!("{name} must be a u64"))
+            })
+            .unwrap_or(fallback)
+    };
+    let from = frame_bound("PARITY_DEBUG_FROM", 0);
+    let until = frame_bound("PARITY_DEBUG_UNTIL", 10);
+    if frame.frame_after < from || frame.frame_after > until {
+        return;
+    }
+    let spec = spec.to_string_lossy().to_string();
+    let (kind, index) = spec
+        .split_once(':')
+        .expect("PARITY_DEBUG_ELEMENT must look like pc:342");
+    let index: u32 = index
+        .parse()
+        .expect("PARITY_DEBUG_ELEMENT index must be u32");
+    let id = match kind {
+        "pc" => EntityId::Pc(robin_engine::entity_id::PcId(index)),
+        "soldier" => EntityId::Soldier(robin_engine::entity_id::SoldierId(index)),
+        "civilian" => EntityId::Civilian(robin_engine::entity_id::CivilianId(index)),
+        other => panic!("unsupported PARITY_DEBUG_ELEMENT kind {other}"),
+    };
+    // The slot may not exist yet on early frames; stay quiet until it does
+    // rather than aborting the whole replay.
+    let Some(entity) = engine.get_entity(id) else {
+        return;
+    };
+    let sprite = &entity.element_data().sprite;
+    let actor = entity.actor_data().expect("debug element is an actor");
+    eprintln!(
+        "{label} frame {} {:?} order={:?} installed={:?} last_processed_order={} actor_motion={:?} sprite_motion={:?} last_action={:?} row={} frame={}/{} command={:?} execute_init={} last_execute_order={:?}",
+        frame.frame_after,
+        id,
+        engine.actor_order_type(id),
+        actor.installed_order.map(|order| order.order_id),
+        sprite.last_processed_order_id,
+        actor.continuation.motion_state,
+        sprite.last_motion_state,
+        sprite.last_action,
+        sprite.current_row,
+        sprite.current_frame,
+        sprite.frame_count,
+        engine.actor_command(id),
+        actor.execute_order_initialising,
+        actor.last_execute_order_id,
+    );
 }
 
 fn print_startup_actors(label: &str, engine: &Engine, frame: &TraceFrame, entity_map: &EntityMap) {

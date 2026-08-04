@@ -3822,6 +3822,18 @@ impl EngineInner {
                                 actor.continuation.motion_state =
                                     crate::sprite::MotionState::Terminated;
                             }
+                            tracing::trace!(
+                                target: "parity_motion_state",
+                                entity = ?entity_id,
+                                family = ?selected_owner_family,
+                                entry_order = ?selected_order,
+                                specialized_motion = ?specialized_execute_motion,
+                                element_retired = selected_element_retired,
+                                specialized_advanced = selected_specialized_order_advanced,
+                                live_successor = live_successor_exists,
+                                motion_state = ?actor.continuation.motion_state,
+                                "actor motion-state latch",
+                            );
                         }
                         // DoNextOrder may synchronously expose a real postponed
                         // successor through SetState/Ready. If it does not,
