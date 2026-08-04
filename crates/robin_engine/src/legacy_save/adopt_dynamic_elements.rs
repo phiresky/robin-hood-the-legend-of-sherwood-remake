@@ -281,6 +281,13 @@ impl LegacyDynamicElementAdoptionPlan {
                 construction_count,
             })?;
 
+        tracing::trace!(
+            target: "robin_engine::creation_order",
+            "dynamic plan: saved_counter={saved_creation_counter} boundary={} records={} constructed={construction_count} post_load={post_load_creation_counter}",
+            topology.static_creation_order_boundary,
+            envelope.records.len(),
+        );
+
         Ok(Self {
             elements,
             static_creation_orders: topology.creation_order_by_entity.clone(),
