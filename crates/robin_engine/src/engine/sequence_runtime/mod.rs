@@ -117,7 +117,7 @@ impl EngineInner {
     ) {
         match self.try_dispatch_move_path(sim, assets, owner, seq_id, elem_idx, dest, move_action) {
             MovePathOutcome::Success | MovePathOutcome::Pending => {}
-            MovePathOutcome::ActorGone => {
+            MovePathOutcome::ActorGone | MovePathOutcome::Refused => {
                 self.orders
                     .sequence_manager
                     .element_impossible(seq_id, elem_idx);

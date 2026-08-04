@@ -430,7 +430,7 @@ impl EngineInner {
                             .expect("retranslated movement owner lost actor data")
                             .installed_order = installed_order;
                     }
-                    MovePathOutcome::ActorGone => {
+                    MovePathOutcome::ActorGone | MovePathOutcome::Refused => {
                         self.orders
                             .sequence_manager
                             .element_impossible(seq_id, elem_idx);

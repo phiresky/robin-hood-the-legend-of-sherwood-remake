@@ -1543,6 +1543,10 @@ pub(crate) enum MovePathOutcome {
     /// The entity slot is empty or the element vanished mid-dispatch.
     /// Caller should mark the element `Impossible`.
     ActorGone,
+    /// The actor's current state forbids the move outright (contest
+    /// archer). The refusal bark has already been played; the caller marks
+    /// the element `Impossible`.
+    Refused,
 }
 
 impl GoalShape {
@@ -10490,6 +10494,26 @@ impl EngineInner {
                     },
                 );
             }
+        }
+
+        // A PC disguised as an anonymous archer is pinned to its shooting
+        // spot for the duration of the contest: the move is refused outright
+        // and the hero complains instead of walking away.
+        if owner_is_pc
+            && self.world.entities.get(owner).is_some_and(|e| {
+                e.element_data().posture == crate::element::Posture::AnonymousArcher
+            })
+        {
+            tracing::debug!(
+                actor = ?owner,
+                "try_dispatch_move_path: anonymous archer may not move",
+            );
+            self.hero_speaking(
+                _assets,
+                owner,
+                crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+            );
+            return MovePathOutcome::Refused;
         }
 
         // Before queuing a path request, if the move is flagged

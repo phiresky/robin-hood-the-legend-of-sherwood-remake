@@ -269,11 +269,25 @@ impl EngineInner {
         // emergency hero speech fire at low amount_of_speaking
         // settings where it should have stayed silent.
         if !expression_allowed_by_amount(expression, amount_of_speaking) {
+            tracing::trace!(
+                pc = ?pc_id,
+                expression,
+                priority,
+                amount_of_speaking,
+                "hero_speaking: rejected by amount_of_speaking",
+            );
             return;
         }
 
         // CanHeroSay check: chorus timer + forbidden expression list
         if self.control.chorus_timer > 0 && (priority & SPEECH_ALWAYS) == 0 {
+            tracing::trace!(
+                pc = ?pc_id,
+                expression,
+                priority,
+                chorus_timer = self.control.chorus_timer,
+                "hero_speaking: rejected by chorus timer",
+            );
             return;
         }
 
@@ -307,8 +321,22 @@ impl EngineInner {
         };
 
         if is_forbidden && (priority & SPEECH_ALWAYS) == 0 {
+            tracing::trace!(
+                pc = ?pc_id,
+                expression,
+                priority,
+                "hero_speaking: rejected by forbidden-expression list",
+            );
             return;
         }
+
+        tracing::trace!(
+            pc = ?pc_id,
+            expression,
+            priority,
+            frame = self.control.frame_counter,
+            "hero_speaking: queued exclamation",
+        );
 
         // Queue the expression (drained after tick)
         self.feedback
