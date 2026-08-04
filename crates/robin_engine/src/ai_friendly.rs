@@ -1578,10 +1578,7 @@ impl FriendlyAi {
             self.base.non_script_lock(AiLockFlags::BUSY);
             self.base.was_busy = true;
             self.base
-                .outbox
-                .reentrant
-                .self_stimuli
-                .push(StimulusType::EventReturnToDuty);
+                .fire_self_stimulus(StimulusType::EventReturnToDuty);
             return;
         }
 
