@@ -4023,6 +4023,20 @@ impl EngineInner {
                             Some(actor_id),
                             crate::profiles::Action::Listen as u32,
                         ));
+                    // The message's gameplay half runs inline, the same way
+                    // the beggar entry handoff applies it: for a selected PC
+                    // the action reselection stops the group at Normal
+                    // priority even though Listen is already the current
+                    // action, which discards anything the entry transition
+                    // postponed behind itself (a move instructed while the
+                    // PC was listening never resumes).  An unselected PC only
+                    // stores the action.
+                    self.set_pc_action_from_message(
+                        assets,
+                        0,
+                        actor_id,
+                        crate::profiles::Action::Listen,
+                    );
                     tracing::debug!(
                         actor = ?actor_id,
                         "Listen: entry transition done → CountingDown, MSG_SELECT_ACTION sent"

@@ -1021,6 +1021,25 @@ impl EngineInner {
                         | Command::LeaveHelpingClimb
                         | Command::LeaveSpy
                         | Command::LeaveTree => {
+                            if cmd == Command::EnterBeggar {
+                                // "To avoid beggar & run bug": the beggar
+                                // entry stops the actor from inside its own
+                                // translation, so the stop runs after this
+                                // element has already taken over and pushed
+                                // whatever it replaced into its postponed
+                                // slot. Walking that slot is the point — a
+                                // move the beggar entry displaced is
+                                // interrupted here and never resumes. The
+                                // element is not the actor's selection yet on
+                                // this side, so root the stop at it directly.
+                                let resolver = Self::priority_resolver(&self.world.entities);
+                                self.orders.sequence_manager.stop_owner_from_root(
+                                    owner,
+                                    Some((seq_id, elem_idx)),
+                                    crate::sequence::SequencePriority::Normal,
+                                    &resolver,
+                                );
+                            }
                             let barrier = StealthCommandContext {
                                 entities: &mut self.world.entities,
                                 sequence_manager: &mut self.orders.sequence_manager,

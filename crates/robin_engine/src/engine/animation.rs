@@ -1683,6 +1683,11 @@ pub(super) struct ExecuteSideOutcomes {
     /// entering the aiming state, restoring the PC's remembered action (and
     /// the messenger action when that PC is selected).
     pub pc_bow_equip_action: Vec<EntityId>,
+    /// PCs whose helping-to-climb entry transition reached DONE. Original
+    /// forwards `MSG_SELECT_ACTION(HELP_TO_CLIMB)` right after setting the
+    /// stance, which reselects the already-current action and therefore
+    /// still stops a selected PC's group at Normal priority.
+    pub pc_helping_climb_action: Vec<EntityId>,
 }
 
 fn forwards_pc_bow_action_on_start(
@@ -5112,6 +5117,12 @@ impl EngineInner {
                                         .execute_sides
                                         .beggar_wait_handoffs
                                         .push((entity_id, false));
+                                }
+                                OrderType::TransitionWaitingUprightHelpingClimbing => {
+                                    completion_outcomes
+                                        .execute_sides
+                                        .pc_helping_climb_action
+                                        .push(entity_id);
                                 }
                                 _ => {}
                             }
