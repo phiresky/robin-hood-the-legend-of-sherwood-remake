@@ -67,7 +67,15 @@ impl crate::engine::EngineInner {
         // Therefore manager `current_element_for_actor` cannot recognize the
         // initial wrapper here; the explicit sequence identity supplied by
         // every caller is the authoritative selected Seek.
+        let frame = self.control.frame_counter;
         if let Some(entity) = self.get_entity_mut(owner) {
+            tracing::trace!(
+                target: "parity_owner_handoff",
+                frame,
+                ?owner,
+                goal = ?entity.position_iface().map_goal(),
+                "refresh seek clearing selected movement goal"
+            );
             entity.position_iface_mut().set_map_goal(MapPoint::ZERO);
         }
         self.stop_owner_active_mechanics(owner);

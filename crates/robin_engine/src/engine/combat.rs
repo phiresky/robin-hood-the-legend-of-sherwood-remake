@@ -3239,6 +3239,31 @@ impl EngineInner {
                 .set_direction_goal(facing);
         }
 
+        let pending_carry_init = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::Carry)
+                    && actor.execute_order_initialising
+                    && actor.installed_order.is_some_and(|installed| {
+                        installed.order_type
+                            == crate::order::OrderType::TransitionWaitingUprightCarryingCorpse
+                    }))
+                .then_some(ability.target)
+                .flatten()
+            });
+        if let Some(target_id) = pending_carry_init {
+            // The pickup transition's first Execute is where the carried
+            // body stops running its own sequence element and starts being
+            // driven by the carrier, and where an indoor pickup re-selects
+            // the pair and lights the body's hulk. Both are visible one
+            // frame later than the element's translation, which happens in
+            // the manager pass after the carrier's own slot.
+            self.actor_freeze_execution(target_id);
+            self.apply_carry_building_hulk(actor_id, target_id);
+        }
+
         let pending_heal_facing = self
             .get_entity(actor_id)
             .and_then(Entity::actor_data)

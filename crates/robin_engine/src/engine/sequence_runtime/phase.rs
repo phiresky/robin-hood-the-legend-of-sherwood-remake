@@ -1389,21 +1389,15 @@ impl EngineInner {
                                             self.orders
                                                 .sequence_manager
                                                 .element_in_progress(seq_id, elem_idx);
-                                            // Freeze the target's
-                                            // execution, cascading
-                                            // the interrupt on its
-                                            // current sequence
-                                            // element so a postponed
-                                            // successor resumes
-                                            // cleanly after the carry
-                                            // ends.
-                                            self.actor_freeze_execution(target_id);
-                                            // Inside a building,
-                                            // re-select + start hulk
-                                            // on the carried target
-                                            // flashes the body
-                                            // through walls.
-                                            self.apply_carry_building_hulk(owner, target_id);
+                                            // Freezing the target and
+                                            // starting its hulk belong to
+                                            // the pickup order's first
+                                            // Execute, not to translation:
+                                            // the carrier's slot for this
+                                            // frame has already run, so the
+                                            // body keeps its own selected
+                                            // order until the carrier
+                                            // actually begins lifting it.
                                         }
                                         AbilityBeginResult::Impossible => {
                                             self.orders
