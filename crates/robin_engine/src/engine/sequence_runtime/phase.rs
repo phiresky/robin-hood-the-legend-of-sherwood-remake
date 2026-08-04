@@ -742,30 +742,34 @@ impl EngineInner {
                                         .sequence_manager
                                         .element_terminated(seq_id, elem_idx);
                                 }
-                                continue;
-                            }
-
-                            match bow_shot::begin_bow_shot(
-                                &mut self.world.entities,
-                                &mut self.orders.sequence_manager,
-                                owner,
-                                target,
-                                seq_id,
-                                elem_idx,
-                                shoot_once,
-                                ammo_count,
-                                Some(shoot_mode),
-                                &mut self.orders.next_order_id,
-                            ) {
-                                BeginShotResult::Started => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_in_progress(seq_id, elem_idx);
-                                }
-                                BeginShotResult::Impossible => {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
+                                // Fall through to the shared mpOrder
+                                // publication: the rejected body still leaves
+                                // an accepted element whose transition prefix
+                                // becomes the actor's current order this same
+                                // frame.
+                            } else {
+                                match bow_shot::begin_bow_shot(
+                                    &mut self.world.entities,
+                                    &mut self.orders.sequence_manager,
+                                    owner,
+                                    target,
+                                    seq_id,
+                                    elem_idx,
+                                    shoot_once,
+                                    ammo_count,
+                                    Some(shoot_mode),
+                                    &mut self.orders.next_order_id,
+                                ) {
+                                    BeginShotResult::Started => {
+                                        self.orders
+                                            .sequence_manager
+                                            .element_in_progress(seq_id, elem_idx);
+                                    }
+                                    BeginShotResult::Impossible => {
+                                        self.orders
+                                            .sequence_manager
+                                            .element_impossible(seq_id, elem_idx);
+                                    }
                                 }
                             }
                         }
