@@ -4199,12 +4199,15 @@ impl AiController {
                     // fresh EVENT_VIEW on the next detection pass.
                     self.outbox.actor.blink_all_enemies = true;
                     // Face panic center and wait.
-                    self.face_position(Position {
-                        x: self.panic_center_x,
-                        y: self.panic_center_y,
-                        sector: None,
-                        level: 0,
-                    });
+                    self.face_position_with_ctx(
+                        Position {
+                            x: self.panic_center_x,
+                            y: self.panic_center_y,
+                            sector: None,
+                            level: 0,
+                        },
+                        ctx,
+                    );
                     let hiding_time = crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME as u32
                         + crate::sim_rng::u32(
                             sim,
@@ -4232,12 +4235,15 @@ impl AiController {
                     self.current_substate = Substate::FleeingHiding;
                     if self.directed_panic {
                         // Look back at the panic source.
-                        self.face_position(Position {
-                            x: self.panic_center_x,
-                            y: self.panic_center_y,
-                            sector: None,
-                            level: 0,
-                        });
+                        self.face_position_with_ctx(
+                            Position {
+                                x: self.panic_center_x,
+                                y: self.panic_center_y,
+                                sector: None,
+                                level: 0,
+                            },
+                            ctx,
+                        );
                     } else {
                         // Look in a random direction.
                         self.face_direction(

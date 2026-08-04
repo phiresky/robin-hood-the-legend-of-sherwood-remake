@@ -604,7 +604,7 @@ impl EnemyAi {
                 match stimulus_type {
                     StimulusType::EventTimer => {
                         if let Some(lost_pos) = self.is_beer_still_available(ctx) {
-                            self.base.face_position(lost_pos);
+                            self.base.face_position_3d_with_ctx(lost_pos, ctx);
                             self.base.set_emoticon(EmoticonType::Thunderstorm);
                             self.set_state(AiState::Wondering, Substate::WonderingAleAway);
                             self.base.launch_timer(30, ctx.frame);
@@ -614,7 +614,7 @@ impl EnemyAi {
                     }
                     StimulusType::EventReachPoint => {
                         if let Some(lost_pos) = self.is_beer_still_available(ctx) {
-                            self.base.face_position(lost_pos);
+                            self.base.face_position_3d_with_ctx(lost_pos, ctx);
                             self.base.set_emoticon(EmoticonType::Thunderstorm);
                             self.set_state(AiState::Wondering, Substate::WonderingAleAway);
                             self.base.launch_timer(30, ctx.frame);
@@ -1839,7 +1839,8 @@ impl EnemyAi {
                     StimulusType::EventReachPoint | StimulusType::EventTimer => {
                         // Arrived at noise source — look around
                         self.set_state(AiState::Seeking, Substate::SeekingJustWatching);
-                        self.base.face_position(self.base.seek_position);
+                        self.base
+                            .face_position_3d_with_ctx(self.base.seek_position, ctx);
                         self.base
                             .launch_timer(parameters_ai::AI_FIRST_LOOK_TIME as u32, ctx.frame);
                     }
@@ -4542,7 +4543,8 @@ impl EnemyAi {
             Substate::AttackingRiderChargingGettingDistance => {
                 if stimulus_type == StimulusType::EventReachPoint {
                     // Face the seek position (enemy last known pos)
-                    self.base.face_position(self.base.seek_position);
+                    self.base
+                        .face_position_3d_with_ctx(self.base.seek_position, ctx);
                     self.set_state(
                         AiState::Attacking,
                         Substate::AttackingRiderChargingReturning,
@@ -5474,7 +5476,8 @@ impl EnemyAi {
                         AiState::Attacking,
                         Substate::AttackingTooProudToAttackRetireTurn,
                     );
-                    self.base.face_position(self.base.seek_position);
+                    self.base
+                        .face_position_3d_with_ctx(self.base.seek_position, ctx);
                 }
             }
 
@@ -5739,7 +5742,8 @@ impl EnemyAi {
             // Avenger on roof: reached pos, face seek & wait.
             Substate::AttackingRunToAvengerOnRoof => {
                 if stimulus_type == StimulusType::EventReachPoint {
-                    self.base.face_position(self.base.seek_position);
+                    self.base
+                        .face_position_3d_with_ctx(self.base.seek_position, ctx);
                     self.set_state(AiState::Attacking, Substate::AttackingWaitForAvengerOnRoof);
                     self.base.launch_timer(100, ctx.frame);
                 }

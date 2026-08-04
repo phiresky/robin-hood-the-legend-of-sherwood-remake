@@ -1360,11 +1360,15 @@ impl EnemyAi {
             // SquareDistance reads GetPosition(), whose horizontal Y is map
             // Y plus ground elevation, before applying the aspect stretch.
             // Comparing projected map Y wrongly excludes soldiers on a
-            // different elevation from the guard.
+            // different elevation from the guard.  The norm it takes is the
+            // full three-dimensional one, so the height gap between a tower
+            // guard and the ground below counts toward the alert radius: drop
+            // the Z term and the cry reaches soldiers standing too far below.
             let dx = view.position.x - my_pos.x;
+            let dz = view.elevation - ctx.elevation;
             let dy = ((view.position.y + view.elevation) - (my_pos.y + ctx.elevation))
                 * INVERSE_ASPECT_RATIO;
-            let sq_dist = dx * dx + dy * dy;
+            let sq_dist = dx * dx + dy * dy + dz * dz;
 
             if sq_dist < sqr_radius {
                 // This soldier hears the cry. Rank

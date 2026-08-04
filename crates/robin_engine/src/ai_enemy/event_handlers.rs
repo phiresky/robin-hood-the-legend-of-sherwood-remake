@@ -701,7 +701,7 @@ impl EnemyAi {
                                 self.gather_position_instructed = false;
                                 self.base.friends_are_alerted = true;
                                 self.officers_position = caller.position;
-                                self.base.face_position(caller.position);
+                                self.base.face_position_3d_with_ctx(caller.position, ctx);
                                 self.set_state(
                                     AiState::Seeking,
                                     Substate::SeekingGroupCalledByOfficer,
@@ -2382,7 +2382,7 @@ impl EnemyAi {
                 0,
             );
             let seek = self.base.seek_position;
-            self.base.face_position(seek);
+            self.base.face_position_3d_with_ctx(seek, ctx);
             self.base.launch_timer(1, ctx.frame);
         } else {
             // Switch on rank between soldier/knight (go investigate) and
@@ -2404,7 +2404,7 @@ impl EnemyAi {
                 0,
             );
             let seek = self.base.seek_position;
-            self.base.face_position(seek);
+            self.base.face_position_3d_with_ctx(seek, ctx);
             // Focus on the interesting object — locks the eye-tracking
             // cone onto the arrow's interesting object so the detection
             // cone narrows along the threat axis.
@@ -2496,7 +2496,11 @@ impl EnemyAi {
                 self.base.say(Remark::SeesObject);
                 self.base.interesting_object = obj;
                 if let Some(view) = ctx.entity_view(obj) {
-                    self.base.face_position(view.position);
+                    self.base.face_position_at_elevation_with_ctx(
+                        view.position,
+                        f32::from(view.elevation as u16),
+                        ctx,
+                    );
                 }
                 self.base.set_emoticon(EmoticonType::QuestionMark);
                 self.set_state(AiState::Wondering, Substate::WonderingMoneyReactiontime);
@@ -2523,7 +2527,11 @@ impl EnemyAi {
                 self.base.break_macro();
                 self.base.say(Remark::SeesObject);
                 if let Some(view) = ctx.entity_view(obj) {
-                    self.base.face_position(view.position);
+                    self.base.face_position_at_elevation_with_ctx(
+                        view.position,
+                        f32::from(view.elevation as u16),
+                        ctx,
+                    );
                 }
                 self.base.set_emoticon(EmoticonType::QuestionMark);
                 self.base.interesting_object = obj;
@@ -2637,7 +2645,7 @@ impl EnemyAi {
         self.base.seek_position = *pos;
         // Focus on the position — engages `EYES_STARE` before facing it.
         self.base.outbox.actor.set_focus_point(*pos);
-        self.base.face_position(*pos);
+        self.base.face_position_3d_with_ctx(*pos, ctx);
         self.react(
             parameters_ai::AI_MAX_STANDARD_REACTIONTIME as u16,
             ctx,
@@ -2679,7 +2687,7 @@ impl EnemyAi {
         };
         self.base.say(remark);
 
-        self.base.face_position(*pos);
+        self.base.face_position_3d_with_ctx(*pos, ctx);
         self.base.set_emoticon(EmoticonType::QuestionMark);
         self.base
             .launch_timer(combat::APPLE_REACTIONTIME as u32, ctx.frame);
