@@ -2719,6 +2719,15 @@ impl EnemyAi {
                 self.base.launch_timer(200, ctx.frame);
             }
         }
+
+        // HeyFolksLookThere is a plain synchronous call, so everything above
+        // still runs inside the Think that suspended here and its EndThink
+        // dispatches whatever completion the tail raised. Rust parks the tail
+        // outside that Think, so close the completion boundary explicitly —
+        // otherwise a no-op Face in the tail (`already_turned`) is discarded
+        // and the actor is stranded in a *_TURNING substate waiting on an
+        // EVENT_DONE that never arrives.
+        self.base.finish_suspended_common_handler();
     }
 
     /// Default bored behavior — look sidewards randomly on post.

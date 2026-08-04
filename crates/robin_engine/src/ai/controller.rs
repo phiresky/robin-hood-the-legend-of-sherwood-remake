@@ -4402,7 +4402,7 @@ impl AiController {
         self.finish_suspended_common_handler();
     }
 
-    fn finish_suspended_common_handler(&mut self) {
+    pub(crate) fn finish_suspended_common_handler(&mut self) {
         if self.couldnt_reachpoint {
             self.couldnt_reachpoint = false;
             self.outbox
