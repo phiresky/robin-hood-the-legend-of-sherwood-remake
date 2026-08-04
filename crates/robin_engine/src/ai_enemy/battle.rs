@@ -2117,6 +2117,19 @@ impl EnemyAi {
                 c &= my_line_jump.is_none();
                 c &= !ctx.self_is_rider;
                 c &= !target_in_lift;
+                tracing::trace!(
+                    target: "robin_engine::ai_enemy::charge",
+                    frame = ctx.frame,
+                    me = self.base.me,
+                    charge_weapon = self.sword_is_charge_weapon,
+                    courage = self.get_courage(),
+                    working_distance,
+                    has_line_jump = my_line_jump.is_some(),
+                    is_rider = ctx.self_is_rider,
+                    target_in_lift,
+                    charge = c,
+                    "ConsiderCharge: reaction-time charge decision"
+                );
                 if c {
                     self.base.say(crate::ai::Remark::Warcry);
                 }
@@ -2454,6 +2467,15 @@ impl EnemyAi {
             }
         }
 
+        tracing::trace!(
+            target: "robin_engine::ai_enemy::charge",
+            frame = ctx.frame,
+            me = self.base.me,
+            ok,
+            target,
+            begin_charge,
+            "RiderCharge: destination search"
+        );
         if !ok {
             return false;
         }

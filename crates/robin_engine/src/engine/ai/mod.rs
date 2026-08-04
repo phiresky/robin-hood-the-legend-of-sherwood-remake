@@ -4755,6 +4755,13 @@ impl EngineInner {
             });
         ai.cached_frame = self.control.frame_counter;
         ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
+        tracing::trace!(
+            target: "robin_engine::engine::speech",
+            frame = self.control.frame_counter,
+            owner = owner.index(),
+            reason,
+            "Say rejected"
+        );
         let invoke_finished_callback = if let Some(stimulus) = Self::speech_finished_stimulus(flags)
         {
             ai.outbox.reentrant.self_stimuli.insert(0, stimulus);
@@ -4888,6 +4895,14 @@ impl EngineInner {
             ai.cached_frame = self.control.frame_counter;
             ai.register_log_line(crate::ai::LogLineType::Speak, attempt.remark as u16);
         }
+        tracing::trace!(
+            target: "robin_engine::engine::speech",
+            frame = self.control.frame_counter,
+            owner = owner.index(),
+            remark = ?attempt.remark,
+            flags = attempt.flags,
+            "Say attempt"
+        );
 
         if blipped {
             return self.reject_npc_speech_attempt(owner, flags, 0);
