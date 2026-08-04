@@ -2948,13 +2948,26 @@ impl NativeContext<'_, '_> {
             return;
         };
 
-        if !self
+        let entity = self
             .entities
             .get(owner)
-            .expect("UnlockAI resolved actor disappeared during native dispatch")
-            .is_npc()
-        {
+            .expect("UnlockAI resolved actor disappeared during native dispatch");
+
+        if !entity.is_npc() {
             tracing::warn!("UnlockAI: tried to unlock the AI of a PC ({actor})");
+            return;
+        }
+
+        // The native only reaches the AI when the actor is currently
+        // script-locked; unlocking an already-unlocked NPC is a script
+        // error and does nothing. (The authored `UnlockAi` sequence
+        // command has no such guard and always runs the unlock.)
+        let script_locked = entity
+            .ai_controller()
+            .expect("UnlockAI target validated as NPC must own an AI controller")
+            .ai_is_script_locked();
+        if !script_locked {
+            tracing::warn!("UnlockAI: tried to unlock the AI of an NPC which is not locked");
             return;
         }
 
