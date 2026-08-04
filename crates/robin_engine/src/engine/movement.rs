@@ -2291,6 +2291,12 @@ impl EngineInner {
                 elem.sprite
                     .position_iface
                     .update_position_map_scaled(distance * speed_factor);
+                let wait = elem
+                    .sprite
+                    .wait_time(elem.sprite.current_row, elem.sprite.current_frame);
+                elem.sprite
+                    .position_iface
+                    .update_forecasted_movement(distance * speed_factor, wait + 1);
                 elem.update_grid_cell();
             }
             (state, elem.sprite.current_frame)
@@ -8400,6 +8406,33 @@ impl EngineInner {
                         }
                         new_pos_x = pm.x;
                         new_pos_y = pm.y;
+                    }
+
+                    // Refresh the movement forecast used to lead moving
+                    // targets (arrow / stone / apple aiming).  This sits at
+                    // the same point as the position commit: after the
+                    // anti-collision step, using the effective distance and
+                    // the wait time of the frame the sprite has just
+                    // reached.  A blocked step aborts before reaching it.
+                    //
+                    // The fast climb arms commit two motion calls in one
+                    // tick; only the later one's distance survives in the
+                    // forecast, so prefer the second speed when it moved.
+                    if !entity.position_iface().is_blocked() {
+                        let forecast_distance = match split_motion_speeds {
+                            Some((_, second)) if second != 0.0 => second,
+                            Some((first, _)) => first,
+                            None => speed,
+                        };
+                        if forecast_distance != 0.0 {
+                            let elem = entity.element_data_mut();
+                            let wait = elem
+                                .sprite
+                                .wait_time(elem.sprite.current_row, elem.sprite.current_frame);
+                            elem.sprite
+                                .position_iface
+                                .update_forecasted_movement(forecast_distance, wait + 1);
+                        }
                     }
 
                     // Water splash titbit emission.  Every walk tick

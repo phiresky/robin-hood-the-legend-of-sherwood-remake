@@ -1694,6 +1694,11 @@ pub(crate) fn perform_jump_ground_motion(
     );
     if distance != 0.0 {
         pi.update_position_map_scaled(distance);
+        let wait = sprite.wait_time(sprite.current_row, sprite.current_frame);
+        sprite
+            .position_iface
+            .update_forecasted_movement(distance, wait + 1);
+        let pi = &mut sprite.position_iface;
 
         let increment = pi.get_increment_map();
         if (increment.x != 0.0 || increment.y != 0.0) && pi.is_goal_reached_undeviated() {
