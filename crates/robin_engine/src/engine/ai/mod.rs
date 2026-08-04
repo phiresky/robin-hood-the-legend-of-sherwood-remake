@@ -1358,22 +1358,42 @@ impl EngineInner {
         &self,
         target: EntityId,
         owner: EntityId,
-        positions_before_movement: &EntitySlots<Option<MapPoint>>,
+        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
         owner_actor_complete: bool,
     ) -> MapPoint {
-        let current = self
-            .world
-            .entities
-            .get(target)
-            .unwrap_or_else(|| {
-                panic!(
-                    "owner {} requires position for missing entity {}",
-                    owner.index(),
-                    target.index()
-                )
-            })
-            .element_data()
-            .position_map();
+        self.boundary_position(
+            target,
+            owner,
+            positions_before_movement,
+            owner_actor_complete,
+        )
+        .map
+    }
+
+    /// The same boundary choice, keeping both stored coordinate spaces. Direct
+    /// actor geometry (`ComputeEyesPoint` / `ComputeDetectionPoint`) reads the
+    /// 3D position, which is not recoverable from the map projection without
+    /// rounding.
+    pub(super) fn boundary_position(
+        &self,
+        target: EntityId,
+        owner: EntityId,
+        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
+        owner_actor_complete: bool,
+    ) -> crate::entities::BoundaryPosition {
+        let current = crate::entities::BoundaryPosition::of(
+            self.world
+                .entities
+                .get(target)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "owner {} requires position for missing entity {}",
+                        owner.index(),
+                        target.index()
+                    )
+                })
+                .element_data(),
+        );
         let target_has_not_moved = target.index() > owner.index()
             || (!owner_actor_complete && target.index() == owner.index());
         if target_has_not_moved {
@@ -1424,7 +1444,7 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         owner: EntityId,
-        positions_before_movement: &EntitySlots<Option<MapPoint>>,
+        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
         owner_actor_complete: bool,
     ) -> SimScratch {
         let mut views = build_entity_views_without_forecast(self);
@@ -2102,6 +2122,7 @@ impl EngineInner {
                 handle: other_id.index(),
                 active: s.element.active,
                 position: cs_position,
+                position_world: s.element.position(),
                 direction: s.element.direction() as u16,
                 rank: enemy_ai.soldier_profile_rank,
                 ai_state: s.npc.ai_state(),
@@ -4584,7 +4605,7 @@ impl EngineInner {
     #[cfg(test)]
     pub(super) fn refresh_npc_views(
         &mut self,
-        positions_before_movement: &EntitySlots<Option<MapPoint>>,
+        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
     ) {
         if self.actors_frozen() {
             return;
@@ -4601,7 +4622,7 @@ impl EngineInner {
     pub(super) fn refresh_npc_view_for_npc(
         &mut self,
         npc_id: EntityId,
-        positions_before_movement: &EntitySlots<Option<MapPoint>>,
+        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
     ) {
         if self.actors_frozen() {
             return;
@@ -4649,7 +4670,7 @@ impl EngineInner {
                     // Thus a later-created target has not moved yet, while
                     // an earlier-created target has. EntityId::index is the
                     // append-only legacy creation slot in this port.
-                    let boundary_map = if target_id.index() > npc_id.index() {
+                    let boundary = if target_id.index() > npc_id.index() {
                         positions_before_movement
                             .get(target_id)
                             .copied()
@@ -4661,25 +4682,12 @@ impl EngineInner {
                                 )
                             })
                     } else {
-                        target.element_data().position_map()
+                        crate::entities::BoundaryPosition::of(target.element_data())
                     };
-                    let target_position = target.position_iface().get_position();
-                    if boundary_map == target.element_data().position_map() {
-                        // Production runs RefreshView inside the live
-                        // creation-ordered owner walk, so a later target is
-                        // still at this authoritative 3D position. Preserve
-                        // jump/flying Z rather than deriving it from a plane.
-                        crate::coordinates::GroundPoint::new(target_position.x, target_position.y)
-                    } else {
-                        // Test-facing globally-batched seam: reconstruct the
-                        // preserved map point on the target's active plane.
-                        let z = target
-                            .position_iface()
-                            .get_plane()
-                            .map(|plane| plane.compute_z(boundary_map.x, boundary_map.y))
-                            .unwrap_or(target_position.z);
-                        crate::coordinates::GroundPoint::from_map_and_z(boundary_map, z)
-                    }
+                    // The recorded boundary carries the target's own 3D
+                    // position, so jump/flying Z survives and nothing has to
+                    // be re-derived from the plane.
+                    crate::coordinates::GroundPoint::new(boundary.world.x, boundary.world.y)
                 })
             });
 
@@ -5545,7 +5553,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        positions_before_movement: &EntitySlots<Option<MapPoint>>,
+        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
     ) {
         self.tick_enemy_ai_inner(sim, assets, Some(positions_before_movement));
     }
@@ -5566,7 +5574,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        positions_before_movement: &EntitySlots<Option<MapPoint>>,
+        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
         _prepared: PreparedNpcOwnerPass,
         npc_id: EntityId,
         derived_tail_order_type: crate::order::OrderType,
@@ -5625,7 +5633,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        positions_before_movement: Option<&EntitySlots<Option<MapPoint>>>,
+        positions_before_movement: Option<&EntitySlots<Option<crate::entities::BoundaryPosition>>>,
     ) {
         if self.actors_frozen() {
             // Frozen-all skips patrol/view/detection/ambush/deafness but the
@@ -8360,7 +8368,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-        positions_before_movement: &EntitySlots<Option<MapPoint>>,
+        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
     ) {
         use crate::ai::{AiState, Position, Stimulus, StimulusType, Substate};
 

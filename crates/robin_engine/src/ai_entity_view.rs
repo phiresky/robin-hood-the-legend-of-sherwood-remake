@@ -43,6 +43,11 @@ pub struct AiEntityView {
     /// a gate endpoint or substitutes a carrier for an OnShoulders PC.
     /// Direct actor geometry such as `ComputeDetectionPoint` uses this.
     pub detection_position: MapPoint,
+    /// The same raw element position in stored 3D world coordinates.
+    /// `ComputeDetectionPoint` and `ComputeEyesPoint` build on this point, so
+    /// opaque-reachability endpoints must come from here rather than from
+    /// `detection_position` plus the elevation.
+    pub detection_position_world: crate::coordinates::WorldPoint3D,
     /// 0–15 facing sector.
     pub direction: u16,
     /// Standing / crouching / etc.
@@ -785,6 +790,7 @@ pub fn entity_view_from_entity(
         original_creation_order,
         position,
         detection_position: elem.position_map(),
+        detection_position_world: elem.position(),
         direction,
         posture,
         camp,

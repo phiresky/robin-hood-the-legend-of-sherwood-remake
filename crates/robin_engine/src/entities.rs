@@ -441,6 +441,29 @@ impl Entities {
     }
 }
 
+/// An element's position as it stood at a batching boundary, in both of the
+/// spaces the engine stores.
+///
+/// The two are related by `map = (world.x, world.y - world.z)`, but neither
+/// derives the other exactly in binary32: whichever space the element last
+/// wrote is its authoritative value, and recomputing the other one back rounds.
+/// Recording the pair keeps a later reader on the same value the element
+/// itself would have reported.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BoundaryPosition {
+    pub map: crate::coordinates::MapPoint,
+    pub world: crate::coordinates::WorldPoint3D,
+}
+
+impl BoundaryPosition {
+    pub fn of(element: &crate::element::ElementData) -> Self {
+        Self {
+            map: element.position_map(),
+            world: element.position(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct EntitySlots<T>(Vec<T>);
 

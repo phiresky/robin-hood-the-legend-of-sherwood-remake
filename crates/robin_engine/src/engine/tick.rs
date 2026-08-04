@@ -2817,7 +2817,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         display: &mut HostDisplayState,
         assets: &LevelAssets,
-    ) -> EntitySlots<Option<crate::coordinates::MapPoint>> {
+    ) -> EntitySlots<Option<crate::entities::BoundaryPosition>> {
         // Preserve the position each element exposed before the globally
         // batched movement pass. The original does not have this batch:
         // RHElementActorNPC::Hourglass calls RHElementActorHuman::Hourglass
@@ -2825,7 +2825,8 @@ impl EngineInner {
         // while actors with a later creation order have not run yet.
         let mut positions_before_movement = EntitySlots::filled(self.world.entities.len(), None);
         for (entity_id, entity) in self.world.entities.occupied() {
-            positions_before_movement[entity_id] = Some(entity.element_data().position_map());
+            positions_before_movement[entity_id] =
+                Some(crate::entities::BoundaryPosition::of(entity.element_data()));
         }
 
         // ── Per-frame movement tick ─────────────────────────────
@@ -3940,7 +3941,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         display: &mut HostDisplayState,
         assets: &LevelAssets,
-        positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
+        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
     ) {
         self.tick_actor_owner_envelopes_with_owner_hook(
             sim,
@@ -3956,7 +3957,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
+        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
         owner_hook: impl FnMut(&mut Self, EntityId),
     ) {
         let mut display = HostDisplayState::default();
@@ -3974,7 +3975,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         display: &mut HostDisplayState,
         assets: &LevelAssets,
-        positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
+        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
         mut owner_hook: impl FnMut(&mut Self, EntityId),
     ) {
         let prepared = self.prepare_npc_owner_pass(sim, assets);
@@ -4187,7 +4188,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
+        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
     ) {
         let mut display = HostDisplayState::default();
         self.tick_actor_owner_envelopes_with_display(
@@ -4537,7 +4538,7 @@ impl EngineInner {
         &mut self,
         _sim: &crate::sim_rng::SimulationContext,
         _assets: &LevelAssets,
-        _positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
+        _positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
     ) {
         // Listen/object reveal and Target Heard are actor-owned Execute work.
         // ── Creation-ordered pre-detection boundary ──────────────
