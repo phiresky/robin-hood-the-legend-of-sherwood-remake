@@ -841,10 +841,11 @@ impl EngineInner {
                 MapPoint::new(enemy_ai.base.seek_position.x, enemy_ai.base.seek_position.y);
             // Honour check.
             let in_recovery = !able_to_fight || self.actor_is_in_sword_recovery(npc_id.into());
-            // Whether the soldier is inside a building, for the
-            // `alert_officer` layer-penalty gate.  Includes the
-            // door-transit branch — see `entity_data_inside_building`.
-            let in_building = self.entity_data_inside_building(&s.element);
+            // Whether the soldier's sector is a building, for the
+            // `alert_officer` layer-penalty gate and the fighter scans that
+            // build the them/us lists. A soldier still on a door rail counts
+            // as outdoors here.
+            let in_building = self.entity_data_in_building_sector(&s.element);
             // Filled only when the current NPC owner has queued Think work.
             let forecast_destination = None;
             // IsAbleToHelp has its own early gate: dead/unconscious only.

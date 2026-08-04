@@ -862,11 +862,14 @@ pub(super) fn build_ai_context_from_entity(
             crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
         ),
         in_uninterruptible_command: false,
-        // `is_inside_building`: the building sector check OR the
-        // door-transit branch — true during the few frames an actor is
-        // on a door whose inside-sector is a building but whose current
-        // sector pointer has not yet been swapped.
-        in_building: building_sector.is_some() || entity.is_in_door_transit(),
+        // Every AI-side building test resolves the actor's *sector*: the
+        // indoor early-outs, the 180°/360° detection short-circuits, and the
+        // outdoor question gate all ask whether the current sector is a
+        // building. A soldier standing on a door rail has no building sector
+        // yet and must still behave as an outdoor actor, so the door-transit
+        // branch (which only governs whether the view polygon is drawn) must
+        // not leak into this flag.
+        in_building: building_sector.is_some(),
         building_sector,
         camp,
         is_swordfighting,
@@ -2057,7 +2060,7 @@ impl EngineInner {
             let Some(enemy_ai) = s.npc.ai_brain.enemy() else {
                 continue;
             };
-            let in_building = self.entity_data_inside_building(&s.element);
+            let in_building = self.entity_data_in_building_sector(&s.element);
             let forecast_destination = if forecast_destinations {
                 // Missing scripts are a recoverable developer-data load path;
                 // `init_ai` warns once before these per-NPC snapshots are built.
@@ -2625,7 +2628,7 @@ impl EngineInner {
                 dead: entity.is_dead(),
                 unconscious: human.unconscious,
                 friend: entity.camp() == member_camp,
-                in_building: self.entity_data_inside_building(element),
+                in_building: self.entity_data_in_building_sector(element),
             }
         };
 
@@ -2682,7 +2685,7 @@ impl EngineInner {
                 posture: s.element.posture,
                 elevation: s.element.sprite.position_iface.get_elevation(),
                 is_rider: s.soldier.rider,
-                in_building: self.entity_data_inside_building(&s.element),
+                in_building: self.entity_data_in_building_sector(&s.element),
                 sq_view_radius: (s.npc.view_radius as f32) * (s.npc.view_radius as f32),
             });
             let next = neighbour_ai.right_combat_neighbour;
@@ -4255,13 +4258,29 @@ impl EngineInner {
         });
     }
 
-    /// Test whether the entity is inside a building: the
-    /// building-sector flag OR the door-transit branch — true during
-    /// the few frames an actor is on a door whose inside-sector is a
-    /// building but whose current sector pointer has not yet been
-    /// swapped.
+    /// The wide "indoors" test: the building-sector flag OR the
+    /// door-transit branch — true during the few frames an actor is on a
+    /// door whose inside-sector is a building but whose current sector
+    /// pointer has not yet been swapped.
+    ///
+    /// This is the predicate that governs whether the view polygon is
+    /// deactivated, so only the detection refresh may use it. Every other
+    /// indoor test in the AI resolves the sector alone; use
+    /// [`Self::entity_data_in_building_sector`] there.
     pub(super) fn entity_data_inside_building(&self, elem: &crate::element::ElementData) -> bool {
-        self.entity_building_sector(elem.sector()).is_some() || elem.is_in_door_transit()
+        self.entity_data_in_building_sector(elem) || elem.is_in_door_transit()
+    }
+
+    /// The narrow "indoors" test: the entity's current sector is a
+    /// building. An actor still on a door rail is outdoors by this
+    /// measure, which is what the 180°/360° detection short-circuits, the
+    /// them/us-list membership scans, the outdoor question gate, and the
+    /// stuck-on-ladder counter all ask for.
+    pub(super) fn entity_data_in_building_sector(
+        &self,
+        elem: &crate::element::ElementData,
+    ) -> bool {
+        self.entity_building_sector(elem.sector()).is_some()
     }
 
     /// Consume one NPC's deferred `inform_my_friends` edge at that NPC's
@@ -8493,7 +8512,7 @@ impl EngineInner {
                     ground_z: entity.element_data().position().z,
                     posture: entity.element_data().posture,
                     is_rider: entity.soldier_data().is_some_and(|soldier| soldier.rider),
-                    in_building: self.entity_data_inside_building(entity.element_data()),
+                    in_building: self.entity_data_in_building_sector(entity.element_data()),
                     ai_state,
                     is_alive: !entity.is_dead(),
                     is_active: entity.is_active(),
@@ -11954,7 +11973,7 @@ impl EngineInner {
                 ground_z: entity.element_data().position().z,
                 posture: entity.element_data().posture,
                 is_rider: entity.soldier_data().is_some_and(|soldier| soldier.rider),
-                in_building: self.entity_data_inside_building(entity.element_data()),
+                in_building: self.entity_data_in_building_sector(entity.element_data()),
                 ai_state: entity
                     .npc_data()
                     .unwrap_or_else(|| {
@@ -12696,7 +12715,7 @@ impl EngineInner {
             .ai_controller()
             .unwrap_or_else(|| panic!("ladder-tail NPC {} has no AI", npc_id.index()))
             .script_locked;
-        let in_building = self.entity_data_inside_building(entity.element_data());
+        let in_building = self.entity_data_in_building_sector(entity.element_data());
         let qualifies = on_ladder && in_wait_or_move_waiting && !script_locked && !in_building;
 
         // Bump or reset the counter; remember whether to fire.
