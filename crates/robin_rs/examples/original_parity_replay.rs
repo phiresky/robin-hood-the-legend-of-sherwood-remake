@@ -255,8 +255,8 @@ enum TraceStartState {
 
 fn validate_trace_schema(schema: u32) {
     assert!(
-        matches!(schema, 12 | 13),
-        "unsupported parity trace schema {schema}; schemas 12 and 13 are supported"
+        matches!(schema, 12 | 13 | 14),
+        "unsupported parity trace schema {schema}; schemas 12, 13 and 14 are supported"
     );
 }
 
@@ -279,9 +279,12 @@ fn validate_trace_header(header: &TraceHeader) {
         "unsupported parity visibility-query contract"
     );
     match header.schema {
-        12 => assert!(
+        // Schema 14 revises 12's recorder contract without adopting 13's
+        // per-frame payload, which no writer ever produced.
+        12 | 14 => assert!(
             header.authoritative_state.is_none(),
-            "schema-12 trace unexpectedly declares per-frame authoritative state"
+            "schema-{} trace unexpectedly declares per-frame authoritative state",
+            header.schema
         ),
         13 => assert_eq!(
             header.authoritative_state.as_deref(),
@@ -298,14 +301,14 @@ fn decode_and_validate_initial_save(header: &TraceHeader) -> Option<Vec<u8>> {
         header.start_state,
         header.initial_save.as_ref(),
     ) {
-        (12 | 13, TraceStartState::MissionStart, None) => None,
-        (12 | 13, TraceStartState::MissionStart, Some(_)) => {
+        (12 | 13 | 14, TraceStartState::MissionStart, None) => None,
+        (12 | 13 | 14, TraceStartState::MissionStart, Some(_)) => {
             panic!("mission_start traces must not contain initial_save")
         }
-        (12 | 13, TraceStartState::LoadedSave, None) => {
+        (12 | 13 | 14, TraceStartState::LoadedSave, None) => {
             panic!("loaded_save traces require initial_save")
         }
-        (12 | 13, TraceStartState::LoadedSave, Some(initial_save)) => {
+        (12 | 13 | 14, TraceStartState::LoadedSave, Some(initial_save)) => {
             let mission_index = header
                 .campaign
                 .current_mission_index
@@ -819,6 +822,17 @@ enum TraceCommand {
     ChangeQaMemory {
         slot: u8,
     },
+    /// A click the Original refused after it had already barked at the
+    /// player. The click itself is a raw mouse message and is never
+    /// recorded, so without this the bark's speech resolution arrives with
+    /// nothing that caused it.
+    HeroRefusedAction {
+        actor: TraceEntityId,
+        action: TraceAction,
+        #[serde(default)]
+        target: Option<TraceEntityId>,
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
@@ -1206,6 +1220,27 @@ impl TraceCommand {
                 slot,
             },
             Self::ChangeQaMemory { slot } => PlayerCommand::ChangeQaMemory { slot },
+            Self::HeroRefusedAction {
+                actor,
+                action,
+                target: _,
+                reason,
+            } => {
+                // Every refusal the recorder knows about barks the same line.
+                // A new one must be taught here rather than silently replayed
+                // as this one.
+                match reason.as_str() {
+                    "anonymous_archer_contest" | "locked_patch" => {}
+                    other => panic!(
+                        "unsupported refused-action reason {other:?} for {action:?} \
+                         by {actor:?}"
+                    ),
+                }
+                PlayerCommand::HeroSpeak {
+                    pc_id: entity_map.translate(actor),
+                    expression: robin_engine::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+                }
+            }
         })
     }
 }
@@ -1576,9 +1611,9 @@ struct TraceFailedPathRequest {
 
 fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     match schema {
-        12 => assert!(
+        12 | 14 => assert!(
             frame.campaign.is_none() && frame.engine_state.is_none(),
-            "schema-12 frame unexpectedly contains schema-13 authoritative state"
+            "schema-{schema} frame unexpectedly contains schema-13 authoritative state"
         ),
         13 => assert!(
             frame.campaign.is_some() && frame.engine_state.is_some(),
@@ -6654,6 +6689,53 @@ mod tests {
     }
 
     #[test]
+    fn refused_action_schema_fourteen_is_accepted() {
+        validate_trace_schema(14);
+    }
+
+    #[test]
+    fn schema_fourteen_frames_carry_no_authoritative_state() {
+        let frame: TraceFrame = serde_json::from_value(minimal_frame_json()).unwrap();
+        validate_trace_frame_envelope(14, &frame);
+    }
+
+    #[test]
+    fn refused_action_decodes_with_and_without_a_target() {
+        let with_target: TraceCommand = serde_json::from_value(serde_json::json!({
+            "type": "hero_refused_action",
+            "actor": {"kind": "pc", "index": 0},
+            "action": "bow",
+            "target": {"kind": "soldier", "index": 3},
+            "reason": "anonymous_archer_contest",
+        }))
+        .expect("refused bow click decodes");
+        assert!(matches!(
+            with_target,
+            TraceCommand::HeroRefusedAction {
+                action: TraceAction::Bow,
+                target: Some(_),
+                ..
+            }
+        ));
+
+        let without_target: TraceCommand = serde_json::from_value(serde_json::json!({
+            "type": "hero_refused_action",
+            "actor": {"kind": "pc", "index": 0},
+            "action": "no_action",
+            "reason": "locked_patch",
+        }))
+        .expect("refused patch click decodes");
+        assert!(matches!(
+            without_target,
+            TraceCommand::HeroRefusedAction {
+                action: TraceAction::NoAction,
+                target: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn initial_save_decodes_and_matches_its_rhsg_envelope() {
         let save = valid_initial_save();
         let decoded = save
@@ -6759,7 +6841,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "schemas 12 and 13 are supported")]
+    #[should_panic(expected = "schemas 12, 13 and 14 are supported")]
     fn schema_eleven_is_rejected() {
         validate_trace_schema(11);
     }
