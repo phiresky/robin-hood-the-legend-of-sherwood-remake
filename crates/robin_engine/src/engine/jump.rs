@@ -1062,15 +1062,6 @@ impl EngineInner {
                 ) {
                     jump_orders.push(order);
                 }
-                if entity.actor_data().is_some_and(|actor| {
-                    actor.active_jump.as_ref().is_some_and(|jump| {
-                        jump.current
-                            .as_ref()
-                            .is_some_and(|state| state.step.airborne && actor.wait_time == 0)
-                    })
-                }) {
-                    force_advance.push(entity_id.into());
-                }
                 continue;
             }
 
@@ -1102,15 +1093,6 @@ impl EngineInner {
                 entity.position_iface_mut().turn();
             }
             advance_step_interpolation(entity);
-            if entity.actor_data().is_some_and(|actor| {
-                actor.active_jump.as_ref().is_some_and(|jump| {
-                    jump.current
-                        .as_ref()
-                        .is_some_and(|state| state.step.airborne && actor.wait_time == 0)
-                })
-            }) {
-                force_advance.push(entity_id.into());
-            }
 
             // If the step has a max-frames cap (TIME_FLYSEGMENT for
             // airborne trajectory segments), mark it for early
@@ -1245,11 +1227,16 @@ impl EngineInner {
 
         // ── Snap position to the step's end ──────────────────────
         // If the step had a 3D target, ensure the position lands
-        // exactly on it, independent of frame-count drift. Airborne
-        // steps mirror C++ `SetPosition(pointDestination3D)`.
+        // exactly on it, independent of frame-count drift.
         if let Some(target) = finished.step.target_3d {
             if finished.step.airborne && next_anim != Some(finished.step.anim) {
                 entity.element_data_mut().set_position(target);
+                // Landing re-latches the old map position onto the snapped
+                // one, so the frame that ends a flight reports no map
+                // movement even though the body travelled through the air.
+                let pi = entity.position_iface_mut();
+                let landed = pi.map_position();
+                pi.set_old_map_position(landed);
             }
             if let Some(actor) = entity.actor_data_mut() {
                 actor.jump_z_offset = 0.0;
@@ -1557,13 +1544,6 @@ fn start_step(
         actor.active_jump_airborne = step.airborne;
     }
 
-    // Airborne Execute calls UpdatePosition on its first START tick. Ground
-    // transition motion remains owned by the sprite motion driver, whose
-    // first-frame distance may legitimately be zero.
-    if step.airborne {
-        advance_step_interpolation(entity);
-    }
-
     // Build the order to push after the loop closes.  `NextJumpStep`
     // completion routes the motion-terminated signal through
     // `process_anim_completion_outcomes → advance_jump_step`.
@@ -1749,14 +1729,63 @@ fn jump_airborne_speed(anim: OrderType) -> f32 {
     }
 }
 
-/// Per-frame position interpolation for the in-progress airborne step.
+/// Whether the actor's live jump step flies the body through the air under
+/// its own Execute arm rather than through the sprite motion driver.
 ///
-/// Flight advances in absolute 3D at the animation's fixed speed, matching
-/// the jump Execute arms that set a 3D increment and call UpdatePosition
-/// every tick. Ground steps are driven by the sprite motion path instead and
-/// only carry their frame counter here.
-fn advance_step_interpolation(entity: &mut crate::element::Entity) {
-    let (target_3d, airborne, mut state) = {
+/// The airborne arms play their animation for the visual only and drive the
+/// body along a fixed 3D increment, so the animation pass must route them to
+/// [`perform_jump_airborne_motion`] instead of the plain action path.
+pub(crate) fn jump_step_is_airborne(entity: &crate::element::Entity, anim: OrderType) -> bool {
+    entity.actor_data().is_some_and(|actor| {
+        actor.active_jump.as_ref().is_some_and(|jump| {
+            jump.current
+                .as_ref()
+                .is_some_and(|state| state.step.airborne && state.step.anim == anim)
+        })
+    })
+}
+
+/// Run one tick of an airborne jump segment.
+///
+/// The animation is played purely for the visual: its motion state is
+/// discarded and the returned state comes from the flight countdown alone,
+/// so a segment reports IN_PROGRESS on every tick including its first and
+/// TERMINATED only on the tick that exhausts the countdown.
+pub(crate) fn perform_jump_airborne_motion(
+    entity: &mut crate::element::Entity,
+    sim: &crate::sim_rng::SimulationContext,
+    order_id: Option<std::num::NonZeroU32>,
+    anim: OrderType,
+    row: u16,
+) -> crate::sprite::MotionState {
+    entity.element_data_mut().sprite.perform_action(
+        sim,
+        order_id,
+        anim,
+        row,
+        crate::sprite::FrameProgression::FreezeWhenTerminated,
+        false,
+    );
+
+    advance_airborne_flight(entity);
+
+    let wait_time = entity
+        .actor_data()
+        .map(|actor| actor.wait_time)
+        .unwrap_or_else(|| {
+            panic!("airborne jump step {anim:?} ticked on an entity without actor data")
+        });
+    if wait_time == 0 {
+        crate::sprite::MotionState::Terminated
+    } else {
+        crate::sprite::MotionState::InProgress
+    }
+}
+
+/// Advance the in-flight body one frame along its fixed 3D increment and
+/// tick the segment's countdown.
+fn advance_airborne_flight(entity: &mut crate::element::Entity) {
+    let (target_3d, state) = {
         let Some(actor) = entity.actor_data() else {
             return;
         };
@@ -1766,55 +1795,68 @@ fn advance_step_interpolation(entity: &mut crate::element::Entity) {
         let Some(state) = jump.current.clone() else {
             return;
         };
-        (
-            actor.active_jump_target_3d,
-            actor.active_jump_airborne,
-            state,
-        )
+        (actor.active_jump_target_3d, state)
+    };
+
+    if let Some(target) = target_3d {
+        let full_dx = target.x - state.start_x;
+        let full_dy = target.y - state.start_y;
+        let full_dz = target.z - state.start_z;
+        let full_dist = (full_dx * full_dx + full_dy * full_dy + full_dz * full_dz).sqrt();
+
+        let frame_dist = jump_airborne_speed(state.step.anim);
+
+        if full_dist > f32::EPSILON && frame_dist > 0.0 {
+            let dir_x = full_dx / full_dist;
+            let dir_y = full_dy / full_dist;
+            let dir_z = full_dz / full_dist;
+            let elem = entity.element_data_mut();
+            let pos = elem.position();
+            let new_x = pos.x + dir_x * frame_dist;
+            let new_y = pos.y + dir_y * frame_dist;
+            let new_z = pos.z + dir_z * frame_dist;
+            let travelled_new = (new_x - state.start_x) * dir_x
+                + (new_y - state.start_y) * dir_y
+                + (new_z - state.start_z) * dir_z;
+            if travelled_new >= full_dist {
+                elem.set_position(target);
+            } else {
+                elem.set_position(crate::coordinates::WorldPoint3D {
+                    x: new_x,
+                    y: new_y,
+                    z: new_z,
+                });
+            }
+        }
+    } else {
+        tracing::warn!(?state.step.anim, "airborne jump step missing 3D target");
+    }
+
+    if let Some(actor) = entity.actor_data_mut() {
+        actor.jump_z_offset = 0.0;
+        actor.wait_time = actor.wait_time.saturating_sub(1);
+    }
+}
+
+/// Per-frame bookkeeping for the in-progress step.
+///
+/// Ground steps are driven by the sprite motion path and only carry their
+/// frame counter here; airborne flight is applied by the owner's Execute arm.
+fn advance_step_interpolation(entity: &mut crate::element::Entity) {
+    let mut state = {
+        let Some(actor) = entity.actor_data() else {
+            return;
+        };
+        let Some(jump) = actor.active_jump.as_ref() else {
+            return;
+        };
+        let Some(state) = jump.current.clone() else {
+            return;
+        };
+        state
     };
 
     state.frames_elapsed = state.frames_elapsed.saturating_add(1);
-
-    if airborne {
-        if let Some(target) = target_3d {
-            let full_dx = target.x - state.start_x;
-            let full_dy = target.y - state.start_y;
-            let full_dz = target.z - state.start_z;
-            let full_dist = (full_dx * full_dx + full_dy * full_dy + full_dz * full_dz).sqrt();
-
-            let frame_dist = jump_airborne_speed(state.step.anim);
-
-            if full_dist > f32::EPSILON && frame_dist > 0.0 {
-                let dir_x = full_dx / full_dist;
-                let dir_y = full_dy / full_dist;
-                let dir_z = full_dz / full_dist;
-                let elem = entity.element_data_mut();
-                let pos = elem.position();
-                let new_x = pos.x + dir_x * frame_dist;
-                let new_y = pos.y + dir_y * frame_dist;
-                let new_z = pos.z + dir_z * frame_dist;
-                let travelled_new = (new_x - state.start_x) * dir_x
-                    + (new_y - state.start_y) * dir_y
-                    + (new_z - state.start_z) * dir_z;
-                if travelled_new >= full_dist {
-                    elem.set_position(target);
-                } else {
-                    elem.set_position(crate::coordinates::WorldPoint3D {
-                        x: new_x,
-                        y: new_y,
-                        z: new_z,
-                    });
-                }
-            }
-        } else {
-            tracing::warn!(?state.step.anim, "airborne jump step missing 3D target");
-        }
-
-        if let Some(actor) = entity.actor_data_mut() {
-            actor.jump_z_offset = 0.0;
-            actor.wait_time = actor.wait_time.saturating_sub(1);
-        }
-    }
 
     // Save updated state.
     if let Some(actor) = entity.actor_data_mut()
