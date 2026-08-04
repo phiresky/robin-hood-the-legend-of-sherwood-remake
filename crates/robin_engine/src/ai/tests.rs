@@ -120,6 +120,57 @@ fn break_macro_preserves_serialized_cursor_and_remaining_bytes() {
 }
 
 #[test]
+fn goto_point_leaves_the_cursor_parked_on_its_unconsumed_operand() {
+    use crate::ai::macro_patrol::{MacroOpcode, PathId, PatrolPath};
+    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+
+    let waypoint = |x: i16| RawWaypoint {
+        x,
+        y: 0,
+        sector: 1,
+        level: 0,
+        command: WaypointCommand::None,
+    };
+    let paths = vec![RawHikingPath {
+        waypoints: vec![waypoint(0), waypoint(20), waypoint(40)],
+    }];
+    let mut ai = AiController::new(17);
+    ai.current_state = AiState::Default;
+    ai.current_substate = Substate::DefaultInMacro;
+    ai.has_patrol_path = true;
+    ai.patrol_path = PatrolPath::new(PathId::new(0).unwrap(), &paths);
+    // A three-byte `CMD_GOTO_POINT 2` body sitting at the head of the block.
+    ai.macro_command = vec![MacroOpcode::GotoPoint as u8, 2, 0];
+    ai.macro_command_offset = 0;
+    ai.number_of_remaining_macro_bytes = 3;
+    let ctx = AiContext {
+        position: Position {
+            x: 0.0,
+            y: 0.0,
+            sector: SectorHandle::new(1),
+            level: 0,
+        },
+        hiking_paths: std::sync::Arc::new(paths),
+        self_is_soldier: false,
+        ..AiContext::default()
+    };
+
+    ai.execute_next_macro_command(&crate::sim_rng::test_context(), &ctx);
+
+    assert_eq!(
+        ai.patrol_path
+            .as_ref()
+            .expect("patrol path")
+            .current_waypoint_index,
+        2
+    );
+    assert_eq!(
+        ai.macro_command_offset, 1,
+        "the Original dereferences the waypoint index without stepping the cursor over it"
+    );
+}
+
+#[test]
 fn civilian_macro_run_sanitizes_flags_after_nested_path_completion() {
     use crate::ai::macro_patrol::{MacroOpcode, PathId, PatrolPath};
     use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};

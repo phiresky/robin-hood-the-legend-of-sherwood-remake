@@ -2085,7 +2085,7 @@ impl AiController {
                     }
 
                     MacroOpcode::GotoPoint => {
-                        let Some(index) = self.read_macro_u16() else {
+                        let Some(index) = self.peek_macro_u16() else {
                             self.break_macro();
                             return;
                         };
@@ -2188,7 +2188,7 @@ impl AiController {
                     }
 
                     MacroOpcode::ChangeWay => {
-                        let Some(index) = self.read_macro_u16() else {
+                        let Some(index) = self.peek_macro_u16() else {
                             self.break_macro();
                             return;
                         };
@@ -2440,15 +2440,27 @@ impl AiController {
     /// `None` on truncation.  Used by operand-bearing opcodes inside
     /// [`Self::execute_next_macro_command`].
     fn read_macro_u16(&mut self) -> Option<u16> {
-        let off = self.macro_command_offset;
-        if off + 2 > self.macro_command.len() {
-            return None;
-        }
-        let value = u16::from_le_bytes([self.macro_command[off], self.macro_command[off + 1]]);
+        let value = self.peek_macro_u16()?;
         self.macro_command_offset += 2;
         self.number_of_remaining_macro_bytes =
             self.number_of_remaining_macro_bytes.saturating_sub(2);
         Some(value)
+    }
+
+    /// Read a u16 LE operand at the macro PC cursor *without* consuming
+    /// it.  `CMD_GOTO_POINT` and `CMD_CHANGE_WAY` both dereference their
+    /// operand and then leave the cursor and the remaining-byte counter
+    /// parked on it — the macro ends immediately afterwards, so the
+    /// unconsumed operand stays visible in the dormant cursor.
+    fn peek_macro_u16(&self) -> Option<u16> {
+        let off = self.macro_command_offset;
+        if off + 2 > self.macro_command.len() {
+            return None;
+        }
+        Some(u16::from_le_bytes([
+            self.macro_command[off],
+            self.macro_command[off + 1],
+        ]))
     }
 
     // -- Friend check (CheckFor comportment) --
