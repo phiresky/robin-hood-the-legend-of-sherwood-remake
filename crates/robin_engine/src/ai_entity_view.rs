@@ -116,8 +116,13 @@ pub struct AiEntityView {
     /// Defaults to [`Substate::default()`].
     pub ai_substate: Substate,
 
-    /// What animation the entity is currently playing.  Used by e.g.
-    /// the weeping-animation check in `AiFriendly::random_speech`.
+    /// What animation the entity is currently playing — the live sequence
+    /// order's action, or the sprite-driven animation while no order is
+    /// selected.  Used by e.g. the weeping-animation check in
+    /// `AiFriendly::random_speech` and the shield bearer's arrow-launched
+    /// re-raise gate.  Not `ActorData::old_action`, which only feeds the
+    /// next `ActionChange` callback and stays `Invalid` through most
+    /// visible animations.
     pub current_animation: OrderType,
 
     /// World-Z coordinate of the entity's ground point (feet).  Used
@@ -355,6 +360,7 @@ pub fn entity_view_from_entity(
     in_building: bool,
     building_sector: Option<crate::position_interface::SectorHandle>,
     campaign: Option<&crate::campaign::Campaign>,
+    current_animation: OrderType,
 ) -> AiEntityView {
     let elem = entity.element_data();
     let actor = entity.actor_data();
@@ -373,7 +379,6 @@ pub fn entity_view_from_entity(
         .human_data()
         .map(|h| !h.opponents.is_empty())
         .unwrap_or(false);
-    let current_animation = actor.map(|a| a.old_action).unwrap_or_default();
     let is_tower_guard = match entity {
         Entity::Soldier(s) => s
             .npc

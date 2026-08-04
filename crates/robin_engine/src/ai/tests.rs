@@ -338,7 +338,14 @@ fn consider_report_preserves_pc_body_kind_in_detectable_effect() {
     let mut views = crate::ai_entity_view::AiEntityViewMap::new();
     views.insert(
         17,
-        crate::ai_entity_view::entity_view_from_entity(&pc, 41, false, None, None),
+        crate::ai_entity_view::entity_view_from_entity(
+            &pc,
+            41,
+            false,
+            None,
+            None,
+            crate::order::OrderType::NonanimationEnd,
+        ),
     );
     let mut report = ReconnaissanceReport::default();
     report.add_seen_body(17);

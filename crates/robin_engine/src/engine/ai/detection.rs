@@ -3228,6 +3228,172 @@ impl EngineInner {
             .collect()
     }
 
+    /// Live `ComputeVisibility(human) > 0` for one NPC viewer and one human
+    /// target, issued outside the batched per-frame detection pass.
+    ///
+    /// Engine code that asks "does this NPC see that human *right now*" must
+    /// go through here rather than reading a `Detectable::seen_now` flag: the
+    /// flag is a snapshot taken at the viewer's own detection cadence, so
+    /// reusing it both answers a stale question and suppresses the LOS ray the
+    /// Original issues at the asking site.
+    ///
+    /// Only the view-radius memo is shared with the batched pass — that memo
+    /// is keyed by viewer, surface, and frame in the Original too, so a
+    /// same-frame call legitimately reuses it and, like the Original, still
+    /// re-runs the cone test and the opaque-reachability ray.
+    pub(crate) fn npc_is_detecting_human(
+        &mut self,
+        assets: &LevelAssets,
+        viewer_id: EntityId,
+        target_id: EntityId,
+        universal_frame: u32,
+    ) -> bool {
+        let viewer_building_sector = {
+            let Some(entity) = self.world.entities.get(viewer_id) else {
+                tracing::warn!(
+                    viewer = ?viewer_id,
+                    target = ?target_id,
+                    "Live detection query skipped: viewer entity missing"
+                );
+                return false;
+            };
+            self.entity_building_sector(entity.element_data().sector())
+        };
+        let Some(viewer) = self.world.entities.get(viewer_id).and_then(|entity| {
+            SoldierSightContext::from_npc_viewer(viewer_id, entity, viewer_building_sector)
+        }) else {
+            // Blind, tied, unconscious, dead, or simply not an NPC: no view
+            // parameters exist, which is the same answer the Original's
+            // eye-status and posture gates produce.
+            tracing::trace!(
+                viewer = ?viewer_id,
+                target = ?target_id,
+                "Live detection query: viewer has no active NPC view state"
+            );
+            return false;
+        };
+
+        let Some(target) = self.world.entities.get(target_id) else {
+            tracing::warn!(
+                viewer = ?viewer_id,
+                target = ?target_id,
+                "Live detection query skipped: target entity missing"
+            );
+            return false;
+        };
+        let Some(target_human) = target.human_data() else {
+            tracing::warn!(
+                viewer = ?viewer_id,
+                target = ?target_id,
+                "Live detection query skipped: target is not a human"
+            );
+            return false;
+        };
+        let target_element = target.element_data();
+        let target_posture = target_element.posture;
+        let target_ground_z = target_element.position().z;
+        let target_is_rider = matches!(target, Entity::Soldier(soldier) if soldier.soldier.rider);
+        let target_position = target_element.position_map();
+        let target_direction = target_element.direction();
+        let target_los =
+            crate::stealth::detection_point_xy(target_position, target_posture, target_direction);
+        let target_eye_z = target_ground_z
+            + crate::stealth::detection_z_for_posture(target_posture, target_is_rider);
+        let target_obstacle_handle = target_element.obstacle_index();
+        let target_building_sector = self.entity_building_sector(target_element.sector());
+        let target_active = target_element.active;
+        let target_is_pc = matches!(target, Entity::Pc(_));
+        let target_action_state = target
+            .actor_data()
+            .map(|actor| actor.action_state)
+            .unwrap_or(crate::element::ActionState::Waiting);
+        let target_passing_door = target
+            .actor_data()
+            .is_some_and(|actor| actor.active_door_pass.is_some());
+        let target_unconscious = target_human.unconscious;
+
+        let viewer_in_building = self.entity_building_sector(viewer.sector).is_some();
+        let target_in_same_building = viewer_in_building
+            && self.entity_building_sector(viewer.sector) == target_building_sector;
+        let is_night_or_fog = matches!(
+            self.world.weather.ambiance,
+            crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
+        );
+        let sight_obstacles = crate::sight_obstacle::ObstacleList {
+            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+            static_active: &self.world.static_sight_obstacle_active,
+        };
+        let target_obstacle = target_obstacle_handle.map(|handle| {
+            sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
+                panic!(
+                    "Live detection target {} requires missing sight obstacle {}",
+                    target_id.index(),
+                    u16::from(handle)
+                )
+            })
+        });
+
+        let q = ai_vision::VisibilityQuery {
+            viewer_los: viewer.eye,
+            viewer_world: visibility_world_point(viewer.eye, viewer.ground_z, viewer.eye_z),
+            viewer_direction: viewer.dir,
+            view_forward: viewer.view_forward,
+            view_radius: viewer.view_radius,
+            viewer_eye_status: viewer.eye_status,
+            real_half_aperture: viewer.real_half_aperture,
+            viewer_in_building,
+            target_in_same_building,
+            forest_180_degree_view: forest_180_degree_view_enabled(
+                self.world.weather.is_forest_level,
+                viewer.camp,
+            ),
+            golden_eye_mode: self.ai.global.golden_eye_mode,
+            effective_view_radius: viewer.view_radius as f32,
+            target_is_active_and_outside_building: target_active
+                && target_building_sector.is_none(),
+            target_los,
+            target_world: visibility_world_point(target_los, target_ground_z, target_eye_z),
+            target_posture,
+            target_action_state,
+            target_is_pc,
+            sight_obstacles,
+            fast_grid: &self.world.fast_grid,
+            layer: viewer.layer,
+            target_unconscious,
+            target_passing_door,
+        };
+
+        let view_radius_cache = OwnerViewRadiusCache::from_persistent(
+            &self.ai.view_radius_cache,
+            viewer_id,
+            universal_frame,
+        );
+        let visibility = ai_vision::compute_visibility_with_effective_radius(&q, || {
+            view_radius_cache.get_or_compute(target_obstacle_handle, || {
+                ai_vision::compute_view_radius(
+                    q.viewer_world,
+                    viewer.view_radius,
+                    viewer.view_forward,
+                    viewer.real_half_aperture,
+                    is_night_or_fog,
+                    &self.world.fast_grid,
+                    sight_obstacles,
+                    target_obstacle,
+                )
+            })
+        });
+        view_radius_cache.commit_to(&mut self.ai.view_radius_cache, viewer_id, universal_frame);
+
+        tracing::trace!(
+            viewer = ?viewer_id,
+            target = ?target_id,
+            visibility,
+            "Live detection query"
+        );
+        visibility > 0.0
+    }
+
     // ── P3c. Per-NPC non-Enemy detection (Body / Object /
     //         Friend / MissedFriend / Beggar) ────────────────────
     //
