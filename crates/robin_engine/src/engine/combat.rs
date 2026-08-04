@@ -480,21 +480,31 @@ impl EngineInner {
             // Warn shield-bearing target soldiers that they're being shot
             // at before the hit roll and projectile insertion, matching
             // C++ `ShootWithBowAt`.
+            // Shield-bearer admission is two-gated: the HtH weapon must be a
+            // shield weapon *and* the soldier's sprite profile must carry a
+            // `WaitingShield` animation row. A shield-flagged weapon on a
+            // profile that never learned the shield stance is not a bearer.
             let target_is_shield_soldier = match self.get_entity(result.target) {
-                Some(Entity::Soldier(s)) => match assets
-                    .profile_manager
-                    .get_soldier(s.soldier.soldier_profile_index)
-                    .and_then(|p| assets.profile_manager.get_hth_weapon(p.hth_weapon_id))
-                {
-                    Some(w) => w.shield,
-                    None => {
-                        tracing::warn!(
-                            target = ?result.target,
-                            "Bow shot shield warning skipped: missing soldier HtH weapon profile"
-                        );
-                        false
-                    }
-                },
+                Some(Entity::Soldier(s)) => {
+                    let weapon_is_shield = match assets
+                        .profile_manager
+                        .get_soldier(s.soldier.soldier_profile_index)
+                        .and_then(|p| assets.profile_manager.get_hth_weapon(p.hth_weapon_id))
+                    {
+                        Some(w) => w.shield,
+                        None => {
+                            tracing::warn!(
+                                target = ?result.target,
+                                "Bow shot shield warning skipped: missing soldier HtH weapon profile"
+                            );
+                            false
+                        }
+                    };
+                    weapon_is_shield
+                        && s.element
+                            .sprite
+                            .has_animation(crate::order::OrderType::WaitingShield)
+                }
                 _ => false,
             };
             if target_is_shield_soldier {
@@ -701,8 +711,20 @@ impl EngineInner {
     fn start_arrow_ricochet(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         arrow_id: EntityId,
     ) {
+        let sight_obstacles = crate::sight_obstacle::ObstacleList {
+            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+            static_active: &self.world.static_sight_obstacle_active,
+        };
+        let obstacle_check = bow_shot::TrajectoryObstacleCheck {
+            fast_find_grid: &self.world.fast_grid,
+            layer: u16::MAX,
+            sight_obstacles,
+            water_zones: Some(&assets.water_zones),
+        };
         let Some(entity) = self.world.entities.get_mut(arrow_id) else {
             return;
         };
@@ -710,7 +732,7 @@ impl EngineInner {
             return;
         };
 
-        bow_shot::make_arrow_falling_down(sim, proj, false);
+        bow_shot::make_arrow_falling_down(sim, proj, false, Some(&obstacle_check));
     }
 
     /// Classify an arrow impact on a candidate victim.
@@ -2092,10 +2114,19 @@ impl EngineInner {
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
+        let obstacle_check = bow_shot::TrajectoryObstacleCheck {
+            fast_find_grid: &self.world.fast_grid,
+            // A deflection trajectory is recomputed from scratch and drops the
+            // projectile's membership, so it carries no layer of its own.
+            layer: u16::MAX,
+            sight_obstacles,
+            water_zones: Some(&assets.water_zones),
+        };
         let results = bow_shot::tick_existing_projectile(
             sim,
             &mut self.world.entities,
             sight_obstacles,
+            Some(&obstacle_check),
             projectile_id,
         );
         self.process_projectile_tick_results(sim, assets, results);
@@ -2113,8 +2144,19 @@ impl EngineInner {
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
-        let results =
-            bow_shot::tick_arrow(sim, &mut self.world.entities, sight_obstacles, arrow_id);
+        let obstacle_check = bow_shot::TrajectoryObstacleCheck {
+            fast_find_grid: &self.world.fast_grid,
+            layer: u16::MAX,
+            sight_obstacles,
+            water_zones: Some(&assets.water_zones),
+        };
+        let results = bow_shot::tick_arrow(
+            sim,
+            &mut self.world.entities,
+            sight_obstacles,
+            Some(&obstacle_check),
+            arrow_id,
+        );
         self.process_projectile_tick_results(sim, assets, results);
     }
 
@@ -2297,7 +2339,7 @@ impl EngineInner {
                                     victim = ?victim,
                                     "Arrow ricocheted from armor"
                                 );
-                                self.start_arrow_ricochet(sim, result.arrow);
+                                self.start_arrow_ricochet(sim, assets, result.arrow);
                                 continue;
                             }
                             ArrowHitOutcome::Damage => {}
@@ -3029,9 +3071,14 @@ impl EngineInner {
             };
 
             let elem = entity.element_data();
+            let elevation = elem.position().z;
+            let position_map = elem.position_map();
             let obstacle = compute_shield_obstacle(
-                elem.position_map(),
-                elem.position().z,
+                crate::coordinates::MapPoint {
+                    x: position_map.x,
+                    y: position_map.y + elevation,
+                },
+                elevation,
                 elem.direction(),
                 &params,
             );

@@ -3165,8 +3165,8 @@ fn apply_shield_transition_side_effect(
         (OrderType::LoweringShield, MotionState::Done | MotionState::Terminated) => {
             Some(ActionState::Waiting)
         }
-        // DONE → ParryingShield (re-asserts the state set at dispatch
-        // time so other systems see it consistently).
+        // DONE → ParryingShield: the parry animation running to completion
+        // is what puts the actor into the parrying state.
         (OrderType::ParryingShield, MotionState::Done) => Some(ActionState::ParryingShield),
         (OrderType::ParryingShield, MotionState::Terminated) => Some(ActionState::HoldingShield),
         _ => None,
