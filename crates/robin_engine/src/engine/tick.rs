@@ -5139,6 +5139,20 @@ impl EngineInner {
             }
             OT::TransitionWaitingCrouchedClimbingWallDownCrenel => {
                 let point_in = crate::coordinates::MapPoint::new(point_in.x, point_in.y);
+                // The crenel variant re-latches the old position across the
+                // teleport, so the wall-height jump to the door's entry point
+                // is not reported as this frame's movement. Only the map half
+                // of the latch sees the teleported point: the 3D position is
+                // still the pre-teleport one when the latch happens and is
+                // re-derived from the map afterwards.
+                //
+                // TODO: this branch also owes an increment recompute against
+                // the standing map goal after the teleport; nothing observable
+                // depends on it yet because the successor order installs its
+                // own increment.
+                let pre_teleport_position = self
+                    .get_entity(entity_id)
+                    .map(|entity| entity.position_iface().get_position());
                 self.finalize_special_move_position_using_projection_sector(
                     assets,
                     entity_id,
@@ -5149,6 +5163,11 @@ impl EngineInner {
                     "crenel climb-down transition",
                 );
                 if let Some(entity) = self.world.entities.get_mut(entity_id) {
+                    let pi = entity.position_iface_mut();
+                    pi.set_old_map_position(point_in);
+                    if let Some(position) = pre_teleport_position {
+                        pi.set_old_position(position);
+                    }
                     entity.set_posture(Posture::OnWall);
                     if let Some(actor) = entity.actor_data_mut() {
                         actor.action_state = ActionState::Moving;
