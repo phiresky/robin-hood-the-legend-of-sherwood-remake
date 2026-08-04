@@ -10461,7 +10461,22 @@ impl EngineInner {
                 self.control.sim_config.difficulty,
             )
         };
-        let tick = self.build_npc_tick_data(sim, source_id, &scratch, assets);
+        // The tail of `EVENT_VIEW` is what adopts the sighted enemy as the
+        // primary target, so at this point the AI still carries whatever
+        // target it had before the sighting. Reconstructing the per-tick
+        // combat data off that stale handle leaves the enemy distances
+        // unseeded, and `BattleDecisions` then reads an infinite
+        // nearest-enemy distance and holds the soldier back in reserve
+        // instead of engaging a target standing right next to it. Resolve
+        // the tick data against the enemy the tail is about to adopt.
+        let target_override = match continuation {
+            crate::ai::LookThereContinuation::EventView { enemy, .. } => {
+                self.entity_id_for_index(enemy)
+            }
+            _ => None,
+        };
+        let tick =
+            self.build_npc_tick_data_for_target(sim, source_id, &scratch, assets, target_override);
         let global = &mut self.ai.global;
         let grid = &self.world.fast_grid;
         self.world

@@ -1587,6 +1587,14 @@ impl EnemyAi {
                     self.base.current_substate,
                     Substate::SeekingJustWatching | Substate::SeekingJustWatchingSidewards
                 );
+                tracing::trace!(
+                    target: "look_there",
+                    me = self.base.me,
+                    state = ?self.base.current_state,
+                    substate = ?self.base.current_substate,
+                    state_ok,
+                    "CallLookThere: received"
+                );
                 if state_ok
                     && let StimulusInfo::Hint(ref hint) = stimulus.info
                     && !self

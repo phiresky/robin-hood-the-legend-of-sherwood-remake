@@ -1436,7 +1436,16 @@ impl EnemyAi {
             let react = if sq < SQ_HEARS {
                 true
             } else if sq < SQ_SEES_180 {
-                soldier_detects_position_180(&officer, ctx.position, ctx.sq_standard_view_radius)
+                // Gate on the officer's own live view radius, the same
+                // quantity the cone+LOS band below uses. The level's
+                // standard radius belongs to nobody in particular, and
+                // alertness, drunkenness and lean-out all move an
+                // individual officer's radius away from it.
+                soldier_detects_position_180(
+                    &officer,
+                    ctx.position,
+                    (officer.view_radius as f32).powi(2),
+                )
             } else {
                 let officer_view = ctx.entity_view(officer.handle).unwrap_or_else(|| {
                     panic!(
@@ -2649,6 +2658,15 @@ impl EnemyAi {
                     fallback_to_sender: None,
                     to_whole_patrol: false,
                 });
+            tracing::trace!(
+                target: "look_there",
+                sender = self.base.me,
+                friend = handle,
+                friend_state = ?view.ai_state,
+                friend_substate = ?view.ai_substate,
+                radius,
+                "hey_folks_look_there: queued synchronous call"
+            );
             called_anyone = true;
         }
 
@@ -2675,6 +2693,14 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) {
+        tracing::trace!(
+            target: "look_there",
+            me = self.base.me,
+            state = ?self.base.current_state,
+            substate = ?self.base.current_substate,
+            ?continuation,
+            "hey_folks_look_there: resuming caller tail"
+        );
         match continuation {
             LookThereContinuation::EventView { enemy, enemy_pos } => {
                 self.event_view_after_look_there(sim, enemy, enemy_pos, global, ctx, tick, grid);
