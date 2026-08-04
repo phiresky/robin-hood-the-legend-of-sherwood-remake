@@ -641,9 +641,7 @@ struct ConvertedLocalAiCommon {
     stop_before_end_of_path: bool,
     use_max_norm_to_stop_before_end_of_path: bool,
     stop_before_end_of_path_distance: u16,
-    macro_command: Vec<u8>,
-    macro_command_offset: usize,
-    macro_command_waypoint: Option<(PathId, u8)>,
+    macro_cursor: Option<ConvertedMacroCursor>,
     primary_target: u32,
     friend_in_trouble: u32,
     detected_body: u32,
@@ -1743,6 +1741,20 @@ fn convert_local_ai(
     }
 }
 
+/// The macro byte cursor as the save stream carries it.
+///
+/// The stream only stores the cursor for an NPC that owns a patrol path, and
+/// the restore rebuilds it against that NPC's current waypoint. A save taken
+/// while the NPC had no patrol path leaves the cursor out entirely, so the
+/// value the mission's own initialization put there survives the load — hence
+/// [`Option`] rather than an empty stream.
+#[derive(Clone, Debug)]
+struct ConvertedMacroCursor {
+    command: Vec<u8>,
+    offset: usize,
+    waypoint: Option<(PathId, u8)>,
+}
+
 fn convert_local_ai_common(
     saved: &LegacyLocalAiCommon,
     creation_order: u32,
@@ -1751,8 +1763,7 @@ fn convert_local_ai_common(
     view_alert_status: AlertLevel,
     assets: &LevelAssets,
 ) -> Result<ConvertedLocalAiCommon, LegacyElementAdoptError> {
-    let (macro_command, macro_command_offset, macro_command_waypoint) =
-        convert_macro_command(saved, creation_order, &assets.hiking_paths)?;
+    let macro_cursor = convert_macro_command(saved, creation_order, &assets.hiking_paths)?;
     let (patrol_path, detached_patrol_path_status) =
         convert_patrol_path(&saved.path, creation_order, topology, &assets.hiking_paths)?;
     let saved_current_remark = remark(
@@ -1829,9 +1840,7 @@ fn convert_local_ai_common(
         stop_before_end_of_path: saved.stop_before_end_of_path,
         use_max_norm_to_stop_before_end_of_path: saved.use_max_norm_to_stop_before_end_of_path,
         stop_before_end_of_path_distance: saved.stop_before_end_of_path_distance,
-        macro_command,
-        macro_command_offset,
-        macro_command_waypoint,
+        macro_cursor,
         primary_target: ai_handle(
             entities.resolve_ai_element(saved.primary_target)?,
             ReferenceKind::Human,
@@ -2264,9 +2273,11 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.stop_before_end_of_path = saved.stop_before_end_of_path;
     ai.use_max_norm_to_stop_before_end_of_path = saved.use_max_norm_to_stop_before_end_of_path;
     ai.stop_before_end_of_path_distance = saved.stop_before_end_of_path_distance;
-    ai.macro_command = saved.macro_command;
-    ai.macro_command_offset = saved.macro_command_offset;
-    ai.macro_command_waypoint = saved.macro_command_waypoint;
+    if let Some(cursor) = saved.macro_cursor {
+        ai.macro_command = cursor.command;
+        ai.macro_command_offset = cursor.offset;
+        ai.macro_command_waypoint = cursor.waypoint;
+    }
     ai.primary_target = saved.primary_target;
     ai.friend_in_trouble = saved.friend_in_trouble;
     ai.detected_body = saved.detected_body;
@@ -3146,12 +3157,16 @@ fn convert_macro_command(
     saved: &LegacyLocalAiCommon,
     creation_order: u32,
     hiking_paths: &[crate::level_data::RawHikingPath],
-) -> Result<(Vec<u8>, usize, Option<(PathId, u8)>), LegacyElementAdoptError> {
+) -> Result<Option<ConvertedMacroCursor>, LegacyElementAdoptError> {
     if !saved.has_patrol_path {
         if saved.macro_in_progress {
             return Err(LegacyElementAdoptError::MacroWithoutPatrolPath { creation_order });
         }
-        return Ok((Vec::new(), 0, None));
+        // No cursor in the stream: keep the one the mission left behind. It is
+        // dormant while the NPC stands on a post, but the NPC can return to its
+        // route and stand on the very waypoint the stale cursor points into,
+        // and the cursor becomes observable again at that moment.
+        return Ok(None);
     }
     let raw_path_id = saved
         .path
@@ -3188,12 +3203,16 @@ fn convert_macro_command(
     )?;
     // The Original rebuilds the cursor from the current waypoint's block, so a
     // restored cursor always belongs to that waypoint.
-    let macro_command_waypoint = (!macro_command.is_empty()).then(|| {
+    let waypoint = (!macro_command.is_empty()).then(|| {
         let path_id = PathId::new(raw_path_id)
             .expect("Legacy decoder already maps the 0xffff no-path sentinel to None");
         (path_id, saved.path.current_waypoint_index)
     });
-    Ok((macro_command, macro_command_offset, macro_command_waypoint))
+    Ok(Some(ConvertedMacroCursor {
+        command: macro_command,
+        offset: macro_command_offset,
+        waypoint,
+    }))
 }
 
 fn convert_waypoint_macro_cursor(
