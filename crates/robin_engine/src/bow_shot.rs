@@ -196,9 +196,15 @@ pub fn shield_params_for_soldier(
 ///
 /// The obstacle is a thin rectangular quad oriented perpendicular to the
 /// actor's facing direction, offset forward from the actor's position.
-/// Coordinate system: (x, y) in map-space, z in world height.
+///
+/// `position_ground` is the holder's ground-space (world) XY, not its
+/// screen-projected map position: sight obstacles live in ground space, and
+/// every ray query against them supplies ground coordinates.  For a holder
+/// standing above z = 0 the two differ by the holder's elevation, and folding
+/// that elevation into Y here would then be counted a second time by the
+/// obstacle's own Z extent.
 pub fn compute_shield_obstacle(
-    position_map: MapPoint,
+    position_ground: MapPoint,
     z: f32,
     direction_sector: i16,
     params: &ShieldParams,
@@ -210,10 +216,10 @@ pub fn compute_shield_obstacle(
 
     let (dir_x, dir_y) = direction_vector_16(direction_sector);
 
-    // Pre-offset: move position forward in map-space direction
+    // Pre-offset: move position forward in the facing direction
     // before constructing the shield box.
-    let px = position_map.x + params.pre_offset * dir_x;
-    let py = position_map.y + params.pre_offset * dir_y;
+    let px = position_ground.x + params.pre_offset * dir_x;
+    let py = position_ground.y + params.pre_offset * dir_y;
     let pz = z + params.z_offset;
 
     // Box construction: direction is already unit from
@@ -3043,6 +3049,7 @@ pub(crate) fn make_arrow_falling_down(
     _sim: &crate::sim_rng::SimulationContext,
     proj: &mut ElementProjectile,
     thrown_away_by_shield: bool,
+    obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
 ) {
     let (sector, _) = current_arrow_orientation(proj);
     proj.projectile.falling = true;
@@ -3077,19 +3084,50 @@ pub(crate) fn make_arrow_falling_down(
     };
 
     proj.projectile.falling_direction = falling_direction;
-    proj.projectile.trajectory = compute_trajectory_ballistic(
+    // The deflection trajectory is integrated through the same
+    // solid-sight-obstacle clipping as a launched shot, so a deflected arrow
+    // stops at the wall or floor it is thrown into instead of sailing through
+    // it. Segment clipping also shortens the first waypoint's frame count,
+    // which is directly observable as this tick's movement increment.
+    let (trajectory, terminal_obstacle) = compute_trajectory_ballistic_with_terminal_obstacle(
         proj.element.position(),
         velocity,
         MASS_ARROW_HIGH,
         false,
-        None,
+        obstacle_check,
     );
+    proj.projectile.trajectory = trajectory;
     proj.projectile.trajectory_frame_count = 0;
     proj.projectile.launch_segment_start = None;
 
+    // Recomputing a trajectory drops the projectile's current membership and
+    // re-derives it from where the new trajectory ends, so the deflected
+    // arrow reports the layer and sector it is about to land in for the whole
+    // of its fall rather than only once it settles.
+    proj.element.clear_layer();
+    proj.element.set_sector(None);
+    if let Some(check) = obstacle_check
+        && let Some(end) = proj.projectile.trajectory.last().map(|tp| tp.position)
+    {
+        let resolution = check
+            .fast_find_grid
+            .resolve_projectile_landing_with_obstacle(
+                end.to_map(),
+                terminal_obstacle,
+                check.sight_obstacles,
+            );
+        proj.element.set_sector(resolution.sector);
+        if resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle {
+            proj.element.set_layer(resolution.layer);
+        }
+    }
+
     // C++ `RHElementArrow::MakeFallingDown` calls `Hourglass()` after
     // recomputing the trajectory, so the ricochet visibly advances on
-    // the same tick as the shield/target impact.
+    // the same tick as the shield/target impact.  That nested hourglass
+    // opens with its own `NewMove`, which re-anchors the old position onto
+    // the impact point before the deflection step is applied.
+    proj.element.sprite.position_iface.new_move();
     proj.advance_trajectory_one_frame();
 }
 
@@ -3108,7 +3146,7 @@ pub fn tick_arrows(
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(sim, entities, sight_obstacles, None, false, &[])
+    tick_arrows_matching(sim, entities, sight_obstacles, None, None, false, &[])
 }
 
 /// Advance every projectile except the ones listed in `skip_arrow_ids`.
@@ -3123,7 +3161,15 @@ pub fn tick_arrows_excluding(
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     skip_arrow_ids: &[EntityId],
 ) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(sim, entities, sight_obstacles, None, false, skip_arrow_ids)
+    tick_arrows_matching(
+        sim,
+        entities,
+        sight_obstacles,
+        None,
+        None,
+        false,
+        skip_arrow_ids,
+    )
 }
 
 /// Advance and resolve collision for one active projectile.
@@ -3136,9 +3182,18 @@ pub fn tick_arrow(
 
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
+    obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
     arrow_id: EntityId,
 ) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(sim, entities, sight_obstacles, Some(arrow_id), true, &[])
+    tick_arrows_matching(
+        sim,
+        entities,
+        sight_obstacles,
+        obstacle_check,
+        Some(arrow_id),
+        true,
+        &[],
+    )
 }
 
 /// Advance one projectile already present in the engine element array.
@@ -3152,12 +3207,14 @@ pub fn tick_existing_projectile(
 
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
+    obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
     projectile_id: EntityId,
 ) -> Vec<ArrowTickResult> {
     tick_arrows_matching(
         sim,
         entities,
         sight_obstacles,
+        obstacle_check,
         Some(projectile_id),
         false,
         &[],
@@ -3169,6 +3226,7 @@ fn tick_arrows_matching(
 
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
+    obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
     only_arrow_id: Option<EntityId>,
     primed_segment_already_advanced: bool,
     skip_arrow_ids: &[EntityId],
@@ -3338,6 +3396,11 @@ fn tick_arrows_matching(
             })
         })
         .collect();
+
+    tracing::trace!(
+        holders = ?shield_snapshots.iter().map(|s| s.holder_id).collect::<Vec<_>>(),
+        "Projectile tick shield-holder snapshot"
+    );
 
     for (projectile_id, entity) in entities.projectiles_mut() {
         let idx = projectile_id.0 as usize;
@@ -3563,7 +3626,6 @@ fn tick_arrows_matching(
         // the per-type impact FX and launches a `ParryShield` on the
         // holder, then this frame terminates early — the apple/stone
         // carries on its trajectory next tick.
-        let arrow_map = proj.element.position_map();
         let vx = proj.projectile.velocity_increment.x;
         let vy = proj.projectile.velocity_increment.y;
 
@@ -3574,9 +3636,12 @@ fn tick_arrows_matching(
             || vx != 0.0
             || vy != 0.0
         {
-            let arrow_old_map = arrow_old.to_map();
-            let old_pos = [arrow_old_map.x, arrow_old_map.y, arrow_old.z];
-            let new_pos = [arrow_new.x, arrow_map.y, arrow_new.z];
+            // Shield obstacle geometry lives in ground/world space, the same
+            // space every other 3D sight-ray query uses, so the projectile
+            // endpoints go in as world XYZ rather than screen-projected map
+            // coordinates.
+            let old_pos = [arrow_old.x, arrow_old.y, arrow_old.z];
+            let new_pos = [arrow_new.x, arrow_new.y, arrow_new.z];
 
             // Flight direction with Y un-compressed.
             let flight_dir = (vx, vy * INVERSE_ASPECT_RATIO);
@@ -3587,11 +3652,20 @@ fn tick_arrows_matching(
                 }
                 // (a) Arrow from front: dot(look_dir, flight_dir) < 0.
                 let dot = shield.look_dir.0 * flight_dir.0 + shield.look_dir.1 * flight_dir.1;
-                if dot >= 0.0 {
-                    continue;
-                }
                 // (b) Arrow path intersects shield geometry.
-                if shield.obstacle.is_blocking_ray_3d(new_pos, old_pos) {
+                let blocking = dot < 0.0 && shield.obstacle.is_blocking_ray_3d(new_pos, old_pos);
+                tracing::trace!(
+                    ?arrow_id,
+                    holder = ?shield.holder_id,
+                    ?dot,
+                    ?old_pos,
+                    ?new_pos,
+                    obstacle_id = shield.obstacle.id,
+                    obstacle_points = ?shield.obstacle.obstacle_points,
+                    blocking,
+                    "Projectile shield-holder intersection test"
+                );
+                if blocking {
                     shield_blocker = Some(shield.holder_id);
                     break;
                 }
@@ -3608,7 +3682,7 @@ fn tick_arrows_matching(
             // (no human / FX-target check), so `continue` after
             // reporting.
             if matches!(proj.object.object_type, ObjectType::Arrow) {
-                make_arrow_falling_down(sim, proj, true);
+                make_arrow_falling_down(sim, proj, true, obstacle_check);
 
                 results.push(ArrowTickResult {
                     arrow: arrow_id,
@@ -5403,6 +5477,7 @@ mod tests {
             sim,
             &mut entities,
             crate::sight_obstacle::ObstacleList::empty(),
+            None,
             EntityId::Projectile(crate::entity_id::ProjectileId(2)),
         );
 
@@ -6794,15 +6869,13 @@ mod tests {
 
             // Arrow flying from +X toward the shield holder at Z=40 —
             // mid-shield height for `shield_params_for_soldier(20, 40)`
-            // which places the quad between Z=30 and Z=50.  The isometric
-            // projection requires `world.y = map_y + z`, so for the arrow
-            // to render at the holder's map-space column (map_y=0) it
-            // needs world.y = 40 — see `compute_bow_point` which adds
-            // elevation into the hand Y the same way.
+            // which places the quad between Z=30 and Z=50.  The holder
+            // stands at ground Y=0, so the arrow shares that ground Y and
+            // clears the quad only on height, which the Z extent decides.
             let trajectory = vec![TrajectoryPoint {
                 position: WorldPoint3D {
                     x: 50.0,
-                    y: 40.0,
+                    y: 0.0,
                     z: 40.0,
                 },
                 time: 2,
@@ -6811,7 +6884,7 @@ mod tests {
                 shooter: EntityId::Pc(crate::entity_id::PcId(0)),
                 bow_point: WorldPoint3D {
                     x: 100.0,
-                    y: 40.0,
+                    y: 0.0,
                     z: 40.0,
                 },
                 trajectory_origin: MapPoint { x: 100.0, y: 0.0 },
@@ -6927,7 +7000,7 @@ mod tests {
             projectile.element.set_direction_instantly(4);
             let impact_position = projectile.element.position();
 
-            make_arrow_falling_down(sim, &mut projectile, false);
+            make_arrow_falling_down(sim, &mut projectile, false, None);
 
             assert!(projectile.projectile.falling);
             assert!(projectile.projectile.flying);

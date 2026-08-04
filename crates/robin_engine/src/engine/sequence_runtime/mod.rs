@@ -2993,7 +2993,7 @@ mod sequence_phase_context_tests {
                 .actor_data()
                 .expect("shield owner has actor data")
                 .action_state,
-            ActionState::ParryingShield
+            ActionState::HoldingShield
         );
     }
 

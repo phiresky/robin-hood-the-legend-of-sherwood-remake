@@ -902,11 +902,14 @@ impl<'a> ShieldCommandContext<'a> {
         if let Some(entity) = self.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
-            // Requires the actor to currently be holding the shield.
+            // Requires the actor to currently be holding the shield.  The
+            // entry transition does not itself move the actor into
+            // `ParryingShield`: the actor keeps holding the shield for the
+            // whole parry animation and only reports parrying once that
+            // animation completes.
             if actor.action_state == ActionState::HoldingShield
                 || actor.action_state == ActionState::ParryingShield
             {
-                actor.action_state = ActionState::ParryingShield;
                 started = true;
             }
         }
