@@ -854,6 +854,19 @@ fn night_fog_shadow_sector_indices(
             }
         }
     }
+    tracing::trace!(
+        ref_x = reference.x,
+        ref_y = reference.y,
+        layer,
+        x_min,
+        x_max,
+        y_min,
+        y_max,
+        grid_w = level.grid_width,
+        grid_h = level.grid_height,
+        found = result.len(),
+        "night/fog shadow-sector block walk"
+    );
     result
 }
 
@@ -893,6 +906,16 @@ pub fn compute_view_radius(
 ) -> f32 {
     let level = &fast_grid.level;
     let r = view_radius as f32;
+
+    tracing::trace!(
+        eye_x = eye_world.x,
+        eye_y = eye_world.y,
+        eye_z = eye_world.z,
+        view_radius,
+        is_night_or_fog,
+        on_obstacle = target_obstacle.is_some(),
+        "compute_view_radius entry"
+    );
 
     // Base radius.  Without an obstacle, slice the view sphere with
     // the ground plane (`sqrt(R² − Z²)`).  With an obstacle, slice it
@@ -945,12 +968,24 @@ pub fn compute_view_radius(
 
     let mut factor_result: f32 = 0.5;
 
+    let shadow_sectors = night_fog_shadow_sector_indices(fast_grid, pt_ref, shadow_layer);
+
+    tracing::trace!(
+        eye_x = eye_world.x,
+        eye_y = eye_world.y,
+        eye_z = eye_world.z,
+        base_radius,
+        shadow_layer,
+        sectors = shadow_sectors.len(),
+        "view radius night modulation"
+    );
+
     // Original does not select lights by barycentre distance. `GetSectors`
     // walks every 64-pixel grid block touched by the clipped +/-400 query
     // box and appends each active SHADOW sector on first encounter. A large
     // light polygon may therefore be selected even when its barycentre lies
     // farther than 400 units from `pt_ref`.
-    for sector_idx in night_fog_shadow_sector_indices(fast_grid, pt_ref, shadow_layer) {
+    for sector_idx in shadow_sectors {
         // Use the precomputed centroid + 3D barycentre from
         // `RHSectorShadow::Initialize` (`level.shadow_data` populated
         // in the post-load pass at
