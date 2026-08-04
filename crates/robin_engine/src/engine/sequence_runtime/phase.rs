@@ -143,7 +143,16 @@ impl EngineInner {
         sequence_id: crate::sequence::SequenceId,
         element_index: usize,
     ) {
-        let Some((command, stored_destination, target_element, action, flags, tolerance)) = self
+        let Some((
+            command,
+            stored_destination,
+            target_element,
+            action,
+            flags,
+            tolerance,
+            goal_sector,
+            goal_layer,
+        )) = self
             .orders
             .sequence_manager
             .get_element(sequence_id, element_index)
@@ -154,6 +163,8 @@ impl EngineInner {
                     action,
                     flags,
                     tolerance,
+                    sector,
+                    layer,
                     ..
                 } if matches!(element.command, Command::Move | Command::Seek) => Some((
                     element.command,
@@ -162,6 +173,8 @@ impl EngineInner {
                     *action,
                     *flags,
                     *tolerance,
+                    *sector,
+                    *layer,
                 )),
                 _ => None,
             })
@@ -389,6 +402,30 @@ impl EngineInner {
         // sequence-manager's live FIFO. Keeping those as distinct elements is
         // required for faithful state/cascade ownership even when other
         // elements are already queued for this actor.
+        // A point seek whose goal sector differs from the actor's own runs
+        // the same gate expansion as any other cross-sector route: the
+        // transient Seek is replaced by ASSERT_POSITION / gate approach /
+        // PASS_DOOR legs and a trailing MOVE that keeps the SEEK flag, so the
+        // post-seek interaction still fires on arrival.
+        if is_seek
+            && target_element.is_none()
+            && self.try_dispatch_cross_sector_point_seek(
+                sim,
+                assets,
+                owner,
+                sequence_id,
+                element_index,
+                destination,
+                goal_sector,
+                goal_layer,
+                action,
+                flags,
+                tolerance,
+            )
+        {
+            return;
+        }
+
         if is_seek {
             let Some(mut replacement_data) = self
                 .orders
