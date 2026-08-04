@@ -2445,7 +2445,22 @@ impl EngineInner {
                     new_command,
                 );
                 self.stop_owner_active_mechanics(owner);
+                // Original assigns the incoming element to mpSequenceElement
+                // before postponing the outgoing one, so every condolence
+                // card raised from inside that postpone — including the
+                // immediate termination of an outgoing element whose last
+                // order is already done — observes that it is no longer the
+                // actor's selected element and leaves the sprite's
+                // PositionGoalMap intact.  Mirrors the equivalent
+                // `element_interrupted_after_replacement_selected` handling
+                // in the InterruptCurrent arm below.
+                self.orders
+                    .sequence_manager
+                    .begin_instruct_callback(owner, new_seq, new_idx);
                 self.engine_postpone(new_seq, new_idx, cur_seq, cur_idx);
+                self.orders
+                    .sequence_manager
+                    .end_instruct_callback(owner, new_seq, new_idx);
                 true
             }
             PriorityDecision::InterruptCurrent => {

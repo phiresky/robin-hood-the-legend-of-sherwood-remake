@@ -3754,7 +3754,15 @@ impl SequenceManager {
     /// Called by the engine when an element has finished (terminated).
     /// Advances the sequence to the next command level if all elements at
     /// the current level are done.
+    #[track_caller]
     pub fn element_terminated(&mut self, seq_id: SequenceId, elem_idx: usize) {
+        tracing::trace!(
+            target: "parity_terminate_caller",
+            ?seq_id,
+            elem_idx,
+            caller = %std::panic::Location::caller(),
+            "element_terminated"
+        );
         let Some(seq) = self.sequences.get_mut(&seq_id) else {
             return;
         };
