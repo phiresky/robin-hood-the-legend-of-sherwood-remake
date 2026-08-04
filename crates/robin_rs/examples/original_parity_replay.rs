@@ -6226,16 +6226,36 @@ fn compare_frame(
                     actual_ai.when_does_macro_timer_ring,
                 );
             }
-            let actual_macro_cursor = (actual_ai.patrol_path.is_some()
-                && !actual_ai.macro_command.is_empty())
-            .then(|| {
-                u16::try_from(actual_ai.macro_command_offset).unwrap_or_else(|_| {
-                    panic!(
-                        "NPC {id:?} macro cursor {} exceeds Original's UWORD domain",
-                        actual_ai.macro_command_offset
-                    )
+            // The cursor is only a position while it still lies inside the
+            // waypoint block it was authored against. Advancing the patrol path
+            // or breaking a macro leaves the cursor behind on the previous
+            // waypoint's data, and the Original can only report an offset when
+            // its pointer still falls within the current waypoint's block.
+            // Recognise the same situation here by requiring the retained
+            // opcode stream to be the current waypoint's macro data, so both
+            // sides withhold the field on exactly the dormant cases.
+            let current_waypoint_macro = actual_ai
+                .patrol_path
+                .as_ref()
+                .and_then(|path| path.current_waypoint(&assets.hiking_paths))
+                .and_then(|waypoint| match &waypoint.command {
+                    robin_engine::level_data::WaypointCommand::Macro(data) => Some(data),
+                    _ => None,
+                });
+            let actual_macro_cursor = current_waypoint_macro
+                .filter(|data| {
+                    !actual_ai.macro_command.is_empty()
+                        && data[..] == actual_ai.macro_command[..]
+                        && actual_ai.macro_command_offset <= actual_ai.macro_command.len()
                 })
-            });
+                .map(|_| {
+                    u16::try_from(actual_ai.macro_command_offset).unwrap_or_else(|_| {
+                        panic!(
+                            "NPC {id:?} macro cursor {} exceeds Original's UWORD domain",
+                            actual_ai.macro_command_offset
+                        )
+                    })
+                });
             if let Some(expected) = expected_ai.macro_cursor {
                 compare(
                     &mut differences,
