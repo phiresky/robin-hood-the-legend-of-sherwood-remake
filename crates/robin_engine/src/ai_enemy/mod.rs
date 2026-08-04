@@ -2518,7 +2518,21 @@ impl EnemyAi {
 
     /// `radius` is the look-there radius (100 for vision-triggered
     /// alerts, 200 for noise-triggered).
-    fn hey_folks_look_there(&mut self, pos: &Position, radius: u16, ctx: &AiContext) {
+    ///
+    /// Returns `true` when at least one friend was called and the caller's
+    /// remaining work has been parked in `continuation`: the calls are
+    /// delivered synchronously, so the caller must not run its tail (state
+    /// transitions included) until they have closed. Returns `false` when no
+    /// friend qualified, in which case the caller falls straight through into
+    /// its tail exactly as the Original does on an empty broadcast.
+    #[must_use]
+    fn hey_folks_look_there(
+        &mut self,
+        pos: &Position,
+        radius: u16,
+        continuation: LookThereContinuation,
+        ctx: &AiContext,
+    ) -> bool {
         let radius_sq = (radius as f32) * (radius as f32);
         let my_camp = ctx.camp;
         let my_pos = ctx.position;
@@ -2540,6 +2554,7 @@ impl EnemyAi {
             .collect();
         friends.sort_by_key(|(_, view)| view.original_creation_order);
 
+        let mut called_anyone = false;
         for (&handle, view) in friends {
             // Filter `friend.ai_state`: DEFAULT or WONDERING, or
             // SEEKING with substate SeekingJustWatching /
@@ -2579,6 +2594,49 @@ impl EnemyAi {
                     fallback_to_sender: None,
                     to_whole_patrol: false,
                 });
+            called_anyone = true;
+        }
+
+        if called_anyone {
+            // Queued last, so the ordered synchronous drain runs it only after
+            // every look-there above (and everything those cascade into) has
+            // closed.
+            self.base.outbox.reentrant.cross_npc_actions.push(
+                CrossNpcAction::ResumeAfterLookThere {
+                    caller: self.base.me,
+                    continuation,
+                },
+            );
+        }
+        called_anyone
+    }
+
+    pub(crate) fn resume_after_look_there(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        continuation: LookThereContinuation,
+        global: &mut AiGlobalState,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        match continuation {
+            LookThereContinuation::EventView { enemy, enemy_pos } => {
+                self.event_view_after_look_there(sim, enemy, enemy_pos, global, ctx, tick, grid);
+            }
+            LookThereContinuation::EventSeesBody {
+                body,
+                body_pos,
+                is_charly,
+            } => {
+                self.event_sees_body_after_look_there(body, body_pos, is_charly, ctx, tick);
+            }
+            LookThereContinuation::EventGetArrow => {
+                self.event_get_arrow_after_look_there(ctx, tick);
+            }
+            LookThereContinuation::SeekingArrowReactiontime => {
+                self.base.launch_timer(200, ctx.frame);
+            }
         }
     }
 

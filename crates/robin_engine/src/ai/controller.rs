@@ -1104,6 +1104,7 @@ impl AiController {
                     | CrossNpcAction::ReportBackToOfficer { .. }
                     | CrossNpcAction::ConsiderReport { .. }
                     | CrossNpcAction::FinalizeAlertSoldiers { .. }
+                    | CrossNpcAction::ResumeAfterLookThere { .. }
                     | CrossNpcAction::InstructGatherPosition { .. }
                     | CrossNpcAction::BreakPhalanx { .. }
                     | CrossNpcAction::Say { .. }
@@ -1132,6 +1133,7 @@ impl AiController {
                         | CrossNpcAction::ReportBackToOfficer { .. }
                         | CrossNpcAction::ConsiderReport { .. }
                         | CrossNpcAction::FinalizeAlertSoldiers { .. }
+                        | CrossNpcAction::ResumeAfterLookThere { .. }
                         | CrossNpcAction::InstructGatherPosition { .. }
                         | CrossNpcAction::Say { .. }
                 )

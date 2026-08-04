@@ -1544,6 +1544,16 @@ pub enum CrossNpcAction {
     /// `EventSeesCharlyStandardProcedure` when the reuniting soldier
     /// still needs to wait at the sync waypoint for its macro friend.
     RegisterSynchronizingActor { target: NpcHandle, actor: NpcHandle },
+    /// Resume the procedure that called `HeyFolksLookThere` once every
+    /// `CALL_LOOKTHERE` it emitted has been delivered and its cascade has
+    /// closed. The look-there broadcast is a plain synchronous call in the
+    /// Original, so the caller's own state transition happens *after* the
+    /// friends have thought. A friend that relays the call back to the sender
+    /// must therefore still observe the sender's pre-transition state.
+    ResumeAfterLookThere {
+        caller: NpcHandle,
+        continuation: LookThereContinuation,
+    },
     /// Synchronously deliver `CALL_MR_OFFICER_I_AM_BACK` and feed the
     /// target officer's actual `Think` return value back into Charly's
     /// state machine before the originating dispatch completes.
@@ -1568,6 +1578,23 @@ pub enum AlertSoldiersFailureContinuation {
     SeekMissingInstructedSoldier,
     SeekMissedCharly { center: Position },
     FleeingRunToDoor,
+}
+
+/// The tail of a procedure that broadcast `CALL_LOOKTHERE`, parked until the
+/// broadcast's synchronous delivery has finished.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub enum LookThereContinuation {
+    EventView {
+        enemy: HumanHandle,
+        enemy_pos: Position,
+    },
+    EventSeesBody {
+        body: HumanHandle,
+        body_pos: Position,
+        is_charly: bool,
+    },
+    EventGetArrow,
+    SeekingArrowReactiontime,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, robin_state_hash_derive::StateHash)]

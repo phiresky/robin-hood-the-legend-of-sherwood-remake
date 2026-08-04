@@ -1909,9 +1909,30 @@ impl EnemyAi {
             self.pc_missed = false;
         }
 
-        // HeyFolksLookThere(enemy_pos, VIEW_LOOK_THERE_RADIUS).
-        self.hey_folks_look_there(&enemy_pos, 100, ctx);
+        // HeyFolksLookThere(enemy_pos, VIEW_LOOK_THERE_RADIUS). It runs before
+        // the state transition below, and the called friends think inside it,
+        // so the tail has to wait for them.
+        if self.hey_folks_look_there(
+            &enemy_pos,
+            100,
+            LookThereContinuation::EventView { enemy, enemy_pos },
+            ctx,
+        ) {
+            return;
+        }
+        self.event_view_after_look_there(sim, enemy, enemy_pos, global, ctx, tick, grid);
+    }
 
+    pub(super) fn event_view_after_look_there(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        enemy: HumanHandle,
+        enemy_pos: Position,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+    ) {
         // Already sprinting? Stay in MovingFast, just commit the target
         // and re-issue the run-to. Skips the StopAll/Say path entirely so
         // the sprint animation chains straight into the engage.
@@ -2266,7 +2287,29 @@ impl EnemyAi {
             self.base.say(Remark::SeesBody);
         }
         // HeyFolksLookThere with default radius.
-        self.hey_folks_look_there(&body_pos, 100, ctx);
+        if self.hey_folks_look_there(
+            &body_pos,
+            100,
+            LookThereContinuation::EventSeesBody {
+                body,
+                body_pos,
+                is_charly: b_hey_this_is_charly,
+            },
+            ctx,
+        ) {
+            return;
+        }
+        self.event_sees_body_after_look_there(body, body_pos, b_hey_this_is_charly, ctx, tick);
+    }
+
+    pub(super) fn event_sees_body_after_look_there(
+        &mut self,
+        body: HumanHandle,
+        body_pos: Position,
+        b_hey_this_is_charly: bool,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
         self.seen_dead_body = false;
 
         self.base.stop_all();
@@ -2363,18 +2406,27 @@ impl EnemyAi {
                     .actor
                     .set_focus(self.base.interesting_object);
             }
-            self.hey_folks_look_there(pos, 200, ctx);
-            if self.get_rank() == ProfileRank::Officer {
-                // Officer just watches with a fixed timer.
-                self.base
-                    .launch_timer(parameters_ai::AI_FIRST_LOOK_TIME as u32, ctx.frame);
-            } else {
-                self.react(
-                    parameters_ai::AI_MAX_STANDARD_REACTIONTIME as u16 + 50,
-                    ctx,
-                    tick,
-                );
+            if !self.hey_folks_look_there(pos, 200, LookThereContinuation::EventGetArrow, ctx) {
+                self.event_get_arrow_after_look_there(ctx, tick);
             }
+        }
+    }
+
+    pub(super) fn event_get_arrow_after_look_there(
+        &mut self,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        if self.get_rank() == ProfileRank::Officer {
+            // Officer just watches with a fixed timer.
+            self.base
+                .launch_timer(parameters_ai::AI_FIRST_LOOK_TIME as u32, ctx.frame);
+        } else {
+            self.react(
+                parameters_ai::AI_MAX_STANDARD_REACTIONTIME as u16 + 50,
+                ctx,
+                tick,
+            );
         }
     }
 
