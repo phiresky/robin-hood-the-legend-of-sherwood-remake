@@ -2115,8 +2115,14 @@ impl EnemyAi {
                         ctx,
                     );
                     let seek_pos = self.base.seek_position;
-                    self.hey_folks_look_there(&seek_pos, 100, ctx);
-                    self.base.launch_timer(200, ctx.frame);
+                    if !self.hey_folks_look_there(
+                        &seek_pos,
+                        100,
+                        LookThereContinuation::SeekingArrowReactiontime,
+                        ctx,
+                    ) {
+                        self.base.launch_timer(200, ctx.frame);
+                    }
                 }
             }
 

@@ -9317,6 +9317,11 @@ impl EngineInner {
                         "AlertSoldiers finalization for caller {caller} escaped its owner boundary"
                     )
                 }
+                crate::ai::CrossNpcAction::ResumeAfterLookThere { caller, .. } => {
+                    panic!(
+                        "HeyFolksLookThere resume for caller {caller} escaped its owner boundary"
+                    )
+                }
                 crate::ai::CrossNpcAction::RelayStimulusToPatrolMembers {
                     stimulus_type,
                     members,
@@ -10164,6 +10169,16 @@ impl EngineInner {
                         failure,
                         assets,
                     ),
+                    crate::ai::CrossNpcAction::ResumeAfterLookThere {
+                        caller,
+                        continuation,
+                    } => self.process_synchronous_look_there_resume(
+                        sim,
+                        source_id,
+                        caller,
+                        continuation,
+                        assets,
+                    ),
                     crate::ai::CrossNpcAction::SendStimulus { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
                         self.process_synchronous_stimuli_for(
@@ -10402,6 +10417,74 @@ impl EngineInner {
             .and_then(Entity::enemy_ai_mut)
             .unwrap_or_else(|| panic!("AlertSoldiers caller {caller} lost its EnemyAi"))
             .finalize_alert_soldiers(sim, failure, global, grid, &ctx, &tick);
+        self.drain_direct_ai_owner_boundary_without_forecast(sim, source_id, assets);
+    }
+
+    fn process_synchronous_look_there_resume(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        source_id: crate::element::EntityId,
+        caller: u32,
+        continuation: crate::ai::LookThereContinuation,
+        assets: &LevelAssets,
+    ) {
+        assert_eq!(
+            source_id.index(),
+            caller,
+            "HeyFolksLookThere resume caller must be its owner"
+        );
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let building_sector = self
+            .world
+            .entities
+            .get(source_id)
+            .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+            .unwrap_or_else(|| panic!("HeyFolksLookThere caller {caller} disappeared"));
+        let ctx = {
+            let entity = self
+                .world
+                .entities
+                .get(source_id)
+                .unwrap_or_else(|| panic!("HeyFolksLookThere caller {caller} disappeared"));
+            build_ai_context_from_entity(
+                entity,
+                self.control.frame_counter,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.hiking_paths,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            )
+        };
+        // The tail of `EVENT_VIEW` is what adopts the sighted enemy as the
+        // primary target, so at this point the AI still carries whatever
+        // target it had before the sighting. Reconstructing the per-tick
+        // combat data off that stale handle leaves the enemy distances
+        // unseeded, and `BattleDecisions` then reads an infinite
+        // nearest-enemy distance and holds the soldier back in reserve
+        // instead of engaging a target standing right next to it. Resolve
+        // the tick data against the enemy the tail is about to adopt.
+        let target_override = match continuation {
+            crate::ai::LookThereContinuation::EventView { enemy, .. } => {
+                self.entity_id_for_index(enemy)
+            }
+            _ => None,
+        };
+        let tick =
+            self.build_npc_tick_data_for_target(sim, source_id, &scratch, assets, target_override);
+        let global = &mut self.ai.global;
+        let grid = &self.world.fast_grid;
+        self.world
+            .entities
+            .get_mut(source_id)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| panic!("HeyFolksLookThere caller {caller} lost its EnemyAi"))
+            .resume_after_look_there(sim, continuation, global, Some(grid), &ctx, &tick);
         self.drain_direct_ai_owner_boundary_without_forecast(sim, source_id, assets);
     }
 
