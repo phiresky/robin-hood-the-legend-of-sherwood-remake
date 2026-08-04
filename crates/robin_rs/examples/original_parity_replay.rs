@@ -6231,21 +6231,18 @@ fn compare_frame(
             // or breaking a macro leaves the cursor behind on the previous
             // waypoint's data, and the Original can only report an offset when
             // its pointer still falls within the current waypoint's block.
-            // Recognise the same situation here by requiring the retained
-            // opcode stream to be the current waypoint's macro data, so both
-            // sides withhold the field on exactly the dormant cases.
-            let current_waypoint_macro = actual_ai
-                .patrol_path
-                .as_ref()
-                .and_then(|path| path.current_waypoint(&assets.hiking_paths))
-                .and_then(|waypoint| match &waypoint.command {
-                    robin_engine::level_data::WaypointCommand::Macro(data) => Some(data),
-                    _ => None,
-                });
-            let actual_macro_cursor = current_waypoint_macro
-                .filter(|data| {
-                    !actual_ai.macro_command.is_empty()
-                        && data[..] == actual_ai.macro_command[..]
+            // That is a question of identity, not of content: two waypoints can
+            // carry byte-identical macro data, so the retained stream has to be
+            // the one taken from the waypoint the path currently stands on.
+            let current_waypoint = actual_ai
+                .has_patrol_path
+                .then_some(actual_ai.patrol_path.as_ref())
+                .flatten()
+                .map(|path| (path.hiking_path_index, path.current_waypoint_index));
+            let actual_macro_cursor = current_waypoint
+                .filter(|current| {
+                    actual_ai.macro_command_waypoint == Some(*current)
+                        && !actual_ai.macro_command.is_empty()
                         && actual_ai.macro_command_offset <= actual_ai.macro_command.len()
                 })
                 .map(|_| {

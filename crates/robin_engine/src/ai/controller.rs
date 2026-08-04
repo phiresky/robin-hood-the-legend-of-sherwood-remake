@@ -88,6 +88,12 @@ pub struct AiController {
     /// Macro bytecode (if any) currently being executed.
     pub macro_command: Vec<u8>,
     pub macro_command_offset: usize,
+    /// Which waypoint's authored data block `macro_command` was copied from,
+    /// as `(path, waypoint index)`. The Original walks the waypoint block in
+    /// place, so its cursor carries that identity implicitly; the copy here
+    /// does not, and only this field can tell a cursor that still belongs to
+    /// the current waypoint from one the path has since left behind.
+    pub macro_command_waypoint: Option<(PathId, u8)>,
     pub number_of_remaining_macro_bytes: u16,
     pub macro_in_progress: bool,
     pub macro_started_in_this_frame: bool,
@@ -328,6 +334,7 @@ impl Default for AiController {
             think_recursion_depth: 0,
             macro_command: Vec::new(),
             macro_command_offset: 0,
+            macro_command_waypoint: None,
             number_of_remaining_macro_bytes: 0,
             macro_in_progress: false,
             macro_started_in_this_frame: false,
@@ -1984,6 +1991,10 @@ impl AiController {
         // forward into it.
         self.macro_command = macro_data.to_vec();
         self.macro_command_offset = section_data_off + 2;
+        self.macro_command_waypoint = self
+            .patrol_path
+            .as_ref()
+            .map(|path| (path.hiking_path_index, path.current_waypoint_index));
         self.number_of_remaining_macro_bytes = macro_byte_count;
 
         // Start the macro machine.

@@ -643,6 +643,7 @@ struct ConvertedLocalAiCommon {
     stop_before_end_of_path_distance: u16,
     macro_command: Vec<u8>,
     macro_command_offset: usize,
+    macro_command_waypoint: Option<(PathId, u8)>,
     primary_target: u32,
     friend_in_trouble: u32,
     detected_body: u32,
@@ -1750,7 +1751,7 @@ fn convert_local_ai_common(
     view_alert_status: AlertLevel,
     assets: &LevelAssets,
 ) -> Result<ConvertedLocalAiCommon, LegacyElementAdoptError> {
-    let (macro_command, macro_command_offset) =
+    let (macro_command, macro_command_offset, macro_command_waypoint) =
         convert_macro_command(saved, creation_order, &assets.hiking_paths)?;
     let (patrol_path, detached_patrol_path_status) =
         convert_patrol_path(&saved.path, creation_order, topology, &assets.hiking_paths)?;
@@ -1830,6 +1831,7 @@ fn convert_local_ai_common(
         stop_before_end_of_path_distance: saved.stop_before_end_of_path_distance,
         macro_command,
         macro_command_offset,
+        macro_command_waypoint,
         primary_target: ai_handle(
             entities.resolve_ai_element(saved.primary_target)?,
             ReferenceKind::Human,
@@ -2264,6 +2266,7 @@ fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
     ai.stop_before_end_of_path_distance = saved.stop_before_end_of_path_distance;
     ai.macro_command = saved.macro_command;
     ai.macro_command_offset = saved.macro_command_offset;
+    ai.macro_command_waypoint = saved.macro_command_waypoint;
     ai.primary_target = saved.primary_target;
     ai.friend_in_trouble = saved.friend_in_trouble;
     ai.detected_body = saved.detected_body;
@@ -3143,12 +3146,12 @@ fn convert_macro_command(
     saved: &LegacyLocalAiCommon,
     creation_order: u32,
     hiking_paths: &[crate::level_data::RawHikingPath],
-) -> Result<(Vec<u8>, usize), LegacyElementAdoptError> {
+) -> Result<(Vec<u8>, usize, Option<(PathId, u8)>), LegacyElementAdoptError> {
     if !saved.has_patrol_path {
         if saved.macro_in_progress {
             return Err(LegacyElementAdoptError::MacroWithoutPatrolPath { creation_order });
         }
-        return Ok((Vec::new(), 0));
+        return Ok((Vec::new(), 0, None));
     }
     let raw_path_id = saved
         .path
@@ -3176,13 +3179,21 @@ fn convert_macro_command(
             .macro_command_offset
             .expect("decoder supplies the conditional cursor when has_patrol_path is true"),
     );
-    convert_waypoint_macro_cursor(
+    let (macro_command, macro_command_offset) = convert_waypoint_macro_cursor(
         &waypoint.command,
         offset,
         saved.remaining_macro_bytes,
         saved.macro_in_progress,
         creation_order,
-    )
+    )?;
+    // The Original rebuilds the cursor from the current waypoint's block, so a
+    // restored cursor always belongs to that waypoint.
+    let macro_command_waypoint = (!macro_command.is_empty()).then(|| {
+        let path_id = PathId::new(raw_path_id)
+            .expect("Legacy decoder already maps the 0xffff no-path sentinel to None");
+        (path_id, saved.path.current_waypoint_index)
+    });
+    Ok((macro_command, macro_command_offset, macro_command_waypoint))
 }
 
 fn convert_waypoint_macro_cursor(
