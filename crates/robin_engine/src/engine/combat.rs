@@ -629,6 +629,27 @@ impl EngineInner {
                 predicted_hit = bow_shot::will_hit_target(&trajectory, bow_point, target_point),
                 "Bow shot trajectory computed"
             );
+            // Launch-parameter snapshot, on its own target so it can be
+            // enabled without the rest of the combat module's chatter:
+            // `RUST_LOG=arrow_launch=trace`.
+            tracing::trace!(
+                target: "arrow_launch",
+                frame = self.control.frame_counter,
+                shooter = result.shooter.index(),
+                target_id = result.target.index(),
+                ?shoot_mode,
+                shooter_pos = ?result.shooter_position,
+                shooter_dir = result.shooter_direction,
+                hand = ?result.sprite_hand_point,
+                ?bow_point,
+                ?target_point,
+                target_movement = ?target_movement,
+                ?velocity,
+                hit_chance,
+                trajectory_len = trajectory.len(),
+                first_waypoint = ?trajectory.first().map(|tp| tp.position),
+                "arrow launch parameters"
+            );
 
             // ── Spawn the arrow ──────────────────────────────────
             // Pre-flag `disappear` when the trajectory's final approach
