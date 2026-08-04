@@ -653,6 +653,29 @@ pub(super) fn pos_diff(a: &Position, b: &Position) -> (f32, f32) {
     (a.x - b.x, a.y - b.y)
 }
 
+/// The AI's own squared distance metric: a stretched **3D** norm.
+///
+/// The elements' world-space points are subtracted, the Y component is
+/// stretched by `INVERSE_ASPECT_RATIO`, and all three components are
+/// squared. Positions in the AI snapshots are map-space, so world Y is
+/// recovered as `map_y + elevation`.
+///
+/// A flat 2D `square_norm` is not a substitute: it both under-reports
+/// screen-vertical separation and ignores height, so a soldier on a
+/// rampart reads as adjacent to one on the ground below.
+pub(super) fn ai_square_distance(
+    target: &Position,
+    target_elevation: f32,
+    me: &Position,
+    me_elevation: f32,
+) -> f32 {
+    let dx = target.x - me.x;
+    let dz = target_elevation - me_elevation;
+    let dy = ((target.y + target_elevation) - (me.y + me_elevation))
+        * crate::position_interface::INVERSE_ASPECT_RATIO;
+    dx * dx + dy * dy + dz * dz
+}
+
 /// Convert a raw 2D map-space vector `(target - me)` to a 0–15 sector.
 /// Thin alias over [`crate::position_interface::vector_to_sector_0_to_15_iso`].
 pub(super) fn vec_to_sector(dx: f32, dy: f32) -> u16 {

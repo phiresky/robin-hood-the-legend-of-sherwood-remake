@@ -3820,6 +3820,17 @@ impl EngineInner {
                         !element.data.is_movement()
                             || order.order_type == OrderType::Select
                             || matches!(element.command, Command::WaitTimer | Command::WaitFreeLift)
+                            // A movement element's translated order chain also
+                            // holds pure animation steps — the door-pass Turning
+                            // and crouch transitions, and the FREEZING token a
+                            // pathfinding move carries. Those belong to the
+                            // generic Execute switch even though the element
+                            // itself is a movement element, so the actor's
+                            // stale moving action-state must not suppress them.
+                            || super::tick::classify_live_actor_execute_arm(
+                                entity_id,
+                                order.order_type,
+                            ) == Some(super::tick::ExecuteOwnerFamily::GenericAnimation)
                     })
             })
             .unwrap_or(false);
@@ -4713,6 +4724,7 @@ impl EngineInner {
                         //   STRIKING_DOWN_SWORD,
                         //   STANDING_UP_SWORD/BOW,
                         //   EXTRACTING_ARROW_SWORD, RAISING_SHIELD,
+                        //   WAITING_SHIELD,
                         //   ROLLING, TAKING_NET,
                         //   TAKING, DRINKING_ALE,
                         //   TRANSITION_CARRYING_CORPSE_WAITING_UPRIGHT,
@@ -4724,6 +4736,7 @@ impl EngineInner {
                             OrderType::TransitionRaisingSword
                                 | OrderType::TransitionLoweringSword
                                 | OrderType::WaitingSword
+                                | OrderType::WaitingShield
                                 | OrderType::ParryingSword
                                 | OrderType::ParryingLowSword
                                 | OrderType::StrikingLowLeftSmalltalk
@@ -4818,6 +4831,27 @@ impl EngineInner {
                                     ),
                                 );
                             }
+                        }
+                        if owner_is_pc
+                            && anim_type == OrderType::WaitingShield
+                            && let Some(danger) = entity
+                                .actor_data()
+                                .and_then(|actor| actor.shield_face_point)
+                            && (danger.x != 0.0 || danger.y != 0.0)
+                        {
+                            // The PC override of WAITING_SHIELD re-aims at the
+                            // shield danger point on *every* tick, not just at
+                            // initialization, so a danger point that moves
+                            // while the shield is up keeps dragging the facing
+                            // around. The soldier override has no such step.
+                            let position = entity.element_data().position();
+                            let dx = danger.x - position.x;
+                            let dy = danger.y - position.y;
+                            let direction =
+                                crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
+                            entity.position_iface_mut().set_direction(
+                                crate::position_interface::Direction::from_raw(direction as i32),
+                            );
                         }
                         if needs_turn {
                             let still_turning = entity.position_iface_mut().turn();
