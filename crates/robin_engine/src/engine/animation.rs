@@ -4539,6 +4539,10 @@ impl EngineInner {
                         .is_some_and(|actor| actor.active_jump.is_some());
                     let jump_ground_motion_step =
                         super::jump::jump_step_uses_perform_motion(anim_type) && actor_in_jump;
+                    // Airborne segments fly the body themselves and ignore
+                    // what their animation reports, so they take their own
+                    // Execute path below.
+                    let jump_airborne_step = super::jump::jump_step_is_airborne(entity, anim_type);
                     let order_is_initialising = actor.execute_order_initialising;
                     if let Some(direction) = waiting_sword_direction_goal {
                         entity.element_data_mut().set_direction_goal(direction);
@@ -4967,6 +4971,11 @@ impl EngineInner {
                                     motion_order,
                                     played,
                                     row,
+                                ));
+                            }
+                            if jump_airborne_step {
+                                return Some(super::jump::perform_jump_airborne_motion(
+                                    entity, sim, order_id, played, row,
                                 ));
                             }
                             let elem = entity.element_data_mut();
