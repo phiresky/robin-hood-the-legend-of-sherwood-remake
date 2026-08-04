@@ -158,6 +158,16 @@ pub struct AiContext {
     /// interval.
     pub self_pride: u16,
 
+    /// Self's current life points, read live from the element rather than
+    /// from an AI-side cache. `MakeBattlePredecisions` scales the battle
+    /// odds by `life_points / max_life_points`, so a stale copy makes a
+    /// badly wounded soldier fight on instead of calling for help.
+    pub self_life_points: i16,
+
+    /// Self's maximum life points — the soldier profile value after the
+    /// difficulty modifier, `100` for civilians and PCs.
+    pub self_max_life_points: i16,
+
     /// `true` when this NPC is dead (`life_points <= 0`). Read by the
     /// `start_think` dead-gate to short-circuit stimulus processing —
     /// defence-in-depth against cross-NPC actions or scripts that fire

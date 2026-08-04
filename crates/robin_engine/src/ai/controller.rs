@@ -719,7 +719,15 @@ impl AiController {
     /// machine immediately. Also latches `pending_blink_all_enemies` so
     /// the next detection pass re-registers anyone still in the view
     /// cone.
+    #[track_caller]
     pub fn script_unlock(&mut self, is_unconscious: bool) {
+        tracing::trace!(
+            target: "parity_stimulus_origin",
+            me = self.me,
+            was_script_locked = self.script_locked,
+            origin = %std::panic::Location::caller(),
+            "script unlock"
+        );
         // Clear current detections so NPCs re-register view-cone
         // occupants on the next detection pass.
         self.outbox.actor.blink_all_enemies = true;
@@ -735,10 +743,7 @@ impl AiController {
         self.script_locked = false;
 
         if self.current_state != AiState::Sleeping && !after_script_go_on && !is_unconscious {
-            self.outbox
-                .reentrant
-                .self_stimuli
-                .push(StimulusType::EventReturnToDuty);
+            self.fire_self_stimulus(StimulusType::EventReturnToDuty);
         }
     }
 
@@ -3289,7 +3294,15 @@ impl AiController {
     /// Queue a stimulus to be re-dispatched to this NPC on the next tick.
     /// The engine drains `pending_self_stimuli` and re-dispatches them
     /// after the current think cycle.
+    #[track_caller]
     pub fn fire_self_stimulus(&mut self, stimulus_type: StimulusType) {
+        tracing::trace!(
+            target: "parity_stimulus_origin",
+            me = self.me,
+            ?stimulus_type,
+            origin = %std::panic::Location::caller(),
+            "self stimulus queued"
+        );
         self.outbox.reentrant.self_stimuli.push(stimulus_type);
     }
 

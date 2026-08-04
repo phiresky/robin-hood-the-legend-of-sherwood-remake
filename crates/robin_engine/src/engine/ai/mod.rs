@@ -889,6 +889,8 @@ pub(super) fn build_ai_context_from_entity(
         self_action_state: actor.map(|a| a.action_state).unwrap_or_default(),
         self_rank,
         self_pride,
+        self_life_points: entity.human_life_points(),
+        self_max_life_points: entity.human_max_life_points(),
         self_is_dead: entity.is_dead(),
         self_detectable_friend_count,
         self_detectable_missed_friend_count,

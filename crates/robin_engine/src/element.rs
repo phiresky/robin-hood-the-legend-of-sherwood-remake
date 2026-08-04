@@ -3145,6 +3145,27 @@ impl Entity {
         }
     }
 
+    /// Live life points of a human element; `0` for everything else.
+    pub fn human_life_points(&self) -> i16 {
+        match self {
+            Self::Pc(e) => e.pc.life_points,
+            Self::Soldier(e) => e.npc.life_points,
+            Self::Civilian(e) => e.npc.life_points,
+            _ => 0,
+        }
+    }
+
+    /// Maximum life points of a human element: the difficulty-scaled
+    /// soldier-profile value for soldiers, a flat `100` for PCs and
+    /// civilians, `0` for everything else.
+    pub fn human_max_life_points(&self) -> i16 {
+        match self {
+            Self::Pc(_) | Self::Civilian(_) => 100,
+            Self::Soldier(e) => e.soldier.cached_max_life_points,
+            _ => 0,
+        }
+    }
+
     pub fn is_transporting(&self) -> bool {
         match self {
             Self::Pc(e) => e.element.posture == Posture::CarryingCorpse,

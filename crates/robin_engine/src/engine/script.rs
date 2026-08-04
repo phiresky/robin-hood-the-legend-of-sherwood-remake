@@ -2768,7 +2768,17 @@ impl EngineInner {
         );
 
         match result {
-            Ok(v) => v != 0,
+            Ok(v) => {
+                tracing::trace!(
+                    target: "parity_stimulus_origin",
+                    handle,
+                    source,
+                    code,
+                    allowed = v != 0,
+                    "FilterAIEvent verdict"
+                );
+                v != 0
+            }
             Err(e) => {
                 tracing::warn!(
                     "FilterAIEvent(handle={handle}, source={source}, code={code}) failed: {e} — allowing"

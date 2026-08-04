@@ -401,9 +401,13 @@ impl EnemyAi {
             raw.max(0) as i16
         };
 
-        // Wounded soldiers are more pessimistic.
-        let max_lp = self.initial_life_points.max(1);
-        let cur_lp = self.old_life_points;
+        // Wounded soldiers are more pessimistic. Both operands are read
+        // live off the element: the AI-side `old_life_points` snapshot
+        // trails the real value by an entire damage exchange, and
+        // `initial_life_points` is the spawn value, not the profile
+        // maximum, so a soldier at 20/120 was scoring as unhurt.
+        let max_lp = ctx.self_max_life_points.max(1);
+        let cur_lp = ctx.self_life_points;
         if cur_lp < max_lp {
             odds = (odds as i32 * cur_lp as i32 / max_lp as i32) as i16;
         }
