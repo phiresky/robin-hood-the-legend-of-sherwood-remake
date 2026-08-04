@@ -498,30 +498,17 @@ impl EngineInner {
                 _ => false,
             };
             if target_is_shield_soldier {
-                // "Detecting" means the shooter is visible *this frame*
-                // (cone + LOS).  The NPC tick caches that live result as
-                // `det.seen_now`, so checking that flag is equivalent to
-                // a fresh visibility query without rebuilding the full
-                // `VisibilityQuery`.  Using `detectable_lists` membership
-                // alone would be wrong: the entry persists forever, so a
-                // soldier whose LOS of the archer is now occluded by a
-                // wall would still raise his shield — the audit-flagged
-                // "soldier cheats" case.
-                let target_detects_shooter =
-                    match self.get_entity(result.target).and_then(|e| e.npc_data()) {
-                        Some(npc) => npc.detectable_lists.iter().any(|list| {
-                            list.iter()
-                                .any(|d| d.element == Some(result.shooter) && d.seen_now)
-                        }),
-                        None => {
-                            tracing::warn!(
-                                target = ?result.target,
-                                shooter = ?result.shooter,
-                                "Bow shot shield warning skipped: shield soldier missing NPC data"
-                            );
-                            false
-                        }
-                    };
+                // The shield bearer runs its own cone + LOS query here rather
+                // than reading the detection pass's `seen_now` flag: that flag
+                // only refreshes on the bearer's detection cadence, so an
+                // archer who stepped out from behind a wall this frame would
+                // otherwise go unnoticed until the next cadence tick.
+                let target_detects_shooter = self.npc_is_detecting_human(
+                    assets,
+                    result.target,
+                    result.shooter,
+                    self.control.frame_counter,
+                );
                 if target_detects_shooter {
                     self.dispatch_ai_stimulus(
                         result.target,

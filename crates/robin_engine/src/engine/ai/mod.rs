@@ -1254,6 +1254,9 @@ fn build_entity_views_inner(engine: &EngineInner) -> AiEntityViewMap {
             building_sector.is_some(),
             building_sector,
             Some(&engine.mission_domain.campaign),
+            engine
+                .live_actor_animation(entity_id)
+                .unwrap_or(crate::order::OrderType::NonanimationEnd),
         );
 
         // Door-rail snap: while a human actor is passing a door, AI

@@ -323,6 +323,7 @@ pub fn compute_visibility(q: &VisibilityQuery<'_>) -> f32 {
 /// branch. Keeping the calculation behind `FnOnce` preserves that observable
 /// LOS/cache timing while the fixed-radius wrapper above remains convenient
 /// for unit tests and callers without light-sector modulation.
+#[track_caller]
 pub fn compute_visibility_with_effective_radius(
     q: &VisibilityQuery<'_>,
     effective_view_radius: impl FnOnce() -> f32,
@@ -500,6 +501,7 @@ pub struct ObjectVisibilityQuery<'a> {
 /// Returns a sharpness in `[0.0, 1.0]` — 0.0 means "not visible this
 /// frame", non-zero is the distance-sharpness curve result with no
 /// posture or action-state multiplier (objects are inanimate).
+#[track_caller]
 pub fn compute_object_visibility(q: &ObjectVisibilityQuery<'_>) -> f32 {
     if q.viewer_eye_status.is_blind() {
         return 0.0;
@@ -576,6 +578,7 @@ pub fn compute_object_visibility(q: &ObjectVisibilityQuery<'_>) -> f32 {
 /// re-applies the radius + forward-halfplane reject before the triangle
 /// test.  `compute_visibility` passes false because it already ran an
 /// equivalent reject upstream.
+#[track_caller]
 fn is_detecting(
     q: &VisibilityQuery<'_>,
     view_x: f32,
@@ -628,6 +631,7 @@ fn is_detecting(
 /// `compute_object_visibility` (object target), both of which check
 /// those short-circuits earlier in their own bodies.
 #[allow(clippy::too_many_arguments)]
+#[track_caller]
 fn is_detecting_cone_and_los(
     viewer: MapPoint,
     viewer_direction: i16,
@@ -713,6 +717,7 @@ fn los_clear_for_detection(
 /// Merry-men forest-level 180° view: vision is a flat 180° forward
 /// half-plane bounded by the view radius — no narrow cone, no distance
 /// curve.
+#[track_caller]
 fn is_detecting_180_degrees(
     q: &VisibilityQuery<'_>,
     effective_view_radius: impl FnOnce() -> f32,
@@ -1178,6 +1183,7 @@ pub fn los_clear_spatial(
 /// target-in-building short-circuits; those depend on state outside
 /// the raw inputs.
 #[allow(clippy::too_many_arguments)]
+#[track_caller]
 pub fn is_detecting_target(
     viewer_los: MapPoint,
     viewer_world: GroundPoint,

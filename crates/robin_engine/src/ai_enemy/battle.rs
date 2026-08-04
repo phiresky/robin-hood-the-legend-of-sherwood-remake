@@ -2873,7 +2873,14 @@ mod tests {
                 ..Default::default()
             },
         });
-        crate::ai_entity_view::entity_view_from_entity(&entity, 41, false, None, None)
+        crate::ai_entity_view::entity_view_from_entity(
+            &entity,
+            41,
+            false,
+            None,
+            None,
+            crate::order::OrderType::NonanimationEnd,
+        )
     }
 
     #[test]
