@@ -5686,6 +5686,17 @@ impl EngineInner {
             self.set_pc_action_from_message(assets, 0, pc_id, crate::profiles::Action::Bow);
         }
 
+        for pc_id in sides.pc_helping_climb_action {
+            // RHElementActorPC::Execute forwards MSG_SELECT_ACTION(HELP_TO_CLIMB)
+            // straight after SetStates on the DONE edge of the helping-climb
+            // entry transition. HelpToClimb is already the current action, but
+            // a selected PC still goes through the action-reselection Stop at
+            // Normal priority, which interrupts whatever the entry transition
+            // postponed behind itself — the move the player queued while the
+            // PC was kneeling down never resumes.
+            self.set_pc_action_from_message(assets, 0, pc_id, crate::profiles::Action::HelpToClimb);
+        }
+
         for _pc_id in sides.stature_change_end {
             self.orders.messenger.send(crate::messenger::Message::new(
                 crate::messenger::MessageType::Simple(

@@ -4407,6 +4407,25 @@ impl SequenceManager {
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
     ) {
+        let root = self.current_element_for_actor(owner);
+        self.stop_owner_from_root(owner, root, stop_priority, resolver);
+    }
+
+    /// `RHElementActor::Stop` with an explicit root instead of the actor's
+    /// currently selected element.
+    ///
+    /// A command that stops its owner from inside its own translation runs
+    /// before the incoming element has been installed as the actor's
+    /// selection, yet Original has already assigned `mpSequenceElement` by
+    /// then and therefore stops through the incoming element — reaching
+    /// whatever that element pushed into its postponed slot.
+    pub fn stop_owner_from_root(
+        &mut self,
+        owner: EntityId,
+        root: Option<(SequenceId, usize)>,
+        stop_priority: SequencePriority,
+        resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
+    ) {
         let parity_debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
         // Original `RHElementActor::Stop` starts from exactly
         // `mpSequenceElement`. Scanning every InProgress/Postponed element is
@@ -4414,7 +4433,7 @@ impl SequenceManager {
         // form a large shared next/postponed graph, so recursively stopping
         // each node as a fresh root repeats that graph exponentially.
         let mut targets = VecDeque::new();
-        if let Some(current) = self.current_element_for_actor(owner)
+        if let Some(current) = root
             && self.get_element(current.0, current.1).is_some_and(|elem| {
                 !(elem.command == Command::Wait && elem.priority == SequencePriority::Wait)
             })
