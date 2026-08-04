@@ -1907,6 +1907,15 @@ impl EngineInner {
     /// `will_hit_target` for the "arc only when the shot misses" gate —
     /// ground throws pass `None`, which makes the will-hit test fall
     /// through to a positional-only check.
+    ///
+    /// The Original builds a throwaway arrow (bow) or net (thrown net on
+    /// Easy) as a stack local here purely to borrow its ballistics, and
+    /// element construction bumps the global creation counter. Rust
+    /// deliberately does not reproduce that: the counter is
+    /// gameplay-authoritative state while this runs on the cursor/render
+    /// path, so mutating it here would break rollback. The cost is that
+    /// Original element serials drift ahead of Rust's by one per settled
+    /// hover, leaving only their relative order comparable across engines.
     pub fn compute_trajectory_preview_to_point(
         &self,
         assets: &LevelAssets,

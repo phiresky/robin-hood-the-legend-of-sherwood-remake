@@ -80,6 +80,10 @@ impl WorldState {
         self.next_original_creation_order = creation_order
             .checked_add(1)
             .expect("Original element creation counter overflow");
+        tracing::trace!(
+            target: "robin_engine::creation_order",
+            "assign creation order {creation_order} to {entity_id}"
+        );
         if let Some(previous) = self
             .original_creation_order_by_entity
             .insert(entity_id, creation_order)

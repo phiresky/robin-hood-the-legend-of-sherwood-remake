@@ -4204,6 +4204,12 @@ struct EntityMap {
     /// canonical position-sector number. The raw numbers are allocation
     /// details rather than gameplay identity.
     sectors: BTreeMap<u16, u16>,
+    /// One past the highest creation order the mission start established.
+    /// Below it the Original's serials come from the mission file or the save
+    /// and are exact; at or above it they also count the throwaway elements
+    /// described on [`Self::extend_runtime_entities`], so only their relative
+    /// order is comparable.
+    runtime_creation_order_boundary: u32,
 }
 
 impl EntityMap {
@@ -4291,11 +4297,22 @@ impl EntityMap {
                 );
             }
         }
+        let runtime_creation_order_boundary = entities_by_creation_order
+            .keys()
+            .next_back()
+            .map_or(0, |highest| highest + 1);
         Self {
             entities: result,
             entities_by_creation_order,
             sectors,
+            runtime_creation_order_boundary,
         }
+    }
+
+    /// Whether the Original's raw serial for this element is an exact
+    /// cross-engine value rather than one carrying presentation-only gaps.
+    fn creation_order_is_exact(&self, creation_order: u32) -> bool {
+        creation_order < self.runtime_creation_order_boundary
     }
 
     fn refresh_trace_indices(&mut self, frame: &TraceFrame) {
@@ -5776,13 +5793,15 @@ fn compare_frame(
             "Original NPC trace state must contain both ai and detection payloads for {:?}",
             expected.entity_id
         );
-        compare(
-            &mut differences,
-            id,
-            "creation_order",
-            expected.creation_order,
-            engine.original_creation_order(id),
-        );
+        if entity_map.creation_order_is_exact(expected.creation_order) {
+            compare(
+                &mut differences,
+                id,
+                "creation_order",
+                expected.creation_order,
+                engine.original_creation_order(id),
+            );
+        }
         compare(
             &mut differences,
             id,
