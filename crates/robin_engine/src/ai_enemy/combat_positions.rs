@@ -11,8 +11,8 @@ use crate::parameters_ai;
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 
 use super::util::{
-    FighterView, calculate_opponent_nearest_to_rene, check_straight_movement, det2, dot2,
-    evaluate_combat_position_full, get_normal, get_normal_iso, get_normal_right,
+    FighterView, ai_square_distance, calculate_opponent_nearest_to_rene, check_straight_movement,
+    det2, dot2, evaluate_combat_position_full, get_normal, get_normal_iso, get_normal_right,
     is_any_swordfight_substate, is_observing_combat_substate, is_walking_running_charging_substate,
     iso_norm, iso_normalize, max_norm, pos_diff, sector_to_vector, square_norm, vec_to_sector,
     vec_to_sector_ar,
@@ -301,12 +301,12 @@ impl EnemyAi {
                 if !ok {
                     continue;
                 }
-                // SquareDistance(pFriend) stretches Y by
-                // INVERSE_ASPECT_RATIO before squaring — isometric
-                // squared distance, not Euclidean.
-                let v = pos_diff(&snap.position, &me_pos);
-                let v_iso = (v.0, v.1 * INVERSE_ASPECT_RATIO);
-                let sq = square_norm(v_iso);
+                let sq = ai_square_distance(
+                    &snap.position,
+                    snap.elevation as f32,
+                    &me_pos,
+                    ctx.elevation,
+                );
                 if sq < best_sq {
                     best_sq = sq;
                     best = *handle;
@@ -1171,8 +1171,13 @@ impl EnemyAi {
             if !f.is_friendly {
                 continue;
             }
-            let d = pos_diff(&f.position, &ctx.position);
-            if square_norm(d) >= consider_sq {
+            if ai_square_distance(
+                &f.position,
+                f.elevation as f32,
+                &ctx.position,
+                ctx.elevation,
+            ) >= consider_sq
+            {
                 continue;
             }
             // Filter on AI state ∈ {Seeking, Wondering, Attacking}.
@@ -1476,9 +1481,14 @@ impl EnemyAi {
         if nearest != 0
             && let Some(snap) = self.find_fighter(nearest, tick)
         {
-            let d = pos_diff(&snap.position, &ctx.position);
             let atk_dist = archer::PHALANX_ATTACK_DISTANCE as f32;
-            if square_norm(d) < atk_dist * atk_dist {
+            if ai_square_distance(
+                &snap.position,
+                snap.elevation as f32,
+                &ctx.position,
+                ctx.elevation,
+            ) < atk_dist * atk_dist
+            {
                 self.break_phalanx(sim, global, ctx, tick, grid);
                 return true;
             }
@@ -1836,20 +1846,18 @@ impl EnemyAi {
             return false;
         }
 
-        // Both range gates below are `SquareDistance`, which stretches Y by
-        // INVERSE_ASPECT_RATIO before squaring — an isometric squared
-        // distance, not a Euclidean one. Measuring Euclidean here
-        // under-reports how far away a target is along the screen-vertical
-        // axis, which silently shrinks both thresholds.
-        let square_distance_to = |pos: &crate::ai::Position| -> f32 {
-            let v = pos_diff(pos, &ctx.position);
-            square_norm((v.0, v.1 * INVERSE_ASPECT_RATIO))
+        // Both range gates below are `SquareDistance`, the stretched 3D
+        // metric — see `ai_square_distance`.
+        let square_distance_to = |pos: &crate::ai::Position, elevation: f32| -> f32 {
+            ai_square_distance(pos, elevation, &ctx.position, ctx.elevation)
         };
 
         // Are we already near enough to fight? (PHALANX_ATTACK_DISTANCE gate)
         if let Some(enemy_snap) = self.find_fighter(nearest_enemy, tick) {
             let atk_dist = archer::PHALANX_ATTACK_DISTANCE as f32;
-            if square_distance_to(&enemy_snap.position) < atk_dist * atk_dist {
+            if square_distance_to(&enemy_snap.position, enemy_snap.elevation as f32)
+                < atk_dist * atk_dist
+            {
                 return false;
             }
         }
@@ -1886,7 +1894,7 @@ impl EnemyAi {
                 continue;
             };
             let min_dist = archer::MIN_PROTECT_ARROW_DISTANCE as f32;
-            if square_distance_to(&view.position) < min_dist * min_dist {
+            if square_distance_to(&view.position, view.elevation) < min_dist * min_dist {
                 continue;
             }
             if view.action_state.is_bow() {
@@ -1904,7 +1912,13 @@ impl EnemyAi {
                 .iter()
                 .map(|&h| {
                     ctx.entity_view(h)
-                        .map(|v| (h, v.action_state, square_distance_to(&v.position)))
+                        .map(|v| {
+                            (
+                                h,
+                                v.action_state,
+                                square_distance_to(&v.position, v.elevation),
+                            )
+                        })
                 })
                 .collect::<Vec<_>>(),
             dangerous_enemy,
