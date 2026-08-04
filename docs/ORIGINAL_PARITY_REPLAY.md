@@ -4553,9 +4553,8 @@ explicitly introduces and motivates another profile.
 
 ### Schema 13 adds per-frame campaign and engine-global state
 
-Schema 13 is the current writer format and declares
-`authoritative_state: "per_frame_v1"`. Every frame now carries the complete
-portable campaign snapshot already used at startup, the Original's gameplay
+Schema 13 declares `authoritative_state: "per_frame_v1"`. Every frame carries
+the complete portable campaign snapshot used at startup, the Original's gameplay
 lock/freeze/speed and mission-exit flags, the script-global array, and the
 ordered failed-path timeout list. Failed requests include the same canonical
 actor/antagonist identity and exact request float bits as ordered path events,
@@ -4575,6 +4574,74 @@ while Rust retains the fallback plus a typed override slot. The mutable
 production counters, occupants, inventories, skills, mission lists and all
 other fields emitted by `CampaignSnapshotJson` remain authoritative and are
 compared field-by-field.
+
+Schema 13 was never written. The recorder has only ever stamped 12, and no
+`authoritative_state`, `campaign` or `engine_state` per-frame emission exists
+in the C++ sources on any machine — the writer half was lost with the upstream
+history. The reader keeps the format because reinstating it is still the right
+answer for divergences that depend on unrecorded global state; what it no
+longer claims is that anything produces it.
+
+### Schema 14 gives every observable effect a recorded cause
+
+Schema 14 is the current writer format. It revises schema 12's contract in two
+places and deliberately does not adopt schema 13's per-frame payload, so a
+schema-14 frame omits `campaign` and `engine_state` exactly as a schema-12 one
+does. Reinstating that payload needs its own schema number and its own writer.
+
+The first revision closes a hole in the resolved-command contract. Random input
+selects an action by forwarding a recorded message and then clicks with a raw
+mouse message that is deliberately never recorded, on the understanding that
+whatever the click resolves to gets recorded instead. Two click outcomes broke
+that: an archer holding the contest posture, and a click on a locked patch.
+Both bark `HERO_UNABLE_TO_DO_SOMETHING` and return before reaching any
+recording call, so the resolved speech appeared in the trace with no command in
+front of it and the replay had nothing to apply. Both now record a
+`hero_refused_action` command carrying the actor, the selected action, the
+click target where the refusal has one, and a `reason` naming the rule that
+refused it. Rust applies it as the same hero-speech command its live input path
+emits, and fails loudly on a reason it does not know rather than assuming the
+line. The rest of the raw-click dispatch was audited for the same shape: every
+other early return either leaves no observable trace or already records through
+the focused element's `MouseClicked`.
+
+The second revision keeps presentation out of the oracle. Drawing a detection
+polygon computes a night radius by asking the grid whether the viewer can see
+each nearby light sector, and those opaque visibility queries were recorded
+like simulation ones even though the entire path is clipped against the camera
+and the host screen resolution. A scoped presentation marker around the shadow
+polygon's display entry point suppresses recording for anything it issues. The
+simulation's own night radius is computed separately and is still recorded.
+
+That second revision matters far less than it looks. The detection polygon is
+only drawn for the element the player has view-locked, and an automated capture
+never sets one — it is reachable only when a save was taken while a view
+element was selected, which held for one of twenty-five sampled reference
+saves. Render queries are therefore absent from almost every recorded trace,
+and the `visibility_queries.length` failures in the corpus are not explained by
+them.
+
+### The oracle is not reproducible run to run
+
+Two captures of the same save, with the same binary, seed and frame count, do
+not produce the same trace. The divergence is not in the simulation: audio
+draws go through `RHParity::AudioRandomDraw`, which calls the same libc
+generator the simulation draws from, so a sound decision that depends on
+wall-clock or mixer state consumes from the shared stream and shifts every
+simulation draw after it. Captures stay identical for a few hundred frames and
+then separate for good. Traces also carry one field that differs between runs
+regardless: an NPC's `macro_cursor` is a pointer difference between the macro
+command pointer and the current waypoint's data, so it reports a heap offset
+whenever those live in different allocations. It shows up immediately: a
+freshly recorded trace replayed against this port diverges first, and only, on
+`ai.macro_cursor`, with the Original reporting a raw offset against Rust's
+bytecode index.
+
+Neither is a Rust-side defect, and neither is fixed here. Both bound what a
+parity failure can mean: a mismatch on a trace whose recorded audio draws
+differ from the run that produced the expectation is not evidence about the
+port. Comparisons that need a stable oracle should use the deterministic
+prefix, which ends at the first audio draw.
 
 ### Runtime entity identity ignores presentation-only constructor gaps
 
