@@ -4079,6 +4079,18 @@ impl SequenceManager {
         if let Some(card) = effects.condolation.as_mut() {
             card.was_selected = self.current_element_for_actor(card.owner)
                 == Some((card.seq_id, usize::from(card.elem_idx)));
+            tracing::trace!(
+                target: "parity_owner_handoff",
+                owner = ?card.owner,
+                seq_id = ?card.seq_id,
+                elem_idx = card.elem_idx,
+                command = ?card.command,
+                terminal_state = ?card.terminal_state,
+                was_selected = card.was_selected,
+                instructing = ?self.actor_instructing.get(&card.owner),
+                in_progress = ?self.actor_in_progress.get(&card.owner),
+                "condolation card capturing selection at SetState"
+            );
         }
 
         if let Some(seq) = self.sequences.get_mut(&seq_id) {

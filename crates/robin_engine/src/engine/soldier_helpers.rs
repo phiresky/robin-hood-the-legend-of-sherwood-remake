@@ -600,6 +600,7 @@ impl EngineInner {
             selected_element.is_some_and(|selected| selected != (seq_id, usize::from(elem_idx)));
         let detaches_selected_order = detaches_selected_goal && !successor_already_selected;
         let mut cleared_selected_goal = false;
+        let frame = self.control.frame_counter;
         if let Some(entity) = self.world.entities.get_mut(owner) {
             let active_movement_matches = entity.actor_data().is_some_and(|actor| {
                 actor.active_movement.sequence_id == Some(seq_id)
@@ -610,7 +611,25 @@ impl EngineInner {
             // `mpSequenceElement`, independently of whether that element is
             // tracked as movement. A synchronous AssertPosition can select
             // and terminate without ever becoming `active_movement`.
-            if detaches_selected_goal || (active_movement_matches && selected_element.is_none()) {
+            let clears_goal =
+                detaches_selected_goal || (active_movement_matches && selected_element.is_none());
+            tracing::trace!(
+                target: "parity_owner_handoff",
+                frame,
+                ?owner,
+                ?seq_id,
+                elem_idx,
+                ?command,
+                ?terminal_state,
+                was_selected,
+                ?selected_element,
+                active_movement_matches,
+                clears_goal,
+                detaches_selected_order,
+                goal = ?entity.position_iface().map_goal(),
+                "condolation card owner cleanup"
+            );
+            if clears_goal {
                 entity
                     .position_iface_mut()
                     .set_map_goal(crate::coordinates::MapPoint::ZERO);

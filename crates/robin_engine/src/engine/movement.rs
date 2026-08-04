@@ -7904,6 +7904,12 @@ impl EngineInner {
                             }
                         }
                         if clear_completed_movement_goal {
+                            tracing::trace!(
+                                target: "parity_owner_handoff",
+                                owner = ?eid,
+                                goal = ?entity.position_iface().map_goal(),
+                                "door-pass stop transition clearing movement goal"
+                            );
                             // Actor::SendCondolationCard runs synchronously
                             // when this retained stop transition completes and
                             // clears the selected movement's sprite goal before
@@ -9383,96 +9389,45 @@ impl EngineInner {
                     // postpones the Turn without translating it, so its
                     // direction goal remains untouched until the attentive
                     // transition finishes.
-                    let current_movement = self
+                    let selected_is_movement = self
                         .orders
                         .sequence_manager
                         .current_element_for_actor(entity_id)
                         .and_then(|(seq, idx)| self.orders.sequence_manager.get_element(seq, idx))
-                        .filter(|element| element.data.is_movement());
-                    if let Some(current_movement) = current_movement {
-                        let interrupts_retained_stop_transition =
-                            current_movement.orders.front().is_some_and(|order| {
-                                matches!(
-                                    order.order_type,
-                                    OrderType::TransitionWalkingUprightWaitingUpright
-                                        | OrderType::TransitionRunningUprightWaitingUpright
-                                        | OrderType::TransitionWalkingCrouchedWaitingCrouched
-                                )
-                            });
-                        // FaceTo interrupts the movement and installs its
-                        // transition early enough for this actor slot, while
-                        // retaining the movement goal cached by the sprite.
-                        // A standalone FaceTo halts a live movement only to
-                        // rotate the actor and therefore retains its cached
-                        // destination. An explicit StopAll/Halt preceding the
-                        // Face has already cleared the selected movement goal,
-                        // so sampling here naturally retains zero instead of
-                        // resurrecting the old destination.
-                        // A second Halt against an already-retained
-                        // transition-to-waiting is different: it interrupts
-                        // that selected element outright, so Actor's
-                        // condolence clears the goal before the Turn is
-                        // instructed.
-                        let retained_goal = (!had_explicit_halt
-                            && !interrupts_retained_stop_transition)
-                            .then(|| {
-                                self.world
-                                    .entities
-                                    .get(entity_id)
-                                    .map(|entity| entity.position_iface().map_goal())
-                            })
-                            .flatten();
+                        .is_some_and(|element| element.data.is_movement());
+                    if selected_is_movement || !intent.no_halt {
                         self.halt_actor(entity_id);
-                        if interrupts_retained_stop_transition
-                            && let Some(entity) = self.world.entities.get_mut(entity_id)
-                        {
-                            entity
-                                .position_iface_mut()
-                                .set_map_goal(crate::coordinates::MapPoint::ZERO);
-                        }
-                        self.launch_turn_sequence_deferred_no_transitions(
-                            entity_id,
-                            turn_command,
-                            direction,
-                            intent.target_x,
-                            intent.target_y,
-                            retained_goal,
-                        );
-                        if let (Some(goal), Some(entity)) =
-                            (retained_goal, self.world.entities.get_mut(entity_id))
-                        {
-                            entity.position_iface_mut().set_map_goal(goal);
-                        }
-                    } else {
-                        if !intent.no_halt {
-                            self.halt_actor(entity_id);
-                        }
-                        // FaceTo's Halt has now synchronously performed any
-                        // selected element's Actor condolence.  Whatever map
-                        // goal remains after that callback is the value the
-                        // ensuing Turn observes: RHSprite::PerformAction does
-                        // not overwrite PositionGoalMap for an animation
-                        // order.  Carry it on the deferred element so Rust's
-                        // staged Turn initialization does not mistake the
-                        // animation order's zero destination for a movement
-                        // goal.  This also covers FaceTo launched from an
-                        // EventReachPoint callback after an empty SEEK was
-                        // rewritten to MOVE and terminated without becoming
-                        // the actor's selected element.
-                        let retained_goal = self
-                            .world
-                            .entities
-                            .get(entity_id)
-                            .map(|entity| entity.position_iface().map_goal());
-                        self.launch_turn_sequence_deferred_no_transitions(
-                            entity_id,
-                            turn_command,
-                            direction,
-                            intent.target_x,
-                            intent.target_y,
-                            retained_goal,
-                        );
                     }
+                    // FaceTo's Halt has now synchronously performed any
+                    // selected element's Actor condolence.  Whatever map
+                    // goal remains after that callback is the value the
+                    // ensuing Turn observes: RHSprite::PerformAction does
+                    // not overwrite PositionGoalMap for an animation
+                    // order.  A halt that only rewrites a live movement into
+                    // its stop transition leaves the element selected and the
+                    // cached destination intact; a halt that interrupts the
+                    // element outright clears it.  Sampling after the halt
+                    // reproduces both without having to predict which
+                    // happened.  Carry the result on the deferred element so
+                    // Rust's staged Turn initialization does not mistake the
+                    // animation order's zero destination for a movement goal.
+                    // This also covers FaceTo launched from an
+                    // EventReachPoint callback after an empty SEEK was
+                    // rewritten to MOVE and terminated without becoming the
+                    // actor's selected element.
+                    let retained_goal = self
+                        .world
+                        .entities
+                        .get(entity_id)
+                        .map(|entity| entity.position_iface().map_goal());
+                    self.launch_turn_sequence_deferred_no_transitions(
+                        entity_id,
+                        turn_command,
+                        direction,
+                        intent.target_x,
+                        intent.target_y,
+                        retained_goal,
+                    );
                 }
                 _ => {
                     // Other order types go on their own single-order

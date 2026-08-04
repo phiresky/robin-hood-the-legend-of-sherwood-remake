@@ -4628,6 +4628,13 @@ impl EngineInner {
                         // condolence in this actor slot: its serialized sprite
                         // goal must remain observable while the loaded order
                         // resumes.
+                        tracing::trace!(
+                            target: "parity_owner_handoff",
+                            owner = ?entity_id,
+                            ?cur_command,
+                            goal = ?entity.position_iface().map_goal(),
+                            "turn launch clearing superseded movement goal"
+                        );
                         entity
                             .position_iface_mut()
                             .set_map_goal(crate::coordinates::MapPoint::ZERO);
