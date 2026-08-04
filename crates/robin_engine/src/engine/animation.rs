@@ -2023,8 +2023,14 @@ pub(super) fn apply_actor_walk_start_side_effect(
     };
 
     match anim_type {
-        OT::WalkingUpright | OT::WalkingAlerted | OT::WalkingCrouched => {
+        OT::WalkingUpright | OT::WalkingAlerted => {
             set_states(entity, Posture::Upright, ActionState::Moving);
+        }
+        // The crouched walk keeps the actor crouched; only the action
+        // state moves on. Sharing the upright arm made every crouched
+        // walk order stand the actor up on its first frame.
+        OT::WalkingCrouched => {
+            set_states(entity, Posture::Crouched, ActionState::Moving);
         }
         OT::RunningUpright => {
             set_states(entity, Posture::Upright, ActionState::MovingFast);
@@ -2281,6 +2287,17 @@ fn apply_active_animation_start_state_side_effect(
             } else {
                 Posture::Crouched
             });
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            return;
+        }
+        // The crouched idle loop is executed only by the PC, and settles
+        // the actor into Waiting on its first frame. Without this a PC
+        // that stops crouch-walking keeps a stale Moving action state
+        // into the following posture transition.
+        (OrderType::WaitingCrouched, MotionState::Start) if entity.is_pc() => {
+            entity.set_posture(Posture::Crouched);
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::Waiting;
             }

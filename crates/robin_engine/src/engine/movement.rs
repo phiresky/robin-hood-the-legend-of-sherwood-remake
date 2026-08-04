@@ -593,13 +593,12 @@ fn movement_execute_state_effect(
             Some((P::Upright, AS::Moving))
         }
         (
-            OT::WalkingUpright
-            | OT::WalkingAlerted
-            | OT::WalkingCrouched
-            | OT::WalkingStairs
-            | OT::RunningStairs,
+            OT::WalkingUpright | OT::WalkingAlerted | OT::WalkingStairs | OT::RunningStairs,
             MS::Start,
         ) => Some((P::Upright, AS::Moving)),
+        // The crouched walk starts the actor moving without standing it
+        // up; only the PC executes this animation.
+        (OT::WalkingCrouched, MS::Start) => Some((P::Crouched, AS::Moving)),
         (OT::RunningUpright, MS::Start) => Some((P::Upright, AS::MovingFast)),
         (OT::WalkingWithSword, MS::Start) => Some((P::Upright, AS::MovingSword)),
         (OT::RunningWithSword, MS::Start) => Some((P::Upright, AS::MovingFastSword)),
