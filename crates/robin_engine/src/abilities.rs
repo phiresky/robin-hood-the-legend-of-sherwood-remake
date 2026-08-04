@@ -2671,9 +2671,9 @@ struct CarrierSnapshot {
     /// Frame state to synchronize with for lift/waiting/drop phases.
     carrier_frame: u16,
     carrier_frame_count: u16,
-    /// True if the carrier has `Action::LittleJohnCarry` or
-    /// `Action::FarmerCarry` as a contextual action — selects the
-    /// LittleJohn-style carry animations (vs peasant-C style).
+    /// True if the carrier has `Action::LittleJohnCarry` as a contextual
+    /// action — selects the LittleJohn-style carry animations (vs
+    /// peasant-C style).
     little_john_style: bool,
     /// Posture stored on the carrier's `pc.carried_posture` — determines
     /// whether this is a corpse-carry (target on `Posture::Carried` /
@@ -2711,18 +2711,15 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
         };
         let elem = &entity.element;
 
-        // Check the carrier's profile for LittleJohnCarry or the
-        // equivalent FarmerCarry.
+        // Only LittleJohnCarry selects the Little John carry animations.
+        // FarmerCarry widens who is *allowed* to carry a body, but it does
+        // not change which carry animation the carried actor plays.
         let little_john_style = profiles
             .get_character(pc.profile_index)
             .map(|cp| {
-                cp.contextual_actions.iter().any(|&a| {
-                    matches!(
-                        a,
-                        crate::profiles::Action::LittleJohnCarry
-                            | crate::profiles::Action::FarmerCarry
-                    )
-                })
+                cp.contextual_actions
+                    .iter()
+                    .any(|&a| a == crate::profiles::Action::LittleJohnCarry)
             })
             .unwrap_or(false);
 
