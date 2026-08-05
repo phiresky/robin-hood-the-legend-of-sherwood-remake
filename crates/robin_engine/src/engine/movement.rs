@@ -10382,8 +10382,36 @@ impl EngineInner {
         // lift translation still applies to non-sword and authored climb
         // movement.
         if !sword_movement_context {
+            // The sword / shield / corpse movement tokens are only ever
+            // assigned to an element whose post-transition posture is
+            // Upright, so a movement that reaches a wall or ladder carries
+            // the plain walk or run action and the lift sector answers a run
+            // with the fast climb. Rust can still arrive here holding a
+            // carried-over variant token; normalise it to the speed the
+            // element is actually moving at before the lift translates it.
+            let lift_input = if matches!(
+                posture_after,
+                crate::element::Posture::OnWall | crate::element::Posture::OnLadder
+            ) && matches!(
+                move_action,
+                OrderType::WalkingUpright
+                    | OrderType::RunningUpright
+                    | OrderType::WalkingWithSword
+                    | OrderType::RunningWithSword
+                    | OrderType::WalkingWithShield
+                    | OrderType::WalkingCrouched
+                    | OrderType::WalkingWithCorpse
+            ) {
+                if is_fast {
+                    OrderType::RunningUpright
+                } else {
+                    OrderType::WalkingUpright
+                }
+            } else {
+                move_action
+            };
             move_action =
-                self.determine_lift_movement_animation(owner, posture_after, move_action, dest);
+                self.determine_lift_movement_animation(owner, posture_after, lift_input, dest);
         }
         // Write the rewritten action back onto the movement sequence
         // element so downstream consumers (refresh-seek, post-process,
