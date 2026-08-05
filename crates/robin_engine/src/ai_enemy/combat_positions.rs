@@ -11,11 +11,11 @@ use crate::parameters_ai;
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 
 use super::util::{
-    FighterView, ai_square_distance, calculate_opponent_nearest_to_rene, check_straight_movement,
-    det2, dot2, evaluate_combat_position_full, get_normal, get_normal_iso, get_normal_right,
-    is_any_swordfight_substate, is_observing_combat_substate, is_walking_running_charging_substate,
-    iso_norm, iso_normalize, max_norm, pos_diff, sector_to_vector, square_norm, vec_to_sector,
-    vec_to_sector_ar,
+    FighterView, ai_max_norm_distance, ai_square_distance, calculate_opponent_nearest_to_rene,
+    check_straight_movement, det2, dot2, evaluate_combat_position_full, get_normal, get_normal_iso,
+    get_normal_right, is_any_swordfight_substate, is_observing_combat_substate,
+    is_walking_running_charging_substate, iso_norm, iso_normalize, max_norm, pos_diff,
+    sector_to_vector, square_norm, vec_to_sector, vec_to_sector_ar,
 };
 use super::{
     CombatPosition, EnemyAi, FighterSnapshot, PrimaryTargetFlags, ProfileRank, Question, SeekFlags,
@@ -2685,7 +2685,7 @@ impl EnemyAi {
             if f.is_friendly || !f.is_able_to_fight {
                 continue;
             }
-            let d = max_norm(pos_diff(&f.position, &me_pos));
+            let d = ai_max_norm_distance(&f.position, f.elevation, &me_pos, ctx.elevation);
             if d >= max_radius {
                 continue;
             }
@@ -2704,8 +2704,10 @@ impl EnemyAi {
             if !f.is_friendly || f.handle == self.base.me || !f.is_able_to_fight {
                 continue;
             }
-            let d = max_norm(pos_diff(&f.position, &me_pos));
-            if d >= max_radius {
+            // Original truncates `MaxNormDistance` to UWORD on the us-list
+            // side before the radius comparison.
+            let d = ai_max_norm_distance(&f.position, f.elevation, &me_pos, ctx.elevation) as u16;
+            if f32::from(d) >= max_radius {
                 continue;
             }
             self.base.list_us.push(f.handle);
@@ -2716,6 +2718,15 @@ impl EnemyAi {
                 *local_mult.entry(f.primary_target).or_insert(0) += 1;
             }
         }
+
+        tracing::trace!(
+            frame = ctx.frame,
+            me = self.base.me,
+            list_us = ?self.base.list_us,
+            list_them = ?self.list_them,
+            nearby_fighters = tick.nearby_fighters.len(),
+            "ReconsiderSwordfightObservation rebuilt the us/them lists"
+        );
 
         // (4) Pick new primary target with the local multiplicity
         //     override.

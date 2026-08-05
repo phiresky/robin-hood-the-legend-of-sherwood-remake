@@ -536,8 +536,11 @@ pub struct FighterSnapshot {
     pub in_sword_action_state: bool,
     /// Fighter's ground-plane elevation (world Z). Used by the
     /// archer run-to-archery-point path to remember the enemy's Z
-    /// when picking a bow posture.
-    pub elevation: u16,
+    /// when picking a bow posture, and to rebuild the fighter's world
+    /// position for the max-norm consideration radius. Kept at full
+    /// float precision: truncating it moved cross-layer fighters by up
+    /// to a unit and flipped boundary distance gates.
+    pub elevation: f32,
     /// Position the fighter is moving to (or current position for stationary
     /// fighters). Used by `propose_good_combat_position` to score friends at
     /// their *intended* combat position rather than their current pose.
@@ -651,6 +654,31 @@ pub(super) fn ai_square_distance(
     let dy = ((target.y + target_elevation) - (me.y + me_elevation))
         * crate::position_interface::INVERSE_ASPECT_RATIO;
     dx * dx + dy * dy + dz * dz
+}
+
+/// The AI's `MaxNormDistance`: the stretched **3D** Chebyshev distance.
+///
+/// The world-space points are subtracted, the Y component is stretched by
+/// `INVERSE_ASPECT_RATIO`, and the largest absolute component wins.
+/// Snapshot positions are map-space, so world Y is recovered as
+/// `map_y + elevation` exactly as [`ai_square_distance`] does.
+///
+/// A 2D max-norm over raw map coordinates is not a substitute. Map Y
+/// already carries the elevation as a projection offset, so a friend one
+/// layer up reads as roughly twice their true separation and drops out of
+/// every consideration radius that should have contained them.
+pub(super) fn ai_max_norm_distance(
+    target: &Position,
+    target_elevation: f32,
+    me: &Position,
+    me_elevation: f32,
+) -> f32 {
+    let dx = (target.x - me.x).abs();
+    let dz = (target_elevation - me_elevation).abs();
+    let dy = (((target.y + target_elevation) - (me.y + me_elevation))
+        * crate::position_interface::INVERSE_ASPECT_RATIO)
+        .abs();
+    dx.max(dy).max(dz)
 }
 
 /// Convert a raw 2D map-space vector `(target - me)` to a 0–15 sector.

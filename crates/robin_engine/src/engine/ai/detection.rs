@@ -2684,7 +2684,7 @@ impl EngineInner {
                                 level: my_layer,
                             },
                             bow_max_range: me_snap.bow_max_range,
-                            elevation: me_snap.elevation,
+                            elevation: f32::from(me_snap.elevation),
                         });
                     }
 
@@ -2771,7 +2771,7 @@ impl EngineInner {
                                 level: ss.layer,
                             },
                             bow_max_range: ss.bow_max_range,
-                            elevation: ss.elevation,
+                            elevation: f32::from(ss.elevation),
                         });
                     }
 
@@ -2859,7 +2859,7 @@ impl EngineInner {
                                 level: pc.layer,
                             },
                             bow_max_range: 0, // PCs don't use AI bow targeting
-                            elevation: pc.ground_elevation,
+                            elevation: f32::from(pc.ground_elevation),
                         });
                     }
                 }

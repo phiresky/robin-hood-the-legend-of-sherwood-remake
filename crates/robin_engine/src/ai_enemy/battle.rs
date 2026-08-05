@@ -46,6 +46,8 @@ fn enough_nearer_friends_to_observe(
 #[track_caller]
 fn battle_friend_detected_360(
     ctx: &AiContext,
+    me: HumanHandle,
+    friend: HumanHandle,
     friend_position_world: crate::coordinates::WorldPoint3D,
     friend_direction: u16,
     target: &crate::ai_entity_view::AiEntityView,
@@ -70,6 +72,8 @@ fn battle_friend_detected_360(
     let dz = detection_point.z - ctx.self_upright_eye_world.z;
     tracing::trace!(
         frame = ctx.frame,
+        me,
+        friend,
         viewer_in_building = ctx.in_building,
         viewer_radius = ctx.self_view_radius,
         viewer_x = ctx.self_upright_eye_world.x,
@@ -490,6 +494,14 @@ impl EnemyAi {
                     AiState::Default | AiState::Wondering | AiState::Seeking | AiState::Attacking
                 )
             {
+                tracing::trace!(
+                    frame = ctx.frame,
+                    me = self.base.me,
+                    friend = friend.handle,
+                    able_to_fight = friend.is_able_to_fight,
+                    ai_state = ?friend.ai_state,
+                    "BattleDecisions us-list candidate rejected before the 360 gate"
+                );
                 continue;
             }
             // Original evaluates `mpMe->IsDetecting360Degrees(pHuman)` here,
@@ -504,7 +516,14 @@ impl EnemyAi {
                     friend.handle
                 )
             });
-            if !battle_friend_detected_360(ctx, friend.position_world, friend.direction, target) {
+            if !battle_friend_detected_360(
+                ctx,
+                self.base.me,
+                friend.handle,
+                friend.position_world,
+                friend.direction,
+                target,
+            ) {
                 continue;
             }
             self.base.list_us.push(friend.handle);
@@ -1812,7 +1831,7 @@ impl EnemyAi {
                         // Remember enemy elevation for later bend decision
                         self.enemy_had_this_elevation = self
                             .find_fighter(self.base.primary_target, tick)
-                            .map(|f| f.elevation)
+                            .map(|f| f.elevation as u16)
                             .unwrap_or(0);
                         if wp.is_shooting_point {
                             // Run directly to shooting point (final
@@ -2965,6 +2984,8 @@ mod tests {
 
         assert!(battle_friend_detected_360(
             &ctx,
+            1,
+            2,
             target.detection_position_world,
             target.direction,
             &target,
@@ -2973,6 +2994,8 @@ mod tests {
         target.in_building = true;
         assert!(!battle_friend_detected_360(
             &ctx,
+            1,
+            2,
             target.detection_position_world,
             target.direction,
             &target,
