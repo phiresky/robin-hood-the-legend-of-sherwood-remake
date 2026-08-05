@@ -297,6 +297,21 @@ impl AiContext {
         radius
     }
 
+    /// Fold another context's surface-radius entries into this one.
+    ///
+    /// The memo lives on the surface, not on the context, so a radius any
+    /// clone of this context computed during a Think has to survive back to
+    /// the context the caller later commits from. Without this the writes are
+    /// dropped with the clone and the next Think in the same frame recomputes
+    /// a radius the surface already knows — visible as extra night/fog
+    /// barycentre rays.
+    pub(crate) fn absorb_view_radius_cache(&self, other: &Self) {
+        let mut values = self.view_radius_cache.borrow_mut();
+        for (&surface, &radius) in other.view_radius_cache.borrow().iter() {
+            values.insert(surface, radius);
+        }
+    }
+
     pub(crate) fn commit_view_radius_cache(
         &self,
         cache: &mut crate::ai_vision::ViewRadiusCache,
