@@ -8534,9 +8534,12 @@ impl EngineInner {
                 )
             });
             let ai_state = npc.ai_state();
-            // IsDetecting360Degrees uses mViewParameters.uwRealRadius,
-            // not the currently displayed/growing cone radius.
-            let real_view_radius = npc.view_radius_base;
+            // IsDetecting360Degrees uses the post-RefreshView real radius,
+            // which is the growing/goal radius already multiplied by the
+            // long-range, stare/follow, rider and drunkenness factors. Using
+            // the pre-factor base radius loses every member a staring chief
+            // can still feel.
+            let real_view_radius = npc.view_radius;
             let move_box = *entity.position_iface().get_move_box();
             let is_civilian = entity.is_civilian();
             let is_able_to_help = match entity {
@@ -9949,7 +9952,7 @@ impl EngineInner {
         // result produced earlier in this universal frame. Keep AiContext's
         // immutable-handler facade bounded exactly by the synchronous Think
         // call, then commit any newly computed surfaces before later callbacks.
-        ctx.seed_view_radius_cache(&self.ai.view_radius_cache, npc_id);
+        ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
         let had_ai_at_entry = self
             .world
             .entities
@@ -9966,7 +9969,7 @@ impl EngineInner {
             owner_local_no_forecast,
             defer_turn_instruction,
         );
-        ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache, npc_id);
+        ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
 
         // `RHArtificialIntelligence::ExecuteWaypointScript` invokes the
         // waypoint VM directly from the active Think handler. Close that
@@ -12008,6 +12011,9 @@ impl EngineInner {
                 chief_id.index()
             )
         });
+        // `InitializePatrol` admits members through IsDetecting360Degrees,
+        // whose distance gate is the post-RefreshView real radius, not the
+        // pre-factor base radius the growing cone animates towards.
         let chief_real_view_radius = chief_entity
             .npc_data()
             .unwrap_or_else(|| {
@@ -12016,7 +12022,7 @@ impl EngineInner {
                     chief_id.index()
                 )
             })
-            .view_radius_base;
+            .view_radius;
 
         let snapshot = |id: EntityId| {
             let view = views.get(&id.index()).unwrap_or_else(|| {

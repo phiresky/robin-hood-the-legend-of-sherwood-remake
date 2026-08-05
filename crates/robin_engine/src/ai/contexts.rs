@@ -236,8 +236,15 @@ pub struct AiContext {
     /// dispatch seeds this immediately before Think and commits it immediately
     /// after Think, allowing immutable AI handlers to preserve Original's
     /// synchronous cache semantics without sharing rollback state by `Arc`.
+    /// Each surface holds exactly one entry, tagged with the viewer that
+    /// wrote it: a lookup by any other viewer misses, and its recomputation
+    /// replaces the entry. That is the surface-slot behaviour the AI has to
+    /// reproduce when it evaluates a detection test through an ally's eyes.
     pub(crate) view_radius_cache: std::cell::RefCell<
-        std::collections::HashMap<Option<crate::position_interface::ObstacleHandle>, f32>,
+        std::collections::HashMap<
+            Option<crate::position_interface::ObstacleHandle>,
+            (crate::element::EntityId, f32),
+        >,
     >,
     /// FastFindGrid snapshot used for `IsReachable` line-of-sight queries
     /// from AI code that only has an `AiContext`.
@@ -255,16 +262,22 @@ pub struct AiContext {
 }
 
 impl AiContext {
-    pub(crate) fn seed_view_radius_cache(
-        &self,
-        cache: &crate::ai_vision::ViewRadiusCache,
-        viewer: crate::element::EntityId,
-    ) {
+    /// Import every surface entry stored for the current frame, keeping the
+    /// viewer that wrote it. Entries belonging to other viewers have to be
+    /// carried too: they are what makes this Think miss a surface an ally
+    /// already claimed earlier in the same frame.
+    pub(crate) fn seed_view_radius_cache(&self, cache: &crate::ai_vision::ViewRadiusCache) {
         let mut values = self.view_radius_cache.borrow_mut();
         values.clear();
-        if let Some(radius) = cache.get(None, viewer, self.frame) {
-            values.insert(None, radius);
-        }
+        let mut seed = |surface, entry: Option<crate::ai_vision::ViewRadiusCacheEntry>| {
+            if let Some(entry) = entry
+                && entry.frame == self.frame
+                && entry.radius != 0.0
+            {
+                values.insert(surface, (entry.viewer, entry.radius));
+            }
+        };
+        seed(None, cache.ground);
         for (index, entry) in cache.obstacles.iter().enumerate() {
             let Some(handle) = u16::try_from(index)
                 .ok()
@@ -272,27 +285,28 @@ impl AiContext {
             else {
                 continue;
             };
-            if entry.is_some()
-                && let Some(radius) = cache.get(Some(handle), viewer, self.frame)
-            {
-                values.insert(Some(handle), radius);
-            }
+            seed(Some(handle), *entry);
         }
     }
 
     pub(crate) fn compute_view_radius_cached(
         &self,
+        viewer: crate::element::EntityId,
         surface: Option<crate::position_interface::ObstacleHandle>,
         compute: impl FnOnce() -> f32,
     ) -> f32 {
-        if let Some(radius) = self.view_radius_cache.borrow().get(&surface).copied() {
+        if let Some(&(stored_viewer, radius)) = self.view_radius_cache.borrow().get(&surface)
+            && stored_viewer == viewer
+        {
             return radius;
         }
         let radius = compute();
         // Original's getter uses zero as the miss sentinel even after its
         // setter stored a computed zero.
         if radius != 0.0 {
-            self.view_radius_cache.borrow_mut().insert(surface, radius);
+            self.view_radius_cache
+                .borrow_mut()
+                .insert(surface, (viewer, radius));
         }
         radius
     }
@@ -307,17 +321,13 @@ impl AiContext {
     /// barycentre rays.
     pub(crate) fn absorb_view_radius_cache(&self, other: &Self) {
         let mut values = self.view_radius_cache.borrow_mut();
-        for (&surface, &radius) in other.view_radius_cache.borrow().iter() {
-            values.insert(surface, radius);
+        for (&surface, &entry) in other.view_radius_cache.borrow().iter() {
+            values.insert(surface, entry);
         }
     }
 
-    pub(crate) fn commit_view_radius_cache(
-        &self,
-        cache: &mut crate::ai_vision::ViewRadiusCache,
-        viewer: crate::element::EntityId,
-    ) {
-        for (&surface, &radius) in self.view_radius_cache.borrow().iter() {
+    pub(crate) fn commit_view_radius_cache(&self, cache: &mut crate::ai_vision::ViewRadiusCache) {
+        for (&surface, &(viewer, radius)) in self.view_radius_cache.borrow().iter() {
             cache.set(surface, viewer, self.frame, radius);
         }
     }

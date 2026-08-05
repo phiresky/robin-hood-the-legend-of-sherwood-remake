@@ -1914,8 +1914,9 @@ impl EnemyAi {
             target_unconscious: view.is_unconscious,
             target_passing_door: view.passing_door,
         };
+        let viewer_entity = view_radius_memo_viewer(self.base.me, ctx);
         crate::ai_vision::compute_visibility_with_effective_radius(&q, || {
-            ctx.compute_view_radius_cached(view.obstacle_idx, || {
+            ctx.compute_view_radius_cached(viewer_entity, view.obstacle_idx, || {
                 crate::ai_vision::compute_view_radius(
                     q.viewer_world,
                     ctx.self_view_radius,
@@ -2242,6 +2243,7 @@ impl EnemyAi {
             false,
         );
         let viewer = Viewer180 {
+            entity: view_radius_memo_viewer(self.base.me, ctx),
             eye_ground: crate::coordinates::GroundPoint::from_map_and_z(viewer_eye, ctx.elevation),
             eye_z: ctx.elevation
                 + crate::stealth::eye_z_for_posture(ctx.posture, ctx.self_is_rider),
@@ -2252,7 +2254,7 @@ impl EnemyAi {
             view_direction: ctx.self_view_direction,
             real_half_aperture: ctx.self_real_half_aperture,
         };
-        detects_180_degrees(&viewer, target, ctx, true)
+        detects_180_degrees(&viewer, target, ctx)
     }
 
     /// `IsDetecting180Degrees` evaluated on another soldier's behalf.
@@ -2299,6 +2301,7 @@ impl EnemyAi {
             false,
         );
         let viewer = Viewer180 {
+            entity: view_radius_memo_viewer(viewer_handle, ctx),
             eye_ground: crate::coordinates::GroundPoint::from_map_and_z(
                 viewer_eye,
                 viewer_view.elevation,
@@ -2313,17 +2316,25 @@ impl EnemyAi {
             view_direction: viewer_snapshot.view_direction,
             real_half_aperture: viewer_snapshot.real_half_aperture,
         };
-        // TODO: the surface radius memo lives on the acting NPC's context,
-        // so a radius computed for another viewer can neither hit nor be
-        // stored. Within one decision each ally is visited once, so the
-        // only loss is a cross-`Think` reuse in the same frame.
-        detects_180_degrees(&viewer, target, ctx, false)
+        detects_180_degrees(&viewer, target, ctx)
     }
+}
+
+/// Resolve the identity a `ComputeViewRadius` result is stored under.
+/// The memo lives on the surface and records which viewer produced it, so
+/// the acting NPC and any ally it reasons through must be distinguishable.
+fn view_radius_memo_viewer(handle: HumanHandle, ctx: &AiContext) -> crate::element::EntityId {
+    ctx.entity_id(handle).unwrap_or_else(|| {
+        panic!("view-radius memo viewer {handle} is absent from the AI entity view")
+    })
 }
 
 /// Viewer half of a 180° detection test, so the test can be evaluated
 /// either from the acting NPC or from an ally it is reasoning about.
 struct Viewer180 {
+    /// Identity the surface radius memo is keyed by — the ally when the
+    /// test runs through an ally's eyes, not the deciding soldier.
+    entity: crate::element::EntityId,
     eye_ground: crate::coordinates::GroundPoint,
     eye_z: f32,
     direction: u16,
@@ -2334,12 +2345,7 @@ struct Viewer180 {
     real_half_aperture: f32,
 }
 
-fn detects_180_degrees(
-    viewer: &Viewer180,
-    target: HumanHandle,
-    ctx: &AiContext,
-    cache_effective_radius: bool,
-) -> bool {
+fn detects_180_degrees(viewer: &Viewer180, target: HumanHandle, ctx: &AiContext) -> bool {
     // Step 1: viewer in a building — always returns false.
     if viewer.in_building {
         return false;
@@ -2445,11 +2451,8 @@ fn detects_180_degrees(
             target_obstacle,
         )
     };
-    let effective_view_radius = if cache_effective_radius {
-        ctx.compute_view_radius_cached(view.obstacle_idx, compute_radius)
-    } else {
-        compute_radius()
-    };
+    let effective_view_radius =
+        ctx.compute_view_radius_cached(viewer.entity, view.obstacle_idx, compute_radius);
     if sq_distance > effective_view_radius * effective_view_radius {
         return false;
     }

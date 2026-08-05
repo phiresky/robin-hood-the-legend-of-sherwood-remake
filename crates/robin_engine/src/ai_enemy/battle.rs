@@ -688,27 +688,33 @@ impl EnemyAi {
                         .find_map(|&(attacker, target)| {
                             (attacker == cs.handle && target != 0).then_some(target)
                         });
+                let target = same_frame_target.unwrap_or_else(|| cs.primary_target);
+                tracing::trace!(
+                    frame = ctx.frame,
+                    me,
+                    friend = cs.handle,
+                    friend_state = ?cs.ai_state,
+                    friend_substate = ?cs.ai_substate,
+                    snapshot_target = cs.primary_target,
+                    same_frame_target,
+                    target,
+                    already_listed = self.list_them.contains(&target),
+                    "BattleDecisions friend-seen Them injection candidate"
+                );
                 if cs.ai_state != AiState::Attacking && same_frame_target.is_none() {
                     continue;
                 }
-                let target = same_frame_target.unwrap_or_else(|| cs.primary_target);
                 if target == 0 || target == me {
-                    continue;
-                }
-                // Don't inject same-camp by accident — primary_target
-                // can briefly be a same-camp during the cross-camp
-                // setup race; skip if the target maps to a friendly
-                // fighter snapshot.
-                let target_is_friendly = self
-                    .find_fighter(target, tick)
-                    .map(|f| f.is_friendly)
-                    .unwrap_or(false);
-                if target_is_friendly {
                     continue;
                 }
                 if super::util::is_any_swordfight_substate(cs.ai_substate as u32) {
                     *decision_target_multiplicity.entry(target).or_insert(0) += 1;
                 }
+                // The Them list rejects duplicates on insertion, so a target
+                // an earlier entry or friend already contributed is dropped
+                // here rather than appended a second time. A same-camp target
+                // is deliberately not filtered: the cleanup pass below is what
+                // removes friends from the list.
                 if self.list_them.contains(&target) || friend_seen.contains(&target) {
                     continue;
                 }
