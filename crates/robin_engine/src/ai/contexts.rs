@@ -592,6 +592,9 @@ pub struct AiPerTickData {
     /// `alert_soldiers`).  Populated every tick from the engine's soldier
     /// snapshot list, filtered to the evaluating NPC's camp.
     pub camp_soldiers: Vec<crate::ai_enemy::CampSoldierInfo>,
+    /// Rank-soldier NPCs of every camp in registry order, the domain
+    /// `CommandSoldiersToAttack` scans.
+    pub alert_soldier_candidates: Vec<crate::ai_enemy::AlertSoldierCandidate>,
     /// Same-camp soldiers who are currently unconscious + alive.
     /// Populated alongside `camp_soldiers`, which skips unconscious
     /// entries; the money-fight scans walk the whole camp registry, so
@@ -824,6 +827,7 @@ impl AiPerTickData {
             reconsider_swordfight_enemies: Vec::new(),
             reconsider_swordfight_friends: Vec::new(),
             camp_soldiers: Vec::new(),
+            alert_soldier_candidates: Vec::new(),
             camp_unconscious_soldiers: Vec::new(),
             visible_seeking_friends: 0,
             friend_seek_clears_help_flag: false,

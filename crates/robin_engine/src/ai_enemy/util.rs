@@ -175,6 +175,18 @@ pub struct CampUnconsciousSoldierInfo {
     pub knocked_out_in_money_fight: bool,
 }
 
+/// One rank-soldier NPC considered by `CommandSoldiersToAttack`, in NPC
+/// registry order and without any camp filter.
+#[derive(Debug, Clone)]
+pub struct AlertSoldierCandidate {
+    pub handle: NpcHandle,
+    pub position: Position,
+    pub elevation: f32,
+    pub is_rider: bool,
+    pub view_radius: u16,
+    pub in_building: bool,
+}
+
 /// Lightweight snapshot of a same-camp soldier used by alert functions
 /// (`alert_officer`, `alert_soldiers`).  Populated by the engine each tick
 /// for all soldiers in the same camp, regardless of combat state.
@@ -324,6 +336,8 @@ pub(crate) fn soldier_detects_detection_point_360(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+#[track_caller]
 pub(crate) fn soldier_detects_target_360(
     viewer_position: Position,
     viewer_ground_z: f32,
@@ -393,43 +407,6 @@ pub fn soldier_is_able_to_help_state(
                 | Substate::SeekingBodyReactiontime
         ),
     }
-}
-
-/// 180-degree detection check evaluated from the perspective of an
-/// arbitrary [`FighterSnapshot`] (not necessarily `self`).  Used by
-/// `is_too_proud_to_attack` to ask whether a lower-pride ally is
-/// observing our primary target.
-pub(super) fn fighter_detects_position_180(
-    viewer: &FighterSnapshot,
-    target: Position,
-    sq_standard_view_radius: f32,
-) -> bool {
-    if !viewer.is_able_to_fight {
-        return false;
-    }
-
-    let dx = target.x - viewer.position.x;
-    let dy = (target.y - viewer.position.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-    let sq_distance = dx * dx + dy * dy;
-    if sq_distance > sq_standard_view_radius {
-        return false;
-    }
-
-    let dir = crate::shadow_polygon::sector_to_direction(viewer.direction as i16);
-    let fx = dir[0];
-    let fy = dir[1] * crate::position_interface::INVERSE_ASPECT_RATIO;
-
-    if sq_distance < 50.0 * 50.0 {
-        let fwd_len = dx * fx + dy * fy;
-        let fc_x = fx * fwd_len;
-        let fc_y = fy * fwd_len;
-        let perp_sq = (dx - fc_x) * (dx - fc_x) + (dy - fc_y) * (dy - fc_y);
-        if perp_sq >= fwd_len {
-            return true;
-        }
-    }
-
-    dx * fx + dy * fy >= 0.0
 }
 
 pub(super) fn soldier_detects_position_180(
