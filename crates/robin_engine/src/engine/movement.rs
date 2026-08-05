@@ -4881,15 +4881,21 @@ impl EngineInner {
                 self.set_ai_couldnt_reachpoint(entity_id);
                 return None;
             };
-            let prefix = if intent.quit_swordfight_before_move {
-                vec![crate::sequence::SequenceElement::new(
+            let mut prefix = Vec::new();
+            if intent.quit_swordfight_before_move {
+                prefix.push(crate::sequence::SequenceElement::new(
                     1,
                     crate::element::Command::QuitSwordfight,
                     Some(entity_id),
-                )]
-            } else {
-                Vec::new()
-            };
+                ));
+            }
+            if intent.lower_shield_before_move {
+                prefix.push(crate::sequence::SequenceElement::new(
+                    prefix.len() as u16 + 1,
+                    crate::element::Command::LowerShield,
+                    Some(entity_id),
+                ));
+            }
             let tail = self.ai_special_action_tail(entity_id, intent);
             let goal = door_goal.map_or(
                 GoalShape::Point {
@@ -4945,11 +4951,9 @@ impl EngineInner {
             );
         }
 
-        let move_level = if intent.quit_swordfight_before_move {
-            2
-        } else {
-            1
-        };
+        let move_level = 1
+            + u16::from(intent.quit_swordfight_before_move)
+            + u16::from(intent.lower_shield_before_move);
         let mut elem = crate::sequence::SequenceElement::new_movement(
             move_level,
             crate::element::Command::Move,
@@ -4987,6 +4991,13 @@ impl EngineInner {
             sequence.append_element(crate::sequence::SequenceElement::new(
                 1,
                 crate::element::Command::QuitSwordfight,
+                Some(entity_id),
+            ));
+        }
+        if intent.lower_shield_before_move {
+            sequence.append_element(crate::sequence::SequenceElement::new(
+                move_level - 1,
+                crate::element::Command::LowerShield,
                 Some(entity_id),
             ));
         }

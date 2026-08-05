@@ -5197,6 +5197,14 @@ impl EnemyAi {
                     }
                     StimulusType::CallInstruction => {
                         // Received new position instruction from phalanx leader
+                        tracing::trace!(
+                            target: "robin_engine::ai_enemy::phalanx",
+                            me = self.base.me,
+                            frame = ctx.frame,
+                            gather = ?self.gather_position,
+                            direction = self.gather_direction,
+                            "phalanx CallInstruction: leaving AttackingPhalanx to run to new slot"
+                        );
                         self.shield_bearer_direction = self.gather_direction;
                         self.base.seek_position = self.gather_position;
                         self.set_state(AiState::Attacking, Substate::AttackingRunningToPhalanx);
