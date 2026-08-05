@@ -2851,6 +2851,7 @@ fn review2_alert_soldiers_uses_state_refusal_and_does_not_consider_report() {
                 ..Default::default()
             },
             direction: 4,
+            call_instruction: false,
         });
     engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
 
@@ -3786,6 +3787,7 @@ fn review2_instruct_gather_position_closes_at_owner_boundary() {
             target: soldier_id.index(),
             position: gather,
             direction: 7,
+            call_instruction: false,
         });
 
     engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
@@ -3804,6 +3806,48 @@ fn review2_instruct_gather_position_closes_at_owner_boundary() {
             .expect("review2 gather source retains AI")
             .has_pending_synchronous_cross_npc_actions()
     );
+}
+
+#[test]
+fn phalanx_gather_instruction_skips_a_member_who_already_left_the_formation() {
+    use crate::ai::{CrossNpcAction, Position};
+
+    let sim = crate::sim_rng::test_context();
+    let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
+    let before = engine
+        .get_entity(soldier_id)
+        .and_then(Entity::enemy_ai)
+        .expect("phalanx gather target has EnemyAi")
+        .gather_position;
+    engine
+        .get_entity_mut(officer_id)
+        .and_then(Entity::ai_controller_mut)
+        .expect("phalanx gather source has AI")
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .push(CrossNpcAction::InstructGatherPosition {
+            target: soldier_id.index(),
+            position: Position {
+                x: 55.0,
+                y: 12.0,
+                ..Default::default()
+            },
+            direction: 7,
+            call_instruction: true,
+        });
+
+    engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
+
+    // The target stands in DefaultOnPost, so the phalanx-correction loop
+    // passes over it entirely: neither the slot nor the instruction lands.
+    let soldier = engine
+        .get_entity(soldier_id)
+        .and_then(Entity::enemy_ai)
+        .expect("phalanx gather target retains EnemyAi");
+    assert_eq!(soldier.gather_position, before);
+    assert_eq!(soldier.gather_direction, 0);
+    assert!(!soldier.gather_position_instructed);
 }
 
 fn queue_review2_wrong_kind_think(

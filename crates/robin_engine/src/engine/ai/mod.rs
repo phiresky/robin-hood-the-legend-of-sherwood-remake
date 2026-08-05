@@ -9458,9 +9458,22 @@ impl EngineInner {
                     target,
                     position,
                     direction,
+                    call_instruction,
                     ..
                 } => {
                     let target_id = EntityId::Soldier(SoldierId(target));
+                    tracing::trace!(
+                        target: "robin_engine::ai_enemy::phalanx",
+                        instructed = target,
+                        frame = self.control.frame_counter,
+                        ?position,
+                        direction,
+                        call_instruction,
+                        "InstructGatherPosition"
+                    );
+                    if call_instruction && !self.soldier_stands_in_phalanx(target_id) {
+                        continue;
+                    }
                     let ctx = {
                         let Some(entity @ Entity::Soldier(_)) =
                             self.world.entities.get_mut(target_id)
@@ -9491,6 +9504,9 @@ impl EngineInner {
                         }
                         ctx
                     };
+                    if !call_instruction {
+                        continue;
+                    }
                     // CrossNpcAction::InstructGatherPosition: target
                     // is an enemy soldier.  Build rich tick data so a
                     // subsequent think()-triggered BattleDecisions
@@ -10236,6 +10252,7 @@ impl EngineInner {
                         target,
                         position,
                         direction,
+                        call_instruction,
                     } => {
                         // Alert formations queue their result requests before
                         // the sibling gather instructions. Remember those
@@ -10259,7 +10276,12 @@ impl EngineInner {
                                 .contains(&target);
                         if still_alerted {
                             self.process_synchronous_gather_instruction(
-                                sim, target, position, direction, assets,
+                                sim,
+                                target,
+                                position,
+                                direction,
+                                call_instruction,
+                                assets,
                             );
                         }
                     }
@@ -10610,15 +10632,43 @@ impl EngineInner {
         self.drain_direct_ai_owner_boundary_without_forecast(sim, source_id, assets);
     }
 
+    /// Whether a soldier is still holding its place in a phalanx.
+    ///
+    /// The phalanx-correction loops re-read this for every member right before
+    /// announcing the new slot, because an earlier member's `CALL_INSTRUCTION`
+    /// can re-enter and pull later members out of the formation.
+    fn soldier_stands_in_phalanx(&self, target_id: EntityId) -> bool {
+        self.world
+            .entities
+            .get(target_id)
+            .and_then(Entity::enemy_ai)
+            .is_some_and(|enemy| {
+                enemy.base.current_substate == crate::ai::Substate::AttackingPhalanx
+            })
+    }
+
     fn process_synchronous_gather_instruction(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         target: u32,
         position: crate::ai::Position,
         direction: u16,
+        call_instruction: bool,
         assets: &LevelAssets,
     ) {
         let target_id = EntityId::Soldier(SoldierId(target));
+        tracing::trace!(
+            target: "robin_engine::ai_enemy::phalanx",
+            instructed = target,
+            frame = self.control.frame_counter,
+            ?position,
+            direction,
+            call_instruction,
+            "synchronous InstructGatherPosition"
+        );
+        if call_instruction && !self.soldier_stands_in_phalanx(target_id) {
+            return;
+        }
         let enemy = self
             .world
             .entities
@@ -10630,6 +10680,9 @@ impl EngineInner {
         enemy.gather_position = position;
         enemy.gather_direction = direction;
         enemy.gather_position_instructed = true;
+        if !call_instruction {
+            return;
+        }
 
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
         let building_sector = self

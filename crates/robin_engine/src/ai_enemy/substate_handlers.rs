@@ -2987,6 +2987,13 @@ impl EnemyAi {
                     // Instruct each soldier via direct CALL_INSTRUCTION and
                     // prune refusals from the live list before finalising.
                     let instructed = self.alerted_us.clone();
+                    tracing::trace!(
+                        target: "robin_engine::ai_enemy::phalanx",
+                        officer = self.base.me,
+                        frame = ctx.frame,
+                        group = ?instructed,
+                        "officer instructs its alerted group with CallInstruction"
+                    );
                     for (index, handle) in instructed.iter().copied().enumerate() {
                         self.base.outbox.reentrant.cross_npc_actions.push(
                             CrossNpcAction::RequestThinkResult {

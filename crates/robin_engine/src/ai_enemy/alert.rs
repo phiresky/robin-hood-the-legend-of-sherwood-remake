@@ -318,6 +318,7 @@ impl EnemyAi {
                                 target: handle,
                                 position: chosen,
                                 direction: face_threat,
+                                call_instruction: false,
                             },
                         );
                     }
@@ -731,6 +732,7 @@ impl EnemyAi {
                             target: handle,
                             position: chosen,
                             direction: face_threat,
+                            call_instruction: false,
                         },
                     );
                 } else {
@@ -764,6 +766,7 @@ impl EnemyAi {
                             target: handle,
                             position: chosen,
                             direction: face_threat,
+                            call_instruction: false,
                         },
                     );
                 }

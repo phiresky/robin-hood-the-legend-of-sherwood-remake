@@ -5430,17 +5430,23 @@ impl EngineInner {
             false,
         );
 
-        // Original immediately sends EVENT_QUIT_SWORDFIGHT from this guard;
-        // PCs intentionally have no AI receiver.
+        // Original announces EVENT_QUIT_SWORDFIGHT from this guard in the
+        // same call, before the Execute arm returns ABORTED — so the soldier's
+        // brain has already left its swordfight substate when any later phase
+        // of this frame runs. Only soldiers have a receiver here.
         tracing::trace!(
             owner = owner.index(),
             frame = self.control.frame_counter,
             "orphaned sword movement aborted; sending EVENT_QUIT_SWORDFIGHT"
         );
-        self.dispatch_ai_stimulus(
-            owner,
-            crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
-        );
+        if matches!(self.world.entities.get(owner), Some(Entity::Soldier(_))) {
+            self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                sim,
+                owner,
+                assets,
+                crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
+            );
+        }
         true
     }
 
