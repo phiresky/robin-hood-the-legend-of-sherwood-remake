@@ -102,9 +102,15 @@ fn phalanx_member_detects_180(
         return false;
     }
 
+    // The direction vector this test compares against is built in map
+    // space, where Y is already compressed by `ASPECT_RATIO`, and is then
+    // expanded back into the stretched frame the offsets above use. The
+    // shared table is the expanded unit vector already, so stretching it
+    // a second time would narrow the forward half-plane and reject
+    // enemies that are genuinely in front.
     let direction = crate::shadow_polygon::sector_to_direction(member.direction as i16);
     let forward_x = direction[0];
-    let forward_y = direction[1] * INVERSE_ASPECT_RATIO;
+    let forward_y = direction[1];
     if sq_distance < 50.0 * 50.0 {
         let forward_length = dx * forward_x + dy * forward_y;
         let projected_x = forward_x * forward_length;
@@ -130,13 +136,33 @@ fn phalanx_member_detects_180(
 fn append_phalanx_member_enemies(
     merged: &mut Vec<HumanHandle>,
     member: &PhalanxMemberThemList,
+    kept: &[&PhalanxEnemySnapshot],
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) {
-    for target in &member.current_them_list {
-        if !target.able_to_fight
-            || target.friend
-            || !phalanx_member_detects_360(member, target, obstacles)
-        {
+    tracing::trace!(
+        target: "robin_engine::ai_enemy::phalanx",
+        member = member.handle,
+        sq_view_radius = member.sq_view_radius,
+        kept = ?kept.iter().map(|t| t.handle).collect::<Vec<_>>(),
+        detectable = ?member.detectable_enemies.iter().map(|t| t.handle).collect::<Vec<_>>(),
+        "phalanx them-list: member inputs"
+    );
+    for target in kept {
+        // Short-circuit order matters: an entry that can no longer fight
+        // is dropped without ever running a line-of-sight query.
+        let keep = target.able_to_fight
+            && phalanx_member_detects_360(member, target, obstacles)
+            && !target.friend;
+        tracing::trace!(
+            target: "robin_engine::ai_enemy::phalanx",
+            member = member.handle,
+            enemy = target.handle,
+            able = target.able_to_fight,
+            friend = target.friend,
+            keep,
+            "phalanx them-list: keep check"
+        );
+        if !keep {
             continue;
         }
         if !merged.contains(&target.handle) {
@@ -145,10 +171,19 @@ fn append_phalanx_member_enemies(
     }
 
     for target in &member.detectable_enemies {
-        if target.dead
-            || target.unconscious
-            || !phalanx_member_detects_180(member, target, obstacles)
-        {
+        // The detection test runs before the dead/unconscious filter, so
+        // it queries line of sight even for targets about to be rejected.
+        let detects = phalanx_member_detects_180(member, target, obstacles);
+        tracing::trace!(
+            target: "robin_engine::ai_enemy::phalanx",
+            member = member.handle,
+            enemy = target.handle,
+            dead = target.dead,
+            unconscious = target.unconscious,
+            detects_180 = detects,
+            "phalanx them-list: add check"
+        );
+        if !detects || target.dead || target.unconscious {
             continue;
         }
         if !merged.contains(&target.handle) {
@@ -1289,6 +1324,7 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
         _grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        carried_them_list: Option<&[HumanHandle]>,
     ) {
         // Original recursively descends all the way left and runs each
         // member's BattleDecisions while unwinding, then does the same on the
@@ -1327,7 +1363,7 @@ impl EnemyAi {
         if !has_left_neighbour {
             // We are already the leftmost member. Original refreshes the
             // shared list before recursing to the right.
-            self.phalanx_reinitialize_them_list(&ctx.position, ctx, tick);
+            self.phalanx_reinitialize_them_list(&ctx.position, ctx, tick, carried_them_list);
         }
 
         let mut right = Vec::new();
@@ -1387,7 +1423,7 @@ impl EnemyAi {
         refresh_them_list: bool,
     ) {
         if refresh_them_list {
-            self.phalanx_reinitialize_them_list(&ctx.position, ctx, tick);
+            self.phalanx_reinitialize_them_list(&ctx.position, ctx, tick, None);
         }
         self.left_combat_neighbour = 0;
         self.right_combat_neighbour = 0;
@@ -1400,20 +1436,46 @@ impl EnemyAi {
     /// right-neighbour chain; here we build from our own detectable
     /// enemies plus those visible to right neighbours via snapshots,
     /// then set primary_target to the nearest enemy.
+    ///
+    /// `carried` is the list a previous rebuild in this same think already
+    /// installed on every member. The member snapshots are taken once at
+    /// the start of the think, so without it a second rebuild would clean
+    /// each member's pre-rebuild list instead of the shared one, and would
+    /// re-derive a list the formation has already moved past.
     fn phalanx_reinitialize_them_list(
         &mut self,
         phalanx_left_pos: &Position,
         ctx: &AiContext,
         tick: &AiPerTickData,
-    ) {
+        carried: Option<&[HumanHandle]>,
+    ) -> Vec<HumanHandle> {
         // (1..3) Replay the original recursion over the up-front member
         // snapshots. Each member cleans its persistent list with its own
         // current 360° radius+LOS, then scans its live detectable-enemy
         // list with its own current 180° radius+LOS.
-        self.list_them.clear();
         let obstacles = ctx.obstacle_list();
+        let mut snapshots: std::collections::HashMap<HumanHandle, &PhalanxEnemySnapshot> =
+            std::collections::HashMap::new();
         for member in &tick.phalanx_member_them_lists {
-            append_phalanx_member_enemies(&mut self.list_them, member, obstacles);
+            for target in member
+                .current_them_list
+                .iter()
+                .chain(member.detectable_enemies.iter())
+            {
+                snapshots.entry(target.handle).or_insert(target);
+            }
+        }
+
+        self.list_them.clear();
+        for member in &tick.phalanx_member_them_lists {
+            let kept: Vec<&PhalanxEnemySnapshot> = match carried {
+                Some(handles) => handles
+                    .iter()
+                    .filter_map(|handle| snapshots.get(handle).copied())
+                    .collect(),
+                None => member.current_them_list.iter().collect(),
+            };
+            append_phalanx_member_enemies(&mut self.list_them, member, &kept, obstacles);
         }
 
         // (4) Find nearest enemy to phalanx center and make it primary
@@ -1468,6 +1530,26 @@ impl EnemyAi {
         } else {
             self.base.primary_target = 0;
         }
+
+        // Steps (5) and (6) run once per member as the recursion unwinds,
+        // so the completed shared list and its head become every member's
+        // them-list and primary target — not only the caller's.
+        for member in &tick.phalanx_member_them_lists {
+            if member.handle == self.base.me {
+                continue;
+            }
+            self.base
+                .outbox
+                .reentrant
+                .cross_npc_actions
+                .push(CrossNpcAction::SetPhalanxThemList {
+                    target: member.handle,
+                    them: self.list_them.clone(),
+                    primary_target: self.base.primary_target,
+                });
+        }
+
+        self.list_them.clone()
     }
 
     /// ReconsiderPhalanx. Called by the leftmost phalanx member on timer
@@ -1515,7 +1597,7 @@ impl EnemyAi {
                 "reconsider_phalanx: attack-distance gate"
             );
             if sq < atk_dist * atk_dist {
-                self.break_phalanx(sim, global, ctx, tick, grid);
+                self.break_phalanx(sim, global, ctx, tick, grid, None);
                 return true;
             }
         }
@@ -1532,7 +1614,7 @@ impl EnemyAi {
             frame = ctx.frame,
             "reconsider_phalanx: reinitializing them lists"
         );
-        self.phalanx_reinitialize_them_list(&ctx.position, ctx, tick);
+        let merged_them_list = self.phalanx_reinitialize_them_list(&ctx.position, ctx, tick, None);
 
         if self.list_them.is_empty() {
             // Pass no flags (uwFlags = 0, default per
@@ -1645,7 +1727,7 @@ impl EnemyAi {
                         frame = ctx.frame,
                         "reconsider_phalanx: encircled, breaking phalanx"
                     );
-                    self.break_phalanx(sim, global, ctx, tick, grid);
+                    self.break_phalanx(sim, global, ctx, tick, grid, Some(&merged_them_list));
                     return true;
                 }
                 (true, false) // unused when enemies_in_front
@@ -1812,7 +1894,7 @@ impl EnemyAi {
 
             if !found_pivot {
                 // Not enough space to hold the phalanx — break formation
-                self.break_phalanx(sim, global, ctx, tick, grid);
+                self.break_phalanx(sim, global, ctx, tick, grid, Some(&merged_them_list));
                 return true;
             }
 
@@ -3365,8 +3447,15 @@ mod tests {
         let right = member(2, 100.0, vec![target], Vec::new());
         let mut merged = Vec::new();
 
-        append_phalanx_member_enemies(&mut merged, &leftmost, ObstacleList::empty());
-        append_phalanx_member_enemies(&mut merged, &right, ObstacleList::empty());
+        let leftmost_kept: Vec<&PhalanxEnemySnapshot> = leftmost.current_them_list.iter().collect();
+        let right_kept: Vec<&PhalanxEnemySnapshot> = right.current_them_list.iter().collect();
+        append_phalanx_member_enemies(
+            &mut merged,
+            &leftmost,
+            &leftmost_kept,
+            ObstacleList::empty(),
+        );
+        append_phalanx_member_enemies(&mut merged, &right, &right_kept, ObstacleList::empty());
 
         assert!(merged.is_empty());
     }
@@ -3377,7 +3466,8 @@ mod tests {
         let member = member(2, 300.0, vec![target.clone()], vec![target]);
 
         let mut clear_merged = Vec::new();
-        append_phalanx_member_enemies(&mut clear_merged, &member, ObstacleList::empty());
+        let kept: Vec<&PhalanxEnemySnapshot> = member.current_them_list.iter().collect();
+        append_phalanx_member_enemies(&mut clear_merged, &member, &kept, ObstacleList::empty());
         assert_eq!(clear_merged, vec![9]);
 
         let obstacles = vec![opaque_wall()];
@@ -3388,7 +3478,7 @@ mod tests {
             static_active: &active,
         };
         let mut blocked_merged = Vec::new();
-        append_phalanx_member_enemies(&mut blocked_merged, &member, blocked);
+        append_phalanx_member_enemies(&mut blocked_merged, &member, &kept, blocked);
         assert!(blocked_merged.is_empty());
     }
 

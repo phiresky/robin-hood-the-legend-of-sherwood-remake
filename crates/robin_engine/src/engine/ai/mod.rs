@@ -9792,6 +9792,12 @@ impl EngineInner {
                     }
                 }
 
+                crate::ai::CrossNpcAction::SetPhalanxThemList {
+                    target,
+                    them,
+                    primary_target,
+                } => self.process_synchronous_set_phalanx_them_list(target, them, primary_target),
+
                 crate::ai::CrossNpcAction::Say { target, remark } => {
                     let target_id = EntityId::Soldier(SoldierId(target));
                     let Entity::Soldier(s) =
@@ -10313,6 +10319,13 @@ impl EngineInner {
                         failure,
                         assets,
                     ),
+                    crate::ai::CrossNpcAction::SetPhalanxThemList {
+                        target,
+                        them,
+                        primary_target,
+                    } => {
+                        self.process_synchronous_set_phalanx_them_list(target, them, primary_target)
+                    }
                     crate::ai::CrossNpcAction::ResumeAfterLookThere {
                         caller,
                         continuation,
@@ -10436,6 +10449,34 @@ impl EngineInner {
             .reentrant
             .cross_npc_actions
             .push(action);
+    }
+
+    /// Install the completed phalanx them-list and its head target on one
+    /// member. This has to stay ordered against the `BreakPhalanx` batch:
+    /// the assignment happens while the rebuild recursion unwinds, before
+    /// any member's `BattleDecisions` prunes entries that can no longer
+    /// fight.
+    fn process_synchronous_set_phalanx_them_list(
+        &mut self,
+        target: u32,
+        them: Vec<crate::ai::HumanHandle>,
+        primary_target: crate::ai::HumanHandle,
+    ) {
+        let target_id = EntityId::Soldier(SoldierId(target));
+        let Some(Entity::Soldier(s)) = self.world.entities.get_mut(target_id) else {
+            return;
+        };
+        if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
+            tracing::trace!(
+                target: "robin_engine::ai_enemy::phalanx",
+                member = target,
+                ?them,
+                primary_target,
+                "phalanx them-list: installing on member"
+            );
+            enemy_ai.list_them = them;
+            enemy_ai.base.primary_target = primary_target;
+        }
     }
 
     /// Execute one member of Original's recursive
