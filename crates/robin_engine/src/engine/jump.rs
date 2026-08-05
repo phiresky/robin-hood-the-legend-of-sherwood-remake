@@ -1068,27 +1068,10 @@ impl EngineInner {
             // A step is in progress — advance interpolation.
             let current = jump.current.as_ref().expect("current step exists");
             let current_anim = current.step.anim;
-            let transition_reached_terminal_tick =
-                !current.step.airborne && current.frames_elapsed >= current.total_frames;
-            if transition_reached_terminal_tick
-                && matches!(
-                    current_anim,
-                    OrderType::TransitionWaitingUprightJumpingUp
-                        | OrderType::TransitionWaitingCrouchedJumpingDown
-                )
-            {
-                // These Execute arms apply flight state on
-                // RHMOTION_TERMINATED. Jump stepping precedes the owner
-                // animation pass, so expose it once the authored duration
-                // elapsed on the preceding frames. The long take-off arms
-                // instead terminate from their own sprite motion inside the
-                // owner slot, which applies the same state there.
-                entity.set_posture(Posture::Flying);
-                if let Some(actor) = entity.actor_data_mut() {
-                    actor.action_state = ActionState::Moving;
-                }
-                force_advance.push(entity_id.into());
-            }
+            // Ground take-off / landing steps end when their own sprite
+            // animation terminates inside the owner slot, which routes the
+            // `NextJumpStep` completion back here. Their authored tick
+            // total only drives interpolation, never step advance.
             if jump_step_turns(current_anim) {
                 entity.position_iface_mut().turn();
             }
