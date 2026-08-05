@@ -4257,8 +4257,8 @@ impl EnemyAi {
 
     /// `hypothetical` corresponds to the original `bHypoteticalQuestion`
     /// flag — when true, the outdoor branch is evaluated regardless of
-    /// where the NPC currently stands. Pass `false` from live ticks and
-    /// rely on `ctx.in_building` to route to the indoor branch.
+    /// where the NPC currently stands. Pass `false` from live ticks and let
+    /// `ctx.self_is_active` / `ctx.in_building` route to the indoor branch.
     pub fn answer_question_ex(
         &self,
         question: Question,
@@ -4290,11 +4290,7 @@ impl EnemyAi {
 
         // ── Outdoor / active branch ───────────────────────────────────
         // Gate: hypothetical || (active && outside building).
-        // TODO(original-parity): `ctx.in_building` only carries the
-        // building-sector half of that test. An NPC that is outdoors but
-        // inactive takes the indoor branch in the Original and the outdoor
-        // one here; the two disagree on every question with differing arms.
-        if hypothetical || !ctx.in_building {
+        if hypothetical || (ctx.self_is_active && !ctx.in_building) {
             return match question {
                 Question::ShallITakeAle => self.soldier_profile_beer > 0,
                 Question::ShallITakeMoney => self.soldier_profile_money > 0,
