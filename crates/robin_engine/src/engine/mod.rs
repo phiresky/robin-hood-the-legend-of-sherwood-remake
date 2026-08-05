@@ -2857,6 +2857,16 @@ impl EngineInner {
             .get_element_mut(waiter_seq, waiter_idx)
         {
             w.orders.clear();
+            // The cached movement goal only bridges Rust's staged handoff
+            // from an outgoing movement straight into its replacement. Once
+            // this element is queued behind a blocker instead of taking the
+            // actor, the blocker owns the sprite goal and will publish or
+            // clear it before the waiter is ever instructed. Original's Turn
+            // simply observes whatever goal it finds, so reviving this
+            // snapshot afterwards would resurrect a destination the blocker's
+            // own condolence card legitimately erased.
+            w.retained_movement_goal = None;
+            w.remove_property(crate::sequence::Field::RetainedMovementGoal);
         }
         self.orders
             .sequence_manager

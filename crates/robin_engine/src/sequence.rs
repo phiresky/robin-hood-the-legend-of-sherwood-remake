@@ -1102,6 +1102,17 @@ impl SequenceElement {
         }
     }
 
+    /// Drop a property from a generic element, if present.
+    ///
+    /// Only engine caches are ever removed — [`Field::RetainedMovementGoal`]
+    /// is the sole such field. Authored command properties are written once
+    /// and read for the element's whole life.
+    pub fn remove_property(&mut self, field: Field) {
+        if let SequenceElementData::Generic { properties } = &mut self.data {
+            properties.remove(&field);
+        }
+    }
+
     /// Get a property from a generic element. Returns `None` if not found or not generic.
     pub fn get_property(&self, field: Field) -> Option<&FieldValue> {
         match &self.data {

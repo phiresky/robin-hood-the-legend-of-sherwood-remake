@@ -314,7 +314,16 @@ impl EngineInner {
                 // RHElementTarget::MouseClicked, whose ordinary click path
                 // directly builds AppendMoveToSequence rather than calling
                 // AddInteractionWithSeek.
-                if *command == Command::HitTarget
+                // ENTER_SWORDFIGHT is likewise unambiguous: it is only ever
+                // resolved by a soldier click, whose route is the classical
+                // sword seek (tolerance = the PC's own sword range) plus the
+                // VIP, table-swordfight and cross-gate forks. The generic
+                // AddInteractionWithSeek helper has no sword-range entry and
+                // would seek at the 30-unit interaction default instead,
+                // stopping the PC short of — or past — the opponent.
+                if *command == Command::EnterSwordfight {
+                    self.apply_enter_swordfight(sim, assets, *actor, *target, *running);
+                } else if *command == Command::HitTarget
                     && matches!(
                         self.get_entity(*target),
                         Some(crate::element::Entity::Target(_))
