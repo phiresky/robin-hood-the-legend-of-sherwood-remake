@@ -445,9 +445,13 @@ pub(crate) fn detects_position_180_raw(
         return false;
     }
 
+    // The direction vector is built by compressing the sector table's Y by
+    // ASPECT_RATIO and then stretching it back by INVERSE_ASPECT_RATIO. The
+    // shared Rust table already holds the resulting uncompressed unit vector,
+    // so stretching here a second time would narrow the forward half-plane.
     let dir = crate::shadow_polygon::sector_to_direction(viewer_direction as i16);
     let fx = dir[0];
-    let fy = dir[1] * crate::position_interface::INVERSE_ASPECT_RATIO;
+    let fy = dir[1];
 
     if sq_distance < 50.0 * 50.0 {
         let fwd_len = dx * fx + dy * fy;
