@@ -5174,6 +5174,14 @@ impl EnemyAi {
                             .map(|f| f.action_state)
                             .unwrap_or_default();
 
+                        tracing::trace!(
+                            target: "robin_engine::ai_enemy::phalanx",
+                            me = self.base.me,
+                            frame = ctx.frame,
+                            ?my_action,
+                            primary = self.base.primary_target,
+                            "phalanx timer"
+                        );
                         if !my_action.is_shield() && self.base.primary_target != 0 {
                             // Reestablish shield state
                             let (target_pos, target_elevation) = self
@@ -5197,7 +5205,10 @@ impl EnemyAi {
                                 // EngineInner::update_shield_obstacles — no explicit call needed.
                                 self.base.launch_timer(20, ctx.frame);
                             } else {
-                                self.get_battle_overview(0x0001, ctx, tick);
+                                // No flags: a phalanx member that lost its
+                                // primary target takes the plain overview,
+                                // not the fast swordfight-neighbours one.
+                                self.get_battle_overview(0, ctx, tick);
                             }
                         }
                         // else: reconsider_phalanx changed substate

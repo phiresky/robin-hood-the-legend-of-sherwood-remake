@@ -1119,6 +1119,7 @@ impl AiController {
                     | CrossNpcAction::ResumeAfterLookThere { .. }
                     | CrossNpcAction::InstructGatherPosition { .. }
                     | CrossNpcAction::BreakPhalanx { .. }
+                    | CrossNpcAction::SetPhalanxThemList { .. }
                     | CrossNpcAction::Say { .. }
             ) {
                 synchronous.push(action);

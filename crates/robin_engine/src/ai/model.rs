@@ -1513,6 +1513,16 @@ pub enum CrossNpcAction {
         target: NpcHandle,
         primary_target: HumanHandle,
     },
+    /// Install the merged phalanx them-list and its head target on one
+    /// member. `PhalanxReinitializeThemList` recurses to the right end and
+    /// then, as the recursion unwinds, assigns the completed shared list
+    /// and its first element to every member it passed through — not just
+    /// to the member that started the walk.
+    SetPhalanxThemList {
+        target: NpcHandle,
+        them: Vec<HumanHandle>,
+        primary_target: HumanHandle,
+    },
     /// Make the target NPC say a remark.
     Say { target: NpcHandle, remark: Remark },
     /// Write `AiBase::looted_after_money_fight` on a target soldier.
