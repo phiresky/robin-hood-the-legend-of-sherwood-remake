@@ -636,10 +636,12 @@ impl EngineInner {
             if let Some(ai) = s.npc.ai_brain.base()
                 && ai.primary_target != 0
                 && ai.current_substate.is_any_swordfight()
+                // `primary_target` is a raw element slot whose occupant is
+                // any human — a soldier fighting another soldier stores that
+                // soldier here — so resolve the slot instead of assuming a PC.
+                && let Some(target_id) = self.world.entities.id_at_legacy_slot(ai.primary_target)
             {
-                *primary_target_multiplicity
-                    .entry(EntityId::Pc(crate::entity_id::PcId(ai.primary_target)))
-                    .or_insert(0) += 1;
+                *primary_target_multiplicity.entry(target_id).or_insert(0) += 1;
             }
         }
         primary_target_multiplicity
@@ -657,13 +659,19 @@ impl EngineInner {
         for (npc_id, s) in self.world.entities.soldiers() {
             if let Some(ai) = s.npc.ai_brain.enemy()
                 && ai.base.primary_target != 0
+                // Raw element slot — the occupant can be a soldier as well
+                // as a PC, so resolve it rather than assuming a PC index.
+                && let Some(target_id) = self
+                    .world
+                    .entities
+                    .id_at_legacy_slot(ai.base.primary_target)
             {
                 let jl = crate::engine::melee::is_table_swordfight_needed(
                     &self.world.entities,
                     &self.world.fast_grid,
                     &assets.profile_manager,
                     npc_id,
-                    EntityId::Pc(crate::entity_id::PcId(ai.base.primary_target)),
+                    target_id,
                 );
                 npc_jump_lines.insert(npc_id.into(), jl);
             }
