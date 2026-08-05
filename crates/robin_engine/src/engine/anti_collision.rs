@@ -903,6 +903,19 @@ pub fn apply_anti_collision_step(
             MapVec::ZERO
         };
         let mut barge = MapVec::new(n.x * speed, n.y * speed);
+
+        // The barge faces along its own charge vector, and does so
+        // before the authorisation tests below — a mover that ends up
+        // completely stuck still turns to face the goal it is trying to
+        // reach.  Unlike the committed-deviation facing applied by the
+        // caller, this one is binned without the isometric Y-stretch and
+        // ignores a reversing order's flipped facing.
+        state
+            .pi
+            .set_direction(crate::position_interface::Direction::from_raw(
+                crate::position_interface::vector_to_sector_0_to_15(barge.x, barge.y) as i32,
+            ));
+
         let mut barge_future = MapPoint::new(
             mover.position_map.x + barge.x,
             mover.position_map.y + barge.y,

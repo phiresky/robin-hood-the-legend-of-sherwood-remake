@@ -7550,7 +7550,12 @@ impl EngineInner {
                             (
                                 dx_step,
                                 dy_step,
-                                state.pi.is_deviated(),
+                                // Only a committed deviation (blocked counter
+                                // reset) faces along its step and rebuilds the
+                                // increment here; a break-through barge keeps
+                                // the facing and cached increment the
+                                // anti-collision step left behind.
+                                state.pi.is_deviated() && state.pi.blocked_count == 0,
                                 was_deviated && !state.pi.is_deviated(),
                             )
                         } else {
@@ -8316,82 +8321,79 @@ impl EngineInner {
                     // (move box, half-diagonal) + the current path goal.  The
                     // persistent state (deviated / blocked_count / box_blocked /
                     // radius) lives on the actor's PI directly now.
-                    let (
-                        dx_step,
-                        dy_step,
-                        deviated,
-                        recovered_from_deviation,
-                        rebuild_after_deviation,
-                    ) = if anti_on
-                        && let Some(mover_snap) = anti_snapshots
-                            .get(actor_id)
-                            .and_then(|slot| slot.as_ref())
-                            .filter(|snapshot| snapshot.active)
-                    {
-                        let goal_map = crate::coordinates::MapPoint::new(goal.x, goal.y);
-                        let (move_box, half_diagonal) = {
-                            let pi = entity.position_iface();
-                            (*pi.get_move_box(), pi.get_half_diagonal())
+                    let (dx_step, dy_step, recovered_from_deviation, rebuild_after_deviation) =
+                        if anti_on
+                            && let Some(mover_snap) = anti_snapshots
+                                .get(actor_id)
+                                .and_then(|slot| slot.as_ref())
+                                .filter(|snapshot| snapshot.active)
+                        {
+                            let goal_map = crate::coordinates::MapPoint::new(goal.x, goal.y);
+                            let (move_box, half_diagonal) = {
+                                let pi = entity.position_iface();
+                                (*pi.get_move_box(), pi.get_half_diagonal())
+                            };
+                            let pi = entity.position_iface_mut();
+                            let was_deviated = pi.is_deviated();
+                            let mut state = super::anti_collision::AntiCollisionState {
+                                pi,
+                                move_box,
+                                half_diagonal,
+                                goal_map,
+                            };
+                            let (dx_step, dy_step) =
+                                super::anti_collision::apply_anti_collision_step(
+                                    mover_snap,
+                                    anti_snapshots.as_slice(),
+                                    &self.ai.global.repulsive_points,
+                                    prepared
+                                        .mobile_points_by_layer
+                                        .get(&mover_snap.layer)
+                                        .map(Vec::as_slice)
+                                        .unwrap_or(&[]),
+                                    prepared
+                                        .mobile_lines_by_layer
+                                        .get(&mover_snap.layer)
+                                        .map(Vec::as_slice)
+                                        .unwrap_or(&[]),
+                                    prepared
+                                        .mobile_polygons_by_layer
+                                        .get(&mover_snap.layer)
+                                        .map(Vec::as_slice)
+                                        .unwrap_or(&[]),
+                                    Some(&self.world.fast_grid),
+                                    Some(&mut state),
+                                    nx,
+                                    ny,
+                                    speed,
+                                    anti_on,
+                                );
+                            (
+                                dx_step,
+                                dy_step,
+                                was_deviated && !state.pi.is_deviated(),
+                                // A successfully committed deviation expands the
+                                // blocked box, resets the counter, and Original
+                                // rebuilds the cached increment. Its
+                                // blocked-count break-through path instead uses
+                                // MoveMap and deliberately retains the old cache.
+                                state.pi.is_deviated() && state.pi.blocked_count == 0,
+                            )
+                        } else {
+                            (nx * speed, ny * speed, false, false)
                         };
-                        let pi = entity.position_iface_mut();
-                        let was_deviated = pi.is_deviated();
-                        let mut state = super::anti_collision::AntiCollisionState {
-                            pi,
-                            move_box,
-                            half_diagonal,
-                            goal_map,
-                        };
-                        let (dx_step, dy_step) = super::anti_collision::apply_anti_collision_step(
-                            mover_snap,
-                            anti_snapshots.as_slice(),
-                            &self.ai.global.repulsive_points,
-                            prepared
-                                .mobile_points_by_layer
-                                .get(&mover_snap.layer)
-                                .map(Vec::as_slice)
-                                .unwrap_or(&[]),
-                            prepared
-                                .mobile_lines_by_layer
-                                .get(&mover_snap.layer)
-                                .map(Vec::as_slice)
-                                .unwrap_or(&[]),
-                            prepared
-                                .mobile_polygons_by_layer
-                                .get(&mover_snap.layer)
-                                .map(Vec::as_slice)
-                                .unwrap_or(&[]),
-                            Some(&self.world.fast_grid),
-                            Some(&mut state),
-                            nx,
-                            ny,
-                            speed,
-                            anti_on,
-                        );
-                        (
-                            dx_step,
-                            dy_step,
-                            state.pi.is_deviated(),
-                            was_deviated && !state.pi.is_deviated(),
-                            // A successfully committed deviation expands the
-                            // blocked box, resets the counter, and Original
-                            // rebuilds the cached increment. Its
-                            // blocked-count break-through path instead uses
-                            // MoveMap and deliberately retains the old cache.
-                            state.pi.is_deviated() && state.pi.blocked_count == 0,
-                        )
-                    } else {
-                        (nx * speed, ny * speed, false, false, false)
-                    };
                     let new_pos_x;
                     let new_pos_y;
                     {
                         let elem = entity.element_data_mut();
-                        if deviated && (dx_step != 0.0 || dy_step != 0.0) {
-                            // `UpdatePositionAntiCollision` faces along the
-                            // committed deviation, then invalidates and
-                            // reconstructs the cached increment from the new
-                            // position to the original goal.  The direction is
-                            // deliberately retained by ComputeIncrementAll(false).
+                        if rebuild_after_deviation && (dx_step != 0.0 || dy_step != 0.0) {
+                            // A committed deviation faces along the step it
+                            // just took, then invalidates and reconstructs the
+                            // cached increment from the new position to the
+                            // original goal (the rebuild deliberately retains
+                            // this direction rather than recomputing it).  The
+                            // break-through barge sets its own facing inside
+                            // the anti-collision step, so it is excluded here.
                             let raw = vector_to_sector_0_to_15(dx_step, dy_step);
                             elem.set_direction_goal(if order_reverse { raw ^ 8 } else { raw });
                         }
