@@ -4808,6 +4808,8 @@ impl EngineInner {
             return;
         };
         if let Some(npc) = entity.npc_data_mut() {
+            let span = tracing::trace_span!("refresh_npc_view", npc = npc_id.index());
+            let _guard = span.enter();
             ai_vision::refresh_view(npc, &ctx);
         }
     }
