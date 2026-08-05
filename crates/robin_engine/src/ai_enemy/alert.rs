@@ -784,19 +784,22 @@ impl EnemyAi {
 
             self.base.stop_all();
 
-            // SetProperty(DIRECTION, direction ^ 8).
-            // After L12296 `uwDirection ^= 8`, `uwDirection` is
-            // `match_dir ^ 8`, so `uwDirection ^ 8` resolves to
-            // `match_dir` — the officer turns toward the formation
-            // (i.e. toward the soldiers) before the GatherSoldiers
-            // animation.  In our Rust naming, `chosen_direction` is
-            // already `match_dir`, so we use it verbatim (not XORed).
-            // Falls back to the average soldier-direction when no
-            // placement was found.
+            // The officer turns toward the formation (i.e. toward the
+            // soldiers) before the GatherSoldiers animation.  A
+            // successful placement stores `match_dir ^ 8` as the gather
+            // direction and the turn re-XORs it, so the turn lands on
+            // `match_dir` — `chosen_direction` verbatim.
+            //
+            // When no placement is found the gather direction keeps the
+            // value the 16-direction sweep left behind, `avg_dir + 16`,
+            // which never took the `^ 8` correction. The turn's own
+            // `^ 8` then still applies, and the surplus 16 falls out in
+            // the 16-sector wrap, leaving `avg_dir ^ 8` — the officer
+            // faces *away* from the average soldier direction.
             let turn_dir = if placement_ok {
                 chosen_direction
             } else {
-                avg_dir_start
+                avg_dir_start ^ 8
             };
             let owner = self.base.owner_entity_id;
             let mut seq = Sequence::new();
