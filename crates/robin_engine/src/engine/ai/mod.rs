@@ -870,6 +870,7 @@ pub(super) fn build_ai_context_from_entity(
         // branch (which only governs whether the view polygon is drawn) must
         // not leak into this flag.
         in_building: building_sector.is_some(),
+        self_is_active: elem.active,
         building_sector,
         camp,
         is_swordfighting,

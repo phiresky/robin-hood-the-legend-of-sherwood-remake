@@ -1270,8 +1270,10 @@ pub struct StrikeSelectionContext<'a> {
     /// damage path.
     pub attacker_elevation: f32,
     pub attacker_camp: Camp,
-    /// Whether the attacker is currently in a swordfight (affects straight
-    /// strike targeting — only principal opponent when true).
+    /// Whether the attacker is currently in a swordfight, i.e. holds a
+    /// non-empty opponent list. False aborts the whole proposal (after the
+    /// skill draw); when true it also narrows straight-strike targeting to
+    /// the principal opponent.
     pub is_swordfighting: bool,
     /// Frames remaining until the opponent's current action completes.
     /// Used to reject strikes whose startup animation would be too slow.
@@ -1369,6 +1371,13 @@ pub fn propose_good_sword_strike(
         } else {
             return None;
         }
+    }
+
+    // An actor with no live opponent has nothing to propose against. The
+    // bail-out sits after the skill draw (so the RNG stream advances either
+    // way) and before any boredom bookkeeping.
+    if !ctx.is_swordfighting {
+        return None;
     }
 
     let mut best_strike: Option<SwordStrike> = None;

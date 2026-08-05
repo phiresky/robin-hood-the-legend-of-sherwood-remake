@@ -101,6 +101,11 @@ pub struct AiContext {
     /// per-tick engine path (unit tests, fallback fields).
     pub in_uninterruptible_command: bool,
     pub in_building: bool,
+    /// The evaluating element's own active flag. Paired with `in_building`
+    /// it forms the "active and outside a building" predicate that gates the
+    /// outdoor arm of `answer_question`: an inactive actor answers from the
+    /// indoor arm even when it is standing outdoors.
+    pub self_is_active: bool,
     pub building_sector: Option<SectorHandle>,
     pub camp: crate::element::Camp,
     pub is_swordfighting: bool,
