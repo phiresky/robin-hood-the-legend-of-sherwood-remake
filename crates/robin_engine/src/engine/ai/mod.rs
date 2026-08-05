@@ -2207,6 +2207,7 @@ impl EngineInner {
             return Vec::new();
         };
         let me_pos_pt = soldier.element.position_map();
+        let me_elevation = soldier.element.position().z;
         let my_camp = soldier.soldier.cached_camp;
         let me_handle = enemy_ai.base.me;
 
@@ -2349,7 +2350,7 @@ impl EngineInner {
                 right_combat_neighbour: enemy_ai_other.right_combat_neighbour,
                 is_in_recovery_animation: in_recovery,
                 in_sword_action_state: s.actor.action_state.is_sword(),
-                elevation: s.element.position().z as u16,
+                elevation: s.element.position().z,
                 seek_position,
                 current_substate: s.npc.ai_substate() as u32,
                 archer_behind_me: enemy_ai_other.archer_behind_me,
@@ -2446,7 +2447,7 @@ impl EngineInner {
                 right_combat_neighbour: 0,
                 is_in_recovery_animation: in_recovery,
                 in_sword_action_state: pc.actor.action_state.is_sword(),
-                elevation: pc.element.sprite.position_iface.get_elevation() as u16,
+                elevation: pc.element.sprite.position_iface.get_elevation(),
                 seek_position: pc_seek_position,
                 current_substate: 0,
                 archer_behind_me: 0,
@@ -2478,9 +2479,10 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(id) else {
                 continue;
             };
-            let (position, snapshot) = match entity {
+            let (position, elevation, snapshot) = match entity {
                 Entity::Soldier(soldier) => (
                     soldier.element.position_map(),
+                    soldier.element.position().z,
                     // Radius-limited snapshots model
                     // FillListWithAllNearFighters and therefore exclude
                     // unable fighters. The complete registry is the backing
@@ -2489,12 +2491,25 @@ impl EngineInner {
                     // them.
                     build_soldier(id.index(), max_distance.is_some()),
                 ),
-                Entity::Pc(pc) => (pc.element.position_map(), build_pc(id.index())),
+                Entity::Pc(pc) => (
+                    pc.element.position_map(),
+                    pc.element.sprite.position_iface.get_elevation(),
+                    build_pc(id.index()),
+                ),
                 _ => continue,
             };
-            let dx = position.x - me_pos_pt.x;
-            let dy = (position.y - me_pos_pt.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-            if max_distance.is_some_and(|radius| dx.abs().max(dy.abs()) > radius) {
+            // `MaxNormDistance` subtracts full world positions before
+            // stretching Y, so the elevation enters twice: once as the
+            // projection offset baked into map Y and once as its own
+            // component. Comparing raw map coordinates instead pushed
+            // fighters standing a layer above or below out of every
+            // consideration radius built on this snapshot.
+            let world = crate::coordinates::GroundPoint::from_map_and_z(position, elevation);
+            let me_world = crate::coordinates::GroundPoint::from_map_and_z(me_pos_pt, me_elevation);
+            let dx = world.x - me_world.x;
+            let dy = (world.y - me_world.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+            let dz = elevation - me_elevation;
+            if max_distance.is_some_and(|radius| dx.abs().max(dy.abs()).max(dz.abs()) > radius) {
                 continue;
             }
             if let Some(snapshot) = snapshot {
