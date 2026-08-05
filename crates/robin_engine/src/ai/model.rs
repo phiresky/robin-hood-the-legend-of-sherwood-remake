@@ -1414,11 +1414,20 @@ pub enum CrossNpcAction {
         info: StimulusInfo,
         continuation: ThinkResultContinuation,
     },
-    /// Set gather position on target NPC, then deliver `CALL_INSTRUCTION`.
+    /// Set gather position and gather direction on the target NPC.
+    ///
+    /// The gather instruction itself is a plain setter: the alert paths that
+    /// hand out formation slots only stash the slot, and the recipient reads
+    /// it whenever its own behaviour next needs a gather point. Only the
+    /// phalanx-correction paths follow the setter with a `CALL_INSTRUCTION`
+    /// Think, and they do so exclusively for members still standing in the
+    /// phalanx — hence `call_instruction`, which re-checks that substate at
+    /// delivery time because an earlier member's Think may have moved this one.
     InstructGatherPosition {
         target: NpcHandle,
         position: Position,
         direction: u16,
+        call_instruction: bool,
     },
     /// Propagate break-phalanx to target: clear their combat neighbours,
     /// set `phalanx_aborted = true`, and trigger `BattleDecisions`.

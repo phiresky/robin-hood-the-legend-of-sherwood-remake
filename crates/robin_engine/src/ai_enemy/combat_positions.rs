@@ -1499,13 +1499,22 @@ impl EnemyAi {
             && let Some(snap) = self.find_fighter(nearest, tick)
         {
             let atk_dist = archer::PHALANX_ATTACK_DISTANCE as f32;
-            if ai_square_distance(
+            let sq = ai_square_distance(
                 &snap.position,
                 snap.elevation as f32,
                 &ctx.position,
                 ctx.elevation,
-            ) < atk_dist * atk_dist
-            {
+            );
+            tracing::trace!(
+                target: "robin_engine::ai_enemy::phalanx",
+                me = self.base.me,
+                frame = ctx.frame,
+                nearest,
+                square_distance = sq,
+                threshold = atk_dist * atk_dist,
+                "reconsider_phalanx: attack-distance gate"
+            );
+            if sq < atk_dist * atk_dist {
                 self.break_phalanx(sim, global, ctx, tick, grid);
                 return true;
             }
@@ -1613,10 +1622,29 @@ impl EnemyAi {
 
         let dir_diff = (ideal_direction.wrapping_sub(real_direction)) & 15;
 
+        tracing::trace!(
+            target: "robin_engine::ai_enemy::phalanx",
+            me = self.base.me,
+            frame = ctx.frame,
+            members = ?phalanx_members,
+            them = ?self.list_them,
+            primary = self.base.primary_target,
+            ideal_direction,
+            real_direction,
+            dir_diff,
+            "reconsider_phalanx: geometry"
+        );
+
         let (enemies_in_front, enemy_on_right_side) = match dir_diff {
             0 | 1 | 15 => {
                 // Within tolerance
                 if self.phalanx_is_encircled_by_enemies(&phalanx_center, ideal_direction, tick) {
+                    tracing::trace!(
+                        target: "robin_engine::ai_enemy::phalanx",
+                        me = self.base.me,
+                        frame = ctx.frame,
+                        "reconsider_phalanx: encircled, breaking phalanx"
+                    );
                     self.break_phalanx(sim, global, ctx, tick, grid);
                     return true;
                 }
@@ -1713,6 +1741,7 @@ impl EnemyAi {
                             target: guy,
                             position: new_pos,
                             direction: ideal_direction,
+                            call_instruction: true,
                         },
                     );
                 }
@@ -1801,6 +1830,7 @@ impl EnemyAi {
                         target: guy,
                         position: new_pos,
                         direction: ideal_direction,
+                        call_instruction: true,
                     },
                 );
             }
