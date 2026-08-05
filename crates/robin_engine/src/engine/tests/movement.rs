@@ -14,6 +14,23 @@ fn tick_production_owner_coordinator(
     engine.tick_actor_owner_envelopes(sim, assets, &positions);
 }
 
+/// Run the movement phase and then the sequence-manager drain behind it.
+///
+/// A rider-charge hit does not damage its victim inside the rider's own
+/// Execute: that arm only registers a `ReceiveSwordDamage` element, and
+/// the manager Hourglass that follows the entity loop is what executes
+/// it. Tests that want to observe the damage of a charge frame therefore
+/// have to run both halves of the frame.
+fn tick_movement_and_sequences(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
+) {
+    engine.tick_entity_movement(sim, assets);
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(sim, &mut display, assets);
+}
+
 #[test]
 fn make_fast_does_not_postprocess_an_unrelated_live_movement() {
     use crate::order::{Order, OrderType};
@@ -974,9 +991,9 @@ fn rider_charge_frozen_all_real_victim_is_damaged_once_across_multiple_ticks() {
     let sim = crate::sim_rng::test_context();
     clear_test_sword_damage_observations();
 
-    engine.tick_entity_movement(&sim, &assets);
-    engine.tick_entity_movement(&sim, &assets);
-    engine.tick_entity_movement(&sim, &assets);
+    tick_movement_and_sequences(&mut engine, &sim, &assets);
+    tick_movement_and_sequences(&mut engine, &sim, &assets);
+    tick_movement_and_sequences(&mut engine, &sim, &assets);
 
     let observations = take_test_sword_damage_observations();
     assert_eq!(observations.len(), 1, "frozen ticks must not rebuild hits");
@@ -1146,7 +1163,7 @@ fn rider_charge_frozen_then_unfrozen_initializes_sprite_motion_on_first_live_tic
 }
 
 #[test]
-fn rider_charge_real_hit_is_synchronous_once_only_and_uses_post_turn_flight_direction() {
+fn rider_charge_real_hit_lands_once_only_and_uses_post_turn_flight_direction() {
     use crate::engine::melee::{
         clear_test_sword_damage_observations, take_test_sword_damage_observations,
     };
@@ -1164,7 +1181,7 @@ fn rider_charge_real_hit_is_synchronous_once_only_and_uses_post_turn_flight_dire
     let victim = add_charge_victim(&mut engine, rider_charge_point(origin, 0, 0.0, 30.0));
     clear_test_sword_damage_observations();
 
-    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+    tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets);
 
     let observations = take_test_sword_damage_observations();
     assert_eq!(observations.len(), 1);
@@ -1174,11 +1191,11 @@ fn rider_charge_real_hit_is_synchronous_once_only_and_uses_post_turn_flight_dire
     assert!(hit.active_rider_charge);
     assert!(
         hit.pending_victims.is_empty(),
-        "hit is removed before damage dispatch"
+        "the hit leaves the pending list when its damage element is registered"
     );
     assert!(
         hit.life_points_after < hit.life_points_before,
-        "damage applies inline"
+        "the manager drain behind the entity loop applies the damage"
     );
     assert_eq!(
         hit.attacker_direction, 1,
@@ -1205,7 +1222,7 @@ fn rider_charge_real_hit_is_synchronous_once_only_and_uses_post_turn_flight_dire
     );
 
     clear_test_sword_damage_observations();
-    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+    tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets);
     assert!(
         take_test_sword_damage_observations().is_empty(),
         "victim is hit once"
@@ -1234,7 +1251,7 @@ fn rider_charge_multiple_hits_follow_creation_order_rng_state_and_holes() {
         engine.remove_entity(hole);
         clear_test_sword_damage_observations();
 
-        engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+        tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets);
 
         let observations = take_test_sword_damage_observations();
         assert_eq!(
@@ -1245,7 +1262,10 @@ fn rider_charge_multiple_hits_follow_creation_order_rng_state_and_holes() {
             vec![first, second],
             "candidate order follows live creation slots across a hole"
         );
-        assert_eq!(observations[0].pending_victims, vec![second]);
+        // The charge frame drains the whole pending list while it registers
+        // the damage elements, so neither hit still sees a candidate waiting
+        // by the time the manager drain executes them.
+        assert!(observations[0].pending_victims.is_empty());
         assert!(observations[1].pending_victims.is_empty());
         observations
             .into_iter()
@@ -1271,7 +1291,7 @@ fn rider_charge_multiple_hits_follow_creation_order_rng_state_and_holes() {
 }
 
 #[test]
-fn rider_charge_last_frame_damage_observes_active_state_before_rewrite_and_clear() {
+fn rider_charge_last_frame_damage_lands_after_the_rewrite_and_clear() {
     use crate::engine::melee::{
         clear_test_sword_damage_observations, take_test_sword_damage_observations,
     };
@@ -1287,11 +1307,14 @@ fn rider_charge_last_frame_damage_observes_active_state_before_rewrite_and_clear
     add_charge_victim(&mut engine, rider_charge_point(origin, 0, 10.0, 30.0));
     clear_test_sword_damage_observations();
 
-    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+    tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets);
 
     let observations = take_test_sword_damage_observations();
     assert_eq!(observations.len(), 1);
-    assert!(observations[0].active_rider_charge);
+    // The rider's own Execute rewrites its order and drops the charge on the
+    // last frame; the damage element it registered only runs afterwards, in
+    // the manager drain, so it never observes a live charge.
+    assert!(!observations[0].active_rider_charge);
     let order = engine
         .orders
         .sequence_manager
@@ -1331,7 +1354,7 @@ fn rider_charge_initial_eligibility_is_not_rechecked_and_returning_layer_can_hit
     );
     let sim = crate::sim_rng::test_context();
     clear_test_sword_damage_observations();
-    engine.tick_entity_movement(&sim, &assets);
+    tick_movement_and_sequences(&mut engine, &sim, &assets);
     assert!(take_test_sword_damage_observations().is_empty());
 
     // Eligibility changes after initialization are intentionally ignored.
@@ -1347,7 +1370,7 @@ fn rider_charge_initial_eligibility_is_not_rechecked_and_returning_layer_can_hit
         .unwrap()
         .element_data_mut()
         .set_layer(1);
-    engine.tick_entity_movement(&sim, &assets);
+    tick_movement_and_sequences(&mut engine, &sim, &assets);
     assert!(take_test_sword_damage_observations().is_empty());
     let rider_origin = engine
         .get_entity(rider)
@@ -1365,7 +1388,7 @@ fn rider_charge_initial_eligibility_is_not_rechecked_and_returning_layer_can_hit
         .unwrap()
         .element_data_mut()
         .set_layer(0);
-    engine.tick_entity_movement(&sim, &assets);
+    tick_movement_and_sequences(&mut engine, &sim, &assets);
     assert_eq!(take_test_sword_damage_observations().len(), 1);
 }
 
@@ -1410,7 +1433,7 @@ fn rider_charge_owner_slot_sees_earlier_movement_and_interrupts_later_before_mov
     // Hold the later victim on a non-distance wait counter, then restore both
     // positions on each animation wait tick until the rider reaches its
     // actual charge decision frame.
-    engine.tick_entity_movement(&sim, &assets);
+    tick_movement_and_sequences(&mut engine, &sim, &assets);
     assert!(take_test_sword_damage_observations().is_empty());
     let observations = (0..4)
         .find_map(|_| {
@@ -1423,7 +1446,7 @@ fn rider_charge_owner_slot_sees_earlier_movement_and_interrupts_later_before_mov
             later_entity.element_data_mut().set_position_map(hit_point);
             later_entity.sprite_mut().frame_count = 1;
             clear_test_sword_damage_observations();
-            engine.tick_entity_movement(&sim, &assets);
+            tick_movement_and_sequences(&mut engine, &sim, &assets);
             let observations = take_test_sword_damage_observations();
             (!observations.is_empty()).then_some(observations)
         })
