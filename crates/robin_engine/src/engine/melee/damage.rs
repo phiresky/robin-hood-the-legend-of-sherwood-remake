@@ -229,10 +229,10 @@ impl EngineInner {
         attacker_profile_idx: Option<u32>,
         damage_element: (crate::sequence::SequenceId, usize),
     ) {
-        if self.is_scroll_protected_civilian(victim_id) {
-            tracing::debug!(?victim_id, "sword damage blocked: scroll-carrying beggar");
-            return;
-        }
+        // A scroll-carrying civilian is not short-circuited here: the
+        // immunity lives in the wounding/concussion primitives
+        // (`ConcussionContext::scroll_attached`), so the protection
+        // rolls and the rest of the pipeline still run.
         let strike = match sword_strike {
             Some(s) => s,
             None => {
@@ -241,18 +241,15 @@ impl EngineInner {
             }
         };
 
-        // Ladder/wall arm — route to `translate_ladder_wall_fall`
-        // before any damage / push / hit-reaction work.  Same
-        // early-out as `apply_generic_damage` and
-        // `apply_piercing_damage`.
+        // Ladder/wall victims are *not* short-circuited here: the
+        // protection rolls happen first and only the hit-reaction
+        // translation further down routes them to
+        // `translate_ladder_wall_fall`.  Push strikes reach the same
+        // helper through `apply_push_effect`.
         let pre_drop_posture = self
             .get_entity(victim_id)
             .map(|e| e.element_data().posture)
             .unwrap_or_default();
-        if matches!(pre_drop_posture, Posture::OnLadder | Posture::OnWall) {
-            self.translate_ladder_wall_fall(victim_id, damage_element);
-            return;
-        }
 
         // CarryingCorpse arm — drop the corpse instantly (the
         // carrier then falls through to the base-class sword-damage
@@ -679,6 +676,11 @@ impl EngineInner {
             );
             if is_shoulder_posture {
                 self.translate_shoulder_damage(sim, assets, victim_id, damage_element);
+            } else if matches!(victim_posture, Posture::OnLadder | Posture::OnWall) {
+                // Ladder/wall arm of the hit-reaction posture switch.
+                // Like the shoulder arm this fires for lethal and KO
+                // hits too — the fall itself resolves the victim's fate.
+                self.translate_ladder_wall_fall(victim_id, damage_element);
             } else if still_alive && still_conscious {
                 let anims = self.get_entity(victim_id).and_then(|e| {
                     let posture = e.element_data().posture;
