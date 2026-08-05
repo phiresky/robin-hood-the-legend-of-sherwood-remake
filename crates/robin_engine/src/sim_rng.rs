@@ -746,6 +746,11 @@ mod tests {
         "i16",
         "i32",
         "script_rand",
+        // The diagnostic-carrying twin of `script_rand`: the same script
+        // `Rand(max)` native dispatch selects it when a VM diagnostic context
+        // is attached, and it draws exactly one value from the same
+        // `RngSite::ScriptRand`. Authoritative for the same reason.
+        "script_rand_with_context",
         "shuffle",
         "u16",
         "u32",

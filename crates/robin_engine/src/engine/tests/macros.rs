@@ -2,6 +2,28 @@ use super::*;
 
 // ── QA macro playback / abort system tests ─────────────────────────
 
+/// Add a live PC entity to the engine.
+///
+/// The macro/quick-action paths write back through the owner's `PcData`, so
+/// these fixtures need a real entity rather than a synthetic `PcId` handle.
+#[cfg(test)]
+fn add_test_pc(engine: &mut EngineInner) -> crate::element::EntityId {
+    engine.add_entity(Entity::Pc(crate::element::ActorPc {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::ActorPc,
+            active: true,
+            posture: crate::element::Posture::Upright,
+            ..Default::default()
+        },
+        actor: Default::default(),
+        human: Default::default(),
+        pc: crate::element::PcData {
+            life_points: 100,
+            ..Default::default()
+        },
+    }))
+}
+
 /// Seed a PC's macro slot with a recorded "move to (x,y)" step and a
 /// wired titbit.  Used by the playback/abort/tetris tests below.
 #[cfg(test)]
@@ -78,7 +100,7 @@ fn abort_quick_action_clears_slot_and_titbit() {
     use crate::element::EntityId;
 
     let mut engine = EngineInner::new();
-    let pc = EntityId::Pc(crate::entity_id::PcId(20));
+    let pc = add_test_pc(&mut engine);
 
     // Empty slot → false.
     assert!(!engine.abort_quick_action(pc, 0));
@@ -104,14 +126,11 @@ fn delete_macro_command_matches_original_single_vs_all() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut display = HostDisplayState::default();
-    use crate::element::EntityId;
     use crate::player_command::PlayerCommand;
 
     let mut engine = EngineInner::new();
-    let pc_a = EntityId::Pc(crate::entity_id::PcId(30));
-    let pc_b = EntityId::Pc(crate::entity_id::PcId(31));
-    engine.world.pc_ids.push(pc_a);
-    engine.world.pc_ids.push(pc_b);
+    let pc_a = add_test_pc(&mut engine);
+    let pc_b = add_test_pc(&mut engine);
 
     // Both PCs have macros in slots 0 and 1; slot 2 is empty.
     seed_macro_slot(&mut engine, pc_a, 0, vec![(1.0, 1.0)]);
@@ -163,14 +182,11 @@ fn start_macro_plays_back_move_steps_and_tetris_collapses() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut display = HostDisplayState::default();
-    use crate::element::EntityId;
     use crate::player_command::PlayerCommand;
 
     let mut engine = EngineInner::new();
-    let pc_a = EntityId::Pc(crate::entity_id::PcId(40));
-    let pc_b = EntityId::Pc(crate::entity_id::PcId(41));
-    engine.world.pc_ids.push(pc_a);
-    engine.world.pc_ids.push(pc_b);
+    let pc_a = add_test_pc(&mut engine);
+    let pc_b = add_test_pc(&mut engine);
 
     // Both PCs record a one-step move macro at slot 0; pc_a has a slot-1
     // macro too.
@@ -212,12 +228,10 @@ fn start_macro_empty_slot_is_noop() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut display = HostDisplayState::default();
-    use crate::element::EntityId;
     use crate::player_command::PlayerCommand;
 
     let mut engine = EngineInner::new();
-    let pc = EntityId::Pc(crate::entity_id::PcId(50));
-    engine.world.pc_ids.push(pc);
+    let pc = add_test_pc(&mut engine);
 
     // pc has a macro only in slot 2 — starting slot 0 should NOT tetris,
     // because no PC had a slot-0 macro to launch.

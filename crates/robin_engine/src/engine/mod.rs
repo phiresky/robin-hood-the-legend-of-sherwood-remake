@@ -1114,7 +1114,58 @@ impl EngineInner {
 
         self.world.entities.push(Some(entity));
         self.world.assign_next_original_creation_order(id);
+        #[cfg(test)]
+        self.backfill_test_entity_identity(id);
         id
+    }
+
+    /// Give a directly-constructed test actor the identity fields that level
+    /// loading writes in production.
+    ///
+    /// Unit-test fixtures build `Entity` values from `Default` and hand them
+    /// straight to [`Self::add_entity`], so two required identities are never
+    /// filled in: a PC's campaign description (the stable `mpDescription`
+    /// identity behind coma/guard/ammo lookups) and an NPC brain's own actor
+    /// handle. Both are backfilled here so individual fixtures don't have to
+    /// and so the runtime keeps its strict required-data invariants. Fixtures
+    /// that set either field explicitly keep their value.
+    #[cfg(test)]
+    fn backfill_test_entity_identity(&mut self, id: EntityId) {
+        let handle = id.index();
+        match self.world.entities.get_mut(id) {
+            Some(Entity::Pc(pc)) => {
+                if pc.pc.campaign_description_index.is_some() {
+                    return;
+                }
+                let profile_index = pc.pc.profile_index;
+                let characters = &mut self.mission_domain.campaign.characters;
+                let description_index = characters.len();
+                characters.push(crate::campaign::PcDescription {
+                    character_profile_idx: Some(profile_index),
+                    instanced: true,
+                    ..crate::campaign::PcDescription::default()
+                });
+                let Some(Entity::Pc(pc)) = self.world.entities.get_mut(id) else {
+                    unreachable!("PC slot changed kind during fixture backfill");
+                };
+                pc.pc.campaign_description_index = Some(description_index as u32);
+            }
+            Some(Entity::Soldier(soldier)) => {
+                if let Some(base) = soldier.npc.ai_brain.base_mut()
+                    && base.me == 0
+                {
+                    base.me = handle;
+                }
+            }
+            Some(Entity::Civilian(civilian)) => {
+                if let Some(base) = civilian.npc.ai_brain.base_mut()
+                    && base.me == 0
+                {
+                    base.me = handle;
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Get a reference to an entity by ID.
@@ -4978,10 +5029,10 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
     let mut profiles = (*assets.profile_manager).clone();
     let mut needs_hth_weapon = false;
 
+    // Profiles are static level data: production actors carry them whatever
+    // their live state, and a fixture actor that starts dead, inactive or
+    // unconscious still needs one the moment it revives or is scanned.
     for (_, pc) in engine.world.entities.pcs() {
-        if !pc.element.active || pc.pc.life_points <= 0 {
-            continue;
-        }
         let profile_idx = usize::from(pc.pc.profile_index);
         profiles
             .characters
@@ -5002,9 +5053,6 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
             soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
                 panic!("test soldier {} has a non-enemy AI brain", soldier_id.0)
             });
-        if !soldier.element.active || soldier.human.unconscious {
-            continue;
-        }
         let profile_idx = usize::from(soldier.soldier.soldier_profile_index);
         profiles
             .soldiers

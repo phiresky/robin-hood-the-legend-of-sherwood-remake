@@ -1589,6 +1589,7 @@ fn synchronous_one_shot_noise_is_handled_before_broadcast_returns() {
         .detection
         .stimuli
         .push(Stimulus::new(StimulusType::EventTimer));
+    complete_test_runtime_fixture(&mut engine, &mut assets);
 
     engine.broadcast_noise_synchronously(
         &sim,
