@@ -5528,11 +5528,11 @@ mod tests {
             ..AiGlobalState::default()
         };
 
-        ai.the_16th_frame(sim, 0, &ctx, &global, &tick, None, false, false);
+        ai.the_16th_frame(sim, 0, &ctx, &global, &tick, None, false, false, false);
         assert!(!ai.base.timer_is_running);
 
         global.freeze = false;
-        ai.the_16th_frame(sim, 0, &ctx, &global, &tick, None, false, false);
+        ai.the_16th_frame(sim, 0, &ctx, &global, &tick, None, false, false, false);
         assert!(ai.base.timer_is_running);
     }
 
@@ -5559,6 +5559,7 @@ mod tests {
             &AiPerTickData::stub(),
             None,
             true,
+            false,
             false,
         );
 
