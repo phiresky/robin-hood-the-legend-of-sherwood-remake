@@ -899,6 +899,7 @@ fn night_fog_shadow_sector_indices(
 /// The per-frame cache from the legacy implementation is
 /// intentionally skipped — we recompute once per call.
 #[allow(clippy::too_many_arguments)]
+#[track_caller]
 pub fn compute_view_radius(
     eye_world: WorldPoint3D,
     view_radius: u16,

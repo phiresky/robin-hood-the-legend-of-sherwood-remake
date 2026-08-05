@@ -1714,6 +1714,7 @@ impl EngineInner {
         }
         tick.camp_soldiers =
             self.build_camp_soldier_tick_infos(npc_id, my_camp, scratch, build_forecasts);
+        tick.alert_soldier_candidates = self.build_alert_soldier_candidates(npc_id);
         if build_forecasts
             && let Some(enemy_ai) = soldier.npc.ai_brain.enemy()
             && enemy_ai.missed_pc != 0
@@ -2032,6 +2033,54 @@ impl EngineInner {
         }
 
         tick
+    }
+
+    /// Rank-soldier NPCs of *every* camp, in NPC registry order.
+    ///
+    /// `CommandSoldiersToAttack` walks the whole NPC array and gates each
+    /// entry on rank, body state and the candidate's own 360° detection of
+    /// the officer — no camp test anywhere. Feeding it the same-camp
+    /// snapshot dropped the opposing camp's soldiers from both the alert
+    /// broadcast and the observable detection-call stream.
+    fn build_alert_soldier_candidates(
+        &self,
+        npc_id: crate::element::EntityId,
+    ) -> Vec<crate::ai_enemy::AlertSoldierCandidate> {
+        let mut candidates = Vec::new();
+        for other_id in self.world.entities.npc_ids() {
+            if other_id == npc_id {
+                continue;
+            }
+            let Some(entity) = self.world.entities.get(other_id) else {
+                continue;
+            };
+            let crate::element::Entity::Soldier(s) = entity else {
+                continue;
+            };
+            let Some(enemy_ai) = s.npc.ai_brain.enemy() else {
+                continue;
+            };
+            if enemy_ai.soldier_profile_rank != crate::profiles::ProfileRank::Soldier
+                || !crate::element::Human::is_able_to_fight(s)
+            {
+                continue;
+            }
+            let position = s.element.position_map();
+            candidates.push(crate::ai_enemy::AlertSoldierCandidate {
+                handle: other_id.index(),
+                position: crate::ai::Position {
+                    x: position.x,
+                    y: position.y,
+                    sector: s.element.sector(),
+                    level: s.element.layer(),
+                },
+                elevation: s.element.sprite.position_iface.get_elevation(),
+                is_rider: s.soldier.rider,
+                view_radius: s.npc.view_radius,
+                in_building: self.entity_data_in_building_sector(&s.element),
+            });
+        }
+        candidates
     }
 
     fn build_camp_soldier_tick_infos(

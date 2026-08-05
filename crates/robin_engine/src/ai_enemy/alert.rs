@@ -145,26 +145,18 @@ impl EnemyAi {
         self.pending_alert_soldier_candidates.clear();
         let mut last_result_request = None;
 
-        for cs in &tick.camp_soldiers {
-            // Original eligibility is rank soldier + IsAbleToFight; the
-            // recipient's live Think handles script/AI locks and state gates.
-            if cs.rank != ProfileRank::Soldier || !cs.is_able_to_fight {
-                continue;
-            }
+        // `alert_soldier_candidates` already carries Original's rank and
+        // IsAbleToFight gates, over every camp's NPCs in registry order;
+        // the recipient's live Think handles script/AI locks and state gates.
+        for cs in &tick.alert_soldier_candidates {
             // Original calls `pFriend->IsDetecting360Degrees(mpMe)` here,
             // after the cheap rank/body gates and before its distance gates.
             // Evaluating this while constructing every tick snapshot changes
             // the observable LOS call stream even when no officer broadcasts.
-            let friend = ctx.entity_view(cs.handle).unwrap_or_else(|| {
-                panic!(
-                    "CommandSoldiersToAttack candidate {} is absent from the AI entity view",
-                    cs.handle
-                )
-            });
             if !super::soldier_detects_target_360(
                 cs.position,
-                friend.elevation,
-                friend.is_rider,
+                cs.elevation,
+                cs.is_rider,
                 cs.view_radius,
                 cs.in_building,
                 ctx.position,
@@ -238,12 +230,13 @@ impl EnemyAi {
                 .alerted_us
                 .iter()
                 .map(|handle| {
-                    tick.camp_soldiers
-                        .iter()
-                        .find(|cs| cs.handle == *handle)
+                    // `CommandSoldiersToAttack` alerts rank soldiers of any
+                    // camp, so the recipients are not all in the same-camp
+                    // roster; Original reads `Point(pFriend)` off the actor.
+                    ctx.entity_view(*handle)
                         .unwrap_or_else(|| {
                             panic!(
-                                "combat-alerted soldier {} disappeared from officer {} tick roster",
+                                "combat-alerted soldier {} disappeared from officer {} entity views",
                                 handle, self.base.me
                             )
                         })
