@@ -221,6 +221,29 @@ pub fn build_jump_steps(
             0.0
         };
 
+    tracing::trace!(
+        target: "parity_jump",
+        src_a = ?source.point_a,
+        src_b = ?source.point_b,
+        src_z_a = source.z_a,
+        src_z_b = source.z_b,
+        dst_a = ?destination.point_a,
+        dst_b = ?destination.point_b,
+        dst_z_a = destination.z_a,
+        dst_z_b = destination.z_b,
+        ?pt_source,
+        f_dot,
+        v_line_norm,
+        ratio,
+        z_source,
+        z_destination,
+        jump_height,
+        ?pt_destination,
+        ?posture_before,
+        long_jump_forced = source.long_jump_forced,
+        "jump geometry"
+    );
+
     let mut steps: Vec<JumpStep> = Vec::new();
 
     // ── Straight long jump ────────────────────────────────────────
@@ -421,18 +444,18 @@ pub fn build_jump_steps(
             });
         }
 
-        // Landing point 3D is (landX, landY + zDest, zDest - TELEPORT_JUMPING_UP).
-        // The z subtracted is the extra lift before the actor lands on
-        // the raised platform — during the JUMPING_UP animation the
-        // sprite rises an additional TELEPORT_JUMPING_UP units before
-        // clearing the edge, then settles onto the top.  We emit the
-        // animation with target_3d at the apex (above the landing
-        // pad), and the closing transition with target_3d at the
-        // landing pad — so the sprite descends onto it.
-        let apex_3d = WorldPoint3D {
+        // The flight target sits TELEPORT_JUMPING_UP *below* the
+        // landing elevation: the airborne segment only carries the
+        // actor up to the lip of the platform, and the closing
+        // transition adds the remaining lift back when its animation
+        // reaches its last frame.  The subtraction also shortens the
+        // flight distance, which is what sizes the segment's frame
+        // countdown — a jump-up typically terminates within one or two
+        // frames.
+        let flight_3d = WorldPoint3D {
             x: pt_destination_jump.x,
             y: pt_destination_jump.y + z_destination,
-            z: z_destination + TELEPORT_JUMPING_UP,
+            z: z_destination - TELEPORT_JUMPING_UP,
         };
         let land_3d = WorldPoint3D {
             x: pt_destination.x,
@@ -442,7 +465,7 @@ pub fn build_jump_steps(
 
         steps.push(JumpStep {
             anim: OrderType::JumpingUp,
-            target_3d: Some(apex_3d),
+            target_3d: Some(flight_3d),
             airborne: true,
             max_frames: None,
         });
@@ -1575,6 +1598,16 @@ fn start_airborne_jump_motion(entity: &mut crate::element::Entity, step: &JumpSt
         wait_time = 1;
     }
 
+    tracing::trace!(
+        target: "parity_jump",
+        anim = ?step.anim,
+        ?position,
+        ?target,
+        distance,
+        wait_time,
+        "airborne jump flight started"
+    );
+
     if let Some(actor) = entity.actor_data_mut() {
         actor.action_state = if step.anim == OrderType::JumpingLongSword {
             ActionState::MovingSword
@@ -1671,6 +1704,21 @@ pub(crate) fn perform_jump_ground_motion(
                 pi.set_map_position(goal);
             }
         }
+        entity.element_data_mut().update_grid_cell();
+    }
+
+    // The jump-up flight stops TELEPORT_JUMPING_UP below the platform
+    // top; the landing animation's last frame is where the body is
+    // lifted the rest of the way. The lift is a straight write to the
+    // 3D position, so the map position slides by the same amount and
+    // no plane re-derivation happens here.
+    if anim == OrderType::TransitionJumpingUpWaitingCrouched
+        && state == crate::sprite::MotionState::Done
+    {
+        let pi = entity.position_iface_mut();
+        let mut lifted = pi.get_position();
+        lifted.z += TELEPORT_JUMPING_UP;
+        pi.set_position(lifted);
         entity.element_data_mut().update_grid_cell();
     }
 
