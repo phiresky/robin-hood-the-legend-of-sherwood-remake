@@ -713,9 +713,13 @@ impl EnemyAi {
             {
                 continue;
             }
-            let dist = max_norm(pos_diff(&f.position, &me_pos));
-            if dist < best_distance {
-                best_distance = dist;
+            // The reference truncates `MaxNormDistance` to UWORD before
+            // the comparison, and measures in world space (map Y plus
+            // elevation), not raw map coordinates.
+            let dist =
+                ai_max_norm_distance(&f.position, f.elevation, &me_pos, ctx.elevation) as u16;
+            if f32::from(dist) < best_distance {
+                best_distance = f32::from(dist);
                 best = f.handle;
             }
         }
@@ -1005,6 +1009,10 @@ impl EnemyAi {
         // to a phalanx slot, use their future seek position + shield bearing
         // direction; when in position, use their current pose.
         let shield_running = Substate::AttackingRunningToPhalanx as u32;
+        // Both straight-movement probes below are made on the left
+        // anchor's own layer, taken from where it currently stands rather
+        // than from the slot it is heading for.
+        let left_layer = self.find_fighter(left_guy, tick)?.position.level;
         let (left_pos, left_dir) = {
             let snap = self.find_fighter(left_guy, tick)?;
             if snap.current_substate == shield_running {
@@ -1030,9 +1038,9 @@ impl EnemyAi {
 
         let distance = archer::DISTANCE_SHIELD_BEARER_SHIELD_BEARER as f32;
 
-        // Left slot: anchor's forward vector, counter-clockwise normal.
+        // Left slot: anchor's forward vector, clockwise normal.
         let left_forward = sector_to_vector(left_dir);
-        let mut left_side = get_normal(left_forward);
+        let mut left_side = get_normal_right(left_forward);
         left_side.0 *= distance;
         left_side.1 *= distance;
         left_side.1 *= ASPECT_RATIO;
@@ -1042,9 +1050,9 @@ impl EnemyAi {
             ..left_pos
         };
 
-        // Right slot: anchor's forward vector, clockwise normal.
+        // Right slot: anchor's forward vector, counter-clockwise normal.
         let right_forward = sector_to_vector(right_dir);
-        let mut right_side = get_normal_right(right_forward);
+        let mut right_side = get_normal(right_forward);
         right_side.0 *= distance;
         right_side.1 *= distance;
         right_side.1 *= ASPECT_RATIO;
@@ -1059,15 +1067,15 @@ impl EnemyAi {
         let left_accessible = grid.is_none_or(|g| {
             let anchor_pt = crate::coordinates::MapPoint::new(left_pos.x, left_pos.y);
             let slot_pt = crate::coordinates::MapPoint::new(pos_left.x, pos_left.y);
-            g.is_straight_movement_authorized(anchor_pt, slot_pt, left_pos.level, &ctx.move_box)
+            g.is_straight_movement_authorized(anchor_pt, slot_pt, left_layer, &ctx.move_box)
         });
-        // The reference passes `left_guy.layer` here (a copy-paste bug);
-        // we use `right_pos.level` so the right-side check matches the
-        // right anchor when phalanx ends straddle stairs/ramps.
+        // Both reachability probes are made on the *left* anchor's layer,
+        // including the right-hand one. It reads like a slip, but the
+        // formation geometry it produces is the behaviour being matched.
         let right_accessible = grid.is_none_or(|g| {
             let anchor_pt = crate::coordinates::MapPoint::new(right_pos.x, right_pos.y);
             let slot_pt = crate::coordinates::MapPoint::new(pos_right.x, pos_right.y);
-            g.is_straight_movement_authorized(anchor_pt, slot_pt, right_pos.level, &ctx.move_box)
+            g.is_straight_movement_authorized(anchor_pt, slot_pt, left_layer, &ctx.move_box)
         });
 
         let me_pos = ctx.position;
@@ -1474,6 +1482,15 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
+        tracing::trace!(
+            target: "robin_engine::ai_enemy::phalanx",
+            me = self.base.me,
+            frame = ctx.frame,
+            substate = ?self.base.current_substate,
+            left = self.left_combat_neighbour,
+            right = self.right_combat_neighbour,
+            "reconsider_phalanx: enter"
+        );
         self.base.clear_emoticon();
 
         // Check PHALANX_ATTACK_DISTANCE gate
@@ -1500,6 +1517,12 @@ impl EnemyAi {
         }
 
         // Reinitialize them lists
+        tracing::trace!(
+            target: "robin_engine::ai_enemy::phalanx",
+            me = self.base.me,
+            frame = ctx.frame,
+            "reconsider_phalanx: reinitializing them lists"
+        );
         self.phalanx_reinitialize_them_list(&ctx.position, ctx, tick);
 
         if self.list_them.is_empty() {
