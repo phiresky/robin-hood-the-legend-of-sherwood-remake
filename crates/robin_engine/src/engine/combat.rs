@@ -603,6 +603,8 @@ impl EngineInner {
                         Some(&obstacle_check)
                     },
                 );
+            let terminal_obstacle_plane =
+                bow_shot::terminal_obstacle_plane(terminal_obstacle, obstacle_list);
             let trajectory_end = trajectory.last().map(|tp| tp.position);
             // ComputeTrajectory resolves and stores the eventual impact
             // membership before the projectile's explicit pre-add
@@ -690,6 +692,19 @@ impl EngineInner {
                 if resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle {
                     element.set_layer(resolution.layer);
                 }
+            }
+            {
+                let element = self
+                    .world
+                    .entities
+                    .get_mut(arrow_id)
+                    .expect("newly added arrow vanished before obstacle binding")
+                    .element_data_mut();
+                bow_shot::bind_trajectory_obstacle(
+                    element,
+                    terminal_obstacle,
+                    terminal_obstacle_plane,
+                );
             }
             // Hydrate the arrow's sprite from the accessory registry so
             // the flying arrow renders its proper sprite instead of the
@@ -2447,9 +2462,12 @@ impl EngineInner {
                     });
             }
 
-            if result.despawn && result.hit_target.is_none() {
-                self.apply_projectile_landing_resolution(assets, result.arrow);
-            }
+            // Landing deliberately re-derives no membership: a projectile's
+            // obstacle, layer and sector are settled while its arc is built
+            // and hold for the whole flight. Re-resolving them from the
+            // landing footprint would contradict that answer and, for a
+            // landing on open ground, bind a null obstacle whose plane drags
+            // the elevation just snapped above back down to a flat zero.
 
             // Water/hole splash — arrow landed in a water or hole zone
             // with no victim/shield/target.  Add the plouf titbit,
