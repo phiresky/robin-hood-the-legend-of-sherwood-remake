@@ -1129,6 +1129,10 @@ impl EngineInner {
     /// handle. Both are backfilled here so individual fixtures don't have to
     /// and so the runtime keeps its strict required-data invariants. Fixtures
     /// that set either field explicitly keep their value.
+    ///
+    /// A fixture that seeded its own campaign roster is adopted rather than
+    /// extended: the PC claims the first unclaimed description carrying its
+    /// character profile, so a seeded ammo or coma status stays reachable.
     #[cfg(test)]
     fn backfill_test_entity_identity(&mut self, id: EntityId) {
         let handle = id.index();
@@ -1138,13 +1142,27 @@ impl EngineInner {
                     return;
                 }
                 let profile_index = pc.pc.profile_index;
+                let claimed: Vec<u32> = self
+                    .world
+                    .entities
+                    .pcs()
+                    .filter_map(|(_, pc)| pc.pc.campaign_description_index)
+                    .collect();
                 let characters = &mut self.mission_domain.campaign.characters;
-                let description_index = characters.len();
-                characters.push(crate::campaign::PcDescription {
-                    character_profile_idx: Some(profile_index),
-                    instanced: true,
-                    ..crate::campaign::PcDescription::default()
-                });
+                let description_index = characters
+                    .iter()
+                    .position(|description| {
+                        description.character_profile_idx == Some(profile_index)
+                    })
+                    .filter(|index| !claimed.contains(&(*index as u32)))
+                    .unwrap_or_else(|| {
+                        characters.push(crate::campaign::PcDescription {
+                            character_profile_idx: Some(profile_index),
+                            instanced: true,
+                            ..crate::campaign::PcDescription::default()
+                        });
+                        characters.len() - 1
+                    });
                 let Some(Entity::Pc(pc)) = self.world.entities.get_mut(id) else {
                     unreachable!("PC slot changed kind during fixture backfill");
                 };
