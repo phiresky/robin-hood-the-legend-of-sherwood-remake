@@ -2131,6 +2131,9 @@ pub fn tick_ability(
                 ability.sequence_id, ability.element_index, ability.order_id
             ),
         };
+        // All three listen arms call `Turn()` ahead of their sprite action, so
+        // the row played this tick belongs to the already-stepped direction.
+        let _ = entity.position_iface_mut().turn();
         let direction = u16::try_from(entity.element_data().direction()).unwrap_or_else(|_| {
             panic!("Listen owner {entity_id:?} has invalid animation direction")
         });
@@ -2301,15 +2304,36 @@ pub fn tick_ability(
     } else {
         ability_order_type(kind)
     };
-    // HITTING, HEALING, PAYING, and TYING turn progressively toward the
-    // direction installed at Execute-time initialization. Only Hit and Pay
-    // freeze the first sprite frame until alignment; Original Tie calls
-    // `Turn()` for its side effect and advances the action unconditionally.
+    // These ability arms turn progressively toward the direction installed at
+    // Execute-time initialization. The throws, `Hit` and `Pay` freeze the first
+    // sprite frame until alignment; the rest turn for its side effect and
+    // advance the action unconditionally. `Carry`, `Drop`, `Whistle` and
+    // `ClimbDownFromShoulders` do not turn at all — see `docs/TURN_ARMS.md`.
     let turning = matches!(
         kind,
-        AbilityKind::Hit | AbilityKind::Heal | AbilityKind::Pay | AbilityKind::Tie
+        AbilityKind::Hit
+            | AbilityKind::Heal
+            | AbilityKind::Pay
+            | AbilityKind::Tie
+            | AbilityKind::Eat
+            | AbilityKind::ClimbOnShoulders
+            | AbilityKind::ThrowApple
+            | AbilityKind::ThrowStone
+            | AbilityKind::ThrowPurse
+            | AbilityKind::ThrowWaspNest
+            | AbilityKind::ThrowNet
     ) && entity.position_iface_mut().turn();
-    let frame_progression = if matches!(kind, AbilityKind::Hit | AbilityKind::Pay) && turning {
+    let frame_progression = if matches!(
+        kind,
+        AbilityKind::Hit
+            | AbilityKind::Pay
+            | AbilityKind::ThrowApple
+            | AbilityKind::ThrowStone
+            | AbilityKind::ThrowPurse
+            | AbilityKind::ThrowWaspNest
+            | AbilityKind::ThrowNet
+    ) && turning
+    {
         crate::sprite::FrameProgression::FrozenFirstFrame
     } else {
         crate::sprite::FrameProgression::Default

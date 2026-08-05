@@ -114,20 +114,49 @@ fn pc_beggar_execute_calls_turn(anim: OrderType) -> bool {
     )
 }
 
+/// Extra per-class conditions guarding a turning animation arm.
+///
+/// A few arms exist in more than one actor subclass and the overrides disagree
+/// about whether they rotate:
+///
+/// * `TransitionRaisingSword` — the human (and, through its fall-through, the
+///   PC) arm turns unconditionally, while the soldier override turns only when
+///   the order carries an antagonist.
+/// * `StandingUpSword` — the human arm re-aims at the principal opponent and
+///   turns; the soldier override replays the sprite without turning.
+/// * `ExtractingArrowSword` — turns only while actually swordfighting.
+///
+/// Everything else in the turning set rotates unconditionally in every
+/// subclass that defines it.
+fn turn_arm_condition_holds(entity: &Entity, anim: OrderType, has_antagonist: bool) -> bool {
+    let is_swordfighting = entity
+        .human_data()
+        .is_some_and(|human| !human.opponents.is_empty());
+    match anim {
+        OrderType::TransitionRaisingSword => !entity.is_soldier() || has_antagonist,
+        OrderType::StandingUpSword => !entity.is_soldier(),
+        OrderType::ExtractingArrowSword => is_swordfighting,
+        _ => true,
+    }
+}
+
 /// Select the direction row stamped by an actor action that also turns.
 ///
-/// Original's attentive-soldier `TURNING` arm performs
-/// `TURNING_ALERTED` before calling `Turn`/`TurnFast`, unlike the other
-/// turn-driving arms.  Its visible row therefore belongs to the direction at
-/// Execute entry even though the position interface has advanced by the end
-/// of the same simulation frame.
+/// Two arms call the sprite *before* they rotate, so their visible row belongs
+/// to the direction at Execute entry even though the position interface has
+/// advanced by the end of the same simulation frame: the attentive-soldier
+/// `Turning` arm, which plays `TurningAlerted` ahead of its rotation step, and
+/// the human `StandingUpSword` arm, which re-aims and turns only after its
+/// sprite action.
 fn actor_action_row(
     anim_type: OrderType,
     effective_anim: OrderType,
     direction_before_turn: u16,
     direction_after_turn: u16,
 ) -> u16 {
-    if anim_type == OrderType::Turning && effective_anim == OrderType::TurningAlerted {
+    if (anim_type == OrderType::Turning && effective_anim == OrderType::TurningAlerted)
+        || anim_type == OrderType::StandingUpSword
+    {
         direction_before_turn
     } else {
         direction_after_turn
@@ -4741,20 +4770,14 @@ impl EngineInner {
                         // Many per-anim handlers call `Turn()` each
                         // tick so the body keeps rotating toward the
                         // direction goal *while* the action animation
-                        // plays.  Anims with explicit `Turn()` calls:
-                        //   TRANSITION_RAISING_SWORD (only with an
-                        //   antagonist), TRANSITION_LOWERING_SWORD,
-                        //   WAITING_SWORD, PARRYING_SWORD,
-                        //   STRIKING_LOW_LEFT_SMALLTALK and the matching
-                        //   strike/parry smalltalk family,
-                        //   STRIKING_DOWN_SWORD,
-                        //   STANDING_UP_SWORD/BOW,
-                        //   EXTRACTING_ARROW_SWORD, RAISING_SHIELD,
-                        //   WAITING_SHIELD,
-                        //   ROLLING, TAKING_NET,
-                        //   TAKING, DRINKING_ALE,
-                        //   TRANSITION_CARRYING_CORPSE_WAITING_UPRIGHT,
-                        //   and the PC beggar transition/idle family.
+                        // plays.  Turning is decided strictly per animation
+                        // arm, and neighbouring arms of the same family often
+                        // disagree: `ParryingSword` turns but `ParryingLowSword`
+                        // does not, `StandingUpSword` turns but `StandingUpBow`
+                        // does not, and the helping-to-climb entry/exit
+                        // transitions do not turn while the
+                        // `WaitingHelpingClimbing` idle between them does.
+                        // See the per-arm table in `docs/TURN_ARMS.md`.
                         // Step the rotation here, then sync `element.direction`
                         // to match before the sprite picks the row to play.
                         let needs_turn = (matches!(
@@ -4764,7 +4787,6 @@ impl EngineInner {
                                 | OrderType::WaitingSword
                                 | OrderType::WaitingShield
                                 | OrderType::ParryingSword
-                                | OrderType::ParryingLowSword
                                 | OrderType::StrikingLowLeftSmalltalk
                                 | OrderType::StrikingLowRightSmalltalk
                                 | OrderType::StrikingLeftSmalltalk
@@ -4775,19 +4797,29 @@ impl EngineInner {
                                 | OrderType::ParryingLowRightSmalltalk
                                 | OrderType::StrikingDownSword
                                 | OrderType::StandingUpSword
-                                | OrderType::StandingUpBow
                                 | OrderType::ExtractingArrowSword
+                                | OrderType::FallingLadderWall
                                 | OrderType::RaisingShield
                                 | OrderType::Rolling
                                 | OrderType::Taking
                                 | OrderType::TakingCrouched
+                                | OrderType::TakingTarget
+                                | OrderType::DroppingAmmo
+                                | OrderType::DroppingAmmoCrouched
+                                | OrderType::DroppingAle
+                                | OrderType::DroppingAleCrouched
+                                | OrderType::UsingLever
                                 | OrderType::DrinkingAle
                                 | OrderType::TakingNet
                                 | OrderType::HittingTarget
                                 | OrderType::HandlingTarget
                                 | OrderType::UnlockingDoor
                                 | OrderType::UnlockingTrap
-                                | OrderType::TransitionCarryingCorpseWaitingUpright
+                                | OrderType::SearchingCrouched
+                                | OrderType::WaitingHelpingClimbing
+                                | OrderType::WaitingCarryingOnShoulders
+                                | OrderType::TransitionWaitingCarryingOnShouldersWaitingUpright
+                                | OrderType::FallingShoulders
                                 | OrderType::TransitionCrouchingUp
                                 | OrderType::TransitionCrouchingDown
                                 | OrderType::TransitionWaitingUprightClimbingWallUp
@@ -4820,9 +4852,12 @@ impl EngineInner {
                                 // but the parity slot is required.
                                 | OrderType::Pointing
                                 | OrderType::Searching
-                        ) && (anim_type != OrderType::TransitionRaisingSword
-                            || antagonist.is_some()))
-                            || (entity.is_pc() && pc_beggar_execute_calls_turn(anim_type));
+                        ) && turn_arm_condition_holds(
+                            entity,
+                            anim_type,
+                            antagonist.is_some(),
+                        )) || (entity.is_pc()
+                            && pc_beggar_execute_calls_turn(anim_type));
                         // Capture `Turn()`'s return for the GETTING_FREE_FROM_WASP
                         // still-turning substitution: while still
                         // turning, play TURNING_ALERTED and return
@@ -4880,6 +4915,13 @@ impl EngineInner {
                             );
                         }
                         if needs_turn {
+                            if owner_is_pc && anim_type == OrderType::RaisingShield {
+                                // The PC override turns and then delegates to
+                                // the human arm, which turns again: a PC
+                                // raising its shield rotates two steps per
+                                // tick, unlike every other shield holder.
+                                let _ = entity.position_iface_mut().turn();
+                            }
                             let still_turning = entity.position_iface_mut().turn();
                             if matches!(anim_type, OrderType::GettingFreeFromWasp) {
                                 wasp_still_turning = still_turning;
@@ -4887,7 +4929,11 @@ impl EngineInner {
                             if owner_is_pc
                                 && matches!(
                                     anim_type,
-                                    OrderType::Taking | OrderType::TakingCrouched
+                                    OrderType::Taking
+                                        | OrderType::TakingCrouched
+                                        | OrderType::TakingTarget
+                                        | OrderType::DroppingAmmo
+                                        | OrderType::DroppingAmmoCrouched
                                 )
                             {
                                 pc_taking_still_turning = still_turning;
