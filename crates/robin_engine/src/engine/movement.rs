@@ -5595,11 +5595,16 @@ impl EngineInner {
                     .copied()
             } else if entity.is_soldier() {
                 // GetPrimaryTarget — soldier's AI-picked priority target,
-                // which can differ from opponents[0].
+                // which can differ from opponents[0]. The stored handle is a
+                // raw element slot and the occupant is any human, not just a
+                // PC: soldiers routinely keep an enemy soldier as their
+                // primary target once a swordfight has ended, and facing it
+                // is what keeps the fighter turned toward the melee.
                 entity
                     .ai_controller()
-                    .map(|c| EntityId::Pc(crate::entity_id::PcId(c.primary_target)))
-                    .filter(|id| id.index() != 0)
+                    .map(|c| c.primary_target)
+                    .filter(|slot| *slot != 0)
+                    .and_then(|slot| self.world.entities.id_at_legacy_slot(slot))
             } else {
                 None
             };
@@ -6610,6 +6615,16 @@ impl EngineInner {
                     };
                     let fdx = opp_pos.x - face_origin.x;
                     let fdy = opp_pos.y - face_origin.y;
+                    tracing::trace!(
+                        entity = ?entity_id,
+                        frame = self.control.frame_counter,
+                        origin_x = face_origin.x,
+                        origin_y = face_origin.y,
+                        target_x = opp_pos.x,
+                        target_y = opp_pos.y,
+                        sector = crate::position_interface::vector_to_sector_0_to_15_iso(fdx, fdy),
+                        "combat facing target"
+                    );
                     if fdx * fdx + fdy * fdy > 0.01 {
                         elem.set_direction_goal(
                             crate::position_interface::vector_to_sector_0_to_15_iso(fdx, fdy),
