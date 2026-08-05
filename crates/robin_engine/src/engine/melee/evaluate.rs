@@ -972,6 +972,7 @@ impl EngineInner {
             pc.element_data().position_map().y,
         );
         let mut boredom = pc_data.human.sword_strike_boredom.clone();
+        let is_swordfighting = !pc_data.human.opponents.is_empty();
         let attacker_profile = assets
             .profile_manager
             .get_hth_weapon(weapon_id)
@@ -1106,7 +1107,7 @@ impl EngineInner {
             attacker_direction: direction,
             attacker_elevation: elevation,
             attacker_camp: crate::element::Camp::Royalists,
-            is_swordfighting: true,
+            is_swordfighting,
             opponent_time_limit,
             strike_startup_frames: attacker_sprite_frames,
             parry_startup_frames: parry_startup,
@@ -1653,7 +1654,7 @@ impl EngineInner {
                 attacker_direction: pc_direction,
                 attacker_elevation: pc_elevation,
                 attacker_camp: pc_camp,
-                is_swordfighting: true,
+                is_swordfighting,
                 opponent_time_limit,
                 strike_startup_frames: pc_sprite_frames,
                 parry_startup_frames: pc_parry_startup,
@@ -1989,12 +1990,9 @@ impl EngineInner {
             attacker_direction: victim_direction,
             attacker_elevation: victim_elevation,
             attacker_camp: victim_camp,
-            // TODO(original-parity): the proposal itself bails out for an
-            // actor with no live opponent, right after the skill draw and
-            // before any boredom bookkeeping. All four proposal call sites
-            // hardcode this flag instead, so a victim caught by a circle
-            // strike while not duelling still gets a proposal here.
-            is_swordfighting: true,
+            // A victim caught by a circle strike while not duelling has an
+            // empty opponent list; the proposal bails out for it.
+            is_swordfighting: principal_opponent.is_some(),
             opponent_time_limit,
             strike_startup_frames: victim_sprite_frames,
             parry_startup_frames: parry_startup,
