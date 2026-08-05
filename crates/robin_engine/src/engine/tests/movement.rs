@@ -1388,6 +1388,14 @@ fn rider_charge_initial_eligibility_is_not_rechecked_and_returning_layer_can_hit
         .unwrap()
         .element_data_mut()
         .set_layer(0);
+    // Activeness is restored with the layer: retention is what this test is
+    // about, but the receive-sword-damage dispatch independently refuses an
+    // inactive owner, so an off-world victim would never reach the rolls.
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .active = true;
     tick_movement_and_sequences(&mut engine, &sim, &assets);
     assert_eq!(take_test_sword_damage_observations().len(), 1);
 }
