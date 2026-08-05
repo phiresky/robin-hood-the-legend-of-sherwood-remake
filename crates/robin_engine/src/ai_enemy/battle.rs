@@ -727,6 +727,8 @@ impl EnemyAi {
         // able-to-fight, drop it. Each removal that falls within
         // `num_enemies_i_can_see` decrements the personally-visible
         // counter. Friends accidentally on the list are also dropped.
+        // The same pass measures the nearest surviving enemy.
+        let mut min_square_enemy_distance = i32::MAX;
         let mut unconscious_enemies_from_them = Vec::new();
         {
             let mut idx = 0;
@@ -750,6 +752,22 @@ impl EnemyAi {
                                 is_robin: view.is_robin,
                                 is_vip: view.is_vip,
                             });
+                        }
+                        if !is_friend && view.is_able_to_fight {
+                            // The minimum enemy distance is measured over
+                            // the surviving Them list — which by now also
+                            // holds the targets contributed by nearby
+                            // attacking allies, so a fight raging next to
+                            // us counts even when our own nearest enemy is
+                            // far away. The stretched-Y square norm is
+                            // truncated to an integer before comparison.
+                            let dx = view.position.x - ctx.position.x;
+                            let dy = (view.position.y - ctx.position.y)
+                                * crate::position_interface::INVERSE_ASPECT_RATIO;
+                            let sq = (dx * dx + dy * dy) as i32;
+                            if sq < min_square_enemy_distance {
+                                min_square_enemy_distance = sq;
+                            }
                         }
                         if !is_friend
                             && view.is_able_to_fight
@@ -948,7 +966,6 @@ impl EnemyAi {
             // Use engine-populated cached values for battle context.
             let friends_with_lower_company = tick.friends_lower_company;
             let soldiers_with_lower_pride = tick.soldiers_lower_pride;
-            let min_square_enemy_distance = tick.min_sq_enemy_distance;
 
             if self.combat_trainer {
                 decision = Decision::Observe;
@@ -2380,7 +2397,10 @@ impl EnemyAi {
                 GotoFlags::RUN,
                 ctx,
             );
-            self.base.launch_timer(30, ctx.frame);
+            // No timer here: the guard waits for the reach-point event at
+            // the gate, and the seek position tracks the unreachable
+            // avenger rather than the wait spot.
+            self.base.seek_position = working_target_pos;
         }
     }
 
