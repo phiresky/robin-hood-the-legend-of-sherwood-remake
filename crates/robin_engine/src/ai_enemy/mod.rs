@@ -2576,6 +2576,20 @@ impl EnemyAi {
         let look_dx = angle.sin();
         let look_dy = -angle.cos();
         let dot = look_dx * stare_dx + look_dy * stare_dy;
+        tracing::trace!(
+            me = self.base.me,
+            frame = ctx.frame,
+            direction = ctx.direction,
+            stare_x = ctx.self_stare_point.x,
+            stare_y = ctx.self_stare_point.y,
+            actor_x = actor_ground.x,
+            actor_y = actor_ground.y,
+            elevation = ctx.elevation,
+            eye_status = ?ctx.self_eye_status,
+            dot,
+            behind = dot < 0.0,
+            "enemy_is_behind_me"
+        );
         dot < 0.0
     }
 

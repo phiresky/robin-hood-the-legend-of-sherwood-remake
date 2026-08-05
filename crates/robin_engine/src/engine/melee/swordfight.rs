@@ -340,7 +340,7 @@ impl EngineInner {
     pub(crate) fn evaluate_opponents(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        _assets: &LevelAssets,
+        assets: &LevelAssets,
         entity_id: EntityId,
     ) {
         let count = self
@@ -376,6 +376,27 @@ impl EngineInner {
                 Command::QuitSwordfight,
                 Some(entity_id),
             ));
+
+            // The quit is announced to the owner immediately, in the same
+            // call: an orphaned PC regains its temporarily disabled actions,
+            // and a soldier's brain receives EVENT_QUIT_SWORDFIGHT before any
+            // later phase of this frame — in particular before its own
+            // RefreshDetection can emit VIEW / OUTOFVIEW. Deferring the
+            // stimulus to the `Command::QuitSwordfight` dispatcher left the
+            // soldier in its pre-quit substate while the falling-edge
+            // OUTOFVIEW arrived, which changed how that event was routed.
+            if let Some(entity) = self.world.entities.get_mut(entity_id)
+                && let Some(pc) = entity.pc_data_mut()
+            {
+                pc.enable_all_actions_temp(false);
+            } else if matches!(self.world.entities.get(entity_id), Some(Entity::Soldier(_))) {
+                self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                    sim,
+                    entity_id,
+                    assets,
+                    crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
+                );
+            }
         } else if count >= 2 {
             self.choose_principal_opponent(sim, entity_id);
         }

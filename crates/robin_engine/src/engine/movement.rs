@@ -5432,6 +5432,11 @@ impl EngineInner {
 
         // Original immediately sends EVENT_QUIT_SWORDFIGHT from this guard;
         // PCs intentionally have no AI receiver.
+        tracing::trace!(
+            owner = owner.index(),
+            frame = self.control.frame_counter,
+            "orphaned sword movement aborted; sending EVENT_QUIT_SWORDFIGHT"
+        );
         self.dispatch_ai_stimulus(
             owner,
             crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),

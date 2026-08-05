@@ -904,6 +904,13 @@ impl EngineInner {
                 crate::ai::StimulusType::EventView | crate::ai::StimulusType::EventOutOfView
             ) {
                 self.overlay_live_enemy_detection_scan_for_think(npc_id, &scratch, &mut tick_data);
+                // A retained OUTOFVIEW can still reach the lost-enemy body,
+                // which forecasts the destination of the human the stimulus
+                // carries — not necessarily the current primary target. The
+                // generic tick builder only prepares primary/missed
+                // forecasts, so add the per-detectable ones the handler
+                // indexes by handle.
+                self.prepare_detection_forecasts_for_owner(npc_id, None, &mut tick_data);
             }
             self.dispatch_think_with_drain_without_forecast_deferred_turn(
                 sim, npc_id, &stimulus, &ctx, &tick_data, assets,

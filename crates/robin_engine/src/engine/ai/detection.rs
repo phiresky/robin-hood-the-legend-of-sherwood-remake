@@ -1447,7 +1447,7 @@ impl EngineInner {
     /// Prepare destination forecast alternatives without drawing RNG. The AI
     /// handler that actually consumes a primary/missed/officer forecast owns
     /// any building-exit selection draw.
-    fn prepare_detection_forecasts_for_owner(
+    pub(super) fn prepare_detection_forecasts_for_owner(
         &self,
         npc_id: EntityId,
         positions_before_movement: Option<&EntitySlots<Option<crate::entities::BoundaryPosition>>>,

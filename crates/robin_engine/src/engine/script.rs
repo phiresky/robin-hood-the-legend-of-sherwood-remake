@@ -2898,6 +2898,11 @@ impl EngineInner {
         if !self.filter_stimulus(sim, assets, handle, stimulus) {
             return false;
         }
+        // Every Think, however it was reached, must see the surface radii this
+        // viewer already computed earlier in the frame. Cross-NPC calls and
+        // the panic/report dispatch sites enter here without passing through
+        // the drain wrapper, and used to start from an empty memo.
+        ctx.seed_view_radius_cache(&self.ai.view_radius_cache, entity_id);
         // This predicate is live sequence-manager state in the Original,
         // queried inside ReconsiderSwordfight. AI contexts can predate a
         // re-entrant SendCondolationCard callback, so refresh it at the
@@ -2960,6 +2965,13 @@ impl EngineInner {
                 return false;
             }
         };
+        // The Think ran against a refreshed copy of the caller's context; any
+        // surface radius it computed belongs to the surface, so hand those
+        // entries back before the copy goes away and publish them now — the
+        // owner drain below can re-enter Think, and those nested calls read
+        // the surfaces through the persistent table.
+        ctx.absorb_view_radius_cache(&live_ctx);
+        ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache, entity_id);
 
         // ReconsiderSwordfight calls ProposeGoodSwordStrike before returning
         // to its caller. Keep that event-owned RNG and sequence work ahead of
