@@ -16,7 +16,7 @@
 //!   optional stand-up.
 //!
 //! Each branch pushes a list of [`JumpStep`]s onto `ActorData::active_jump`.
-//! [`EngineInner::tick_active_jumps`] drains them one at a time, interpolating
+//! [`EngineInner::tick_active_jump_for`] drains them one at a time, interpolating
 //! position over the step's animation duration. Airborne target points
 //! are absolute Spellbound 3D coordinates, matching the original C++
 //! `SetPosition(pointDestination3D)` path.  When the last step terminates,
@@ -93,7 +93,7 @@ pub struct CurrentStepState {
 /// Active jump state stored on an actor.
 ///
 /// Created by [`EngineInner::start_jump`] from a `Command::JumpCmd` sequence
-/// element and drained by [`EngineInner::tick_active_jumps`].
+/// element and drained by [`EngineInner::tick_active_jump_for`].
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct ActiveJump {
     /// Remaining steps to execute.
@@ -1006,166 +1006,145 @@ impl EngineInner {
         true
     }
 
-    /// Per-frame tick of all active jumps.  Advances position
-    /// interpolation for the currently-executing step (if any), pops
-    /// steps when the animation finishes, and terminates the sequence
-    /// element once the step list is drained.
+    /// Per-frame tick of one actor's active jump.  Starts the next step
+    /// when the previous one finished, advances the running step's frame
+    /// counter, and terminates the sequence element once the step list is
+    /// drained.
+    ///
+    /// This runs inside the actor's own creation slot rather than in a
+    /// global pre-pass, because every effect it has — the landing posture
+    /// swap in particular — is visible to whatever the surrounding slots do
+    /// afterwards.  A crouched landing that publishes its posture before an
+    /// unrelated entity's detection pass moves that entity's sight origin by
+    /// the crouch height for a frame.
     ///
     /// Animation advance is handled by the normal animation tick; this
     /// function reads the completion signal via `active_ai_anim` being
     /// cleared (with `AiAnimCompletion::NextJumpStep`) and forwards it
-    /// to [`EngineInner::advance_jump_step`].  Position interpolation is
-    /// done here so it runs every frame, not just on animation end.
-    pub(super) fn tick_active_jumps(&mut self, assets: &LevelAssets) {
-        // Entities whose current order reached its exact Execute termination
-        // boundary. We advance them after the entity borrow closes.
-        let mut force_advance: Vec<EntityId> = Vec::new();
-        // Collected here during the main loop, applied after — each
-        // entry is `(seq_id, elem_idx, order)` for the step that just
-        // started.  `next_order_id` is stamped into the order AFTER
-        // the loop closes so the sequence-manager borrow doesn't
-        // overlap with the entity borrow.
-        let mut jump_orders: Vec<(crate::sequence::SequenceId, usize, crate::order::Order)> =
-            Vec::new();
-        // PCs whose just-popped step is a jump-init transition — they
-        // need an `MSG_DISABLE_ALL_ACTIONS_TEMP` message dispatched
-        // after the entity loop closes.
-        let mut pending_init_messages: Vec<EntityId> = Vec::new();
-        // Disjoint-borrow trick: we need `&mut self.world.entities` for the
-        // loop AND `&mut self.orders.next_order_id` for the new step's order
-        // tag. Splitting them through a local re-borrow.
-        let next_order_id = &mut self.orders.next_order_id;
-        let sequence_manager = &self.orders.sequence_manager;
-        for (entity_id, entity) in self.world.entities.actors_mut() {
+    /// to [`EngineInner::advance_jump_step`].
+    pub(super) fn tick_active_jump_for(&mut self, assets: &LevelAssets, entity_id: EntityId) {
+        // The order authored by a step that starts this tick.  It is stamped
+        // onto the sequence element after the entity borrow closes, because
+        // `next_order_id` and the sequence manager sit beside `world.entities`.
+        let mut started_order: Option<(crate::sequence::SequenceId, usize, crate::order::Order)> =
+            None;
+        // A PC entering one of the four jump-initiation transitions needs
+        // `MSG_DISABLE_ALL_ACTIONS_TEMP` so the action strip greys out its
+        // abilities for the duration of the jump.
+        let mut send_init_message = false;
+        // Set when the running step reached its own Execute termination
+        // boundary (`TIME_FLYSEGMENT` for an airborne trajectory segment).
+        let mut force_advance = false;
+        // Set when the step list drained: the jump's sequence element
+        // terminates once the entity borrow closes.
+        let mut jump_done: Option<(SequenceId, usize)> = None;
+
+        {
+            // Disjoint-borrow split: the step start needs `&mut
+            // self.world.entities` for the actor and `&mut
+            // self.orders.next_order_id` for the new step's order tag.
+            let next_order_id = &mut self.orders.next_order_id;
+            let sequence_manager = &self.orders.sequence_manager;
+            let Some(entity) = self.world.entities.get_mut(entity_id) else {
+                return;
+            };
             let Some(actor) = entity.actor_data_mut() else {
-                continue;
+                return;
             };
             let Some(jump) = actor.active_jump.as_mut() else {
-                continue;
+                return;
             };
 
-            // Start the next step if we don't have a current one.
             if jump.current.is_none() {
-                let step = match jump.steps.pop_front() {
-                    Some(s) => s,
+                match jump.steps.pop_front() {
+                    Some(step) => {
+                        if matches!(
+                            step.anim,
+                            OrderType::TransitionWaitingUprightJumpingUp
+                                | OrderType::TransitionWaitingCrouchedJumpingDown
+                                | OrderType::TransitionWaitingUprightJumpingLong
+                                | OrderType::TransitionWaitingSwordJumpingLongSword
+                        ) && entity.is_pc()
+                        {
+                            send_init_message = true;
+                        }
+                        started_order =
+                            start_step(entity, entity_id, step, next_order_id, sequence_manager);
+                    }
                     None => {
-                        // No more steps — jump is done.  Signal the
+                        // No more steps — the jump is done.  Signal the
                         // sequence element and swap layer/sector.
-                        let seq_id = jump.sequence_id;
-                        let elem_idx = jump.element_index;
+                        jump_done = Some((jump.sequence_id, jump.element_index));
                         actor.active_jump = None;
                         actor.jump_z_offset = 0.0;
                         actor.action_state = ActionState::Waiting;
-                        // Defer sequence termination to after the loop.
-                        actor.pending_jump_done = Some((seq_id, elem_idx));
-                        continue;
                     }
-                };
-                // For the four jump initiation transitions: forward
-                // `MSG_DISABLE_ALL_ACTIONS_TEMP` so the action strip
-                // greys out abilities for the duration of the jump.
-                // Collected and dispatched after the entity-loop borrow
-                // closes.
-                if matches!(
-                    step.anim,
-                    OrderType::TransitionWaitingUprightJumpingUp
-                        | OrderType::TransitionWaitingCrouchedJumpingDown
-                        | OrderType::TransitionWaitingUprightJumpingLong
-                        | OrderType::TransitionWaitingSwordJumpingLongSword
-                ) && entity.is_pc()
+                }
+            } else {
+                // A step is in progress — advance interpolation.
+                let current = jump.current.as_ref().expect("current step exists");
+                let current_anim = current.step.anim;
+                // Ground take-off / landing steps end when their own sprite
+                // animation terminates inside the owner slot, which routes the
+                // `NextJumpStep` completion back here. Their authored tick
+                // total only drives interpolation, never step advance.
+                if jump_step_turns(current_anim) {
+                    entity.position_iface_mut().turn();
+                }
+                advance_step_interpolation(entity);
+
+                // If the step has a max-frames cap (TIME_FLYSEGMENT for
+                // airborne trajectory segments), mark it for early
+                // advance once the cap is reached.
+                if let Some(actor) = entity.actor_data()
+                    && let Some(jump) = actor.active_jump.as_ref()
+                    && let Some(state) = jump.current.as_ref()
+                    && let Some(cap) = state.step.max_frames
+                    && state.frames_elapsed >= cap
                 {
-                    pending_init_messages.push(entity_id.into());
+                    force_advance = true;
                 }
-                if let Some(order) = start_step(
-                    entity,
-                    entity_id.into(),
-                    step,
-                    next_order_id,
-                    sequence_manager,
-                ) {
-                    jump_orders.push(order);
-                }
-                continue;
-            }
-
-            // A step is in progress — advance interpolation.
-            let current = jump.current.as_ref().expect("current step exists");
-            let current_anim = current.step.anim;
-            // Ground take-off / landing steps end when their own sprite
-            // animation terminates inside the owner slot, which routes the
-            // `NextJumpStep` completion back here. Their authored tick
-            // total only drives interpolation, never step advance.
-            if jump_step_turns(current_anim) {
-                entity.position_iface_mut().turn();
-            }
-            advance_step_interpolation(entity);
-
-            // If the step has a max-frames cap (TIME_FLYSEGMENT for
-            // airborne trajectory segments), mark it for early
-            // advance once the cap is reached.
-            if let Some(actor) = entity.actor_data()
-                && let Some(jump) = actor.active_jump.as_ref()
-                && let Some(state) = jump.current.as_ref()
-                && let Some(cap) = state.step.max_frames
-                && state.frames_elapsed >= cap
-            {
-                force_advance.push(entity_id.into());
             }
         }
 
-        // Push each new-step order onto the jump's sequence element
-        // after the entity-loop borrow closes.
-        for (seq_id, elem_idx, order) in jump_orders {
-            if let Some(elem) = self
+        // Push a new step's order onto the jump's sequence element.
+        if let Some((seq_id, elem_idx, order)) = started_order
+            && let Some(elem) = self
                 .orders
                 .sequence_manager
                 .get_element_mut(seq_id, elem_idx)
-            {
-                elem.orders.clear();
-                elem.orders.push_back(order);
-            }
+        {
+            elem.orders.clear();
+            elem.orders.push_back(order);
         }
 
-        // Dispatch `MSG_DISABLE_ALL_ACTIONS_TEMP` for jump-init
-        // transitions whose steps just started this tick — addressed
-        // to the PC actor.  `value` carries the PC entity id so the
-        // dispatch in `tick.rs` targets the specific PC rather than
-        // fanning over the selection.
-        for pc_id in pending_init_messages {
+        // Dispatch `MSG_DISABLE_ALL_ACTIONS_TEMP` for a jump-init transition
+        // that just started — addressed to the PC actor.  `value` carries the
+        // PC entity id so the dispatch in `tick.rs` targets the specific PC
+        // rather than fanning over the selection.
+        if send_init_message {
             self.orders.messenger.send(crate::messenger::Message::pc(
                 crate::messenger::PcMessage::DisableAllActionsTemp,
-                Some(pc_id),
+                Some(entity_id),
             ));
         }
 
-        // Force-advance entities whose current step reached its Execute
-        // termination boundary.
-        for entity_id in force_advance {
-            if let Some((new_layer, new_sector, projection_point)) =
+        // Advance a step that reached its Execute termination boundary.
+        if force_advance
+            && let Some((new_layer, new_sector, projection_point)) =
                 self.advance_jump_step(entity_id)
-            {
-                self.finalize_airborne_jump_landing(
-                    assets,
-                    entity_id,
-                    new_layer,
-                    new_sector,
-                    projection_point,
-                );
-            }
+        {
+            self.finalize_airborne_jump_landing(
+                assets,
+                entity_id,
+                new_layer,
+                new_sector,
+                projection_point,
+            );
         }
 
-        // Drain pending_jump_done — terminate sequence elements for
-        // jumps that finished this tick.
-        let mut to_terminate: Vec<(SequenceId, usize)> = Vec::new();
-        for (_, entity) in self.world.entities.actors_mut() {
-            let Some(actor) = entity.actor_data_mut() else {
-                continue;
-            };
-            if let Some((seq_id, elem_idx)) = actor.pending_jump_done.take() {
-                to_terminate.push((seq_id, elem_idx));
-            }
-        }
-        for (seq_id, elem_idx) in to_terminate {
+        // Terminate the sequence element of a jump that finished this tick.
+        if let Some((seq_id, elem_idx)) = jump_done {
             self.orders
                 .sequence_manager
                 .element_terminated(seq_id, elem_idx);

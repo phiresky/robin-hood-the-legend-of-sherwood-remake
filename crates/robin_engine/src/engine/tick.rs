@@ -2861,10 +2861,8 @@ impl EngineInner {
         // ── Per-frame animation tick ────────────────────────────
         // Advance sprite animations for idle actors, FX, and other entities.
         // Supported moving actors are animated inside their live owner Execute arm.
-        // Advance line-jump sequences: interpolate 3D position for
-        // actors currently mid-jump.  Runs before the animation tick
-        // so the sprite drawn this frame reflects the new position.
-        self.tick_active_jumps(assets);
+        // Line-jump step advance runs inside each actor's own owner
+        // envelope below, not as a batch ahead of the walk.
 
         // Every supported nonactor virtual Hourglass now runs below at its
         // live legacy slot: mobile boundary first, then static owners, then
@@ -4033,6 +4031,11 @@ impl EngineInner {
                 }
             },
             |engine, owner| {
+                // The jump step lifecycle is the jump order's own work: the
+                // step that starts here is the order this actor executes a few
+                // lines later, and the landing posture it publishes is visible
+                // to every later creation slot and to none of the earlier ones.
+                engine.tick_active_jump_for(assets, owner);
                 if matches!(owner, EntityId::Soldier(_)) {
                     #[cfg(test)]
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::SoldierPrelude(owner));
