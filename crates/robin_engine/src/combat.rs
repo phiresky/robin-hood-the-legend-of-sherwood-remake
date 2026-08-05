@@ -178,6 +178,10 @@ pub struct ConcussionContext {
     /// When true, bypass the `script_locked && old >= WAKEUP_THRESHOLD`
     /// stay-asleep clause so a script can force-wake a script-locked NPC.
     pub force_value: bool,
+    /// Civilian carrying an attached scroll.  Such a civilian silently
+    /// discards life-point loss and concussion; every other part of the
+    /// damage pipeline — including the protection rolls — still runs.
+    pub scroll_attached: bool,
 }
 
 // ─── Concussion result ─────────────────────────────────────────────
@@ -351,7 +355,7 @@ pub fn add_concussion(
     life_points: i16,
     ctx: &ConcussionContext,
 ) -> ConcussionOutcome {
-    if ctx.is_invulnerable {
+    if ctx.is_invulnerable || ctx.scroll_attached {
         return ConcussionOutcome::NoChange;
     }
 
@@ -492,14 +496,20 @@ pub fn receive_sword_damage(
                     attacker.is_rank_soldier,
                 );
                 if cutting > 0 {
-                    get_wounded(
-                        life_points,
-                        cutting,
-                        concussion_ctx.is_invulnerable,
-                        params.max_life_points,
-                        concussion_ctx.is_sherwood_pc,
-                    );
-                    cutting_inflicted = cutting;
+                    // A scroll-carrying civilian overrides the wounding
+                    // primitive to a no-op, but the strike still counts as
+                    // cutting damage for the caller's translation and
+                    // sound decisions.
+                    if !concussion_ctx.scroll_attached {
+                        get_wounded(
+                            life_points,
+                            cutting,
+                            concussion_ctx.is_invulnerable,
+                            params.max_life_points,
+                            concussion_ctx.is_sherwood_pc,
+                        );
+                        cutting_inflicted = cutting;
+                    }
                     result |= SwordDamageResult::CUTTING_DAMAGE;
                 }
             }

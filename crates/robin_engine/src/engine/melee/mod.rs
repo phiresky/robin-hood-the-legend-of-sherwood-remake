@@ -998,6 +998,10 @@ pub(crate) fn concussion_ctx_full(
         // Default to false; cheats / scripts that need force-wake set
         // it on the ctx returned by `concussion_ctx_for`.
         force_value: false,
+        // Only civilians override the wounding/concussion primitives on
+        // an attached scroll; a soldier carrying one takes damage
+        // normally.
+        scroll_attached: matches!(entity, Entity::Civilian(c) if c.npc.attached_scroll.is_some()),
     }
 }
 

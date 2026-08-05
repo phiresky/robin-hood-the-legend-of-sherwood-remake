@@ -14,7 +14,8 @@ impl EnemyAi {
 
     /// The16thFrame.
     /// Called every 16 frames (staggered per NPC) for periodic checks.
-    /// `is_idle` corresponds to `command == RHCOMMAND_WAIT`.
+    /// `is_idle` corresponds to `command == RHCOMMAND_WAIT`;
+    /// `receiving_wasp_sting` to `command == RHCOMMAND_RECEIVE_WASP_STING`.
     #[allow(clippy::too_many_arguments)]
     pub fn the_16th_frame(
         &mut self,
@@ -25,12 +26,14 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
         is_idle: bool,
+        receiving_wasp_sting: bool,
         sequence_null_about_to_launch: bool,
     ) {
-        // Scotch — wasp stuck recovery.
-        // If the NPC is in WonderingWaspInArmour but the wasp sting
-        // animation has finished (is_idle), dismiss the wasp.
-        if self.base.current_substate == Substate::WonderingWaspInArmour && is_idle {
+        // Scotch — wasp stuck recovery.  The gate is on the NPC no
+        // longer running the sting command at all, not on it having
+        // fallen back to Wait: any other command means the sting is
+        // over and the wasp should be dismissed.
+        if self.base.current_substate == Substate::WonderingWaspInArmour && !receiving_wasp_sting {
             self.base
                 .outbox
                 .reentrant
