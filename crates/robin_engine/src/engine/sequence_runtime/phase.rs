@@ -530,6 +530,10 @@ impl EngineInner {
         // non-immediate action in the batch rather than waiting for
         // the next `Hourglass()`.
         while let Some(action) = phase.pop_action_after_registration(&mut self.orders) {
+            // Translation selection never outlives the dispatch that
+            // installed it; the arms below leave the loop early on many
+            // rejection paths.
+            self.orders.sequence_manager.set_translating_element(None);
             match action {
                 crate::sequence::SequenceAction::InstructOwner {
                     owner,
@@ -693,6 +697,15 @@ impl EngineInner {
                     // order lowering may already have performed that work,
                     // which is why `needs_transition` gates it above.
                     //
+                    // The accepted element stays the actor's selection for
+                    // the whole translation. Translation bodies that
+                    // terminate or interrupt the element on the spot then
+                    // send their condolence card while still selected, and
+                    // that card is what clears the actor's movement goal.
+                    self.orders.sequence_manager.set_translating_element(Some((
+                        owner,
+                        crate::sequence::SequenceElementRef::new(seq_id, elem_idx),
+                    )));
                     // Re-borrow element for data access.
                     let elem = match self.orders.sequence_manager.get_element(seq_id, elem_idx) {
                         Some(e) => e,
@@ -889,22 +902,11 @@ impl EngineInner {
                         // ── ASSERT_POSITION ────────────────────────
                         // Check actor is at expected position/sector.
                         Command::AssertPosition => {
-                            // Original keeps the incoming AssertPosition in
-                            // `mpSequenceElement` throughout Translate. Its
-                            // synchronous terminal card therefore owns the
-                            // actor-base goal cleanup even though this command
-                            // never reaches InProgress/active_movement.
-                            self.orders
-                                .sequence_manager
-                                .begin_instruct_callback(owner, seq_id, elem_idx);
                             PositionAssertionContext {
                                 entities: &self.world.entities,
                                 sequence_manager: &mut self.orders.sequence_manager,
                             }
                             .dispatch(owner, seq_id, elem_idx);
-                            self.orders
-                                .sequence_manager
-                                .end_instruct_callback(owner, seq_id, elem_idx);
                         }
                         // ── WAIT_FREE_LIFT ──────────────────────
                         // Translation is identical to WAIT: book the
@@ -2610,6 +2612,7 @@ impl EngineInner {
                                     .expect("accepted empty Generic lost its actor")
                                     .continuation
                                     .motion_state = crate::sprite::MotionState::InProgress;
+                                self.orders.sequence_manager.set_translating_element(None);
                                 self.orders
                                     .sequence_manager
                                     .element_terminated(seq_id, elem_idx);
@@ -2638,11 +2641,13 @@ impl EngineInner {
                                 elem_idx,
                                 "InstructOwner: no dispatch for command; terminating element"
                             );
+                            self.orders.sequence_manager.set_translating_element(None);
                             self.orders
                                 .sequence_manager
                                 .element_terminated(seq_id, elem_idx);
                         }
                     }
+                    self.orders.sequence_manager.set_translating_element(None);
                     // Accepted Actor::Instruct publishes the translated
                     // current order through mpOrder. Keep this write at the
                     // dispatch boundary rather than inferring it later from
@@ -2698,6 +2703,7 @@ impl EngineInner {
             // appended behind actions that were already waiting.
             phase.splice_registered_actions(&mut self.orders);
         }
+        self.orders.sequence_manager.set_translating_element(None);
 
         let instructed_owners = actor_elements_before_instruct
             .into_iter()

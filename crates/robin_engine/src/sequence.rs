@@ -2449,6 +2449,21 @@ pub struct SequenceManager {
     #[serde(default)]
     actor_instructing: BTreeMap<EntityId, Vec<SequenceElementRef>>,
 
+    /// Actor selection held across the accepted element's command
+    /// translation.
+    ///
+    /// Original keeps `RHElementActor::mpSequenceElement` pointing at the
+    /// accepted element for the whole of `Translate`, and only drops it
+    /// afterwards when translation produced no orders. Commands whose
+    /// translation bodies terminate or interrupt the element outright —
+    /// EnterSwordfight onto an actor already holding its sword, a parry
+    /// that repeats one already running, AssertPosition — therefore reach
+    /// `SendCondolationCard` while still selected, which is what performs
+    /// the actor-base movement-goal cleanup. Set for the duration of one
+    /// command dispatch; empty at stable frame/save boundaries.
+    #[serde(default)]
+    actor_translating: Option<(EntityId, SequenceElementRef)>,
+
     /// Deferred queue of elements to start. Processed in `hourglass()`.
     /// Each entry is `(sequence id, element index within that sequence)`.
     /// Serialized so mid-frame snapshots (rollback / replay) preserve
@@ -2586,6 +2601,7 @@ impl SequenceManager {
         if !self.pending_synchronous_actions.is_empty()
             || !self.pending_condolations.is_empty()
             || !self.actor_instructing.is_empty()
+            || self.actor_translating.is_some()
             || self.halt_pending
         {
             panic!("parity sequence capture reached a non-quiescent dispatch boundary");
@@ -2623,6 +2639,7 @@ impl SequenceManager {
             actor_live: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
             actor_instructing: BTreeMap::new(),
+            actor_translating: None,
             elements_to_go: VecDeque::new(),
             pending_synchronous_actions: VecDeque::new(),
             pending_condolations: Vec::new(),
@@ -2644,6 +2661,7 @@ impl SequenceManager {
             actor_live: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
             actor_instructing: BTreeMap::new(),
+            actor_translating: None,
             elements_to_go: state.elements_to_go,
             pending_synchronous_actions: VecDeque::new(),
             pending_condolations: Vec::new(),
@@ -2664,6 +2682,7 @@ impl SequenceManager {
         self.actor_live.clear();
         self.actor_in_progress.clear();
         self.actor_instructing.clear();
+        self.actor_translating = None;
         for (seq_id, seq) in &self.sequences {
             for (elem_idx, elem) in seq.elements.iter().enumerate() {
                 let Some(owner) = elem.owner else {
@@ -3017,6 +3036,11 @@ impl SequenceManager {
         {
             return Some((elem_ref.sequence_id, elem_ref.element_index));
         }
+        if let Some((owner, elem_ref)) = self.actor_translating
+            && owner == actor
+        {
+            return Some((elem_ref.sequence_id, elem_ref.element_index));
+        }
         let set = self.actor_in_progress.get(&actor)?;
         let mut refs = set.iter();
         let first = *refs.next()?;
@@ -3034,6 +3058,21 @@ impl SequenceManager {
             }
         }
         Some((first.sequence_id, first.element_index))
+    }
+
+    /// Select the accepted element for the duration of its command
+    /// translation, or release it again.
+    ///
+    /// Releasing before a terminal `SetState` reproduces Original's
+    /// post-`Translate` `mpSequenceElement = 0` for an accepted element whose
+    /// translation produced no orders: that card must not claim the actor's
+    /// movement goal, while a card raised from inside the translation body
+    /// must.
+    pub(crate) fn set_translating_element(
+        &mut self,
+        selection: Option<(EntityId, SequenceElementRef)>,
+    ) {
+        self.actor_translating = selection;
     }
 
     /// Select an incoming element while the outgoing element's synchronous
