@@ -2884,12 +2884,15 @@ impl EngineInner {
         let posture = pc.element.posture;
         let action_state = pc.actor.action_state;
         let raw_dir = vector_to_sector_0_to_15(dx, dy);
-        if posture == Posture::OnShoulders
+        // The posture under test is the carrier's (`CarryingOnShoulders`),
+        // not the carried PC's (`OnShoulders`): it is the one holding another
+        // outlaw up who faces away from the mouse so the rider looks at it.
+        if posture == Posture::CarryingOnShoulders
             && matches!(action_state, ActionState::Waiting | ActionState::Bored)
             && !transition_active
         {
             pc.element.set_direction_goal((raw_dir + 8) & 15);
-        } else if posture != Posture::OnShoulders && posture != Posture::HelpingToClimb {
+        } else if posture != Posture::CarryingOnShoulders && posture != Posture::HelpingToClimb {
             pc.element.set_direction_goal(raw_dir);
             pc.element.sprite.position_iface.turn();
         }

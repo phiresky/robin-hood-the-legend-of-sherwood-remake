@@ -2457,7 +2457,7 @@ impl EngineInner {
                         // Build a step list covering the run-up,
                         // airborne trajectory, and landing
                         // transitions, then drive the actor through
-                        // them via `tick_active_jumps`.  If the jump
+                        // them via `tick_active_jump_for`.  If the jump
                         // can't be installed (missing data) the
                         // element is terminated so the sequence
                         // doesn't stall.
