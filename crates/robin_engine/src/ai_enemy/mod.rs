@@ -4287,6 +4287,10 @@ impl EnemyAi {
 
         // ── Outdoor / active branch ───────────────────────────────────
         // Gate: hypothetical || (active && outside building).
+        // TODO(original-parity): `ctx.in_building` only carries the
+        // building-sector half of that test. An NPC that is outdoors but
+        // inactive takes the indoor branch in the Original and the outdoor
+        // one here; the two disagree on every question with differing arms.
         if hypothetical || !ctx.in_building {
             return match question {
                 Question::ShallITakeAle => self.soldier_profile_beer > 0,
@@ -4350,20 +4354,25 @@ impl EnemyAi {
 
             Question::HasTheNewTaskPriority => self.has_the_new_task_priority(),
 
-            // Default arm asserts and recurses to
-            // ShallIStayOnMyPost; recursive call is
-            // `hypothetical=false`, NPC is still indoor, so recursion
-            // re-enters this indoor branch where ShallIStayOnMyPost
-            // returns `false` (see arm above). Mirror that — the assert
-            // is debug-only.
+            // These five reach no indoor arm. The Original's default arm
+            // asserts and then recurses on ShallIStayOnMyPost; that recursion
+            // is non-hypothetical and the NPC is still indoor, so it lands on
+            // the indoor ShallIStayOnMyPost arm above and yields `false`.
+            //
+            // The assertion is not an invariant that holds: the whistle and
+            // send-out-soldier askers are reached from ordinary wondering
+            // substates with no outdoor precondition, so a soldier that heard
+            // whistling from inside a building trips it in the shipped debug
+            // build too. Only the release-build answer is behaviour, so this
+            // stays a trace rather than a panic.
             Question::ShallILookWhistle
             | Question::ShallIFollowWhistle
             | Question::ShallISeekBeforeAlertingOfficer
             | Question::ShallISeekBeforeAlertingSoldiers
             | Question::ShallISendOutSoldier => {
-                debug_assert!(
-                    false,
-                    "AnswerQuestion: indoor caller asked whistle/seek-before-alert/send-out-soldier — asserted away upstream"
+                tracing::trace!(
+                    ?question,
+                    "answer_question: indoor branch has no arm for this question; answering false"
                 );
                 false
             }

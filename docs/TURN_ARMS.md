@@ -97,7 +97,12 @@ equip/load/raise/lower transitions and the `AimingWithBow*` idles do not turn.
 ### Melee / soldier
 
 `TransitionCharging` turns before its motion call. `WaitingSword` turns
-unconditionally for humans and PCs but only while swordfighting for soldiers.
+unconditionally for every actor class, including soldiers. The soldier
+subclass carries a `WAITING_SWORD` override that would have gated both the
+re-aim and the turn on being in a swordfight, but that whole arm is commented
+out in the shipped source, so soldiers reach the human arm like anyone else.
+Only the re-aim toward the principal opponent is conditional there; the turn
+itself is not.
 
 ## Arms that explicitly do **not** turn
 
