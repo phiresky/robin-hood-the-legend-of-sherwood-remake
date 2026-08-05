@@ -582,8 +582,17 @@ fn movement_execute_state_effect(
         (OT::TransitionCrouchingDown, MS::Done | MS::Terminated) => {
             Some((P::Crouched, AS::Waiting))
         }
-        (OT::TransitionWaitingCrouchedWalkingCrouched, MS::Done | MS::Terminated) => {
-            Some((P::Crouched, AS::Moving))
+        (
+            OT::TransitionWaitingCrouchedWalkingCrouched
+            | OT::TransitionWalkingUprightWalkingCrouched
+            | OT::TransitionRunningUprightWalkingCrouched,
+            MS::Done | MS::Terminated,
+        ) => Some((P::Crouched, AS::Moving)),
+        (OT::TransitionWalkingCrouchedWalkingUpright, MS::Done | MS::Terminated) => {
+            Some((P::Upright, AS::Moving))
+        }
+        (OT::TransitionWalkingCrouchedRunningUpright, MS::Done | MS::Terminated) => {
+            Some((P::Upright, AS::MovingFast))
         }
         (
             OT::TransitionWaitingUprightRunningUpright | OT::TransitionWalkingUprightRunningUpright,
