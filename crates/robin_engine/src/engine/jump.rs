@@ -38,6 +38,11 @@ use crate::sequence::SequenceId;
 /// long-jump branch; above it they split into `jump-up` / `jump-down`.
 pub const TELEPORT_JUMPING_UP: f32 = 60.0;
 
+/// Vertical drop applied in one step when the crouched jump-down take-off
+/// transition reaches its action point, so the airborne segment begins
+/// below the ledge lip instead of on top of it.
+pub const TELEPORT_JUMPING_DOWN: f32 = 50.0;
+
 /// Gravity constant.
 const GRAVITY: f32 = -8.01;
 
@@ -1702,6 +1707,38 @@ pub(crate) fn perform_jump_ground_motion(
     }
 
     state
+}
+
+/// Drop the jumper by [`TELEPORT_JUMPING_DOWN`] on the action point of the
+/// crouched jump-down take-off transition.
+///
+/// The mirror image of the jump-up lift in [`perform_jump_ground_motion`]:
+/// the take-off animation ends with the body already over the edge, and the
+/// drop is a straight write to the 3D position, so the map position slides
+/// by the same amount and no plane re-derivation happens. It runs inside the
+/// jumper's own Execute, which makes the new elevation visible to every later
+/// creation slot on this very frame rather than the next one.
+pub(crate) fn apply_jump_down_takeoff_drop(
+    entity: &mut crate::element::Entity,
+    anim: OrderType,
+    state: crate::sprite::MotionState,
+) {
+    if anim != OrderType::TransitionWaitingCrouchedJumpingDown
+        || state != crate::sprite::MotionState::Done
+    {
+        return;
+    }
+    if !entity
+        .actor_data()
+        .is_some_and(|actor| actor.active_jump.is_some())
+    {
+        return;
+    }
+    let pi = entity.position_iface_mut();
+    let mut dropped = pi.get_position();
+    dropped.z -= TELEPORT_JUMPING_DOWN;
+    pi.set_position(dropped);
+    entity.element_data_mut().update_grid_cell();
 }
 
 fn jump_step_turns(anim: OrderType) -> bool {

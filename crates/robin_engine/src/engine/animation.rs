@@ -5185,6 +5185,7 @@ impl EngineInner {
                         // tick consults `is_moving()`, otherwise the
                         // actor walks-in-place.
                         apply_actor_walk_start_side_effect(entity, anim_type, motion_state);
+                        super::jump::apply_jump_down_takeoff_drop(entity, anim_type, motion_state);
                         // Universal handlers (run for any actor type).
                         apply_active_animation_start_state_side_effect(
                             entity,
