@@ -4564,9 +4564,11 @@ fn print_debug_element(label: &str, engine: &Engine, frame: &TraceFrame) {
     let sprite = &entity.element_data().sprite;
     let actor = entity.actor_data().expect("debug element is an actor");
     eprintln!(
-        "{label} frame {} {:?} posture={:?} action_state={:?} order={:?} installed={:?} last_processed_order={} actor_motion={:?} sprite_motion={:?} last_action={:?} row={} frame={}/{} command={:?} execute_init={} last_execute_order={:?}",
+        "{label} frame {} {:?} dir={} dir_goal={} posture={:?} action_state={:?} order={:?} installed={:?} last_processed_order={} actor_motion={:?} sprite_motion={:?} last_action={:?} row={} frame={}/{} command={:?} execute_init={} last_execute_order={:?}",
         frame.frame_after,
         id,
+        entity.element_data().direction(),
+        sprite.position_iface.get_direction_goal().as_u8(),
         entity.element_data().posture,
         actor.action_state,
         engine.actor_order_type(id),
