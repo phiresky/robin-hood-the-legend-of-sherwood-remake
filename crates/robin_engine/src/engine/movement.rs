@@ -8342,6 +8342,17 @@ impl EngineInner {
                                 + ft.tol)
                                 * 1.05;
                         if dx * dx + dy * dy > reach * reach {
+                            // PerformMotion already committed this frame's
+                            // step before PerformSeek decided to refresh.
+                            // Actor::Hourglass still runs
+                            // CheckForLineCrossing after Execute returns, so
+                            // preserve the segment even though the refreshed
+                            // seek replaces the current movement before the
+                            // crossing callback.
+                            if eligible_for_crossing {
+                                line_cross_checks.push((eid, old_pos, entity_layer));
+                                non_elevation_cross_checks.push((eid, old_pos, entity_layer));
+                            }
                             transition_seek_refreshes.push((eid, move_seq_id, move_elem_idx));
                             tracing::trace!(
                                 ?eid,
@@ -8961,6 +8972,66 @@ impl EngineInner {
         for entity_id in door_pass_transition_completion_effects {
             self.apply_door_pass_transition_completion_side_effects(assets, entity_id);
         }
+
+        // PerformSeek calls SetMovingActionState and RefreshSeek synchronously
+        // from the actor's Execute arm. Actor::Hourglass observes the
+        // replacement movement when it subsequently checks line crossings.
+        // Keep this before crossing resolution/dispatch; delaying it until
+        // afterwards lets LINE_SOUND/LINE_SCRIPT callbacks inspect the stale
+        // seek and can enter the seeking AI state an extra time.
+        for (owner, seq_id, elem_idx) in transition_seek_refreshes {
+            // Re-read the seek element's flags / target / tolerance / action
+            // because another staged Execute effect may have changed adjacent
+            // elements. When it no longer looks like an entity-target seek,
+            // skip silently.
+            let snapshot = self
+                .orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .and_then(|e| match &e.data {
+                    crate::sequence::SequenceElementData::Movement {
+                        flags,
+                        element,
+                        tolerance,
+                        action,
+                        ..
+                    } => element.map(|t| (*flags, t, *tolerance, *action)),
+                    _ => None,
+                });
+            if let Some((flags, target, tolerance, action)) = snapshot {
+                let new_target_pos = self
+                    .get_entity(target)
+                    .map(|e| e.element_data().position_map())
+                    .unwrap_or_default();
+                if let Some(actor) = self
+                    .get_entity_mut(owner)
+                    .and_then(|entity| entity.actor_data_mut())
+                {
+                    let before = actor.action_state;
+                    actor.action_state = actor.action_state.set_moving(false, false);
+                    tracing::trace!(
+                        target: "parity_post_process_path",
+                        ?owner,
+                        ?before,
+                        after = ?actor.action_state,
+                        "transition seek refresh arming moving state",
+                    );
+                }
+                self.apply_seek_refresh(
+                    sim,
+                    assets,
+                    owner,
+                    seq_id,
+                    elem_idx,
+                    target,
+                    action,
+                    flags,
+                    tolerance,
+                    new_target_pos,
+                );
+            }
+        }
+
         // Resolve every queued crossing segment against the actor's live
         // position now that all Execute-arm completion branches have run.
         // CheckForLineCrossing samples GetPositionMap() at this point and
@@ -9026,69 +9097,6 @@ impl EngineInner {
             self.check_for_non_elevation_line_crossing(
                 sim, assets, entity_id, old_pos, new_pos, layer,
             );
-        }
-
-        // Dispatch final-order seek refreshes detected during the per-tick
-        // movement loop. Same machinery as
-        // `tick_refresh_seeks` — re-resolve the seek destination,
-        // build a fresh single-element seek sequence, and re-launch
-        // via `relaunch_seek_replacement`.  Runs before the LINE_SOUND
-        // dispatch so the relaunched seek's first dispatch tick
-        // already sees the freshly-built grid line state.
-        for (owner, seq_id, elem_idx) in transition_seek_refreshes {
-            // Re-read the seek element's flags / target / tolerance /
-            // action because the dispatch above might have mutated
-            // state on adjacent elements.  When the element no longer
-            // looks like an entity-target seek, skip silently.
-            let snapshot = self
-                .orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx)
-                .and_then(|e| match &e.data {
-                    crate::sequence::SequenceElementData::Movement {
-                        flags,
-                        element,
-                        tolerance,
-                        action,
-                        ..
-                    } => element.map(|t| (*flags, t, *tolerance, *action)),
-                    _ => None,
-                });
-            if let Some((flags, target, tolerance, action)) = snapshot {
-                let new_target_pos = self
-                    .get_entity(target)
-                    .map(|e| e.element_data().position_map())
-                    .unwrap_or_default();
-                // The final-order refresh arms SetMovingActionState before
-                // calling RefreshSeek, like the ordinary PerformSeek
-                // target-drift branch.
-                if let Some(actor) = self
-                    .get_entity_mut(owner)
-                    .and_then(|entity| entity.actor_data_mut())
-                {
-                    let before = actor.action_state;
-                    actor.action_state = actor.action_state.set_moving(false, false);
-                    tracing::trace!(
-                        target: "parity_post_process_path",
-                        ?owner,
-                        ?before,
-                        after = ?actor.action_state,
-                        "transition seek refresh arming moving state",
-                    );
-                }
-                self.apply_seek_refresh(
-                    sim,
-                    assets,
-                    owner,
-                    seq_id,
-                    elem_idx,
-                    target,
-                    action,
-                    flags,
-                    tolerance,
-                    new_target_pos,
-                );
-            }
         }
 
         // These calls are inside the Human/PC sword movement Execute arms,

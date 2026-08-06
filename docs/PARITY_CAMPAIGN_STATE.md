@@ -31,14 +31,16 @@ main @ HEAD includes today's merged fixes (all suite-green, `cargo test -p robin
 - #19 reach-point half: five Think-dispatch sites live-read animation instead of latched installed_order (mpOrder mirror) — deletion fix, branch wt-fix-noisetiming (da65a5097).
 - #30 TakeCorpse: invented face-the-corpse snap deleted from begin_carry + FarmerCarry wrongly selecting LittleJohn carried-animation set — branch worktree-agent-ac0fca79adc9b7209 (497eb4ad0, 62ea32191). Merge had one trivial comment conflict in abilities.rs, resolved.
 
-## CRITICAL open item: task #36 regression (URGENT)
+## Task #36 seek-RNG regression — resolved locally, pending re-sweep 14
 
-Four traces that PASSED at db67cc978 now fail on HEAD with seek-RNG draw-count storms:
+Four traces that passed at `db67cc978` regressed before this fix with seek-RNG draw-count storms:
 - Cyrdach_001 replay-009 (f1653, SeekPointSelection storm, draws 5251..5813)
 - Nescafe_001 replay-009 (f1589, same)
 - linux2/Profile_002/Savegame_000/replay-014 (f5379, SeekPointAcceptance)
 - linux2/Profile_002/Continue/replay-013 (f7581, SeekPointAcceptance)
-All confirmed pre-existing on HEAD by two independent A/B tests (not caused by #25 or #30). Introduced somewhere in db67cc978..78a792ed6. Prime suspects: #29 PerformSeek else-arm refresh, #33 seek-refresh effect drop, #12 arrival predicate. Agent fix-seekregress was bisecting (worktree agent-ae66cda91de4ba9d5) — status unknown at dump time, may have died to the credit limit before reporting.
+All were confirmed on the pre-fix HEAD by two independent A/B tests (not caused by #25 or #30).
+
+The exact boundary is `69df41aeb` (both controls pass) to `4cfae5aa0`, whose only topic change is #33 (`708abb56e`). Dropping the stop transition's queued `Waiting` effect is faithful, but exposed an older staging error: Rust applied the resulting `RefreshSeek` after line-crossing callbacks, whereas Original `PerformSeek` refreshes synchronously before `RHElementActor::Hourglass` calls `CheckForLineCrossing`. The fix applies the replacement before crossing resolution and retains the already-committed crossing segment on the walking refresh path. Cyrdach replay-009 and Nescafe replay-009 both match exact EOF in the patched debug runner. Re-sweep 14 must still be full-universe to verify the passing set broadly.
 
 ## KILLED agents — session terminated by user; agents are NOT resumable. Respawn fresh.
 
@@ -63,7 +65,6 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #31 360-gate LOS/detection us-list composition (2 repros @f33630/f13778, all-soldier membership, relates to detection.detectables.length cluster 68)
 - #34 tolerance-arrival + StrangleCmd post-seek Moving stamp (nicouzouf/S069 r005 f457) — check if survives sweep first
 - #35 LeaveSpy/LeaveTree priority NotYetSet latent hazard
-- #36 URGENT seek-RNG regression bisect (fix-seekregress, interrupted)
 - #37 exclude/re-record 11 nicouzouf_061 old-schema traces (lack hero_refused_action records — unfixable as recorded; add to retired list or re-record with schema-14 recorder, original-code commit d494273)
 - #38 swordfight RNG divergence — the "rng:VipIdleRemark" cluster (80) is MISLABELED (classifier keys on first RNG site of frame); real mismatches are UpdateSwordfightDistance (offsets 1807002/1807253), ReceiveSwordDamage (1746896/1747024), EvaluateSwordfight (1814391), FindPositionForTableSwordfight (~1804390), SwordDamageProtection. Offsets symbolized via addr2line on original-code/build/native-full/robin.
 - #39 heard-steps noise delivery (fix-corpsewalk, interrupted at start)
