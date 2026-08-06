@@ -1577,7 +1577,7 @@ fn start_airborne_jump_motion(entity: &mut crate::element::Entity, step: &JumpSt
         tracing::warn!(?step.anim, "airborne jump step has zero-length motion");
         return;
     }
-    let mut wait_time = (distance / jump_airborne_speed(step.anim) - 1.0) as u32;
+    let mut wait_time = (distance * jump_flight_rate(step.anim) - 1.0) as u32;
     if wait_time == 0 {
         wait_time = 1;
     }
@@ -1759,6 +1759,28 @@ fn jump_step_turns(anim: OrderType) -> bool {
             | OrderType::TransitionJumpingLongWaitingUpright
             | OrderType::TransitionJumpingLongSwordWaitingSword
     )
+}
+
+/// Per-frame fraction of the flight distance used to size a jump segment's
+/// frame countdown.
+///
+/// These are the reciprocals of [`jump_airborne_speed`], but the countdown
+/// must multiply by the literal rate rather than divide by the speed: the
+/// two disagree in the last ulp, and the result is truncated to an integer
+/// frame count, so a single ulp can flip a jump's length by a whole frame.
+fn jump_flight_rate(anim: OrderType) -> f32 {
+    match anim {
+        OrderType::JumpingLong | OrderType::JumpingLongSword => 0.125,
+        OrderType::JumpingUp => 0.066_666_666_666_666_67,
+        OrderType::JumpingDown => 0.05,
+        _ => {
+            tracing::warn!(
+                ?anim,
+                "airborne jump step used non-jump animation; falling back to long-jump rate"
+            );
+            0.125
+        }
+    }
 }
 
 fn jump_airborne_speed(anim: OrderType) -> f32 {
