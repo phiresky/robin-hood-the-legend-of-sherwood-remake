@@ -1,8 +1,8 @@
 {
   "id": "34",
   "subject": "Fix tolerance-arrival + StrangleCmd post-seek Moving stamp",
-  "description": "Residual from #12 (merged cc3737b28): nicouzouf/Savegame_069 replay-005 (60s-15x corpus) still diverges at f457 with the \"rust missing Moving\" signature but a DIFFERENT mechanism than the committed-step arrival predicate — an order_tolerance 21.0 tolerance arrival plus a StrangleCmd post-seek handoff. Check whether it survives the next sweep first (baseline resweep-db67cc978). Also still open from #12 item (c): WalkingWithShield has no action-state stamp at all — no isolating trace yet; TODO recorded in docs/ACTION_STATE_ARMS.md.",
-  "status": "pending",
+  "description": "Completed: nicouzouf Savegame_069 replay-005 reproduced a sole f457 action_state mismatch. Original StartPostSeekSequence synchronously launches Strangle, and PC::Translate(RHCOMMAND_STRANGLE) appends the Strangling order without changing the Moving state inherited from seek arrival. Rust begin_strangle invented an immediate Waiting assignment. Removing it makes the target cross f457; the next f463 Pc motion_state/Soldier197 sprite-frame signature is a distinct task #42. Five strangle-focused tests pass, including a new preserve-Moving regression. WalkingWithShield still has no isolating trace and remains documented in ACTION_STATE_ARMS.md.",
+  "status": "completed",
   "blocks": [],
   "blockedBy": []
 }

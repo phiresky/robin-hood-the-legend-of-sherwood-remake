@@ -1229,7 +1229,10 @@ pub fn begin_strangle(
         order_id: Some(order_id),
     };
     actor.clear_path();
-    actor.action_state = ActionState::Waiting;
+    // PC::Translate(RHCOMMAND_STRANGLE) only appends the Strangling
+    // order.  In particular, a seek that launches its post-seek sequence
+    // synchronously retains the movement state until the later posture
+    // transition actually changes it.
 
     let mut order = Order::new(OrderType::Strangling, target_pos.x, target_pos.y, order_id);
     order.target_actor = Some(target_id.index());
@@ -3131,6 +3134,75 @@ mod tests {
             .current_order()
             .unwrap();
         assert_eq!(order.order_type, OrderType::Hitting);
+        assert!(!order.compute_direction);
+    }
+
+    #[test]
+    fn strangle_translation_preserves_live_movement_state() {
+        let mut entities = Entities::new();
+        entities.push(Some(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        })));
+        entities.push(Some(Entity::Civilian(ActorCivilian {
+            element: ElementData {
+                kind: ElementKind::ActorCivilian,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            npc: NpcData {
+                ai_brain: crate::element::AiBrain::Friendly(Box::default()),
+                ..Default::default()
+            },
+            civilian: CivilianData::default(),
+        })));
+        let attacker = entities.id_at_legacy_slot(0).unwrap();
+        let target = entities.id_at_legacy_slot(1).unwrap();
+        entities
+            .get_mut(attacker)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .action_state = ActionState::Moving;
+
+        let mut manager = SequenceManager::new();
+        let seq_id = launch_ability_element(&mut manager, Command::StrangleCmd, attacker);
+        let mut next_id = 1;
+        assert_eq!(
+            begin_strangle(
+                &mut entities,
+                &mut manager,
+                attacker,
+                target,
+                seq_id,
+                0,
+                &mut next_id,
+            ),
+            BeginResult::Started
+        );
+
+        assert_eq!(
+            entities
+                .get(attacker)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .action_state,
+            ActionState::Moving,
+            "Strangle translation must not overwrite the post-seek movement state"
+        );
+        let order = manager
+            .get_element(seq_id, 0)
+            .unwrap()
+            .current_order()
+            .unwrap();
+        assert_eq!(order.order_type, OrderType::Strangling);
         assert!(!order.compute_direction);
     }
 
