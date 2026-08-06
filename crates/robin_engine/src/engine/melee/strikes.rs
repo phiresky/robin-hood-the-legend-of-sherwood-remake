@@ -1260,23 +1260,12 @@ impl EngineInner {
 
             let mut hit_indices = Vec::new();
 
+            // Victim eligibility is settled once, when the sweep seeds its
+            // list.  The per-frame pass only asks whether the arc has reached
+            // the victim's sector; a victim who dies, falls unconscious or
+            // otherwise stops qualifying mid-sweep still takes the blow that
+            // was already on its way.
             for (i, &victim_id) in active.sweep.pending_victims.iter().enumerate() {
-                let obstacles = crate::sight_obstacle::ObstacleList {
-                    static_obstacles: assets.static_sight_obstacles.as_slice(),
-                    dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-                    static_active: &self.world.static_sight_obstacle_active,
-                };
-                if !is_possible_sword_strike_victim_id(
-                    &self.world.entities,
-                    active.attacker_id,
-                    victim_id,
-                    &assets.profile_manager,
-                    &self.world.fast_grid,
-                    obstacles,
-                ) {
-                    hit_indices.push(i);
-                    continue;
-                }
                 let victim_pos = match self.get_entity(victim_id) {
                     Some(e) => e.element_data().position_map(),
                     None => {
