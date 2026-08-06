@@ -57,8 +57,8 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 ## Task board (open items)
 
 - #9 RefreshArrowProtection Reserve residual (f794/f762)
-- #20 jump-up step entry + flight increment (fix-jump, interrupted mid-diagnosis)
-- #21 small elevation residue (fix-ladderpick2, interrupted at start)
+- #20 completed: retained Original's Execute-time airborne increment and synchronous post-jump `motion_state=InProgress`; primary linux2 schema-14 replay-004 exact EOF. SuN Aborted-vs-Terminated signatures are a separate non-jump MoveOk lifecycle family.
+- #21 completed as superseded/no-fix: four archived elevation/projectile controls reach exact EOF on task-36 main; remaining symptoms route to arrow lifecycle, shield-command, and movement families.
 - #23 SeekArea one-fewer-pair geometry (13+) — requeued, unowned
 - #24 completed as source-verified no-op: shipped proto loading never registers `RHSectorAssociated` (both Original lift `AddSector` calls are commented out); Rust already discards the dead click polygon.
 - #28 strike resolution one frame early (f19137) + CombatObserveSideStep misattribution (8)
