@@ -59,7 +59,7 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #9 completed: reciprocal archer/shield links now clear synchronously like Original; both f762/f794 boundaries clear and advance to independent residuals.
 - #20 completed: retained Original's Execute-time airborne increment and synchronous post-jump `motion_state=InProgress`; primary linux2 schema-14 replay-004 exact EOF. SuN Aborted-vs-Terminated signatures are a separate non-jump MoveOk lifecycle family.
 - #21 completed as superseded/no-fix: four archived elevation/projectile controls reach exact EOF on task-36 main; remaining symptoms route to arrow lifecycle, shield-command, and movement families.
-- #23 SeekArea one-fewer-pair geometry (13+) — requeued, unowned
+- #23 completed: `ForecastDestinationForIA` now preserves the independent direct-passage latch after the live door clears; both primary Seek RNG boundaries advance to separate later door/building residuals.
 - #24 completed as source-verified no-op: shipped proto loading never registers `RHSectorAssociated` (both Original lift `AddSector` calls are commented out); Rust already discards the dead click polygon.
 - #28 strike resolution one frame early (f19137) + CombatObserveSideStep misattribution (8)
 - #31 360-gate LOS/detection us-list composition (2 repros @f33630/f13778, all-soldier membership, relates to detection.detectables.length cluster 68)

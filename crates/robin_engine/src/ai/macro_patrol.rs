@@ -475,11 +475,14 @@ impl PreparedForecastDestination {
     }
 
     pub fn resolve(&self, sim: &crate::sim_rng::SimulationContext) -> ForecastedDestination {
-        let Some(entry_gate) = self.entry_gate else {
+        if self.building_gates.is_empty() {
             return self.fallback;
-        };
+        }
         assert!(
-            self.building_gates.len() > 1 && entry_gate < self.building_gates.len(),
+            self.building_gates.len() > 1
+                && self
+                    .entry_gate
+                    .is_none_or(|entry_gate| entry_gate < self.building_gates.len()),
             "prepared building forecast has an invalid entry gate"
         );
         loop {
@@ -488,7 +491,9 @@ impl PreparedForecastDestination {
                 crate::sim_rng::RngSite::BuildingExitGate,
                 ..self.building_gates.len(),
             );
-            if selected != entry_gate {
+            // When GetDoor() is already NULL, Original compares the selected
+            // gate against NULL and accepts every real gate on the first draw.
+            if self.entry_gate != Some(selected) {
                 return self.building_gates[selected];
             }
         }
@@ -563,6 +568,44 @@ mod prepared_forecast_tests {
             "selecting the entry gate must consume another authoritative draw"
         );
     }
+
+    #[test]
+    fn building_exit_without_a_live_entry_gate_accepts_the_first_draw() {
+        let prepared = PreparedForecastDestination {
+            fallback: ForecastedDestination {
+                position: Position::default(),
+                direction: 0,
+            },
+            building_gates: vec![
+                ForecastedDestination {
+                    position: Position {
+                        x: 10.0,
+                        ..Position::default()
+                    },
+                    direction: 1,
+                },
+                ForecastedDestination {
+                    position: Position {
+                        x: 20.0,
+                        ..Position::default()
+                    },
+                    direction: 2,
+                },
+            ],
+            entry_gate: None,
+        };
+
+        let sim = SimulationContext::with_seed(17);
+        let expected_sim = SimulationContext::with_seed(17);
+        let expected = crate::sim_rng::usize(&expected_sim, RngSite::BuildingExitGate, ..2);
+        let (resolved, trace) = with_draw_trace(|| prepared.resolve(&sim));
+
+        assert_eq!(
+            resolved.position.x,
+            prepared.building_gates[expected].position.x
+        );
+        assert_eq!(trace, vec![RngSite::BuildingExitGate]);
+    }
 }
 
 /// Snapshot of a target actor's state needed for destination forecasting.
@@ -579,8 +622,12 @@ pub struct ForecastInput {
     pub layer: u16,
     pub direction: u16,
     pub forecasted_movement_z: f32,
-    /// `Some((door_index, direct))` if the target is mid-door-pass.
+    /// Live `GetDoor()` pointer and its direction, when non-null.
     pub door_pass: Option<(crate::gate::DoorIndex, bool)>,
+    /// Original's independent `mbPassingDoorDirectly` latch. It remains true
+    /// after the first PassingDoor callback clears `GetDoor()` and still
+    /// enables random exit forecasting from the actor's current building.
+    pub passing_door_directly: bool,
 }
 
 /// Predict where a target actor is heading based on their current
@@ -676,10 +723,6 @@ pub fn prepare_forecast_destination_for_ia(
         .get(&crate::sector::SectorNumber::new(sector as i16))
         .and_then(|&idx| sectors.get(idx));
 
-    // Building-gate branch only fires when passing the door directly
-    // (outside→inside). Extract the `direct` flag from the door_pass tuple.
-    let passing_door_directly = input.door_pass.map(|(_, direct)| direct).unwrap_or(false);
-
     if let Some(gs) = grid_sector {
         if gs.sector_type.is_lift() {
             // Target is on a lift — predict high/low exit.
@@ -690,39 +733,41 @@ pub fn prepare_forecast_destination_for_ia(
                 point = exit_door.point_out;
                 direction = door_exit_direction_from_mid(exit_door);
             }
-        } else if gs.sector_type.is_building() && passing_door_directly {
+        } else if gs.sector_type.is_building() && input.passing_door_directly {
             // Target entering a building (direct only) — predict exit
-            // through a random other gate.
+            // through a random gate. If GetDoor() is still live, reject that
+            // entry gate; after PassDoor clears it, the NULL comparison in
+            // Original accepts whichever real gate the first draw selects.
             // Direction uses `(PointOut - PointIn)`.
-            if let Some(current_door) = current_door_index {
-                for (door_index, door) in doors
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, door)| door.sector_in == sector)
-                {
+            for (door_index, door) in doors
+                .iter()
+                .enumerate()
+                .filter(|(_, door)| door.sector_in == sector)
+            {
+                if let Some(current_door) = current_door_index {
                     if door_index as u32 == u32::from(current_door) {
                         entry_gate = Some(building_gates.len());
                     }
-                    building_gates.push(ForecastedDestination {
-                        position: Position {
-                            x: door.point_out.x,
-                            y: door.point_out.y,
-                            sector: SectorHandle::new(u16::from(door.sector_out)),
-                            level: door.layer_out,
-                        },
-                        direction: door_exit_direction_from_in(door),
-                    });
                 }
-                if building_gates.len() <= 1 {
-                    building_gates.clear();
-                    entry_gate = None;
-                } else {
-                    assert!(
-                        entry_gate.is_some(),
-                        "building sector {sector} has no entry door {} in its ordered gate list",
-                        u32::from(current_door)
-                    );
-                }
+                building_gates.push(ForecastedDestination {
+                    position: Position {
+                        x: door.point_out.x,
+                        y: door.point_out.y,
+                        sector: SectorHandle::new(u16::from(door.sector_out)),
+                        level: door.layer_out,
+                    },
+                    direction: door_exit_direction_from_in(door),
+                });
+            }
+            if building_gates.len() <= 1 {
+                building_gates.clear();
+                entry_gate = None;
+            } else if let Some(current_door) = current_door_index {
+                assert!(
+                    entry_gate.is_some(),
+                    "building sector {sector} has no entry door {} in its ordered gate list",
+                    u32::from(current_door)
+                );
             }
         }
         // else: position is fine, keep current direction.

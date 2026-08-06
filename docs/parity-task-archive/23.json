@@ -4,7 +4,8 @@
   "description": "Surviving seek sub-cluster after b35927626 (flag/penalty/teleport fixes): Rust's phase-4 loop runs exactly ONE fewer interest/insert pair then goes to acceptance — the true upstream geometry cause (expected_points or near_sorted membership). Repros: Savegame_047/replay-007 f83637, Savegame_066/replay-002 f38731; the 11-member EventHearStandardProcedure cluster shares the shape. Diagnostics: \"SeekArea built its seek point list\" trace (seek.rs). Also: Savegame_030/replay-005 f6122 (draw 1500 vs 1625, different cause) + Family-B leftovers 033/replay-002 f23392, 034/replay-007 f35353.",
   "activeForm": "Fixing seek-point geometry",
   "owner": "",
-  "status": "pending",
+  "status": "completed",
+  "resolution": "The phase-4 Seek pair counts already matched. The missing draw occurred earlier in ForecastDestinationForIA: Original's independent mbPassingDoorDirectly latch remains true after the first PassDoor callback clears GetDoor(), so a target now inside a building still draws a random exit gate and accepts the first real gate against NULL. Rust derived direct passage solely from the nullable live door and skipped building-gate forecasting, shifting the Seek center. Both primary RNG boundaries clear; later failures are separate door lifecycle/building-exit families.",
   "blocks": [],
   "blockedBy": []
 }

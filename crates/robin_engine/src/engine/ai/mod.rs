@@ -642,6 +642,7 @@ pub(super) fn extract_forecast_input(entity: &Entity) -> Option<crate::ai::Forec
         direction: elem.direction() as u16,
         forecasted_movement_z: forecasted_z,
         door_pass,
+        passing_door_directly: actor.passing_door_directly,
     })
 }
 
@@ -2182,6 +2183,7 @@ impl EngineInner {
                         .get_forecasted_movement()
                         .z,
                     door_pass,
+                    passing_door_directly: s.actor.passing_door_directly,
                 };
                 Some(crate::ai::prepare_forecast_destination_for_ia(
                     &input,

@@ -5461,6 +5461,12 @@ fn destination_forecast_ignores_a_stale_door_pass_without_a_live_door() {
         None,
         "Original ForecastDestinationForIA falls back when GetDoor() is NULL"
     );
+    assert!(
+        !super::ai::extract_forecast_input(&actor)
+            .expect("actor has forecast state")
+            .passing_door_directly,
+        "a stale passage mirror must not manufacture the independent direct-passage latch"
+    );
 
     let Entity::Pc(pc) = &mut actor else {
         unreachable!("PC fixture changed kind")
@@ -5474,6 +5480,22 @@ fn destination_forecast_ignores_a_stale_door_pass_without_a_live_door() {
             .expect("actor has forecast state")
             .door_pass,
         Some((DoorIndex(7), true))
+    );
+}
+
+#[test]
+fn destination_forecast_retains_direct_passage_after_the_live_door_clears() {
+    let mut actor = make_pc(true);
+    let Entity::Pc(pc) = &mut actor else {
+        unreachable!("PC fixture changed kind")
+    };
+    pc.actor.passing_door_directly = true;
+
+    let input = super::ai::extract_forecast_input(&actor).expect("actor has forecast state");
+    assert_eq!(input.door_pass, None);
+    assert!(
+        input.passing_door_directly,
+        "Original keeps mbPassingDoorDirectly after PassDoor clears GetDoor()"
     );
 }
 
