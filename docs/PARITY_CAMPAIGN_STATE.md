@@ -90,6 +90,7 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #58 completed: the sequence phase now records actual accepted Actor instruction boundaries, including zero-order elements that terminate synchronously, preserving Original's `InProgress` edge at frame 973.
 - #60 completed: `AssertPosition` now exposes its pointer-changing `Skip` barrier, so Actor::Instruct skips the accepted-motion/order epilogue after Translate-time `SetState`, clearing the frame-1073 civilian motion frontier.
 - #61 completed: decision-local swordfight target multiplicity now saturates as occupancy instead of stacking duplicate nearby-friend claims, clearing Soldier 115's hidden target-choice divergence and the frame-1162 visibility frontier.
+- #62 completed: transition-distance movement now refreshes forecasted displacement through the same post-motion rule as ordinary walking, restoring bow target lead at frame 1216; the replay advances to an independent `VipIdleRemark` RNG frontier after frame 1600.
 
 Standing clusters not yet tasked: actor.animation 133 (top cluster, resweep-db67cc978 classification), direction_goal 76, position_goal_map.x 72, motion_state 70, MoveOk→MoveWaiting 57, BoredAnimationChoice 56, AiRandomValueRectangle 55, path_events.length 54, RuntimeBuildingExitWait 51, visibility_queries.length 45 (+43 ai.list_them etc.). Full breakdown: `output/parity-audits/resweep-db67cc978/classification.json`.
 
