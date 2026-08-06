@@ -4664,3 +4664,10 @@ rank and require the concrete kind at every paired rank to agree. This catches
 missing/extra gameplay entities and cross-kind persistent reordering while only
 discarding the raw numeric gaps consumed by presentation-only temporary
 objects.
+
+## Re-sweep 12 — 2026-08-06, runner db67cc978
+- Manifest: 2,444 previously-failing traces (resweep-71cd5e503 minus its 20 passes).
+- Result: 26 exact-EOF passes, 1,973 state divergences, 437 RNG panics (down from 532), 8 timeouts.
+- Cumulative: 2,390 / 5,164 passing (46.3%).
+- Wave-13 fixes measured: sworddmg/sheriffkill/orderlag/seekdoor/speechfifo mostly moved frontiers deeper (101->1 conversions ~95 traces) rather than reaching EOF.
+- Classification: output/parity-audits/resweep-db67cc978/classification.json (202 groups). Top: actor.animation 133, rng:VipIdleRemark 80, direction_goal 76, position_goal_map.x 72, motion_state 70, MoveOk->MoveWaiting 57.
