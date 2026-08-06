@@ -457,17 +457,10 @@ pub fn begin_carry(
 
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
-    // Face the target — match the `_iso` aspect convention used by
-    // every other ability init face-target so the sprite ends up
-    // aligned with what the downstream animation expects.  (The
-    // preceding `SEEK` element will already have oriented the PC, but
-    // we re-snap here to be defensive.)
-    let carrier_pos = carrier.element_data().position_map();
-    let dx = target_pos.x - carrier_pos.x;
-    let dy = target_pos.y - carrier_pos.y;
-    carrier.element_data_mut().set_direction_instantly(
-        crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
-    );
+    // Unlike the strangle/heal/tie ability inits, the corpse-carry
+    // transition does not turn the carrier toward the corpse: the
+    // carrier keeps the facing it arrived with, and the carried body is
+    // aligned relative to that direction instead.
 
     // Carry is now committed. Set up the target:
     // - Back-reference (`human.carrier = carrier_id`) so
@@ -2728,9 +2721,11 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
         };
         let elem = &entity.element;
 
-        // Only LittleJohnCarry selects the Little John carry animations.
-        // FarmerCarry widens who is *allowed* to carry a body, but it does
-        // not change which carry animation the carried actor plays.
+        // Only the LittleJohnCarry contextual action selects the
+        // LittleJohn carried-animation set. FarmerCarry grants the same
+        // *ability* (carry availability checks accept either), but a
+        // FarmerCarry carrier still plays the PeasantC lift/carry/drop
+        // rows on the body it carries.
         let little_john_style = profiles
             .get_character(pc.profile_index)
             .map(|cp| {
