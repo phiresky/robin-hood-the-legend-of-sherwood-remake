@@ -1,9 +1,9 @@
 {
   "id": "21",
   "subject": "Fix small elevation residue (11)",
-  "description": "Surviving state:elevation after all fixes: 4x Pc 93.3318-vs-90.00101 (paired with moving mismatch), several Projectile elevation/old_elevation drift, one Soldier 153.73-vs-153.72 (ULP-ish). None are the fixed +50 family (grep-verified zero hits). Fresh diagnosis needed per sub-shape.",
+  "description": "Superseded/no standalone fix on current main 658ff7991. The archived Pc 93.3318-vs-90.00101 family no longer reproduces: SuN1Sh1nE/Profile_004/Savegame_036 replay-006 and linux3/Profile_003/Savegame_065 replay-005 both reach exact EOF. The old WIP proposal to stop door-transition projection lookup is source-plausible, but no active replay demonstrates causality, so it was deliberately not applied. Projectile residues are not one elevation family: nicouzouf/Profile_001/Savegame_035 replay-013 and SuN1Sh1nE/Profile_004/Savegame_017 replay-009 now reach exact EOF; nicouzouf/Profile_001/Savegame_045 replay-011 remains an Arrow terminal Refresh/retirement boundary whose elevation is only a coupled symptom; nicouzouf/Profile_001/Savegame_020 replay-006 starts with Soldier ParryShield command/action divergence and the projectile geometry is downstream. The Soldier 153.73-vs-153.72 case is coupled to a different movement goal/increment and visibility-origin divergence, not an elevation ULP implementation defect. Route those surviving shapes to their lifecycle, shield-command, and movement owners rather than conflating them here.",
   "activeForm": "Fixing elevation residue",
-  "status": "in_progress",
+  "status": "completed",
   "blocks": [],
   "blockedBy": [],
   "owner": "fix-ladderpick2"
