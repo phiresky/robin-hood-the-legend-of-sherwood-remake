@@ -1,0 +1,8 @@
+{
+  "id": "64",
+  "subject": "Restore reciprocal swordfight Enter callback ordering",
+  "description": "DONE. The reported frame-1601 VipIdleRemark mismatch was classifier noise: Original consumed the shared VIP idle draw followed by two ReconsiderSwordfight alcohol rolls and ProposeGoodSwordStrike, while Rust consumed only the VIP draw. PC171's EnterSwordFight prepared Soldier111 and registered a reciprocal ENTER_SWORDFIGHT, but Rust left that exact element in the ordinary manager FIFO behind Soldier111's postponed LookLeft. LookLeft/LookRight transition generation then quit the newly installed fight before the reciprocal Enter's terminal EventDone could reach ReconsiderSwordfight. Original PrepareToEnterSwordFight synchronously pumps Think(EVENT_ENTER_SWORDFIGHT) for soldiers, and its newly registered reciprocal element reaches the owner Instruct boundary before unrelated FIFO takeover. Rust now records that exact Soldier reciprocal sequence, installs the relationship, promotes only that element with take_deferred_owner_action, and closes its owner condolence boundary. PC reciprocals retain ordinary FIFO timing because PCs do not execute the synchronous Think arm. The focused Prepare ordering test proves the interrupted command's EventDone precedes EventEnterSwordfight and the reciprocal Enter has left the manager FIFO before EnterSwordFight returns. The replay preserves the cleared frame-1579 frontier, consumes all four Original frame-1600 callsites, and advances to a same-frame post-state mismatch (Soldier111 LookRight/Quitting and cleared links versus Original Wait/AttackingSwordfight), tracked separately as #67.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

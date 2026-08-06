@@ -4598,7 +4598,7 @@ mod tests {
     }
 
     #[test]
-    fn preparing_swordfight_delivers_interrupted_done_before_enter_event() {
+    fn preparing_swordfight_orders_done_enter_then_promotes_reciprocal() {
         use crate::ai::{AiState, LogLineType, StimulusType, Substate};
         use crate::profiles::{CharacterProfile, HtHWeaponProfile, ProfileManager, SoldierProfile};
 
@@ -4673,6 +4673,13 @@ mod tests {
 
         let _ = engine.enter_swordfight(sim, &assets, initiator, opponent, false);
 
+        assert!(
+            !engine
+                .orders
+                .sequence_manager
+                .element_is_about_to_be_launched(opponent, Command::EnterSwordfight),
+            "the reciprocal enter must leave the manager FIFO before EnterSwordFight returns"
+        );
         let ai = engine
             .get_entity(opponent)
             .unwrap()
