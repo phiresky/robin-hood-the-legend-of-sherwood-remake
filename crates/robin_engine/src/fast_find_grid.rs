@@ -2017,7 +2017,13 @@ impl FastFindGrid {
     /// `(world.x, world.y - world.z)`, not viewport pixels.
     ///
     /// Iterates from the highest layer down to 0, returning the first hit.
-    /// Resolves associated sectors to their targets (lifts / drawbridges).
+    ///
+    /// Original's query also unwraps `RHSectorAssociated`, but current proto
+    /// loading never registers one: `RHSectorLift::InitializeFromProtoStream`
+    /// leaves both `AddSector(pSectorAssociated, ...)` calls commented out.
+    /// Rust therefore reads and discards that legacy click polygon during
+    /// level decoding rather than exposing an association that cannot occur
+    /// in the shipped runtime grid.
     pub fn get_sector_screen(&self, pt: MapPoint, reference: MapPoint) -> SectorScreenResult {
         // Iterate layers top-down from `special_layer - 1`.
         for layer in (0..self.level.special_layer).rev() {

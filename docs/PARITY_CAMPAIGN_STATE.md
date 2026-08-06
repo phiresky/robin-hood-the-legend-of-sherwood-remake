@@ -60,7 +60,7 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #20 jump-up step entry + flight increment (fix-jump, interrupted mid-diagnosis)
 - #21 small elevation residue (fix-ladderpick2, interrupted at start)
 - #23 SeekArea one-fewer-pair geometry (13+) — requeued, unowned
-- #24 get_sector_screen associated-sector resolution (wide blast radius)
+- #24 completed as source-verified no-op: shipped proto loading never registers `RHSectorAssociated` (both Original lift `AddSector` calls are commented out); Rust already discards the dead click polygon.
 - #28 strike resolution one frame early (f19137) + CombatObserveSideStep misattribution (8)
 - #31 360-gate LOS/detection us-list composition (2 repros @f33630/f13778, all-soldier membership, relates to detection.detectables.length cluster 68)
 - #34 tolerance-arrival + StrangleCmd post-seek Moving stamp (nicouzouf/S069 r005 f457) — check if survives sweep first

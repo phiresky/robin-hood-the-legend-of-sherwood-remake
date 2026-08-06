@@ -3,7 +3,8 @@
   "subject": "Port get_sector_screen associated-sector resolution",
   "description": "From b35927626's report: FastFindGrid::get_sector_screen (fast_find_grid.rs:2021) has a doc comment CLAIMING it resolves associated sectors (lifts/drawbridges) but doesn't; C++ GetSectorScreen (RHfastfindgrid.cpp:1876) swaps to GetAssociatedSector() when the hit IsAssociated(), and for a lift overrides both result layer and sector number. Wide blast radius (shared geometry — every screen sector lookup); own task with wide validation. Related: the jump-sector drop-goal fix a891019e6 resolved through patch/jump overlays — RE-CHECK recorder task #3 (mpSelectedSector schema-15 addition) after this merges: the \"point inside no sector\" cases may now resolve.",
   "activeForm": "Porting associated-sector resolution",
-  "status": "pending",
+  "status": "completed",
+  "resolution": "No runtime change required. Original GetSectorScreen unwraps RHSectorAssociated, but the shipped proto path RHSectorLift::InitializeFromProtoStream leaves both AddSector(pSectorAssociated, ...) calls commented out. Rust faithfully reads and discards that dead lift click polygon; only the obsolete Original old-level loader registers associated sectors.",
   "blocks": [],
   "blockedBy": []
 }
