@@ -1488,6 +1488,18 @@ pub enum CrossNpcAction {
         target: NpcHandle,
         neighbour: HumanHandle,
     },
+    /// One-way counterpart of Original `SetArcherBehindMe`, used while
+    /// applying the reciprocal half of `UpdateShieldBearerBeforeMe`.
+    SetArcherBehindMe {
+        target: NpcHandle,
+        archer: HumanHandle,
+    },
+    /// One-way counterpart of Original `SetShieldBearerBeforeMe`, used while
+    /// applying the reciprocal half of `UpdateArcherBehindMe`.
+    SetShieldBearerBeforeMe {
+        target: NpcHandle,
+        shield_bearer: HumanHandle,
+    },
     /// Full reciprocal update of `target`'s left combat neighbour. Four steps:
     ///   1. Clear `old_left`'s right pointer (if non-zero).
     ///   2. Store `new_left` on `target`'s left pointer.

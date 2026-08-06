@@ -2995,7 +2995,14 @@ impl EnemyAi {
                     | Substate::AttackingRunningToPhalanx
             )
         {
+            let old_archer = self.archer_behind_me;
             self.archer_behind_me = 0;
+            self.base.outbox.reentrant.cross_npc_actions.push(
+                CrossNpcAction::SetShieldBearerBeforeMe {
+                    target: old_archer,
+                    shield_bearer: 0,
+                },
+            );
         }
 
         // If we had a shield-bearer pairing and are leaving a

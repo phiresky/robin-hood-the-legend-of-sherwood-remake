@@ -9697,6 +9697,29 @@ impl EngineInner {
                     }
                 }
 
+                crate::ai::CrossNpcAction::SetArcherBehindMe { target, archer } => {
+                    let target_id = EntityId::Soldier(SoldierId(target));
+                    let Some(Entity::Soldier(s)) = self.world.entities.get_mut(target_id) else {
+                        continue;
+                    };
+                    if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
+                        enemy_ai.archer_behind_me = archer;
+                    }
+                }
+
+                crate::ai::CrossNpcAction::SetShieldBearerBeforeMe {
+                    target,
+                    shield_bearer,
+                } => {
+                    let target_id = EntityId::Soldier(SoldierId(target));
+                    let Some(Entity::Soldier(s)) = self.world.entities.get_mut(target_id) else {
+                        continue;
+                    };
+                    if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
+                        enemy_ai.shield_bearer_before_me = shield_bearer;
+                    }
+                }
+
                 // Full reciprocal update.  Four steps:
                 //   1. clear old_left's right pointer
                 //   2. store new_left on target's left pointer (caller

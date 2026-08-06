@@ -4,7 +4,8 @@
   "description": "From daeacac81: post-break members Save057 replay-011 f794 + Save014 replay-015 f762 share soldier 61 original=ProtectingWithShield(183) vs rust=Reserve(164), 10-12 frames after the break — likely inside RefreshArrowProtection(true) from The16thFrame (substate whitelist includes ATTACKING_RESERVE; wiring is present) — the divergence is in its DECISION (dangerous-archer scan / NumberOfNearbyArchersWhoNeedProtection). Related merged work: ebf29f488 (detectable-list scan + isometric gates).",
   "activeForm": "Fixing arrow-protection decision",
   "owner": "",
-  "status": "pending",
+  "status": "completed",
+  "resolution": "Original SetState -> UpdateArcherBehindMe(NULL) clears both sides synchronously. Rust cleared only shield.archer_behind_me, leaving archer.shield_bearer_before_me; snapshot derivation then resurrected the stale pair and NumberOfNearbyArchersWhoNeedProtection returned zero. Reciprocal cross-NPC setters now maintain both UpdateArcherBehindMe and UpdateShieldBearerBeforeMe links. Both target boundaries clear; later failures are independent families.",
   "blocks": [],
   "blockedBy": []
 }

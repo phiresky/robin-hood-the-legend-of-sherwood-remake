@@ -964,10 +964,8 @@ impl EnemyAi {
     }
 
     /// UpdateShieldBearerBeforeMe. Updates the archer's own
-    /// `shield_bearer_before_me` link. The reverse link on the shield
-    /// bearer (`archer_behind_me`) is reconciled by the engine's
-    /// snapshot-building pass so we don't need cross-entity mutation
-    /// here.
+    /// `shield_bearer_before_me` link and the shield bearer's reciprocal
+    /// `archer_behind_me` link.
     pub(super) fn update_shield_bearer_before_me(&mut self, new_sb: HumanHandle) {
         if !self.is_archer() {
             return;
@@ -975,14 +973,29 @@ impl EnemyAi {
         if new_sb == self.shield_bearer_before_me {
             return;
         }
+        let old_sb = self.shield_bearer_before_me;
+        if old_sb != 0 {
+            self.base
+                .outbox
+                .reentrant
+                .cross_npc_actions
+                .push(CrossNpcAction::SetArcherBehindMe {
+                    target: old_sb,
+                    archer: 0,
+                });
+        }
         self.shield_bearer_before_me = new_sb;
+        if new_sb != 0 {
+            self.base
+                .outbox
+                .reentrant
+                .cross_npc_actions
+                .push(CrossNpcAction::SetArcherBehindMe {
+                    target: new_sb,
+                    archer: self.base.me,
+                });
+        }
     }
-
-    // UpdateArcherBehindMe is not ported: the reverse link is
-    // maintained by the engine's snapshot-building pass (see
-    // `archer_behind_me` derivation in `engine/ai.rs`), so no direct
-    // setter is required. Mirror of `update_shield_bearer_before_me`
-    // above if a future caller needs it.
 
     /// Walk the cached neighbour chain from `start` via left/right links,
     /// returning the last fighter encountered on that side. Used by

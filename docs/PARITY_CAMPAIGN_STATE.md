@@ -56,7 +56,7 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 
 ## Task board (open items)
 
-- #9 RefreshArrowProtection Reserve residual (f794/f762)
+- #9 completed: reciprocal archer/shield links now clear synchronously like Original; both f762/f794 boundaries clear and advance to independent residuals.
 - #20 completed: retained Original's Execute-time airborne increment and synchronous post-jump `motion_state=InProgress`; primary linux2 schema-14 replay-004 exact EOF. SuN Aborted-vs-Terminated signatures are a separate non-jump MoveOk lifecycle family.
 - #21 completed as superseded/no-fix: four archived elevation/projectile controls reach exact EOF on task-36 main; remaining symptoms route to arrow lifecycle, shield-command, and movement families.
 - #23 SeekArea one-fewer-pair geometry (13+) — requeued, unowned
