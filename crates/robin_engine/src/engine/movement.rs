@@ -7733,6 +7733,7 @@ impl EngineInner {
                         anim,
                         OrderType::TransitionWaitingUprightClimbingWallUp
                             | OrderType::TransitionWaitingCrouchedClimbingLadderDown
+                            | OrderType::TransitionWaitingUprightClimbingLadderDownAlerted
                             | OrderType::TransitionClimbingLadderDownWaitingUpright
                             | OrderType::TransitionClimbingLadderDownWaitingUprightAlerted
                             | OrderType::TransitionClimbingWallUpWaitingCrouched

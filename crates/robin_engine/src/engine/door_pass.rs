@@ -699,8 +699,24 @@ impl<'a> PassDoorLaunchContext<'a> {
         if restored_from_v48 {
             built.pass.position_direct = saved_direction != 0;
         }
-        self.sequence_manager
-            .set_action_recursive(seq_id, elem_idx, built.root_action);
+        // The original PassDoor translation only rewrites the movement
+        // element's action for building / default / gate / trap doors and
+        // for stairs lifts, and only on the element itself.  Ladder and
+        // wall lift passes leave the element's authored action untouched
+        // (their step actions are explicit), and nothing propagates to
+        // following elements — only the PC forced-crouch override below
+        // walks the chain recursively.
+        let rewrite_element_action = match door.door_type {
+            DoorType::LiftHigh | DoorType::LiftLow | DoorType::LiftHighCrenel => {
+                matches!(lift_type, Some(LiftType::Stairs) | Some(LiftType::Normal))
+            }
+            _ => true,
+        };
+        if rewrite_element_action
+            && let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx)
+        {
+            elem.set_action(built.root_action);
+        }
         if let Some(override_action) = built.post_chain_action_recursive {
             self.sequence_manager
                 .set_action_recursive(seq_id, elem_idx, override_action);
@@ -819,18 +835,11 @@ impl PassDoorLaunchContext<'_> {
         );
         let is_carrying = posture == Posture::CarryingOnShoulders;
 
-        // Soldier attentive state: true while in a sword/shield action
-        // state.  Attentive soldiers use different ladder/wall climb
-        // transition animations.
-        let is_attentive = is_soldier
-            && matches!(
-                action_state,
-                Some(crate::element::ActionState::WaitingSword)
-                    | Some(crate::element::ActionState::MovingSword)
-                    | Some(crate::element::ActionState::HoldingShield)
-                    | Some(crate::element::ActionState::MovingShield)
-                    | Some(crate::element::ActionState::Menacing)
-            );
+        // Soldier attentive state: the soldier AI's persistent attentive
+        // flag (set/cleared by enter/leave-attentive transitions), not a
+        // derived property of the current action state.  Attentive
+        // soldiers use the alerted ladder climb transition animations.
+        let is_attentive = is_soldier && entity.enemy_ai().is_some_and(|enemy| enemy.attentive);
 
         // Choose base movement animation. Original
         // `DetermineMovementAnimation` starts from the movement element's

@@ -1140,16 +1140,47 @@ fn make_action_transition_soldier(
         .unwrap_or((false, ActionState::Waiting));
 
     // attentive && MUST_BE_WAITING && !CAN_BE_ALERTED → leave-attentive
-    // transition.  Queue the matching transition animation so the
-    // soldier unstands from attentive before the command's real orders
-    // run.
+    // transition.  This routes through the same translate arm as an
+    // explicit LeaveAttentiveMode command: the transition animation only
+    // plays when the element's stamped posture is upright.  Any other
+    // posture (e.g. on a ladder mid door-pass) terminates the element
+    // outright and silently drops the attentive pose instead of queueing
+    // an animation that would fire much later.
     if attentive && flags.contains(EX::MUST_BE_WAITING) && !flags.contains(EX::CAN_BE_ALERTED) {
-        push_anim_order(
-            engine,
-            seq_id,
+        let (posture_after, command) = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .map(|e| (e.posture_after_transition, Some(e.command)))
+            .unwrap_or_default();
+        tracing::trace!(
+            ?owner,
+            ?seq_id,
             elem_idx,
-            OrderType::TransitionWaitingAlertedWaitingUpright,
+            ?command,
+            ?flags,
+            ?posture_after,
+            "soldier leave-attentive exit transition"
         );
+        if posture_after == crate::element::Posture::Upright {
+            push_anim_order(
+                engine,
+                seq_id,
+                elem_idx,
+                OrderType::TransitionWaitingAlertedWaitingUpright,
+            );
+        } else {
+            engine
+                .orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
+            if let Some(enemy) = engine
+                .get_entity_mut(owner)
+                .and_then(crate::element::Entity::enemy_ai_mut)
+            {
+                enemy.attentive = false;
+            }
+        }
     }
 
     // For bow-down soldiers, short-circuit the Human fall-through
@@ -1959,15 +1990,36 @@ fn make_final_action_transition_soldier(
         .unwrap_or(false);
 
     if flags.contains(EA::MUST_BE_ALERTED) && !attentive {
-        // Enter-attentive-mode transition: queue the matching
-        // waiting→alerted transition animation so the soldier enters
-        // the alerted pose before the command's real orders run.
-        push_anim_order(
-            engine,
-            seq_id,
-            elem_idx,
-            OrderType::TransitionWaitingUprightWaitingAlerted,
-        );
+        // Enter-attentive-mode transition, routed through the same
+        // translate arm as an explicit EnterAttentiveMode command: the
+        // waiting→alerted transition animation only plays when the
+        // element's stamped posture is upright.  Any other posture
+        // terminates the element and flips the attentive pose silently.
+        let posture_after = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .map(|e| e.posture_after_transition)
+            .unwrap_or_default();
+        if posture_after == crate::element::Posture::Upright {
+            push_anim_order(
+                engine,
+                seq_id,
+                elem_idx,
+                OrderType::TransitionWaitingUprightWaitingAlerted,
+            );
+        } else {
+            engine
+                .orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
+            if let Some(enemy) = engine
+                .get_entity_mut(owner)
+                .and_then(crate::element::Entity::enemy_ai_mut)
+            {
+                enemy.attentive = true;
+            }
+        }
         return true;
     }
 
