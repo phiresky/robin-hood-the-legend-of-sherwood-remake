@@ -724,6 +724,14 @@ impl EngineInner {
             && !result.contains(combat::SwordDamageResult::NO_DAMAGE_PARRIED)
             && let Some(atk_id) = attacker_id
         {
+            if victim_died {
+                // Dead people can't fight: the victim leaves the swordfight
+                // before the hitter is informed. The quit notification
+                // reaches the attacker first and moves it out of its
+                // special-strike substate, which is what keeps the kill
+                // remark from firing on a blow that ends the fight.
+                self.quit_swordfight(sim, assets, victim_id);
+            }
             let stimulus_type = if victim_died {
                 crate::ai::StimulusType::EventLethalStrike
             } else {
