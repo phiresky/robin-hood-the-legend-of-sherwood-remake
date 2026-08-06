@@ -1170,6 +1170,32 @@ impl WaitCommandContext<'_> {
             None
         };
 
+        // An actor that reaches an upright wait while already dead or
+        // unconscious never got a damage sequence to fall through, so the
+        // wait itself has to stage the collapse: drop whatever transition
+        // the movement machinery queued, play the harder falling animation,
+        // and translate the rest of this wait as if the actor were already
+        // down. Only the animation is redirected here — the posture write
+        // still happens when the fall lands.
+        let heart_attack_animation =
+            if posture == crate::element::Posture::Upright && (is_unconscious || is_dead) {
+                crate::engine::melee::select_hit_fall_animation(posture, action_state, true)
+            } else {
+                None
+            };
+        // Only the base-class posture switch sees the collapsed posture; the
+        // PC and soldier overrides above and the listening wait below keep
+        // reading the actor's live posture.
+        let switch_posture = if heart_attack_animation.is_some() {
+            if is_unconscious {
+                crate::element::Posture::Lying
+            } else {
+                crate::element::Posture::DeadBack
+            }
+        } else {
+            posture
+        };
+
         let mut set_posture_stuck_under_net = false;
         let animation = if let Some(pc_animation) = pc_posture_animation {
             Some(pc_animation)
@@ -1210,7 +1236,7 @@ impl WaitCommandContext<'_> {
                     _ => OT::WaitingUprightBored,
                 }
             };
-            match posture {
+            match switch_posture {
                 P::Upright => Some(upright_animation),
                 P::Crouched => Some(OT::WaitingCrouched),
                 P::OnWall | P::OnLadder => Some(OT::Freezing),
@@ -1319,6 +1345,22 @@ impl WaitCommandContext<'_> {
             entity
                 .element_data_mut()
                 .set_posture(crate::element::Posture::StuckUnderNet);
+        }
+
+        if let Some(falling) = heart_attack_animation {
+            tracing::trace!(
+                ?owner,
+                ?command,
+                ?falling,
+                is_dead,
+                is_unconscious,
+                "upright wait on a downed actor; collapsing"
+            );
+            self.sequence_manager.clear_orders_on(seq_id, elem_idx);
+            let id = crate::order::alloc_order_id(self.next_order_id);
+            let mut order = crate::order::Order::new(falling, 0.0, 0.0, id);
+            order.compute_direction = false;
+            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
         }
 
         if let Some(animation) = animation {

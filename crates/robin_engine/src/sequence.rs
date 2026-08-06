@@ -3028,6 +3028,19 @@ impl SequenceManager {
         }
     }
 
+    /// Drop every queued `Order` on the given element, keeping the element
+    /// itself live.  Panics on a stale handle for the same reason
+    /// [`push_order_on`](Self::push_order_on) does.
+    pub fn clear_orders_on(&mut self, seq_id: SequenceId, elem_idx: usize) {
+        match self.get_element_mut(seq_id, elem_idx) {
+            Some(elem) => elem.orders.clear(),
+            None => panic!(
+                "clear_orders_on: no element at ({:?}, {}) — handle is stale",
+                seq_id, elem_idx
+            ),
+        }
+    }
+
     /// Find the actor's in-progress sequence element.  O(log k) via
     /// [`actor_in_progress`](Self::actor_in_progress), where k is the
     /// number of simultaneously-`InProgress` elements owned by this

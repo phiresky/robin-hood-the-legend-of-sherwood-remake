@@ -2292,7 +2292,7 @@ fn select_push_damage_animations(
 /// When `harder` is true, the `HARDER` variant is returned. The harder
 /// variant plays in place and collapses to `Lying` at the end, while
 /// the non-harder variant flights 30 units away from the attacker.
-fn select_hit_fall_animation(
+pub(in crate::engine) fn select_hit_fall_animation(
     posture: Posture,
     action_state: ActionState,
     harder: bool,
