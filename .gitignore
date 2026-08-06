@@ -1,4 +1,5 @@
 # Build output
+/output/
 /build/
 /target/
 /android/.gradle/
