@@ -1,8 +1,8 @@
 {
   "id": "38",
   "subject": "Fix swordfight RNG draw divergence (mislabeled VipIdleRemark cluster, ~80)",
-  "description": "ReceiveSwordDamage subfamily fixed: Smalltalk DONE used a raw circular direction vector for Original's pAntagonist->GetDirectionVector dot-product back-hit gate. Original's vector is in the isometric map plane, with aspect-scaled Y. On Nescafe schema14 P003/S001 replay-005 this flipped the half-plane test, suppressing ReceiveSwordDamage and two SwordDamageProtection draws. The exact replay now matches frames 429-431 and a focused regression passes. REMAINING heterogeneous subfamilies: UpdateSwordfightDistance (offsets 1807002/1807253), EvaluateSwordfight (1814391), FindPositionForTableSwordfight (~1804390), and other SwordDamageProtection cases. The rng:VipIdleRemark cluster label is only the first RNG site in the divergent frame.",
-  "status": "in_progress",
+  "description": "DONE at 960b156e3. The rng:VipIdleRemark cluster was a classifier artifact: VipIdleRemark/The16thFrame matched, while later offsets named UpdateSwordfightDistance, ReceiveSwordDamage, EvaluateSwordfight, FindPositionForTableSwordfight, and SwordDamageProtection. The common upstream cause was ReceiveSwordDamage's smalltalk DONE back-hit test. Original GetDirectionVector returns the isometric/aspect-scaled facing vector; Rust tested the raw unit-circle vector, flipping the half-plane result for diagonal facings. The resulting damage/protection draw skew perturbed later combat topology. Representative exact-EOF controls cover both Update offsets, table positioning, EvaluateSwordfight, and protection calls across old-schema nicouzouf S039 r009/r003, S037 r007, SuN1Sh1nE S024 r005 and schema-14 nicouzouf S024 r006, linux3 S013 r013, Cyrdach S001 r001. No independent distance/evaluate repro survived, so the existing spacing tolerance was not changed speculatively.",
+  "status": "completed",
   "blocks": [],
   "blockedBy": []
 }
