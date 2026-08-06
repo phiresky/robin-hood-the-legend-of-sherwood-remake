@@ -511,21 +511,12 @@ impl EngineInner {
 
         // ── Sequence manager dispatch ────────────────────────────
         // Process pending sequence elements in the manager's emitted order.
-        let actor_elements_before_instruct = self
-            .world
-            .entities
-            .occupied()
-            .filter_map(|(owner, entity)| {
-                entity.actor_data().is_some().then(|| {
-                    (
-                        owner,
-                        self.orders
-                            .sequence_manager
-                            .current_element_for_actor(owner),
-                    )
-                })
-            })
-            .collect::<Vec<_>>();
+        // Record the actual accepted Actor::Instruct boundaries. Looking at
+        // the selected element after the drain is insufficient: translation
+        // may validly produce no order and terminate the incoming element
+        // synchronously, after Original has already written
+        // mmotionState=IN_PROGRESS.
+        let mut accepted_instruct_owners = Vec::new();
         let mut phase = SequencePhase::begin(&mut self.orders);
 
         // Dispatch each action at its exact FIFO position. In particular,
@@ -2573,6 +2564,7 @@ impl EngineInner {
                                     .element_terminated(seq_id, elem_idx);
                             }
                         }
+                        accepted_instruct_owners.push(owner);
                         // Accepted Actor::Instruct publishes the translated
                         // current order through mpOrder. Keep this write at the
                         // dispatch boundary rather than inferring it later from
@@ -2636,17 +2628,7 @@ impl EngineInner {
         }
         self.orders.sequence_manager.set_translating_element(None);
 
-        let instructed_owners = actor_elements_before_instruct
-            .into_iter()
-            .filter_map(|(owner, before)| {
-                let after = self
-                    .orders
-                    .sequence_manager
-                    .current_element_for_actor(owner);
-                (after.is_some() && after != before).then_some(owner)
-            })
-            .collect::<Vec<_>>();
-        for owner in instructed_owners {
+        for owner in accepted_instruct_owners {
             // RHElementActor::Instruct writes mmotionState=IN_PROGRESS after
             // an accepted element has survived translation and entered
             // INPROGRESS. AI work in the preceding derived NPC tail only

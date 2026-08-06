@@ -1,0 +1,8 @@
+{
+  "id": "58",
+  "subject": "Preserve IN_PROGRESS for accepted zero-order Actor instructions",
+  "description": "DONE. In schema14 Savegame_linux3/Profile_001/Continue/replay-001, Soldier 114 completed SwordstrikeThrustB at frame 973 and synchronously launched and retired a ReceiveSwordDamage element. Original Actor::Instruct writes RHMOTION_IN_PROGRESS after Translate succeeds and before discovering that the accepted element has no current order. Rust inferred accepted instructions from an element that remained selected after the entire manager drain, so synchronously terminated zero-order instructions were invisible and the prior Done edge survived. The sequence manager phase now records actual command translations that reach the accepted instruction boundary and projects IN_PROGRESS for those owners after the drain. A focused regression covers an accepted ReceiveSwordDamage element that terminates during translation. The exact replay clears frame 973 and advances to a separate Civilian 73 motion-state frontier after frame 1073.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

@@ -126,6 +126,58 @@ fn exhausted_generic_order_carrier_terminates_on_resume() {
 }
 
 #[test]
+fn accepted_zero_order_damage_preserves_in_progress_motion_edge() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::{SequenceElement, SequenceState};
+    use crate::sprite::MotionState;
+
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    engine
+        .get_entity_mut(soldier)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .continuation
+        .motion_state = MotionState::Done;
+
+    // A malformed damage element is still accepted by Actor::Instruct, then
+    // its command translation terminates it synchronously without an order.
+    // Original writes IN_PROGRESS between those two events.
+    let mut damage = SequenceElement::new_generic(1, Command::ReceiveSwordDamage, Some(soldier));
+    damage.posture_after_transition = Posture::Upright;
+    let sequence = engine.orders.sequence_manager.launch_element(damage);
+
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .expect("terminated damage element remains until cleanup")
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        MotionState::InProgress,
+        "accepted Actor::Instruct must expose its motion edge even when translation terminates"
+    );
+}
+
+#[test]
 fn entity_phase_completion_resumes_postponed_work_in_same_manager_drain() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
