@@ -83,8 +83,31 @@ idle hold is the one that resets the carrier:
 Because the drop transition stamps nothing, a missing `WaitingWithCorpse`
 `Start` propagates: the carrier keeps `Moving` through the idle hold, through
 the drop, and into whatever command follows (`WhistleCmd`, `EnterHelpingClimb`).
-Note also that a seek-mode corpse walk consumes `Start`, so the walk arm often
-never stamps `Moving` at all and the hold is the only thing setting the state.
+
+The `Terminated` row is the one that fires most often, and it is easy to miss:
+the carry route is a chain of waypoints, and every waypoint the carrier reaches
+returns a termination that settles it back to `Waiting` until the next order
+starts. That termination does not come from the sprite — it comes from the
+arrival branch described below.
+
+## Arrival outranks the sprite result
+
+The ordinary (non-`TillLastFrame`) motion path commits its step and then asks
+the position interface whether the goal is reached. When it is, the Execute arm
+is handed `Terminated` no matter what the sprite was about to report, so
+`Start`, `InProgress` and `Done` all reach the switch as a termination on the
+frame the actor arrives.
+
+Two details make this predicate impossible to approximate with a
+distance-versus-step-length comparison, and getting either wrong shows up as a
+whole family of stale `action_state` values:
+
+- The predicate is a tolerance-compared dot product against the movement
+  increment, not a straight-line distance.
+- Anti-collision runs first. A walker that sidesteps another actor both moves
+  off the straight line to its goal *and* has its cached increment rebuilt from
+  the new position, and the predicate reads the rebuilt vector. A step longer
+  than the remaining distance therefore routinely does not arrive.
 
 ## Arms that stamp on every tick
 

@@ -671,6 +671,100 @@ fn should_snap_arrival(
     arrived_after_committed_step && !tolerance_arrival && order_tolerance == 0.0 && !deviated
 }
 
+/// Does the step this Execute is about to commit satisfy `IsGoalReached`?
+///
+/// `PerformMotion` moves first and only then asks the position interface
+/// whether the goal is reached, so a call that would otherwise return `START`
+/// can return `TERMINATED` instead. Rust stages the physical step until after
+/// the sprite call, so the answer has to be projected on a throwaway copy of
+/// the position interface, anti-collision and all. Comparing the straight-line
+/// distance against the step length is not a substitute: the predicate is a
+/// tolerance-compared dot product against the movement increment, and a step
+/// deviated around another actor both leaves that line and rebuilds the
+/// increment it is measured against.
+#[allow(clippy::too_many_arguments)]
+fn projected_step_reaches_goal(
+    position_iface: &crate::position_interface::PositionInterface,
+    mover_snapshot: Option<&super::anti_collision::ActorSnapshot>,
+    neighbours: &[Option<super::anti_collision::ActorSnapshot>],
+    static_repulsive_points: &[crate::ai::RepulsivePoint],
+    mobile: &LiveMobileGeometry,
+    grid: &crate::fast_find_grid::FastFindGrid,
+    goal: MapPoint,
+    target: Option<crate::position_interface::TargetInfo>,
+    speed: f32,
+) -> bool {
+    if speed == 0.0 {
+        return false;
+    }
+    let mut projected = position_iface.clone();
+    let increment = projected.get_increment_map();
+    let anti_on = projected.is_anti_collision_on();
+    let (dx_step, dy_step, recovered_from_deviation, rebuild_after_deviation) =
+        if anti_on && let Some(mover) = mover_snapshot.filter(|snapshot| snapshot.active) {
+            let move_box = *projected.get_move_box();
+            let half_diagonal = projected.get_half_diagonal();
+            let was_deviated = projected.is_deviated();
+            let mut state = super::anti_collision::AntiCollisionState {
+                pi: &mut projected,
+                move_box,
+                half_diagonal,
+                goal_map: goal,
+            };
+            let (dx_step, dy_step) = super::anti_collision::apply_anti_collision_step(
+                mover,
+                neighbours,
+                static_repulsive_points,
+                mobile
+                    .mobile_points_by_layer
+                    .get(&mover.layer)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
+                mobile
+                    .mobile_lines_by_layer
+                    .get(&mover.layer)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
+                mobile
+                    .mobile_polygons_by_layer
+                    .get(&mover.layer)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
+                Some(grid),
+                Some(&mut state),
+                increment.x,
+                increment.y,
+                speed,
+                anti_on,
+            );
+            (
+                dx_step,
+                dy_step,
+                was_deviated && !state.pi.is_deviated(),
+                state.pi.is_deviated() && state.pi.blocked_count == 0,
+            )
+        } else {
+            (increment.x * speed, increment.y * speed, false, false)
+        };
+    let mut projected_position = projected.map_position();
+    projected_position.x += dx_step;
+    projected_position.y += dy_step;
+    projected.set_map_position(projected_position);
+    // A committed deviation invalidates the cached increment and rebuilds it
+    // from the new position toward the same goal, and the arrival predicate
+    // that follows reads the rebuilt vector. Skipping the rebuild leaves the
+    // dot product measuring against the pre-deviation heading, which is how a
+    // sidestepped walker looked as if it had already arrived.
+    if rebuild_after_deviation && (dx_step != 0.0 || dy_step != 0.0) {
+        projected.reset_increment_computed();
+        projected.compute_increment_all(false);
+    } else if recovered_from_deviation {
+        projected.reset_increment_computed();
+        projected.compute_increment_all(true);
+    }
+    projected.is_goal_reached(grid, target)
+}
+
 /// Motion state observed by the Original Execute arm after `PerformSeek`.
 ///
 /// Entity-target `PerformSeek` consumes non-terminal sprite results and returns
@@ -679,13 +773,19 @@ fn should_snap_arrival(
 /// while the seek wrapper remains active. Running upright is deliberately
 /// excluded: its Original Execute arm sets `MOVING_FAST` unconditionally after
 /// `PerformSeek`, irrespective of the returned motion state.
+///
+/// The ordinary arrival branch outranks the sprite's own result: once the
+/// committed step satisfies the goal predicate, `PerformMotion` returns
+/// `TERMINATED` whatever it was about to report, so a walk that merely
+/// continued (`IN_PROGRESS`) or finished its action frame (`DONE`) still
+/// reaches the Execute arm as a termination.
 fn movement_execute_visible_motion(
     order: OrderType,
     motion: MotionState,
     reaches_goal_this_step: bool,
     entity_target_seek: bool,
 ) -> MotionState {
-    if reaches_goal_this_step && matches!(motion, MotionState::Start) {
+    if reaches_goal_this_step {
         return MotionState::Terminated;
     }
     if entity_target_seek
@@ -7134,59 +7234,17 @@ impl EngineInner {
                     apply_speed_factor,
                     first_direction_differs_from_goal,
                 );
-                if first_speed == 0.0 {
-                    false
-                } else {
-                    let mut projected = sprite.position_iface.clone();
-                    let increment = projected.get_increment_map();
-                    let anti_on = projected.is_anti_collision_on();
-                    let (dx_step, dy_step) = if anti_on
-                        && let Some(mover_snap) =
-                            anti_snapshots.get(actor_id).and_then(|slot| slot.as_ref())
-                    {
-                        let move_box = *projected.get_move_box();
-                        let half_diagonal = projected.get_half_diagonal();
-                        let mut state = super::anti_collision::AntiCollisionState {
-                            pi: &mut projected,
-                            move_box,
-                            half_diagonal,
-                            goal_map: goal,
-                        };
-                        super::anti_collision::apply_anti_collision_step(
-                            mover_snap,
-                            anti_snapshots.as_slice(),
-                            &self.ai.global.repulsive_points,
-                            prepared
-                                .mobile_points_by_layer
-                                .get(&mover_snap.layer)
-                                .map(Vec::as_slice)
-                                .unwrap_or(&[]),
-                            prepared
-                                .mobile_lines_by_layer
-                                .get(&mover_snap.layer)
-                                .map(Vec::as_slice)
-                                .unwrap_or(&[]),
-                            prepared
-                                .mobile_polygons_by_layer
-                                .get(&mover_snap.layer)
-                                .map(Vec::as_slice)
-                                .unwrap_or(&[]),
-                            Some(&self.world.fast_grid),
-                            Some(&mut state),
-                            increment.x,
-                            increment.y,
-                            first_speed,
-                            true,
-                        )
-                    } else {
-                        (increment.x * first_speed, increment.y * first_speed)
-                    };
-                    let mut projected_position = projected.map_position();
-                    projected_position.x += dx_step;
-                    projected_position.y += dy_step;
-                    projected.set_map_position(projected_position);
-                    projected.is_goal_reached(&self.world.fast_grid, goal_target_infos[actor_id])
-                }
+                projected_step_reaches_goal(
+                    &sprite.position_iface,
+                    anti_snapshots.get(actor_id).and_then(|slot| slot.as_ref()),
+                    anti_snapshots.as_slice(),
+                    &self.ai.global.repulsive_points,
+                    &prepared,
+                    &self.world.fast_grid,
+                    goal,
+                    goal_target_infos[actor_id],
+                    first_speed,
+                )
             } else {
                 false
             };
@@ -7311,23 +7369,27 @@ impl EngineInner {
             // into the state-effect result now.
             let entity_target_seek = active_move_flags.contains(crate::sequence::MoveFlags::SEEK)
                 && ft.target_id.is_some();
-            // With anti-collision disabled the committed step is exactly
-            // `increment * speed`. Original PerformMotion applies that step,
-            // then tests the order's ordinary tolerance before returning to
-            // Execute. Account for an imminent tolerance arrival here so a
-            // fresh walking order that terminates on its first call does not
-            // expose the START-only Moving state. Door-pass approach points
-            // intentionally rely on this (their distance is often exactly
-            // the authored tolerance).
-            let reaches_order_tolerance_this_step = !is_transition_anim
-                && speed > 0.0
-                && order_tolerance > 0.0
-                && !sprite.position_iface.is_anti_collision_on()
-                && dist <= speed + order_tolerance;
+            // The ordinary (non-TillLastFrame) arrival branch runs only when
+            // the sprite actually advanced the actor, and it asks the position
+            // interface rather than comparing straight-line distances. A
+            // walker that sidesteps a neighbour covers more ground than
+            // remains to its goal and still ends the frame short of it.
+            let reaches_goal_this_step = !is_transition_anim
+                && projected_step_reaches_goal(
+                    &sprite.position_iface,
+                    anti_snapshots.get(actor_id).and_then(|slot| slot.as_ref()),
+                    anti_snapshots.as_slice(),
+                    &self.ai.global.repulsive_points,
+                    &prepared,
+                    &self.world.fast_grid,
+                    goal,
+                    goal_target_infos[actor_id],
+                    speed,
+                );
             let state_effect_motion = movement_execute_visible_motion(
                 order_action,
                 motion_state,
-                !is_transition_anim && (dist <= speed || reaches_order_tolerance_this_step),
+                reaches_goal_this_step,
                 entity_target_seek,
             );
             let deferred_movement_state_start_due = if deferred_movement_state_start {
@@ -7378,6 +7440,14 @@ impl EngineInner {
                 speed_factor,
                 effective_distance = speed,
                 remaining_distance = dist,
+                reaches_goal_this_step,
+                order_tolerance,
+                deviated = sprite.position_iface.is_deviated(),
+                anti_collision = sprite.position_iface.is_anti_collision_on(),
+                goal_x = goal.x,
+                goal_y = goal.y,
+                increment_x = sprite.position_iface.get_increment_map().x,
+                increment_y = sprite.position_iface.get_increment_map().y,
                 "movement Execute result"
             );
             // Transition motion can still change from InProgress to
@@ -8713,8 +8783,12 @@ impl EngineInner {
             // The authored successor owns the deferred movement START only
             // if it remains current after this Execute. A very short
             // successor can complete and hand off to its stop transition in
-            // the same call; Original retains Waiting in that case.
+            // the same call; Original retains Waiting in that case. The
+            // Execute switch still only reacts to the motion state it is
+            // handed, so a successor whose START the seek wrapper swallowed
+            // owns no state effect to postpone.
             if deferred_movement_state_start_due
+                && matches!(state_effect_motion, MotionState::Start)
                 && !current_order_will_advance
                 && self
                     .orders
@@ -8738,6 +8812,7 @@ impl EngineInner {
             // frame. This survival rule applies to PCs too; their separate
             // deferred-successor marker covers the later authored order.
             if transition_distance_first_execute_due
+                && matches!(state_effect_motion, MotionState::Start)
                 && !current_order_will_advance
                 && self
                     .orders
@@ -8758,8 +8833,17 @@ impl EngineInner {
         for entity_id in sword_movement_starts {
             self.apply_sword_movement_start_initiative_transfer(entity_id);
         }
+        let state_effect_frame = self.control.frame_counter;
         for (entity_id, posture, action_state) in movement_state_effects {
             if let Some(entity) = self.get_entity_mut(entity_id) {
+                tracing::trace!(
+                    target: "robin_engine::engine::movement::state_effect",
+                    ?entity_id,
+                    frame = state_effect_frame,
+                    ?posture,
+                    ?action_state,
+                    "movement Execute state side effect"
+                );
                 entity.set_posture(posture);
                 if let Some(actor) = entity.actor_data_mut() {
                     actor.action_state = action_state;
@@ -11995,6 +12079,50 @@ mod line_jump_tests {
                 MotionState::Terminated,
             ),
             Some((crate::element::Posture::Upright, ActionState::Moving))
+        );
+    }
+
+    #[test]
+    fn committed_step_arrival_outranks_every_sprite_result() {
+        use crate::element::{ActionState, Posture};
+        use crate::sprite::MotionState;
+
+        for motion in [
+            MotionState::Start,
+            MotionState::InProgress,
+            MotionState::Done,
+        ] {
+            assert_eq!(
+                movement_execute_visible_motion(OrderType::WalkingWithCorpse, motion, true, false),
+                MotionState::Terminated,
+                "a step that satisfies the goal predicate reaches Execute as a termination"
+            );
+        }
+        assert_eq!(
+            movement_execute_state_effect(
+                OrderType::WalkingWithCorpse,
+                movement_execute_visible_motion(
+                    OrderType::WalkingWithCorpse,
+                    MotionState::InProgress,
+                    true,
+                    false,
+                ),
+            ),
+            Some((Posture::CarryingCorpse, ActionState::Waiting)),
+            "the corpse carrier settles back to Waiting on the waypoint it reaches"
+        );
+        assert_eq!(
+            movement_execute_state_effect(
+                OrderType::WalkingWithCorpse,
+                movement_execute_visible_motion(
+                    OrderType::WalkingWithCorpse,
+                    MotionState::InProgress,
+                    false,
+                    false,
+                ),
+            ),
+            None,
+            "a walk that has not reached its waypoint owns no state effect"
         );
     }
 
