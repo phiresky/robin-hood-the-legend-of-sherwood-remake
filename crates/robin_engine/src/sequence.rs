@@ -1418,10 +1418,16 @@ impl SequenceElement {
                     );
                     new_order.compute_direction = true;
                     new_order.tolerance = 0.0;
+                    // The spliced movement order inherits the element's target
+                    // element, not just the relabelled transition it precedes.
+                    // Once it is the live order the target's radius widens the
+                    // blocked-count arrival slack, so dropping it here strands
+                    // the walk short of its waypoint for extra frames.
                     if (!flags.contains(MoveFlags::SEEK) || !flags.contains(MoveFlags::USE_POINT))
                         && let Some(a) = antagonist
                     {
                         new_order.target_actor = Some(a.index());
+                        new_order.antagonist = Some(a);
                     }
                     self.insert_order(i, new_order);
                     return;
@@ -1456,6 +1462,7 @@ impl SequenceElement {
                         && let Some(a) = antagonist
                     {
                         new_order.target_actor = Some(a.index());
+                        new_order.antagonist = Some(a);
                     }
                     self.insert_order(i, new_order);
                 }
