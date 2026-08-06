@@ -2573,7 +2573,6 @@ impl EngineInner {
                                     .element_terminated(seq_id, elem_idx);
                             }
                         }
-                        self.orders.sequence_manager.set_translating_element(None);
                         // Accepted Actor::Instruct publishes the translated
                         // current order through mpOrder. Keep this write at the
                         // dispatch boundary rather than inferring it later from
@@ -2624,6 +2623,11 @@ impl EngineInner {
             // boundary here lets an immediate next-level successor preempt
             // older actions already detached into `SequencePhase`.
             self.dispatch_condolations(sim, assets);
+            // Original keeps mpSequenceElement selected until Translate and
+            // any synchronous SendCondolationCard callback it raised have
+            // both returned. In particular, ReconsiderSwordfight must still
+            // see a just-satisfied EnterSwordfight as pending here.
+            self.orders.sequence_manager.set_translating_element(None);
 
             // After-action live-FIFO continuation: re-entrant immediate/WAIT
             // work goes to the front, while newly registered normal work is

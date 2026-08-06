@@ -1,0 +1,8 @@
+{
+  "id": "50",
+  "subject": "Preserve queued bow shots when the retained human target dies",
+  "description": "DONE. On schema14 Savegame_linux3/Profile_001/Savegame_013/replay-006, soldier 115's queued ShootBow reached begin_bow_shot after its retained PC target died. Rust added a second target-life guard there, returned Impossible, delivered EventImpossible, entered the generic lost-enemy SeekArea path, and consumed ten extra SeekPointSelection draws after original frame 1514. Original RHArtificialMalignity::ShootArrowAt unconditionally launches the retained-target interaction, and its bow translation has no equivalent second IsDead rejection. Active human targets are now accepted by begin_bow_shot even if they died while the archer was aiming; inactive, missing, wrong-kind, and non-arrow target objects remain rejected. A focused regression covers the completed begin path. The exact replay advances through the RNG frontier to a new independent projectile movement_map.x mismatch after frame 1542.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

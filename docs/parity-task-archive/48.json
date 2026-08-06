@@ -1,0 +1,10 @@
+{
+  "id": "48",
+  "subject": "Preserve CMD_CHANGE_WAY's redundant ReturnToDuty launch",
+  "description": "DONE. The feefc57f5 resweep exposed 39 Savegame_nicouzouf controls (32 in the 60s-15x corpus and 7 in the base random-save corpus) whose first boundary had frame.path_events.length original=2 rust=1. Savegame_059/replay-006 and Savegame_053/replay-007 both first diverged at frame 384: Soldier 42 queued two byte-identical RunningUpright requests from (910,445.00006) to (601,506) in Original, but Rust queued one. The actor's macro timer was resuming CMD_CHANGE_WAY. Original RHArtificialIntelligence::ExecuteNextMacroCommand calls AssignNewPatrolPath, whose Default-state branch synchronously Thinks EVENT_RETURN_TO_DUTY and launches one GoTo; CMD_CHANGE_WAY then redundantly calls BreakMacro and ReturnToDuty itself, launching the second identical GoTo. Rust returned immediately after assign_new_patrol_path and omitted that authored tail. The opcode now performs the explicit break_macro + return_to_duty_common_stuff call as well. Focused coverage verifies the assignment callback remains queued while the explicit tail independently emits its movement order. Both representative replays clear frame 384 and advance to the unrelated visibility_queries.length frontier at frame 441.",
+  "activeForm": "Fixing duplicate ChangeWay path-request parity",
+  "owner": "task48-cluster",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

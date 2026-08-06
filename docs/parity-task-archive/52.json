@@ -1,0 +1,8 @@
+{
+  "id": "52",
+  "subject": "Keep translating EnterSwordfight visible to synchronous AI callbacks",
+  "description": "DONE. Schema14 Savegame_linux3/Profile_003/Restart/replay-004 hung after original frame 866 inside SequenceManager hourglass. Soldier 84 repeatedly emitted a fresh EnterSwordfight action, growing sequence IDs without bound. The command already found the actor in WaitingSword, terminated immediately, delivered EVENT_DONE, and ReconsiderSwordfight launched another EnterSwordfight because Rust's pending-command predicate only scanned the launch FIFO after the current action had been popped. Original SequenceElementIsAboutToBeLaunched remains true across the Actor::Translate and synchronous SendCondolationCard boundary. Rust now includes actor_translating in that predicate and retains the translating selection until condolations have been dispatched. A focused manager regression covers the boundary. The exact replay clears the infinite loop and exits normally at the next unrelated visibility_queries.length mismatch after frame 866.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

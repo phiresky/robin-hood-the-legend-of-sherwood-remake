@@ -1563,7 +1563,7 @@ pub enum BeginShotResult {
     /// Shooter will play the shoot animation; arrow will spawn on the
     /// action-done frame.  The sequence element is now `InProgress`.
     Started,
-    /// Shooter or target no longer valid (dead, despawned, wrong kind).
+    /// Shooter or target no longer valid (inactive, despawned, wrong kind).
     /// The sequence element should be marked `Impossible`.
     Impossible,
 }
@@ -1596,12 +1596,15 @@ pub fn begin_bow_shot(
     resolved_shoot_mode: Option<ShootMode>,
     next_order_id: &mut u32,
 ) -> BeginShotResult {
-    // Validate target: must exist, be shootable, and not be the shooter.
+    // Validate target: must exist, be active/shootable, and not be the shooter.
+    // A human may have died since aiming began. The original still launches
+    // the queued shot at that retained target rather than rejecting the
+    // interaction and sending AI through its lost-enemy path.
     if shooter_id == target_id {
         return BeginShotResult::Impossible;
     }
     let target_valid = match entities.get(target_id) {
-        Some(e) if e.is_human() => !e.is_dead() && e.is_active(),
+        Some(e) if e.is_human() => e.is_active(),
         Some(Entity::Target(t)) => {
             t.element.active && t.target.action_filter.contains(TargetFilter::ARROW)
         }
@@ -4856,7 +4859,7 @@ mod tests {
     }
 
     #[test]
-    fn begin_bow_shot_rejects_dead_target() {
+    fn begin_bow_shot_accepts_active_target_that_died_while_aiming() {
         let mut entities =
             entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
         let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
@@ -4877,7 +4880,17 @@ mod tests {
             None,
             &mut 1u32,
         );
-        assert_eq!(result, BeginShotResult::Impossible);
+        assert_eq!(result, BeginShotResult::Started);
+        assert!(
+            sm.get_element(seq_id, elem_idx)
+                .unwrap()
+                .orders
+                .iter()
+                .any(|order| matches!(
+                    order.order_type,
+                    OrderType::ShootingWithBow | OrderType::ShootingWithBowUp
+                ))
+        );
     }
 
     #[test]

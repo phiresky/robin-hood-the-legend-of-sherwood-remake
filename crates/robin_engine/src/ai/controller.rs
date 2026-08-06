@@ -2206,6 +2206,13 @@ impl AiController {
                             ctx.direction,
                             &ctx.hiking_paths,
                         );
+                        // CMD_CHANGE_WAY does not stop after
+                        // AssignNewPatrolPath. The original helper synchronously calls
+                        // Think(EVENT_RETURN_TO_DUTY), then the opcode itself
+                        // redundantly breaks the macro and calls ReturnToDuty
+                        // again. Both calls launch an observable GoTo sequence.
+                        self.break_macro();
+                        self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
                         return;
                     }
 

@@ -263,6 +263,61 @@ fn invalid_patrol_assignment_preserves_original_partial_mutation() {
 }
 
 #[test]
+fn change_way_keeps_explicit_return_to_duty_after_assignment_callback() {
+    use crate::ai::macro_patrol::{MacroOpcode, PathId, PatrolPath};
+    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+
+    let waypoint = |x: i16| RawWaypoint {
+        x,
+        y: 20,
+        sector: 1,
+        level: 0,
+        command: WaypointCommand::None,
+    };
+    let paths = vec![
+        RawHikingPath {
+            waypoints: vec![waypoint(10), waypoint(30)],
+        },
+        RawHikingPath {
+            waypoints: vec![waypoint(60), waypoint(90)],
+        },
+    ];
+    let mut ai = AiController::new(17);
+    ai.current_state = AiState::Default;
+    ai.current_substate = Substate::DefaultInMacro;
+    ai.has_patrol_path = true;
+    ai.patrol_path = PatrolPath::new(PathId::new(0).unwrap(), &paths);
+    ai.macro_in_progress = true;
+    ai.macro_command = vec![MacroOpcode::ChangeWay as u8, 1, 0];
+    ai.number_of_remaining_macro_bytes = 3;
+    let ctx = AiContext {
+        position: Position {
+            x: 40.0,
+            y: 20.0,
+            sector: SectorHandle::new(1),
+            level: 0,
+        },
+        hiking_paths: std::sync::Arc::new(paths),
+        self_is_soldier: true,
+        ..AiContext::default()
+    };
+
+    ai.execute_next_macro_command(&crate::sim_rng::test_context(), &ctx);
+
+    assert_eq!(
+        ai.outbox.reentrant.self_stimuli,
+        [StimulusType::EventReturnToDuty],
+        "AssignNewPatrolPath preserves the first ReturnToDuty callback"
+    );
+    assert_eq!(
+        ai.outbox.actor.orders.len(),
+        1,
+        "CMD_CHANGE_WAY must also execute its explicit ReturnToDuty tail"
+    );
+    assert!(!ai.macro_in_progress);
+}
+
+#[test]
 fn ai_log_stimulus_strings_match_original_names_and_fallback() {
     assert_eq!(
         StimulusType::log_string_from_u16(StimulusType::EventView as u16),

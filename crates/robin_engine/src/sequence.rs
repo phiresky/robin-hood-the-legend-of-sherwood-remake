@@ -4900,6 +4900,21 @@ impl SequenceManager {
             return true;
         }
 
+        // `SequenceElementIsAboutToBeLaunched` remains true while Original's
+        // manager is synchronously translating the element it just removed
+        // from the launch queue.  Rust represents that boundary separately
+        // in `actor_translating`; without checking it, a terminal callback
+        // from an already-satisfied ENTER_SWORDFIGHT can re-enter
+        // ReconsiderSwordfight and launch the same command forever.
+        if let Some((translating_owner, element_ref)) = self.actor_translating
+            && translating_owner == owner
+            && self
+                .get_element(element_ref.sequence_id, element_ref.element_index)
+                .is_some_and(|element| command == Command::Null || element.command == command)
+        {
+            return true;
+        }
+
         let Some((seq_id, elem_idx)) = self.current_element_for_actor(owner) else {
             return false;
         };
@@ -6734,6 +6749,32 @@ mod tests {
             owner,
             Command::EnterSwordfight
         ));
+    }
+
+    #[test]
+    fn pending_command_query_sees_element_during_translation() {
+        let owner = EntityId::Soldier(crate::entity_id::SoldierId(84));
+        let mut mgr = SequenceManager::new();
+        let mut seq = Sequence::new();
+        seq.append_element(make_simple_element(
+            1,
+            Command::EnterSwordfight,
+            Some(owner),
+        ));
+        let seq_id = mgr.launch_sequence(seq);
+
+        // Hourglass has popped the launch entry, but Actor::Translate still
+        // owns the incoming element while a synchronous terminal callback
+        // queries the AI's pending-command guard.
+        mgr.elements_to_go.clear();
+        mgr.set_translating_element(Some((owner, SequenceElementRef::new(seq_id, 0))));
+
+        assert!(mgr.element_is_about_to_be_launched_or_postponed_by_current(
+            owner,
+            Command::EnterSwordfight
+        ));
+        assert!(mgr.element_is_about_to_be_launched_or_postponed_by_current(owner, Command::Null));
+        assert!(!mgr.element_is_about_to_be_launched_or_postponed_by_current(owner, Command::Move));
     }
 
     #[test]
