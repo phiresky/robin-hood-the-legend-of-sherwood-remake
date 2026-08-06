@@ -148,15 +148,27 @@ impl EngineInner {
         ScrollStatus::from_i32(raw)
     }
 
-    /// Update a scroll's status and refresh its minimap dot.
+    /// Update a scroll's status, sprite, and minimap dot.
+    ///
+    /// Original `RHElementScroll::SetStatus` owns the Opened animation side
+    /// effect, so every caller (including the script `SetScrollStatus`
+    /// native) must pass through this boundary.
     pub(crate) fn set_scroll_status(&mut self, scroll: EntityId, status: ScrollStatus) {
         let handle = crate::natives::ScriptHandleCodec::actor_handle(scroll);
         self.script_domains
             .scrolls
             .status
             .insert(handle, status as i32);
-        if let Some(entity) = self.get_entity_mut(scroll) {
-            entity.element_data_mut().custom_minimap_dot = status.custom_minimap_dot();
+        if let Some(Entity::Scroll(entity)) = self.get_entity_mut(scroll) {
+            entity.element.custom_minimap_dot = status.custom_minimap_dot();
+            if status == ScrollStatus::Opened {
+                let direction = entity.element.direction() as u16;
+                entity
+                    .element
+                    .sprite
+                    .force_animation(crate::order::OrderType::BonusThree, direction);
+                entity.object.animation = crate::order::OrderType::BonusThree;
+            }
         }
     }
 

@@ -69,6 +69,8 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #38 completed: Smalltalk back-hit now uses Original's isometric facing vector, restoring ReceiveSwordDamage and its protection draws. Representative controls for both UpdateSwordfightDistance offsets, EvaluateSwordfight, FindPositionForTableSwordfight, and protection calls all reach exact EOF; those labels were downstream topology symptoms of the same diagonal-facing bug.
 - #39 completed: removed invented receiver-side `CALL_LOOKTHERE` state gate; Original delivery is unconditional after sender selection. Both controls clear the heard-steps substate/view failure and expose a separate direction-goal residual.
 - #40 completed: The16thFrame now reads ActorData::installed_order after synchronous detection callbacks instead of using the NPC owner path's pre-detection snapshot, matching Original's live GetAnimation boundary.
+- #41 completed: opening a scroll now forces the live BonusThree sprite at the shared SetStatus boundary, clearing the repeated Scroll(111) row/frame family found in 25 completed baseline controls.
+- #42 active: investigate the distinct nicouzouf/S069 r005 f463 Pc motion-state and Soldier197 sprite-frame residual exposed after #34.
 
 Standing clusters not yet tasked: actor.animation 133 (top cluster, resweep-db67cc978 classification), direction_goal 76, position_goal_map.x 72, motion_state 70, MoveOk→MoveWaiting 57, BoredAnimationChoice 56, AiRandomValueRectangle 55, path_events.length 54, RuntimeBuildingExitWait 51, visibility_queries.length 45 (+43 ai.list_them etc.). Full breakdown: `output/parity-audits/resweep-db67cc978/classification.json`.
 

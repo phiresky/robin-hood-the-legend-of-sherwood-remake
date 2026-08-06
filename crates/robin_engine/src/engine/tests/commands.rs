@@ -43,6 +43,33 @@ fn script_globals() {
 }
 
 #[test]
+fn opened_scroll_status_forces_bonus_three_sprite() {
+    let mut engine = EngineInner::new();
+    let mut conversion = vec![0; crate::order::OrderType::NonanimationEnd as usize + 1];
+    conversion[crate::order::OrderType::BonusThree as usize] = 32;
+    let mut scroll = crate::element::ElementScroll::default();
+    scroll.element.sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(Vec::new()),
+        std::sync::Arc::new(conversion),
+    );
+    scroll.element.sprite.current_frame = 7;
+    scroll.element.sprite.frame_count = 9;
+    let scroll_id = engine.add_entity(crate::element::Entity::Scroll(scroll));
+
+    engine.set_scroll_status(scroll_id, ScrollStatus::Opened);
+
+    let scroll = engine
+        .get_entity(scroll_id)
+        .and_then(crate::element::Entity::as_scroll)
+        .expect("scroll survives status change");
+    assert_eq!(scroll.element.sprite.current_row, 32);
+    assert_eq!(scroll.element.sprite.current_frame, 0);
+    assert_eq!(scroll.element.sprite.frame_count, 0);
+    assert_eq!(scroll.object.animation, crate::order::OrderType::BonusThree);
+    assert_eq!(scroll.element.custom_minimap_dot, 1);
+}
+
+#[test]
 #[should_panic(expected = "out of range")]
 fn script_global_set_out_of_range_panics() {
     let mut engine = EngineInner::new();

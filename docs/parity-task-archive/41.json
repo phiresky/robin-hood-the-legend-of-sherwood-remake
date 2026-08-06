@@ -1,0 +1,8 @@
+{
+  "id": "41",
+  "subject": "Force the opened-scroll sprite at the shared status boundary",
+  "description": "DONE. The in-progress feefc57f5 full-universe baseline exposed a repeated Scroll(111) family in 25 completed random-save controls across Cyrdach, Nescafe, and linux profiles. Representative schema-12 Cyrdach Profile_156/Savegame_000/replay-002 first diverged at frame 937 with Original sprite row/frame 32/0 and Rust row/frame 0/8. Original RHElementScroll::SetStatus centrally calls ForceAnimation(RHANIMATION_BONUS_THREE, GetDirection()) whenever the new status is Opened. Rust's shared set_scroll_status updated only the script-domain status and minimap dot; the SetScrollStatus script command then wrote ObjectData::animation, which did not change the live sprite. The shared setter now owns both the live BonusThree force and the matching logical animation, covering script natives and all other Opened transitions. A focused regression verifies row, frame, frame counter, logical animation, and minimap state. The representative replay ran beyond its old frame-937 boundary without a parity divergence before the debug validation run was stopped; exact EOF remains for the next full-universe sweep.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
