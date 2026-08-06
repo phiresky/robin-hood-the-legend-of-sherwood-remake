@@ -1,0 +1,13 @@
+{
+  "id": "57",
+  "subject": "Classify four old-schema parity timeouts after task 52",
+  "description": "DONE, superseded by #52. Classified the four remaining old-schema timeout controls from resweep-feefc57f5 with bounded optimized runs against current main and pre-#52 instrumentation. All four were the same unbounded EnterSwordfight sequence-manager family; none remains a distinct hang. (1) Savegame_SuN1Sh1nE/Profile_004/Savegame_013/replay-014 formerly stalled in frame 2141 while Soldier 85 generated fresh EnterSwordfight sequences (218581, 218582, ...) without leaving the manager drain. Current main exits normally after frame 2141 at actor.animation for Soldier 85, Original 54 versus Rust 283. (2) Savegame_SuN1Sh1nE/Profile_004/Savegame_036/replay-013 formerly completed frame 960 then made no progress through frame 961 under the pre-#52 bounded scan. Current main exits normally after frame 961 with PC 318 direction Original 4 versus Rust 5, direction_goal Original 2 versus Rust 5, and sprite_row Original 1188 versus Rust 1189. (3) Savegame_linux3/Profile_003/Savegame_008/replay-011 formerly stalled in frame 17301 while Soldier 100 generated EnterSwordfight sequences 15561, 15562, ... beyond 10,000 actions. Current main exits normally after frame 17301 with Soldier 100 animation Original 62 versus Rust 283, command ParrySmalltalkLeft versus Wait, and visibility_queries.length Original 21 versus Rust 24. (4) Savegame_linux3/Profile_003/Savegame_073/replay-006 formerly stalled in frame 47752 while Soldier 137 generated EnterSwordfight sequences 990714, 990715, ... beyond 10,000 actions. Current main advances another 158 frames and reaches an RNG frontier during Original frame 47910: Rust consumes draws 2671..2676 at VipIdleRemark, BoredAnimationChoice, VipIdleRemark, VipIdleRemark, MeleeInitiative while Original ends at draw 2675. These results confirm task #52's translating-element visibility fix clears the complete seven-control timeout set; the exposed state and RNG differences are independent follow-up frontiers.",
+  "activeForm": "Classifying old-schema timeout controls",
+  "owner": "task48-cluster",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [
+    "52"
+  ],
+  "resolution": "All four old-schema timeouts clear under #52; three stop at ordinary state frontiers and one advances to a later RNG frontier. No distinct hang remains among the seven baseline timeout controls."
+}
