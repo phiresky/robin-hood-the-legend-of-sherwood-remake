@@ -891,6 +891,14 @@ fn apply_element_base(element: &mut crate::element::ElementData, converted: Conv
     element.blipped = converted.blipped;
     element.unreachable = converted.unreachable;
     let sprite = &mut element.sprite;
+    // RHSprite serializes its own fields before delegating to
+    // RHPositionInterface::Serialize. On read, a changed alternate-profile
+    // flag immediately calls SwitchAlternateProfile(), so the row is
+    // recomputed with the freshly constructed sprite's direction; the saved
+    // position/direction is restored only afterward. Preserve that observable
+    // load-order artifact instead of treating the payload as one atomic state.
+    let pre_restore_alternate_profile = sprite.use_alternate_profile;
+    let pre_restore_direction = sprite.position_iface.get_direction().as_u8() as u16;
     sprite.current_row = converted.sprite.current_row;
     sprite.current_frame = converted.sprite.current_frame;
     sprite.frame_count = converted.sprite.frame_count;
@@ -898,7 +906,12 @@ fn apply_element_base(element: &mut crate::element::ElementData, converted: Conv
     sprite.current_height = converted.sprite.current_height;
     sprite.current_width = converted.sprite.current_width;
     sprite.last_action = converted.sprite.last_action;
-    sprite.use_alternate_profile = converted.sprite.alternate_profile;
+    if converted.sprite.alternate_profile != pre_restore_alternate_profile {
+        sprite.use_alternate_profile = pre_restore_alternate_profile;
+        sprite.switch_alternate_profile(pre_restore_direction);
+    } else {
+        sprite.use_alternate_profile = converted.sprite.alternate_profile;
+    }
     sprite.masked = converted.sprite.masked;
     sprite.behind_display_order_ref = converted.sprite.behind_display_order_reference;
     sprite.display_order_ref = converted.sprite.display_order_reference;
@@ -3714,6 +3727,72 @@ fn ai_base_mut(brain: &mut AiBrain) -> Option<&mut AiController> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sprite_adoption_preserves_original_profile_switch_before_position_restore() {
+        use crate::position_interface::Direction;
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+        let mut element = crate::element::ElementData::default();
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[OrderType::RunningUpright as usize] = 224;
+        let mut scripts = vec![SpriteScript::default(); 240];
+        scripts[234].frame_ids = vec![0; 8];
+        element.sprite.scripts = std::sync::Arc::new(scripts.clone());
+        element.sprite.alternate_scripts = Some(std::sync::Arc::new(scripts));
+        element.sprite.conversion = std::sync::Arc::new(conversion.clone());
+        element.sprite.alternate_conversion = Some(std::sync::Arc::new(conversion));
+        element.sprite.use_alternate_profile = true;
+        element
+            .sprite
+            .position_iface
+            .set_direction_instantly(Direction::from_raw(10));
+
+        let mut saved_position = element.sprite.position_iface.v48_serialized_state();
+        saved_position.direction = Direction::from_raw(6);
+        saved_position.direction_goal = Direction::from_raw(6);
+        let converted = ConvertedElementBase {
+            outline_colors: [0; 5],
+            current_outline: OutlineColorName::Default,
+            outline_width: 0,
+            custom_minimap_dot: 0,
+            active: true,
+            position_map_delayed: false,
+            delayed_map_position: MapPoint::new(0.0, 0.0),
+            position_delayed: false,
+            delayed_position: crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0),
+            in_honolulu: false,
+            index_in_elements_list: 113,
+            blipped: false,
+            unreachable: false,
+            sprite: ConvertedSprite {
+                current_row: 230,
+                current_frame: 7,
+                frame_count: 0,
+                flight_frame_countdown: 0,
+                current_height: 0,
+                current_width: 0,
+                last_action: OrderType::RunningUpright,
+                alternate_profile: false,
+                masked: false,
+                behind_display_order_reference: false,
+                display_order_reference: None,
+                action_done_frame: 0,
+                action_done_counter: 0,
+                last_sound_id: 0,
+                last_processed_order_id: 0,
+                animation_replacements: Vec::new(),
+                position: saved_position,
+            },
+        };
+
+        apply_element_base(&mut element, converted);
+
+        assert!(!element.sprite.use_alternate_profile);
+        assert_eq!(element.sprite.position_iface.get_direction().as_u8(), 6);
+        assert_eq!(element.sprite.current_row, 234);
+        assert_eq!(element.sprite.current_frame, 7);
+    }
 
     #[test]
     fn actor_seek_sector_preserves_a_saved_door_sector_identity() {

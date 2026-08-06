@@ -1,0 +1,8 @@
+{
+  "id": "43",
+  "subject": "Preserve sprite profile-switch ordering during legacy save adoption",
+  "description": "DONE. The in-progress feefc57f5 full-universe baseline exposed an identical 15-control Savegame_SuN1Sh1nE/Profile_004/Savegame_009 family. Representative replay-001 first diverged at frame 22228 with Soldier(113) sprite row 234 in Original versus 230 in Rust, while frame, direction, movement, and RNG remained aligned; the rows converged on the following movement frame. The saved state itself contains row 230 and direction 6. Original RHSprite::Serialize reads sprite state before RHPositionInterface state; when the saved alternate-profile flag differs from the freshly constructed blipped sprite, it calls SwitchAlternateProfile immediately and recomputes the row with the pre-load direction 10, then restores saved direction 6 afterward. Rust's atomic legacy adoption omitted this observable ordering artifact. apply_element_base now reproduces the conditional profile switch before restoring serialized position state. A focused regression recreates the constructed/saved mismatch and verifies final profile false, saved direction 6, transient row 234, and retained frame 7. The representative replay ran beyond its former frame-22228 boundary until the 120-second debug validation timeout with no divergence; exact EOF remains for the next full-universe sweep.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
