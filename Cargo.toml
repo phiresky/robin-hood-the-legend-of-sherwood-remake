@@ -38,6 +38,20 @@ opt-level = 3
 lto = "thin"
 # codegen-units = 1
 
+# Optimized replay-validation profile. Parity investigations rebuild the
+# engine frequently and then run long traces, so release-like optimization is
+# valuable but whole-program LTO is not: even thin LTO makes every one-line
+# engine change relink the entire example for many minutes. Keep incremental
+# codegen units reusable and trade a little runtime throughput for fast links.
+#
+# Use with: cargo build --profile parity --example original_parity_replay
+[profile.parity]
+inherits = "release"
+lto = false
+incremental = true
+codegen-units = 16
+debug = 0
+
 # Dev profile tuned for fast incremental iteration.
 # - debug = "line-tables-only": file:line in backtraces, no locals/types.
 #   Workflow is --replay + trace! logging, not interactive debugging.
