@@ -1,0 +1,8 @@
+{
+  "id": "49",
+  "subject": "Retain dead PCs in the complete AI fighter registry",
+  "description": "DONE. The current schema14 Savegame_linux3/Profile_001/Savegame_013/replay-006 survivor panicked at frame 1515 because archer 115 retained dead PC 173 as its primary target, but Rust's complete fighter snapshot omitted that PC. Original's append-only marrayFighters retains a dead actor object, so ArcherIsToNearToEnemy can still dereference a previously selected primary target even though IsAbleToFight excludes it from new nearby-fighter lists. Rust used one PC builder for both views and unconditionally filtered inactive/dead PCs. After restoring the snapshot, the same frame exposed a second invented guard: shoot_bow_at rejected a target that died during the aiming timer, while Original ShootArrowAt unconditionally launches its interaction against the retained pointer. The radius-limited nearby view still filters through the exact PC IsAbleToFight predicates, the complete registry retains dead or inactive PC snapshots with honest ability/death fields, and bow interaction launch preserves the selected target. Focused regressions cover both distinctions; the exact replay advances beyond frame 1515.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

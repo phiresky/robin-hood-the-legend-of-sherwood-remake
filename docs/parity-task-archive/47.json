@@ -1,0 +1,8 @@
+{
+  "id": "47",
+  "subject": "Use committed gate-side positions in swordfight fighter snapshots",
+  "description": "DONE. Residual exposed after task #45 at parity-random-save-replays-60s-15x/Savegame_nicouzouf/Profile_001/Savegame_069/replay-005 frame 1299. Soldier 198's ReconsiderSwordfight consumes the two sober DrunkCombatFreeze draws and then Original issues GoNear, while Rust made an extra SwordStrikeSelection draw. RHArtificialIntelligence::Position(actor) returns the movement gate's committed point_in/point_out whenever IsPassingDoor is true. Will Scarlet was passing door 52 toward point_out (635, 2921), about 121 units from Soldier 198, but Rust's FighterSnapshot retained Will's interpolated map position (668.26, 2911.46), only 86 units away. That incorrectly skipped the both-weapons-out-of-range branch. Fighter snapshots now use the same committed door-side RHposition, including sector/layer, and preserve Original's carrier-position override for carried fighters. A focused regression covers a door-passing fighter whose live and committed positions straddle combat range. The exact replay clears the SwordStrikeSelection frontier and advances from frame 1299 to an unrelated Soldier 187 AI-substate mismatch at frame 1332.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

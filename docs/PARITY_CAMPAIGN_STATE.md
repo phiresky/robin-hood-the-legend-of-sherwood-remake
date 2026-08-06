@@ -77,8 +77,11 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #44 completed: final point-target Seek arrivals launch attached post-seek actions, and DropAle now uses Original's authored animation/DONE lifecycle and exact bottle placement/initialization. Three cross-family controls reach EOF.
 - #45 completed: removed the invented Attacking-state gate from BeginSwordfight, restoring synchronous EVENT_GOTHIT retaliation at f465. The later frame1299 RNG frontier is #47.
 - #46 completed: smalltalk strikes now route to the bespoke Human animation executor instead of the specialized melee owner, restoring the missing action-DONE damage/protection pair; the exact replay reaches EOF.
-- #47 active: investigate nicouzouf/S069 r005 frame1299 SwordStrikeSelection RNG after #45.
+- #47 completed: fighter snapshots now use Original's committed gate-side position during door passage, clearing the extra SwordStrikeSelection draw at frame 1299; the next unrelated frontier is Soldier 187's AI substate at frame 1332.
 - #48 active: mine the near-complete baseline for the next broad family.
+- #49 completed: the complete fighter registry retains dead PCs for held Original pointers, and ShootArrowAt no longer invents a dead-target admission guard. The frame-1515 panic and command/animation mismatch clear; the same-frame extra post-shot seek RNG is #50.
+- #50 active: investigate schema14 linux3/P001/Savegame_013 replay-006 frame 1515 after the restored dead-target ShootBow launch; Rust consumes an extra SeekPointSelection batch after the two matching draws.
+- #51 active: investigate nicouzouf/S069 replay-005 Soldier 187's AI-substate frontier at frame 1332 after #47.
 
 Standing clusters not yet tasked: actor.animation 133 (top cluster, resweep-db67cc978 classification), direction_goal 76, position_goal_map.x 72, motion_state 70, MoveOk→MoveWaiting 57, BoredAnimationChoice 56, AiRandomValueRectangle 55, path_events.length 54, RuntimeBuildingExitWait 51, visibility_queries.length 45 (+43 ai.list_them etc.). Full breakdown: `output/parity-audits/resweep-db67cc978/classification.json`.
 

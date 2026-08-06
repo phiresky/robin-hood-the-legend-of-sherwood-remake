@@ -208,14 +208,9 @@ impl EngineInner {
             return None;
         };
         match target_entity {
-            Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_) if target_entity.is_dead() => {
-                tracing::warn!(
-                    shooter = ?shooter,
-                    target = ?target,
-                    "shoot_bow_at: dead target"
-                );
-                return None;
-            }
+            // ShootArrowAt launches the interaction against its retained
+            // pointer without rechecking IsDead. A target may die after an
+            // archer selected it but before the aiming timer expires.
             Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_) => {}
             Entity::Target(t)
                 if t.target

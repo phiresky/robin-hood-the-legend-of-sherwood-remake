@@ -1935,6 +1935,172 @@ fn nearby_fighters_keeps_inactive_self_and_filters_ineligible_others() {
     assert!(!fighters[0].is_carried);
 }
 
+#[test]
+fn full_fighter_registry_retains_dead_pc_for_held_ai_targets() {
+    let mut engine = EngineInner::new();
+    let self_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let dead_pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Dead));
+
+    let Entity::Soldier(self_soldier) =
+        engine.get_entity_mut(self_id).expect("test fighter exists")
+    else {
+        panic!("test fighter changed kind")
+    };
+    self_soldier.element.active = true;
+    self_soldier.npc.life_points = 100;
+    self_soldier
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("test fighter has enemy AI")
+        .base
+        .me = self_id.index();
+
+    let Entity::Pc(dead_pc) = engine
+        .get_entity_mut(dead_pc_id)
+        .expect("dead test PC exists")
+    else {
+        panic!("dead test PC changed kind")
+    };
+    dead_pc.element.active = true;
+    dead_pc.pc.life_points = 0;
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let nearby = engine.build_nearby_fighters_for(
+        self_id,
+        &assets,
+        &crate::sight_obstacle::SharedSightObstacles::default(),
+    );
+    assert!(
+        !nearby
+            .iter()
+            .any(|fighter| fighter.handle == dead_pc_id.index())
+    );
+
+    let registry = engine.build_full_fighter_registry_for_test(self_id, &assets);
+    let dead_snapshot = registry
+        .iter()
+        .find(|fighter| fighter.handle == dead_pc_id.index())
+        .expect("Original fighter registry retains dead PC objects");
+    assert!(dead_snapshot.is_dead);
+    assert!(!dead_snapshot.is_able_to_fight);
+}
+
+#[test]
+fn bow_interaction_accepts_a_target_that_died_while_aiming() {
+    use crate::profiles::{BowProfile, BowShootMode, CharacterProfile, ProfileManager};
+
+    let mut engine = EngineInner::new();
+    let shooter = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let target = engine.add_entity(make_test_pc(crate::element::Posture::Dead));
+    let Entity::Pc(dead_target) = engine.get_entity_mut(target).expect("dead target exists") else {
+        panic!("dead target changed kind")
+    };
+    dead_target.element.active = true;
+    dead_target.pc.life_points = 0;
+
+    let mut profiles = ProfileManager::new();
+    profiles.characters.push(CharacterProfile {
+        shooting_weapon_id: 1,
+        shooting: 100,
+        ..CharacterProfile::default()
+    });
+    profiles.bows.push(BowProfile {
+        normal_shoot: BowShootMode {
+            range: 2000,
+            ..BowShootMode::default()
+        },
+        ..BowProfile::default()
+    });
+    let mut assets = LevelAssets {
+        profile_manager: std::sync::Arc::new(profiles),
+        ..LevelAssets::new()
+    };
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    assert!(engine.shoot_bow_at(&assets, shooter, target).is_some());
+}
+
+#[test]
+fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
+    use crate::coordinates::{MapPoint, WorldPoint3D};
+    use crate::element::ActiveDoorPass;
+    use crate::gate::{Door, DoorIndex, DoorType};
+    use crate::sector::SectorNumber;
+    use std::collections::VecDeque;
+
+    let mut engine = EngineInner::new();
+    let self_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+
+    for (id, x) in [(self_id, 0.0), (target_id, 20.0)] {
+        let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("test fighter exists")
+        else {
+            panic!("test fighter changed kind")
+        };
+        soldier.element.active = true;
+        soldier.npc.life_points = 100;
+        soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("test fighter has enemy AI")
+            .base
+            .me = id.index();
+        soldier.element.set_position(WorldPoint3D::new(x, 0.0, 0.0));
+        soldier.element.set_position_map(MapPoint::new(x, 0.0));
+    }
+
+    let Entity::Soldier(target) = engine
+        .get_entity_mut(target_id)
+        .expect("door-passing target exists")
+    else {
+        panic!("door-passing target changed kind")
+    };
+    target.actor.active_door_pass = Some(ActiveDoorPass {
+        door_index: DoorIndex(0),
+        direct: false,
+        position_direct: false,
+        steps: VecDeque::new(),
+        triggers_fired: 0,
+        current_action: crate::order::OrderType::WalkingWithSword,
+        current_reverse: false,
+        saved_action_state: None,
+    });
+
+    engine.script_domains.interactables.doors = vec![Door {
+        door_type: DoorType::Default,
+        sector_out: SectorNumber::new(7),
+        sector_in: SectorNumber::new(8),
+        layer_out: 3,
+        layer_in: 4,
+        point_out: MapPoint::new(120.0, 5.0),
+        point_in: MapPoint::new(100.0, 5.0),
+        ..Door::default()
+    }];
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let fighters = engine.build_nearby_fighters_for(
+        self_id,
+        &assets,
+        &crate::sight_obstacle::SharedSightObstacles::default(),
+    );
+    let target = fighters
+        .iter()
+        .find(|fighter| fighter.handle == target_id.index())
+        .expect("door-passing target remains inside the fighter radius");
+    assert_eq!(target.position.x, 120.0);
+    assert_eq!(target.position.y, 5.0);
+    assert_eq!(
+        target.position.sector,
+        crate::position_interface::SectorHandle::new(7)
+    );
+    assert_eq!(target.position.level, 3);
+}
+
 fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInner {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;

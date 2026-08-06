@@ -2284,6 +2284,15 @@ impl EngineInner {
         self.build_fighter_snapshots_for(npc_id, assets, Some(500.0))
     }
 
+    #[cfg(test)]
+    pub(super) fn build_full_fighter_registry_for_test(
+        &self,
+        npc_id: crate::element::EntityId,
+        assets: &LevelAssets,
+    ) -> Vec<crate::ai_enemy::FighterSnapshot> {
+        self.build_fighter_snapshots_for(npc_id, assets, None)
+    }
+
     fn build_fighter_snapshots_for(
         &self,
         npc_id: crate::element::EntityId,
@@ -2300,7 +2309,45 @@ impl EngineInner {
         let Some(enemy_ai) = soldier.npc.ai_brain.enemy() else {
             return Vec::new();
         };
-        let me_pos_pt = soldier.element.position_map();
+        let doors = self.script_domains.interactables.doors.as_slice();
+        let fighter_position = |id: crate::element::EntityId| {
+            let entity = self
+                .world
+                .entities
+                .get(id)
+                .unwrap_or_else(|| panic!("fighter snapshot owner {id:?} disappeared"));
+            // Handle zero is a valid fighter-registry slot even though the
+            // primary-target lookup reserves it as the null target.
+            if id.index() == 0 {
+                let elem = entity.element_data();
+                return Position {
+                    x: elem.position_map().x,
+                    y: elem.position_map().y,
+                    sector: elem.sector(),
+                    level: elem.layer(),
+                };
+            }
+            let (position, _, _, carrier_position, _) = lookup_primary_target_metadata(
+                &self.world.entities,
+                &self.orders.sequence_manager,
+                doors,
+                id,
+            )
+            .unwrap_or_else(|| panic!("fighter snapshot owner {id:?} disappeared"));
+            let passing_door = entity
+                .actor_data()
+                .is_some_and(|actor| actor.active_door_pass.is_some());
+            // RHArtificialIntelligence::Position uses the carrier for a PC
+            // on shoulders, except that its earlier door-passing arm returns
+            // the committed gate side immediately.
+            if passing_door {
+                position
+            } else {
+                carrier_position.unwrap_or(position)
+            }
+        };
+        let me_position = fighter_position(npc_id);
+        let me_pos_pt = crate::coordinates::MapPoint::new(me_position.x, me_position.y);
         let me_elevation = soldier.element.position().z;
         let my_camp = soldier.soldier.cached_camp;
         let me_handle = enemy_ai.base.me;
@@ -2315,7 +2362,7 @@ impl EngineInner {
             if require_able && !is_able_to_fight {
                 return None;
             }
-            let pos = s.element.position_map();
+            let position = fighter_position(EntityId::Soldier(SoldierId(handle)));
             let enemy_ai_other = s
                 .npc
                 .ai_brain
@@ -2402,8 +2449,8 @@ impl EngineInner {
             Some(FighterSnapshot {
                 handle,
                 position: Position {
-                    x: pos.x,
-                    y: pos.y,
+                    x: position.x,
+                    y: position.y,
                     // `Position(entity)` in Original copies the complete
                     // RHposition, including its authoritative sector
                     // pointer.  Combat helpers later copy this position
@@ -2411,8 +2458,8 @@ impl EngineInner {
                     // cover point behind a stationary shield bearer), so
                     // discarding the sector here turns an otherwise valid
                     // same-sector GoTo into EVENT_COULDNT_REACHPOINT.
-                    sector: s.element.sector(),
-                    level: s.element.layer(),
+                    sector: position.sector,
+                    level: position.level,
                 },
                 direction: s.element.direction() as u16,
                 is_friendly,
@@ -2461,15 +2508,19 @@ impl EngineInner {
         // Build a PC snapshot for `handle`. PCs belong to the Royalist camp,
         // so they are enemies for Lackland soldiers and friends for friendly
         // forest soldiers.
-        let build_pc = |handle: u32| -> Option<FighterSnapshot> {
+        let build_pc = |handle: u32, require_able: bool| -> Option<FighterSnapshot> {
             let pc = self.world.entities.get_pc(PcId(handle))?;
-            if !pc.element.active || pc.pc.life_points <= 0 {
+            let is_dead = pc.pc.life_points <= 0;
+            let is_unconscious = pc.human.unconscious;
+            let is_able_to_fight = pc.element.active
+                && !is_dead
+                && !is_unconscious
+                && !matches!(pc.element.posture, Posture::Tree | Posture::Spy);
+            if require_able && !is_able_to_fight {
                 return None;
             }
-            let is_unconscious = pc.human.unconscious;
             let is_carried = pc.human.carrier.is_some();
-            let alive = !is_unconscious;
-            let pos = pc.element.position_map();
+            let position = fighter_position(EntityId::Pc(PcId(handle)));
             let character = assets
                 .profile_manager
                 .get_character(pc.pc.profile_index)
@@ -2492,32 +2543,28 @@ impl EngineInner {
                 hth_profile.distance[crate::weapons::WeaponDistance::Maximal as usize],
                 hth_profile.distance[crate::weapons::WeaponDistance::Uber as usize],
             );
-            let in_recovery = !alive || self.actor_is_in_sword_recovery(EntityId::Pc(PcId(handle)));
+            let in_recovery =
+                !is_able_to_fight || self.actor_is_in_sword_recovery(EntityId::Pc(PcId(handle)));
             let opponent_handles: Vec<u32> =
                 pc.human.opponents.iter().map(|id| id.index()).collect();
             let number_of_opponents = opponent_handles.len().min(u16::MAX as usize) as u16;
+            let live_position = pc.element.position_map();
             let pc_seek_position = Position {
-                x: pos.x,
-                y: pos.y,
+                x: live_position.x,
+                y: live_position.y,
                 sector: pc.element.sector(),
                 level: pc.element.layer(),
             };
             Some(FighterSnapshot {
                 handle,
-                position: Position {
-                    x: pos.x,
-                    y: pos.y,
-                    sector: pc.element.sector(),
-                    level: pc.element.layer(),
-                },
+                position,
                 direction: pc.element.direction() as u16,
                 is_friendly: my_camp == Camp::Royalists,
                 is_swordfighting: !pc.human.opponents.is_empty(),
-                is_able_to_fight: alive
-                    && !matches!(pc.element.posture, Posture::Tree | Posture::Spy),
+                is_able_to_fight,
                 is_tied: pc.element.posture == Posture::Tied,
                 is_unconscious,
-                is_dead: false, // filtered life_points > 0 above
+                is_dead,
                 is_carried,
                 is_pc: true,
                 is_soldier: false,
@@ -2575,7 +2622,7 @@ impl EngineInner {
             };
             let (position, elevation, snapshot) = match entity {
                 Entity::Soldier(soldier) => (
-                    soldier.element.position_map(),
+                    fighter_position(id),
                     soldier.element.position().z,
                     // Radius-limited snapshots model
                     // FillListWithAllNearFighters and therefore exclude
@@ -2586,9 +2633,9 @@ impl EngineInner {
                     build_soldier(id.index(), max_distance.is_some()),
                 ),
                 Entity::Pc(pc) => (
-                    pc.element.position_map(),
+                    fighter_position(id),
                     pc.element.sprite.position_iface.get_elevation(),
-                    build_pc(id.index()),
+                    build_pc(id.index(), max_distance.is_some()),
                 ),
                 _ => continue,
             };
@@ -2598,7 +2645,10 @@ impl EngineInner {
             // component. Comparing raw map coordinates instead pushed
             // fighters standing a layer above or below out of every
             // consideration radius built on this snapshot.
-            let world = crate::coordinates::GroundPoint::from_map_and_z(position, elevation);
+            let world = crate::coordinates::GroundPoint::from_map_and_z(
+                crate::coordinates::MapPoint::new(position.x, position.y),
+                elevation,
+            );
             let me_world = crate::coordinates::GroundPoint::from_map_and_z(me_pos_pt, me_elevation);
             let dx = world.x - me_world.x;
             let dy = (world.y - me_world.y) * crate::position_interface::INVERSE_ASPECT_RATIO;

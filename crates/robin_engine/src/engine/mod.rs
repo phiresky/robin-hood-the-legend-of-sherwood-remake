@@ -5088,9 +5088,6 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
             description.character_profile_idx = Some(pc.pc.profile_index);
         }
 
-        if !pc.element.active || pc.pc.life_points <= 0 {
-            continue;
-        }
         if profiles.characters[profile_idx].hth_weapon_id == 0 {
             profiles.characters[profile_idx].hth_weapon_id = 1;
         }
