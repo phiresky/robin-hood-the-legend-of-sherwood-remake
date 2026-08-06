@@ -1442,6 +1442,47 @@ impl EngineInner {
 
     // ─── PC coma / amulet death-save ────────────────────────────────
 
+    /// Close the PC wounded/coma virtual boundary at a damage-apply site.
+    ///
+    /// The wounding entry points dispatch `GetWounded` virtually, so a VIP
+    /// PC establishes its amulet coma (5-HP floor, maximum concussion)
+    /// *inside* the damage call — before the damage element is translated
+    /// and before the shared `SayOuch` classifies the result. Rust's shared
+    /// damage primitives cannot mutate campaign state, so every wounding
+    /// site closes that boundary here, immediately after writing the life
+    /// points.
+    ///
+    /// Returns `true` when the coma save activated, in which case the
+    /// caller's downstream death handling must be skipped.
+    pub(super) fn close_pc_wounded_coma_boundary(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+        damage: u16,
+        life_points_before: i16,
+        life_points_after: i16,
+    ) -> bool {
+        let victim_is_pc = self
+            .get_entity(victim_id)
+            .is_some_and(|victim| victim.kind().is_pc());
+        let coma_saved = victim_is_pc
+            && life_points_before > 0
+            && damage > 0
+            && life_points_after <= 0
+            && self.try_pc_coma_save(sim, assets, victim_id, damage);
+
+        // The coma branch marks the campaign coma, stores the 5-HP floor
+        // through the PC life-point setter (which emits HERO_HURT for a drop
+        // greater than twenty), and only then applies maximum concussion.
+        // The shared SayOuch path skips unconscious actors, so preserve that
+        // life-point-setter callback explicitly at this boundary.
+        if coma_saved && 5 < life_points_before - 20 {
+            self.hero_speaking(assets, victim_id, HERO_HURT);
+        }
+        coma_saved
+    }
+
     /// Check if a PC should be saved from death by an amulet (coma mechanic).
     ///
     /// If the PC is a VIP, not already in coma, and the campaign has amulets,

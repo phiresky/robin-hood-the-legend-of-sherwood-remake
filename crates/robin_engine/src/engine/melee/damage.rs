@@ -378,7 +378,6 @@ impl EngineInner {
             Some(e) => e,
             None => return,
         };
-        let victim_is_pc = victim.kind().is_pc();
         let (human, lp) = match victim.human_and_life_points_mut() {
             Some(pair) => pair,
             None => return,
@@ -387,27 +386,14 @@ impl EngineInner {
         let (result, cutting_inflicted) = combat::receive_sword_damage(sim, human, lp, &params);
 
         let raw_life_points_after = *lp;
-        // RHElementActorHuman::ReceiveSwordDamage dispatches GetWounded
-        // virtually. For a VIP PC, RHElementActorPC::GetWounded consumes an
-        // amulet and establishes the 5-HP coma state *inside* the cutting
-        // damage call, before ReceiveSwordDamage returns and before SayOuch
-        // classifies the result as HERO_HURT or HERO_DIE. Rust's shared
-        // damage primitive cannot mutate campaign state, so close that
-        // virtual boundary here rather than deferring it to
-        // handle_post_damage.
-        let coma_saved = victim_is_pc
-            && raw_life_points_after <= 0
-            && cutting_inflicted > 0
-            && self.try_pc_coma_save(sim, assets, victim_id, cutting_inflicted);
-        if coma_saved && 5 < life_points_before - 20 {
-            // PC::GetWounded marks the campaign coma, stores the 5-HP
-            // floor through PC::SetLifePoints (which emits HERO_HURT for a
-            // drop greater than twenty), and only then applies maximum
-            // concussion. The shared SayOuch path below intentionally skips
-            // unconscious actors, so preserve that virtual SetLifePoints
-            // callback explicitly at this boundary.
-            self.hero_speaking(assets, victim_id, HERO_HURT);
-        }
+        let coma_saved = self.close_pc_wounded_coma_boundary(
+            sim,
+            assets,
+            victim_id,
+            cutting_inflicted,
+            life_points_before,
+            raw_life_points_after,
+        );
         let life_points_after = self
             .get_entity(victim_id)
             .map(get_life_points)
@@ -722,16 +708,30 @@ impl EngineInner {
         // Dispatch combat stimulus to attacker's AI: EventLethalStrike
         // if victim died, EventGoodStrike if damage was dealt.
         //
-        // Original provenance: `RHElementActorHuman::TranslateDamage` calls
-        // the attacker's `Think(EVENT_{LETHAL,GOOD}_STRIKE)` inline
-        // (`original-code/RHelementactorhuman.cpp:2633-2665`). In particular,
-        // the good-strike handler must still observe
-        // `SUBSTATE_ATTACKING_SWORDFIGHT_SPECIAL_STRIKE`; leaving this in the
-        // ordinary NPC-phase queue can suppress the associated combat remark.
+        // The damage translation runs this inline, so the stimulus is
+        // dispatched synchronously — the good-strike handler must still
+        // observe the special-strike substate, and leaving this in the
+        // ordinary NPC-phase queue can suppress the associated combat
+        // remark.
+        //
+        // TODO: both informs sit after the posture switch in the original
+        // translation, which returns early for a victim that is already on
+        // the ground (or on a ladder / wall), and the good-strike inform
+        // additionally requires cutting damage and a soldier attacker.
+        // Adding those gates did not move the remaining speech-FIFO
+        // repros, so they are recorded rather than applied unvalidated.
         if !result.is_empty()
             && !result.contains(combat::SwordDamageResult::NO_DAMAGE_PARRIED)
             && let Some(atk_id) = attacker_id
         {
+            if victim_died {
+                // Dead people can't fight: the victim leaves the swordfight
+                // before the hitter is informed. The quit notification
+                // reaches the attacker first and moves it out of its
+                // special-strike substate, which is what keeps the kill
+                // remark from firing on a blow that ends the fight.
+                self.quit_swordfight(sim, assets, victim_id);
+            }
             let stimulus_type = if victim_died {
                 crate::ai::StimulusType::EventLethalStrike
             } else {
@@ -949,6 +949,7 @@ impl EngineInner {
             self.control.sim_config.difficulty,
         );
         let max_lp = get_max_life_points(victim);
+        let life_points_before = get_life_points(victim);
 
         let victim = match self.world.entities.get_mut(victim_id) {
             Some(e) => e,
@@ -960,6 +961,15 @@ impl EngineInner {
         };
 
         let _died = combat::receive_generic_damage(human, lp, damage, concussion, max_lp, &ctx);
+        let raw_life_points_after = *lp;
+        self.close_pc_wounded_coma_boundary(
+            sim,
+            assets,
+            victim_id,
+            damage,
+            life_points_before,
+            raw_life_points_after,
+        );
 
         // Shoulder-posture victims route through
         // `translate_shoulder_damage` instead of the base-class
@@ -1073,6 +1083,7 @@ impl EngineInner {
             self.control.sim_config.difficulty,
         );
         let max_lp = get_max_life_points(victim);
+        let life_points_before = get_life_points(victim);
 
         let victim = match self.world.entities.get_mut(victim_id) {
             Some(e) => e,
@@ -1084,6 +1095,15 @@ impl EngineInner {
         };
 
         let _died = combat::receive_piercing_damage(human, lp, damage, concussion, max_lp, &ctx);
+        let raw_life_points_after = *lp;
+        self.close_pc_wounded_coma_boundary(
+            sim,
+            assets,
+            victim_id,
+            damage,
+            life_points_before,
+            raw_life_points_after,
+        );
         // Raw attempted damage — overkill hits show the same number
         // as a non-overkill hit would.  `add_damage_number` no-ops on 0.
         self.add_damage_number(victim_id, damage);
