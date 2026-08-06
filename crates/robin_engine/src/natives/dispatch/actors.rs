@@ -981,6 +981,7 @@ impl NativeContext<'_, '_> {
                 // element inline. Launching through the live manager keeps
                 // its sequence id ordered with recorded Thanx sequences and
                 // yields to ProcessMessage before this callback resumes.
+                tracing::trace!(target_actor = actor, message = msg, "script SendMessage");
                 let mut sequence = Sequence::new();
                 sequence.append_element(self.build_send_message_element(1, actor, msg, 0, 0));
                 self.launch_script_sequence(sequence, 0);

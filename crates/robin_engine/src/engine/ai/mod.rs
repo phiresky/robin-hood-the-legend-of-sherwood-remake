@@ -11748,6 +11748,13 @@ impl EngineInner {
         wp_idx: u8,
     ) {
         let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(npc_id);
+        tracing::trace!(
+            frame = self.control.frame_counter,
+            owner = npc_id.index(),
+            path = ?path_idx,
+            wp = wp_idx,
+            "waypoint ReachPoint dispatch"
+        );
         if let Err(error) = self.call_script_vm(
             sim,
             assets,
