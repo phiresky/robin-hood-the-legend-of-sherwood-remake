@@ -4671,3 +4671,9 @@ objects.
 - Cumulative: 2,390 / 5,164 passing (46.3%).
 - Wave-13 fixes measured: sworddmg/sheriffkill/orderlag/seekdoor/speechfifo mostly moved frontiers deeper (101->1 conversions ~95 traces) rather than reaching EOF.
 - Classification: output/parity-audits/resweep-db67cc978/classification.json (202 groups). Top: actor.animation 133, rng:VipIdleRemark 80, direction_goal 76, position_goal_map.x 72, motion_state 70, MoveOk->MoveWaiting 57.
+
+## Re-sweep 13 — 2026-08-06, runner 69df41aeb
+- Manifest: 2,418 failures from re-sweep 12. Result: 31 exact-EOF passes, 1,948 state-div, 431 RNG-panic, 8 timeouts.
+- Cumulative: 2,421 / 5,164 passing (46.9%). Measures #12/#14/#18/#26/#29/#32; #33/#27/#25/#30/#19 land in sweep 14.
+- Sweep 14 must be FULL-UNIVERSE (seek-RNG regression #36 invisible to failure-only sweeps).
+- Classification: output/parity-audits/resweep-69df41aeb/classification.json
