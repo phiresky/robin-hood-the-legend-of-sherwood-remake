@@ -15,7 +15,7 @@ use super::util::{
     check_straight_movement, det2, dot2, evaluate_combat_position_full, get_normal, get_normal_iso,
     get_normal_right, is_any_swordfight_substate, is_observing_combat_substate,
     is_walking_running_charging_substate, iso_norm, iso_normalize, max_norm, pos_diff,
-    sector_to_vector, square_norm, vec_to_sector, vec_to_sector_ar,
+    sector_to_vector, sector_to_vector_iso, square_norm, vec_to_sector, vec_to_sector_ar,
 };
 use super::{
     CombatPosition, EnemyAi, FighterSnapshot, PrimaryTargetFlags, ProfileRank, Question, SeekFlags,
@@ -2960,7 +2960,10 @@ impl EnemyAi {
             let v_to_me = pos_diff(&me_pos, &pos_fighter);
             let distance = iso_norm(v_to_me, ASPECT_RATIO) as u16;
 
-            let target_dir = sector_to_vector(primary.direction);
+            // `RHElement::GetDirectionVector` constructs this vector with
+            // `SetSector0to15(direction, ASPECT_RATIO)`.  The isometric Y
+            // compression is significant near the behind/in-front boundary.
+            let target_dir = sector_to_vector_iso(primary.direction, ASPECT_RATIO);
             // Reference condition:
             //   primary.direction_vector * (pos_fighter - pos_me) > 0
             // This means the target is looking away from the observer,

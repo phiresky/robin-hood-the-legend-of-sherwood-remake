@@ -1,9 +1,9 @@
 {
   "id": "28",
   "subject": "Fix strike resolution one frame early (f19137) + side-step misattribution",
-  "description": "Strike half fixed: at schema14/linux3/P003/Savegame_010/replay-007, the apparent one-frame timing mismatch was actually the lateral sweep seed geometry. Original seeds angular admission from GetPositionGround and range from the full 3D GetPosition norm, while Rust used map-space geometry and incorrectly admitted Pc192 (sector 11 instead of ground-space sector 12), causing damage/RNG at f19137. The focused regression passes and the replay advances to an unrelated Soldier144 substate mismatch at f19165. REMAINING: the largest SwordDamageProtection sub-cluster (8 traces, linux2/P002/Savegame_003 family) is misattributed — the real extra draw is a SECOND CombatObserveSideStep (Original 1x, Rust 2x). Rust retains archer177→shield179 in the observed repro; investigate the side-step cadence/association family separately (kin of aba2a0406 battle-predecision).",
+  "description": "DONE in two parts. The lateral-strike f19137 mismatch came from seed geometry: Original uses ground-space direction plus full 3D range, while Rust used map space and incorrectly admitted Pc192. The separate linux2/P002/Savegame_003 side-step RNG family was not association cadence: numeric substate 155 is RunningToEnemy, and Original Soldier183 takes that attack opportunity. Original GetDirectionVector aspect-scales Y; Rust used an unscaled sector vector for the target-behind dot product, flipped the diagonal half-plane test, fell through to CombatObserveSideStep, and consumed the extra draw. The isometric vector clears replay-002 f13985 and replay-006's cluster; both advance to later unrelated frontiers (#46 tracks replay-002 f14266).",
   "activeForm": "Fixing strike timing and side-step",
-  "status": "in_progress",
+  "status": "completed",
   "blocks": [],
   "blockedBy": []
 }
