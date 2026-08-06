@@ -232,7 +232,6 @@ impl EngineInner {
 
         self.tick_push_flights(sim, assets);
         self.tick_enemy_sword_attacks(sim, assets);
-        self.tick_refresh_hero_mouth();
         self.tick_pc_combat_anim_speech(sim, assets);
         self.tick_refresh_purse_disable(assets);
     }

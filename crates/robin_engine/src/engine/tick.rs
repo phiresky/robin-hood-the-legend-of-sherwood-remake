@@ -1408,6 +1408,13 @@ impl EngineInner {
         // only re-runs `perform_hourglass`, so anything advancing engine
         // state outside it would diverge from the live timeline.
         self.update_overall_villain_alert(&assets.profile_manager);
+        // Forbidden-expression timers age in the Original's per-frame PC
+        // render refresh, which runs after the whole simulation frame.  Keep
+        // the decrement here (not inside a mid-hourglass melee phase) so a
+        // bark queued by any hourglass phase still ages this frame; otherwise
+        // the 75-frame forbid window ends one frame late and a repeat bark
+        // the Original accepted at exactly +75 frames is wrongly rejected.
+        self.tick_refresh_hero_mouth();
         display.minimap.tick_transition();
         // Advance the delayed-reveal highlight state machine.  Run it
         // once per hourglass (rather than from the draw loop) so
