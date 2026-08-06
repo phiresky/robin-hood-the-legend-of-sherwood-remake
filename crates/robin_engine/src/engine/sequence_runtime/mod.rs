@@ -804,18 +804,12 @@ impl TargetAnimationContext<'_> {
             order.compute_direction = false;
             self.sequence_manager.push_order_on(seq_id, elem_idx, order);
             self.sequence_manager.element_in_progress(seq_id, elem_idx);
-            // Actor::Instruct publishes the translated first order through
-            // mpOrder before returning. This branch returns Skip to the outer
-            // dispatcher, so it must perform that publication locally.
-            self.entities
-                .get_mut(owner)
-                .and_then(crate::element::Entity::actor_data_mut)
-                .expect("human PlayAnim owner lost actor data")
-                .installed_order = Some(crate::element::InstalledActorOrder {
-                order_id: id,
-                order_type: wrapper,
-            });
-            return OwnerActionBarrier::Skip;
+            // This is an ordinary accepted Actor::Instruct boundary. Let the
+            // outer dispatcher publish mpOrder and project IN_PROGRESS after
+            // the manager drain, just like every other translated actor
+            // command. Returning Skip here used to strand the outgoing
+            // animation's terminal motion edge on PlayAnim instructions.
+            return OwnerActionBarrier::Reach;
         }
 
         if !owner_entity.kind().is_fx_target() {

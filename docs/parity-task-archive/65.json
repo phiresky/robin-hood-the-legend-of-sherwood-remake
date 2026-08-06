@@ -1,0 +1,8 @@
+{
+  "id": "65",
+  "subject": "Preserve accepted PlayAnim motion edge",
+  "description": "DONE. In the retained Savegame_SuN1Sh1nE/Profile_004/Savegame_013/replay-014 control, Civilian 39 completed TransitionWalkingUprightWaitingUpright at frame 785 and accepted a script-recorded PlayAnim(TransitionWaitingUprightSitting) in the same SequenceManager drain. Original PlayAnim translation appends PLAY_CUSTOM and then continues the ordinary Actor::Instruct epilogue, which writes RHMOTION_IN_PROGRESS. Rust's TargetAnimationContext appended and promoted the PlayCustom order but returned an OwnerActionBarrier::Skip, bypassing the shared accepted-instruction mpOrder and motion projection and leaving the outgoing transition's Terminated state visible. Human PlayAnim translation now returns Reach so all four PlayAnim variants use the common accepted Actor::Instruct epilogue; FX targets remain on their non-Actor path. The focused test covers PlayAnim, PlayAnimLoop, PlayAnimFreeze, and PlayAnimFrozen. The exact replay now matches every recorded frame, including the former 126-frame downstream residual and task #59's later swordfight boundary.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

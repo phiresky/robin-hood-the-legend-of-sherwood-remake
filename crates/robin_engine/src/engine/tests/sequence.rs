@@ -899,49 +899,61 @@ fn play_anim_uses_custom_wrapper_instead_of_requested_animation_semantics() {
     use crate::order::OrderType;
     use crate::sequence::{Field, FieldValue, SequenceElement, SequenceState};
 
-    let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
-    engine
-        .get_entity_mut(owner)
-        .expect("test soldier exists")
-        .actor_data_mut()
-        .expect("test soldier is an actor")
-        .action_state = ActionState::Bored;
-
-    let mut element = SequenceElement::new_generic(1, Command::PlayAnim, Some(owner));
-    element.set_property(
-        Field::AnimationId,
-        FieldValue::Animation(OrderType::Pointing),
-    );
-    let sequence = engine.orders.sequence_manager.launch_element(element);
-    let mut display = HostDisplayState::default();
-    engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
-        &mut display,
-        &LevelAssets::default(),
-    );
-
-    let element = engine
-        .orders
-        .sequence_manager
-        .get_element(sequence, 0)
-        .expect("PlayAnim element remains live");
-    assert_eq!(element.state, SequenceState::InProgress);
-    assert_eq!(
-        element.current_order().map(|order| order.order_type),
-        Some(OrderType::PlayCustom),
-        "Pointing is only the requested sprite animation; Original executes the PlayCustom wrapper"
-    );
-    assert_eq!(
+    for (command, wrapper) in [
+        (Command::PlayAnim, OrderType::PlayCustom),
+        (Command::PlayAnimLoop, OrderType::PlayCustomLooped),
+        (Command::PlayAnimFreeze, OrderType::PlayCustomFreeze),
+        (Command::PlayAnimFrozen, OrderType::PlayCustomFrozen),
+    ] {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_test_soldier(Posture::Upright));
         engine
+            .get_entity_mut(owner)
+            .expect("test soldier exists")
+            .actor_data_mut()
+            .expect("test soldier is an actor")
+            .action_state = ActionState::Bored;
+
+        let mut element = SequenceElement::new_generic(1, command, Some(owner));
+        element.set_property(
+            Field::AnimationId,
+            FieldValue::Animation(OrderType::Pointing),
+        );
+        let sequence = engine.orders.sequence_manager.launch_element(element);
+        let mut display = HostDisplayState::default();
+        engine.hourglass_phase_sequences(
+            &crate::sim_rng::test_context(),
+            &mut display,
+            &LevelAssets::default(),
+        );
+
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .expect("PlayAnim element remains live");
+        assert_eq!(element.state, SequenceState::InProgress);
+        assert_eq!(
+            element.current_order().map(|order| order.order_type),
+            Some(wrapper),
+            "Pointing is only the requested sprite animation; Original executes the command wrapper"
+        );
+        let actor = engine
             .get_entity(owner)
             .expect("test soldier remains")
             .actor_data()
-            .expect("test soldier remains an actor")
-            .action_state,
-        ActionState::Bored,
-        "translating custom Pointing must not apply Pointing's Waiting state"
-    );
+            .expect("test soldier remains an actor");
+        assert_eq!(
+            actor.action_state,
+            ActionState::Bored,
+            "translating custom Pointing must not apply Pointing's Waiting state"
+        );
+        assert_eq!(
+            actor.continuation.motion_state,
+            crate::sprite::MotionState::InProgress,
+            "accepted {command:?} must project Actor::Instruct's IN_PROGRESS edge"
+        );
+    }
 }
 
 /// An attentive-mode transition on an idle soldier queues
