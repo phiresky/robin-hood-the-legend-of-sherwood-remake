@@ -3402,13 +3402,64 @@ impl EngineInner {
             OrderType::WalkingUpright
         };
 
+        // The drop point's sector and layer come from the cursor, not from
+        // the actor: take the topmost sector under the point, resolve a patch
+        // overlay to the sector it covers, and resolve a jump sector to the
+        // sector it sits in. Jump sectors carry no sector number of their own,
+        // so reading the number off the raw hit loses the goal entirely and
+        // the seek never learns that it has to cross a gate.
+        //
+        // TODO: the original also refuses the whole action when the resolved
+        // sector is a door, or a lift that is a wall or ladder. Not ported
+        // yet — a mis-resolution here would silently drop a replayed command,
+        // so the guard needs its own validation pass.
+        let (goal_sector, goal_layer) = {
+            let reference = self
+                .get_entity(actor)
+                .map(|e| e.element_data().position_map())
+                .unwrap_or(target_pos);
+            let hit = self
+                .world
+                .fast_grid
+                .get_sector_screen(target_pos, reference);
+            let resolved = hit.sector_idx.and_then(|idx| {
+                let sector = self.world.fast_grid.level.sectors.get(usize::from(idx))?;
+                if sector.sector_type.is_patch() || sector.sector_type.is_jump() {
+                    let under_idx = sector.underlying_sector?;
+                    let under = self
+                        .world
+                        .fast_grid
+                        .level
+                        .sectors
+                        .get(usize::from(under_idx))?;
+                    Some((under.sector_number, sector.layer))
+                } else {
+                    Some((sector.sector_number, hit.layer))
+                }
+            });
+            match resolved {
+                Some((number, layer)) => (
+                    crate::position_interface::SectorHandle::new(u16::from(number)),
+                    layer,
+                ),
+                None => (
+                    hit.sector
+                        .map(u16::from)
+                        .and_then(crate::position_interface::SectorHandle::new),
+                    hit.layer,
+                ),
+            }
+        };
+
+        // The move box is authorised on the cursor's layer, the same one the
+        // seek element is stamped with.
         let mut destination_pos = target_pos;
         if move_box.is_somewhere() {
             let mut box_at_target = move_box.translated(target_pos);
             if self
                 .world
                 .fast_grid
-                .find_authorized_position(&mut box_at_target, layer)
+                .find_authorized_position(&mut box_at_target, goal_layer)
             {
                 let center = box_at_target.center();
                 destination_pos = crate::coordinates::MapPoint {
@@ -3418,7 +3469,7 @@ impl EngineInner {
             } else {
                 tracing::warn!(
                     ?actor,
-                    layer,
+                    goal_layer,
                     target_x = target_pos.x,
                     target_y = target_pos.y,
                     "apply_drop_ale_at: target move box has no authorized position"
@@ -3426,41 +3477,6 @@ impl EngineInner {
                 return;
             }
         }
-
-        // The seek element carries the hovered sector / layer, which the
-        // point-seek translation needs to decide whether reaching the drop
-        // point crosses a gate.
-        let (goal_sector, goal_layer) = {
-            let reference = self
-                .get_entity(actor)
-                .map(|e| e.element_data().position_map())
-                .unwrap_or(target_pos);
-            // The drop point was authorised on the actor's own layer, so probe
-            // that layer first; the top-down screen scan only answers for the
-            // layers it walks.
-            match self
-                .world
-                .fast_grid
-                .get_sector(target_pos, reference, layer)
-            {
-                crate::fast_find_grid::SectorHit::Found { sector_number, .. } => (
-                    crate::position_interface::SectorHandle::new(u16::from(sector_number)),
-                    layer,
-                ),
-                _ => {
-                    let hit = self
-                        .world
-                        .fast_grid
-                        .get_sector_screen(target_pos, reference);
-                    (
-                        hit.sector
-                            .map(u16::from)
-                            .and_then(crate::position_interface::SectorHandle::new),
-                        hit.layer,
-                    )
-                }
-            }
-        };
 
         tracing::trace!(
             ?actor,

@@ -3786,6 +3786,17 @@ impl EngineInner {
             let old_is_building = prev_sector
                 .map(|s| is_building_sector(self, s))
                 .unwrap_or(false);
+            tracing::trace!(
+                entity = ?entity_id,
+                gate_idx,
+                door = ?shot.door_index,
+                direct = shot.direct,
+                prev_sector,
+                new_sector = shot.new_sector,
+                old_is_building,
+                is_jump = shot.is_jump,
+                "gate-traversal sequence emits a gate"
+            );
 
             // Original sequence construction uses the caller's action
             // for both approach and door-pass sub-elements.
