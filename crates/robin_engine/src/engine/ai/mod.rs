@@ -773,6 +773,13 @@ pub(super) fn build_ai_context_from_entity(
         .and_then(|actor| actor.installed_order)
         .map(|order| order.order_type)
         .unwrap_or(crate::order::OrderType::NonanimationEnd);
+    tracing::trace!(
+        target: "robin_engine::ai::goto",
+        me = elem.index_in_elements_list,
+        frame,
+        ?self_animation,
+        "build_ai_context: installed mpOrder animation"
+    );
     // Only soldiers can be forced-attentive; civilians always read
     // `false`.  Threaded into AiContext so
     // `set_alert_status_with_flags` can apply the view-override from
@@ -11553,19 +11560,6 @@ impl EngineInner {
             };
             let frame = self.control.frame_counter;
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-            // Original `RHElementActor::GetAnimation()` reads the current
-            // order and returns `RHNONANIMATION_END` when `mpOrder` is null.
-            // A self-stimulus commonly runs immediately after an order has
-            // terminated (notably ScriptUnlockAI -> EventReturnToDuty), while
-            // `Sprite::last_action` still names the animation that just
-            // finished. Recompute this for every recursive stimulus because
-            // the preceding one may install or terminate another order.
-            let live_animation = self
-                .orders
-                .sequence_manager
-                .current_order_for_actor(npc_id)
-                .map(|(_, _, order)| order.order_type)
-                .unwrap_or(crate::order::OrderType::NonanimationEnd);
             let ctx = {
                 let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
                     panic!("re-entrant self-Think NPC {} disappeared", npc_id.index())
@@ -11586,7 +11580,6 @@ impl EngineInner {
                     self.control.sim_config.difficulty,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
-                ctx.self_animation = live_animation;
                 ctx
             };
             let stimulus = crate::ai::Stimulus::new(stimulus_type);
@@ -11899,12 +11892,6 @@ impl EngineInner {
         }
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-        let live_animation = self
-            .orders
-            .sequence_manager
-            .current_order_for_actor(npc_id)
-            .map(|(_, _, order)| order.order_type)
-            .unwrap_or(crate::order::OrderType::NonanimationEnd);
         let ctx = {
             let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
                 panic!(
@@ -11928,7 +11915,6 @@ impl EngineInner {
                 self.control.sim_config.difficulty,
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
-            ctx.self_animation = live_animation;
             ctx
         };
         self.world
@@ -11976,12 +11962,6 @@ impl EngineInner {
 
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-        let live_animation = self
-            .orders
-            .sequence_manager
-            .current_order_for_actor(npc_id)
-            .map(|(_, _, order)| order.order_type)
-            .unwrap_or(crate::order::OrderType::NonanimationEnd);
         let ctx = {
             let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
                 panic!(
@@ -12005,7 +11985,6 @@ impl EngineInner {
                 self.control.sim_config.difficulty,
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
-            ctx.self_animation = live_animation;
             ctx
         };
         self.world
@@ -12042,12 +12021,6 @@ impl EngineInner {
 
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-        let live_animation = self
-            .orders
-            .sequence_manager
-            .current_order_for_actor(npc_id)
-            .map(|(_, _, order)| order.order_type)
-            .unwrap_or(crate::order::OrderType::NonanimationEnd);
         let ctx = {
             let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
                 panic!("patrol-start macro owner {} disappeared", npc_id.index())
@@ -12068,7 +12041,6 @@ impl EngineInner {
                 self.control.sim_config.difficulty,
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
-            ctx.self_animation = live_animation;
             ctx
         };
         self.world
