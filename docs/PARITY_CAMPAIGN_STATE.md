@@ -64,7 +64,7 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #28 strike resolution one frame early (f19137) + CombatObserveSideStep misattribution (8)
 - #31 360-gate LOS/detection us-list composition (2 repros @f33630/f13778, all-soldier membership, relates to detection.detectables.length cluster 68)
 - #34 tolerance-arrival + StrangleCmd post-seek Moving stamp (nicouzouf/S069 r005 f457) — check if survives sweep first
-- #35 LeaveSpy/LeaveTree priority NotYetSet latent hazard
+- #35 completed: Rust-only LeaveSpy/LeaveTree commands inherit Original CROUCH_UP's Preference priority; Original appends the cape/tree transition order to that same posture-toggle element.
 - #37 completed: retired the old nicouzouf_061 save family in `docs/PARITY_RETIRED_SAVES.txt` and the local `tmp/regen14-saves.txt`; all 15 schema-14 replacement traces already exist (the 11 affected old-schema captures lacked `hero_refused_action` records and were unfixable as recorded; original-code commit d494273).
 - #38 swordfight RNG divergence — the "rng:VipIdleRemark" cluster (80) is MISLABELED (classifier keys on first RNG site of frame); real mismatches are UpdateSwordfightDistance (offsets 1807002/1807253), ReceiveSwordDamage (1746896/1747024), EvaluateSwordfight (1814391), FindPositionForTableSwordfight (~1804390), SwordDamageProtection. Offsets symbolized via addr2line on original-code/build/native-full/robin.
 - #39 heard-steps noise delivery (fix-corpsewalk, interrupted at start)

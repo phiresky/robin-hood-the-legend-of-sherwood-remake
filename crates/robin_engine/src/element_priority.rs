@@ -71,7 +71,13 @@ fn pc_branch(ctx: ActorPriorityContext, elem: &SequenceElement) -> SequencePrior
     match elem.command {
         Command::Fall => SequencePriority::NonInterruptable,
 
-        Command::CrouchUp | Command::CrouchDown => SequencePriority::Preference,
+        // LeaveSpy/LeaveTree are Rust-only commands used when an explicit
+        // posture toggle leaves the two hidden PC postures. Original keeps
+        // RHCOMMAND_CROUCH_UP (Preference priority) and appends the cape or
+        // tree transition order to that same element in MakePostureTransition.
+        Command::CrouchUp | Command::CrouchDown | Command::LeaveSpy | Command::LeaveTree => {
+            SequencePriority::Preference
+        }
 
         Command::JumpCmd
         | Command::ClimbUpOnShoulders
@@ -354,6 +360,18 @@ mod tests {
             determine_priority(pc_ctx(), &elem),
             SequencePriority::Normal
         );
+    }
+
+    #[test]
+    fn pc_rust_only_hidden_posture_exits_inherit_crouch_up_priority() {
+        for command in [Command::LeaveSpy, Command::LeaveTree] {
+            let elem = make_elem(command);
+            assert_eq!(
+                determine_priority(pc_ctx(), &elem),
+                SequencePriority::Preference,
+                "{command:?} should retain Original CROUCH_UP arbitration",
+            );
+        }
     }
 
     #[test]
