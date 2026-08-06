@@ -43,6 +43,16 @@ fn enough_nearer_friends_to_observe(
         >= visible_enemies + visible_enemies * (0.045_f32 * f32::from(courage))
 }
 
+/// BattleDecisions treats a swordfight-family target as occupied. Multiple
+/// nearby friends pursuing that same target do not stack the 100-point
+/// `UNOCCUPIED_PREFERRED` penalty at this decision-local seam.
+fn mark_battle_target_occupied(
+    multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
+    target: HumanHandle,
+) {
+    multiplicity.insert(target, 1);
+}
+
 #[track_caller]
 fn battle_friend_detected_360(
     ctx: &AiContext,
@@ -612,9 +622,11 @@ impl EnemyAi {
 
         // BattleDecisions owns a fresh, local multiplicity calculation in
         // the original. It first resets every enemy currently in mlistThem,
-        // then increments targets claimed by nearby swordfighting friends
-        // and finally ensures every enemy already in a swordfight has at
-        // least one claimant. The engine-wide snapshot is deliberately not
+        // then marks targets claimed by nearby swordfighting-family friends
+        // as occupied and finally ensures every enemy already in a swordfight
+        // has at least one claimant. The decision-local value is occupancy,
+        // not a stacking count when multiple friends pursue the same target.
+        // The engine-wide snapshot is deliberately not
         // equivalent: it still contains claims from actors outside this
         // decision's rebuilt us/them lists.
         let mut decision_target_multiplicity = std::collections::BTreeMap::new();
@@ -742,7 +754,7 @@ impl EnemyAi {
                     continue;
                 }
                 if super::util::is_any_swordfight_substate(cs.ai_substate as u32) {
-                    *decision_target_multiplicity.entry(target).or_insert(0) += 1;
+                    mark_battle_target_occupied(&mut decision_target_multiplicity, target);
                 }
                 // The Them list rejects duplicates on insertion, so a target
                 // an earlier entry or friend already contributed is dropped
@@ -3323,4 +3335,13 @@ mod tests {
             "BattleDecisions must not replace the persistent list with its tick snapshot"
         );
     }
+}
+#[test]
+fn battle_target_occupancy_does_not_stack_duplicate_friend_claims() {
+    let mut multiplicity = std::collections::BTreeMap::from([(174, 0)]);
+
+    mark_battle_target_occupied(&mut multiplicity, 174);
+    mark_battle_target_occupied(&mut multiplicity, 174);
+
+    assert_eq!(multiplicity[&174], 1);
 }

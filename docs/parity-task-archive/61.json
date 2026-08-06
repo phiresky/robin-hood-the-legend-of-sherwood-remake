@@ -1,0 +1,8 @@
+{
+  "id": "61",
+  "subject": "Saturate BattleDecisions duplicate target claims",
+  "description": "DONE. In schema14 Savegame_linux3/Profile_001/Continue/replay-001, Soldier 115 diverged at frame 1162 because its narrow Follow cone tracked a different PC. The hidden choice was made by the frame-1112 ArcherObserve BattleDecisions pass: two nearby friends in the broad swordfight substate family pursued the same target, and Rust stacked their decision-local UNOCCUPIED_PREFERRED multiplicity penalty. Original's control treats that seam as target occupancy, so duplicate friend claims saturate at one. BattleDecisions now marks the target occupied instead of incrementing duplicate claims, with a focused regression. The exact replay clears frame 1162 and advances to an independent projectile movement frontier after frame 1216.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
