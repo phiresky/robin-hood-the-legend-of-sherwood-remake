@@ -326,6 +326,12 @@ impl AiActorOutbox {
     /// semantics. A Think call can issue `Focus(NULL)` and then focus a new
     /// target before the deferred engine drain.
     pub fn set_focus(&mut self, target: HumanHandle) {
+        // `Focus(element)` with a null element is `Unfocus()` in the
+        // Original; handle 0 is the AI's null-target sentinel.
+        if target == 0 {
+            self.set_unfocus();
+            return;
+        }
         self.focus = Some(target);
         self.focus_point = None;
         self.unfocus = false;

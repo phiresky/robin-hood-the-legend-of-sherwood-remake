@@ -373,7 +373,9 @@ impl EngineInner {
     }
 
     /// Per-frame refresh of all PCs' forbidden expression list counters.
-    pub(super) fn tick_refresh_hero_mouth(&mut self) {
+    /// Runs after the whole simulation frame (the Original ages these in its
+    /// per-frame PC render refresh), so same-frame barks always age once.
+    pub(in crate::engine) fn tick_refresh_hero_mouth(&mut self) {
         for (_, pc) in self.world.entities.pcs_mut() {
             pc.pc.forbidden_expressions.retain_mut(|(_, timer)| {
                 *timer = timer.saturating_sub(1);

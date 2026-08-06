@@ -195,6 +195,17 @@ impl EngineInner {
                 && entity.element_data().posture == crate::element_kinds::Posture::AnonymousArcher
         });
         if is_anonymous_archer_pc {
+            tracing::trace!(
+                ?owner,
+                ?sequence_id,
+                element_index,
+                ?command,
+                destination = ?stored_destination,
+                target = ?target_element,
+                ?flags,
+                frame = self.control.frame_counter,
+                "move instruct refused: anonymous archer",
+            );
             self.hero_speaking(
                 assets,
                 owner,
