@@ -5,9 +5,10 @@ Written when the session ran out of credits (limit resets 18:30 Berlin; earlier 
 ## Standing orders (user directives, all still in force)
 
 - **"keep going until ALL replays are 100% parity. until then do not stop."** Proper general fixes aligned with `original-code/` C++ — no per-trace hacks. See memory `project_parity_campaign`.
-- Release builds ONLY on the remote (`ssh atlasbio-robin-cpu4`, repo copy at `~/robinhood/rust-src`); fix agents use DEBUG builds locally.
-- Never `/tmp` — use repo-local `tmp/`. Never `git stash`. Never pipe cargo output through filters. No clippy in worktree agents.
-- Agents validate ONLY 2-4 key repros + 2-3 short controls in debug; the remote release re-sweep is the wide regression check.
+- This session is already running on the remote server: do **not** SSH. All builds and sweeps run directly in this sandboxed checkout.
+- Prefer debug for local investigation, but individual long replays may use release when the longer link is cheaper than debug execution; decide per repro.
+- Never `git stash`. Never pipe cargo output through filters. No clippy in worktree agents. Preserve all unrelated tracked and untracked worktree state.
+- Agents validate 2-4 key repros + focused controls; the local release full-universe sweep is the wide regression check.
 - Consult `docs/SNAPSHOT_INPUT_AUDIT.md` for the determinism/ownership contract.
 
 ## Score
