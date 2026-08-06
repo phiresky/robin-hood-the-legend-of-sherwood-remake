@@ -1246,6 +1246,9 @@ impl AiGlobalState {
                     let max_norm = dx.abs().max(dy.abs());
                     if max_norm <= 5.0 {
                         sp.position = door_info.position_in;
+                        // First matching door wins: the point has moved
+                        // inside, so later doors must not re-teleport it.
+                        break;
                     }
                 }
             }

@@ -2967,28 +2967,85 @@ impl EnemyAi {
                     {
                         seek_flags |= SeekFlags::LOCATION_FIRST;
                     }
-                    if self.base.my_reconnaissance_report.report_type == ReportType::MissedCharly {
-                        seek_flags |= SeekFlags::CHARLY_SEEK | SeekFlags::LOCATION_FIRST;
-                    }
-
                     // Instruct each soldier via direct CALL_INSTRUCTION and
                     // prune refusals from the live list before finalising.
                     let instructed = self.alerted_us.clone();
+
+                    // When the group is chasing a missed friend who walks a
+                    // patrol path, the officer spreads the group along that
+                    // path: every soldier gets its own waypoint as the seek
+                    // point, stepping by `(len - 1) / (soldiers - 1)` and
+                    // wrapping. Only then does the whole group keep
+                    // LOCATION_FIRST — otherwise the officer sends everyone to
+                    // the same reported position and only the first soldier
+                    // searches the location itself.
+                    let mut charly_waypoints: Vec<Position> = Vec::new();
+                    if self.base.my_reconnaissance_report.report_type == ReportType::MissedCharly {
+                        seek_flags |= SeekFlags::CHARLY_SEEK;
+                        let charly = self.base.my_reconnaissance_report.charly;
+                        let charly_path = ctx.entity_view(charly).and_then(|view| {
+                            view.has_patrol_path
+                                .then_some(view.patrol_hiking_path_index)
+                                .flatten()
+                        });
+                        if let Some(path_index) = charly_path
+                            && !instructed.is_empty()
+                            && let Some(path) = ctx.hiking_paths.get(usize::from(path_index))
+                            && !path.waypoints.is_empty()
+                        {
+                            seek_flags |= SeekFlags::LOCATION_FIRST;
+                            charly_waypoints = path
+                                .waypoints
+                                .iter()
+                                .map(|w| Position {
+                                    x: w.x as f32,
+                                    y: w.y as f32,
+                                    sector: None,
+                                    level: w.level,
+                                })
+                                .collect();
+                        }
+                    }
+
+                    // Waypoint cursor and stride for the charly-path spread.
+                    let waypoint_step = if charly_waypoints.is_empty() {
+                        0
+                    } else if instructed.len() > 1 {
+                        (charly_waypoints.len() - 1) / (instructed.len() - 1)
+                    } else {
+                        0
+                    };
+                    let mut waypoint_index = 0usize;
+
                     tracing::trace!(
                         target: "robin_engine::ai_enemy::phalanx",
                         officer = self.base.me,
                         frame = ctx.frame,
                         group = ?instructed,
+                        charly_waypoints = charly_waypoints.len(),
                         "officer instructs its alerted group with CallInstruction"
                     );
                     for (index, handle) in instructed.iter().copied().enumerate() {
+                        let soldier_seek_pos = if charly_waypoints.is_empty() {
+                            if index > 0 {
+                                // Everyone after the first searches the area
+                                // around the point, not the point itself.
+                                seek_flags &= !SeekFlags::LOCATION_FIRST;
+                            }
+                            seek_pos
+                        } else {
+                            let pos = charly_waypoints[waypoint_index];
+                            waypoint_index =
+                                (waypoint_index + waypoint_step) % charly_waypoints.len();
+                            pos
+                        };
                         self.base.outbox.reentrant.cross_npc_actions.push(
                             CrossNpcAction::RequestThinkResult {
                                 target: handle,
                                 caller: self.base.me,
                                 stimulus_type: StimulusType::CallInstruction,
                                 info: StimulusInfo::Hint(Hint {
-                                    seek_point: seek_pos,
+                                    seek_point: soldier_seek_pos,
                                     seek_flags: seek_flags.bits(),
                                     who_tells_me: self.base.me,
                                 }),
