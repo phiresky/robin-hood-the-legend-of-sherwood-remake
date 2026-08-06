@@ -3325,8 +3325,25 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
     );
     assert_eq!(
         engine.orders.sequence_manager.sequences_iter().count(),
-        sequence_count_before + 2,
-        "failed setup synchronously appends only its required victim Wait"
+        sequence_count_before + 4,
+        "failed setup appends Strangle, victim Wait, and faithful hit-retaliation orders"
+    );
+    let victim_commands: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| element.owner == Some(victim))
+        .map(|element| element.command)
+        .collect();
+    assert_eq!(
+        victim_commands,
+        [
+            Command::Wait,
+            Command::EnterSwordfight,
+            Command::EnterAttentiveMode
+        ],
+        "Original EVENT_GOTHIT retaliation remains synchronous after the failed Strangle setup"
     );
     let victim_waits: Vec<_> = engine
         .orders
