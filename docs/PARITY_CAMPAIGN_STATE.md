@@ -85,7 +85,8 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #52 completed: the sequence manager now retains the translating actor selection through synchronous condolence callbacks, and pending-command queries include that translating element. This prevents `EVENT_DONE` from recursively relaunching `EnterSwordfight`; the former frame-867 hang now exits normally at an unrelated visibility-query frontier after frame 866.
 - #53 completed as superseded by #52: Restart replay-008 had the identical unbounded EnterSwordfight loop at frame 1423 (Soldier 80); current main clears it and reaches a normal visibility-query frontier. Savegame_054 replay-008 also now clears its former timeout and reaches a frame-1696 visibility frontier.
 - #54 completed: ground impact evaluation now mirrors Original's mixed-precision dominant-axis equation (`FLOAT` coefficients with `DOUBLE` secondary-coordinate evaluation), clearing Projectile192's exact-bit residual and every later frame. A pre-existing frame-776 visibility-query count remains as #56.
-- #55 active: mine another high-leverage direction-goal or motion-state family.
+- #55 completed: an entry movement that becomes `Impossible` now preserves Original's authoritative `Aborted` Execute result across a synchronous condolence-installed successor; the representative clears frame 835.
+- #58 active: investigate the separate linux3/P001/Continue replay-001 frame-973 InProgress-versus-Done motion subfamily.
 
 Standing clusters not yet tasked: actor.animation 133 (top cluster, resweep-db67cc978 classification), direction_goal 76, position_goal_map.x 72, motion_state 70, MoveOk→MoveWaiting 57, BoredAnimationChoice 56, AiRandomValueRectangle 55, path_events.length 54, RuntimeBuildingExitWait 51, visibility_queries.length 45 (+43 ai.list_them etc.). Full breakdown: `output/parity-audits/resweep-db67cc978/classification.json`.
 

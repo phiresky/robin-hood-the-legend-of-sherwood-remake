@@ -1085,9 +1085,29 @@ fn specialized_execute_motion(
     }
 }
 
+fn project_post_completion_motion(
+    current: crate::sprite::MotionState,
+    selected_element_impossible: bool,
+    live_successor_exists: bool,
+    selected_specialized_order_advanced: bool,
+) -> crate::sprite::MotionState {
+    use crate::sprite::MotionState;
+    if selected_element_impossible {
+        MotionState::Aborted
+    } else if live_successor_exists
+        && (current == MotionState::Terminated || selected_specialized_order_advanced)
+    {
+        MotionState::InProgress
+    } else if selected_specialized_order_advanced {
+        MotionState::Terminated
+    } else {
+        current
+    }
+}
+
 #[cfg(test)]
 mod specialized_execute_motion_tests {
-    use super::specialized_execute_motion;
+    use super::{project_post_completion_motion, specialized_execute_motion};
     use crate::sprite::MotionState;
 
     #[test]
@@ -1107,6 +1127,18 @@ mod specialized_execute_motion_tests {
         assert_eq!(
             specialized_execute_motion(Some(MotionState::Terminated), false, true),
             Some(MotionState::Terminated)
+        );
+    }
+
+    #[test]
+    fn impossible_entry_element_preserves_aborted_across_condolence_sprite_edges() {
+        assert_eq!(
+            project_post_completion_motion(MotionState::Terminated, true, false, true),
+            MotionState::Aborted
+        );
+        assert_eq!(
+            project_post_completion_motion(MotionState::Done, true, true, true),
+            MotionState::Aborted
         );
     }
 }
@@ -3783,6 +3815,15 @@ impl EngineInner {
                                         )
                                     })
                             });
+                        let selected_element_impossible =
+                            selected_order.is_some_and(|(entry_seq, entry_idx, _)| {
+                                self.orders
+                                    .sequence_manager
+                                    .get_element(entry_seq, entry_idx)
+                                    .is_some_and(|element| {
+                                        element.state == crate::sequence::SequenceState::Impossible
+                                    })
+                            });
                         let selected_specialized_order_advanced = specialized_execute_motion
                             .is_some_and(|motion| motion != crate::sprite::MotionState::Aborted)
                             && selected_order.is_some_and(|(entry_seq, entry_idx, entry_order)| {
@@ -3830,17 +3871,17 @@ impl EngineInner {
                             // so an entry-identity change is their equivalent of
                             // the base Hourglass TERMINATED branch even when the
                             // last raw sprite edge was START/DONE/IN_PROGRESS.
-                            if live_successor_exists
-                                && (actor.continuation.motion_state
-                                    == crate::sprite::MotionState::Terminated
-                                    || selected_specialized_order_advanced)
-                            {
-                                actor.continuation.motion_state =
-                                    crate::sprite::MotionState::InProgress;
-                            } else if selected_specialized_order_advanced {
-                                actor.continuation.motion_state =
-                                    crate::sprite::MotionState::Terminated;
-                            }
+                            // ABORTED is tied to the sequence element captured
+                            // on Actor::Hourglass entry. Its synchronous
+                            // Impossible condolence may install Wait and
+                            // overwrite the sprite's last edge, but it cannot
+                            // rewrite the Execute return already held by Actor.
+                            actor.continuation.motion_state = project_post_completion_motion(
+                                actor.continuation.motion_state,
+                                selected_element_impossible,
+                                live_successor_exists,
+                                selected_specialized_order_advanced,
+                            );
                             tracing::trace!(
                                 target: "parity_motion_state",
                                 entity = ?entity_id,

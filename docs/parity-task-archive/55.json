@@ -1,0 +1,8 @@
+{
+  "id": "55",
+  "subject": "Preserve Actor ABORTED when the entry movement becomes Impossible",
+  "description": "DONE. In schema14 Savegame_SuN1Sh1nE/Profile_004/Savegame_001/replay-007, PC 252's MoveOk became Impossible after its final committed movement at frame 835. Original reported RHMOTION_ABORTED, but Rust reported TERMINATED. Rust correctly made the selected entry element Impossible, then synchronously dispatched its condolence and installed Wait; that callback overwrote the sprite's last motion edge. The later specialized-owner retirement projection treated any retired order as a normal termination. Original Actor::Hourglass retains ABORTED against the sequence element captured before Execute, so synchronous replacement work cannot rewrite it. The post-completion projection now gives an Impossible entry element authoritative ABORTED precedence over successor/retirement inference. A focused regression covers both an overwritten TERMINATED edge and a live-successor edge. The exact representative clears frame 835 and advances to an independent sword-damage RNG frontier after frame 1079; a second motion-state control at linux3/Profile_001/Continue/replay-001 remains unchanged at its separate frame-973 InProgress-versus-Done frontier.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
