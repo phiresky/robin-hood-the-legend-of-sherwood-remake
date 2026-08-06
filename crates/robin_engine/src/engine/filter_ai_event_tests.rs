@@ -5386,6 +5386,7 @@ fn install_unrelated_multi_exit_building_actor(engine: &mut EngineInner) -> Enti
         current_reverse: false,
         saved_action_state: None,
     });
+    pc.actor.passing_door_directly = true;
     pc.element
         .sprite
         .position_iface

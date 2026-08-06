@@ -1765,6 +1765,7 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
         current_reverse: false,
         saved_action_state: None,
     });
+    pc.actor.passing_door_directly = true;
     // Forecast preparation only treats the actor as mid door transit while
     // its position interface still holds the live door pointer.
     pc.element
