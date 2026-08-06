@@ -61,7 +61,7 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #21 completed as superseded/no-fix: four archived elevation/projectile controls reach exact EOF on task-36 main; remaining symptoms route to arrow lifecycle, shield-command, and movement families.
 - #23 completed: `ForecastDestinationForIA` now preserves the independent direct-passage latch after the live door clears; both primary Seek RNG boundaries advance to separate later door/building residuals.
 - #24 completed as source-verified no-op: shipped proto loading never registers `RHSectorAssociated` (both Original lift `AddSector` calls are commented out); Rust already discards the dead click polygon.
-- #28 strike resolution one frame early (f19137) + CombatObserveSideStep misattribution (8)
+- #28 partially completed: lateral strikes now seed arc direction in Original's ground space and range in full 3D, clearing the f19137 damage/RNG boundary. The separate CombatObserveSideStep misattribution family (8) remains open; its repro retains archer177→shield179 and gives Soldier183 an extra draw.
 - #31 completed: threaded owner-boundary `Position(enemy)` into `EVENT_VIEW` and made `SeekingCombatAlert` ignore `EventTimer`; the two archived list-us symptoms were separate timing/position causes, not a shared 360-LOS composition bug.
 - #34 tolerance-arrival + StrangleCmd post-seek Moving stamp (nicouzouf/S069 r005 f457) — check if survives sweep first
 - #35 completed: Rust-only LeaveSpy/LeaveTree commands inherit Original CROUCH_UP's Preference priority; Original appends the cape/tree transition order to that same posture-toggle element.

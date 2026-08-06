@@ -1,9 +1,9 @@
 {
   "id": "28",
   "subject": "Fix strike resolution one frame early (f19137) + side-step misattribution",
-  "description": "From 1bf80b6f7's re-diagnosis: at schema14/linux3/P003/Savegame_010/replay-007, Rust resolves the sword STRIKE (2x SwordDamageProtection + MeleeProvoke) at f19137 where the Original resolves at f19138 — both engines apply damage synchronously at launch, so this is a MOTION_DONE/sweep-seed timing skew (the strike animation completes a frame early) — motion_state-family timing, NOT melee dispatch. ALSO: the largest \"SwordDamageProtection\" sub-cluster (8 traces, linux2/P002/Savegame_003 family) is misattributed — the real extra draw is a SECOND CombatObserveSideStep (Original 1x, Rust 2x) — route to a side-step cadence investigation (kin of the aba2a0406 battle-predecision area).",
+  "description": "Strike half fixed: at schema14/linux3/P003/Savegame_010/replay-007, the apparent one-frame timing mismatch was actually the lateral sweep seed geometry. Original seeds angular admission from GetPositionGround and range from the full 3D GetPosition norm, while Rust used map-space geometry and incorrectly admitted Pc192 (sector 11 instead of ground-space sector 12), causing damage/RNG at f19137. The focused regression passes and the replay advances to an unrelated Soldier144 substate mismatch at f19165. REMAINING: the largest SwordDamageProtection sub-cluster (8 traces, linux2/P002/Savegame_003 family) is misattributed — the real extra draw is a SECOND CombatObserveSideStep (Original 1x, Rust 2x). Rust retains archer177→shield179 in the observed repro; investigate the side-step cadence/association family separately (kin of aba2a0406 battle-predecision).",
   "activeForm": "Fixing strike timing and side-step",
-  "status": "pending",
+  "status": "in_progress",
   "blocks": [],
   "blockedBy": []
 }

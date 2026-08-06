@@ -1502,10 +1502,16 @@ impl EngineInner {
                         (angle_to_sector(initial), angle_to_sector(final_a))
                     }
                 };
-                collect_arc_victims(
+                let attacker_position = self
+                    .get_entity(attacker_id)
+                    .map(|entity| entity.element_data().position())
+                    .unwrap_or_else(|| {
+                        panic!("lateral strike attacker {attacker_id:?} is missing")
+                    });
+                collect_lateral_strike_victims(
                     &self.world.entities,
                     attacker_id,
-                    attacker_pos,
+                    attacker_position,
                     min_dist,
                     max_dist,
                     begin_sector,

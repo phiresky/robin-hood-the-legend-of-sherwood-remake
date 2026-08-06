@@ -1866,6 +1866,58 @@ fn collect_arc_victims(
     victims
 }
 
+/// Collect the seed list for `ExecuteLateralSwordStrike`.
+///
+/// The Original deliberately mixes coordinate spaces here: admission uses
+/// `GetPositionGround()` for the angular sector and the full 3D `GetPosition()`
+/// norm for weapon range.  Once seeded, the per-frame sweep tests the moving
+/// victim in map space.  Using map space for this initial test can admit an
+/// actor on a different elevation whose ground-space direction lies outside
+/// the strike arc.
+#[allow(clippy::too_many_arguments)]
+fn collect_lateral_strike_victims(
+    entities: &Entities,
+    attacker_id: EntityId,
+    attacker_position: crate::coordinates::WorldPoint3D,
+    min_distance: f32,
+    max_distance: f32,
+    begin_sector: u8,
+    end_sector: u8,
+    profile_manager: &crate::profiles::ProfileManager,
+    fast_grid: &crate::fast_find_grid::FastFindGrid,
+    obstacles: crate::sight_obstacle::ObstacleList<'_>,
+) -> Vec<EntityId> {
+    let mut victims = Vec::new();
+    for (target_id, entity) in entities.humans() {
+        if !is_possible_sword_strike_victim(
+            entities,
+            attacker_id,
+            entity,
+            target_id,
+            profile_manager,
+            fast_grid,
+            obstacles,
+        ) {
+            continue;
+        }
+
+        let target_position = entity.element_data().position();
+        let dx = target_position.x - attacker_position.x;
+        let dy = (target_position.y - attacker_position.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
+        let dz = target_position.z - attacker_position.z;
+        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+        if distance < min_distance || distance > max_distance {
+            continue;
+        }
+
+        let sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy) as u8;
+        if is_sector_between(sector, begin_sector, end_sector) {
+            victims.push(target_id.into());
+        }
+    }
+    victims
+}
+
 /// Original lateral warning admission is intentionally looser than the hit
 /// collector: active human, not self, geometry only.
 fn collect_lateral_warning_victims(
@@ -3411,6 +3463,88 @@ mod tests {
             soldier_life(&engine, victim),
             50,
             "lateral initialization cannot hit until a later Hourglass"
+        );
+    }
+
+    #[test]
+    fn lateral_seed_uses_ground_direction_instead_of_map_direction() {
+        let mut engine = make_engine();
+        // Both actors have the same ground Y, so the victim is due west
+        // (sector 12).  Its lower elevation projects six units south in map
+        // space, which moves the same vector into sector 11.
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+        let victim = engine.add_entity(make_soldier(WorldPoint3D::default(), None));
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .element_data_mut()
+            .set_position(WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 100.0,
+            });
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .element_data_mut()
+            .set_position(WorldPoint3D {
+                x: -15.0,
+                y: 100.0,
+                z: 94.0,
+            });
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .element_data_mut()
+            .set_direction_instantly(9);
+
+        let mut assets = assets_with_nonstraight_profile(
+            SwordStrike::E,
+            crate::profiles::WeaponThrustKind::Lateral,
+        );
+        let thrust = &mut std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0]
+            .thrusts[SwordStrike::E as usize];
+        thrust.direction = crate::profiles::WeaponThrustDirection::RightToLeft;
+        thrust.initial_angle = 45;
+        thrust.final_angle = 90;
+
+        let attacker_map = engine
+            .get_entity(attacker)
+            .unwrap()
+            .element_data()
+            .position_map();
+        let victim_map = engine
+            .get_entity(victim)
+            .unwrap()
+            .element_data()
+            .position_map();
+        let attacker_ground = engine
+            .get_entity(attacker)
+            .unwrap()
+            .element_data()
+            .position();
+        let victim_ground = engine.get_entity(victim).unwrap().element_data().position();
+        assert_eq!(
+            crate::position_interface::vector_to_sector_0_to_15(
+                victim_ground.x - attacker_ground.x,
+                victim_ground.y - attacker_ground.y,
+            ),
+            12,
+        );
+        assert_eq!(
+            crate::position_interface::vector_to_sector_0_to_15(
+                victim_map.x - attacker_map.x,
+                victim_map.y - attacker_map.y,
+            ),
+            11,
+            "the old map-space seed would admit this victim at the arc boundary"
+        );
+
+        let victims =
+            engine.execute_multi_target_strike(&assets, attacker, SwordStrike::E, Some(1));
+        assert!(
+            victims.is_empty(),
+            "Original seeds lateral victims from ground-space direction, where this actor is sector 12 and outside sectors 5..=11"
         );
     }
 
