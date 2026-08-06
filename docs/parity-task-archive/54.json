@@ -1,0 +1,8 @@
+{
+  "id": "54",
+  "subject": "Match Original projectile ground-impact rounding",
+  "description": "DONE. After task #50, schema14 Savegame_linux3/Profile_001/Savegame_013/replay-006 first differed after frame 1542 in Projectile 192 movement_map.x (-7.7423096 Original versus -7.7421875 Rust). The trace proved both sides began the frame at the same X; Rust's terminal ground point was 1454.3637695 while Original produced 1454.3636475. RHFastFindGrid::IsReachableImpact computes ground intersections by storing the dominant-axis z-line coefficients in FLOAT, solving z=0 on that axis, and evaluating the other coordinate through SBGeoLine2D's DOUBLE deltas. Rust instead used one parametric f32 ratio. Ground raycasts now reproduce the Original operation and rounding order; obstacle impacts retain their existing path. A regression uses the exact descending arrow segment and asserts both terminal coordinate bits. The exact replay matches every recorded frame.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

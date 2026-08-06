@@ -1166,6 +1166,7 @@ pub fn is_reachable_impact_3d(
     // Walk active, type-matching obstacles and find the nearest impact.
     let mut best_t: f32 = f32::INFINITY;
     let mut best_obstacle: Option<u32> = None;
+    let mut ground_impact = None;
 
     for (idx, obs) in obstacles.iter_indexed().map(|(i, o)| (i as usize, o)) {
         if !obstacles.is_active(idx) {
@@ -1191,16 +1192,44 @@ pub fn is_reachable_impact_3d(
             if (0.0..=1.0).contains(&t_ground) && t_ground < best_t {
                 best_t = t_ground;
                 best_obstacle = None;
+                // RHFastFindGrid::IsReachableImpact does not obtain the
+                // ground point from the parametric 3D ratio. It builds the
+                // dominant-axis z equation in FLOAT, solves z=0, then uses
+                // SBGeoLine2D::EvalX/Y (whose deltas are DOUBLE) for the
+                // other map coordinate. Those intermediate rounding points
+                // are observable in the final projectile movement.
+                let dx = destination.x - origin.x;
+                let dy = destination.y - origin.y;
+                let dz = destination.z - origin.z;
+                let use_x = dx.abs() > dy.abs();
+                let (primary_origin, primary_delta) = if use_x {
+                    (origin.x, dx)
+                } else {
+                    (origin.y, dy)
+                };
+                let a = dz / primary_delta;
+                let b = origin.z - a * primary_origin;
+                let primary = -b / a;
+                let (x, y) = if use_x {
+                    let y = (((primary - origin.x) as f64 * dy as f64 / dx as f64)
+                        + origin.y as f64) as f32;
+                    (primary, y)
+                } else {
+                    let x = (((primary - origin.y) as f64 * dx as f64 / dy as f64)
+                        + origin.x as f64) as f32;
+                    (x, primary)
+                };
+                ground_impact = Some(WorldPoint3D { x, y, z: 0.0 });
             }
         }
     }
 
     if best_t.is_finite() {
-        let impact = WorldPoint3D {
+        let impact = ground_impact.unwrap_or_else(|| WorldPoint3D {
             x: origin.x + best_t * (destination.x - origin.x),
             y: origin.y + best_t * (destination.y - origin.y),
             z: origin.z + best_t * (destination.z - origin.z),
-        };
+        });
         Some(ImpactResult3D {
             impact,
             obstacle_index: best_obstacle,
@@ -1876,6 +1905,33 @@ mod tests {
         // the 2D projection is outside the obstacle, so it reports ground.
         assert_eq!(result.obstacle_index, None);
         assert!((result.impact.z - 0.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn impact_3d_ground_crossing_uses_original_dominant_axis_rounding() {
+        // Representative long descending arrow segment. Pin the operation
+        // order independently of the more forgiving midpoint test above.
+        let result = is_reachable_impact_3d(
+            WorldPoint3D {
+                x: 1462.1060791015625,
+                y: 286.5855407714844,
+                z: 11.0,
+            },
+            WorldPoint3D {
+                x: 1395.727294921875,
+                y: 270.90264892578125,
+                z: -54.47200012207031,
+            },
+            SIGHTOBSTACLE_SOLID,
+            ObstacleList::from_slice_all_active(&[]),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.obstacle_index, None);
+        assert_eq!(result.impact.x.to_bits(), 1_152_736_901);
+        assert_eq!(result.impact.y.to_bits(), 1_133_377_967);
+        assert_eq!(result.impact.z, 0.0);
     }
 
     #[test]
