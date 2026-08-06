@@ -682,6 +682,37 @@ fn motion_recomputes_exact_position(
     is_transition && has_map_target && speed > 0.0 && distance <= f32::EPSILON
 }
 
+/// Mirror the forecast update at the end of Original's nonzero
+/// `RHSprite::PerformMotion` displacement. Transition-distance orders use a
+/// separate commit path from ordinary walking in Rust, but Original runs both
+/// through the same forecast update before its arrival check.
+fn refresh_motion_forecast(
+    sprite: &mut crate::sprite::Sprite,
+    speed: f32,
+    split_motion_speeds: Option<(f32, f32)>,
+) {
+    if sprite.position_iface.is_blocked() {
+        return;
+    }
+
+    // Fast movement executes PerformMotion twice. Each nonzero call updates
+    // the forecast, so the second distance wins when it moved; otherwise the
+    // first call's forecast remains live.
+    let forecast_distance = match split_motion_speeds {
+        Some((_, second)) if second != 0.0 => second,
+        Some((first, _)) => first,
+        None => speed,
+    };
+    if forecast_distance == 0.0 {
+        return;
+    }
+
+    let wait = sprite.wait_time(sprite.current_row, sprite.current_frame);
+    sprite
+        .position_iface
+        .update_forecasted_movement(forecast_distance, wait + 1);
+}
+
 /// Original only performs the exact zero-tolerance goal snap from the
 /// post-movement arrival branches. An order which starts at its goal is
 /// consumed without rewriting the actor's coordinates.
@@ -7769,6 +7800,14 @@ impl EngineInner {
                     elem.set_position_map(position);
                     elem.update_grid_cell();
                 }
+                if transition_has_distance {
+                    // Original's shared PerformMotion path refreshes target
+                    // leading after every committed transition displacement,
+                    // before IsGoalReached can clear the live increment. A
+                    // missing refresh here made arrows aim at the target's
+                    // current point during start/stop transitions.
+                    refresh_motion_forecast(entity.sprite_mut(), speed, split_motion_speeds);
+                }
                 // TILL_LAST_FRAME still performs the ordinary arrival check
                 // after every nonzero transition step. Reaching the target
                 // zeros both increments and snaps an undeviated zero-tolerance
@@ -8688,22 +8727,7 @@ impl EngineInner {
                     // The fast climb arms commit two motion calls in one
                     // tick; only the later one's distance survives in the
                     // forecast, so prefer the second speed when it moved.
-                    if !entity.position_iface().is_blocked() {
-                        let forecast_distance = match split_motion_speeds {
-                            Some((_, second)) if second != 0.0 => second,
-                            Some((first, _)) => first,
-                            None => speed,
-                        };
-                        if forecast_distance != 0.0 {
-                            let elem = entity.element_data_mut();
-                            let wait = elem
-                                .sprite
-                                .wait_time(elem.sprite.current_row, elem.sprite.current_frame);
-                            elem.sprite
-                                .position_iface
-                                .update_forecasted_movement(forecast_distance, wait + 1);
-                        }
-                    }
+                    refresh_motion_forecast(entity.sprite_mut(), speed, split_motion_speeds);
 
                     // Water splash titbit emission.  Every walk tick
                     // where `speed > 2` and the actor's cached material
@@ -11555,6 +11579,16 @@ mod movement_transition_state_tests {
             .active_movement = ActiveMovement::new(sequence, 0);
 
         engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+        let first_tick_forecast = engine
+            .get_entity(owner)
+            .unwrap()
+            .position_iface()
+            .get_forecasted_movement();
+        assert_ne!(
+            first_tick_forecast,
+            crate::coordinates::WorldVec3D::ZERO,
+            "a moving startup transition must restore the forecast that its action change reset"
+        );
         assert_eq!(
             engine
                 .get_entity(owner)

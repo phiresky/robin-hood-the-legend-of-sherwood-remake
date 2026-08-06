@@ -1,0 +1,8 @@
+{
+  "id": "62",
+  "subject": "Refresh target-leading forecast after transition displacement",
+  "description": "DONE. In schema14 Savegame_linux3/Profile_001/Continue/replay-001, Projectile 176 diverged at frame 1216 because its PC 174 target had just moved during TransitionWaitingUprightWalkingUpright. Original RHSprite::PerformMotion calls UpdateForecastedMovement after every nonzero committed displacement, including TillLastFrame transitions. Rust committed the transition movement through a separate path that omitted this refresh, leaving the action-change reset's zero forecast in place and removing exactly the target lead seen in the arrow velocity delta. Transition and ordinary movement now share the Original forecast refresh rule, with a focused startup-transition regression. The exact replay clears frame 1216 and advances to an independent VipIdleRemark RNG frontier after original frame 1600 (dump frame 1601).",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
