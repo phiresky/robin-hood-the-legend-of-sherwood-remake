@@ -2692,10 +2692,10 @@ impl EngineInner {
             // boundary here lets an immediate next-level successor preempt
             // older actions already detached into `SequencePhase`.
             self.dispatch_condolations(sim, assets);
-            // Original keeps mpSequenceElement selected until Translate and
-            // any synchronous SendCondolationCard callback it raised have
-            // both returned. In particular, ReconsiderSwordfight must still
-            // see a just-satisfied EnterSwordfight as pending here.
+            // Keep Rust's translation identity through its deferred
+            // SendCondolationCard bookkeeping, then release it. This mirrors
+            // an actor pointer, not SequenceManager's launch list: pending-
+            // command queries must not interpret this selection as queued.
             self.orders.sequence_manager.set_translating_element(None);
 
             // After-action live-FIFO continuation: re-entrant immediate/WAIT

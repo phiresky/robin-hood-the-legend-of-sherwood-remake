@@ -53,6 +53,9 @@ impl AiStateChangeSource {
 pub enum EnterSwordfightRequest {
     RaiseSword,
     Engage(HumanHandle),
+    /// Direct `RHElementActorHuman::EnterSwordFight` call made by
+    /// `ReconsiderSwordfight` while rebalancing an existing melee.
+    Rebalance(HumanHandle),
 }
 
 pub use crate::position_interface::SectorHandle;

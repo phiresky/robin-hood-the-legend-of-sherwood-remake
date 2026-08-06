@@ -6140,6 +6140,9 @@ impl EngineInner {
         //     Original `BeginSwordfight` launches ENTER_SWORDFIGHT; it
         //     does not call `EnterSwordFight` directly from Think.  Keep
         //     relationship and animation changes behind that owner boundary.
+        //   * Rebalance(target) — ReconsiderSwordfight's direct
+        //     `RHElementActorHuman::EnterSwordFight` call. This updates the
+        //     relationship without authoring a recursive command/EventDone.
         //   * RaiseSword — sword pose without engagement. `go_to`'s
         //     `GOTO_SWORD` arm, `AttackingApproachToObserve`, and
         //     menace-effect-of-hit need a sword pose held without an
@@ -6199,6 +6202,15 @@ impl EngineInner {
                     // its last movement goal while the sword transition takes
                     // ownership.
                     self.launch_element(elem);
+                }
+                crate::ai::EnterSwordfightRequest::Rebalance(target_handle) => {
+                    let target_id = self.expect_human_id_for_ai_handle(
+                        target_handle,
+                        "AI reconsider swordfight target",
+                    );
+                    self.enter_swordfight_with_jump_line(
+                        sim, assets, npc_id, target_id, false, None,
+                    );
                 }
             }
         }

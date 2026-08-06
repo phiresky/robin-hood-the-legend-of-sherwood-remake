@@ -2542,11 +2542,12 @@ impl EnemyAi {
                         .unwrap_or(&me_pos),
                 ) == self.base.me;
                 if i_should_take_him {
-                    // Request the engine to enter swordfight with the new
-                    // target. The engine picks this up after the AI
-                    // tick.
+                    // Original calls RHElementActorHuman::EnterSwordFight
+                    // directly here. It does not launch another
+                    // ENTER_SWORDFIGHT command: doing so would make that
+                    // command's EventDone re-enter this branch recursively.
                     self.base.outbox.actor.enter_swordfight =
-                        Some(EnterSwordfightRequest::Engage(nearest_enemy_of_solo));
+                        Some(EnterSwordfightRequest::Rebalance(nearest_enemy_of_solo));
                     self.base.primary_target = nearest_enemy_of_solo;
                     return;
                 }

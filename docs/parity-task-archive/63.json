@@ -1,0 +1,8 @@
+{
+  "id": "63",
+  "subject": "Separate direct swordfight rebalancing from Enter commands",
+  "description": "DONE. This supersedes task #56's manual visibility-query shim with source-backed control flow. RHSequenceManager::Hourglass deletes the launch-list head before calling Go (original-code/RHsequencemanager.cpp:938), and SequenceElementIsAboutToBeLaunched scans only the remaining launch list (:1068), so an element selected by Actor::Instruct/Translate is not itself pending. Rust now excludes actor_translating from that predicate, allowing the terminal EnterSwordfight EventDone callback to reach ReconsiderSwordfight and its real IsDetecting360Degrees call. The former recursion was not an Original pending-marker behavior: ReconsiderSwordfight's imbalance branch directly calls mpMe->EnterSwordFight(pNearestEnemy, false) (original-code/RHartificialmalignity.cpp around 13350) and returns, while Rust encoded it as Engage and launched another ENTER_SWORDFIGHT command whose EventDone recursively reconsidered. A dedicated Rebalance effect now invokes enter_swordfight_with_jump_line directly without authoring a command. On current main, the Profile_001 control clears the reported frame-776 query frontier through the real combat_positions caller and reaches an independent PC173 motion-state frontier at frame 883. The Profile_003 scan does not hang, matches the reported frame-866 visibility count 13/13 through the real Reconsider caller, and advances to the separate next-frame seven-versus-three RNG frontier. A focused engine test proves Rebalance promotes the opponent without queuing EnterSwordfight.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
