@@ -1,0 +1,10 @@
+{
+  "id": "16",
+  "subject": "Fix bored-roll eligibility gap (17, one repro)",
+  "description": "Idle-remark tail from the rngcluster map: 60s-15x/linux2/P002/ExQuickSave/replay-001 f939 (deterministic across all 15 replays of the save — one repro settles all): Rust makes 4 bored-roll draws, Original 13 — ~8 more NPCs were in WAITING_UPRIGHT_BORED + STATE_DEFAULT in the Original at that frame. The per-NPC stagger ((frame&255)-((reg+100)&255), &15==0) is correctly mirrored — the question is WHY those NPCs are bored/default in the Original but not Rust at f939 (upstream state divergence that only shows through RNG counts).",
+  "activeForm": "Fixing bored eligibility",
+  "owner": "fix-boredgap",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

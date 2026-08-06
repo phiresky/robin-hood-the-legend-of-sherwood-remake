@@ -1,0 +1,10 @@
+{
+  "id": "17",
+  "subject": "Fix seek-point geometry + door-path + principal-opponent families (54)",
+  "description": "Three localized families from the rngcluster map: (a) SeekArea phase-4 pair loop (32): Rust runs FEWER interest/insert pairs — loop body + ranges verified identical; divergence is upstream in near_sorted membership or expected_points (geometry/state). Repro: schema14/Cyrdach/P156/Savegame_001/replay-012 f793 draws 2188-2665. (b) Building-exit waits (16): AppendMoveToSequence rand()&15 pair — Rust port structurally identical; the DOOR PATH differs. Also noticed: Rust picks Command::Wait instead of WaitTimer for GoalShape::Line goals (C++ never does). (c) ChoosePrincipalOpponent (6): Original draws rand()%candidates (RHelementactorhuman.cpp:8184), Rust's frame ends early — call sites + reshuffle gate ported; find why Rust's frame ends before reaching it. Clustering data: fix-rngcluster worktree tmp/clusters_filtered.txt + scripts.",
+  "activeForm": "Fixing seek/door/opponent families",
+  "owner": "fix-seekdoor",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

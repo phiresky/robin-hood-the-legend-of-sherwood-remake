@@ -1,0 +1,9 @@
+{
+  "id": "32",
+  "subject": "Fix sword sprite_row one block off on stairs door pass",
+  "description": "Residual from #29 cause B (merged bccb27806): armed actor crossing a stairs door now keeps the WalkingWithSword animation token, but the concrete combat sprite row FaceOpponent picks is exactly one 16-row block off (537-vs-553 / 536-vs-552). Repros: parity-random-save-replays-60s-15x linux2/Profile_002/Savegame_029 replay-010 @f4323 and replay-014 @f4167 (single remaining mismatched field: sprite_row). Compare the sword-row selection for armed door-pass/FaceOpponent in C++ (RHelementactorhuman DetermineMovementAnimation override + row derivation) vs Rust engine/door_pass.rs / animation row mapping.",
+  "owner": "fix-orderlag",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

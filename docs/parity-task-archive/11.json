@@ -1,0 +1,10 @@
+{
+  "id": "11",
+  "subject": "Fix sound-manager FIFO resolution order (speech group)",
+  "description": "Two fixes committed on wt-fix-speechfifo (583df1087 PC amulet coma at every wounding site; 95647bb55 quit swordfight before informing the killer). 6 of 12 group members improved, 4/4 controls unchanged. A third sub-family remains: 018-006, 051-001, 061-001 still panic at tick.rs:1738/:1743.",
+  "activeForm": "Fixing speech FIFO order",
+  "owner": "fix-speechfifo",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

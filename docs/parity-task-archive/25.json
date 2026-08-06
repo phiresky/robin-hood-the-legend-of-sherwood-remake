@@ -1,0 +1,9 @@
+{
+  "id": "25",
+  "subject": "Fix :1738 missing-request speech sub-family + slot-0 panic",
+  "description": "Residuals from 583df1087/95647bb55: (a) the :1738 shape — Rust FAILS to queue a request the Original resolved — members 061/replay-001, linux3 018/006, linux3 051/001 (uncharacterized; cf. the shield-bearer/warcry precedents ebf29f488 for missing NPC triggers). Discarded hypothesis (do not repeat unvalidated): gating attacker inform on victim's down-posture + CUTTING_DAMAGE — real gaps vs the original translation but move none of these repros; TODO left at the dispatch site in damage.rs. (b) NEW panic exposed: ai/mod.rs:1349 \"entity in raw slot 0 is not human\" at nicouzouf 071/replay-011 f530 — raw-slot resolution reaching a non-human (kin of the fixed PC-flavored-id bugs 343c17927/23eca980c).",
+  "activeForm": "Fixing speech residuals",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

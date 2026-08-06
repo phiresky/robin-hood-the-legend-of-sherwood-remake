@@ -1,0 +1,363 @@
+diff --git a/crates/robin_engine/src/engine/jump.rs b/crates/robin_engine/src/engine/jump.rs
+index c58ce5964..8cf7be8ea 100644
+--- a/crates/robin_engine/src/engine/jump.rs
++++ b/crates/robin_engine/src/engine/jump.rs
+@@ -84,6 +84,11 @@ pub struct CurrentStepState {
+     pub total_frames: u16,
+     pub frames_elapsed: u16,
+     pub order_id: std::num::NonZeroU32,
++    /// Airborne flight increment, computed once when the step starts —
++    /// `(target − position) * (speed / distance)` — and added to the
++    /// position every frame thereafter.  `None` for ground steps.
++    #[serde(default)]
++    pub increment: Option<WorldVec3D>,
+     /// The step being executed — retained so `advance_jump_step` can
+     /// snap position to the target and apply the posture transition
+     /// when the animation completes.
+@@ -421,18 +426,15 @@ pub fn build_jump_steps(
+             });
+         }
+ 
+-        // Landing point 3D is (landX, landY + zDest, zDest - TELEPORT_JUMPING_UP).
+-        // The z subtracted is the extra lift before the actor lands on
+-        // the raised platform — during the JUMPING_UP animation the
+-        // sprite rises an additional TELEPORT_JUMPING_UP units before
+-        // clearing the edge, then settles onto the top.  We emit the
+-        // animation with target_3d at the apex (above the landing
+-        // pad), and the closing transition with target_3d at the
+-        // landing pad — so the sprite descends onto it.
+-        let apex_3d = WorldPoint3D {
++        // Airborne destination is (landX, landY + zDest, zDest − TELEPORT_JUMPING_UP):
++        // the flight ends TELEPORT_JUMPING_UP units *below* the ledge
++        // top, hands clearing the edge.  The landing transition then
++        // walks onto the pad and lifts the actor those remaining units
++        // at its action-done frame.
++        let grab_3d = WorldPoint3D {
+             x: pt_destination_jump.x,
+             y: pt_destination_jump.y + z_destination,
+-            z: z_destination + TELEPORT_JUMPING_UP,
++            z: z_destination - TELEPORT_JUMPING_UP,
+         };
+         let land_3d = WorldPoint3D {
+             x: pt_destination.x,
+@@ -442,7 +444,7 @@ pub fn build_jump_steps(
+ 
+         steps.push(JumpStep {
+             anim: OrderType::JumpingUp,
+-            target_3d: Some(apex_3d),
++            target_3d: Some(grab_3d),
+             airborne: true,
+             max_frames: None,
+         });
+@@ -1074,30 +1076,13 @@ impl EngineInner {
+                 continue;
+             }
+ 
+-            // A step is in progress — advance interpolation.
++            // A step is in progress — advance interpolation.  Ground
++            // transition steps terminate from their own sprite motion
++            // inside the owner slot (which applies the take-off flight
++            // state on the terminated tick); only airborne steps are
++            // timed here through the flight wait counter.
+             let current = jump.current.as_ref().expect("current step exists");
+             let current_anim = current.step.anim;
+-            let transition_reached_terminal_tick =
+-                !current.step.airborne && current.frames_elapsed >= current.total_frames;
+-            if transition_reached_terminal_tick
+-                && matches!(
+-                    current_anim,
+-                    OrderType::TransitionWaitingUprightJumpingUp
+-                        | OrderType::TransitionWaitingCrouchedJumpingDown
+-                )
+-            {
+-                // These Execute arms apply flight state on
+-                // RHMOTION_TERMINATED. Jump stepping precedes the owner
+-                // animation pass, so expose it once the authored duration
+-                // elapsed on the preceding frames. The long take-off arms
+-                // instead terminate from their own sprite motion inside the
+-                // owner slot, which applies the same state there.
+-                entity.set_posture(Posture::Flying);
+-                if let Some(actor) = entity.actor_data_mut() {
+-                    actor.action_state = ActionState::Moving;
+-                }
+-                force_advance.push(entity_id.into());
+-            }
+             if jump_step_turns(current_anim) {
+                 entity.position_iface_mut().turn();
+             }
+@@ -1398,6 +1383,13 @@ impl EngineInner {
+         landing_finalize
+     }
+ 
++    /// Terminal processing of an exhausted airborne jump order: adopt the
++    /// destination line's layer and sector, install the projection area
++    /// probed at the destination line's midpoint, and reset the old map
++    /// position — all without re-deriving elevation from the new plane.
++    /// The actor keeps the authored 3D landing point (for a jump-up that
++    /// is `TELEPORT_JUMPING_UP` below the ledge top; the landing
++    /// transition lifts it at its action-done frame).
+     pub(super) fn finalize_airborne_jump_landing(
+         &mut self,
+         assets: &LevelAssets,
+@@ -1406,22 +1398,40 @@ impl EngineInner {
+         new_sector: Option<u16>,
+         projection_point: MapPoint,
+     ) {
+-        let Some(position) = self
+-            .get_entity(entity_id)
+-            .map(|entity| entity.element_data().position())
+-        else {
+-            tracing::warn!(?entity_id, "jump landing lost actor");
+-            return;
++        {
++            let Some(entity) = self.get_entity_mut(entity_id) else {
++                tracing::warn!(?entity_id, "jump landing lost actor");
++                return;
++            };
++            let elem = entity.element_data_mut();
++            elem.set_layer(new_layer);
++            if let Some(sector) = new_sector {
++                elem.set_sector(crate::position_interface::SectorHandle::new(sector));
++            }
++        }
++        let obstacle = match new_sector {
++            Some(sector) => {
++                self.get_projection_area_index(assets, sector, new_layer, projection_point)
++            }
++            None => self.find_plane_obstacle_at(assets, new_layer, projection_point),
+         };
+-        self.finalize_special_move_position_with_ground(
+-            assets,
+-            entity_id,
+-            super::special_motion::SpecialMovePosition::World(position),
+-            Some(new_layer),
+-            new_sector,
+-            projection_point,
+-            "jump landing",
+-        );
++        if obstacle.is_none() {
++            tracing::warn!(
++                ?entity_id,
++                layer = new_layer,
++                sector = ?new_sector,
++                probe_x = projection_point.x,
++                probe_y = projection_point.y,
++                "jump landing found no projection-area obstacle"
++            );
++        }
++        self.set_obstacle_and_material(assets, entity_id, obstacle);
++        if let Some(entity) = self.get_entity_mut(entity_id) {
++            let map = entity.element_data().position_map();
++            entity.position_iface_mut().set_old_map_position(map);
++            entity.element_data_mut().update_grid_cell();
++        }
++        self.update_opponents_jump_lines(assets, entity_id);
+     }
+ }
+ 
+@@ -1440,8 +1450,9 @@ fn start_step(
+     next_order_id: &mut u32,
+     sequence_manager: &crate::sequence::SequenceManager,
+ ) -> Option<(crate::sequence::SequenceId, usize, crate::order::Order)> {
++    let mut airborne_increment = None;
+     if step.airborne {
+-        start_airborne_jump_motion(entity, &step);
++        airborne_increment = start_airborne_jump_motion(entity, &step);
+         entity.position_iface_mut().turn();
+     } else if matches!(
+         step.anim,
+@@ -1517,9 +1528,14 @@ fn start_step(
+         }
+     };
+ 
+-    // Sprite's animation duration drives the per-frame increment.
++    // Ground transition steps are timed against the sprite animation's
++    // default-progression play-out: START tick + this many further ticks
++    // until the terminated tick.
+     let total_frames = {
+-        let n = entity.element_data().sprite.total_ticks_for_anim(step.anim);
++        let n = entity
++            .element_data()
++            .sprite
++            .action_duration_ticks_for_anim(step.anim);
+         if n > 0 { n } else { 1 }
+     };
+ 
+@@ -1546,6 +1562,7 @@ fn start_step(
+         total_frames,
+         frames_elapsed: 0,
+         order_id,
++        increment: airborne_increment,
+         step: step.clone(),
+     };
+ 
+@@ -1591,12 +1608,15 @@ fn start_step(
+     Some((jump_seq, jump_elem, order))
+ }
+ 
+-fn start_airborne_jump_motion(entity: &mut crate::element::Entity, step: &JumpStep) {
++fn start_airborne_jump_motion(
++    entity: &mut crate::element::Entity,
++    step: &JumpStep,
++) -> Option<WorldVec3D> {
+     entity.set_posture(Posture::Flying);
+ 
+     let Some(target) = step.target_3d else {
+         tracing::warn!(?step.anim, "airborne jump step missing 3D target");
+-        return;
++        return None;
+     };
+     let position = entity.element_data().position();
+     let dx = target.x - position.x;
+@@ -1605,12 +1625,27 @@ fn start_airborne_jump_motion(entity: &mut crate::element::Entity, step: &JumpSt
+     let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+     if distance <= f32::EPSILON {
+         tracing::warn!(?step.anim, "airborne jump step has zero-length motion");
+-        return;
++        return None;
+     }
+-    let mut wait_time = (distance / jump_airborne_speed(step.anim) - 1.0) as u32;
+-    if wait_time == 0 {
+-        wait_time = 1;
++    // The increment is computed once at initialization — the full vector
++    // scaled by `speed / distance` — and the flight duration comes from a
++    // reciprocal-speed factor, both with the exact original constants.
++    let scale = jump_airborne_speed(step.anim) / distance;
++    let increment = WorldVec3D {
++        x: dx * scale,
++        y: dy * scale,
++        z: dz * scale,
++    };
++    let wait_factor: f32 = match step.anim {
++        OrderType::JumpingUp => 0.066_666_666_666_666_666_666_666_666_666_667,
++        OrderType::JumpingDown => 0.05,
++        _ => 0.125,
++    };
++    let mut f_wait_time = wait_factor * distance - 1.0;
++    if f_wait_time < 1.0 {
++        f_wait_time = 1.0;
+     }
++    let wait_time = f_wait_time as u32;
+ 
+     if let Some(actor) = entity.actor_data_mut() {
+         actor.action_state = if step.anim == OrderType::JumpingLongSword {
+@@ -1624,6 +1659,7 @@ fn start_airborne_jump_motion(entity: &mut crate::element::Entity, step: &JumpSt
+         actor.seek_refresh_wait = 0;
+         actor.wait_time = wait_time;
+     }
++    Some(increment)
+ }
+ 
+ /// Ground transition steps whose Execute arm drives the sprite through
+@@ -1706,6 +1742,23 @@ pub(crate) fn perform_jump_ground_motion(
+         entity.element_data_mut().update_grid_cell();
+     }
+ 
++    // The jump-up landing lifts the actor the remaining
++    // TELEPORT_JUMPING_UP units at the animation's action-done frame:
++    // 3D z rises while the world y stays put, so the map position slides
++    // by the same amount.
++    if anim == OrderType::TransitionJumpingUpWaitingCrouched
++        && state == crate::sprite::MotionState::Done
++    {
++        let elem = entity.element_data_mut();
++        let pos = elem.position();
++        elem.set_position(crate::coordinates::WorldPoint3D {
++            x: pos.x,
++            y: pos.y,
++            z: pos.z + TELEPORT_JUMPING_UP,
++        });
++        elem.update_grid_cell();
++    }
++
+     state
+ }
+ 
+@@ -1771,39 +1824,21 @@ fn advance_step_interpolation(entity: &mut crate::element::Entity) {
+     state.frames_elapsed = state.frames_elapsed.saturating_add(1);
+ 
+     if airborne {
+-        if let Some(target) = target_3d {
+-            let full_dx = target.x - state.start_x;
+-            let full_dy = target.y - state.start_y;
+-            let full_dz = target.z - state.start_z;
+-            let full_dist = (full_dx * full_dx + full_dy * full_dy + full_dz * full_dz).sqrt();
+-
+-            let frame_dist = jump_airborne_speed(state.step.anim);
+-
+-            if full_dist > f32::EPSILON && frame_dist > 0.0 {
+-                let dir_x = full_dx / full_dist;
+-                let dir_y = full_dy / full_dist;
+-                let dir_z = full_dz / full_dist;
+-                let elem = entity.element_data_mut();
+-                let pos = elem.position();
+-                let new_x = pos.x + dir_x * frame_dist;
+-                let new_y = pos.y + dir_y * frame_dist;
+-                let new_z = pos.z + dir_z * frame_dist;
+-                let travelled_new = (new_x - state.start_x) * dir_x
+-                    + (new_y - state.start_y) * dir_y
+-                    + (new_z - state.start_z) * dir_z;
+-                if travelled_new >= full_dist {
+-                    elem.set_position(target);
+-                } else {
+-                    elem.set_position(crate::coordinates::WorldPoint3D {
+-                        x: new_x,
+-                        y: new_y,
+-                        z: new_z,
+-                    });
+-                }
+-            }
+-        } else {
++        if target_3d.is_none() {
+             tracing::warn!(?state.step.anim, "airborne jump step missing 3D target");
+         }
++        // The flight increment was fixed when the step started; every
++        // tick simply adds it.  The exhausted step's terminal snap to the
++        // target happens in `advance_jump_step`.
++        if let Some(increment) = state.increment {
++            let elem = entity.element_data_mut();
++            let pos = elem.position();
++            elem.set_position(crate::coordinates::WorldPoint3D {
++                x: pos.x + increment.x,
++                y: pos.y + increment.y,
++                z: pos.z + increment.z,
++            });
++        }
+ 
+         if let Some(actor) = entity.actor_data_mut() {
+             actor.jump_z_offset = 0.0;
+diff --git a/crates/robin_engine/src/sprite.rs b/crates/robin_engine/src/sprite.rs
+index eefee6b24..807a9c949 100644
+--- a/crates/robin_engine/src/sprite.rs
++++ b/crates/robin_engine/src/sprite.rs
+@@ -777,6 +777,30 @@ impl Sprite {
+         total.min(u16::MAX as u32) as u16
+     }
+ 
++    /// Ticks from an action's START tick until its default-progression
++    /// termination tick, exclusive of the START tick itself.
++    ///
++    /// The frame counter starts one tick behind on the first frame (the
++    /// START tick performs no increment), every subsequent frame consumes
++    /// `delay + 1` increments before advancing, and the animation
++    /// terminates once the counter matches the last frame's delay.  That
++    /// works out to `(frames - 1) + sum(delays)` post-START ticks whether
++    /// or not the last frame's delay is zero.
++    pub fn action_duration_ticks_for_anim(&self, action: OrderType) -> u16 {
++        let Some(row) = self.row_for_action(action) else {
++            return 0;
++        };
++        let scripts = self.current_scripts();
++        let Some(script) = scripts.get(row as usize) else {
++            return 0;
++        };
++        let mut total: u32 = script.frame_ids.len().saturating_sub(1) as u32;
++        for &delay in &script.delays {
++            total = total.saturating_add(delay as u32);
++        }
++        total.min(u16::MAX as u32) as u16
++    }
++
+     /// Exact `RHSprite::ReadyForTakeOff(RHFLIGHTSTYLE_DEFAULT)` duration.
+     ///
+     /// The Original starts at one tick and adds `GetWaitTime + 1` for

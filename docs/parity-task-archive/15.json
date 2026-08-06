@@ -1,0 +1,10 @@
+{
+  "id": "15",
+  "subject": "Fix queue_sword_damage launch filter + FallingLadderWall gap (~35)",
+  "description": "Dominant sword-damage cause from the rngcluster map: queue_sword_damage (melee/damage.rs:164) refuses to launch for dead/unconscious victims; NEITHER C++ sweep launcher (RHelementactorhuman.cpp:9346, :9513) filters — they launch for every victim in mlistSwordStrikeVictims and only Instruct may decline. CAUTION: surrounding comment claims CheckOpponents invariants depend on the filter — reconcile before removing. Repro: schema14/linux3/P003/Savegame_010/replay-007 f19137 (Original 1 draw, Rust 4). ALSO: the ladder/wall fall translation newly reached by 0ec83150e is incomplete — \"Trying to play non-existing animation FallingLadderWall of sprite Paysan A\" (schema14/linux3/P001/Savegame_008/replay-001 f4338, posture 9-vs-4) — port the sprite/animation mapping for civilian ladder falls.",
+  "activeForm": "Fixing sword-damage launch + ladder fall",
+  "owner": "fix-sworddmg",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

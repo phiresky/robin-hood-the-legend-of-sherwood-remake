@@ -1,0 +1,47 @@
+diff --git a/crates/robin_engine/src/engine/movement.rs b/crates/robin_engine/src/engine/movement.rs
+index 69296f790..14bee5ec2 100644
+--- a/crates/robin_engine/src/engine/movement.rs
++++ b/crates/robin_engine/src/engine/movement.rs
+@@ -7140,7 +7140,13 @@ impl EngineInner {
+                     OrderType::TransitionClimbingWallUpWaitingCrouched
+                     | OrderType::TransitionClimbingWallDownWaitingUpright,
+                     Some(_),
+-                ) => {
++                ) if execute_order_initialising => {
++                    // Only on the transition's first execute: the wall
++                    // posture carries over from the climb order.  The
++                    // wall-exit transitions set their landing posture on
++                    // the raw DONE edge while the animation keeps
++                    // playing, so a per-tick re-assert here would stomp
++                    // that crouched/upright landing state.
+                     elem.posture = crate::element::Posture::OnWall;
+                 }
+                 (
+diff --git a/crates/robin_engine/src/engine/tick.rs b/crates/robin_engine/src/engine/tick.rs
+index 785366f64..66aa4eebe 100644
+--- a/crates/robin_engine/src/engine/tick.rs
++++ b/crates/robin_engine/src/engine/tick.rs
+@@ -5309,6 +5309,14 @@ impl EngineInner {
+         self.set_transition_position_map_and_compute_position_all(assets, entity_id, midpoint);
+     }
+ 
++    /// Door-transition position snap: set the map position and re-derive
++    /// the 3D position from the *currently installed* plane.  The
++    /// original's transition Execute arms only reposition here — the
++    /// obstacle/plane (and layer/sector) change belongs to the later
++    /// PassingDoor order.  Probing for a projection area at the snapped
++    /// point would swap the plane early and, at a wall midpoint sitting
++    /// on flat ground, drop the climb transition's elevation back to
++    /// the ground plane.
+     fn set_transition_position_map_and_compute_position_all(
+         &mut self,
+         assets: &LevelAssets,
+@@ -5321,7 +5329,7 @@ impl EngineInner {
+             super::special_motion::SpecialMovePosition::Map(point),
+             None,
+             None,
+-            Some(point),
++            None,
+             "door transition",
+         );
+     }

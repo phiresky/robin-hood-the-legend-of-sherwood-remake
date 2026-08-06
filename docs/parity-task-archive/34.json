@@ -1,0 +1,8 @@
+{
+  "id": "34",
+  "subject": "Fix tolerance-arrival + StrangleCmd post-seek Moving stamp",
+  "description": "Residual from #12 (merged cc3737b28): nicouzouf/Savegame_069 replay-005 (60s-15x corpus) still diverges at f457 with the \"rust missing Moving\" signature but a DIFFERENT mechanism than the committed-step arrival predicate — an order_tolerance 21.0 tolerance arrival plus a StrangleCmd post-seek handoff. Check whether it survives the next sweep first (baseline resweep-db67cc978). Also still open from #12 item (c): WalkingWithShield has no action-state stamp at all — no isolating trace yet; TODO recorded in docs/ACTION_STATE_ARMS.md.",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

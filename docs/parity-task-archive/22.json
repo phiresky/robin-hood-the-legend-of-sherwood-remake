@@ -1,0 +1,10 @@
+{
+  "id": "22",
+  "subject": "Find what kills the Sheriff at f939 (17 traces)",
+  "description": "SOLVED. Killer: VMCoreCustom::ISetPersistentProperty reads params 2+3 as *(char*) (signed byte), so the Sheriff's own ProcessMessage(5) call SetPersistentProperty(ThisActor, PROP_LIFE_POINTS, 250) delivers -6 -> clamped to 0 -> Kill(). The FALLING_HIT_HARDER_UPRIGHT animation is the \"heart-attack\" branch of RHElementActorHuman::Translate (RHCOMMAND_WAIT, posture-after-transition UPRIGHT while dead: DeleteAllOrders + GetFallingBackAnimation(true) + posture DEAD_BACK). IForbidNPCRemark has the same truncation. Fixed on wt-fix-sheriffkill (f0ab17e0c). Frontier moved 939 -> 941 on the repro and all 4 siblings; residual is a 4-field START-deferral (motion_state Start vs InProgress + stale sprite row 391/119) on the same soldier — belongs to task #12.",
+  "activeForm": "Fixing waypoint-script SendMessage delivery",
+  "owner": "fix-sheriffkill",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

@@ -40,16 +40,17 @@ Four traces that PASSED at db67cc978 now fail on HEAD with seek-RNG draw-count s
 - linux2/Profile_002/Continue/replay-013 (f7581, SeekPointAcceptance)
 All confirmed pre-existing on HEAD by two independent A/B tests (not caused by #25 or #30). Introduced somewhere in db67cc978..78a792ed6. Prime suspects: #29 PerformSeek else-arm refresh, #33 seek-refresh effect drop, #12 arrival predicate. Agent fix-seekregress was bisecting (worktree agent-ae66cda91de4ba9d5) — status unknown at dump time, may have died to the credit limit before reporting.
 
-## Interrupted agents (all hit the session credit limit; resume via SendMessage or fresh spawn)
+## KILLED agents — session terminated by user; agents are NOT resumable. Respawn fresh.
 
-All are harness-created worktrees `.claude/worktrees/agent-<id>/` with symlinks (original-code, datadirs, corpora) already set up, on branches `worktree-agent-<id>`:
+The whole session (coordinator + subagents) was killed on 2026-08-06 ~14:20. The old session's agent transcripts and task store are gone for practical purposes, BUT everything needed is archived in-repo:
 
-1. **fix-jump (task #20)** — worktree agent-a2b48d6a0f1b3ebb0. Jump-up spurious step entry (f872 family) + flight-increment rounding. Task description contains fix-orderlag's detailed scoping: C++ ReadyForTakeOff computes increment ONCE = (goal3D−pos3D)/uwFramesOfFlight; Rust re-normalises per frame at engine/jump.rs:1870-1899 (advance_airborne_flight); uwFramesOfFlight is per-RHflightstyle — FALL style uses (myZ−goalZ)/FALL_SPEED (Rust's JumpingDown 20.0 = FALL_SPEED), others use animation duration (CurrentStepState.total_frames at jump.rs:1498 is the analogue). Last seen: dumping frames 790-800 of its repro to see Rust sequencing (mid-diagnosis of the f872 step-entry half, no commit yet).
-2. **fix-ladderpick2 (task #21)** — worktree agent-a43843b306107ea87 (same tree that landed #14+#27). Small elevation residue (~11 traces). Was just starting: had been told to `git merge main` then work the elevation groups from resweep-db67cc978 classification. Watch for: map.y = world.y − z, INVERSE_ASPECT_RATIO 1.743, f32/f64 boundaries.
-3. **fix-seekregress (task #36)** — worktree agent-ae66cda91de4ba9d5. THE URGENT ONE (see above). Was bisecting db67cc978..78a792ed6 with the 4 repros; also received the 2 extra linux2 repros mid-flight.
-4. **fix-corpsewalk (task #39)** — worktree `.claude/worktrees/fix-corpsewalk` (MANUALLY created, branch wt-fix-noisetiming; this agent is teammate-style, reachable by name). Heard-steps noise family (11 traces). Its own analysis: C++ RHElementActorNPC::Noise is fully synchronous — walks every NPC, inline Think(EVENT_HEAR) in the emitting element's slot; Rust posts noise through a deferred path. Officer CallAlert vs noise delivery ordering is the observable. Was about to merge main + re-derive membership from resweep-db67cc978.
-- fix-endfacing (task #30) — DONE and merged, worktree agent-ac0fca79adc9b7209 disposable.
-- fix-orderlag — retired cleanly; branch wt-fix-orderlag fully merged.
+- **`docs/parity-task-archive/*.json`** — full copy of the task store (all 40 tasks with their accumulated per-task analysis in the descriptions). Read these instead of TaskGet; recreate open tasks in the new session's board from them.
+- **`docs/parity-task-archive/wip-fix-jump-task20.patch`** (363 lines) — fix-jump's UNCOMMITTED mid-diagnosis work on task #20 (engine/jump.rs + sprite.rs, in worktree agent-a2b48d6a0f1b3ebb0 at stale base 3d42ce0ad). Mostly instrumentation + partial fix; treat as reference/head-start, re-derive on current main. It was last dumping frames 790-800 of its repro to compare Rust step-entry sequencing.
+- **`docs/parity-task-archive/wip-fix-ladderpick2-task21.patch`** (47 lines) — fix-ladderpick2's uncommitted start on task #21 (movement.rs + tick.rs, worktree agent-a43843b306107ea87, base = merged main 9423d267a).
+- **fix-seekregress (task #36, URGENT)**: worktree agent-ae66cda91de4ba9d5 is CLEAN at base 3d42ce0ad — the bisect produced no commits and no report. Nothing to salvage; restart #36 from the task description (it has all 4 repro traces + suspect list). This is the highest-priority item.
+- **fix-corpsewalk (task #39)**: worktree .claude/worktrees/fix-corpsewalk is clean (its #19 work is merged; branch wt-fix-noisetiming). #39's full analysis is in its task JSON: C++ RHElementActorNPC::Noise is fully synchronous — walks every NPC with inline Think(EVENT_HEAR) in the emitting element's slot; Rust posts noise deferred. Observable: officer CallAlert vs noise delivery order. 11 traces.
+
+Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fully merged can be `git worktree remove --force`d to free disk; keep the two with WIP patches until their tasks land. All merged branch names appear in `git log --oneline --merges` on main.
 
 ## Task board (open items)
 
@@ -88,6 +89,11 @@ Standing clusters not yet tasked: actor.animation 133 (top cluster, resweep-db67
 - Debug replays under multi-agent load: 25-85 min for 15k+ frame traces; timeout 1800-3600s.
 - The Bash tool auto-spills long output; never filter cargo.
 
-## Credit-limit protocol
+## Recovery checklist for the NEW session (do these in order)
 
-When agents die with "You've hit your session limit": wait for reset time, then SendMessage each named agent ("Session limit has reset — resume <task> where you left off") — agents resume from transcripts. Unnamed/failed spawns: re-spawn fresh with the task-board context (task descriptions carry the accumulated analysis). Previous reset (13:30) revived the whole fleet successfully this way.
+1. Read this file fully. Also load memories (MEMORY.md points here).
+2. Recreate the open task board from `docs/parity-task-archive/*.json` (open items: #9, #20, #21, #23, #24, #28, #31, #34–#40; the JSON descriptions carry the accumulated analysis — copy them verbatim into new TaskCreate calls).
+3. **First dispatch: task #36 (seek-RNG regression)** — spawn a fresh worktree agent with the task JSON's content; 4 shallow repros make it a fast bisect over `git log --oneline --merges db67cc978..78a792ed6`.
+4. Spawn agents for #20 (attach wip patch as head-start), #21 (ditto), #39, and further board items as slots allow. Spawn template: Agent tool with isolation:"worktree"; prompt = symlink setup block (original-code, datadirs, corpora → absolute paths into this repo) + task text + rules (debug builds only; never --release/clippy/filtered cargo; faithful C++ only, no invented guards; validate 2-4 repros + 2-3 short controls; cargo fmt; commit on own branch; report worktree+branch+root cause+validation).
+5. After merging a batch: remote release build + freeze runner + **FULL-UNIVERSE re-sweep 14** (all 5,164 minus `parity-save-replays__` schema-11 minus `tmp/regen14-saves.txt` minus the 11 nicouzouf_061 once #37 retires them). Failure-only sweeps are banned until #36 is resolved (regressions on passing traces are invisible to them).
+6. Continue the wave loop (previous section) until 100% parity. Do not stop.

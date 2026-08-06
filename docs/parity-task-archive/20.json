@@ -1,0 +1,10 @@
+{
+  "id": "20",
+  "subject": "Fix spurious jump-up step entry (f872 family)",
+  "description": "Re-diagnosis from fix-residuals (formula/duration exonerated — constants now exact): at linux2 P002/Savegame_002 replay-004 f872, Rust enters a REAL airborne JumpingUp (wait_time 1, Terminated first frame) while the Original's Pc 252 is completely IDLE frames 864-886 (constant position, posture 10→1 at 869, idle motion cycle). The bug is UPSTREAM: Rust's jump sequence advances into the airborne step at a moment the Original doesn't — step-entry/sequence timing. Related third signature: SuN Savegame_001 members f835/f778 show motion_state Aborted-vs-Terminated (another distinct cause).\n\nALSO in-scope: flight-increment rounding. SCOPING NOTES from fix-orderlag (not implemented):\n- C++ ReadyForTakeOff (RHsprite.cpp, end of fn) computes the increment ONCE: `SetIncrement((ptRealGoal3D - ptMyPosition3D) / uwFramesOfFlight)`, and PerformFlight just adds the stored increment each frame.\n- Rust advance_airborne_flight (engine/jump.rs:1870-1899) instead normalises the full vector each frame and multiplies by jump_airborne_speed(anim) (8/15/20). Per-frame delta therefore differs: C++ steps full_dist/frames, Rust steps the literal speed, so intermediate positions drift even when the endpoint snaps.\n- The divisor already exists Rust-side: CurrentStepState.total_frames = sprite.total_ticks_for_anim(step.anim) (jump.rs:1498), which matches C++'s non-fall `uwFramesOfFlight = 1 + sum(GetWaitTime(row,i)+1)`.\n- CAUTION: C++ picks uwFramesOfFlight differently per RHflightstyle — the FALL style uses `(ptMyPosition3D.mZ - ptRealGoal3D.mZ) / FALL_SPEED` and also sets muwFrameCountDown from it, while other styles use the animation duration. A faithful fix must reproduce that split, not just divide by total_frames everywhere. Rust's JumpingDown speed constant (20.0) is FALL_SPEED, so today's per-frame behaviour happens to be right only for a purely vertical fall.",
+  "activeForm": "Fixing jump step entry",
+  "owner": "fix-jump",
+  "status": "in_progress",
+  "blocks": [],
+  "blockedBy": []
+}

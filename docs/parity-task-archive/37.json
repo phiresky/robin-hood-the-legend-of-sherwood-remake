@@ -1,0 +1,8 @@
+{
+  "id": "37",
+  "subject": "Exclude or re-record 11 nicouzouf_061 old-schema traces",
+  "description": "From #25: all 11 nicouzouf_061 traces (60s-15x corpus) are old-schema recordings lacking hero_refused_action records — the anonymous-archer-contest bark input is not in the trace, so they can never pass. Either add them to the retired list used when building sweep manifests (like tmp/regen14-saves.txt) or re-record them with the schema-14 recorder on the remote (scripts/capture_parity_subset.sh, original-code d494273 recorder).",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

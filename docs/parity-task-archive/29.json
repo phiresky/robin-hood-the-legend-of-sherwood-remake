@@ -1,0 +1,9 @@
+{
+  "id": "29",
+  "subject": "Fix early order-advance (Rust ahead) subfamily of the 61-trace cluster",
+  "description": "Follow-up to task #13 (merged as 5cdc8d639: spliced end-transition movement order now carries antagonist, fixing the \"Rust behind\" half). The OPPOSITE signatures remain: original=10 rust=12 and original=6 rust=8, where Rust advances the order queue EARLIER than the Original. Unchanged repros (diverge at exactly their baseline frames in output/parity-audits/resweep-71cd5e503): linux2/Profile_002 Savegame_015 replay-007, Savegame_017 replay-015, Savegame_029 replay-010 and replay-014. Suspect area: the same is_goal_reached arrival test (RHpositioninterface.cpp:922-926 radius-slack branch — maybe Rust applies slack where C++ doesn't, e.g. antagonist set when C++'s pAntagonist is null, or the deviated/blocked_count gate differing) and insert_transition_end splice conditions in crates/robin_engine/src/sequence.rs.",
+  "owner": "fix-orderlag",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

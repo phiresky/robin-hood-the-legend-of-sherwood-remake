@@ -1,0 +1,10 @@
+{
+  "id": "13",
+  "subject": "Fix Pc order-advance lag (61, largest animation residual)",
+  "description": "From ce969d23e's clustering: Original has advanced to the NEXT order while Rust publishes the previous one (6-vs-8, 6-vs-9, 10-vs-11/12, 7-vs-303 pairs). C++ site: RHElementActor::Hourglass (RHelementactor.cpp:686-698) — RHMOTION_TERMINATED calls DoNextOrder() inside the SAME Hourglass, and :568 republishes GetCurrentOrder() at the top of the next. Cheapest repro BY FAR: nicouzouf/P001/Savegame_036/replay-013 frame 971 (Pc, 8-vs-6); rest of cluster starts 9000+. Same family as earlier deferred-advance diagnoses (task from 961c71d17's cause A — jump force-advance was deleted; this is the ORDINARY movement equivalent).",
+  "activeForm": "Fixing order-advance lag",
+  "owner": "fix-orderlag",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

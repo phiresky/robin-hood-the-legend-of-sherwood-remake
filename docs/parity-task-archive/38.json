@@ -1,0 +1,8 @@
+{
+  "id": "38",
+  "subject": "Fix swordfight RNG draw divergence (mislabeled VipIdleRemark cluster, ~80)",
+  "description": "From #25: the rng:VipIdleRemark cluster (80 traces) is a classifier artifact — it groups by FIRST RNG site in the divergent frame; the VipIdleRemark/The16thFrame draws match. The actual missing/extra draws are swordfight draws: UpdateSwordfightDistance (offsets 1807002/1807253), ReceiveSwordDamage (1746896/1747024), EvaluateSwordfight (1814391), FindPositionForTableSwordfight (~1804390), plus SwordDamageProtection extras. The offset→function map came from addr2line on original-code/build/native-full/robin. Compare the Rust swordfight distance/damage/evaluate draw sites and their gates against C++ arm by arm (docs/TURN_ARMS.md methodology). Repros: pick early-frame members of the rng:VipIdleRemark group in output/parity-audits/resweep-db67cc978/classification.json.",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

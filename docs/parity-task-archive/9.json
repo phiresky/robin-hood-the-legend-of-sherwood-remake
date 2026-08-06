@@ -1,0 +1,10 @@
+{
+  "id": "9",
+  "subject": "Fix RefreshArrowProtection Reserve residual (f794/f762)",
+  "description": "From daeacac81: post-break members Save057 replay-011 f794 + Save014 replay-015 f762 share soldier 61 original=ProtectingWithShield(183) vs rust=Reserve(164), 10-12 frames after the break — likely inside RefreshArrowProtection(true) from The16thFrame (substate whitelist includes ATTACKING_RESERVE; wiring is present) — the divergence is in its DECISION (dangerous-archer scan / NumberOfNearbyArchersWhoNeedProtection). Related merged work: ebf29f488 (detectable-list scan + isometric gates).",
+  "activeForm": "Fixing arrow-protection decision",
+  "owner": "",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

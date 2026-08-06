@@ -1,0 +1,9 @@
+{
+  "id": "33",
+  "subject": "Fix walk-to-run transition where Original is already running",
+  "description": "Residual from #29 cause A area: linux2/Profile_002/Savegame_015 replay-007 now diverges at f14950 with animation 10-vs-9 (Rust plays TransitionWalkingUprightRunningUpright where Original is already RunningUpright) plus action_state 3-vs-2. Likely a run-entry transition gate: C++ presumably skips the walk->run transition in this state (check RHElementActor DetermineMovementAnimation / transition insertion conditions for run entry). Baseline resweep-71cd5e503; re-check against latest audit.",
+  "owner": "fix-orderlag",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

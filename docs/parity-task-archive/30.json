@@ -1,0 +1,9 @@
+{
+  "id": "30",
+  "subject": "Fix direction 13-vs-14 residual when end transition takes over",
+  "description": "FIXED on branch worktree-agent-ac0fca79adc9b7209 (commits 497eb4ad0 + 62ea32191, on top of cherry-picked 5cdc8d639). Root cause was NOT the transition facing: after the walk + end transition finished, a TakeCorpse interaction began, and Rust's begin_carry contained an invented 'defensive' iso-aspect face-the-corpse snap (C++ RHCOMMAND_TAKE_CORPSE creates the order with bComputeDirection=false and never turns the carrier). Plain vs iso sector of the corpse vector was exactly 13 vs 14. Second commit: carried-animation style must be LittleJohnCarry-only (C++ HasContextualAction(RHACTION_LITTLE_JOHN_CARRY)); Rust also accepted FarmerCarry, forcing the corpse onto the LittleJohn rows (1145 vs 1177). Validated: replay-005 now diverges at f23041 (was 22662, unrelated movement signature), replay-015 at f22594 (was 22322, carry-abort/posture signature — original aborts the carry, Rust continues; follow-up candidate). Controls Savegame_000 replay-014 / Continue replay-013 fail identically pre- and post-fix (main-branch drift vs db67cc978; no corpse activity in either trace).",
+  "owner": "fix-endfacing",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

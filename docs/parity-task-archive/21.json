@@ -1,0 +1,10 @@
+{
+  "id": "21",
+  "subject": "Fix small elevation residue (11)",
+  "description": "Surviving state:elevation after all fixes: 4x Pc 93.3318-vs-90.00101 (paired with moving mismatch), several Projectile elevation/old_elevation drift, one Soldier 153.73-vs-153.72 (ULP-ish). None are the fixed +50 family (grep-verified zero hits). Fresh diagnosis needed per sub-shape.",
+  "activeForm": "Fixing elevation residue",
+  "status": "in_progress",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "fix-ladderpick2"
+}

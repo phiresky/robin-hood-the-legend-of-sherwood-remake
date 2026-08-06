@@ -1,0 +1,10 @@
+{
+  "id": "26",
+  "subject": "Re-repair unit test suite (90 red at 71cd5e503)",
+  "description": "cargo test -p robin_engine --lib fails ~90 tests at merge base 71cd5e503 (before any wave-13 changes) — e.g. sequence.rs:1668 \"append_element: command level must stay at 2 or advance to 3; got 1\", plus AI/battle and legacy-save fixtures. This blinds every agent's test gate (they can only diff failure sets). The earlier fixture repair (2a5d959fd, 155→85) has re-drifted under subsequent merges. Dedicated triage pass: per failure decide stale-expectation-update vs real regression (the level-must-stay-2 assert firing suggests a recent sequence merge changed level semantics — check 707f9bff8/b3796faeb/ce969d23e effects on command levels FIRST, could be a genuine regression signal).",
+  "activeForm": "Triaging unit test failures",
+  "owner": "fix-corpsewalk",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

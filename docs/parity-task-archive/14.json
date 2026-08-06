@@ -1,0 +1,10 @@
+{
+  "id": "14",
+  "subject": "Fix soldier ladder-transition pick (9)",
+  "description": "From ce969d23e: TransitionWaitingUprightClimbingLadderDownAlerted(230) vs TransitionWaitingCrouchedClimbingLadderDown(37) + Up equivalents — the alerted/posture arm of the ladder-transition selection. Repro: parity-random-save-replays-60s-15x-schema14/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_021/... frame 557.",
+  "activeForm": "Fixing ladder transition pick",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "fix-ladderpick2"
+}

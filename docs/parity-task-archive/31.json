@@ -1,0 +1,8 @@
+{
+  "id": "31",
+  "subject": "Investigate 360-gate LOS/detection us-list composition divergence",
+  "description": "Follow-up from task #18: after the battle_decisions fixes, two ai.list_us repros remain diverging at their baseline frames because the ALL-SOLDIER us-list composition differs — driven by 360-detection-gate line-of-sight differences (wrong soldiers seen / a missing detectable), not by the PC arm. Repros: parity-random-save-replays-60s-15x linux3/Profile_001/Savegame_036/replay-002 @f33630 and linux3/Profile_003/Continue/replay-009 @f13778 (baseline output/parity-audits/resweep-71cd5e503; re-check against resweep-db67cc978). Suspect area: battle_friend_detected_360 / detection LOS gating vs C++ (RHartificialmalignity camp-soldier scan). Also related to the detection.detectables.length cluster (68 traces in resweep-db67cc978).",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

@@ -1,0 +1,10 @@
+{
+  "id": "8",
+  "subject": "Fix doubled aspect stretch in detects_position_180_raw",
+  "description": "From daeacac81's follow-ups: the same doubled INVERSE_ASPECT_RATIO stretch fixed in phalanx_member_detects_180 exists in ai_enemy/util.rs detects_position_180_raw (used by officer sees-me-fighting gate + UnalertAllNearCharlySeekers sweep). ai_enemy/mod.rs:2404 and ai_vision.rs are correct with explanatory comments. Cheap fix but moves officer/Charly behavior — needs sweep validation. ALSO from same report: phalanx advance branch (1-in-3 roll) has 3 deviations — get_normal_right vs GetNormal(true, ASPECT_RATIO) opposite handedness, dropped aspect on the normal, max_norm vs Normalize(ASPECT_RATIO) — needs a trace that rolls the advance.",
+  "activeForm": "Fixing 180-raw stretch",
+  "owner": "fix-residuals",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

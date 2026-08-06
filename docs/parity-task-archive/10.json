@@ -1,0 +1,10 @@
+{
+  "id": "10",
+  "subject": "Fix +50 elevation Pc family and jump timing residuals",
+  "description": "(a) From 0b1b152b5: Pc members reading exactly +50.0 elevation vs Original (60.001-vs-110.001, 112.98-vs-162.98, 83.32-vs-133.32, 222.5-vs-272.5, ...) — wrong projection area one storey apart; NOTE the jump-down drop 7a86df871 (TELEPORT_JUMPING_DOWN=50) merged simultaneously — re-verify these members against the merged tree FIRST, they may be the same 50 and already fixed. (b) From 7a86df871: f872 residual Pc(252) motion_state InProgress-vs-Terminated at flight end; C++ 0.05f*d vs Rust d/20.0 (and 0.0666666f vs d/15.0) not bit-identical — plausible truncation flip, changes every jump duration, needs targeted validation. (c) Soldier sub-family small drift + increment/goal (linux2/002/Savegame_000 replay-007 f5387).",
+  "activeForm": "Fixing elevation/jump residuals",
+  "owner": "fix-residuals",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

@@ -1,0 +1,8 @@
+{
+  "id": "35",
+  "subject": "Fix LeaveSpy/LeaveTree launched with priority NotYetSet",
+  "description": "Latent hazard flagged during #26: engine/commands.rs launches LeaveSpy/LeaveTree elements with priority NotYetSet, which would trip element_priority.rs's debug catch-all panic if such an element reaches DeterminePriority. Check what priority C++ assigns at the equivalent launch sites and port it. Low urgency; no known trace hits it yet.",
+  "status": "pending",
+  "blocks": [],
+  "blockedBy": []
+}

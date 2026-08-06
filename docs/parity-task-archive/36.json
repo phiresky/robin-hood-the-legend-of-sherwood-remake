@@ -1,0 +1,9 @@
+{
+  "id": "36",
+  "subject": "URGENT: bisect SeekPointSelection-storm regression on passing controls",
+  "description": "Two controls that PASSED at sweep runner db67cc978 now fail identically on HEAD (verified pre-#25 by A/B): parity-random-save-replays-60s-15x traces Savegame_Cyrdach/Profile_001(?)/.../replay-009 and Savegame_Nescafe/.../replay-009 (the two \"pass\" controls fix-vipremark used; exact paths in its report — Cyrdach_001 replay-009 fails f1653, Nescafe_001 replay-009 fails f1589) with an RNG count mismatch storm of SeekPointSelection draws (range 5251..5813). Suspect merges between db67cc978 and 78a792ed6: #18 battle_decisions (204e965c6), #29 PerformSeek else-arm refresh (in f8db6eeb7), #32 FaceOpponent angle, #12 arrival predicate (cc3737b28 merge), #33 seek-refresh effect drop, #14 ladder, #26 tests, #27 ladder-fall, #25 speech. The PerformSeek/RefreshSeek changes (#29/#33) and arrival predicate (#12) are prime suspects since the storm is seek-point selection. Bisect the merge commits with the two repros (shallow frames — fast debug replays), identify the guilty change, and fix it faithfully against C++ (do NOT just revert unless the change was outright wrong). Also flag: failure-only re-sweeps cannot see regressions on passing traces — the next full-universe sweep should re-run the passing set.",
+  "status": "in_progress",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "fix-seekregress"
+}
