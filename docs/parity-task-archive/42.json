@@ -1,0 +1,8 @@
+{
+  "id": "42",
+  "subject": "Fix Strangle pre-action victim animation timing and undefined motion telemetry",
+  "description": "DONE. Residual exposed by task #34 at parity-random-save-replays-60s-15x/Savegame_nicouzouf/Profile_001/Savegame_069/replay-005. The two frame-463 fields were separate. Pc247's Original motion_state was 4160286488, outside the complete RHSprite.h RHmotionState range 0..=5: RHElementActorPC::Perform(RHANIMATION_STRANGLING) can return its uninitialized local while TurnFast short-circuits, and the schema-12 recorder captured those stack bytes. The comparator retains every declared enum value and excludes only out-of-range undefined telemetry instead of fabricating a Rust state. Soldier197's sprite_frame was real gameplay timing: even when the two TurnFast calls prevent Strangling PerformAction, Original continues into its IsNotYetDone tail and PerformVirginIncrement advances the victim's selected attentive-turn animation. Rust returned early and omitted that second per-frame increment. Both short-circuit arms now perform the legacy tail when the attacker's retained sprite row is action-done. The exact replay clears frames 463 and 464 and advances to the distinct task #45 frame-465 visibility/combat-entry frontier.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

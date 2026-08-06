@@ -71,8 +71,10 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #39 completed: removed invented receiver-side `CALL_LOOKTHERE` state gate; Original delivery is unconditional after sender selection. Both controls clear the heard-steps substate/view failure and expose a separate direction-goal residual.
 - #40 completed: The16thFrame now reads ActorData::installed_order after synchronous detection callbacks instead of using the NPC owner path's pre-detection snapshot, matching Original's live GetAnimation boundary.
 - #41 completed: opening a scroll now forces the live BonusThree sprite at the shared SetStatus boundary, clearing the repeated Scroll(111) row/frame family found in 25 completed baseline controls.
-- #42 active: investigate the distinct nicouzouf/S069 r005 f463 Pc motion-state and Soldier197 sprite-frame residual exposed after #34.
+- #42 completed: Strangle's two pre-action TurnFast short-circuit arms now retain Original's due victim virgin increment, clearing the real Soldier197 frame skew; the comparator also excludes only out-of-range uninitialized Original motion telemetry. The next f465 visibility/combat frontier is #45.
 - #43 completed: legacy sprite adoption now preserves Original's profile-switch-before-position ordering, including the transient row computed from the constructed mission direction when the saved alternate-profile flag differs.
+- #44 active: restore the Original animated DropAle lifecycle and DONE-edge bottle/ammo effect for the 26-control family.
+- #45 active: investigate nicouzouf/S069 r005 f465 visibility/combat entry after #42.
 
 Standing clusters not yet tasked: actor.animation 133 (top cluster, resweep-db67cc978 classification), direction_goal 76, position_goal_map.x 72, motion_state 70, MoveOk→MoveWaiting 57, BoredAnimationChoice 56, AiRandomValueRectangle 55, path_events.length 54, RuntimeBuildingExitWait 51, visibility_queries.length 45 (+43 ai.list_them etc.). Full breakdown: `output/parity-audits/resweep-db67cc978/classification.json`.
 

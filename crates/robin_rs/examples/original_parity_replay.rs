@@ -6055,13 +6055,24 @@ fn compare_frame(
                         as u32,
                 );
             }
-            compare(
-                &mut differences,
-                id,
-                "actor.motion_state",
-                expected_actor.motion_state,
-                actual_actor.continuation.motion_state as u32,
-            );
+            // `RHElementActorPC::Perform(RHANIMATION_STRANGLING)` leaves its
+            // local `motionState` uninitialized while either participant is
+            // still turning, and `RHElementActor::Hourglass` copies that raw
+            // return into `mmotionState`.  Old schema-12 captures therefore
+            // occasionally contain stack bytes here.  Preserve comparison
+            // for every value in Original's declared `RHmotionState` enum,
+            // including its `RHMOTION_ERROR` member that Rust deliberately
+            // cannot produce, but do not turn undefined C++ telemetry into a
+            // fabricated Rust gameplay state.
+            if original_motion_state_is_defined(expected_actor.motion_state) {
+                compare(
+                    &mut differences,
+                    id,
+                    "actor.motion_state",
+                    expected_actor.motion_state,
+                    actual_actor.continuation.motion_state as u32,
+                );
+            }
             compare(
                 &mut differences,
                 id,
@@ -6486,6 +6497,12 @@ fn compare<T: std::fmt::Debug + PartialEq>(
     }
 }
 
+fn original_motion_state_is_defined(raw: u32) -> bool {
+    // Original `RHSprite.h`: DONE, START, IN_PROGRESS, TERMINATED,
+    // ABORTED, ERROR.
+    raw <= 5
+}
+
 fn trace_kind_for_entity(entity: &Entity) -> TraceEntityKind {
     match entity {
         Entity::Pc(_) => TraceEntityKind::Pc,
@@ -6636,6 +6653,15 @@ fn compare_point_with_absolute_tolerance(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn original_motion_state_comparison_rejects_only_undefined_stack_values() {
+        for raw in 0..=5 {
+            assert!(original_motion_state_is_defined(raw));
+        }
+        assert!(!original_motion_state_is_defined(6));
+        assert!(!original_motion_state_is_defined(4_160_286_488));
+    }
 
     #[test]
     fn native_cache_suffix_tracks_binary_header_version() {
@@ -7342,6 +7368,7 @@ mod tests {
             entities: BTreeMap::from([(original_actor, rust_actor)]),
             entities_by_creation_order: BTreeMap::new(),
             sectors: BTreeMap::new(),
+            runtime_creation_order_boundary: u32::MAX,
         };
         let request = robin_engine::pathfinder::ParityPathRequest {
             actor: rust_actor,
@@ -7848,6 +7875,7 @@ mod tests {
             entities: BTreeMap::from([(old_trace_id, rust_id)]),
             entities_by_creation_order: BTreeMap::from([(158, rust_id)]),
             sectors: BTreeMap::new(),
+            runtime_creation_order_boundary: u32::MAX,
         };
 
         map.refresh_trace_index(shifted_trace_id, 158);

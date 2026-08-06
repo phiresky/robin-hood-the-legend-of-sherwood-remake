@@ -2081,17 +2081,18 @@ pub fn tick_ability(
     // the victim FREEZE lock are installed by the engine at the original
     // post-translation initialization boundary.
     if kind == AbilityKind::Strangle {
+        let victim_id = ability
+            .target
+            .expect("active Strangle ability must retain its antagonist");
         if entities
             .get_mut(requested_actor)
             .expect("validated strangle owner vanished before TurnFast")
             .position_iface_mut()
             .turn_fast()
         {
+            advance_pre_action_strangle_victim_if_due(sim, entities, requested_actor, victim_id);
             return results;
         }
-        let victim_id = ability
-            .target
-            .expect("active Strangle ability must retain its antagonist");
         let victim = entities
             .get_mut(victim_id)
             .unwrap_or_else(|| panic!("strangle victim {victim_id:?} vanished while turning"));
@@ -2100,6 +2101,7 @@ pub fn tick_ability(
             "strangle victim {victim_id:?} lost required actor state while turning"
         );
         if victim.position_iface_mut().turn_fast() {
+            advance_pre_action_strangle_victim_if_due(sim, entities, requested_actor, victim_id);
             return results;
         }
     }
@@ -2658,6 +2660,38 @@ pub fn tick_ability(
 
     results.push(result);
     results
+}
+
+/// Mirror the legacy Strangle tail while its `TurnFast && TurnFast` guard
+/// short-circuits before `PerformAction`.
+///
+/// The Original still evaluates `IsNotYetDone()` on the attacker's retained
+/// sprite row and calls `PerformVirginIncrement()` on the victim.  This is
+/// observable when Strangle follows an already-done walk-to-wait transition:
+/// the victim's independent turning animation advances a second time in the
+/// same frame even though the Strangling animation has not started yet.
+fn advance_pre_action_strangle_victim_if_due(
+    sim: &crate::sim_rng::SimulationContext,
+    entities: &mut Entities,
+    attacker_id: EntityId,
+    victim_id: EntityId,
+) {
+    let due = {
+        let attacker = entities
+            .get(attacker_id)
+            .unwrap_or_else(|| panic!("strangle attacker {attacker_id:?} vanished while turning"));
+        let sprite = attacker.sprite();
+        !sprite.current_scripts().is_empty()
+            && sprite.current_frame >= sprite.action_done_for_row(sprite.current_row)
+    };
+    if due {
+        entities
+            .get_mut(victim_id)
+            .unwrap_or_else(|| panic!("strangle victim {victim_id:?} vanished before increment"))
+            .element_data_mut()
+            .sprite
+            .perform_virgin_increment(sim, crate::sprite::FrameProgression::Default);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
