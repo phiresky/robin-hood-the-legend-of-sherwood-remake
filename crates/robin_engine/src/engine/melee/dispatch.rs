@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::element::{ActionState, Command, EntityId};
+use crate::engine::sequence_runtime::OwnerActionBarrier;
 use crate::sequence::SequenceElementData;
 use crate::weapons::SwordStrike;
 
@@ -116,7 +117,7 @@ impl EngineInner {
     ///
     /// Establishes the fight relationship and queues the transition into the
     /// sword pose.  Execute owns the action-state and facing changes.
-    pub(crate) fn dispatch_enter_swordfight(
+    pub(in crate::engine) fn dispatch_enter_swordfight(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -124,19 +125,19 @@ impl EngineInner {
         opponent: Option<EntityId>,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) {
+    ) -> OwnerActionBarrier {
         {
             let Some(entity) = self.world.entities.get_mut(owner) else {
                 self.orders
                     .sequence_manager
                     .element_impossible(seq_id, elem_idx);
-                return;
+                return OwnerActionBarrier::Skip;
             };
             if entity.is_dead() || entity.human_data().map(|h| h.unconscious).unwrap_or(true) {
                 self.orders
                     .sequence_manager
                     .element_impossible(seq_id, elem_idx);
-                return;
+                return OwnerActionBarrier::Skip;
             }
         }
 
@@ -170,7 +171,7 @@ impl EngineInner {
                     self.orders
                         .sequence_manager
                         .element_impossible(seq_id, elem_idx);
-                    return;
+                    return OwnerActionBarrier::Skip;
                 }
                 TableFightMove::Launched => {
                     let element = self
@@ -241,10 +242,15 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_in_progress(seq_id, elem_idx);
+            OwnerActionBarrier::Reach
         } else {
             self.orders
                 .sequence_manager
                 .element_terminated(seq_id, elem_idx);
+            // SetState(Terminated) synchronously sends the condolence card.
+            // If that callback changes mpSequenceElement, Actor::Instruct
+            // returns before its accepted-motion/order epilogue.
+            OwnerActionBarrier::Skip
         }
     }
 

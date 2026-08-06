@@ -1049,9 +1049,22 @@ impl EngineInner {
                                         Some(crate::sequence::FieldValue::Element(id)) => Some(*id),
                                         _ => None,
                                     };
-                                self.dispatch_enter_swordfight(
+                                let barrier = self.dispatch_enter_swordfight(
                                     sim, assets, owner, opponent, seq_id, elem_idx,
                                 );
+                                if barrier == OwnerActionBarrier::Skip {
+                                    self.dispatch_condolations(sim, assets);
+                                    if let Some(retained_order) = satisfied_enter_swordfight_order {
+                                        let entity = self
+                                            .get_entity_mut(owner)
+                                            .expect("satisfied EnterSwordfight owner disappeared");
+                                        let actor = entity.actor_data_mut().unwrap();
+                                        actor.installed_order = Some(retained_order);
+                                        actor.retained_waiting_sword_order_id =
+                                            Some(retained_order.order_id);
+                                    }
+                                    break 'action;
+                                }
                             }
                             Command::QuitSwordfight => {
                                 self.dispatch_quit_swordfight(sim, assets, owner, seq_id, elem_idx);
@@ -2633,20 +2646,6 @@ impl EngineInner {
                         // dispatch boundary rather than inferring it later from
                         // whichever element happens to be selected.
                         self.publish_selected_order_for_instruct_owner(owner);
-                        if let Some(retained_order) = satisfied_enter_swordfight_order {
-                            // The terminal Enter card clears mpOrder while the
-                            // incoming element is still the translating
-                            // selection. Let that callback finish first, then
-                            // restore the outgoing idle at the same stable
-                            // boundary as Original Actor::Instruct.
-                            self.dispatch_condolations(sim, assets);
-                            let entity = self
-                                .get_entity_mut(owner)
-                                .expect("satisfied EnterSwordfight owner disappeared");
-                            let actor = entity.actor_data_mut().unwrap();
-                            actor.installed_order = Some(retained_order);
-                            actor.retained_waiting_sword_order_id = Some(retained_order.order_id);
-                        }
                     }
                     crate::sequence::SequenceAction::ExecuteImmediateOwner {
                         owner,

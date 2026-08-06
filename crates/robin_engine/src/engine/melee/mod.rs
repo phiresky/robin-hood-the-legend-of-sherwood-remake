@@ -4378,6 +4378,73 @@ mod tests {
     }
 
     #[test]
+    fn satisfied_enter_swordfight_skips_outer_instruct_epilogue() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let owner = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let opponent = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        if let Some(actor) = engine.get_entity_mut(owner).unwrap().actor_data_mut() {
+            actor.action_state = ActionState::WaitingSword;
+        }
+        if let Some(human) = engine.get_entity_mut(owner).unwrap().human_data_mut() {
+            human.opponents = vec![opponent];
+            human.opponent_jump_lines = vec![None];
+        }
+        if let Some(human) = engine.get_entity_mut(opponent).unwrap().human_data_mut() {
+            human.opponents = vec![owner];
+            human.opponent_jump_lines = vec![None];
+        }
+
+        let mut element =
+            crate::sequence::SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
+        element.set_property(
+            crate::sequence::Field::Opponent,
+            crate::sequence::FieldValue::Element(opponent),
+        );
+        let mut sequence = crate::sequence::Sequence::new();
+        sequence.append_element(element);
+        let seq_id = engine.launch_sequence(sequence);
+
+        let barrier = engine.dispatch_enter_swordfight(
+            &sim,
+            &LevelAssets::default(),
+            owner,
+            Some(opponent),
+            seq_id,
+            0,
+        );
+
+        assert_eq!(
+            barrier,
+            crate::engine::sequence_runtime::OwnerActionBarrier::Skip,
+            "terminal Translate changes the selected element before Actor::Instruct's epilogue"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .unwrap()
+                .state,
+            crate::sequence::SequenceState::Terminated
+        );
+    }
+
+    #[test]
     fn reconsider_rebalance_updates_opponents_without_recursive_enter_command() {
         use crate::ai::EnterSwordfightRequest;
 

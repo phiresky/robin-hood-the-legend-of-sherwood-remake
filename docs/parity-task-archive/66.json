@@ -1,0 +1,8 @@
+{
+  "id": "66",
+  "subject": "Preserve terminal EnterSwordfight motion result",
+  "description": "DONE. After task #63 exposed schema14 Savegame_linux3/Profile_001/Savegame_013/replay-006 past frame 776, PC173 differed for one frame at 883: Original retained the Terminated result of its completed Parry transition while Rust projected InProgress. The queued reciprocal EnterSwordfight had become already satisfied before it was finally instructed, so Human::Translate terminated it without an order. Original SetState synchronously sends the condolence card; when that callback changes mpSequenceElement, Actor::Instruct returns before its accepted-motion/order epilogue (RHelementactor.cpp:967-976). Rust deferred the card until after recording the owner in the accepted-Instruct ledger and overwrote the authentic Terminated result. Enter dispatch now returns a Skip barrier for terminal/impossible translation, settles the card before the shared epilogue, and preserves task #59's retained WaitingSword identity. ReconsiderSwordfight's direct EnterSwordFight path also no longer invents the command-only PrepareToEnterSwordFight Stop/Think boundary. The affected replay matches every recorded frame. The task #59 frame-2141/2142 window remains exact, and focused terminal-barrier, retained-order, direct-entry, rebalance, and ordinary preparation tests pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
