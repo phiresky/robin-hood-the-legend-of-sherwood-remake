@@ -250,7 +250,7 @@ impl EngineInner {
         // queued; the soldier needs to leave the lift first and the
         // animation queue would otherwise be clobbered.
         if on_ladder {
-            self.translate_ladder_wall_fall(owner, (seq_id, elem_idx));
+            self.translate_ladder_wall_fall(assets, owner, (seq_id, elem_idx));
         }
 
         // Book the first struggle animation onto the wasp-sting

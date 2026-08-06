@@ -540,6 +540,13 @@ pub struct ActiveFlight {
     /// goal layer/sector.  Mid-flight queries that need the plane
     /// should use the explicit `increment_z` field.
     pub obstacle: Option<crate::position_interface::ObstacleHandle>,
+    /// Ladder/wall fall marker.  These flights use the constant-speed
+    /// kinematics of the original ladder fall (fixed 3D step length 10,
+    /// duration `0.1 * distance` ticks): the flight tick mirrors the
+    /// remaining tick count into `actor.wait_time`, and landing applies
+    /// the fall's concussion, lying posture, and order retirement
+    /// instead of the generic combat-fall completion.
+    pub ladder_fall: bool,
 }
 
 /// Active rider charge state.
