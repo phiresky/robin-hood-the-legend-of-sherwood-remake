@@ -557,8 +557,14 @@ impl EnemyAi {
                     pc.handle
                 )
             });
-            if !battle_friend_detected_360(ctx, view.detection_position_world, view.direction, view)
-            {
+            if !battle_friend_detected_360(
+                ctx,
+                self.base.me,
+                pc.handle,
+                view.detection_position_world,
+                view.direction,
+                view,
+            ) {
                 continue;
             }
             self.base.list_us.push(pc.handle);
