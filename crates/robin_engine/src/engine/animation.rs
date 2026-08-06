@@ -561,14 +561,13 @@ mod tests {
         let mut entity = weak_soldier_at_action_done(0);
         entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
 
-        apply_soldier_execute_side_effects(
+        // The sword-injury START states are shared human behavior, so they
+        // live in the universal active-animation dispatcher rather than the
+        // soldier-only override.
+        apply_active_animation_start_state_side_effect(
             &mut entity,
             OrderType::BeingStunnedSword,
             MotionState::Start,
-            None,
-            EntityId::Pc(crate::entity_id::PcId(7)),
-            &mut ExecuteSideOutcomes::default(),
-            &crate::profiles::ProfileManager::default(),
         );
 
         assert_eq!(entity.element_data().posture, Posture::Upright);

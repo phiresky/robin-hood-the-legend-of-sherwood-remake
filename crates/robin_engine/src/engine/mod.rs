@@ -4978,14 +4978,37 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
     let mut profiles = (*assets.profile_manager).clone();
     let mut needs_hth_weapon = false;
 
-    for (_, pc) in engine.world.entities.pcs() {
-        if !pc.element.active || pc.pc.life_points <= 0 {
-            continue;
-        }
+    for (_, pc) in engine.world.entities.pcs_mut() {
         let profile_idx = usize::from(pc.pc.profile_index);
         profiles
             .characters
             .resize_with(profile_idx + 1, crate::profiles::CharacterProfile::default);
+
+        // Every PC needs its campaign-description identity: the runtime
+        // resolves coma/ammo/portrait state through the campaign character
+        // table and treats a missing link as corrupted data.
+        let campaign = &mut engine.mission_domain.campaign;
+        let description_idx = match pc.pc.campaign_description_index {
+            Some(idx) => idx as usize,
+            None => {
+                let idx = campaign.characters.len();
+                pc.pc.campaign_description_index = Some(idx as u32);
+                idx
+            }
+        };
+        if campaign.characters.len() <= description_idx {
+            campaign
+                .characters
+                .resize_with(description_idx + 1, crate::campaign::PcDescription::default);
+        }
+        let description = &mut campaign.characters[description_idx];
+        if description.character_profile_idx.is_none() {
+            description.character_profile_idx = Some(pc.pc.profile_index);
+        }
+
+        if !pc.element.active || pc.pc.life_points <= 0 {
+            continue;
+        }
         if profiles.characters[profile_idx].hth_weapon_id == 0 {
             profiles.characters[profile_idx].hth_weapon_id = 1;
         }
@@ -5002,9 +5025,9 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
             soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
                 panic!("test soldier {} has a non-enemy AI brain", soldier_id.0)
             });
-        if !soldier.element.active || soldier.human.unconscious {
-            continue;
-        }
+        // Inactive and unconscious soldiers still appear in camp-soldier
+        // snapshots (e.g. as bodies), and those snapshots resolve the HtH
+        // weapon profile for every entry with an enemy AI.
         let profile_idx = usize::from(soldier.soldier.soldier_profile_index);
         profiles
             .soldiers

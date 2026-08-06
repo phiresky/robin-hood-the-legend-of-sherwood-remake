@@ -338,6 +338,13 @@ fn attentive_postpone_current_preserves_rewritten_movement_goal() {
     // command then POSTPONE_CURRENTs it without a condolence card.
     engine.stop_owner(owner, SequencePriority::Preference);
     engine.set_soldier_attentive_mode(owner, true, false);
+    // The attentive element is only registered here; drive the manager
+    // hourglass so its deferred Instruct performs the POSTPONE_CURRENT.
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut crate::engine::HostDisplayState::default(),
+        &LevelAssets::new(),
+    );
 
     let movement = engine
         .orders

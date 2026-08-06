@@ -4674,6 +4674,18 @@ mod tests {
 
         ai.resolve_charly_officer_report(sim, false, &ctx, &AiPerTickData::stub());
 
+        // The refused report enters ReturnToDuty, which suspends its common
+        // tail at the owner boundary so the engine can run InitializePatrol
+        // in between. Drain that continuation directly for the unit check.
+        let resume = std::mem::take(&mut ai.base.outbox.reentrant.owner_work)
+            .into_iter()
+            .find_map(|work| match work {
+                AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { flags, .. } => Some(flags),
+                _ => None,
+            })
+            .expect("refused report queues the return-to-duty continuation");
+        ai.resume_return_to_duty_after_patrol_init(sim, resume, &ctx);
+
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
         assert_eq!(ai.base.antagonist, 0);

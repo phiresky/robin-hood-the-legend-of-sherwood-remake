@@ -7069,6 +7069,11 @@ mod tests {
         )));
 
         mgr.element_interrupted(sequence_id, 0, CascadeFlags::FOLLOWING);
+        // The owner's condolence card is a synchronous boundary; the
+        // cascade only continues once the card's Think has completed.
+        let mut pending = mgr.drain_pending_condolations();
+        assert_eq!(pending.len(), 1);
+        mgr.finish_pending_condolation(pending.remove(0));
 
         assert_eq!(
             mgr.get_element(sequence_id, 1).unwrap().state,
@@ -7503,7 +7508,12 @@ mod tests {
         let mut sequence = Sequence::new();
         sequence.append_element(SequenceElement::new(1, Command::Generic, Some(owner)));
         sequence.append_element(SequenceElement::new(2, Command::Generic, Some(owner)));
-        sequence.append_element(movement_elem(owner, OrderType::WalkingUpright));
+        sequence.append_element(SequenceElement::new_movement(
+            3,
+            Command::Move,
+            Some(owner),
+            OrderType::WalkingUpright,
+        ));
         let sequence_id = mgr.launch_sequence(sequence);
         mgr.get_element_mut(sequence_id, 0)
             .expect("loaded first element exists")

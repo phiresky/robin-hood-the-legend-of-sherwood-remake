@@ -3939,22 +3939,22 @@ mod tests {
         // raw candidate for the degenerate center-to-click segment, but does
         // not intersect that segment. It must not be promoted ahead of the
         // first edge, which is found by the following box query.
-        grid.add_line(
-            GridLine::new(
-                MapPoint::new(753.0, 678.0),
-                MapPoint::new(741.0, 700.0),
-                true,
-            ),
-            0,
+        let mut first_edge = GridLine::new(
+            MapPoint::new(753.0, 678.0),
+            MapPoint::new(741.0, 700.0),
+            true,
         );
-        grid.add_line(
-            GridLine::new(
-                MapPoint::new(741.0, 700.0),
-                MapPoint::new(617.0, 721.0),
-                true,
-            ),
-            0,
+        // The authored sector is a solid motion obstacle, so its edges carry
+        // the solid orientation (normal pointing toward the walkable side).
+        first_edge.initialize_motion_normal(false);
+        grid.add_line(first_edge, 0);
+        let mut second_edge = GridLine::new(
+            MapPoint::new(741.0, 700.0),
+            MapPoint::new(617.0, 721.0),
+            true,
         );
+        second_edge.initialize_motion_normal(false);
+        grid.add_line(second_edge, 0);
 
         let click = MapPoint::new(742.302, 704.8645);
         let mut bbox = MapBBox::from_coords(732.302, 699.8645, 752.302, 709.8645);

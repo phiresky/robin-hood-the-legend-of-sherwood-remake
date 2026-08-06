@@ -3,7 +3,8 @@ use super::*;
 #[test]
 fn set_actor_location_honolulu_finishes_before_same_callback_unlock() {
     let (mut engine, receiver, handle) = engine_with_receiver();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
 
     engine
         .call_script_vm(

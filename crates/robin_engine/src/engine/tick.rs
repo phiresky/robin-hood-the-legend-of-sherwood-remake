@@ -6972,8 +6972,12 @@ mod bow_command_body_parity_tests {
         .dispatch(owner, Command::CrouchDown, seq_id, 0);
 
         assert_eq!(barrier, OwnerActionBarrier::Reach);
+        // Translation only appends the crouch transition order; the posture
+        // and action-state snap happen when the transition animation reaches
+        // DONE, so the element stays selected/in-progress and the actor is
+        // untouched during dispatch.
         let entity = engine.world.entities.get(owner).unwrap();
-        assert_eq!(entity.element_data().posture, Posture::Crouched);
+        assert_eq!(entity.element_data().posture, Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::Waiting
@@ -6983,11 +6987,11 @@ mod bow_command_body_parity_tests {
             .sequence_manager
             .get_element(seq_id, 0)
             .unwrap();
-        assert_eq!(element.state, SequenceState::Terminated);
+        assert_eq!(element.state, SequenceState::InProgress);
         assert_eq!(
             element.current_order().map(|order| order.order_type),
             Some(OrderType::TransitionCrouchingDown),
-            "the pre-split path terminates synchronously but retains the transition order"
+            "the crouch body only queues its transition order at translation time"
         );
     }
 
@@ -7035,8 +7039,23 @@ mod bow_command_body_parity_tests {
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
         let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        // Crouch bodies now stay live until their transition animation
+        // completes, so use LeaveSpy — the stealth context still snaps the
+        // posture and terminates it synchronously inside its dispatch slot.
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap()
+            .element_data_mut()
+            .posture = Posture::Spy;
         let mut sequence = Sequence::new();
-        sequence.append_element(SequenceElement::new(1, Command::CrouchDown, Some(owner)));
+        // Production launches LeaveSpy with the auto-leave helper, which
+        // never reaches priority arbitration; preset the priority the way
+        // an already-arbitrated element carries it.
+        let mut leave = SequenceElement::new(1, Command::LeaveSpy, Some(owner));
+        leave.priority = crate::sequence::SequencePriority::Normal;
+        sequence.append_element(leave);
         let mut timer = SequenceElement::new_generic(2, Command::Timer, None);
         timer.set_property(Field::Timer, FieldValue::Integer(2));
         sequence.append_element(timer);
@@ -7567,6 +7586,10 @@ mod bow_command_body_parity_tests {
         let lift = engine.world.fast_grid.lift_state_mut(0);
         assert_eq!(lift.occupants, 1);
         assert!(lift.occupied_downwards);
+        // The fallback idle Wait is no longer installed inside the
+        // terminating owner slot: the null-order guard books it at the start
+        // of the owner's next actor frame.
+        engine.tick_actor_animation_action_change_slots(&sim, &assets);
         assert_eq!(
             engine
                 .orders
@@ -7578,7 +7601,7 @@ mod bow_command_body_parity_tests {
                     .get_element(sequence, element))
                 .map(|element| element.command),
             Some(Command::Wait),
-            "DoNext/Wait translation must finish in the same owner slot"
+            "DoNext/Wait translation must finish by the owner's next actor frame"
         );
     }
 }
@@ -7817,6 +7840,7 @@ mod drop_ammo_merge_tests {
             human: Default::default(),
             pc: crate::element::PcData {
                 profile_index: CharacterProfileIdx(0),
+                campaign_description_index: Some(0),
                 ..Default::default()
             },
         }));

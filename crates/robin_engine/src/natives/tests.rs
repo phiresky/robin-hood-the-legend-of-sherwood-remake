@@ -2180,9 +2180,14 @@ fn current_action_and_frame_queries_read_canonical_runtime_state() {
     let pc_id = EntityId::Pc(crate::entity_id::PcId(0));
     let pc_handle = ScriptHandleCodec::actor_handle(pc_id);
     let mut pc_host = BoundScriptEffects::new();
-    pc_host
-        .entities
-        .push(Some(native_test_pc(Vec::new(), Vec::new())));
+    let mut pc = native_test_pc(Vec::new(), Vec::new());
+    // The current-action query reads the actor's installed order (Original
+    // mpOrder), which Instruct publishes from the selected sequence order.
+    pc.actor_data_mut().unwrap().installed_order = Some(crate::element::InstalledActorOrder {
+        order_id: std::num::NonZeroU32::new(1).unwrap(),
+        order_type: crate::order::OrderType::RunningUpright,
+    });
+    pc_host.entities.push(Some(pc));
     let mut sequences = crate::sequence::SequenceManager::new();
     let mut element =
         crate::sequence::SequenceElement::new(1, crate::element::Command::Move, Some(pc_id));
@@ -3005,9 +3010,21 @@ fn native_sees(
     npc_index: usize,
     target_index: usize,
 ) -> i32 {
+    native_sees_at_frame(host, weather, npc_index, target_index, 0)
+}
+
+/// `Sees` memoizes the computed view radius per viewer and universal frame
+/// like the Original surface cache, so a query under changed ambiance must
+/// run on a fresh frame to observe the recomputed radius.
+fn native_sees_at_frame(
+    host: &mut BoundScriptEffects,
+    weather: &crate::engine::WeatherState,
+    npc_index: usize,
+    target_index: usize,
+    frame: u32,
+) -> i32 {
     let mut sequences = crate::sequence::SequenceManager::new();
     let mut sounds = crate::sound_source::SoundSourceManager::new();
-    let frame = 0;
     let mut selected = Vec::new();
     let mut stack = NativeStack::default();
     stack.push_i32(ScriptHandleCodec::actor_handle_from_index(npc_index));
@@ -3084,30 +3101,43 @@ fn sees_uses_ambiance_adjusted_view_radius() {
         .unwrap()
         .view_radius = 500;
 
+    // The night light lookup reproduces GetSectors' grid-block walk, so the
+    // shadow sector must be registered through the sized grid rather than
+    // pushed straight into the sector table.
+    host.fast_grid.size_map(20, 20);
+    host.fast_grid.allocate_layers(1);
+    let points = vec![
+        crate::coordinates::MapPoint::new(240.0, -10.0),
+        crate::coordinates::MapPoint::new(260.0, -10.0),
+        crate::coordinates::MapPoint::new(260.0, 10.0),
+        crate::coordinates::MapPoint::new(240.0, 10.0),
+    ];
+    let mut bounding_box = crate::coordinates::MapBBox::new();
+    for &point in &points {
+        bounding_box.expand_point(point);
+    }
+    host.fast_grid.add_sector(
+        crate::fast_find_grid::GridSector {
+            points,
+            bounding_box,
+            sector_type: crate::sector::SectorType::SHADOW,
+            layer: 0,
+            sector_number: crate::sector::SectorNumber::new(1),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        },
+        0,
+    );
     let level = std::sync::Arc::make_mut(&mut host.fast_grid.level);
-    level.sectors.push(crate::fast_find_grid::GridSector {
-        points: vec![
-            crate::coordinates::MapPoint::new(240.0, -10.0),
-            crate::coordinates::MapPoint::new(260.0, -10.0),
-            crate::coordinates::MapPoint::new(260.0, 10.0),
-            crate::coordinates::MapPoint::new(240.0, 10.0),
-        ],
-        bounding_box: crate::coordinates::MapBBox::new(),
-        sector_type: crate::sector::SectorType::SHADOW,
-        layer: 0,
-        sector_number: crate::sector::SectorNumber::new(1),
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
-    });
     level.shadow_data.insert(
         0,
         crate::sector::ShadowData {
@@ -3120,10 +3150,12 @@ fn sees_uses_ambiance_adjusted_view_radius() {
     );
 
     assert_eq!(weather.ambiance, crate::engine::Ambiance::Day);
-    assert_eq!(native_sees(&mut host, &weather, 0, 1), 1);
+    assert_eq!(native_sees_at_frame(&mut host, &weather, 0, 1, 0), 1);
 
+    // The night query runs on the next universal frame so the per-frame
+    // view-radius memo from the day query cannot satisfy it.
     weather.ambiance = crate::engine::Ambiance::Night;
-    assert_eq!(native_sees(&mut host, &weather, 0, 1), 0);
+    assert_eq!(native_sees_at_frame(&mut host, &weather, 0, 1, 1), 0);
 }
 
 fn set_experiences_test_host() -> (BoundScriptEffects, crate::campaign::Campaign, i32) {

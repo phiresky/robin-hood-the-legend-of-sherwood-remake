@@ -41,6 +41,12 @@ pub(crate) struct WorldState {
     /// Original mobile masters consume creation orders without occupying a
     /// Rust `Entities` slot, and Rust batches authored entity categories
     /// differently while loading a mission.
+    ///
+    /// `EntityId` is a data-carrying enum, so JSON snapshots need the
+    /// any-key adapter to keep the map serializable. The sized variant
+    /// reports the map length so compact encoders that require
+    /// `SerializeSeq` lengths (rollback snapshots) also work.
+    #[serde(with = "serde_json_any_key::any_key_map_sized")]
     pub(crate) original_creation_order_by_entity: BTreeMap<EntityId, u32>,
     /// Original process-global `gulCreationCounter`.
     pub(crate) next_original_creation_order: u32,

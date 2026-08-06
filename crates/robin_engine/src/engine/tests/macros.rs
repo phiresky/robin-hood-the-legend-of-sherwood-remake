@@ -75,10 +75,10 @@ fn has_quick_action_reads_macro_store() {
 /// slot.
 #[test]
 fn abort_quick_action_clears_slot_and_titbit() {
-    use crate::element::EntityId;
-
     let mut engine = EngineInner::new();
-    let pc = EntityId::Pc(crate::entity_id::PcId(20));
+    // Aborting writes the cleared slot back onto the owner's PcData, so the
+    // quick-action owner must be a real PC entity.
+    let pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
 
     // Empty slot → false.
     assert!(!engine.abort_quick_action(pc, 0));
@@ -104,14 +104,13 @@ fn delete_macro_command_matches_original_single_vs_all() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut display = HostDisplayState::default();
-    use crate::element::EntityId;
     use crate::player_command::PlayerCommand;
 
     let mut engine = EngineInner::new();
-    let pc_a = EntityId::Pc(crate::entity_id::PcId(30));
-    let pc_b = EntityId::Pc(crate::entity_id::PcId(31));
-    engine.world.pc_ids.push(pc_a);
-    engine.world.pc_ids.push(pc_b);
+    // Deleting / tetris-shifting rewrites the owners' PcData slots, so the
+    // quick-action owners must be real PC entities.
+    let pc_a = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let pc_b = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
 
     // Both PCs have macros in slots 0 and 1; slot 2 is empty.
     seed_macro_slot(&mut engine, pc_a, 0, vec![(1.0, 1.0)]);
@@ -163,14 +162,31 @@ fn start_macro_plays_back_move_steps_and_tetris_collapses() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut display = HostDisplayState::default();
-    use crate::element::EntityId;
     use crate::player_command::PlayerCommand;
 
     let mut engine = EngineInner::new();
-    let pc_a = EntityId::Pc(crate::entity_id::PcId(40));
-    let pc_b = EntityId::Pc(crate::entity_id::PcId(41));
-    engine.world.pc_ids.push(pc_a);
-    engine.world.pc_ids.push(pc_b);
+    // Macro playback and the post-launch tetris shift both write back into
+    // the owners' PcData slots, so the owners must be real PC entities. The
+    // replayed Move dispatch also reads each mover's collision move box.
+    let pc_a = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let pc_b = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    for (i, pc) in [pc_a, pc_b].into_iter().enumerate() {
+        use crate::coordinates::{MapVec, MoveBox};
+        let element = engine.get_entity_mut(pc).unwrap().element_data_mut();
+        element
+            .sprite
+            .position_iface
+            .set_move_box(MoveBox::from_corners(
+                MapVec::new(-5.0, -5.0),
+                MapVec::new(5.0, 5.0),
+            ));
+        // Re-derive the map-space move box from the position: the group-move
+        // destination authorization reads it.
+        element.set_position_map(crate::coordinates::MapPoint::new(
+            10.0 + i as f32 * 20.0,
+            10.0,
+        ));
+    }
 
     // Both PCs record a one-step move macro at slot 0; pc_a has a slot-1
     // macro too.

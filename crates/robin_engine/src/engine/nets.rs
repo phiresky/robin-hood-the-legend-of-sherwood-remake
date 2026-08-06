@@ -1243,6 +1243,29 @@ mod tests {
         })
     }
 
+    /// Add a soldier and complete the runtime identity production spawn
+    /// paths install: the enemy AI's self handle must reference the
+    /// soldier's real entity slot and its melee weapon must resolve to the
+    /// registered test HtH profile, or capture-time synchronous AI thinks
+    /// reject the fighter registry.
+    fn add_soldier(
+        engine: &mut EngineInner,
+        pos: WorldPoint3D,
+        profile_idx: u32,
+        rider: bool,
+    ) -> EntityId {
+        let id = engine.add_entity(make_soldier(pos, profile_idx, rider));
+        let enemy = engine
+            .world
+            .entities
+            .get_mut(id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("test soldier has an enemy AI brain");
+        enemy.base.me = id.index();
+        enemy.hth_weapon_id = 1;
+        id
+    }
+
     fn make_pc(pos: WorldPoint3D, profile_idx: u32) -> Entity {
         let mut element = ElementData {
             kind: ElementKind::ActorPc,
@@ -1317,7 +1340,8 @@ mod tests {
         let net_id = engine.add_entity(make_net(landing));
         let soldiers: Vec<EntityId> = (0..3)
             .map(|i| {
-                engine.add_entity(make_soldier(
+                add_soldier(
+                    &mut engine,
                     WorldPoint3D {
                         x: LAND_X + i as f32 * 5.0,
                         y: LAND_Y,
@@ -1325,7 +1349,7 @@ mod tests {
                     },
                     0, // plain non-VIP profile
                     false,
-                ))
+                )
             })
             .collect();
 
@@ -1385,7 +1409,7 @@ mod tests {
         net_data.projectile.flying = true;
         net_data.net.was_flying = true;
         let net_id = engine.add_entity(net);
-        let victim_id = engine.add_entity(make_soldier(landing, 0, false));
+        let victim_id = add_soldier(&mut engine, landing, 0, false);
 
         engine.tick_net(sim, &assets, net_id);
 
@@ -1417,7 +1441,8 @@ mod tests {
             z: LAND_Z,
         };
         let net_id = engine.add_entity(make_net(landing));
-        let victim_id = engine.add_entity(make_soldier(
+        let victim_id = add_soldier(
+            &mut engine,
             WorldPoint3D {
                 x: LAND_X,
                 y: LAND_Y,
@@ -1425,7 +1450,7 @@ mod tests {
             },
             0,
             false,
-        ));
+        );
 
         engine.apply_net_falling_effect(sim, &assets, net_id);
         engine.apply_net_falling_effect(sim, &assets, net_id);
@@ -1588,7 +1613,8 @@ mod tests {
             z: LAND_Z,
         };
         let net_id = engine.add_entity(make_net(landing));
-        let near_id = engine.add_entity(make_soldier(
+        let near_id = add_soldier(
+            &mut engine,
             WorldPoint3D {
                 x: LAND_X + 5.0,
                 y: LAND_Y,
@@ -1596,9 +1622,10 @@ mod tests {
             },
             0,
             false,
-        ));
+        );
         // 200 units away in X — way outside SQUARE_RADIUS_NET_CAPTURE.
-        let far_id = engine.add_entity(make_soldier(
+        let far_id = add_soldier(
+            &mut engine,
             WorldPoint3D {
                 x: LAND_X + 200.0,
                 y: LAND_Y,
@@ -1606,7 +1633,7 @@ mod tests {
             },
             0,
             false,
-        ));
+        );
 
         engine.apply_net_falling_effect(sim, &assets, net_id);
 
@@ -1663,7 +1690,8 @@ mod tests {
             z: LAND_Z,
         };
         let net_id = engine.add_entity(make_net(landing));
-        let victim_id = engine.add_entity(make_soldier(
+        let victim_id = add_soldier(
+            &mut engine,
             WorldPoint3D {
                 x: LAND_X,
                 y: LAND_Y,
@@ -1671,7 +1699,7 @@ mod tests {
             },
             0,
             false,
-        ));
+        );
 
         // First, fire the apply sweep so the victim is registered.
         // The sweep eagerly increments stuck_under_nets_counter; the
@@ -1770,7 +1798,9 @@ mod tests {
             z: LAND_Z,
         };
         let net_id = engine.add_entity(make_net(landing));
-        let victim = make_soldier(
+        // The victim already has a default Sprite (non-Option).
+        let victim_id = add_soldier(
+            &mut engine,
             WorldPoint3D {
                 x: LAND_X,
                 y: LAND_Y,
@@ -1779,8 +1809,6 @@ mod tests {
             0,
             false,
         );
-        // The victim already has a default Sprite (non-Option).
-        let victim_id = engine.add_entity(victim);
 
         engine.apply_net_falling_effect(sim, &assets, net_id);
 
@@ -1856,6 +1884,24 @@ mod tests {
             },
             1, // Stuteley (has Action::Net)
         ));
+        // The full hourglass resolves the PC's portrait/ammo state through
+        // its campaign-description identity; install it like production
+        // roster construction does.
+        engine
+            .mission_domain
+            .campaign
+            .characters
+            .push(crate::campaign::PcDescription {
+                character_profile_idx: Some(crate::profiles::CharacterProfileIdx(1)),
+                ..Default::default()
+            });
+        engine
+            .world
+            .entities
+            .get_mut(pc_id)
+            .and_then(Entity::pc_data_mut)
+            .expect("test PC data")
+            .campaign_description_index = Some(0);
 
         // Fire the landing path so the net is actually on the ground.
         let sim = crate::sim_rng::test_context();

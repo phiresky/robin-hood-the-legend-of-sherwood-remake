@@ -417,8 +417,8 @@ fn send_message_callback_precedes_later_move_translation() {
             .state
             .globals
             .get(&909),
-        Some(&0),
-        "ProcessMessage must observe no current movement before the later FIFO Move is translated"
+        Some(&(crate::order::OrderType::NonanimationEnd as i32)),
+        "ProcessMessage must observe the no-installed-order sentinel before the later FIFO Move is translated"
     );
     assert_ne!(
         engine

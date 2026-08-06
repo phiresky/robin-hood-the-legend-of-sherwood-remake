@@ -783,12 +783,18 @@ mod tests {
             .orders
             .sequence_manager
             .element_in_progress(seek_seq, 0);
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .active_movement = ActiveMovement::new(seek_seq, 0);
+        {
+            // Seek translation stamps the owner's base seek distance before
+            // any refresh can run; RefreshSeek requires that live value.
+            let actor = engine
+                .get_entity_mut(owner)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap();
+            actor.active_movement = ActiveMovement::new(seek_seq, 0);
+            actor.seek_target = Some(target);
+            actor.seek_distance = 10.0;
+        }
 
         let pass = SequenceElement::new_movement(
             1,

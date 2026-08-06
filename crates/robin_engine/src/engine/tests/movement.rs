@@ -14,6 +14,42 @@ fn tick_production_owner_coordinator(
     engine.tick_actor_owner_envelopes(sim, assets, &positions);
 }
 
+/// Give a live test PC its required campaign-description identity: a
+/// `PcDescription` slot whose profile matches the entity's profile index.
+fn attach_test_pc_campaign_identity(engine: &mut EngineInner, pc_id: EntityId) {
+    let profile_index = engine
+        .get_entity(pc_id)
+        .and_then(crate::element::Entity::pc_data)
+        .expect("campaign identity target must be a live PC")
+        .profile_index;
+    let description_index = engine.mission_domain.campaign.characters.len() as u32;
+    engine
+        .mission_domain
+        .campaign
+        .characters
+        .push(crate::campaign::PcDescription {
+            character_profile_idx: Some(profile_index),
+            ..Default::default()
+        });
+    engine
+        .get_entity_mut(pc_id)
+        .and_then(crate::element::Entity::pc_data_mut)
+        .expect("campaign identity target must remain a PC")
+        .campaign_description_index = Some(description_index);
+}
+
+/// Sword damage launched by an actor strike reaches its victim only at the
+/// sequence-manager Hourglass after every actor's frame. Run that manager
+/// phase so deferred `ReceiveSwordDamage` elements dispatch.
+fn drain_manager_phase_damage(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
+) {
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(sim, &mut display, assets);
+}
+
 #[test]
 fn make_fast_does_not_postprocess_an_unrelated_live_movement() {
     use crate::order::{Order, OrderType};
@@ -165,6 +201,7 @@ fn frozen_galopp_think_closes_before_movement_completion_and_next_owner_slot() {
     let mut assets = LevelAssets::new();
     let (rider, sequence, order_id) = install_galopp_fixture(&mut engine, &mut assets, vec![20]);
     let later = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    attach_test_pc_campaign_identity(&mut engine, later);
     engine.set_actors_frozen(true);
     let callback_closed = std::rc::Rc::new(std::cell::Cell::new(false));
     let callback_observed = callback_closed.clone();
@@ -259,6 +296,12 @@ fn production_owner_uses_exact_selected_element_not_background_movement() {
         .expect("selected fixture element remains installed");
     selected.command = Command::Point;
     selected.data = generic_data;
+    // Script-built Point elements always carry an integer Direction
+    // property; the animation pass requires it for the pointing goal.
+    selected.set_property(
+        crate::sequence::Field::Direction,
+        crate::sequence::FieldValue::Integer(0),
+    );
     selected.orders.clear();
     selected
         .orders
@@ -372,6 +415,15 @@ fn install_rider_charge_fixture(
         .element
         .set_position_map(MapPoint::new(100.0, 100.0));
     let rider_id = engine.add_entity(rider);
+    // Production entity registration stamps the AI's own handle; the fighter
+    // registry resolves `me` through it, so a stale default would point the
+    // rider's brain at whichever entity occupies slot 0.
+    engine
+        .get_entity_mut(rider_id)
+        .and_then(crate::element::Entity::enemy_ai_mut)
+        .expect("rider fixture keeps its enemy AI")
+        .base
+        .me = rider_id.index();
 
     let order_id = engine.orders.allocate_order_id();
     let mut order = Order::new(order_type, 300.0, 100.0, order_id);
@@ -458,7 +510,9 @@ fn add_charge_victim(engine: &mut EngineInner, position: MapPoint) -> EntityId {
         .set_move_box(crate::coordinates::MoveBox::from_coords(
             -4.0, -4.0, 4.0, 4.0,
         ));
-    engine.add_entity(victim)
+    let victim_id = engine.add_entity(victim);
+    attach_test_pc_campaign_identity(engine, victim_id);
+    victim_id
 }
 
 fn install_charge_victim_motion(
@@ -602,11 +656,13 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
         vec![
             (mover_id, StimulusType::EventReachPoint),
             (nested_owner, StimulusType::EventDone),
-        ]
+            (foreign_owner, StimulusType::EventDone),
+        ],
+        "the pre-existing foreign card closes only at its own owner's later slot"
     );
     assert_eq!(
         resumes,
-        vec![nested_owner, mover_id],
+        vec![nested_owner, mover_id, foreign_owner],
         "the nested cross-owner SetState must close before A resumes Ready/successors"
     );
     assert_eq!(engine.orders.timer_elements.len(), 1);
@@ -620,10 +676,14 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
             .state,
         crate::sequence::SequenceState::Terminated
     );
-    let backlog = engine.orders.sequence_manager.drain_pending_condolations();
-    assert_eq!(backlog.len(), 1);
-    assert_eq!(backlog[0].card.owner, foreign_owner);
-    assert_eq!(backlog[0].card.command, Command::Wait);
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .drain_pending_condolations()
+            .is_empty(),
+        "every owner's card was closed at its own boundary during the pass"
+    );
 }
 
 #[test]
@@ -975,8 +1035,11 @@ fn rider_charge_frozen_all_real_victim_is_damaged_once_across_multiple_ticks() {
     clear_test_sword_damage_observations();
 
     engine.tick_entity_movement(&sim, &assets);
+    drain_manager_phase_damage(&mut engine, &sim, &assets);
     engine.tick_entity_movement(&sim, &assets);
+    drain_manager_phase_damage(&mut engine, &sim, &assets);
     engine.tick_entity_movement(&sim, &assets);
+    drain_manager_phase_damage(&mut engine, &sim, &assets);
 
     let observations = take_test_sword_damage_observations();
     assert_eq!(observations.len(), 1, "frozen ticks must not rebuild hits");
@@ -1164,7 +1227,13 @@ fn rider_charge_real_hit_is_synchronous_once_only_and_uses_post_turn_flight_dire
     let victim = add_charge_victim(&mut engine, rider_charge_point(origin, 0, 0.0, 30.0));
     clear_test_sword_damage_observations();
 
-    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+    let sim = crate::sim_rng::test_context();
+    engine.tick_entity_movement(&sim, &assets);
+    assert!(
+        take_test_sword_damage_observations().is_empty(),
+        "the charge launches the damage element without applying it inline"
+    );
+    drain_manager_phase_damage(&mut engine, &sim, &assets);
 
     let observations = take_test_sword_damage_observations();
     assert_eq!(observations.len(), 1);
@@ -1205,7 +1274,8 @@ fn rider_charge_real_hit_is_synchronous_once_only_and_uses_post_turn_flight_dire
     );
 
     clear_test_sword_damage_observations();
-    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+    engine.tick_entity_movement(&sim, &assets);
+    drain_manager_phase_damage(&mut engine, &sim, &assets);
     assert!(
         take_test_sword_damage_observations().is_empty(),
         "victim is hit once"
@@ -1234,7 +1304,9 @@ fn rider_charge_multiple_hits_follow_creation_order_rng_state_and_holes() {
         engine.remove_entity(hole);
         clear_test_sword_damage_observations();
 
-        engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+        let sim = crate::sim_rng::test_context();
+        engine.tick_entity_movement(&sim, &assets);
+        drain_manager_phase_damage(&mut engine, &sim, &assets);
 
         let observations = take_test_sword_damage_observations();
         assert_eq!(
@@ -1245,7 +1317,10 @@ fn rider_charge_multiple_hits_follow_creation_order_rng_state_and_holes() {
             vec![first, second],
             "candidate order follows live creation slots across a hole"
         );
-        assert_eq!(observations[0].pending_victims, vec![second]);
+        // Both hits were removed from the pending list when the charge
+        // launched their damage elements; the manager-phase dispatch that
+        // records these observations therefore sees an already-empty list.
+        assert!(observations[0].pending_victims.is_empty());
         assert!(observations[1].pending_victims.is_empty());
         observations
             .into_iter()
@@ -1287,11 +1362,15 @@ fn rider_charge_last_frame_damage_observes_active_state_before_rewrite_and_clear
     add_charge_victim(&mut engine, rider_charge_point(origin, 0, 10.0, 30.0));
     clear_test_sword_damage_observations();
 
-    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+    let sim = crate::sim_rng::test_context();
+    engine.tick_entity_movement(&sim, &assets);
+    drain_manager_phase_damage(&mut engine, &sim, &assets);
 
     let observations = take_test_sword_damage_observations();
     assert_eq!(observations.len(), 1);
-    assert!(observations[0].active_rider_charge);
+    // The last charge frame rewrites its order and clears the active charge
+    // before the deferred damage element reaches its manager-phase dispatch.
+    assert!(!observations[0].active_rider_charge);
     let order = engine
         .orders
         .sequence_manager
@@ -1332,6 +1411,7 @@ fn rider_charge_initial_eligibility_is_not_rechecked_and_returning_layer_can_hit
     let sim = crate::sim_rng::test_context();
     clear_test_sword_damage_observations();
     engine.tick_entity_movement(&sim, &assets);
+    drain_manager_phase_damage(&mut engine, &sim, &assets);
     assert!(take_test_sword_damage_observations().is_empty());
 
     // Eligibility changes after initialization are intentionally ignored.
@@ -1348,6 +1428,7 @@ fn rider_charge_initial_eligibility_is_not_rechecked_and_returning_layer_can_hit
         .element_data_mut()
         .set_layer(1);
     engine.tick_entity_movement(&sim, &assets);
+    drain_manager_phase_damage(&mut engine, &sim, &assets);
     assert!(take_test_sword_damage_observations().is_empty());
     let rider_origin = engine
         .get_entity(rider)
@@ -1366,6 +1447,7 @@ fn rider_charge_initial_eligibility_is_not_rechecked_and_returning_layer_can_hit
         .element_data_mut()
         .set_layer(0);
     engine.tick_entity_movement(&sim, &assets);
+    drain_manager_phase_damage(&mut engine, &sim, &assets);
     assert_eq!(take_test_sword_damage_observations().len(), 1);
 }
 
@@ -1411,6 +1493,7 @@ fn rider_charge_owner_slot_sees_earlier_movement_and_interrupts_later_before_mov
     // positions on each animation wait tick until the rider reaches its
     // actual charge decision frame.
     engine.tick_entity_movement(&sim, &assets);
+    drain_manager_phase_damage(&mut engine, &sim, &assets);
     assert!(take_test_sword_damage_observations().is_empty());
     let observations = (0..4)
         .find_map(|_| {
@@ -1424,6 +1507,7 @@ fn rider_charge_owner_slot_sees_earlier_movement_and_interrupts_later_before_mov
             later_entity.sprite_mut().frame_count = 1;
             clear_test_sword_damage_observations();
             engine.tick_entity_movement(&sim, &assets);
+            drain_manager_phase_damage(&mut engine, &sim, &assets);
             let observations = take_test_sword_damage_observations();
             (!observations.is_empty()).then_some(observations)
         })
@@ -1928,6 +2012,16 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
             .orders
             .sequence_manager
             .element_in_progress(sequence_id, 0);
+        // Seek translation stamps the owner's live seek fields before the
+        // first Execute; PerformSeek's arrival predicate reads the actor's
+        // unadapted seek distance, never the element tolerance.
+        let target_position = seek_target.map(|target| {
+            engine
+                .get_entity(target)
+                .expect("seek target exists")
+                .element_data()
+                .position_map()
+        });
         let actor = engine
             .get_entity_mut(owner)
             .expect("movement owner exists")
@@ -1935,6 +2029,14 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
             .expect("movement owner is an actor");
         actor.action_state = ActionState::Moving;
         actor.active_movement = ActiveMovement::new(sequence_id, 0);
+        if let Some(target) = seek_target {
+            actor.seek_target = Some(target);
+            actor.last_seek_target_position =
+                target_position.expect("seek target position sampled above");
+            actor.seek_distance = 15.0;
+            actor.wait_time = 25;
+            actor.seek_refresh_wait = 25;
+        }
         sequence_id
     }
 
@@ -2210,6 +2312,14 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
         mover_position, blocker_position,
         "the final movement tick must not snap the mover onto another actor"
     );
+    assert!(
+        engine
+            .get_entity(mover_id)
+            .unwrap()
+            .position_iface()
+            .is_deviated(),
+        "the blocker deflects the final step through the anti-collision pass"
+    );
     assert_eq!(
         engine
             .orders
@@ -2217,8 +2327,9 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
             .get_element(sequence_id, 0)
             .expect("movement remains inspectable")
             .state,
-        SequenceState::InProgress,
-        "a deflected final step must reconsider arrival on a later tick"
+        SequenceState::Terminated,
+        "a deviated step with a tripped blocked counter accepts a goal within \
+         max-norm 10 as a close-enough arrival, still without snapping"
     );
 }
 

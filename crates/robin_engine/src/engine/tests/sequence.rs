@@ -899,6 +899,25 @@ fn set_soldier_attentive_mode_plays_transition_while_movement_is_postponed() {
 
     engine.set_soldier_attentive_mode(soldier_id, true, false);
 
+    // The attentive element is only registered with the manager here; its
+    // Instruct (and the movement postpone it causes) runs at the next
+    // manager hourglass, matching the deferred launch semantics.
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(movement_sequence, 0)
+            .expect("movement remains registered")
+            .state,
+        SequenceState::InProgress
+    );
+
+    let mut display = HostDisplayState::default();
+    let mut assets = LevelAssets::default();
+    let mut dev = crate::engine::DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+
     let movement = engine
         .orders
         .sequence_manager
@@ -908,20 +927,31 @@ fn set_soldier_attentive_mode_plays_transition_while_movement_is_postponed() {
     assert_eq!(movement.command, Command::Move);
     assert!(movement.orders.is_empty());
 
-    let mut display = HostDisplayState::default();
-    let mut assets = LevelAssets::default();
-    let mut dev = crate::engine::DevState::default();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.perform_hourglass(&mut display, &assets, &mut dev);
-
+    // The attentive element's transition generation must first stop the
+    // running actor (its action state exits MOVING before entering the
+    // alerted stance), so the stop transition fronts the order queue with
+    // the alerted transition queued behind it.
+    let (attentive_seq, attentive_idx, front) = engine
+        .orders
+        .sequence_manager
+        .current_order_for_actor(soldier_id)
+        .expect("attentive element should be current after the postpone");
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_order_for_actor(soldier_id)
-            .map(|(_, _, order)| order.order_type),
-        Some(OrderType::TransitionWaitingUprightWaitingAlerted),
-        "postponing a movement must not suppress the attentive transition",
+        front.order_type,
+        OrderType::TransitionRunningUprightWaitingUpright
+    );
+    let attentive_orders: Vec<OrderType> = engine
+        .orders
+        .sequence_manager
+        .get_element(attentive_seq, attentive_idx)
+        .expect("attentive element remains registered")
+        .orders
+        .iter()
+        .map(|order| order.order_type)
+        .collect();
+    assert!(
+        attentive_orders.contains(&OrderType::TransitionWaitingUprightWaitingAlerted),
+        "postponing a movement must not suppress the attentive transition, got {attentive_orders:?}",
     );
 }
 
@@ -1016,6 +1046,13 @@ fn interrupt_callback_arbitrates_nested_work_against_incoming_selection() {
 
     let mut outgoing = SequenceElement::new(1, Command::SwordstrikeSmalltalkLeft, Some(owner));
     outgoing.priority = SequencePriority::Wait;
+    // Interrupt arbitration requires the in-progress element to carry its
+    // current order, mirroring the assertion in the original manager.
+    outgoing.orders.push_back(crate::order::Order::test_new(
+        crate::order::OrderType::WaitingUpright,
+        0.0,
+        0.0,
+    ));
     let outgoing_sequence = engine.orders.sequence_manager.launch_element(outgoing);
     engine
         .orders
@@ -1383,8 +1420,11 @@ fn soldier_enter_attentive_mode_from_crouched_stands_first() {
     let mut engine = EngineInner::new();
     let soldier_id = engine.add_entity(make_test_soldier(Posture::Crouched));
 
-    let mut elem = SequenceElement::new(1, Command::EnterAttentiveMode, Some(soldier_id));
-    elem.posture_after_transition = Posture::Crouched;
+    // Leave `posture_after_transition` undefined: the deferred Instruct
+    // stamps it from the actor's live (Crouched) posture, and transition
+    // generation then promotes it to Upright via the crouch-up animation.
+    // A pre-stamped posture would skip that transition pass entirely.
+    let elem = SequenceElement::new(1, Command::EnterAttentiveMode, Some(soldier_id));
     engine.launch_element(elem);
     engine.ensure_wait_element(soldier_id);
 
@@ -2117,9 +2157,13 @@ fn waking_up_done_clears_target_concussion_and_waits() {
         0
     );
     assert!(!target_entity.human_data().unwrap().unconscious);
+    // The recovery Wait has translated (StandingUp is current below) but its
+    // animation has not reached the START edge yet — posture and action
+    // state both flip to Upright/Waiting only on that edge, so the actor
+    // still reports the pre-wake movement state at this boundary.
     assert_eq!(
         target_entity.actor_data().unwrap().action_state,
-        ActionState::Waiting
+        ActionState::Moving
     );
     assert_eq!(
         engine

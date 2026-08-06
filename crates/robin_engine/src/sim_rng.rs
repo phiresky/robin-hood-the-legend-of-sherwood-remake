@@ -705,7 +705,7 @@ mod tests {
         ("RescuePcFirstName", 1),
         ("RescuePcSurname", 1),
         ("RuntimeBuildingExitWait", 4),
-        ("ScriptRand", 1),
+        ("ScriptRand", 2),
         ("ScrollInitialFrame", 1),
         ("ScrollRevealFrame", 1),
         ("SeekPointAcceptance", 1),
@@ -746,6 +746,7 @@ mod tests {
         "i16",
         "i32",
         "script_rand",
+        "script_rand_with_context",
         "shuffle",
         "u16",
         "u32",
@@ -957,7 +958,14 @@ mod tests {
 
     impl<'ast> Visit<'ast> for RngSourceVisitor<'_> {
         fn visit_macro(&mut self, node: &'ast syn::Macro) {
-            let tokens = node.tokens.to_string();
+            // Diagnostic macros may name RNG *sites* (for the parity RNG
+            // owner traces) without drawing; only a draw entry point hidden
+            // inside a macro body is a violation.
+            let tokens = node
+                .tokens
+                .to_string()
+                .replace("sim_rng :: RngSite", "")
+                .replace("sim_rng :: AuxiliaryRngSite", "");
             if tokens.contains("sim_rng ::")
                 || tokens.contains("fastrand ::")
                 || tokens.contains("rand ::")
