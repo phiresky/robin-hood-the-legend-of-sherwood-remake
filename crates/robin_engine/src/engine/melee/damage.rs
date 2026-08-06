@@ -663,7 +663,7 @@ impl EngineInner {
                 // Ladder/wall arm of the hit-reaction posture switch.
                 // Like the shoulder arm this fires for lethal and KO
                 // hits too — the fall itself resolves the victim's fate.
-                self.translate_ladder_wall_fall(victim_id, damage_element);
+                self.translate_ladder_wall_fall(assets, victim_id, damage_element);
             } else if still_alive && still_conscious {
                 let anims = self.get_entity(victim_id).and_then(|e| {
                     let posture = e.element_data().posture;
@@ -916,7 +916,7 @@ impl EngineInner {
             .map(|e| e.element_data().posture)
             .unwrap_or_default();
         if matches!(pre_posture, Posture::OnLadder | Posture::OnWall) {
-            self.translate_ladder_wall_fall(victim_id, damage_element);
+            self.translate_ladder_wall_fall(assets, victim_id, damage_element);
             return;
         }
         if pre_posture.is_lying() {
@@ -1065,7 +1065,7 @@ impl EngineInner {
             .map(|e| e.element_data().posture)
             .unwrap_or_default();
         if matches!(pre_posture, Posture::OnLadder | Posture::OnWall) {
-            self.translate_ladder_wall_fall(victim_id, damage_element);
+            self.translate_ladder_wall_fall(assets, victim_id, damage_element);
             return;
         }
 
@@ -1355,7 +1355,7 @@ impl EngineInner {
         // through `translate_ladder_wall_fall`, matching the parallel
         // push-path routing.
         if matches!(victim_posture, Posture::OnLadder | Posture::OnWall) {
-            self.translate_ladder_wall_fall(victim_id, damage_element);
+            self.translate_ladder_wall_fall(assets, victim_id, damage_element);
             return;
         }
 
@@ -1631,6 +1631,7 @@ impl EngineInner {
                 goal_layer: victim_layer,
                 goal_sector: victim_sector,
                 obstacle: goal_obstacle,
+                ladder_fall: false,
             });
         } else {
             // TODO: Verify whether a completely blocked zero-distance

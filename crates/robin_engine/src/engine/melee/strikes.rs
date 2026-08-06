@@ -1433,6 +1433,10 @@ impl EngineInner {
         // termination.
         let mut landings: Vec<(EntityId, Option<u16>)> = Vec::new();
         let mut refresh_script_sectors = false;
+        // Ladder/wall falls that reached their tick countdown this
+        // frame; the post-loop pass applies the landing concussion,
+        // lying posture, and fall-order retirement.
+        let mut ladder_arrivals: Vec<EntityId> = Vec::new();
 
         for (entity_id, entity) in self.world.entities.actors_mut() {
             // Read flight state without holding a mutable borrow.
@@ -1442,6 +1446,28 @@ impl EngineInner {
                 Some(f) => f,
                 None => continue,
             };
+
+            // Ladder/wall falls only progress while the FallingLadderWall
+            // order is live — the original drives this flight from that
+            // order's Execute arm.  Before the order starts, hold the
+            // flight; if the order retired early (its sprite ran out
+            // before the countdown), the increment is never applied
+            // again, so drop the flight and leave the actor in place.
+            if flight.ladder_fall {
+                let fall_order_live = self
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(entity_id)
+                    .is_some_and(|(_, _, order)| {
+                        order.order_type == crate::order::OrderType::FallingLadderWall
+                    });
+                if !fall_order_live {
+                    if entity.element_data().posture == Posture::Flying {
+                        entity.actor_data_mut().unwrap().active_flight = None;
+                    }
+                    continue;
+                }
+            }
 
             // `ReadyForTakeOff` is initialized by ExecuteFallingPushed /
             // ExecuteFallingHit, not by Translate*Damage. Rust stores the
@@ -1524,24 +1550,55 @@ impl EngineInner {
                     entity.element_data_mut().set_layer(flight.goal_layer);
                     entity.element_data_mut().set_sector(flight.goal_sector);
                     landings.push((entity_id.into(), flight.obstacle.map(|h| h.get())));
-                    entity.actor_data_mut().unwrap().active_flight = None;
+                    if flight.ladder_fall {
+                        // Settle the landing like the original's
+                        // position recompute + fresh-move snapshot on
+                        // arrival: old position tracks the snapped
+                        // position, so the landing frame reports no
+                        // residual movement.
+                        entity.position_iface_mut().new_move();
+                    }
+                    let actor = entity.actor_data_mut().unwrap();
+                    actor.active_flight = None;
+                    if flight.ladder_fall {
+                        // The countdown just hit zero.
+                        actor.wait_time = 0;
+                        ladder_arrivals.push(entity_id.into());
+                    }
                 }
             } else {
                 // Advance by increment.  The per-frame increment in
                 // 3D is `(goal - position) / frames_of_flight`, so
                 // the z advance is linear from start_z to goal_z.
-                let mut m = entity.element_data().position_map();
-                m.x += flight.increment_x;
-                m.y += flight.increment_y;
-                let z = entity.position_iface().get_elevation() + flight.increment_z;
-                set_flight_position(entity, flight.geometry, m, z);
-                entity
-                    .actor_data_mut()
-                    .unwrap()
-                    .active_flight
-                    .as_mut()
-                    .unwrap()
-                    .frames_remaining -= 1;
+                if flight.ladder_fall {
+                    // Ladder falls store a 3D increment and accumulate
+                    // on the cached 3D position; the map position is
+                    // re-derived from the accumulated components each
+                    // tick, reproducing the original's rounding.
+                    let pos3 = entity.position_iface().get_position();
+                    entity
+                        .position_iface_mut()
+                        .set_position(crate::coordinates::WorldPoint3D {
+                            x: pos3.x + flight.increment_x,
+                            y: pos3.y + flight.increment_y,
+                            z: pos3.z + flight.increment_z,
+                        });
+                } else {
+                    let mut m = entity.element_data().position_map();
+                    m.x += flight.increment_x;
+                    m.y += flight.increment_y;
+                    let z = entity.position_iface().get_elevation() + flight.increment_z;
+                    set_flight_position(entity, flight.geometry, m, z);
+                }
+                let actor = entity.actor_data_mut().unwrap();
+                let active = actor.active_flight.as_mut().unwrap();
+                active.frames_remaining -= 1;
+                let remaining = active.frames_remaining;
+                if flight.ladder_fall {
+                    // Mirror the original's per-tick fall countdown,
+                    // which lives in the actor's wait-time counter.
+                    actor.wait_time = u32::from(remaining);
+                }
             }
         }
 
@@ -1562,6 +1619,73 @@ impl EngineInner {
         if refresh_script_sectors {
             for (flyer_id, _) in &landings {
                 self.update_script_sectors_after_flight(sim, assets, *flyer_id);
+            }
+        }
+
+        // Ladder/wall fall landings: knock the faller about the head,
+        // put them on their back, and retire the fall order — the
+        // original does all of this inside the fall Execute arm on the
+        // tick its countdown reaches zero.
+        for victim_id in ladder_arrivals {
+            let (concussion, life_points) = {
+                let entity = self
+                    .get_entity(victim_id)
+                    .expect("ladder-fall arrival entity vanished before landing effects");
+                let concussion = entity
+                    .human_data()
+                    .map(|h| h.concussion_of_the_brain)
+                    .unwrap_or(0);
+                let life_points = match entity {
+                    Entity::Pc(pc) => pc.pc.life_points,
+                    Entity::Soldier(soldier) => soldier.npc.life_points,
+                    Entity::Civilian(civilian) => civilian.npc.life_points,
+                    _ => 0,
+                };
+                (concussion, life_points)
+            };
+            let new_value = crate::combat::compute_concussion_effect(concussion, 71, life_points);
+            self.apply_concussion(sim, assets, victim_id, new_value, false);
+
+            if let Some(entity) = self.get_entity_mut(victim_id) {
+                let posture = if entity.is_dead() {
+                    Posture::DeadBack
+                } else {
+                    Posture::Lying
+                };
+                entity.set_posture(posture);
+                if let Some(actor) = entity.actor_data_mut() {
+                    actor.action_state = ActionState::Waiting;
+                }
+            }
+
+            if let Some((seq_id, elem_idx, order)) = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(victim_id)
+                && order.order_type == crate::order::OrderType::FallingLadderWall
+            {
+                // The fall's Execute arm reports Terminated on the
+                // arrival tick; a synchronously exposed successor
+                // order downgrades that to InProgress like the
+                // original's next-order handling.
+                if let Some(actor) = self
+                    .get_entity_mut(victim_id)
+                    .and_then(crate::element::Entity::actor_data_mut)
+                {
+                    actor.continuation.motion_state = crate::sprite::MotionState::Terminated;
+                }
+                self.do_next_order(seq_id, elem_idx);
+                if self
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(victim_id)
+                    .is_some()
+                    && let Some(actor) = self
+                        .get_entity_mut(victim_id)
+                        .and_then(crate::element::Entity::actor_data_mut)
+                {
+                    actor.continuation.motion_state = crate::sprite::MotionState::InProgress;
+                }
             }
         }
 

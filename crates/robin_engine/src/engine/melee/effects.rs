@@ -8,6 +8,19 @@ use crate::element::{ActionState, Entity, EntityId, EyeStatus, Posture};
 use crate::profiles::WeaponThrustKind;
 use crate::weapons::SwordStrike;
 
+/// A lift sector's low entry point resolved to 3D: the lowest door's
+/// `point_out` (map space), the plane-projected altitude of the low
+/// sector's projection-area obstacle at that point, and the exit
+/// layer / sector / obstacle used on landing.
+#[derive(Debug)]
+pub(super) struct LiftLowEntry {
+    pub point: crate::coordinates::MapPoint,
+    pub z: f32,
+    pub layer: u16,
+    pub sector: u16,
+    pub obstacle: Option<u16>,
+}
+
 /// Compute the non-charge flight vector used by a falling-pushed order.
 ///
 /// `RHElementActorHuman::ExecuteFallingPushed` accepts exactly these three
@@ -266,11 +279,18 @@ impl EngineInner {
     /// Look up a lift sector's low-entry point via the cached
     /// `lowest_door_index` on the `GridSector`.
     ///
-    /// Returns `lowest_door.point_out`.  The cache is populated at
-    /// level load by `initialize_motion_from_level_data` (see the
-    /// "Cache lowest / highest door per lift sector" pass), so this
-    /// method is O(1) — no runtime door-list scan.
-    pub(super) fn find_lift_low_entry(&self, lift_sector: u16) -> Option<(f32, f32, u16)> {
+    /// Returns the lowest door's `point_out` (map space) together with
+    /// the plane-projected altitude of the low sector's projection-area
+    /// obstacle at that point (`z = 0` on flat ground), the exit layer,
+    /// the exit sector, and the resolved obstacle index.  The door
+    /// cache is populated at level load by
+    /// `initialize_motion_from_level_data` (see the "Cache lowest /
+    /// highest door per lift sector" pass), so the door lookup is O(1).
+    pub(super) fn find_lift_low_entry(
+        &self,
+        assets: &LevelAssets,
+        lift_sector: u16,
+    ) -> Option<LiftLowEntry> {
         let grid_idx = *self
             .world
             .fast_grid
@@ -285,7 +305,24 @@ impl EngineInner {
             .interactables
             .doors
             .get(door_idx as usize)?;
-        Some((door.point_out.x, door.point_out.y, door.layer_out))
+        let point = door.point_out;
+        let layer = door.layer_out;
+        let sector = u16::from(door.sector_out);
+        let obstacle = self.get_projection_area_index(assets, sector, layer, point);
+        let z = obstacle
+            .and_then(|idx| {
+                self.sight_obstacles(assets)
+                    .get(idx as usize)
+                    .map(|obs| obs.compute_top_z_from_projection(point.x, point.y))
+            })
+            .unwrap_or(0.0);
+        Some(LiftLowEntry {
+            point,
+            z,
+            layer,
+            sector,
+            obstacle,
+        })
     }
 
     /// Translate a push applied to an entity on a ladder or wall:
@@ -293,18 +330,20 @@ impl EngineInner {
     /// to the ladder's low entry point.
     pub(crate) fn translate_ladder_wall_fall(
         &mut self,
+        assets: &LevelAssets,
         victim_id: EntityId,
         damage_element: (crate::sequence::SequenceId, usize),
     ) {
-        let (victim_pos, victim_sector) = match self.get_entity(victim_id) {
-            Some(e) => (e.element_data().position_map(), e.element_data().sector()),
+        let (victim_pos3, victim_sector) = match self.get_entity(victim_id) {
+            Some(e) => (e.position_iface().get_position(), e.element_data().sector()),
             None => return,
         };
 
-        // Destination is the ladder's low entry point.  If we can't
+        // Destination is the ladder's low entry point, resolved to 3D
+        // via the low sector's projection-area plane.  If we can't
         // locate it, leave the victim in place — the animation still
         // plays so the visual feedback is correct.
-        let low_entry = victim_sector.and_then(|s| self.find_lift_low_entry(u16::from(s)));
+        let low_entry = victim_sector.and_then(|s| self.find_lift_low_entry(assets, u16::from(s)));
 
         // The sector should be a lift.  Log a warning if not rather
         // than crashing — we fall through to the safe path.
@@ -315,24 +354,6 @@ impl EngineInner {
                 "translate_ladder_wall_fall: no lowest door found for lift sector"
             );
         }
-
-        // Compute flight tick count from the FallingLadderWall
-        // sprite.  Uses the sum of per-frame delays rather than raw
-        // frame count.
-        // TODO: the Original does not time this flight from a sprite row
-        // at all — it sets a per-tick increment of fixed length 10 toward
-        // the low entry point and waits `0.1 * distance` ticks, so the
-        // fall speed is constant and the duration scales with the drop.
-        // Porting that needs the 3D low-entry point (the plane-projected
-        // z), which this helper does not resolve yet.
-        let frames = {
-            let from_sprite = self
-                .get_entity(victim_id)
-                .map(|e| e.sprite())
-                .map(|s| s.total_ticks_for_anim(OrderType::FallingLadderWall))
-                .unwrap_or(0);
-            if from_sprite > 1 { from_sprite } else { 12 }
-        };
 
         // Free the lift occupancy so other actors can climb it.
         // Uses the `active_lift` marker that was set when the victim
@@ -376,35 +397,54 @@ impl EngineInner {
             }
         }
 
-        // Insert FallingLadderWall onto the damage element.  Posture
-        // transition (Upright/Lying/Dead per alive/unconscious/dead)
-        // is applied via `apply_falling_completion_side_effect` on
-        // MotionState::Terminated.
+        // Insert FallingLadderWall onto the damage element.  Landing
+        // (position snap, concussion, lying posture, order retirement)
+        // is applied by the ladder-fall arm of `tick_push_flights` when
+        // the tick countdown hits zero.
         self.queue_damage_anim(victim_id, damage_element, OrderType::FallingLadderWall);
-        // ActiveFlight is independent of animation state and is set
-        // unconditionally so the victim is carried to the ladder's low
-        // entry point.
+        // Constant-speed fall toward the 3D low entry point: the
+        // per-tick increment has fixed 3D length 10 and the flight
+        // lasts `0.1 * distance` ticks.  A fall shorter than one step
+        // installs no flight — the fall order then never arrives and
+        // only ends when its sprite runs out, like the original.
         if let Some(entity) = self.world.entities.get_mut(victim_id)
             && let Some(actor) = entity.actor_data_mut()
+            && let Some(entry) = &low_entry
         {
-            {
-                if let Some((gx, gy, _)) = low_entry {
-                    let dx = gx - victim_pos.x;
-                    let dy = gy - victim_pos.y;
-                    if dx.abs() > 0.01 || dy.abs() > 0.01 {
-                        actor.active_flight = Some(crate::element::ActiveFlight {
-                            increment_x: dx / frames as f32,
-                            increment_y: dy / frames as f32,
-                            goal_x: gx,
-                            goal_y: gy,
-                            frames_remaining: frames,
-                            // Ladder/wall fall: domino effect is
-                            // not invoked.
-                            antagonist: None,
-                            ..Default::default()
-                        });
-                    }
-                }
+            // 3D vector from the victim's cached world position to the
+            // low entry point (world y = map y + z).
+            let dx = entry.point.x - victim_pos3.x;
+            let dy3 = (entry.point.y + entry.z) - victim_pos3.y;
+            let dz = entry.z - victim_pos3.z;
+            let distance = (dx * dx + dy3 * dy3 + dz * dz).sqrt();
+            let wait = (0.1 * distance) as u32;
+            if distance > f32::EPSILON && wait > 0 {
+                let scale = 10.0 / distance;
+                // Ladder falls accumulate in 3D world space (the flight
+                // tick adds these to the cached 3D position and
+                // re-derives the map position), so `increment_y` holds
+                // the 3D world-y advance here — not the map-space
+                // advance the generic flights store.  Deriving the map
+                // advance up front would round differently from the
+                // original's per-tick 3D accumulation.
+                actor.active_flight = Some(crate::element::ActiveFlight {
+                    geometry: crate::element::FlightGeometry::World3d,
+                    increment_x: dx * scale,
+                    increment_y: dy3 * scale,
+                    increment_z: dz * scale,
+                    goal_x: entry.point.x,
+                    goal_y: entry.point.y,
+                    goal_z: entry.z,
+                    frames_remaining: wait.min(u16::MAX as u32) as u16,
+                    // Ladder/wall fall: domino effect is not invoked.
+                    antagonist: None,
+                    goal_layer: entry.layer,
+                    goal_sector: crate::position_interface::SectorHandle::new(entry.sector),
+                    obstacle: entry
+                        .obstacle
+                        .and_then(crate::position_interface::ObstacleHandle::new),
+                    ladder_fall: true,
+                });
             }
         }
 
@@ -807,7 +847,7 @@ impl EngineInner {
         // Entities on a ladder/wall get the ladder-fall variant
         // instead of the normal push flight.
         if matches!(victim_posture, Posture::OnLadder | Posture::OnWall) {
-            self.translate_ladder_wall_fall(victim_id, damage_element);
+            self.translate_ladder_wall_fall(assets, victim_id, damage_element);
             return true;
         }
 
@@ -1057,6 +1097,7 @@ impl EngineInner {
                     goal_layer: victim_layer,
                     goal_sector: victim_sector,
                     obstacle: goal_obstacle,
+                    ladder_fall: false,
                 });
             }
         }

@@ -3000,11 +3000,13 @@ fn apply_rolling_start_side_effect(
 /// | `FALLING_BACK_SWORD` | DONE\|TERMINATED | DeadBack/Lying | WaitingSword |
 /// | `FALLING_BACK_BOW` | DONE\|TERMINATED | DeadBack/Lying | AimingWithBow |
 /// | `ROLLING` | TERMINATED | Dead/Lying | (unchanged) |
-/// | `FALLING_LADDER_WALL` | TERMINATED | Dead/Lying/Upright | (unchanged) |
+///
+/// `FALLING_LADDER_WALL` is absent: its landing states come from the
+/// ladder-fall arrival in the flight tick, not from a sprite event.
 fn fall_landing_states(
     anim_type: OrderType,
     is_dead: bool,
-    is_unconscious: bool,
+    _is_unconscious: bool,
 ) -> Option<(Posture, Option<ActionState>)> {
     let lying_or_dead_back = if is_dead {
         Posture::DeadBack
@@ -3044,16 +3046,11 @@ fn fall_landing_states(
             },
             None,
         )),
-        OrderType::FallingLadderWall => Some((
-            if is_dead {
-                Posture::Dead
-            } else if is_unconscious {
-                Posture::Lying
-            } else {
-                Posture::Upright
-            },
-            None,
-        )),
+        // FALLING_LADDER_WALL sets no landing state from its sprite
+        // event: the ladder-fall arrival (tick countdown reaching zero
+        // in the flight tick) applies the lying/dead-back posture, and
+        // a sprite that runs out before the countdown leaves the
+        // flying posture in place.
         _ => None,
     }
 }
