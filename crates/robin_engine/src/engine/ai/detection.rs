@@ -2408,7 +2408,7 @@ impl EngineInner {
                 // side when the NPC is Royalist, but for Lacklandists
                 // PCs are enemies — skip). For now, only add NPCs.
                 for ss in soldier_snapshots {
-                    if ss.id == npc_id || ss.camp != Camp::Lacklandists {
+                    if ss.id == npc_id || ss.camp != my_camp {
                         continue;
                     }
                     if !ss.able_to_fight {

@@ -284,7 +284,7 @@ pub struct AiActorOutbox {
     pub enter_swordfight_jump_line: Option<u32>,
     pub stop_target: Option<HumanHandle>,
     pub set_principal: Option<HumanHandle>,
-    pub friend_primary_target_swap: Option<(EntityId, HumanHandle)>,
+    pub friend_primary_target_swaps: Vec<(EntityId, HumanHandle)>,
     pub shoot_target: Option<HumanHandle>,
     pub focus: Option<HumanHandle>,
     pub unalert_near_charly_seekers: Option<CharlySeekerTarget>,
@@ -361,7 +361,7 @@ pub(crate) struct AiActorCoreEffects {
     pub enter_swordfight_jump_line: Option<u32>,
     pub stop_target: Option<HumanHandle>,
     pub set_principal: Option<HumanHandle>,
-    pub friend_primary_target_swap: Option<(EntityId, HumanHandle)>,
+    pub friend_primary_target_swaps: Vec<(EntityId, HumanHandle)>,
     pub shoot_target: Option<HumanHandle>,
     pub focus: Option<HumanHandle>,
     pub focus_point: Option<Position>,
@@ -403,7 +403,7 @@ impl AiActorOutbox {
             || self.enter_swordfight_jump_line.is_some()
             || self.stop_target.is_some()
             || self.set_principal.is_some()
-            || self.friend_primary_target_swap.is_some()
+            || !self.friend_primary_target_swaps.is_empty()
             || self.shoot_target.is_some()
             || self.focus.is_some()
             || self.unalert_near_charly_seekers.is_some()
@@ -475,7 +475,7 @@ impl AiActorOutbox {
             enter_swordfight_jump_line: self.enter_swordfight_jump_line.take(),
             stop_target: self.stop_target.take(),
             set_principal: self.set_principal.take(),
-            friend_primary_target_swap: self.friend_primary_target_swap.take(),
+            friend_primary_target_swaps: std::mem::take(&mut self.friend_primary_target_swaps),
             shoot_target: self.shoot_target.take(),
             focus: self.focus.take(),
             focus_point: self.focus_point.take(),
