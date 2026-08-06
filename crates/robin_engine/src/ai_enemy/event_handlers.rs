@@ -1575,38 +1575,11 @@ impl EnemyAi {
             }
 
             StimulusType::CallLookThere => {
-                // The sender (`hey_folks_look_there`) filters by the
-                // target's ai_state from a tick-start snapshot. That
-                // snapshot is stale by the time this stimulus is
-                // drained from `pending_cross_npc_actions`: an NPC
-                // that transitioned into `Attacking` earlier in the
-                // same tick still receives the queued look-there.
-                // Without a receiver-side gate, the handler's
-                // unconditional `set_state(Wondering, WonderingWatching)`
-                // kicks the NPC back out of combat, causing the
-                // flip-flop loop ("spotted PC → Attacking → yanked to
-                // Wondering → spotted PC → Attacking → …") that the
-                // log traces showed every ~50 ms while running to engage.
-                // Mirror the sender-side filter here — the live
-                // `GetAIState()` check in the reference is equivalent
-                // because its stimulus dispatch is synchronous.
-                let state_ok = matches!(
-                    self.base.current_state,
-                    AiState::Default | AiState::Wondering
-                ) || matches!(
-                    self.base.current_substate,
-                    Substate::SeekingJustWatching | Substate::SeekingJustWatchingSidewards
-                );
-                tracing::trace!(
-                    target: "look_there",
-                    me = self.base.me,
-                    state = ?self.base.current_state,
-                    substate = ?self.base.current_substate,
-                    state_ok,
-                    "CallLookThere: received"
-                );
-                if state_ok
-                    && let StimulusInfo::Hint(ref hint) = stimulus.info
+                // The sender selects eligible recipients before making this
+                // synchronous call. The receiver itself has no state gate:
+                // re-entrant work may change its state between selection and
+                // delivery, but the Original still runs the standard body.
+                if let StimulusInfo::Hint(ref hint) = stimulus.info
                     && !self
                         .dispatch_stimulus_to_whole_patrol(sim, stimulus, global, ctx, tick, grid)
                 {

@@ -2139,7 +2139,9 @@ fn npc_recovery_requires_an_ai_controller() {
 
 #[test]
 fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
-    use crate::ai::{CrossNpcAction, Hint, Position, StimulusInfo, StimulusType};
+    use crate::ai::{
+        AiState, CrossNpcAction, Hint, Position, StimulusInfo, StimulusType, Substate,
+    };
     use crate::element::{Camp, Entity, EyeStatus};
 
     fn observe(receiver_before_source: bool) -> (f32, f32, EyeStatus) {
@@ -2163,6 +2165,17 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
             soldier.npc.life_points = 100;
             soldier.element.set_direction_instantly(4);
             soldier.npc.direction_old = 4;
+        }
+        {
+            let receiver = engine
+                .get_entity_mut(receiver_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap();
+            // Recipient selection happened while this soldier was eligible,
+            // but an earlier synchronous callback then changed its state.
+            // CALL_LOOKTHERE itself is unconditional in the Original.
+            receiver.current_state = AiState::Seeking;
+            receiver.current_substate = Substate::SeekingGroupCalledByOfficer;
         }
         let mut assets = LevelAssets::new();
         complete_test_runtime_fixture(&mut engine, &mut assets);
@@ -2210,6 +2223,9 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
             .get_entity(receiver_id)
             .and_then(Entity::npc_data)
             .unwrap();
+        let receiver_ai = receiver.ai_brain.base().unwrap();
+        assert_eq!(receiver_ai.current_state, AiState::Wondering);
+        assert_eq!(receiver_ai.current_substate, Substate::WonderingWatching);
         (
             receiver.view_angle,
             receiver.view_angle_step,
