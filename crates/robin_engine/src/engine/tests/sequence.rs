@@ -178,6 +178,71 @@ fn accepted_zero_order_damage_preserves_in_progress_motion_edge() {
 }
 
 #[test]
+fn assert_position_translation_preserves_terminal_motion_edge() {
+    use crate::coordinates::MapPoint;
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceElementData, SequenceState};
+    use crate::sprite::MotionState;
+
+    let mut engine = EngineInner::new();
+    let civilian = engine.add_entity(make_test_civilian(Posture::Upright));
+    engine
+        .get_entity_mut(civilian)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .continuation
+        .motion_state = MotionState::Terminated;
+
+    let mut assertion = SequenceElement::new_movement(
+        1,
+        Command::AssertPosition,
+        Some(civilian),
+        OrderType::WalkingUpright,
+    );
+    assertion.posture_after_transition = Posture::Upright;
+    if let SequenceElementData::Movement {
+        destination,
+        tolerance,
+        ..
+    } = &mut assertion.data
+    {
+        *destination = MapPoint::ZERO;
+        *tolerance = 10.0;
+    }
+    let sequence = engine.orders.sequence_manager.launch_element(assertion);
+
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .expect("position assertion remains inspectable")
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        engine
+            .get_entity(civilian)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        MotionState::Terminated,
+        "Translate-time SetState must skip Actor::Instruct's IN_PROGRESS epilogue"
+    );
+}
+
+#[test]
 fn entity_phase_completion_resumes_postponed_work_in_same_manager_drain() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};

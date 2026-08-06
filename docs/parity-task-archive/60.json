@@ -1,0 +1,8 @@
+{
+  "id": "60",
+  "subject": "Skip Actor Instruct epilogue after AssertPosition changes selection",
+  "description": "DONE. In schema14 Savegame_linux3/Profile_001/Continue/replay-001, Civilian 73 finished a direct PassDoor at frame 1073 and its successful AssertPosition successor terminated during translation. Original RHElementActor::Translate calls SetState directly for AssertPosition; the synchronous condolence clears mpSequenceElement, so Actor::Instruct observes that its selected pointer changed and returns before writing RHMOTION_IN_PROGRESS or publishing mpOrder. Rust recorded every command body that reached dispatch as an accepted instruction and overwrote the retained Terminated edge with InProgress. PositionAssertionContext now returns its pointer-changing Skip barrier, and the manager phase exits that action before the accepted-owner projection and order publication. A focused regression distinguishes this Translate-time SetState path from task #58's accepted zero-order damage path. The exact replay keeps frame 973 fixed, clears frame 1073, and advances to an independent Soldier 115 visibility/list-composition frontier after frame 1162.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

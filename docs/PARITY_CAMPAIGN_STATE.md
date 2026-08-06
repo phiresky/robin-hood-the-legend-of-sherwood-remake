@@ -88,7 +88,8 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #54 completed: ground impact evaluation now mirrors Original's mixed-precision dominant-axis equation (`FLOAT` coefficients with `DOUBLE` secondary-coordinate evaluation), clearing Projectile192's exact-bit residual and every later frame. A pre-existing frame-776 visibility-query count remains as #56.
 - #55 completed: an entry movement that becomes `Impossible` now preserves Original's authoritative `Aborted` Execute result across a synchronous condolence-installed successor; the representative clears frame 835.
 - #58 completed: the sequence phase now records actual accepted Actor instruction boundaries, including zero-order elements that terminate synchronously, preserving Original's `InProgress` edge at frame 973.
-- #60 active: investigate the same control's newly exposed Civilian 73 motion frontier after frame 1073.
+- #60 completed: `AssertPosition` now exposes its pointer-changing `Skip` barrier, so Actor::Instruct skips the accepted-motion/order epilogue after Translate-time `SetState`, clearing the frame-1073 civilian motion frontier.
+- #61 active: investigate the same control's newly exposed Soldier 115 visibility/list frontier after frame 1162.
 
 Standing clusters not yet tasked: actor.animation 133 (top cluster, resweep-db67cc978 classification), direction_goal 76, position_goal_map.x 72, motion_state 70, MoveOk→MoveWaiting 57, BoredAnimationChoice 56, AiRandomValueRectangle 55, path_events.length 54, RuntimeBuildingExitWait 51, visibility_queries.length 45 (+43 ai.list_them etc.). Full breakdown: `output/parity-audits/resweep-db67cc978/classification.json`.
 

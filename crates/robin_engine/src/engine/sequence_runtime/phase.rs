@@ -917,11 +917,13 @@ impl EngineInner {
                             // ── ASSERT_POSITION ────────────────────────
                             // Check actor is at expected position/sector.
                             Command::AssertPosition => {
-                                PositionAssertionContext {
+                                let barrier = PositionAssertionContext {
                                     entities: &self.world.entities,
                                     sequence_manager: &mut self.orders.sequence_manager,
                                 }
                                 .dispatch(owner, seq_id, elem_idx);
+                                debug_assert_eq!(barrier, OwnerActionBarrier::Skip);
+                                break 'action;
                             }
                             // ── WAIT_FREE_LIFT ──────────────────────
                             // Translation is identical to WAIT: book the

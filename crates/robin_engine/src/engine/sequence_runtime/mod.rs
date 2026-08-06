@@ -248,7 +248,11 @@ impl PositionAssertionContext<'_> {
                 crate::sequence::CascadeFlags::NEXT_LEVEL,
             );
         }
-        OwnerActionBarrier::Reach
+        // ASSERT_POSITION calls SetState directly from Translate. That
+        // synchronous condolence clears Actor::mpSequenceElement, so
+        // Actor::Instruct observes the changed pointer and skips its ordinary
+        // IN_PROGRESS/mpOrder publication epilogue.
+        OwnerActionBarrier::Skip
     }
 }
 
