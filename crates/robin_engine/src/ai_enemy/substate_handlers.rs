@@ -1429,34 +1429,8 @@ impl EnemyAi {
                     let mut look_for_soldiers = false;
                     match rank {
                         ProfileRank::Soldier => {
-                            // `near_officer_who_is_wondering_about_the_same_noise`:
-                            // scan same-camp officers who are able to
-                            // fight, not script-locked, whose live
-                            // `seek_position` matches mine (same
-                            // noise), within 360° detection range.
-                            // `has_as_seek_position(pos)` is a literal
-                            // exact equality including layer / sector
-                            // / x / y.
-                            let my_seek = self.base.seek_position;
-                            near_officer = tick
-                                .camp_soldiers
-                                .iter()
-                                .find(|cs| {
-                                    // Preserve the C++ predicate order: it
-                                    // performs the authoritative LOS query
-                                    // before script-lock and seek-position
-                                    // rejection, so the query's synchronous
-                                    // cache side effect still occurs.
-                                    cs.rank == ProfileRank::Officer
-                                        && cs.is_able_to_fight
-                                        && self
-                                            .is_detecting_360_degrees(cs.handle as HumanHandle, ctx)
-                                        && !cs.script_locked
-                                        && cs.seek_position.x == my_seek.x
-                                        && cs.seek_position.y == my_seek.y
-                                        && cs.seek_position.level == my_seek.level
-                                })
-                                .map(|cs| cs.handle);
+                            near_officer =
+                                self.near_officer_who_is_wondering_about_the_same_noise(ctx, tick);
                         }
                         ProfileRank::Officer => {
                             // ShallISendOutSoldier outdoor arm:
@@ -1823,14 +1797,27 @@ impl EnemyAi {
 
             Substate::SeekingHeardstepsReactiontime => {
                 if stimulus_type == StimulusType::EventTimer {
-                    self.go_to(
-                        AiState::Seeking,
-                        Substate::SeekingHeardsteps,
-                        self.base.seek_position,
-                        GotoFlags::empty(),
-                        ctx,
-                    );
-                    self.base.launch_timer(200, ctx.frame);
+                    // A plain soldier who can see an officer already
+                    // heading for the same noise defers to him instead of
+                    // investigating himself.
+                    let officer = if self.get_rank() == ProfileRank::Soldier {
+                        self.near_officer_who_is_wondering_about_the_same_noise(ctx, tick)
+                    } else {
+                        None
+                    };
+                    if officer.is_some() {
+                        self.set_state(AiState::Default, Substate::DefaultLookingOfficerForAdvice);
+                        self.base.launch_timer(100, ctx.frame);
+                    } else {
+                        self.go_to(
+                            AiState::Seeking,
+                            Substate::SeekingHeardsteps,
+                            self.base.seek_position,
+                            GotoFlags::empty(),
+                            ctx,
+                        );
+                        self.base.launch_timer(200, ctx.frame);
+                    }
                 }
             }
 
@@ -4713,19 +4700,26 @@ impl EnemyAi {
             }
 
             Substate::AttackingReserve => match stimulus_type {
-                // Fall-through to CallCoordinate: walk same-camp
-                // soldiers in AttackingReserve and send each a
-                // CallCoordinate to make them all begin their
-                // overview together.
+                // Fall-through to CallCoordinate: walk the us-list built
+                // by the last BattleDecisions, pick the soldiers still in
+                // AttackingReserve and send each a CallCoordinate so they
+                // all begin their overview together.  The scan is over the
+                // us-list, not the whole camp roster: only allies this
+                // soldier actually perceived during its own decision pass
+                // participate, and they are visited in us-list order.
                 StimulusType::EventTimer => {
                     let me = self.base.me;
-                    let friends_to_coord: Vec<NpcHandle> = tick
-                        .camp_soldiers
+                    let friends_to_coord: Vec<NpcHandle> = self
+                        .base
+                        .list_us
                         .iter()
-                        .filter(|cs| {
-                            cs.handle != me && cs.ai_substate == Substate::AttackingReserve
+                        .filter(|&&handle| handle != me)
+                        .filter(|&&handle| {
+                            tick.camp_soldiers.iter().any(|cs| {
+                                cs.handle == handle && cs.ai_substate == Substate::AttackingReserve
+                            })
                         })
-                        .map(|cs| cs.handle)
+                        .copied()
                         .collect();
                     for target in friends_to_coord {
                         self.base.outbox.reentrant.cross_npc_actions.push(
@@ -4831,8 +4825,13 @@ impl EnemyAi {
 
             Substate::AttackingTowerGuardObserve => {
                 if stimulus_type == StimulusType::EventTimer {
-                    self.reinitialize_them_list(ctx, tick);
-                    self.battle_decisions(sim, global, ctx, tick, grid);
+                    // The observing tower guard takes a fresh battle
+                    // overview rather than re-deciding directly: that
+                    // rebuilds the them-list, drops the task priority back
+                    // to the minimum and starts the look-left/look-right
+                    // sweep instead of immediately re-entering the same
+                    // observe substate.
+                    self.get_battle_overview(0, ctx, tick);
                 }
             }
 
@@ -6071,6 +6070,45 @@ impl EnemyAi {
             _ => {}
         }
         false
+    }
+
+    /// A near officer of my own camp who is already wondering about the
+    /// same noise I am — i.e. an officer able to fight, not script-locked,
+    /// within 360° detection range, whose live seek position is exactly
+    /// mine.  Only a plain soldier ever asks this question.
+    fn near_officer_who_is_wondering_about_the_same_noise(
+        &mut self,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) -> Option<NpcHandle> {
+        debug_assert_eq!(self.get_rank(), ProfileRank::Soldier);
+        let my_seek = self.base.seek_position;
+        // The predicate order matters: the authoritative LOS query runs
+        // before the script-lock and seek-position rejections, so its
+        // synchronous cache side effect still happens for every candidate
+        // that clears the rank / able-to-fight gate.
+        let candidates: Vec<NpcHandle> = tick
+            .camp_soldiers
+            .iter()
+            .filter(|cs| cs.rank == ProfileRank::Officer && cs.is_able_to_fight)
+            .map(|cs| cs.handle)
+            .collect();
+        for handle in candidates {
+            if !self.is_detecting_360_degrees(handle as HumanHandle, ctx) {
+                continue;
+            }
+            let matches = tick.camp_soldiers.iter().any(|cs| {
+                cs.handle == handle
+                    && !cs.script_locked
+                    && cs.seek_position.x == my_seek.x
+                    && cs.seek_position.y == my_seek.y
+                    && cs.seek_position.level == my_seek.level
+            });
+            if matches {
+                return Some(handle);
+            }
+        }
+        None
     }
 }
 
