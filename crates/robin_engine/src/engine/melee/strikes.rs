@@ -1958,6 +1958,7 @@ impl EngineInner {
             attacker_camp: crate::element::Camp,
             attacker_pos: (f32, f32),
             attacker_elevation: f32,
+            is_swordfighting: bool,
             boredom: Vec<u16>,
         }
 
@@ -2066,6 +2067,7 @@ impl EngineInner {
                     (map.x, map.y)
                 },
                 attacker_elevation: soldier.element.position().z,
+                is_swordfighting: !soldier.human.opponents.is_empty(),
                 boredom: soldier.human.sword_strike_boredom.clone(),
             });
         }
@@ -2222,7 +2224,7 @@ impl EngineInner {
                 attacker_direction: attack.attacker_direction,
                 attacker_elevation: attack.attacker_elevation,
                 attacker_camp: attack.attacker_camp,
-                is_swordfighting: true,
+                is_swordfighting: attack.is_swordfighting,
                 opponent_time_limit,
                 strike_startup_frames: attacker_sprite_frames,
                 parry_startup_frames: parry_startup,

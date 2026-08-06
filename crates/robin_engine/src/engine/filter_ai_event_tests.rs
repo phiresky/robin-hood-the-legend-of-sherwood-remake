@@ -13,9 +13,10 @@
 //!    `filter_stimulus(sim, …, {source=0}) == false` (blocked).
 //!  * Unmapped stimulus type: `filter_stimulus` calls the script with the
 //!    original sentinel event code `-2`.
-//!  * Missing FilterAIEvent override: the base class's implicit
-//!    `return 1` must be honoured, while a missing required VM remains an
-//!    error in the shared driver.
+//!  * Class defining no FilterAIEvent: allow, while a missing required VM
+//!    remains an error in the shared driver.  Function lookup has no
+//!    base-class fallback; such a class is simply never reached by a
+//!    filtered stimulus, so allow is the correct verdict.
 //!  * Side effects: the filter can observe-and-mutate state each call
 //!    (the raison d'être for on-demand vs. precompute).
 
@@ -84,8 +85,8 @@ const TMP0: u16 = 0xC000;
 // of the shipped class whose filter body branches on the source actor
 // (the YellowKnight class in `S03_FoB_MP` is the only example).
 //
-// `NoOverride` — inherits the implicit base-class `FilterAIEvent
-// { return 1; }` by simply not defining the function.
+// `NoOverride` — defines no `FilterAIEvent` at all, so the filter has no
+// function to call and allows the stimulus.
 
 fn stub_fn(name: &str, addr: i32) -> (Function, Vec<Quad>) {
     (

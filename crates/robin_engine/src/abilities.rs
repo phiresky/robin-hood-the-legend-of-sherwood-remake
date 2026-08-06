@@ -2131,6 +2131,9 @@ pub fn tick_ability(
                 ability.sequence_id, ability.element_index, ability.order_id
             ),
         };
+        // All three listen arms call `Turn()` ahead of their sprite action, so
+        // the row played this tick belongs to the already-stepped direction.
+        let _ = entity.position_iface_mut().turn();
         let direction = u16::try_from(entity.element_data().direction()).unwrap_or_else(|_| {
             panic!("Listen owner {entity_id:?} has invalid animation direction")
         });
@@ -2301,15 +2304,36 @@ pub fn tick_ability(
     } else {
         ability_order_type(kind)
     };
-    // HITTING, HEALING, PAYING, and TYING turn progressively toward the
-    // direction installed at Execute-time initialization. Only Hit and Pay
-    // freeze the first sprite frame until alignment; Original Tie calls
-    // `Turn()` for its side effect and advances the action unconditionally.
+    // These ability arms turn progressively toward the direction installed at
+    // Execute-time initialization. The throws, `Hit` and `Pay` freeze the first
+    // sprite frame until alignment; the rest turn for its side effect and
+    // advance the action unconditionally. `Carry`, `Drop`, `Whistle` and
+    // `ClimbDownFromShoulders` do not turn at all — see `docs/TURN_ARMS.md`.
     let turning = matches!(
         kind,
-        AbilityKind::Hit | AbilityKind::Heal | AbilityKind::Pay | AbilityKind::Tie
+        AbilityKind::Hit
+            | AbilityKind::Heal
+            | AbilityKind::Pay
+            | AbilityKind::Tie
+            | AbilityKind::Eat
+            | AbilityKind::ClimbOnShoulders
+            | AbilityKind::ThrowApple
+            | AbilityKind::ThrowStone
+            | AbilityKind::ThrowPurse
+            | AbilityKind::ThrowWaspNest
+            | AbilityKind::ThrowNet
     ) && entity.position_iface_mut().turn();
-    let frame_progression = if matches!(kind, AbilityKind::Hit | AbilityKind::Pay) && turning {
+    let frame_progression = if matches!(
+        kind,
+        AbilityKind::Hit
+            | AbilityKind::Pay
+            | AbilityKind::ThrowApple
+            | AbilityKind::ThrowStone
+            | AbilityKind::ThrowPurse
+            | AbilityKind::ThrowWaspNest
+            | AbilityKind::ThrowNet
+    ) && turning
+    {
         crate::sprite::FrameProgression::FrozenFirstFrame
     } else {
         crate::sprite::FrameProgression::Default
@@ -2653,27 +2677,20 @@ struct CarrierSnapshot {
     pos: MapPoint,
     carrier_dir: i16,
     layer: u16,
-    /// Carrier's current sight obstacle (copied onto the carried
-    /// entity so its anti-collision and reachability tests use the
-    /// same obstacle as the carrier).
-    obstacle_index: Option<ObstacleHandle>,
     /// Carrier's current sector (copied onto the carried entity so
     /// sector-driven systems agree on which sector both occupy).
     sector: Option<crate::position_interface::SectorHandle>,
     /// Carrier's current material (derived from its obstacle).
     material: GameMaterial,
-    /// Carrier's plane Z coefficients (from its `PositionInterface`) — used
-    /// to reproject the carried sprite onto the correct elevation/tilt plane.
-    plane: Option<PlaneZCoeffs>,
     /// The carrier's current sprite animation — determines which carry
     /// phase (lift / waiting / walking / drop) the carried entity plays.
     carrier_last_action: OrderType,
     /// Frame state to synchronize with for lift/waiting/drop phases.
     carrier_frame: u16,
     carrier_frame_count: u16,
-    /// True if the carrier has `Action::LittleJohnCarry` or
-    /// `Action::FarmerCarry` as a contextual action — selects the
-    /// LittleJohn-style carry animations (vs peasant-C style).
+    /// True if the carrier has `Action::LittleJohnCarry` as a contextual
+    /// action — selects the LittleJohn-style carry animations (vs
+    /// peasant-C style).
     little_john_style: bool,
     /// Posture stored on the carrier's `pc.carried_posture` — determines
     /// whether this is a corpse-carry (target on `Posture::Carried` /
@@ -2711,18 +2728,15 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
         };
         let elem = &entity.element;
 
-        // Check the carrier's profile for LittleJohnCarry or the
-        // equivalent FarmerCarry.
+        // Only LittleJohnCarry selects the Little John carry animations.
+        // FarmerCarry widens who is *allowed* to carry a body, but it does
+        // not change which carry animation the carried actor plays.
         let little_john_style = profiles
             .get_character(pc.profile_index)
             .map(|cp| {
-                cp.contextual_actions.iter().any(|&a| {
-                    matches!(
-                        a,
-                        crate::profiles::Action::LittleJohnCarry
-                            | crate::profiles::Action::FarmerCarry
-                    )
-                })
+                cp.contextual_actions
+                    .iter()
+                    .any(|&a| a == crate::profiles::Action::LittleJohnCarry)
             })
             .unwrap_or(false);
 
@@ -2730,12 +2744,6 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
             let s = &elem.sprite;
             (s.last_action, s.current_frame, s.frame_count)
         };
-
-        // Carrier's plane lives on its `PositionInterface`.  It was resolved
-        // from the carrier's current `obstacle_index` when the carrier last
-        // crossed onto that obstacle; copying it directly avoids having to
-        // re-resolve from the sight-obstacle list here.
-        let plane = entity.element.sprite.position_iface.get_plane().copied();
 
         let carried_posture = pc.live_carried_posture();
 
@@ -2757,10 +2765,8 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
             pos: elem.position_map(),
             carrier_dir: elem.direction(),
             layer: elem.layer(),
-            obstacle_index: elem.obstacle_index(),
             sector: elem.sector(),
             material: elem.material(),
-            plane,
             carrier_last_action: last_action,
             carrier_frame: frame,
             carrier_frame_count: frame_count,
@@ -2791,18 +2797,14 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
         };
         let carried_dir_u16 = carried_dir_i16 as u16;
 
-        // Position + layer + direction + obstacle + sector + material:
-        // copy all five fields from the carrier, then reproject onto
-        // the new plane below.
+        // Position + layer + direction + sector + material: copy from
+        // the carrier, then reproject through the carried body's own
+        // plane below.
         {
             let elem = target.element_data_mut();
             elem.set_position_map(snap.pos);
             elem.set_layer(snap.layer);
             elem.set_direction_instantly(carried_dir_i16);
-            // Obstacle/plane assignment is handled below via
-            // `pi.set_obstacle(snap.obstacle_index, snap.plane)`, which
-            // pairs the obstacle handle with the carrier's already-
-            // resolved top-plane (avoiding a redundant lookup).
             elem.set_sector(snap.sector);
             elem.set_material(snap.material);
             // Pin the carried's display_order just in front of the
@@ -2815,21 +2817,21 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
         }
 
         // Update the carried entity's `PositionInterface` with the
-        // carrier's obstacle + plane + material and the new map
-        // position, then reproject.  This ensures the sprite's 3D
-        // projection lands on the correct plane the same frame the
-        // carrier crosses an elevation line or sector boundary —
-        // otherwise the corpse is one frame late.
+        // carrier's material and the new map position, then reproject.
+        //
+        // The carried body keeps its OWN surface: no per-frame carry
+        // animation — lift, idle-with-corpse, walk-with-corpse, or
+        // walk-carrying-on-shoulders — copies the carrier's obstacle
+        // onto it.  They only restamp the map position and re-project
+        // through whatever plane the body already had (from where it
+        // fell, or from the last explicit hand-over).  The obstacle
+        // *is* copied on the one-shot hand-overs: dropping the corpse
+        // and teleporting the carrier, both of which live elsewhere.
+        // Copying it here instead flattened a body held above ground
+        // to elevation 0 whenever the carrier itself stood on plain
+        // ground.
         {
             let pi = target.position_iface_mut();
-            // `RHANIMATION_WAITING_WITH_CORPSE` synchronizes only the
-            // carried animation and display order. In particular it does
-            // not copy the carrier's obstacle: a loaded carried body can
-            // retain an independently serialized surface/elevation while
-            // the stationary carrier has no obstacle.
-            if on_shoulders || snap.carrier_last_action != OrderType::WaitingWithCorpse {
-                pi.set_obstacle(snap.obstacle_index, snap.plane);
-            }
             pi.set_material(snap.material);
             pi.set_map_position(snap.pos);
         }

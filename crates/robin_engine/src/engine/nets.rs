@@ -1231,7 +1231,13 @@ mod tests {
             human: HumanData::default(),
             npc: NpcData {
                 life_points: 50,
-                ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                // Level loading copies the soldier profile's HtH weapon onto
+                // the brain; the fighter-registry scan reached from net
+                // capture requires it.
+                ai_brain: crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi {
+                    hth_weapon_id: 1,
+                    ..crate::ai_enemy::EnemyAi::default()
+                })),
                 ..NpcData::default()
             },
             soldier: SoldierData {

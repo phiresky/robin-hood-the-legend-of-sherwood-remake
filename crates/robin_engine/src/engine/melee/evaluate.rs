@@ -972,6 +972,7 @@ impl EngineInner {
             pc.element_data().position_map().y,
         );
         let mut boredom = pc_data.human.sword_strike_boredom.clone();
+        let is_swordfighting = !pc_data.human.opponents.is_empty();
         let attacker_profile = assets
             .profile_manager
             .get_hth_weapon(weapon_id)
@@ -1106,7 +1107,7 @@ impl EngineInner {
             attacker_direction: direction,
             attacker_elevation: elevation,
             attacker_camp: crate::element::Camp::Royalists,
-            is_swordfighting: true,
+            is_swordfighting,
             opponent_time_limit,
             strike_startup_frames: attacker_sprite_frames,
             parry_startup_frames: parry_startup,
@@ -1653,7 +1654,7 @@ impl EngineInner {
                 attacker_direction: pc_direction,
                 attacker_elevation: pc_elevation,
                 attacker_camp: pc_camp,
-                is_swordfighting: true,
+                is_swordfighting,
                 opponent_time_limit,
                 strike_startup_frames: pc_sprite_frames,
                 parry_startup_frames: pc_parry_startup,
@@ -1823,7 +1824,14 @@ impl EngineInner {
             let layer = s.element.layer();
             let dir = s.element.direction();
             let boredom = s.human.sword_strike_boredom.clone();
-            let principal = EntityId::Pc(crate::entity_id::PcId(ai.base.primary_target));
+            // The strike proposal times and aims the victim's *principal
+            // opponent* — the head of its own opponent list — not the
+            // AI-picked primary target. The two differ routinely: the primary
+            // target survives the end of a duel and can name a soldier this
+            // victim is not fighting, while the opponent list is the live
+            // duel. Straight strikes reach nobody else, so aiming the wrong
+            // one silently zeroes out every straight-strike counter.
+            let principal = s.human.opponents.first().copied();
             (
                 ai.hth_weapon_id,
                 fa,
@@ -1909,7 +1917,7 @@ impl EngineInner {
                     elevation: elem.position().z,
                     life_points: lp,
                     defender_profile: def_prof,
-                    is_primary_target: eid == principal_opponent,
+                    is_primary_target: principal_opponent.is_some_and(|p| eid == p),
                     is_walking_with_sword,
                 })
             })
@@ -1918,7 +1926,8 @@ impl EngineInner {
         // ProposeGoodSwordStrike always times the defender's principal
         // opponent, which need not be the hitter that triggered this
         // reactive warning.
-        let opponent_time_limit: Option<i16> = self.get_entity(principal_opponent).and_then(|e| {
+        let opponent_time_limit: Option<i16> = principal_opponent.and_then(|principal_opponent| {
+            let e = self.get_entity(principal_opponent)?;
             e.actor_data()?;
             let sprite = &e.element_data().sprite;
             use crate::order::OrderType as OT;
@@ -1981,7 +1990,9 @@ impl EngineInner {
             attacker_direction: victim_direction,
             attacker_elevation: victim_elevation,
             attacker_camp: victim_camp,
-            is_swordfighting: true,
+            // A victim caught by a circle strike while not duelling has an
+            // empty opponent list; the proposal bails out for it.
+            is_swordfighting: principal_opponent.is_some(),
             opponent_time_limit,
             strike_startup_frames: victim_sprite_frames,
             parry_startup_frames: parry_startup,
@@ -2175,10 +2186,19 @@ impl EngineInner {
 
                 // Launch counter-strike sequence
                 let counter_cmd = counter_strike.to_command();
-                let target = if principal_opponent.index() != 0 {
-                    principal_opponent
-                } else {
-                    attacker_id
+                // The counter always goes to the principal opponent. A
+                // victim with an empty opponent list cannot reach this arm
+                // in the Original — the proposal refuses outright for an
+                // actor that is not swordfighting — so there is no
+                // substitute target to fall back to here.
+                let Some(target) = principal_opponent else {
+                    tracing::warn!(
+                        ?victim_id,
+                        ?attacker_id,
+                        ?counter_strike,
+                        "ConsiderToBeginParade: counter-strike proposed for a victim with no principal opponent; dropping it"
+                    );
+                    return;
                 };
 
                 let mut seq = crate::sequence::Sequence::new();

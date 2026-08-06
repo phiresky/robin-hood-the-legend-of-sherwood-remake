@@ -11,11 +11,11 @@ use crate::parameters_ai;
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 
 use super::util::{
-    FighterView, calculate_opponent_nearest_to_rene, check_straight_movement, det2, dot2,
-    evaluate_combat_position_full, get_normal, get_normal_iso, get_normal_right,
-    is_any_swordfight_substate, is_observing_combat_substate, is_walking_running_charging_substate,
-    iso_norm, iso_normalize, max_norm, pos_diff, sector_to_vector, square_norm, vec_to_sector,
-    vec_to_sector_ar,
+    FighterView, ai_max_norm_distance, ai_square_distance, calculate_opponent_nearest_to_rene,
+    check_straight_movement, det2, dot2, evaluate_combat_position_full, get_normal, get_normal_iso,
+    get_normal_right, is_any_swordfight_substate, is_observing_combat_substate,
+    is_walking_running_charging_substate, iso_norm, iso_normalize, max_norm, pos_diff,
+    sector_to_vector, square_norm, vec_to_sector, vec_to_sector_ar,
 };
 use super::{
     CombatPosition, EnemyAi, FighterSnapshot, PrimaryTargetFlags, ProfileRank, Question, SeekFlags,
@@ -102,9 +102,15 @@ fn phalanx_member_detects_180(
         return false;
     }
 
+    // The direction vector this test compares against is built in map
+    // space, where Y is already compressed by `ASPECT_RATIO`, and is then
+    // expanded back into the stretched frame the offsets above use. The
+    // shared table is the expanded unit vector already, so stretching it
+    // a second time would narrow the forward half-plane and reject
+    // enemies that are genuinely in front.
     let direction = crate::shadow_polygon::sector_to_direction(member.direction as i16);
     let forward_x = direction[0];
-    let forward_y = direction[1] * INVERSE_ASPECT_RATIO;
+    let forward_y = direction[1];
     if sq_distance < 50.0 * 50.0 {
         let forward_length = dx * forward_x + dy * forward_y;
         let projected_x = forward_x * forward_length;
@@ -130,13 +136,33 @@ fn phalanx_member_detects_180(
 fn append_phalanx_member_enemies(
     merged: &mut Vec<HumanHandle>,
     member: &PhalanxMemberThemList,
+    kept: &[&PhalanxEnemySnapshot],
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) {
-    for target in &member.current_them_list {
-        if !target.able_to_fight
-            || target.friend
-            || !phalanx_member_detects_360(member, target, obstacles)
-        {
+    tracing::trace!(
+        target: "robin_engine::ai_enemy::phalanx",
+        member = member.handle,
+        sq_view_radius = member.sq_view_radius,
+        kept = ?kept.iter().map(|t| t.handle).collect::<Vec<_>>(),
+        detectable = ?member.detectable_enemies.iter().map(|t| t.handle).collect::<Vec<_>>(),
+        "phalanx them-list: member inputs"
+    );
+    for target in kept {
+        // Short-circuit order matters: an entry that can no longer fight
+        // is dropped without ever running a line-of-sight query.
+        let keep = target.able_to_fight
+            && phalanx_member_detects_360(member, target, obstacles)
+            && !target.friend;
+        tracing::trace!(
+            target: "robin_engine::ai_enemy::phalanx",
+            member = member.handle,
+            enemy = target.handle,
+            able = target.able_to_fight,
+            friend = target.friend,
+            keep,
+            "phalanx them-list: keep check"
+        );
+        if !keep {
             continue;
         }
         if !merged.contains(&target.handle) {
@@ -145,10 +171,19 @@ fn append_phalanx_member_enemies(
     }
 
     for target in &member.detectable_enemies {
-        if target.dead
-            || target.unconscious
-            || !phalanx_member_detects_180(member, target, obstacles)
-        {
+        // The detection test runs before the dead/unconscious filter, so
+        // it queries line of sight even for targets about to be rejected.
+        let detects = phalanx_member_detects_180(member, target, obstacles);
+        tracing::trace!(
+            target: "robin_engine::ai_enemy::phalanx",
+            member = member.handle,
+            enemy = target.handle,
+            dead = target.dead,
+            unconscious = target.unconscious,
+            detects_180 = detects,
+            "phalanx them-list: add check"
+        );
+        if !detects || target.dead || target.unconscious {
             continue;
         }
         if !merged.contains(&target.handle) {
@@ -301,12 +336,12 @@ impl EnemyAi {
                 if !ok {
                     continue;
                 }
-                // SquareDistance(pFriend) stretches Y by
-                // INVERSE_ASPECT_RATIO before squaring — isometric
-                // squared distance, not Euclidean.
-                let v = pos_diff(&snap.position, &me_pos);
-                let v_iso = (v.0, v.1 * INVERSE_ASPECT_RATIO);
-                let sq = square_norm(v_iso);
+                let sq = ai_square_distance(
+                    &snap.position,
+                    snap.elevation as f32,
+                    &me_pos,
+                    ctx.elevation,
+                );
                 if sq < best_sq {
                     best_sq = sq;
                     best = *handle;
@@ -713,9 +748,13 @@ impl EnemyAi {
             {
                 continue;
             }
-            let dist = max_norm(pos_diff(&f.position, &me_pos));
-            if dist < best_distance {
-                best_distance = dist;
+            // The reference truncates `MaxNormDistance` to UWORD before
+            // the comparison, and measures in world space (map Y plus
+            // elevation), not raw map coordinates.
+            let dist =
+                ai_max_norm_distance(&f.position, f.elevation, &me_pos, ctx.elevation) as u16;
+            if f32::from(dist) < best_distance {
+                best_distance = f32::from(dist);
                 best = f.handle;
             }
         }
@@ -1005,6 +1044,10 @@ impl EnemyAi {
         // to a phalanx slot, use their future seek position + shield bearing
         // direction; when in position, use their current pose.
         let shield_running = Substate::AttackingRunningToPhalanx as u32;
+        // Both straight-movement probes below are made on the left
+        // anchor's own layer, taken from where it currently stands rather
+        // than from the slot it is heading for.
+        let left_layer = self.find_fighter(left_guy, tick)?.position.level;
         let (left_pos, left_dir) = {
             let snap = self.find_fighter(left_guy, tick)?;
             if snap.current_substate == shield_running {
@@ -1030,9 +1073,9 @@ impl EnemyAi {
 
         let distance = archer::DISTANCE_SHIELD_BEARER_SHIELD_BEARER as f32;
 
-        // Left slot: anchor's forward vector, counter-clockwise normal.
+        // Left slot: anchor's forward vector, clockwise normal.
         let left_forward = sector_to_vector(left_dir);
-        let mut left_side = get_normal(left_forward);
+        let mut left_side = get_normal_right(left_forward);
         left_side.0 *= distance;
         left_side.1 *= distance;
         left_side.1 *= ASPECT_RATIO;
@@ -1042,9 +1085,9 @@ impl EnemyAi {
             ..left_pos
         };
 
-        // Right slot: anchor's forward vector, clockwise normal.
+        // Right slot: anchor's forward vector, counter-clockwise normal.
         let right_forward = sector_to_vector(right_dir);
-        let mut right_side = get_normal_right(right_forward);
+        let mut right_side = get_normal(right_forward);
         right_side.0 *= distance;
         right_side.1 *= distance;
         right_side.1 *= ASPECT_RATIO;
@@ -1059,15 +1102,15 @@ impl EnemyAi {
         let left_accessible = grid.is_none_or(|g| {
             let anchor_pt = crate::coordinates::MapPoint::new(left_pos.x, left_pos.y);
             let slot_pt = crate::coordinates::MapPoint::new(pos_left.x, pos_left.y);
-            g.is_straight_movement_authorized(anchor_pt, slot_pt, left_pos.level, &ctx.move_box)
+            g.is_straight_movement_authorized(anchor_pt, slot_pt, left_layer, &ctx.move_box)
         });
-        // The reference passes `left_guy.layer` here (a copy-paste bug);
-        // we use `right_pos.level` so the right-side check matches the
-        // right anchor when phalanx ends straddle stairs/ramps.
+        // Both reachability probes are made on the *left* anchor's layer,
+        // including the right-hand one. It reads like a slip, but the
+        // formation geometry it produces is the behaviour being matched.
         let right_accessible = grid.is_none_or(|g| {
             let anchor_pt = crate::coordinates::MapPoint::new(right_pos.x, right_pos.y);
             let slot_pt = crate::coordinates::MapPoint::new(pos_right.x, pos_right.y);
-            g.is_straight_movement_authorized(anchor_pt, slot_pt, right_pos.level, &ctx.move_box)
+            g.is_straight_movement_authorized(anchor_pt, slot_pt, left_layer, &ctx.move_box)
         });
 
         let me_pos = ctx.position;
@@ -1171,8 +1214,13 @@ impl EnemyAi {
             if !f.is_friendly {
                 continue;
             }
-            let d = pos_diff(&f.position, &ctx.position);
-            if square_norm(d) >= consider_sq {
+            if ai_square_distance(
+                &f.position,
+                f.elevation as f32,
+                &ctx.position,
+                ctx.elevation,
+            ) >= consider_sq
+            {
                 continue;
             }
             // Filter on AI state ∈ {Seeking, Wondering, Attacking}.
@@ -1276,6 +1324,7 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
         _grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        carried_them_list: Option<&[HumanHandle]>,
     ) {
         // Original recursively descends all the way left and runs each
         // member's BattleDecisions while unwinding, then does the same on the
@@ -1314,7 +1363,7 @@ impl EnemyAi {
         if !has_left_neighbour {
             // We are already the leftmost member. Original refreshes the
             // shared list before recursing to the right.
-            self.phalanx_reinitialize_them_list(&ctx.position, ctx, tick);
+            self.phalanx_reinitialize_them_list(&ctx.position, ctx, tick, carried_them_list);
         }
 
         let mut right = Vec::new();
@@ -1374,7 +1423,7 @@ impl EnemyAi {
         refresh_them_list: bool,
     ) {
         if refresh_them_list {
-            self.phalanx_reinitialize_them_list(&ctx.position, ctx, tick);
+            self.phalanx_reinitialize_them_list(&ctx.position, ctx, tick, None);
         }
         self.left_combat_neighbour = 0;
         self.right_combat_neighbour = 0;
@@ -1387,20 +1436,46 @@ impl EnemyAi {
     /// right-neighbour chain; here we build from our own detectable
     /// enemies plus those visible to right neighbours via snapshots,
     /// then set primary_target to the nearest enemy.
+    ///
+    /// `carried` is the list a previous rebuild in this same think already
+    /// installed on every member. The member snapshots are taken once at
+    /// the start of the think, so without it a second rebuild would clean
+    /// each member's pre-rebuild list instead of the shared one, and would
+    /// re-derive a list the formation has already moved past.
     fn phalanx_reinitialize_them_list(
         &mut self,
         phalanx_left_pos: &Position,
         ctx: &AiContext,
         tick: &AiPerTickData,
-    ) {
+        carried: Option<&[HumanHandle]>,
+    ) -> Vec<HumanHandle> {
         // (1..3) Replay the original recursion over the up-front member
         // snapshots. Each member cleans its persistent list with its own
         // current 360° radius+LOS, then scans its live detectable-enemy
         // list with its own current 180° radius+LOS.
-        self.list_them.clear();
         let obstacles = ctx.obstacle_list();
+        let mut snapshots: std::collections::HashMap<HumanHandle, &PhalanxEnemySnapshot> =
+            std::collections::HashMap::new();
         for member in &tick.phalanx_member_them_lists {
-            append_phalanx_member_enemies(&mut self.list_them, member, obstacles);
+            for target in member
+                .current_them_list
+                .iter()
+                .chain(member.detectable_enemies.iter())
+            {
+                snapshots.entry(target.handle).or_insert(target);
+            }
+        }
+
+        self.list_them.clear();
+        for member in &tick.phalanx_member_them_lists {
+            let kept: Vec<&PhalanxEnemySnapshot> = match carried {
+                Some(handles) => handles
+                    .iter()
+                    .filter_map(|handle| snapshots.get(handle).copied())
+                    .collect(),
+                None => member.current_them_list.iter().collect(),
+            };
+            append_phalanx_member_enemies(&mut self.list_them, member, &kept, obstacles);
         }
 
         // (4) Find nearest enemy to phalanx center and make it primary
@@ -1455,6 +1530,26 @@ impl EnemyAi {
         } else {
             self.base.primary_target = 0;
         }
+
+        // Steps (5) and (6) run once per member as the recursion unwinds,
+        // so the completed shared list and its head become every member's
+        // them-list and primary target — not only the caller's.
+        for member in &tick.phalanx_member_them_lists {
+            if member.handle == self.base.me {
+                continue;
+            }
+            self.base
+                .outbox
+                .reentrant
+                .cross_npc_actions
+                .push(CrossNpcAction::SetPhalanxThemList {
+                    target: member.handle,
+                    them: self.list_them.clone(),
+                    primary_target: self.base.primary_target,
+                });
+        }
+
+        self.list_them.clone()
     }
 
     /// ReconsiderPhalanx. Called by the leftmost phalanx member on timer
@@ -1469,6 +1564,15 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
+        tracing::trace!(
+            target: "robin_engine::ai_enemy::phalanx",
+            me = self.base.me,
+            frame = ctx.frame,
+            substate = ?self.base.current_substate,
+            left = self.left_combat_neighbour,
+            right = self.right_combat_neighbour,
+            "reconsider_phalanx: enter"
+        );
         self.base.clear_emoticon();
 
         // Check PHALANX_ATTACK_DISTANCE gate
@@ -1476,10 +1580,24 @@ impl EnemyAi {
         if nearest != 0
             && let Some(snap) = self.find_fighter(nearest, tick)
         {
-            let d = pos_diff(&snap.position, &ctx.position);
             let atk_dist = archer::PHALANX_ATTACK_DISTANCE as f32;
-            if square_norm(d) < atk_dist * atk_dist {
-                self.break_phalanx(sim, global, ctx, tick, grid);
+            let sq = ai_square_distance(
+                &snap.position,
+                snap.elevation as f32,
+                &ctx.position,
+                ctx.elevation,
+            );
+            tracing::trace!(
+                target: "robin_engine::ai_enemy::phalanx",
+                me = self.base.me,
+                frame = ctx.frame,
+                nearest,
+                square_distance = sq,
+                threshold = atk_dist * atk_dist,
+                "reconsider_phalanx: attack-distance gate"
+            );
+            if sq < atk_dist * atk_dist {
+                self.break_phalanx(sim, global, ctx, tick, grid, None);
                 return true;
             }
         }
@@ -1490,7 +1608,13 @@ impl EnemyAi {
         }
 
         // Reinitialize them lists
-        self.phalanx_reinitialize_them_list(&ctx.position, ctx, tick);
+        tracing::trace!(
+            target: "robin_engine::ai_enemy::phalanx",
+            me = self.base.me,
+            frame = ctx.frame,
+            "reconsider_phalanx: reinitializing them lists"
+        );
+        let merged_them_list = self.phalanx_reinitialize_them_list(&ctx.position, ctx, tick, None);
 
         if self.list_them.is_empty() {
             // Pass no flags (uwFlags = 0, default per
@@ -1580,11 +1704,30 @@ impl EnemyAi {
 
         let dir_diff = (ideal_direction.wrapping_sub(real_direction)) & 15;
 
+        tracing::trace!(
+            target: "robin_engine::ai_enemy::phalanx",
+            me = self.base.me,
+            frame = ctx.frame,
+            members = ?phalanx_members,
+            them = ?self.list_them,
+            primary = self.base.primary_target,
+            ideal_direction,
+            real_direction,
+            dir_diff,
+            "reconsider_phalanx: geometry"
+        );
+
         let (enemies_in_front, enemy_on_right_side) = match dir_diff {
             0 | 1 | 15 => {
                 // Within tolerance
                 if self.phalanx_is_encircled_by_enemies(&phalanx_center, ideal_direction, tick) {
-                    self.break_phalanx(sim, global, ctx, tick, grid);
+                    tracing::trace!(
+                        target: "robin_engine::ai_enemy::phalanx",
+                        me = self.base.me,
+                        frame = ctx.frame,
+                        "reconsider_phalanx: encircled, breaking phalanx"
+                    );
+                    self.break_phalanx(sim, global, ctx, tick, grid, Some(&merged_them_list));
                     return true;
                 }
                 (true, false) // unused when enemies_in_front
@@ -1680,6 +1823,7 @@ impl EnemyAi {
                             target: guy,
                             position: new_pos,
                             direction: ideal_direction,
+                            call_instruction: true,
                         },
                     );
                 }
@@ -1750,7 +1894,7 @@ impl EnemyAi {
 
             if !found_pivot {
                 // Not enough space to hold the phalanx — break formation
-                self.break_phalanx(sim, global, ctx, tick, grid);
+                self.break_phalanx(sim, global, ctx, tick, grid, Some(&merged_them_list));
                 return true;
             }
 
@@ -1768,6 +1912,7 @@ impl EnemyAi {
                         target: guy,
                         position: new_pos,
                         direction: ideal_direction,
+                        call_instruction: true,
                     },
                 );
             }
@@ -1836,20 +1981,18 @@ impl EnemyAi {
             return false;
         }
 
-        // Both range gates below are `SquareDistance`, which stretches Y by
-        // INVERSE_ASPECT_RATIO before squaring — an isometric squared
-        // distance, not a Euclidean one. Measuring Euclidean here
-        // under-reports how far away a target is along the screen-vertical
-        // axis, which silently shrinks both thresholds.
-        let square_distance_to = |pos: &crate::ai::Position| -> f32 {
-            let v = pos_diff(pos, &ctx.position);
-            square_norm((v.0, v.1 * INVERSE_ASPECT_RATIO))
+        // Both range gates below are `SquareDistance`, the stretched 3D
+        // metric — see `ai_square_distance`.
+        let square_distance_to = |pos: &crate::ai::Position, elevation: f32| -> f32 {
+            ai_square_distance(pos, elevation, &ctx.position, ctx.elevation)
         };
 
         // Are we already near enough to fight? (PHALANX_ATTACK_DISTANCE gate)
         if let Some(enemy_snap) = self.find_fighter(nearest_enemy, tick) {
             let atk_dist = archer::PHALANX_ATTACK_DISTANCE as f32;
-            if square_distance_to(&enemy_snap.position) < atk_dist * atk_dist {
+            if square_distance_to(&enemy_snap.position, enemy_snap.elevation as f32)
+                < atk_dist * atk_dist
+            {
                 return false;
             }
         }
@@ -1886,7 +2029,7 @@ impl EnemyAi {
                 continue;
             };
             let min_dist = archer::MIN_PROTECT_ARROW_DISTANCE as f32;
-            if square_distance_to(&view.position) < min_dist * min_dist {
+            if square_distance_to(&view.position, view.elevation) < min_dist * min_dist {
                 continue;
             }
             if view.action_state.is_bow() {
@@ -1904,7 +2047,13 @@ impl EnemyAi {
                 .iter()
                 .map(|&h| {
                     ctx.entity_view(h)
-                        .map(|v| (h, v.action_state, square_distance_to(&v.position)))
+                        .map(|v| {
+                            (
+                                h,
+                                v.action_state,
+                                square_distance_to(&v.position, v.elevation),
+                            )
+                        })
                 })
                 .collect::<Vec<_>>(),
             dangerous_enemy,
@@ -2671,7 +2820,7 @@ impl EnemyAi {
             if f.is_friendly || !f.is_able_to_fight {
                 continue;
             }
-            let d = max_norm(pos_diff(&f.position, &me_pos));
+            let d = ai_max_norm_distance(&f.position, f.elevation, &me_pos, ctx.elevation);
             if d >= max_radius {
                 continue;
             }
@@ -2690,8 +2839,10 @@ impl EnemyAi {
             if !f.is_friendly || f.handle == self.base.me || !f.is_able_to_fight {
                 continue;
             }
-            let d = max_norm(pos_diff(&f.position, &me_pos));
-            if d >= max_radius {
+            // Original truncates `MaxNormDistance` to UWORD on the us-list
+            // side before the radius comparison.
+            let d = ai_max_norm_distance(&f.position, f.elevation, &me_pos, ctx.elevation) as u16;
+            if f32::from(d) >= max_radius {
                 continue;
             }
             self.base.list_us.push(f.handle);
@@ -2702,6 +2853,15 @@ impl EnemyAi {
                 *local_mult.entry(f.primary_target).or_insert(0) += 1;
             }
         }
+
+        tracing::trace!(
+            frame = ctx.frame,
+            me = self.base.me,
+            list_us = ?self.base.list_us,
+            list_them = ?self.list_them,
+            nearby_fighters = tick.nearby_fighters.len(),
+            "ReconsiderSwordfightObservation rebuilt the us/them lists"
+        );
 
         // (4) Pick new primary target with the local multiplicity
         //     override.
@@ -3287,8 +3447,15 @@ mod tests {
         let right = member(2, 100.0, vec![target], Vec::new());
         let mut merged = Vec::new();
 
-        append_phalanx_member_enemies(&mut merged, &leftmost, ObstacleList::empty());
-        append_phalanx_member_enemies(&mut merged, &right, ObstacleList::empty());
+        let leftmost_kept: Vec<&PhalanxEnemySnapshot> = leftmost.current_them_list.iter().collect();
+        let right_kept: Vec<&PhalanxEnemySnapshot> = right.current_them_list.iter().collect();
+        append_phalanx_member_enemies(
+            &mut merged,
+            &leftmost,
+            &leftmost_kept,
+            ObstacleList::empty(),
+        );
+        append_phalanx_member_enemies(&mut merged, &right, &right_kept, ObstacleList::empty());
 
         assert!(merged.is_empty());
     }
@@ -3299,7 +3466,8 @@ mod tests {
         let member = member(2, 300.0, vec![target.clone()], vec![target]);
 
         let mut clear_merged = Vec::new();
-        append_phalanx_member_enemies(&mut clear_merged, &member, ObstacleList::empty());
+        let kept: Vec<&PhalanxEnemySnapshot> = member.current_them_list.iter().collect();
+        append_phalanx_member_enemies(&mut clear_merged, &member, &kept, ObstacleList::empty());
         assert_eq!(clear_merged, vec![9]);
 
         let obstacles = vec![opaque_wall()];
@@ -3310,7 +3478,7 @@ mod tests {
             static_active: &active,
         };
         let mut blocked_merged = Vec::new();
-        append_phalanx_member_enemies(&mut blocked_merged, &member, blocked);
+        append_phalanx_member_enemies(&mut blocked_merged, &member, &kept, blocked);
         assert!(blocked_merged.is_empty());
     }
 

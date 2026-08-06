@@ -114,20 +114,49 @@ fn pc_beggar_execute_calls_turn(anim: OrderType) -> bool {
     )
 }
 
+/// Extra per-class conditions guarding a turning animation arm.
+///
+/// A few arms exist in more than one actor subclass and the overrides disagree
+/// about whether they rotate:
+///
+/// * `TransitionRaisingSword` — the human (and, through its fall-through, the
+///   PC) arm turns unconditionally, while the soldier override turns only when
+///   the order carries an antagonist.
+/// * `StandingUpSword` — the human arm re-aims at the principal opponent and
+///   turns; the soldier override replays the sprite without turning.
+/// * `ExtractingArrowSword` — turns only while actually swordfighting.
+///
+/// Everything else in the turning set rotates unconditionally in every
+/// subclass that defines it.
+fn turn_arm_condition_holds(entity: &Entity, anim: OrderType, has_antagonist: bool) -> bool {
+    let is_swordfighting = entity
+        .human_data()
+        .is_some_and(|human| !human.opponents.is_empty());
+    match anim {
+        OrderType::TransitionRaisingSword => !entity.is_soldier() || has_antagonist,
+        OrderType::StandingUpSword => !entity.is_soldier(),
+        OrderType::ExtractingArrowSword => is_swordfighting,
+        _ => true,
+    }
+}
+
 /// Select the direction row stamped by an actor action that also turns.
 ///
-/// Original's attentive-soldier `TURNING` arm performs
-/// `TURNING_ALERTED` before calling `Turn`/`TurnFast`, unlike the other
-/// turn-driving arms.  Its visible row therefore belongs to the direction at
-/// Execute entry even though the position interface has advanced by the end
-/// of the same simulation frame.
+/// Two arms call the sprite *before* they rotate, so their visible row belongs
+/// to the direction at Execute entry even though the position interface has
+/// advanced by the end of the same simulation frame: the attentive-soldier
+/// `Turning` arm, which plays `TurningAlerted` ahead of its rotation step, and
+/// the human `StandingUpSword` arm, which re-aims and turns only after its
+/// sprite action.
 fn actor_action_row(
     anim_type: OrderType,
     effective_anim: OrderType,
     direction_before_turn: u16,
     direction_after_turn: u16,
 ) -> u16 {
-    if anim_type == OrderType::Turning && effective_anim == OrderType::TurningAlerted {
+    if (anim_type == OrderType::Turning && effective_anim == OrderType::TurningAlerted)
+        || anim_type == OrderType::StandingUpSword
+    {
         direction_before_turn
     } else {
         direction_after_turn
@@ -1683,6 +1712,11 @@ pub(super) struct ExecuteSideOutcomes {
     /// entering the aiming state, restoring the PC's remembered action (and
     /// the messenger action when that PC is selected).
     pub pc_bow_equip_action: Vec<EntityId>,
+    /// PCs whose helping-to-climb entry transition reached DONE. Original
+    /// forwards `MSG_SELECT_ACTION(HELP_TO_CLIMB)` right after setting the
+    /// stance, which reselects the already-current action and therefore
+    /// still stops a selected PC's group at Normal priority.
+    pub pc_helping_climb_action: Vec<EntityId>,
 }
 
 fn forwards_pc_bow_action_on_start(
@@ -1799,18 +1833,8 @@ fn apply_soldier_execute_side_effects(
             set_states(entity, Posture::Upright, ActionState::Moving);
         }
 
-        // BEING_UNCONSCIOUS_*: START sets the settled lying state.
-        // The dispatch arm itself keeps the order alive only while
-        // `human.unconscious` is still true.
-        (OT::BeingUnconsciousSword, MS::Start) => {
-            set_states(entity, Posture::Lying, ActionState::WaitingSword);
-        }
-        (OT::BeingUnconsciousBow, MS::Start) => {
-            set_states(entity, Posture::Lying, ActionState::AimingWithBow);
-        }
-        (OT::BeingUnconscious, MS::Start) => {
-            set_states(entity, Posture::Lying, ActionState::Waiting);
-        }
+        // BEING_UNCONSCIOUS_* START is handled for every human by
+        // `apply_active_animation_start_state_side_effect`.
 
         // TRANSITION_RAISING_SWORD → WaitingSword on DONE
         (OT::TransitionRaisingSword, MS::Done) => {
@@ -2023,8 +2047,14 @@ pub(super) fn apply_actor_walk_start_side_effect(
     };
 
     match anim_type {
-        OT::WalkingUpright | OT::WalkingAlerted | OT::WalkingCrouched => {
+        OT::WalkingUpright | OT::WalkingAlerted => {
             set_states(entity, Posture::Upright, ActionState::Moving);
+        }
+        // The crouched walk keeps the actor crouched; only the action
+        // state moves on. Sharing the upright arm made every crouched
+        // walk order stand the actor up on its first frame.
+        OT::WalkingCrouched => {
+            set_states(entity, Posture::Crouched, ActionState::Moving);
         }
         OT::RunningUpright => {
             set_states(entity, Posture::Upright, ActionState::MovingFast);
@@ -2273,6 +2303,55 @@ fn apply_active_animation_start_state_side_effect(
             }
             return;
         }
+        // The knock-out hold animations are owned by the human Execute
+        // switch, so every human — PC, soldier, civilian — settles into
+        // the lying pose on the first frame.  Leaving them soldier-only
+        // let a knocked-out PC keep whatever action state it carried
+        // into the blow (typically MovingSword or Bored).
+        (OrderType::BeingUnconsciousSword, MotionState::Start) if entity.is_human() => {
+            entity.set_posture(Posture::Lying);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::WaitingSword;
+            }
+            return;
+        }
+        (OrderType::BeingUnconsciousBow, MotionState::Start) if entity.is_human() => {
+            entity.set_posture(Posture::Lying);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::AimingWithBow;
+            }
+            return;
+        }
+        (OrderType::BeingUnconscious, MotionState::Start) if entity.is_human() => {
+            entity.set_posture(Posture::Lying);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            return;
+        }
+        // Corpse-carry idle hold: only a PC ever executes it, and its
+        // first frame settles the carrier back into Waiting.  Without
+        // it a carrier that stops walking keeps the Moving state the
+        // walk order stamped, and every later carry frame — including
+        // the drop transition — inherits it.
+        (OrderType::WaitingWithCorpse, MotionState::Start) if entity.is_pc() => {
+            entity.set_posture(Posture::CarryingCorpse);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            return;
+        }
+        // End of the lift animation: the carrier owns the body and is
+        // standing still with it.
+        (OrderType::TransitionWaitingUprightCarryingCorpse, MotionState::Done)
+            if entity.is_pc() =>
+        {
+            entity.set_posture(Posture::CarryingCorpse);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            return;
+        }
         (OrderType::Taking | OrderType::TakingCrouched, MotionState::Terminated)
             if entity.is_pc() =>
         {
@@ -2281,6 +2360,17 @@ fn apply_active_animation_start_state_side_effect(
             } else {
                 Posture::Crouched
             });
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            return;
+        }
+        // The crouched idle loop is executed only by the PC, and settles
+        // the actor into Waiting on its first frame. Without this a PC
+        // that stops crouch-walking keeps a stale Moving action state
+        // into the following posture transition.
+        (OrderType::WaitingCrouched, MotionState::Start) if entity.is_pc() => {
+            entity.set_posture(Posture::Crouched);
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::Waiting;
             }
@@ -3820,6 +3910,17 @@ impl EngineInner {
                         !element.data.is_movement()
                             || order.order_type == OrderType::Select
                             || matches!(element.command, Command::WaitTimer | Command::WaitFreeLift)
+                            // A movement element's translated order chain also
+                            // holds pure animation steps — the door-pass Turning
+                            // and crouch transitions, and the FREEZING token a
+                            // pathfinding move carries. Those belong to the
+                            // generic Execute switch even though the element
+                            // itself is a movement element, so the actor's
+                            // stale moving action-state must not suppress them.
+                            || super::tick::classify_live_actor_execute_arm(
+                                entity_id,
+                                order.order_type,
+                            ) == Some(super::tick::ExecuteOwnerFamily::GenericAnimation)
                     })
             })
             .unwrap_or(false);
@@ -4539,6 +4640,10 @@ impl EngineInner {
                         .is_some_and(|actor| actor.active_jump.is_some());
                     let jump_ground_motion_step =
                         super::jump::jump_step_uses_perform_motion(anim_type) && actor_in_jump;
+                    // Airborne segments fly the body themselves and ignore
+                    // what their animation reports, so they take their own
+                    // Execute path below.
+                    let jump_airborne_step = super::jump::jump_step_is_airborne(entity, anim_type);
                     let order_is_initialising = actor.execute_order_initialising;
                     if let Some(direction) = waiting_sword_direction_goal {
                         entity.element_data_mut().set_direction_goal(direction);
@@ -4704,19 +4809,14 @@ impl EngineInner {
                         // Many per-anim handlers call `Turn()` each
                         // tick so the body keeps rotating toward the
                         // direction goal *while* the action animation
-                        // plays.  Anims with explicit `Turn()` calls:
-                        //   TRANSITION_RAISING_SWORD (only with an
-                        //   antagonist), TRANSITION_LOWERING_SWORD,
-                        //   WAITING_SWORD, PARRYING_SWORD,
-                        //   STRIKING_LOW_LEFT_SMALLTALK and the matching
-                        //   strike/parry smalltalk family,
-                        //   STRIKING_DOWN_SWORD,
-                        //   STANDING_UP_SWORD/BOW,
-                        //   EXTRACTING_ARROW_SWORD, RAISING_SHIELD,
-                        //   ROLLING, TAKING_NET,
-                        //   TAKING, DRINKING_ALE,
-                        //   TRANSITION_CARRYING_CORPSE_WAITING_UPRIGHT,
-                        //   and the PC beggar transition/idle family.
+                        // plays.  Turning is decided strictly per animation
+                        // arm, and neighbouring arms of the same family often
+                        // disagree: `ParryingSword` turns but `ParryingLowSword`
+                        // does not, `StandingUpSword` turns but `StandingUpBow`
+                        // does not, and the helping-to-climb entry/exit
+                        // transitions do not turn while the
+                        // `WaitingHelpingClimbing` idle between them does.
+                        // See the per-arm table in `docs/TURN_ARMS.md`.
                         // Step the rotation here, then sync `element.direction`
                         // to match before the sprite picks the row to play.
                         let needs_turn = (matches!(
@@ -4724,8 +4824,8 @@ impl EngineInner {
                             OrderType::TransitionRaisingSword
                                 | OrderType::TransitionLoweringSword
                                 | OrderType::WaitingSword
+                                | OrderType::WaitingShield
                                 | OrderType::ParryingSword
-                                | OrderType::ParryingLowSword
                                 | OrderType::StrikingLowLeftSmalltalk
                                 | OrderType::StrikingLowRightSmalltalk
                                 | OrderType::StrikingLeftSmalltalk
@@ -4736,19 +4836,29 @@ impl EngineInner {
                                 | OrderType::ParryingLowRightSmalltalk
                                 | OrderType::StrikingDownSword
                                 | OrderType::StandingUpSword
-                                | OrderType::StandingUpBow
                                 | OrderType::ExtractingArrowSword
+                                | OrderType::FallingLadderWall
                                 | OrderType::RaisingShield
                                 | OrderType::Rolling
                                 | OrderType::Taking
                                 | OrderType::TakingCrouched
+                                | OrderType::TakingTarget
+                                | OrderType::DroppingAmmo
+                                | OrderType::DroppingAmmoCrouched
+                                | OrderType::DroppingAle
+                                | OrderType::DroppingAleCrouched
+                                | OrderType::UsingLever
                                 | OrderType::DrinkingAle
                                 | OrderType::TakingNet
                                 | OrderType::HittingTarget
                                 | OrderType::HandlingTarget
                                 | OrderType::UnlockingDoor
                                 | OrderType::UnlockingTrap
-                                | OrderType::TransitionCarryingCorpseWaitingUpright
+                                | OrderType::SearchingCrouched
+                                | OrderType::WaitingHelpingClimbing
+                                | OrderType::WaitingCarryingOnShoulders
+                                | OrderType::TransitionWaitingCarryingOnShouldersWaitingUpright
+                                | OrderType::FallingShoulders
                                 | OrderType::TransitionCrouchingUp
                                 | OrderType::TransitionCrouchingDown
                                 | OrderType::TransitionWaitingUprightClimbingWallUp
@@ -4781,9 +4891,12 @@ impl EngineInner {
                                 // but the parity slot is required.
                                 | OrderType::Pointing
                                 | OrderType::Searching
-                        ) && (anim_type != OrderType::TransitionRaisingSword
-                            || antagonist.is_some()))
-                            || (entity.is_pc() && pc_beggar_execute_calls_turn(anim_type));
+                        ) && turn_arm_condition_holds(
+                            entity,
+                            anim_type,
+                            antagonist.is_some(),
+                        )) || (entity.is_pc()
+                            && pc_beggar_execute_calls_turn(anim_type));
                         // Capture `Turn()`'s return for the GETTING_FREE_FROM_WASP
                         // still-turning substitution: while still
                         // turning, play TURNING_ALERTED and return
@@ -4819,7 +4932,35 @@ impl EngineInner {
                                 );
                             }
                         }
+                        if owner_is_pc
+                            && anim_type == OrderType::WaitingShield
+                            && let Some(danger) = entity
+                                .actor_data()
+                                .and_then(|actor| actor.shield_face_point)
+                            && (danger.x != 0.0 || danger.y != 0.0)
+                        {
+                            // The PC override of WAITING_SHIELD re-aims at the
+                            // shield danger point on *every* tick, not just at
+                            // initialization, so a danger point that moves
+                            // while the shield is up keeps dragging the facing
+                            // around. The soldier override has no such step.
+                            let position = entity.element_data().position();
+                            let dx = danger.x - position.x;
+                            let dy = danger.y - position.y;
+                            let direction =
+                                crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
+                            entity.position_iface_mut().set_direction(
+                                crate::position_interface::Direction::from_raw(direction as i32),
+                            );
+                        }
                         if needs_turn {
+                            if owner_is_pc && anim_type == OrderType::RaisingShield {
+                                // The PC override turns and then delegates to
+                                // the human arm, which turns again: a PC
+                                // raising its shield rotates two steps per
+                                // tick, unlike every other shield holder.
+                                let _ = entity.position_iface_mut().turn();
+                            }
                             let still_turning = entity.position_iface_mut().turn();
                             if matches!(anim_type, OrderType::GettingFreeFromWasp) {
                                 wasp_still_turning = still_turning;
@@ -4827,7 +4968,11 @@ impl EngineInner {
                             if owner_is_pc
                                 && matches!(
                                     anim_type,
-                                    OrderType::Taking | OrderType::TakingCrouched
+                                    OrderType::Taking
+                                        | OrderType::TakingCrouched
+                                        | OrderType::TakingTarget
+                                        | OrderType::DroppingAmmo
+                                        | OrderType::DroppingAmmoCrouched
                                 )
                             {
                                 pc_taking_still_turning = still_turning;
@@ -4969,6 +5114,11 @@ impl EngineInner {
                                     row,
                                 ));
                             }
+                            if jump_airborne_step {
+                                return Some(super::jump::perform_jump_airborne_motion(
+                                    entity, sim, order_id, played, row,
+                                ));
+                            }
                             let elem = entity.element_data_mut();
                             let sprite = &mut elem.sprite;
                             Some(sprite.perform_action(
@@ -5074,6 +5224,7 @@ impl EngineInner {
                         // tick consults `is_moving()`, otherwise the
                         // actor walks-in-place.
                         apply_actor_walk_start_side_effect(entity, anim_type, motion_state);
+                        super::jump::apply_jump_down_takeoff_drop(entity, anim_type, motion_state);
                         // Universal handlers (run for any actor type).
                         apply_active_animation_start_state_side_effect(
                             entity,
@@ -5112,6 +5263,12 @@ impl EngineInner {
                                         .execute_sides
                                         .beggar_wait_handoffs
                                         .push((entity_id, false));
+                                }
+                                OrderType::TransitionWaitingUprightHelpingClimbing => {
+                                    completion_outcomes
+                                        .execute_sides
+                                        .pc_helping_climb_action
+                                        .push(entity_id);
                                 }
                                 _ => {}
                             }

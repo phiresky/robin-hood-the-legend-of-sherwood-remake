@@ -145,26 +145,18 @@ impl EnemyAi {
         self.pending_alert_soldier_candidates.clear();
         let mut last_result_request = None;
 
-        for cs in &tick.camp_soldiers {
-            // Original eligibility is rank soldier + IsAbleToFight; the
-            // recipient's live Think handles script/AI locks and state gates.
-            if cs.rank != ProfileRank::Soldier || !cs.is_able_to_fight {
-                continue;
-            }
+        // `alert_soldier_candidates` already carries Original's rank and
+        // IsAbleToFight gates, over every camp's NPCs in registry order;
+        // the recipient's live Think handles script/AI locks and state gates.
+        for cs in &tick.alert_soldier_candidates {
             // Original calls `pFriend->IsDetecting360Degrees(mpMe)` here,
             // after the cheap rank/body gates and before its distance gates.
             // Evaluating this while constructing every tick snapshot changes
             // the observable LOS call stream even when no officer broadcasts.
-            let friend = ctx.entity_view(cs.handle).unwrap_or_else(|| {
-                panic!(
-                    "CommandSoldiersToAttack candidate {} is absent from the AI entity view",
-                    cs.handle
-                )
-            });
             if !super::soldier_detects_target_360(
                 cs.position,
-                friend.elevation,
-                friend.is_rider,
+                cs.elevation,
+                cs.is_rider,
                 cs.view_radius,
                 cs.in_building,
                 ctx.position,
@@ -238,12 +230,13 @@ impl EnemyAi {
                 .alerted_us
                 .iter()
                 .map(|handle| {
-                    tick.camp_soldiers
-                        .iter()
-                        .find(|cs| cs.handle == *handle)
+                    // `CommandSoldiersToAttack` alerts rank soldiers of any
+                    // camp, so the recipients are not all in the same-camp
+                    // roster; Original reads `Point(pFriend)` off the actor.
+                    ctx.entity_view(*handle)
                         .unwrap_or_else(|| {
                             panic!(
-                                "combat-alerted soldier {} disappeared from officer {} tick roster",
+                                "combat-alerted soldier {} disappeared from officer {} entity views",
                                 handle, self.base.me
                             )
                         })
@@ -325,6 +318,7 @@ impl EnemyAi {
                                 target: handle,
                                 position: chosen,
                                 direction: face_threat,
+                                call_instruction: false,
                             },
                         );
                     }
@@ -738,6 +732,7 @@ impl EnemyAi {
                             target: handle,
                             position: chosen,
                             direction: face_threat,
+                            call_instruction: false,
                         },
                     );
                 } else {
@@ -771,6 +766,7 @@ impl EnemyAi {
                             target: handle,
                             position: chosen,
                             direction: face_threat,
+                            call_instruction: false,
                         },
                     );
                 }
@@ -784,19 +780,22 @@ impl EnemyAi {
 
             self.base.stop_all();
 
-            // SetProperty(DIRECTION, direction ^ 8).
-            // After L12296 `uwDirection ^= 8`, `uwDirection` is
-            // `match_dir ^ 8`, so `uwDirection ^ 8` resolves to
-            // `match_dir` — the officer turns toward the formation
-            // (i.e. toward the soldiers) before the GatherSoldiers
-            // animation.  In our Rust naming, `chosen_direction` is
-            // already `match_dir`, so we use it verbatim (not XORed).
-            // Falls back to the average soldier-direction when no
-            // placement was found.
+            // The officer turns toward the formation (i.e. toward the
+            // soldiers) before the GatherSoldiers animation.  A
+            // successful placement stores `match_dir ^ 8` as the gather
+            // direction and the turn re-XORs it, so the turn lands on
+            // `match_dir` — `chosen_direction` verbatim.
+            //
+            // When no placement is found the gather direction keeps the
+            // value the 16-direction sweep left behind, `avg_dir + 16`,
+            // which never took the `^ 8` correction. The turn's own
+            // `^ 8` then still applies, and the surplus 16 falls out in
+            // the 16-sector wrap, leaving `avg_dir ^ 8` — the officer
+            // faces *away* from the average soldier direction.
             let turn_dir = if placement_ok {
                 chosen_direction
             } else {
-                avg_dir_start
+                avg_dir_start ^ 8
             };
             let owner = self.base.owner_entity_id;
             let mut seq = Sequence::new();

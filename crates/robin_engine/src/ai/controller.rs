@@ -1119,6 +1119,7 @@ impl AiController {
                     | CrossNpcAction::ResumeAfterLookThere { .. }
                     | CrossNpcAction::InstructGatherPosition { .. }
                     | CrossNpcAction::BreakPhalanx { .. }
+                    | CrossNpcAction::SetPhalanxThemList { .. }
                     | CrossNpcAction::Say { .. }
             ) {
                 synchronous.push(action);
@@ -2085,7 +2086,7 @@ impl AiController {
                     }
 
                     MacroOpcode::GotoPoint => {
-                        let Some(index) = self.read_macro_u16() else {
+                        let Some(index) = self.peek_macro_u16() else {
                             self.break_macro();
                             return;
                         };
@@ -2188,7 +2189,7 @@ impl AiController {
                     }
 
                     MacroOpcode::ChangeWay => {
-                        let Some(index) = self.read_macro_u16() else {
+                        let Some(index) = self.peek_macro_u16() else {
                             self.break_macro();
                             return;
                         };
@@ -2440,15 +2441,27 @@ impl AiController {
     /// `None` on truncation.  Used by operand-bearing opcodes inside
     /// [`Self::execute_next_macro_command`].
     fn read_macro_u16(&mut self) -> Option<u16> {
-        let off = self.macro_command_offset;
-        if off + 2 > self.macro_command.len() {
-            return None;
-        }
-        let value = u16::from_le_bytes([self.macro_command[off], self.macro_command[off + 1]]);
+        let value = self.peek_macro_u16()?;
         self.macro_command_offset += 2;
         self.number_of_remaining_macro_bytes =
             self.number_of_remaining_macro_bytes.saturating_sub(2);
         Some(value)
+    }
+
+    /// Read a u16 LE operand at the macro PC cursor *without* consuming
+    /// it.  `CMD_GOTO_POINT` and `CMD_CHANGE_WAY` both dereference their
+    /// operand and then leave the cursor and the remaining-byte counter
+    /// parked on it — the macro ends immediately afterwards, so the
+    /// unconsumed operand stays visible in the dormant cursor.
+    fn peek_macro_u16(&self) -> Option<u16> {
+        let off = self.macro_command_offset;
+        if off + 2 > self.macro_command.len() {
+            return None;
+        }
+        Some(u16::from_le_bytes([
+            self.macro_command[off],
+            self.macro_command[off + 1],
+        ]))
     }
 
     // -- Friend check (CheckFor comportment) --
@@ -2949,6 +2962,16 @@ impl AiController {
         );
         let may_short_circuit =
             idle_for_goto_short_circuit && !self.likes_to_sit_around && !self.special_action;
+        tracing::trace!(
+            target: "robin_engine::ai::goto",
+            me = self.me,
+            animation = ?ctx.self_animation,
+            idle = idle_for_goto_short_circuit,
+            on_point = self.check_already_on_point(&destination, 5.0, ctx),
+            dx = (ctx.position.x - destination.x).abs(),
+            dy = (ctx.position.y - destination.y).abs(),
+            "go_to: already-on-point gate"
+        );
         if may_short_circuit && self.check_already_on_point(&destination, 5.0, ctx) {
             self.finish_already_on_point();
             return;
@@ -2990,10 +3013,12 @@ impl AiController {
         // move is launched. Centralised here so every caller benefits
         // — the engine drain processes these intents before
         // `launch_pending_orders_for_npc` runs the move.
-        let quit_swordfight_before_move = self.apply_goto_action_state_teardown(flags, ctx);
+        let (quit_swordfight_before_move, lower_shield_before_move) =
+            self.apply_goto_action_state_teardown(flags, ctx);
 
         let mut order = Self::make_move_order(&destination, flags);
         order.quit_swordfight_before_move = quit_swordfight_before_move;
+        order.lower_shield_before_move = lower_shield_before_move;
         self.outbox.actor.orders.push(order);
     }
 
@@ -3007,10 +3032,16 @@ impl AiController {
     ///   * `GOTO_SWORD` not set, currently `Menacing` → prepend
     ///     `STOP_MENACE` (menacing → waiting-sword → sword-down).
     ///
-    /// Shield is also handled here: an actor mid-shield-raise that
-    /// receives a `GoTo` first prepends a `Command::LowerShield` element
-    /// so the shield drops before the move launches.
-    fn apply_goto_action_state_teardown(&mut self, flags: GotoFlags, ctx: &AiContext) -> bool {
+    /// Shield is also handled here: an actor in a shield action state
+    /// that receives a `GoTo` gets a `LowerShield` element ahead of the
+    /// movement, inside the movement's own sequence.
+    ///
+    /// Returns `(quit_swordfight_before_move, lower_shield_before_move)`.
+    fn apply_goto_action_state_teardown(
+        &mut self,
+        flags: GotoFlags,
+        ctx: &AiContext,
+    ) -> (bool, bool) {
         let action_state = ctx.self_action_state;
         let mut quit_swordfight_before_move = false;
         if flags.contains(GotoFlags::SWORD) {
@@ -3034,13 +3065,12 @@ impl AiController {
 
         // Orthogonal to the sword/menace switch above — the shield
         // branch fires whenever the actor is in any shield action-state,
-        // regardless of GOTO_SWORD. Prepend a `Command::LowerShield`
-        // element so the shield drops (and the parry geometry stops
-        // being armed) before the queued move runs.
-        if action_state.is_shield() {
-            self.outbox.actor.lower_shield = true;
-        }
-        quit_swordfight_before_move
+        // regardless of GOTO_SWORD. The `LowerShield` element belongs to
+        // the movement's own sequence, ahead of the move, so that the
+        // move displacing it is an ordinary hand-off within one sequence
+        // rather than a finished action worth telling the AI about.
+        let lower_shield_before_move = action_state.is_shield();
+        (quit_swordfight_before_move, lower_shield_before_move)
     }
 
     /// Low-level movement primitive (speed variant) — see
@@ -3077,10 +3107,12 @@ impl AiController {
             self.finish_already_on_point();
             return;
         }
-        let quit_swordfight_before_move = self.apply_goto_action_state_teardown(flags, ctx);
+        let (quit_swordfight_before_move, lower_shield_before_move) =
+            self.apply_goto_action_state_teardown(flags, ctx);
         let mut order = Self::make_move_order(&destination, flags);
         order.speed_factor = speed;
         order.quit_swordfight_before_move = quit_swordfight_before_move;
+        order.lower_shield_before_move = lower_shield_before_move;
         self.outbox.actor.orders.push(order);
     }
 
@@ -3148,10 +3180,12 @@ impl AiController {
             return;
         }
 
-        let quit_swordfight_before_move = self.apply_goto_action_state_teardown(flags, ctx);
+        let (quit_swordfight_before_move, lower_shield_before_move) =
+            self.apply_goto_action_state_teardown(flags, ctx);
         let mut order = Self::make_move_order(&destination, flags);
         order.tolerance = effective_distance as f32;
         order.quit_swordfight_before_move = quit_swordfight_before_move;
+        order.lower_shield_before_move = lower_shield_before_move;
         self.outbox.actor.orders.push(order);
     }
 

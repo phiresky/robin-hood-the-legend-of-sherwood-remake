@@ -3522,10 +3522,11 @@ fn production_throw_apple_owner_emits_terminal_projectile_effect() {
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
     let sim = crate::sim_rng::test_context();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_entity(make_test_pc(Posture::Upright));
     let target = engine.add_entity(make_test_pc(Posture::Upright));
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     engine
         .get_entity_mut(target)
         .unwrap()

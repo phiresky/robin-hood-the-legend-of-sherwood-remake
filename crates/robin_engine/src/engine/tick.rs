@@ -2861,10 +2861,8 @@ impl EngineInner {
         // ── Per-frame animation tick ────────────────────────────
         // Advance sprite animations for idle actors, FX, and other entities.
         // Supported moving actors are animated inside their live owner Execute arm.
-        // Advance line-jump sequences: interpolate 3D position for
-        // actors currently mid-jump.  Runs before the animation tick
-        // so the sprite drawn this frame reflects the new position.
-        self.tick_active_jumps(assets);
+        // Line-jump step advance runs inside each actor's own owner
+        // envelope below, not as a batch ahead of the walk.
 
         // Every supported nonactor virtual Hourglass now runs below at its
         // live legacy slot: mobile boundary first, then static owners, then
@@ -3479,8 +3477,18 @@ impl EngineInner {
                                         else {
                                             return false;
                                         };
+                                        // The seek wrapper is chosen per animation
+                                        // arm, not per element: wall and ladder
+                                        // orders keep the SEEK flag while their
+                                        // Execute arms drive the sprite directly
+                                        // and hand the raw START edge back.
                                         flags.contains(crate::sequence::MoveFlags::SEEK)
                                             && target.is_some()
+                                            && element.current_order().is_some_and(|order| {
+                                                super::movement::perform_seek_calls_per_execute(
+                                                    order.order_type,
+                                                ) > 0
+                                            })
                                     })
                             });
                         let melee_selection =
@@ -4023,6 +4031,11 @@ impl EngineInner {
                 }
             },
             |engine, owner| {
+                // The jump step lifecycle is the jump order's own work: the
+                // step that starts here is the order this actor executes a few
+                // lines later, and the landing posture it publishes is visible
+                // to every later creation slot and to none of the earlier ones.
+                engine.tick_active_jump_for(assets, owner);
                 if matches!(owner, EntityId::Soldier(_)) {
                     #[cfg(test)]
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::SoldierPrelude(owner));
@@ -5146,11 +5159,6 @@ impl EngineInner {
                 // of the latch sees the teleported point: the 3D position is
                 // still the pre-teleport one when the latch happens and is
                 // re-derived from the map afterwards.
-                //
-                // TODO: this branch also owes an increment recompute against
-                // the standing map goal after the teleport; nothing observable
-                // depends on it yet because the successor order installs its
-                // own increment.
                 let pre_teleport_position = self
                     .get_entity(entity_id)
                     .map(|entity| entity.position_iface().get_position());
@@ -5177,6 +5185,10 @@ impl EngineInner {
                     if let Some(dir) = lift_direction {
                         elem.set_direction_instantly(dir);
                     }
+                    // The teleported position is re-aimed at the map goal the
+                    // actor was already standing on; the direction is the one
+                    // just latched from the lift, so it is not recomputed.
+                    elem.sprite.position_iface.compute_increment_all(false);
                 }
             }
             OT::TransitionClimbingWallUpWaitingCrouched => {
@@ -5383,6 +5395,13 @@ impl EngineInner {
         })() else {
             return;
         };
+        tracing::trace!(
+            ?entity_id,
+            ?action,
+            ?snap_point,
+            ?posture,
+            "door transition completion side effects"
+        );
         if let Some(snap_point) = snap_point {
             self.set_transition_position_map_and_compute_position_all(
                 assets,
@@ -5675,6 +5694,17 @@ impl EngineInner {
             // An unselected PC only restores its remembered action; a
             // selected PC also restores the messenger-global action.
             self.set_pc_action_from_message(assets, 0, pc_id, crate::profiles::Action::Bow);
+        }
+
+        for pc_id in sides.pc_helping_climb_action {
+            // RHElementActorPC::Execute forwards MSG_SELECT_ACTION(HELP_TO_CLIMB)
+            // straight after SetStates on the DONE edge of the helping-climb
+            // entry transition. HelpToClimb is already the current action, but
+            // a selected PC still goes through the action-reselection Stop at
+            // Normal priority, which interrupts whatever the entry transition
+            // postponed behind itself — the move the player queued while the
+            // PC was kneeling down never resumes.
+            self.set_pc_action_from_message(assets, 0, pc_id, crate::profiles::Action::HelpToClimb);
         }
 
         for _pc_id in sides.stature_change_end {

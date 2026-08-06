@@ -46,23 +46,50 @@ fn enough_nearer_friends_to_observe(
 #[track_caller]
 fn battle_friend_detected_360(
     ctx: &AiContext,
+    me: HumanHandle,
+    friend: HumanHandle,
     friend_position_world: crate::coordinates::WorldPoint3D,
     friend_direction: u16,
     target: &crate::ai_entity_view::AiEntityView,
 ) -> bool {
-    super::soldier_detects_detection_point_360(
+    let detection_point = crate::stealth::detection_point_world(
+        friend_position_world,
+        target.posture,
+        friend_direction as i16,
+        target.is_rider,
+    );
+    let detected = super::soldier_detects_detection_point_360(
         ctx.self_upright_eye_world,
         ctx.self_view_radius,
         ctx.in_building,
-        crate::stealth::detection_point_world(
-            friend_position_world,
-            target.posture,
-            friend_direction as i16,
-            target.is_rider,
-        ),
+        detection_point,
         target.in_building,
         ctx.obstacle_list(),
-    )
+    );
+    let dx = detection_point.x - ctx.self_upright_eye_world.x;
+    let dy = (detection_point.y - ctx.self_upright_eye_world.y)
+        * crate::position_interface::INVERSE_ASPECT_RATIO;
+    let dz = detection_point.z - ctx.self_upright_eye_world.z;
+    tracing::trace!(
+        frame = ctx.frame,
+        me,
+        friend,
+        viewer_in_building = ctx.in_building,
+        viewer_radius = ctx.self_view_radius,
+        viewer_x = ctx.self_upright_eye_world.x,
+        viewer_y = ctx.self_upright_eye_world.y,
+        viewer_z = ctx.self_upright_eye_world.z,
+        friend_in_building = target.in_building,
+        friend_posture = ?target.posture,
+        friend_x = detection_point.x,
+        friend_y = detection_point.y,
+        friend_z = detection_point.z,
+        sq_distance = dx * dx + dy * dy + dz * dz,
+        sq_radius = (ctx.self_view_radius as f32).powi(2),
+        detected,
+        "BattleDecisions us-list 360 gate"
+    );
+    detected
 }
 
 #[track_caller]
@@ -467,6 +494,14 @@ impl EnemyAi {
                     AiState::Default | AiState::Wondering | AiState::Seeking | AiState::Attacking
                 )
             {
+                tracing::trace!(
+                    frame = ctx.frame,
+                    me = self.base.me,
+                    friend = friend.handle,
+                    able_to_fight = friend.is_able_to_fight,
+                    ai_state = ?friend.ai_state,
+                    "BattleDecisions us-list candidate rejected before the 360 gate"
+                );
                 continue;
             }
             // Original evaluates `mpMe->IsDetecting360Degrees(pHuman)` here,
@@ -481,7 +516,14 @@ impl EnemyAi {
                     friend.handle
                 )
             });
-            if !battle_friend_detected_360(ctx, friend.position_world, friend.direction, target) {
+            if !battle_friend_detected_360(
+                ctx,
+                self.base.me,
+                friend.handle,
+                friend.position_world,
+                friend.direction,
+                target,
+            ) {
                 continue;
             }
             self.base.list_us.push(friend.handle);
@@ -674,27 +716,33 @@ impl EnemyAi {
                         .find_map(|&(attacker, target)| {
                             (attacker == cs.handle && target != 0).then_some(target)
                         });
+                let target = same_frame_target.unwrap_or_else(|| cs.primary_target);
+                tracing::trace!(
+                    frame = ctx.frame,
+                    me,
+                    friend = cs.handle,
+                    friend_state = ?cs.ai_state,
+                    friend_substate = ?cs.ai_substate,
+                    snapshot_target = cs.primary_target,
+                    same_frame_target,
+                    target,
+                    already_listed = self.list_them.contains(&target),
+                    "BattleDecisions friend-seen Them injection candidate"
+                );
                 if cs.ai_state != AiState::Attacking && same_frame_target.is_none() {
                     continue;
                 }
-                let target = same_frame_target.unwrap_or_else(|| cs.primary_target);
                 if target == 0 || target == me {
-                    continue;
-                }
-                // Don't inject same-camp by accident — primary_target
-                // can briefly be a same-camp during the cross-camp
-                // setup race; skip if the target maps to a friendly
-                // fighter snapshot.
-                let target_is_friendly = self
-                    .find_fighter(target, tick)
-                    .map(|f| f.is_friendly)
-                    .unwrap_or(false);
-                if target_is_friendly {
                     continue;
                 }
                 if super::util::is_any_swordfight_substate(cs.ai_substate as u32) {
                     *decision_target_multiplicity.entry(target).or_insert(0) += 1;
                 }
+                // The Them list rejects duplicates on insertion, so a target
+                // an earlier entry or friend already contributed is dropped
+                // here rather than appended a second time. A same-camp target
+                // is deliberately not filtered: the cleanup pass below is what
+                // removes friends from the list.
                 if self.list_them.contains(&target) || friend_seen.contains(&target) {
                     continue;
                 }
@@ -707,6 +755,8 @@ impl EnemyAi {
         // able-to-fight, drop it. Each removal that falls within
         // `num_enemies_i_can_see` decrements the personally-visible
         // counter. Friends accidentally on the list are also dropped.
+        // The same pass measures the nearest surviving enemy.
+        let mut min_square_enemy_distance = i32::MAX;
         let mut unconscious_enemies_from_them = Vec::new();
         {
             let mut idx = 0;
@@ -730,6 +780,22 @@ impl EnemyAi {
                                 is_robin: view.is_robin,
                                 is_vip: view.is_vip,
                             });
+                        }
+                        if !is_friend && view.is_able_to_fight {
+                            // The minimum enemy distance is measured over
+                            // the surviving Them list — which by now also
+                            // holds the targets contributed by nearby
+                            // attacking allies, so a fight raging next to
+                            // us counts even when our own nearest enemy is
+                            // far away. The stretched-Y square norm is
+                            // truncated to an integer before comparison.
+                            let dx = view.position.x - ctx.position.x;
+                            let dy = (view.position.y - ctx.position.y)
+                                * crate::position_interface::INVERSE_ASPECT_RATIO;
+                            let sq = (dx * dx + dy * dy) as i32;
+                            if sq < min_square_enemy_distance {
+                                min_square_enemy_distance = sq;
+                            }
                         }
                         if !is_friend
                             && view.is_able_to_fight
@@ -928,7 +994,6 @@ impl EnemyAi {
             // Use engine-populated cached values for battle context.
             let friends_with_lower_company = tick.friends_lower_company;
             let soldiers_with_lower_pride = tick.soldiers_lower_pride;
-            let min_square_enemy_distance = tick.min_sq_enemy_distance;
 
             if self.combat_trainer {
                 decision = Decision::Observe;
@@ -1849,7 +1914,7 @@ impl EnemyAi {
                         // Remember enemy elevation for later bend decision
                         self.enemy_had_this_elevation = self
                             .find_fighter(self.base.primary_target, tick)
-                            .map(|f| f.elevation)
+                            .map(|f| f.elevation as u16)
                             .unwrap_or(0);
                         if wp.is_shooting_point {
                             // Run directly to shooting point (final
@@ -2399,7 +2464,10 @@ impl EnemyAi {
                 GotoFlags::RUN,
                 ctx,
             );
-            self.base.launch_timer(30, ctx.frame);
+            // No timer here: the guard waits for the reach-point event at
+            // the gate, and the seek position tracks the unreachable
+            // avenger rather than the wait spot.
+            self.base.seek_position = working_target_pos;
         }
     }
 
@@ -3009,6 +3077,8 @@ mod tests {
 
         assert!(battle_friend_detected_360(
             &ctx,
+            1,
+            2,
             target.detection_position_world,
             target.direction,
             &target,
@@ -3017,6 +3087,8 @@ mod tests {
         target.in_building = true;
         assert!(!battle_friend_detected_360(
             &ctx,
+            1,
+            2,
             target.detection_position_world,
             target.direction,
             &target,

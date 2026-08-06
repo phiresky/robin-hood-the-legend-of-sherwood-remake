@@ -4204,6 +4204,12 @@ struct EntityMap {
     /// canonical position-sector number. The raw numbers are allocation
     /// details rather than gameplay identity.
     sectors: BTreeMap<u16, u16>,
+    /// One past the highest creation order the mission start established.
+    /// Below it the Original's serials come from the mission file or the save
+    /// and are exact; at or above it they also count the throwaway elements
+    /// described on [`Self::extend_runtime_entities`], so only their relative
+    /// order is comparable.
+    runtime_creation_order_boundary: u32,
 }
 
 impl EntityMap {
@@ -4291,11 +4297,22 @@ impl EntityMap {
                 );
             }
         }
+        let runtime_creation_order_boundary = entities_by_creation_order
+            .keys()
+            .next_back()
+            .map_or(0, |highest| highest + 1);
         Self {
             entities: result,
             entities_by_creation_order,
             sectors,
+            runtime_creation_order_boundary,
         }
+    }
+
+    /// Whether the Original's raw serial for this element is an exact
+    /// cross-engine value rather than one carrying presentation-only gaps.
+    fn creation_order_is_exact(&self, creation_order: u32) -> bool {
+        creation_order < self.runtime_creation_order_boundary
     }
 
     fn refresh_trace_indices(&mut self, frame: &TraceFrame) {
@@ -4547,9 +4564,13 @@ fn print_debug_element(label: &str, engine: &Engine, frame: &TraceFrame) {
     let sprite = &entity.element_data().sprite;
     let actor = entity.actor_data().expect("debug element is an actor");
     eprintln!(
-        "{label} frame {} {:?} order={:?} installed={:?} last_processed_order={} actor_motion={:?} sprite_motion={:?} last_action={:?} row={} frame={}/{} command={:?} execute_init={} last_execute_order={:?}",
+        "{label} frame {} {:?} dir={} dir_goal={} posture={:?} action_state={:?} order={:?} installed={:?} last_processed_order={} actor_motion={:?} sprite_motion={:?} last_action={:?} row={} frame={}/{} command={:?} execute_init={} last_execute_order={:?}",
         frame.frame_after,
         id,
+        entity.element_data().direction(),
+        sprite.position_iface.get_direction_goal().as_u8(),
+        entity.element_data().posture,
+        actor.action_state,
         engine.actor_order_type(id),
         actor.installed_order.map(|order| order.order_id),
         sprite.last_processed_order_id,
@@ -5774,13 +5795,15 @@ fn compare_frame(
             "Original NPC trace state must contain both ai and detection payloads for {:?}",
             expected.entity_id
         );
-        compare(
-            &mut differences,
-            id,
-            "creation_order",
-            expected.creation_order,
-            engine.original_creation_order(id),
-        );
+        if entity_map.creation_order_is_exact(expected.creation_order) {
+            compare(
+                &mut differences,
+                id,
+                "creation_order",
+                expected.creation_order,
+                engine.original_creation_order(id),
+            );
+        }
         compare(
             &mut differences,
             id,

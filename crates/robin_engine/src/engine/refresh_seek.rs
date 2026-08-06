@@ -23,10 +23,11 @@
 //! tolerance/speed by chase speed, `SEEK_SHIELD` aims at the protected
 //! side point, and `SEEK_STOP_NPC` keeps the distance gate.
 //!
-//! The point-target overload ([`refresh_seek_point`]) uses the same
-//! interrupt-and-relaunch primitive for classical point seeks and now
-//! preserves door-sector and line-goal metadata when rebuilding those
-//! seek variants.
+//! The point-target overload runs at Seek translation only. A goal sector
+//! that differs from the actor's own goes through
+//! [`EngineInner::try_dispatch_cross_sector_point_seek`], which expands the
+//! route across gates; anything else keeps the flat interrupt-and-relaunch
+//! primitive.
 
 use super::movement::GoalShape;
 use crate::coordinates::{MapPoint, MapVec};
@@ -689,6 +690,157 @@ impl crate::engine::EngineInner {
             from_sector = u16::from(owner_sector),
             to_sector = u16::from(target_sector),
             "try_dispatch_cross_sector_entity_seek: launched gate traversal"
+        );
+        true
+    }
+
+    /// Point-target `RefreshSeek`: expand a seek whose goal sector differs
+    /// from the actor's own into a gate route.
+    ///
+    /// The point overload always hands its goal to the shared move builder,
+    /// which short-circuits to a single MOVE while source and goal share a
+    /// sector and otherwise walks the gate chain — including the
+    /// building-exit `WaitTimer` pair each building gate contributes. Rust
+    /// previously relaunched every point seek as a flat MOVE, so a
+    /// cross-sector drop-ale / walk-here click never crossed a door and never
+    /// consumed the route-construction RNG draws.
+    ///
+    /// Returns `true` when the gate route (or its failure) has consumed the
+    /// element, leaving nothing for the flat relaunch to do.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn try_dispatch_cross_sector_point_seek(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        seq_id: SequenceId,
+        elem_idx: usize,
+        destination: MapPoint,
+        goal_sector: Option<crate::position_interface::SectorHandle>,
+        goal_layer: u16,
+        action: OrderType,
+        flags: MoveFlags,
+        seek_distance: f32,
+    ) -> bool {
+        let Some(goal_sector) = goal_sector else {
+            return false;
+        };
+        if self.scripts.mission.is_none() {
+            return false;
+        }
+        let Some((owner_pos, Some(owner_sector))) = self
+            .get_entity(owner)
+            .map(|e| (e.element_data().position_map(), e.element_data().sector()))
+        else {
+            return false;
+        };
+        if owner_sector == goal_sector {
+            return false;
+        }
+        // A door-sector goal takes the original's `AppendMoveToDoorToSequence`
+        // shape, which this expansion does not build yet.
+        let goal_is_door_sector = self
+            .world
+            .fast_grid
+            .level
+            .sectors
+            .iter()
+            .find(|candidate| u16::from(candidate.sector_number) == u16::from(goal_sector))
+            .is_some_and(|candidate| candidate.sector_type.is_door());
+        if goal_is_door_sector {
+            tracing::debug!(
+                ?owner,
+                goal_sector = u16::from(goal_sector),
+                "cross-sector point seek to a door sector is not expanded yet"
+            );
+            return false;
+        }
+
+        let (door_handle, door_direction) = self
+            .get_entity(owner)
+            .map(crate::engine::movement::current_door_for_route_source)
+            .unwrap_or((crate::position_interface::DoorHandle::NULL, false));
+        let (src_pos, src_sector) = match crate::engine::movement::adapt_source_to_current_door(
+            &self.script_domains.interactables.doors,
+            door_handle,
+            door_direction,
+        ) {
+            Some((adjusted, sector, _layer)) => (adjusted, sector),
+            None => (owner_pos, u16::from(owner_sector)),
+        };
+
+        let owner_auth = self.get_entity(owner).map(|e| e.actor_auth_info());
+        let level = self.world.fast_grid.level.clone();
+        let gate_path = crate::gate::find_path_gates(
+            &self.script_domains.interactables.doors,
+            (src_pos.x, src_pos.y),
+            src_sector,
+            (destination.x, destination.y),
+            u16::from(goal_sector),
+            owner_auth.as_ref(),
+            flags.contains(MoveFlags::MAP),
+            &|sector| {
+                level
+                    .sectors
+                    .iter()
+                    .find(|candidate| candidate.sector_number == sector)
+                    .and_then(|candidate| candidate.lift_type)
+            },
+        );
+
+        let Some(gate_path) = gate_path else {
+            // AppendMoveToSequence speaks the unable bark for a PC before
+            // returning false, and RefreshSeek then marks the element
+            // impossible.
+            self.hero_speaking(
+                assets,
+                owner,
+                crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+            );
+            self.stop_selected_seek_for_refresh(owner, seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
+            return true;
+        };
+        if gate_path.is_empty() {
+            return false;
+        }
+
+        self.stop_selected_seek_for_refresh(owner, seq_id, elem_idx);
+        self.orders.sequence_manager.element_interrupted(
+            seq_id,
+            elem_idx,
+            CascadeFlags::NEXT_LEVEL,
+        );
+
+        let _ = self.build_gate_movement_sequence(
+            sim,
+            owner,
+            gate_path,
+            GoalShape::Point {
+                point: destination,
+                tolerance: seek_distance,
+            },
+            goal_layer,
+            action,
+            true,
+            1.0,
+            flags | MoveFlags::SEEK,
+            Vec::new(),
+            // The post-seek interaction lives on the actor, not on this
+            // transient route, so a later refresh that replaces the route
+            // keeps it.
+            Vec::new(),
+            false,
+            true,
+        );
+
+        tracing::trace!(
+            ?owner,
+            from_sector = u16::from(owner_sector),
+            to_sector = u16::from(goal_sector),
+            "try_dispatch_cross_sector_point_seek: launched gate traversal"
         );
         true
     }

@@ -705,7 +705,10 @@ mod tests {
         ("RescuePcFirstName", 1),
         ("RescuePcSurname", 1),
         ("RuntimeBuildingExitWait", 4),
-        ("ScriptRand", 1),
+        // Two mutually exclusive branches of the one script `Rand(max)`
+        // native: the diagnostic-carrying call and the plain one. Exactly one
+        // of them draws per dispatch.
+        ("ScriptRand", 2),
         ("ScrollInitialFrame", 1),
         ("ScrollRevealFrame", 1),
         ("SeekPointAcceptance", 1),
@@ -746,6 +749,11 @@ mod tests {
         "i16",
         "i32",
         "script_rand",
+        // The diagnostic-carrying twin of `script_rand`: the same script
+        // `Rand(max)` native dispatch selects it when a VM diagnostic context
+        // is attached, and it draws exactly one value from the same
+        // `RngSite::ScriptRand`. Authoritative for the same reason.
+        "script_rand_with_context",
         "shuffle",
         "u16",
         "u32",
@@ -958,10 +966,16 @@ mod tests {
     impl<'ast> Visit<'ast> for RngSourceVisitor<'_> {
         fn visit_macro(&mut self, node: &'ast syn::Macro) {
             let tokens = node.tokens.to_string();
-            if tokens.contains("sim_rng ::")
-                || tokens.contains("fastrand ::")
-                || tokens.contains("rand ::")
-            {
+            // Naming a site enum is data, not a draw: the `parity_rng_owner`
+            // trace lines record which site the *following* statement is
+            // about. Only a real entry-point call inside a macro is a hazard,
+            // because the macro body may never be evaluated.
+            let draws_rng = tokens.split("sim_rng ::").skip(1).any(|rest| {
+                let rest = rest.trim_start();
+                !rest.starts_with("RngSite") && !rest.starts_with("AuxiliaryRngSite")
+            }) || tokens.contains("fastrand ::")
+                || tokens.contains("rand ::");
+            if draws_rng {
                 self.macro_rng.push(Self::path_text(&node.path));
             }
             syn::visit::visit_macro(self, node);

@@ -1425,6 +1425,27 @@ impl PositionInterface {
         self.forecasted_movement = WorldVec3D::ZERO;
     }
 
+    /// Refresh the per-frame movement forecast after a committed motion
+    /// step.  `distance` is the effective distance the step travelled
+    /// (speed factor and turn slowdown already folded in) and
+    /// `wait_time` is the sprite's wait time for the frame reached by
+    /// the step, plus one.
+    ///
+    /// Consumers (arrow / stone / apple leading) read this to aim ahead
+    /// of a walking victim, so it has to be refreshed on every motion
+    /// commit rather than derived on demand: the increment is cleared
+    /// once the actor arrives, but the last forecast lingers until the
+    /// next animation change resets it.
+    pub fn update_forecasted_movement(&mut self, distance: f32, wait_time: u16) {
+        let inc = self.increment;
+        let wait = f32::from(wait_time);
+        self.forecasted_movement = WorldVec3D {
+            x: (distance * inc.x) / wait,
+            y: (distance * inc.y) / wait,
+            z: (distance * inc.z) / wait,
+        };
+    }
+
     // ====================================================================
     // New move / displace
     // ====================================================================

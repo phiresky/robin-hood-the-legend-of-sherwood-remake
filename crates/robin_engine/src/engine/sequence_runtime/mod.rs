@@ -972,6 +972,15 @@ impl TurnCommandContext<'_> {
                         // though. Original StopMovement leaves that newer
                         // goal in place, so only repair an actually-cleared
                         // goal here.
+                        tracing::trace!(
+                            target: "parity_owner_handoff",
+                            ?owner,
+                            ?seq_id,
+                            elem_idx,
+                            x,
+                            y,
+                            "Turn restoring retained movement goal"
+                        );
                         entity
                             .position_iface_mut()
                             .set_map_goal(crate::coordinates::MapPoint::new(x, y));

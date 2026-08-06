@@ -603,6 +603,8 @@ impl EngineInner {
                         Some(&obstacle_check)
                     },
                 );
+            let terminal_obstacle_plane =
+                bow_shot::terminal_obstacle_plane(terminal_obstacle, obstacle_list);
             let trajectory_end = trajectory.last().map(|tp| tp.position);
             // ComputeTrajectory resolves and stores the eventual impact
             // membership before the projectile's explicit pre-add
@@ -628,6 +630,27 @@ impl EngineInner {
                 magic_bullet,
                 predicted_hit = bow_shot::will_hit_target(&trajectory, bow_point, target_point),
                 "Bow shot trajectory computed"
+            );
+            // Launch-parameter snapshot, on its own target so it can be
+            // enabled without the rest of the combat module's chatter:
+            // `RUST_LOG=arrow_launch=trace`.
+            tracing::trace!(
+                target: "arrow_launch",
+                frame = self.control.frame_counter,
+                shooter = result.shooter.index(),
+                target_id = result.target.index(),
+                ?shoot_mode,
+                shooter_pos = ?result.shooter_position,
+                shooter_dir = result.shooter_direction,
+                hand = ?result.sprite_hand_point,
+                ?bow_point,
+                ?target_point,
+                target_movement = ?target_movement,
+                ?velocity,
+                hit_chance,
+                trajectory_len = trajectory.len(),
+                first_waypoint = ?trajectory.first().map(|tp| tp.position),
+                "arrow launch parameters"
             );
 
             // ── Spawn the arrow ──────────────────────────────────
@@ -669,6 +692,19 @@ impl EngineInner {
                 if resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle {
                     element.set_layer(resolution.layer);
                 }
+            }
+            {
+                let element = self
+                    .world
+                    .entities
+                    .get_mut(arrow_id)
+                    .expect("newly added arrow vanished before obstacle binding")
+                    .element_data_mut();
+                bow_shot::bind_trajectory_obstacle(
+                    element,
+                    terminal_obstacle,
+                    terminal_obstacle_plane,
+                );
             }
             // Hydrate the arrow's sprite from the accessory registry so
             // the flying arrow renders its proper sprite instead of the
@@ -2426,9 +2462,12 @@ impl EngineInner {
                     });
             }
 
-            if result.despawn && result.hit_target.is_none() {
-                self.apply_projectile_landing_resolution(assets, result.arrow);
-            }
+            // Landing deliberately re-derives no membership: a projectile's
+            // obstacle, layer and sector are settled while its arc is built
+            // and hold for the whole flight. Re-resolving them from the
+            // landing footprint would contradict that answer and, for a
+            // landing on open ground, bind a null obstacle whose plane drags
+            // the elevation just snapped above back down to a flat zero.
 
             // Water/hole splash — arrow landed in a water or hole zone
             // with no victim/shield/target.  Add the plouf titbit,
@@ -4023,6 +4062,20 @@ impl EngineInner {
                             Some(actor_id),
                             crate::profiles::Action::Listen as u32,
                         ));
+                    // The message's gameplay half runs inline, the same way
+                    // the beggar entry handoff applies it: for a selected PC
+                    // the action reselection stops the group at Normal
+                    // priority even though Listen is already the current
+                    // action, which discards anything the entry transition
+                    // postponed behind itself (a move instructed while the
+                    // PC was listening never resumes).  An unselected PC only
+                    // stores the action.
+                    self.set_pc_action_from_message(
+                        assets,
+                        0,
+                        actor_id,
+                        crate::profiles::Action::Listen,
+                    );
                     tracing::debug!(
                         actor = ?actor_id,
                         "Listen: entry transition done → CountingDown, MSG_SELECT_ACTION sent"

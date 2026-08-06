@@ -199,6 +199,15 @@ impl EngineInner {
             }
         }
 
+        tracing::trace!(
+            ?entity_id,
+            context,
+            map = ?self.get_entity(entity_id).map(|e| e.element_data().position_map()),
+            elevation = ?self.get_entity(entity_id).map(|e| e.element_data().position().z),
+            plane = ?self.get_entity(entity_id).and_then(|e| e.position_iface().get_plane().copied()),
+            "special motion finalization applied"
+        );
+
         self.update_opponents_jump_lines(assets, entity_id);
     }
 

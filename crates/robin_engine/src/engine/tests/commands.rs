@@ -1476,7 +1476,7 @@ fn resize_aborts_zoom() {
 fn dead_pc_triggers_failure() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     engine.feedback.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
 
@@ -1494,6 +1494,7 @@ fn dead_pc_triggers_failure() {
     });
     let id = engine.add_entity(entity);
     engine.mission_domain.dead_pc = Some(id);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let result = engine
         .perform_hourglass(&mut display, &assets, &mut dev)
@@ -1505,7 +1506,7 @@ fn dead_pc_triggers_failure() {
 fn non_playable_pc_does_not_prevent_default_loss() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
 
     let entity = Entity::Pc(crate::element::ActorPc {
@@ -1524,6 +1525,7 @@ fn non_playable_pc_does_not_prevent_default_loss() {
         },
     });
     engine.add_entity(entity);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let result = engine
         .perform_hourglass(&mut display, &assets, &mut dev)

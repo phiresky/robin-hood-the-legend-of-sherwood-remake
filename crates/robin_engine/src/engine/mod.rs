@@ -1114,7 +1114,76 @@ impl EngineInner {
 
         self.world.entities.push(Some(entity));
         self.world.assign_next_original_creation_order(id);
+        #[cfg(test)]
+        self.backfill_test_entity_identity(id);
         id
+    }
+
+    /// Give a directly-constructed test actor the identity fields that level
+    /// loading writes in production.
+    ///
+    /// Unit-test fixtures build `Entity` values from `Default` and hand them
+    /// straight to [`Self::add_entity`], so two required identities are never
+    /// filled in: a PC's campaign description (the stable `mpDescription`
+    /// identity behind coma/guard/ammo lookups) and an NPC brain's own actor
+    /// handle. Both are backfilled here so individual fixtures don't have to
+    /// and so the runtime keeps its strict required-data invariants. Fixtures
+    /// that set either field explicitly keep their value.
+    ///
+    /// A fixture that seeded its own campaign roster is adopted rather than
+    /// extended: the PC claims the first unclaimed description carrying its
+    /// character profile, so a seeded ammo or coma status stays reachable.
+    #[cfg(test)]
+    fn backfill_test_entity_identity(&mut self, id: EntityId) {
+        let handle = id.index();
+        match self.world.entities.get_mut(id) {
+            Some(Entity::Pc(pc)) => {
+                if pc.pc.campaign_description_index.is_some() {
+                    return;
+                }
+                let profile_index = pc.pc.profile_index;
+                let claimed: Vec<u32> = self
+                    .world
+                    .entities
+                    .pcs()
+                    .filter_map(|(_, pc)| pc.pc.campaign_description_index)
+                    .collect();
+                let characters = &mut self.mission_domain.campaign.characters;
+                let description_index = characters
+                    .iter()
+                    .position(|description| {
+                        description.character_profile_idx == Some(profile_index)
+                    })
+                    .filter(|index| !claimed.contains(&(*index as u32)))
+                    .unwrap_or_else(|| {
+                        characters.push(crate::campaign::PcDescription {
+                            character_profile_idx: Some(profile_index),
+                            instanced: true,
+                            ..crate::campaign::PcDescription::default()
+                        });
+                        characters.len() - 1
+                    });
+                let Some(Entity::Pc(pc)) = self.world.entities.get_mut(id) else {
+                    unreachable!("PC slot changed kind during fixture backfill");
+                };
+                pc.pc.campaign_description_index = Some(description_index as u32);
+            }
+            Some(Entity::Soldier(soldier)) => {
+                if let Some(base) = soldier.npc.ai_brain.base_mut()
+                    && base.me == 0
+                {
+                    base.me = handle;
+                }
+            }
+            Some(Entity::Civilian(civilian)) => {
+                if let Some(base) = civilian.npc.ai_brain.base_mut()
+                    && base.me == 0
+                {
+                    base.me = handle;
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Get a reference to an entity by ID.
@@ -2788,6 +2857,16 @@ impl EngineInner {
             .get_element_mut(waiter_seq, waiter_idx)
         {
             w.orders.clear();
+            // The cached movement goal only bridges Rust's staged handoff
+            // from an outgoing movement straight into its replacement. Once
+            // this element is queued behind a blocker instead of taking the
+            // actor, the blocker owns the sprite goal and will publish or
+            // clear it before the waiter is ever instructed. Original's Turn
+            // simply observes whatever goal it finds, so reviving this
+            // snapshot afterwards would resurrect a destination the blocker's
+            // own condolence card legitimately erased.
+            w.retained_movement_goal = None;
+            w.remove_property(crate::sequence::Field::RetainedMovementGoal);
         }
         self.orders
             .sequence_manager
@@ -4978,10 +5057,10 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
     let mut profiles = (*assets.profile_manager).clone();
     let mut needs_hth_weapon = false;
 
+    // Profiles are static level data: production actors carry them whatever
+    // their live state, and a fixture actor that starts dead, inactive or
+    // unconscious still needs one the moment it revives or is scanned.
     for (_, pc) in engine.world.entities.pcs() {
-        if !pc.element.active || pc.pc.life_points <= 0 {
-            continue;
-        }
         let profile_idx = usize::from(pc.pc.profile_index);
         profiles
             .characters
@@ -5002,9 +5081,6 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
             soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
                 panic!("test soldier {} has a non-enemy AI brain", soldier_id.0)
             });
-        if !soldier.element.active || soldier.human.unconscious {
-            continue;
-        }
         let profile_idx = usize::from(soldier.soldier.soldier_profile_index);
         profiles
             .soldiers

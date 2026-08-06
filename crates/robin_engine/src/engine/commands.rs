@@ -314,7 +314,16 @@ impl EngineInner {
                 // RHElementTarget::MouseClicked, whose ordinary click path
                 // directly builds AppendMoveToSequence rather than calling
                 // AddInteractionWithSeek.
-                if *command == Command::HitTarget
+                // ENTER_SWORDFIGHT is likewise unambiguous: it is only ever
+                // resolved by a soldier click, whose route is the classical
+                // sword seek (tolerance = the PC's own sword range) plus the
+                // VIP, table-swordfight and cross-gate forks. The generic
+                // AddInteractionWithSeek helper has no sword-range entry and
+                // would seek at the 30-unit interaction default instead,
+                // stopping the PC short of — or past — the opponent.
+                if *command == Command::EnterSwordfight {
+                    self.apply_enter_swordfight(sim, assets, *actor, *target, *running);
+                } else if *command == Command::HitTarget
                     && matches!(
                         self.get_entity(*target),
                         Some(crate::element::Entity::Target(_))
@@ -3418,6 +3427,54 @@ impl EngineInner {
             }
         }
 
+        // The seek element carries the hovered sector / layer, which the
+        // point-seek translation needs to decide whether reaching the drop
+        // point crosses a gate.
+        let (goal_sector, goal_layer) = {
+            let reference = self
+                .get_entity(actor)
+                .map(|e| e.element_data().position_map())
+                .unwrap_or(target_pos);
+            // The drop point was authorised on the actor's own layer, so probe
+            // that layer first; the top-down screen scan only answers for the
+            // layers it walks.
+            match self
+                .world
+                .fast_grid
+                .get_sector(target_pos, reference, layer)
+            {
+                crate::fast_find_grid::SectorHit::Found { sector_number, .. } => (
+                    crate::position_interface::SectorHandle::new(u16::from(sector_number)),
+                    layer,
+                ),
+                _ => {
+                    let hit = self
+                        .world
+                        .fast_grid
+                        .get_sector_screen(target_pos, reference);
+                    (
+                        hit.sector
+                            .map(u16::from)
+                            .and_then(crate::position_interface::SectorHandle::new),
+                        hit.layer,
+                    )
+                }
+            }
+        };
+
+        tracing::trace!(
+            ?actor,
+            actor_sector = ?self.get_entity(actor).and_then(|e| e.element_data().sector()),
+            actor_layer = layer,
+            ?goal_sector,
+            goal_layer,
+            target_x = target_pos.x,
+            target_y = target_pos.y,
+            dest_x = destination_pos.x,
+            dest_y = destination_pos.y,
+            "apply_drop_ale_at: resolved drop goal"
+        );
+
         let mut move_elem =
             SequenceElement::new_movement(1, Command::Seek, Some(actor), action_style);
         if let SequenceElementData::Movement {
@@ -3425,12 +3482,16 @@ impl EngineInner {
             tolerance,
             flags,
             post_seek_sequence,
+            sector,
+            layer: elem_layer,
             ..
         } = &mut move_elem.data
         {
             *destination = destination_pos;
             *tolerance = action_distance;
             *flags |= MoveFlags::SEEK;
+            *sector = goal_sector;
+            *elem_layer = goal_layer;
             let mut post_seek = Sequence::new();
             post_seek.append_element(SequenceElement::new(1, Command::DropAle, Some(actor)));
             *post_seek_sequence = Some(Box::new(post_seek));

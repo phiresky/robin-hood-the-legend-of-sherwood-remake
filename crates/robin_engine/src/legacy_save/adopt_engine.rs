@@ -583,6 +583,12 @@ fn remap_saved_beam_pc_identities(
     // value, and then restores its serialized creation order. Rust reuses the
     // already initialized, profile-matched PC instead; preserve the otherwise
     // invisible constructor increments explicitly.
+    tracing::trace!(
+        target: "robin_engine::creation_order",
+        "beam-me remap: runtime_team={} saved_team={} counter_before={next_original_creation_order}",
+        runtime_team.len(),
+        saved_team.len()
+    );
     let next_original_creation_order =
         advance_reused_beam_pc_creation_counter(next_original_creation_order, saved_team.len())?;
     engine.world.install_original_creation_orders(

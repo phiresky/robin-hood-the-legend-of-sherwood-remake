@@ -808,20 +808,16 @@ pub struct ActorData {
 
     /// Active line-jump state.  Populated by
     /// [`EngineInner::start_jump`](crate::engine::EngineInner::start_jump) and
-    /// drained by [`EngineInner::tick_active_jumps`]; the actor is
+    /// drained by [`EngineInner::tick_active_jump_for`]; the actor is
     /// position-driven by the jump module while this is `Some`.
     pub active_jump: Option<crate::engine::jump::ActiveJump>,
     /// Target 3D point of the currently-executing jump step.  Stashed
-    /// here so [`tick_active_jumps`] can interpolate toward it on each
-    /// frame without re-peeking the consumed step.
+    /// here so the flight can interpolate toward it on each frame
+    /// without re-peeking the consumed step.
     pub active_jump_target_3d: Option<WorldPoint3D>,
     /// Whether the currently-executing jump step is airborne (drives
     /// `jump_z_offset` during interpolation).
     pub active_jump_airborne: bool,
-    /// Deferred signal: when a jump drains its last step this holds
-    /// the sequence element to terminate once the enclosing tick can
-    /// borrow the sequence manager.
-    pub pending_jump_done: Option<(crate::sequence::SequenceId, usize)>,
     /// Visual lift applied to the sprite during airborne jump steps.
     /// The renderer subtracts this from the sprite's world Y so the
     /// character appears above the ground.  `0.0` on the ground.
@@ -881,7 +877,6 @@ impl Default for ActorData {
             active_jump: None,
             active_jump_target_3d: None,
             active_jump_airborne: false,
-            pending_jump_done: None,
             jump_z_offset: 0.0,
             active_flight: None,
             active_lift: None,

@@ -899,6 +899,7 @@ fn night_fog_shadow_sector_indices(
 /// The per-frame cache from the legacy implementation is
 /// intentionally skipped — we recompute once per call.
 #[allow(clippy::too_many_arguments)]
+#[track_caller]
 pub fn compute_view_radius(
     eye_world: WorldPoint3D,
     view_radius: u16,
@@ -1381,7 +1382,18 @@ pub fn refresh_view(npc: &mut NpcData, ctx: &RefreshViewContext) {
                 // Update stare point from target.
                 if let Some(pos) = ctx.follow_target_position {
                     npc.stare_point = pos;
+                } else {
+                    tracing::warn!(
+                        follow_target = ?npc.follow_target,
+                        "EYES_FOLLOW without a resolved follow-target position; stare point kept stale"
+                    );
                 }
+                tracing::trace!(
+                    follow_target = ?npc.follow_target,
+                    stare_x = npc.stare_point.x,
+                    stare_y = npc.stare_point.y,
+                    "refresh_view: follow stare point"
+                );
                 // Fall through to Stare.
                 refresh_view_stare(npc, vdx, vdy, &ctx.own_position);
             }
