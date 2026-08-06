@@ -83,6 +83,7 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #50 completed: queued bow shots retain active human targets that died while aiming, matching Original's ShootArrowAt and clearing the extra SeekArea/SeekPointSelection batch. The next projectile-position frontier is #54.
 - #51 completed: forced battle decisions persist after use, matching Original's never-cleared `mforcedNextBattleDecision`; nicouzouf/S069 replay-005 reaches exact EOF.
 - #52 completed: the sequence manager now retains the translating actor selection through synchronous condolence callbacks, and pending-command queries include that translating element. This prevents `EVENT_DONE` from recursively relaunching `EnterSwordfight`; the former frame-867 hang now exits normally at an unrelated visibility-query frontier after frame 866.
+- #53 completed as superseded by #52: Restart replay-008 had the identical unbounded EnterSwordfight loop at frame 1423 (Soldier 80); current main clears it and reaches a normal visibility-query frontier. Savegame_054 replay-008 also now clears its former timeout and reaches a frame-1696 visibility frontier.
 - #54 completed: ground impact evaluation now mirrors Original's mixed-precision dominant-axis equation (`FLOAT` coefficients with `DOUBLE` secondary-coordinate evaluation), clearing Projectile192's exact-bit residual and every later frame. A pre-existing frame-776 visibility-query count remains as #56.
 - #55 active: mine another high-leverage direction-goal or motion-state family.
 

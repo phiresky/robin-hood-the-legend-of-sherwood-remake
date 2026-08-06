@@ -1,0 +1,13 @@
+{
+  "id": "53",
+  "subject": "Classify schema-14 Restart replay-008 timeout",
+  "description": "DONE, superseded by #52. Investigated parity-random-save-replays-60s-15x-schema14/traces/Savegame_linux3/Profile_003/Restart/replay-008-session-0001.jsonl.zst, one of the confirmed 1,200-second timeout controls. An optimized scan completed frames 0 through 1422 in about 18 seconds, then remained inside recorded frame 1422->1423. Tick-phase tracing localized the stall to HourglassPhase::Sequences. Temporary FIFO instrumentation proved an unbounded EnterSwordfight translation loop: action 1 instructed Soldier(SoldierId(80)) sequence 4471 at PostponeEverythingButInjuries priority; actions 2 onward instructed the same owner with fresh EnterSwordfight sequences 4477, 4478, ... at NotYetSet priority, and the monotonic sequence creation continued beyond 10,000 actions without leaving frame 1423. Original RHSequenceManager::Hourglass does drain its live registration list, but RHElementActorHuman::EnterSwordFight establishes reciprocal opponent links after registering at most one reciprocal EnterSwordfight; that relationship prevents the reciprocal translation from registering another command. This is the same missing translation/re-entrancy boundary handled by #52, not a distinct frontier. Independent validation on current main with #52 completed the replay in about 30 seconds and advanced to a normal frame-1423 visibility_queries.length divergence (Original 14, Rust 11). All task-only instrumentation was removed; no independent production change was warranted.",
+  "activeForm": "Classifying Restart replay-008 timeout",
+  "owner": "task48-cluster",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [
+    "52"
+  ],
+  "resolution": "Confirmed as the same EnterSwordfight translation-loop family fixed by #52; current-main validation clears the hang and exposes the next visibility-query frontier."
+}
