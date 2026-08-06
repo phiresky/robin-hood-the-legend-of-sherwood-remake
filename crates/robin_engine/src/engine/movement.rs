@@ -502,11 +502,35 @@ fn sword_movement_dispatch_action(order: OrderType) -> OrderType {
     }
 }
 
-/// Match `SBGeoVector2D::Angle(vDisplacement, vDirection)` as used by
-/// `RHElementActorHuman::FaceOpponent`: the signed angle is measured from the
-/// movement displacement to the actor's facing vector.
-fn combat_movement_angle(move_angle: f32, facing_angle: f32) -> f32 {
-    let mut angle = facing_angle - move_angle;
+/// Signed angle from the movement displacement to the actor's facing vector,
+/// as `RHElementActorHuman::FaceOpponent` measures it, normalised to
+/// `[0, 2π)`.
+///
+/// This reproduces the determinant/dot form rather than differencing two
+/// `atan2` results, because the two disagree once the determinant vanishes.
+/// A degenerate displacement — an order whose destination is already the
+/// actor's position — makes both terms zero and yields a half turn, so the
+/// actor walks backwards rather than inheriting whatever direction it happens
+/// to be facing.
+fn combat_movement_angle(displacement: (f32, f32), facing: (f32, f32)) -> f32 {
+    let (dx, dy) = displacement;
+    let (fx, fy) = facing;
+    let dot = dx * fx + dy * fy;
+    let det = dx * fy - dy * fx;
+    let mut angle = if det == 0.0 {
+        if dot > 0.0 { 0.0 } else { std::f32::consts::PI }
+    } else {
+        // The ratio is formed in single precision before the arc tangent,
+        // so an overflow to infinity here still resolves to a quarter turn.
+        let raw = f64::from(det / dot).atan() as f32;
+        if dot >= 0.0 {
+            raw
+        } else if det > 0.0 {
+            raw + std::f32::consts::PI
+        } else {
+            raw - std::f32::consts::PI
+        }
+    };
     if angle < 0.0 {
         angle += 2.0 * std::f32::consts::PI;
     }
@@ -6718,7 +6742,11 @@ impl EngineInner {
                     //   [π/4, 3π/4)             → strafe right
                     //   [3π/4, 5π/4)            → backward
                     //   [5π/4, 7π/4)            → strafe left
-                    let facing_angle = if let Some(opp_pos) = combat_target {
+                    // The facing vector is the one FaceOpponent measures
+                    // against, so keep it as a vector: reducing it to an angle
+                    // first would lose the degenerate cases the Original
+                    // resolves through its determinant test.
+                    let facing = if let Some(opp_pos) = combat_target {
                         let face_origin = if combat_face_targets_are_ground[actor_id] {
                             let position = elem.position();
                             crate::coordinates::MapPoint::new(position.x, position.y)
@@ -6728,21 +6756,37 @@ impl EngineInner {
                         let fdx = opp_pos.x - face_origin.x;
                         let fdy = opp_pos.y - face_origin.y;
                         if fdx * fdx + fdy * fdy > 0.01 {
-                            fdy.atan2(fdx)
+                            (fdx, fdy)
                         } else {
-                            (elem.direction() as f32) * std::f32::consts::PI / 8.0
+                            let heading = (elem.direction() as f32) * std::f32::consts::PI / 8.0;
+                            (heading.cos(), heading.sin())
                         }
                     } else {
-                        (elem.direction() as f32) * std::f32::consts::PI / 8.0
+                        let heading = (elem.direction() as f32) * std::f32::consts::PI / 8.0;
+                        (heading.cos(), heading.sin())
                     };
-                    let move_angle = dy.atan2(dx);
-                    let angle = combat_movement_angle(move_angle, facing_angle);
+                    let angle = combat_movement_angle((dx, dy), facing);
                     // MovingSword and MovingFastSword both use the
                     // directional walking/strafing sword animations — the
                     // `fast` flag is ignored when selecting the animation.
                     // Running in combat is implemented by playing the walking
                     // animation under `MotionMethod::Fast`.
                     let sword_anim = combat_directional_animation(action_state, angle);
+                    tracing::trace!(
+                        target: "parity_face_opponent",
+                        ?entity_id,
+                        goal_x = goal.x,
+                        goal_y = goal.y,
+                        here_x = elem.position_map().x,
+                        here_y = elem.position_map().y,
+                        ?combat_target,
+                        ground_origin = combat_face_targets_are_ground[actor_id],
+                        facing_x = facing.0,
+                        facing_y = facing.1,
+                        angle,
+                        ?sword_anim,
+                        "FaceOpponent combat row selection",
+                    );
                     if elem.sprite.has_animation(sword_anim) {
                         sword_anim
                     } else {
@@ -12153,18 +12197,50 @@ mod line_jump_tests {
     fn face_opponent_uses_original_displacement_to_facing_angle_sign() {
         use crate::element::ActionState;
 
-        let right = combat_movement_angle(0.0, std::f32::consts::FRAC_PI_2);
+        let right = combat_movement_angle((1.0, 0.0), (0.0, 1.0));
         assert_eq!(
             combat_directional_animation(ActionState::MovingSword, right),
             OrderType::StrafingRightSword,
             "Angle(eastward displacement, northward facing) is +90 degrees"
         );
 
-        let left = combat_movement_angle(0.0, -std::f32::consts::FRAC_PI_2);
+        let left = combat_movement_angle((1.0, 0.0), (0.0, -1.0));
         assert_eq!(
             combat_directional_animation(ActionState::MovingSword, left),
             OrderType::StrafingLeftSword,
             "reversing the facing vector selects the opposite strafe"
+        );
+
+        // A destination the actor already stands on leaves both the dot and
+        // the determinant at zero, which the Original resolves as a half turn
+        // regardless of where the opponent is.
+        for facing in [(0.0, 1.0), (1.0, 0.0), (-3.0, 7.5)] {
+            assert_eq!(
+                combat_directional_animation(
+                    ActionState::MovingSword,
+                    combat_movement_angle((0.0, 0.0), facing)
+                ),
+                OrderType::WalkingBackwardsSword,
+                "a zero-length displacement walks backwards, not toward the facing sector"
+            );
+        }
+
+        // Collinear vectors still resolve through the determinant test.
+        assert_eq!(
+            combat_directional_animation(
+                ActionState::MovingSword,
+                combat_movement_angle((2.0, 0.0), (5.0, 0.0))
+            ),
+            OrderType::WalkingSword,
+            "moving straight at the opponent walks forward"
+        );
+        assert_eq!(
+            combat_directional_animation(
+                ActionState::MovingSword,
+                combat_movement_angle((2.0, 0.0), (-5.0, 0.0))
+            ),
+            OrderType::WalkingBackwardsSword,
+            "moving directly away from the opponent walks backwards"
         );
     }
 
