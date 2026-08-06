@@ -2,17 +2,17 @@
 #
 # - rustc-wrapper = sccache: cache rustc invocations across clean builds and
 #   branch switches. Incremental builds are unaffected.
-# - mold linker: debug-link time is usually the bottleneck in Rust; mold cuts
-#   it dramatically vs the default bfd/gold/lld.
+# - Wild linker: debug/validation link time is usually the bottleneck in Rust;
+#   Wild cuts it dramatically versus the default GNU bfd linker.
 
 [build]
-jobs = 2
-rustc-wrapper = "/usr/bin/sccache"
+jobs = 8
+rustc-wrapper = "/home/phire/.cargo/bin/sccache"
 
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"
 rustflags = [
-    "-C", "link-arg=-fuse-ld=mold",
+    "-C", "link-arg=--ld-path=wild",
     # Modern portable x86_64 baseline (AVX2/FMA/BMI), without tying builds to
     # the exact local CPU the way `target-cpu=native` would.
     "-C", "target-cpu=x86-64-v3",
