@@ -5345,7 +5345,8 @@ impl EngineInner {
                     x: door.point_mid.x,
                     y: door.point_mid.y,
                 }),
-                OT::TransitionWaitingCrouchedClimbingLadderDown => Some(MapPoint {
+                OT::TransitionWaitingCrouchedClimbingLadderDown
+                | OT::TransitionWaitingUprightClimbingLadderDownAlerted => Some(MapPoint {
                     x: door.point_in.x,
                     y: door.point_in.y,
                 }),
@@ -5359,7 +5360,8 @@ impl EngineInner {
                 OT::TransitionWaitingUprightClimbingWallUp => {
                     (Posture::OnWall, ActionState::Moving)
                 }
-                OT::TransitionWaitingCrouchedClimbingLadderDown => {
+                OT::TransitionWaitingCrouchedClimbingLadderDown
+                | OT::TransitionWaitingUprightClimbingLadderDownAlerted => {
                     (Posture::OnLadder, ActionState::Moving)
                 }
                 OT::TransitionClimbingWallDownWaitingUpright => {
