@@ -169,21 +169,18 @@ impl EngineInner {
         sword_strike: SwordStrike,
         attacker_profile_idx: u32,
     ) {
-        let Some(victim) = self.get_entity(victim_id) else {
-            return;
-        };
-        // Dead/unconscious humans are pruned from active swordfight
-        // state: setting concussion calls quit_swordfight, victim
-        // discovery rejects unconscious/dead, and the CheckOpponents
-        // invariant asserts no such opponent remains.  Sweep/charge
-        // queues can otherwise keep a stale victim into a later frame,
-        // so do not launch fresh damage.
-        if victim.is_dead() || victim.human_data().is_some_and(|h| h.unconscious) {
-            tracing::debug!(
+        // Dead and unconscious victims are *not* filtered out here: the
+        // sweep launchers hand every in-sector victim to the sequence
+        // manager, and a dead / unconscious human still admits
+        // `ReceiveSwordDamage` through its own instruction gate.  The
+        // decision to decline belongs to arbitration, not to the
+        // launcher.
+        if self.get_entity(victim_id).is_none() {
+            tracing::warn!(
                 ?victim_id,
                 ?attacker_id,
                 ?sword_strike,
-                "sword damage skipped: victim already dead or unconscious"
+                "sword damage victim vanished before its element could be launched"
             );
             return;
         }
@@ -229,10 +226,10 @@ impl EngineInner {
         attacker_profile_idx: Option<u32>,
         damage_element: (crate::sequence::SequenceId, usize),
     ) {
-        if self.is_scroll_protected_civilian(victim_id) {
-            tracing::debug!(?victim_id, "sword damage blocked: scroll-carrying beggar");
-            return;
-        }
+        // A scroll-carrying civilian is not short-circuited here: the
+        // immunity lives in the wounding/concussion primitives
+        // (`ConcussionContext::scroll_attached`), so the protection
+        // rolls and the rest of the pipeline still run.
         let strike = match sword_strike {
             Some(s) => s,
             None => {
@@ -241,18 +238,15 @@ impl EngineInner {
             }
         };
 
-        // Ladder/wall arm — route to `translate_ladder_wall_fall`
-        // before any damage / push / hit-reaction work.  Same
-        // early-out as `apply_generic_damage` and
-        // `apply_piercing_damage`.
+        // Ladder/wall victims are *not* short-circuited here: the
+        // protection rolls happen first and only the hit-reaction
+        // translation further down routes them to
+        // `translate_ladder_wall_fall`.  Push strikes reach the same
+        // helper through `apply_push_effect`.
         let pre_drop_posture = self
             .get_entity(victim_id)
             .map(|e| e.element_data().posture)
             .unwrap_or_default();
-        if matches!(pre_drop_posture, Posture::OnLadder | Posture::OnWall) {
-            self.translate_ladder_wall_fall(victim_id, damage_element);
-            return;
-        }
 
         // CarryingCorpse arm — drop the corpse instantly (the
         // carrier then falls through to the base-class sword-damage
@@ -381,7 +375,6 @@ impl EngineInner {
             Some(e) => e,
             None => return,
         };
-        let victim_is_pc = victim.kind().is_pc();
         let (human, lp) = match victim.human_and_life_points_mut() {
             Some(pair) => pair,
             None => return,
@@ -390,27 +383,14 @@ impl EngineInner {
         let (result, cutting_inflicted) = combat::receive_sword_damage(sim, human, lp, &params);
 
         let raw_life_points_after = *lp;
-        // RHElementActorHuman::ReceiveSwordDamage dispatches GetWounded
-        // virtually. For a VIP PC, RHElementActorPC::GetWounded consumes an
-        // amulet and establishes the 5-HP coma state *inside* the cutting
-        // damage call, before ReceiveSwordDamage returns and before SayOuch
-        // classifies the result as HERO_HURT or HERO_DIE. Rust's shared
-        // damage primitive cannot mutate campaign state, so close that
-        // virtual boundary here rather than deferring it to
-        // handle_post_damage.
-        let coma_saved = victim_is_pc
-            && raw_life_points_after <= 0
-            && cutting_inflicted > 0
-            && self.try_pc_coma_save(sim, assets, victim_id, cutting_inflicted);
-        if coma_saved && 5 < life_points_before - 20 {
-            // PC::GetWounded marks the campaign coma, stores the 5-HP
-            // floor through PC::SetLifePoints (which emits HERO_HURT for a
-            // drop greater than twenty), and only then applies maximum
-            // concussion. The shared SayOuch path below intentionally skips
-            // unconscious actors, so preserve that virtual SetLifePoints
-            // callback explicitly at this boundary.
-            self.hero_speaking(assets, victim_id, HERO_HURT);
-        }
+        let coma_saved = self.close_pc_wounded_coma_boundary(
+            sim,
+            assets,
+            victim_id,
+            cutting_inflicted,
+            life_points_before,
+            raw_life_points_after,
+        );
         let life_points_after = self
             .get_entity(victim_id)
             .map(get_life_points)
@@ -679,6 +659,11 @@ impl EngineInner {
             );
             if is_shoulder_posture {
                 self.translate_shoulder_damage(sim, assets, victim_id, damage_element);
+            } else if matches!(victim_posture, Posture::OnLadder | Posture::OnWall) {
+                // Ladder/wall arm of the hit-reaction posture switch.
+                // Like the shoulder arm this fires for lethal and KO
+                // hits too — the fall itself resolves the victim's fate.
+                self.translate_ladder_wall_fall(victim_id, damage_element);
             } else if still_alive && still_conscious {
                 let anims = self.get_entity(victim_id).and_then(|e| {
                     let posture = e.element_data().posture;
@@ -720,16 +705,30 @@ impl EngineInner {
         // Dispatch combat stimulus to attacker's AI: EventLethalStrike
         // if victim died, EventGoodStrike if damage was dealt.
         //
-        // Original provenance: `RHElementActorHuman::TranslateDamage` calls
-        // the attacker's `Think(EVENT_{LETHAL,GOOD}_STRIKE)` inline
-        // (`original-code/RHelementactorhuman.cpp:2633-2665`). In particular,
-        // the good-strike handler must still observe
-        // `SUBSTATE_ATTACKING_SWORDFIGHT_SPECIAL_STRIKE`; leaving this in the
-        // ordinary NPC-phase queue can suppress the associated combat remark.
+        // The damage translation runs this inline, so the stimulus is
+        // dispatched synchronously — the good-strike handler must still
+        // observe the special-strike substate, and leaving this in the
+        // ordinary NPC-phase queue can suppress the associated combat
+        // remark.
+        //
+        // TODO: both informs sit after the posture switch in the original
+        // translation, which returns early for a victim that is already on
+        // the ground (or on a ladder / wall), and the good-strike inform
+        // additionally requires cutting damage and a soldier attacker.
+        // Adding those gates did not move the remaining speech-FIFO
+        // repros, so they are recorded rather than applied unvalidated.
         if !result.is_empty()
             && !result.contains(combat::SwordDamageResult::NO_DAMAGE_PARRIED)
             && let Some(atk_id) = attacker_id
         {
+            if victim_died {
+                // Dead people can't fight: the victim leaves the swordfight
+                // before the hitter is informed. The quit notification
+                // reaches the attacker first and moves it out of its
+                // special-strike substate, which is what keeps the kill
+                // remark from firing on a blow that ends the fight.
+                self.quit_swordfight(sim, assets, victim_id);
+            }
             let stimulus_type = if victim_died {
                 crate::ai::StimulusType::EventLethalStrike
             } else {
@@ -947,6 +946,7 @@ impl EngineInner {
             self.control.sim_config.difficulty,
         );
         let max_lp = get_max_life_points(victim);
+        let life_points_before = get_life_points(victim);
 
         let victim = match self.world.entities.get_mut(victim_id) {
             Some(e) => e,
@@ -958,6 +958,15 @@ impl EngineInner {
         };
 
         let _died = combat::receive_generic_damage(human, lp, damage, concussion, max_lp, &ctx);
+        let raw_life_points_after = *lp;
+        self.close_pc_wounded_coma_boundary(
+            sim,
+            assets,
+            victim_id,
+            damage,
+            life_points_before,
+            raw_life_points_after,
+        );
 
         // Shoulder-posture victims route through
         // `translate_shoulder_damage` instead of the base-class
@@ -1071,6 +1080,7 @@ impl EngineInner {
             self.control.sim_config.difficulty,
         );
         let max_lp = get_max_life_points(victim);
+        let life_points_before = get_life_points(victim);
 
         let victim = match self.world.entities.get_mut(victim_id) {
             Some(e) => e,
@@ -1082,6 +1092,15 @@ impl EngineInner {
         };
 
         let _died = combat::receive_piercing_damage(human, lp, damage, concussion, max_lp, &ctx);
+        let raw_life_points_after = *lp;
+        self.close_pc_wounded_coma_boundary(
+            sim,
+            assets,
+            victim_id,
+            damage,
+            life_points_before,
+            raw_life_points_after,
+        );
         // Raw attempted damage — overkill hits show the same number
         // as a non-overkill hit would.  `add_damage_number` no-ops on 0.
         self.add_damage_number(victim_id, damage);

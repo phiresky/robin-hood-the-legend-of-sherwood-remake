@@ -1447,7 +1447,7 @@ impl EngineInner {
     /// Prepare destination forecast alternatives without drawing RNG. The AI
     /// handler that actually consumes a primary/missed/officer forecast owns
     /// any building-exit selection draw.
-    fn prepare_detection_forecasts_for_owner(
+    pub(super) fn prepare_detection_forecasts_for_owner(
         &self,
         npc_id: EntityId,
         positions_before_movement: Option<&EntitySlots<Option<crate::entities::BoundaryPosition>>>,
@@ -2408,7 +2408,7 @@ impl EngineInner {
                 // side when the NPC is Royalist, but for Lacklandists
                 // PCs are enemies — skip). For now, only add NPCs.
                 for ss in soldier_snapshots {
-                    if ss.id == npc_id || ss.camp != Camp::Lacklandists {
+                    if ss.id == npc_id || ss.camp != my_camp {
                         continue;
                     }
                     if !ss.able_to_fight {
@@ -2684,7 +2684,7 @@ impl EngineInner {
                                 level: my_layer,
                             },
                             bow_max_range: me_snap.bow_max_range,
-                            elevation: me_snap.elevation,
+                            elevation: f32::from(me_snap.elevation),
                         });
                     }
 
@@ -2771,7 +2771,7 @@ impl EngineInner {
                                 level: ss.layer,
                             },
                             bow_max_range: ss.bow_max_range,
-                            elevation: ss.elevation,
+                            elevation: f32::from(ss.elevation),
                         });
                     }
 
@@ -2859,7 +2859,7 @@ impl EngineInner {
                                 level: pc.layer,
                             },
                             bow_max_range: 0, // PCs don't use AI bow targeting
-                            elevation: pc.ground_elevation,
+                            elevation: f32::from(pc.ground_elevation),
                         });
                     }
                 }

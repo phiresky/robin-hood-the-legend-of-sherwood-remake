@@ -1102,6 +1102,17 @@ impl SequenceElement {
         }
     }
 
+    /// Drop a property from a generic element, if present.
+    ///
+    /// Only engine caches are ever removed — [`Field::RetainedMovementGoal`]
+    /// is the sole such field. Authored command properties are written once
+    /// and read for the element's whole life.
+    pub fn remove_property(&mut self, field: Field) {
+        if let SequenceElementData::Generic { properties } = &mut self.data {
+            properties.remove(&field);
+        }
+    }
+
     /// Get a property from a generic element. Returns `None` if not found or not generic.
     pub fn get_property(&self, field: Field) -> Option<&FieldValue> {
         match &self.data {
@@ -1407,10 +1418,16 @@ impl SequenceElement {
                     );
                     new_order.compute_direction = true;
                     new_order.tolerance = 0.0;
+                    // The spliced movement order inherits the element's target
+                    // element, not just the relabelled transition it precedes.
+                    // Once it is the live order the target's radius widens the
+                    // blocked-count arrival slack, so dropping it here strands
+                    // the walk short of its waypoint for extra frames.
                     if (!flags.contains(MoveFlags::SEEK) || !flags.contains(MoveFlags::USE_POINT))
                         && let Some(a) = antagonist
                     {
                         new_order.target_actor = Some(a.index());
+                        new_order.antagonist = Some(a);
                     }
                     self.insert_order(i, new_order);
                     return;
@@ -1445,6 +1462,7 @@ impl SequenceElement {
                         && let Some(a) = antagonist
                     {
                         new_order.target_actor = Some(a.index());
+                        new_order.antagonist = Some(a);
                     }
                     self.insert_order(i, new_order);
                 }
@@ -2449,6 +2467,21 @@ pub struct SequenceManager {
     #[serde(default)]
     actor_instructing: BTreeMap<EntityId, Vec<SequenceElementRef>>,
 
+    /// Actor selection held across the accepted element's command
+    /// translation.
+    ///
+    /// Original keeps `RHElementActor::mpSequenceElement` pointing at the
+    /// accepted element for the whole of `Translate`, and only drops it
+    /// afterwards when translation produced no orders. Commands whose
+    /// translation bodies terminate or interrupt the element outright —
+    /// EnterSwordfight onto an actor already holding its sword, a parry
+    /// that repeats one already running, AssertPosition — therefore reach
+    /// `SendCondolationCard` while still selected, which is what performs
+    /// the actor-base movement-goal cleanup. Set for the duration of one
+    /// command dispatch; empty at stable frame/save boundaries.
+    #[serde(default)]
+    actor_translating: Option<(EntityId, SequenceElementRef)>,
+
     /// Deferred queue of elements to start. Processed in `hourglass()`.
     /// Each entry is `(sequence id, element index within that sequence)`.
     /// Serialized so mid-frame snapshots (rollback / replay) preserve
@@ -2586,6 +2619,7 @@ impl SequenceManager {
         if !self.pending_synchronous_actions.is_empty()
             || !self.pending_condolations.is_empty()
             || !self.actor_instructing.is_empty()
+            || self.actor_translating.is_some()
             || self.halt_pending
         {
             panic!("parity sequence capture reached a non-quiescent dispatch boundary");
@@ -2623,6 +2657,7 @@ impl SequenceManager {
             actor_live: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
             actor_instructing: BTreeMap::new(),
+            actor_translating: None,
             elements_to_go: VecDeque::new(),
             pending_synchronous_actions: VecDeque::new(),
             pending_condolations: Vec::new(),
@@ -2644,6 +2679,7 @@ impl SequenceManager {
             actor_live: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
             actor_instructing: BTreeMap::new(),
+            actor_translating: None,
             elements_to_go: state.elements_to_go,
             pending_synchronous_actions: VecDeque::new(),
             pending_condolations: Vec::new(),
@@ -2664,6 +2700,7 @@ impl SequenceManager {
         self.actor_live.clear();
         self.actor_in_progress.clear();
         self.actor_instructing.clear();
+        self.actor_translating = None;
         for (seq_id, seq) in &self.sequences {
             for (elem_idx, elem) in seq.elements.iter().enumerate() {
                 let Some(owner) = elem.owner else {
@@ -2998,6 +3035,19 @@ impl SequenceManager {
         }
     }
 
+    /// Drop every queued `Order` on the given element, keeping the element
+    /// itself live.  Panics on a stale handle for the same reason
+    /// [`push_order_on`](Self::push_order_on) does.
+    pub fn clear_orders_on(&mut self, seq_id: SequenceId, elem_idx: usize) {
+        match self.get_element_mut(seq_id, elem_idx) {
+            Some(elem) => elem.orders.clear(),
+            None => panic!(
+                "clear_orders_on: no element at ({:?}, {}) — handle is stale",
+                seq_id, elem_idx
+            ),
+        }
+    }
+
     /// Find the actor's in-progress sequence element.  O(log k) via
     /// [`actor_in_progress`](Self::actor_in_progress), where k is the
     /// number of simultaneously-`InProgress` elements owned by this
@@ -3014,6 +3064,11 @@ impl SequenceManager {
             .actor_instructing
             .get(&actor)
             .and_then(|stack| stack.last())
+        {
+            return Some((elem_ref.sequence_id, elem_ref.element_index));
+        }
+        if let Some((owner, elem_ref)) = self.actor_translating
+            && owner == actor
         {
             return Some((elem_ref.sequence_id, elem_ref.element_index));
         }
@@ -3034,6 +3089,21 @@ impl SequenceManager {
             }
         }
         Some((first.sequence_id, first.element_index))
+    }
+
+    /// Select the accepted element for the duration of its command
+    /// translation, or release it again.
+    ///
+    /// Releasing before a terminal `SetState` reproduces Original's
+    /// post-`Translate` `mpSequenceElement = 0` for an accepted element whose
+    /// translation produced no orders: that card must not claim the actor's
+    /// movement goal, while a card raised from inside the translation body
+    /// must.
+    pub(crate) fn set_translating_element(
+        &mut self,
+        selection: Option<(EntityId, SequenceElementRef)>,
+    ) {
+        self.actor_translating = selection;
     }
 
     /// Select an incoming element while the outgoing element's synchronous
@@ -4407,6 +4477,25 @@ impl SequenceManager {
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
     ) {
+        let root = self.current_element_for_actor(owner);
+        self.stop_owner_from_root(owner, root, stop_priority, resolver);
+    }
+
+    /// `RHElementActor::Stop` with an explicit root instead of the actor's
+    /// currently selected element.
+    ///
+    /// A command that stops its owner from inside its own translation runs
+    /// before the incoming element has been installed as the actor's
+    /// selection, yet Original has already assigned `mpSequenceElement` by
+    /// then and therefore stops through the incoming element — reaching
+    /// whatever that element pushed into its postponed slot.
+    pub fn stop_owner_from_root(
+        &mut self,
+        owner: EntityId,
+        root: Option<(SequenceId, usize)>,
+        stop_priority: SequencePriority,
+        resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
+    ) {
         let parity_debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
         // Original `RHElementActor::Stop` starts from exactly
         // `mpSequenceElement`. Scanning every InProgress/Postponed element is
@@ -4414,7 +4503,7 @@ impl SequenceManager {
         // form a large shared next/postponed graph, so recursively stopping
         // each node as a fresh root repeats that graph exponentially.
         let mut targets = VecDeque::new();
-        if let Some(current) = self.current_element_for_actor(owner)
+        if let Some(current) = root
             && self.get_element(current.0, current.1).is_some_and(|elem| {
                 !(elem.command == Command::Wait && elem.priority == SequencePriority::Wait)
             })

@@ -1234,6 +1234,42 @@ pub fn compute_bow_point(
     }
 }
 
+/// Top-plane coefficients of a trajectory's terminal obstacle, resolved
+/// against the list the trajectory builder searched.
+pub fn terminal_obstacle_plane(
+    obstacle: Option<crate::position_interface::ObstacleHandle>,
+    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
+) -> Option<crate::position_interface::PlaneZCoeffs> {
+    obstacle.map(|handle| {
+        let index = usize::from(u16::from(handle));
+        let obstacle = sight_obstacles.get(index).unwrap_or_else(|| {
+            panic!("projectile terminal obstacle {index} is absent from its source list")
+        });
+        crate::position_interface::PlaneZCoeffs::from_plane_points(&obstacle.top_plane_points)
+    })
+}
+
+/// Bind the obstacle a freshly computed trajectory terminates on.
+///
+/// The arc builder resolves the impact obstacle while integrating the
+/// trajectory — long before the projectile has flown a single frame — and
+/// stores it on the projectile. A ground or motion-line impact stores
+/// nothing, which is exactly the signal the landing code needs to tell
+/// "came to rest on the ground" from "stuck in / on a piece of geometry".
+///
+/// Binding an obstacle also binds its top plane, which would otherwise pull
+/// the projectile's 3D point down onto that plane; the trajectory's own 3D
+/// point stays authoritative, so it is re-asserted afterwards.
+pub fn bind_trajectory_obstacle(
+    element: &mut ElementData,
+    obstacle: Option<crate::position_interface::ObstacleHandle>,
+    plane: Option<crate::position_interface::PlaneZCoeffs>,
+) {
+    let position = element.position();
+    element.set_obstacle_index(obstacle, plane);
+    element.set_position(position);
+}
+
 /// Apply projectile landing membership (obstacle / layer / sector)
 /// to a projectile element after its trajectory has settled.
 pub fn apply_projectile_landing_resolution(
@@ -2655,7 +2691,13 @@ fn spawn_throwable(
         flight_time,
         target_forecasted_movement,
     );
-    let trajectory = compute_trajectory_ballistic(throw_pos, velocity, mass, false, obstacle_check);
+    let (trajectory, terminal_obstacle) = compute_trajectory_ballistic_with_terminal_obstacle(
+        throw_pos,
+        velocity,
+        mass,
+        false,
+        obstacle_check,
+    );
     let end_pos = trajectory_end_or_start(&trajectory, throw_pos, "throwable");
 
     let map_pos = MapPoint {
@@ -2674,6 +2716,10 @@ fn spawn_throwable(
     element.set_direction_instantly(crate::position_interface::vector_to_sector_0_to_15_iso(
         dx, dy,
     ));
+    if let Some(check) = obstacle_check {
+        let plane = terminal_obstacle_plane(terminal_obstacle, check.sight_obstacles);
+        bind_trajectory_obstacle(&mut element, terminal_obstacle, plane);
+    }
     let object = ObjectData {
         associated_action: action,
         object_type,
@@ -2767,8 +2813,13 @@ pub fn spawn_purse(
     };
 
     let velocity = compute_initial_throw_velocity(direction_vec, APEX_PURSE, MASS_PURSE, 0, None);
-    let trajectory =
-        compute_trajectory_ballistic(throw_pos, velocity, MASS_PURSE, false, obstacle_check);
+    let (trajectory, terminal_obstacle) = compute_trajectory_ballistic_with_terminal_obstacle(
+        throw_pos,
+        velocity,
+        MASS_PURSE,
+        false,
+        obstacle_check,
+    );
     let end_pos = trajectory_end_or_start(&trajectory, throw_pos, "purse");
 
     let map_pos = MapPoint {
@@ -2787,6 +2838,10 @@ pub fn spawn_purse(
     element.set_direction_instantly(crate::position_interface::vector_to_sector_0_to_15_iso(
         dx, dy,
     ));
+    if let Some(check) = obstacle_check {
+        let plane = terminal_obstacle_plane(terminal_obstacle, check.sight_obstacles);
+        bind_trajectory_obstacle(&mut element, terminal_obstacle, plane);
+    }
     let object = ObjectData {
         associated_action: Action::Purse,
         object_type: ObjectType::Purse,
@@ -3106,6 +3161,10 @@ pub(crate) fn make_arrow_falling_down(
     // of its fall rather than only once it settles.
     proj.element.clear_layer();
     proj.element.set_sector(None);
+    if let Some(check) = obstacle_check {
+        let plane = terminal_obstacle_plane(terminal_obstacle, check.sight_obstacles);
+        bind_trajectory_obstacle(&mut proj.element, terminal_obstacle, plane);
+    }
     if let Some(check) = obstacle_check
         && let Some(end) = proj.projectile.trajectory.last().map(|tp| tp.position)
     {
@@ -3510,29 +3569,25 @@ fn tick_arrows_matching(
                 //     (arrows stuck in walls and unassigned-layer
                 //     projectiles keep their trajectory-end elevation).
                 //
-                // Active in-flight projectiles don't carry a cached
-                // obstacle reference, so re-derive the obstacle here
-                // by scanning active projection-area obstacles whose
-                // projected polygon contains the landing point — the same
-                // lookup `FastFindGrid::resolve_projectile_landing`
-                // runs after tick to populate the cached obstacle.
+                // The obstacle is the one the trajectory builder struck
+                // when it terminated the arc, bound onto the projectile at
+                // launch and carried through the flight. It is emphatically
+                // not "whichever projection polygon happens to cover the
+                // landing point on screen": an arrow that lands on open
+                // ground in front of a building is under that building's
+                // projection polygon yet hit no obstacle at all, and gets
+                // the flat 0.001 ground snap.
                 let pos = proj.element.position();
-                let landing_map = pos.to_map();
-                let mut top_plane_z: Option<f32> = None;
-                for (obs_idx, obstacle) in sight_obstacles.iter_indexed() {
-                    if !sight_obstacles.is_active(obs_idx as usize)
-                        || !obstacle.is_projection_area()
-                        || obstacle.layer == u16::MAX
-                        || !obstacle.contains_point_projection(landing_map)
-                    {
-                        continue;
-                    }
-                    let plane = crate::position_interface::PlaneZCoeffs::from_plane_points(
+                let top_plane_z = proj.element.obstacle_index().map(|handle| {
+                    let index = usize::from(u16::from(handle));
+                    let obstacle = sight_obstacles.get(index).unwrap_or_else(|| {
+                        panic!("landed projectile obstacle {index} is absent from its source list")
+                    });
+                    crate::position_interface::PlaneZCoeffs::from_plane_points(
                         &obstacle.top_plane_points,
-                    );
-                    top_plane_z = Some(plane.compute_z(pos.x, pos.y));
-                    break;
-                }
+                    )
+                    .compute_z(pos.x, pos.y)
+                });
 
                 let new_z = match top_plane_z {
                     None => Some(0.001),
@@ -3546,6 +3601,17 @@ fn tick_arrows_matching(
                         }
                     }
                 };
+                tracing::trace!(
+                    target: "arrow_landing",
+                    arrow = arrow_id.index(),
+                    object_type = ?proj.object.object_type,
+                    obstacle = ?proj.element.obstacle_index().map(u16::from),
+                    layer = proj.element.layer(),
+                    ?pos,
+                    ?top_plane_z,
+                    ?new_z,
+                    "projectile landing elevation snap"
+                );
                 if let Some(z) = new_z {
                     let mut p = proj.element.position();
                     p.z = z;

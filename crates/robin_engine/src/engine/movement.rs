@@ -582,8 +582,17 @@ fn movement_execute_state_effect(
         (OT::TransitionCrouchingDown, MS::Done | MS::Terminated) => {
             Some((P::Crouched, AS::Waiting))
         }
-        (OT::TransitionWaitingCrouchedWalkingCrouched, MS::Done | MS::Terminated) => {
-            Some((P::Crouched, AS::Moving))
+        (
+            OT::TransitionWaitingCrouchedWalkingCrouched
+            | OT::TransitionWalkingUprightWalkingCrouched
+            | OT::TransitionRunningUprightWalkingCrouched,
+            MS::Done | MS::Terminated,
+        ) => Some((P::Crouched, AS::Moving)),
+        (OT::TransitionWalkingCrouchedWalkingUpright, MS::Done | MS::Terminated) => {
+            Some((P::Upright, AS::Moving))
+        }
+        (OT::TransitionWalkingCrouchedRunningUpright, MS::Done | MS::Terminated) => {
+            Some((P::Upright, AS::MovingFast))
         }
         (
             OT::TransitionWaitingUprightRunningUpright | OT::TransitionWalkingUprightRunningUpright,
@@ -593,13 +602,12 @@ fn movement_execute_state_effect(
             Some((P::Upright, AS::Moving))
         }
         (
-            OT::WalkingUpright
-            | OT::WalkingAlerted
-            | OT::WalkingCrouched
-            | OT::WalkingStairs
-            | OT::RunningStairs,
+            OT::WalkingUpright | OT::WalkingAlerted | OT::WalkingStairs | OT::RunningStairs,
             MS::Start,
         ) => Some((P::Upright, AS::Moving)),
+        // The crouched walk starts the actor moving without standing it
+        // up; only the PC executes this animation.
+        (OT::WalkingCrouched, MS::Start) => Some((P::Crouched, AS::Moving)),
         (OT::RunningUpright, MS::Start) => Some((P::Upright, AS::MovingFast)),
         (OT::WalkingWithSword, MS::Start) => Some((P::Upright, AS::MovingSword)),
         (OT::RunningWithSword, MS::Start) => Some((P::Upright, AS::MovingFastSword)),
@@ -2291,6 +2299,12 @@ impl EngineInner {
                 elem.sprite
                     .position_iface
                     .update_position_map_scaled(distance * speed_factor);
+                let wait = elem
+                    .sprite
+                    .wait_time(elem.sprite.current_row, elem.sprite.current_frame);
+                elem.sprite
+                    .position_iface
+                    .update_forecasted_movement(distance * speed_factor, wait + 1);
                 elem.update_grid_cell();
             }
             (state, elem.sprite.current_frame)
@@ -3772,6 +3786,17 @@ impl EngineInner {
             let old_is_building = prev_sector
                 .map(|s| is_building_sector(self, s))
                 .unwrap_or(false);
+            tracing::trace!(
+                entity = ?entity_id,
+                gate_idx,
+                door = ?shot.door_index,
+                direct = shot.direct,
+                prev_sector,
+                new_sector = shot.new_sector,
+                old_is_building,
+                is_jump = shot.is_jump,
+                "gate-traversal sequence emits a gate"
+            );
 
             // Original sequence construction uses the caller's action
             // for both approach and door-pass sub-elements.
@@ -4876,15 +4901,21 @@ impl EngineInner {
                 self.set_ai_couldnt_reachpoint(entity_id);
                 return None;
             };
-            let prefix = if intent.quit_swordfight_before_move {
-                vec![crate::sequence::SequenceElement::new(
+            let mut prefix = Vec::new();
+            if intent.quit_swordfight_before_move {
+                prefix.push(crate::sequence::SequenceElement::new(
                     1,
                     crate::element::Command::QuitSwordfight,
                     Some(entity_id),
-                )]
-            } else {
-                Vec::new()
-            };
+                ));
+            }
+            if intent.lower_shield_before_move {
+                prefix.push(crate::sequence::SequenceElement::new(
+                    prefix.len() as u16 + 1,
+                    crate::element::Command::LowerShield,
+                    Some(entity_id),
+                ));
+            }
             let tail = self.ai_special_action_tail(entity_id, intent);
             let goal = door_goal.map_or(
                 GoalShape::Point {
@@ -4940,11 +4971,9 @@ impl EngineInner {
             );
         }
 
-        let move_level = if intent.quit_swordfight_before_move {
-            2
-        } else {
-            1
-        };
+        let move_level = 1
+            + u16::from(intent.quit_swordfight_before_move)
+            + u16::from(intent.lower_shield_before_move);
         let mut elem = crate::sequence::SequenceElement::new_movement(
             move_level,
             crate::element::Command::Move,
@@ -4982,6 +5011,13 @@ impl EngineInner {
             sequence.append_element(crate::sequence::SequenceElement::new(
                 1,
                 crate::element::Command::QuitSwordfight,
+                Some(entity_id),
+            ));
+        }
+        if intent.lower_shield_before_move {
+            sequence.append_element(crate::sequence::SequenceElement::new(
+                move_level - 1,
+                crate::element::Command::LowerShield,
                 Some(entity_id),
             ));
         }
@@ -5414,12 +5450,23 @@ impl EngineInner {
             false,
         );
 
-        // Original immediately sends EVENT_QUIT_SWORDFIGHT from this guard;
-        // PCs intentionally have no AI receiver.
-        self.dispatch_ai_stimulus(
-            owner,
-            crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
+        // Original announces EVENT_QUIT_SWORDFIGHT from this guard in the
+        // same call, before the Execute arm returns ABORTED — so the soldier's
+        // brain has already left its swordfight substate when any later phase
+        // of this frame runs. Only soldiers have a receiver here.
+        tracing::trace!(
+            owner = owner.index(),
+            frame = self.control.frame_counter,
+            "orphaned sword movement aborted; sending EVENT_QUIT_SWORDFIGHT"
         );
+        if matches!(self.world.entities.get(owner), Some(Entity::Soldier(_))) {
+            self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                sim,
+                owner,
+                assets,
+                crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
+            );
+        }
         true
     }
 
@@ -5590,11 +5637,16 @@ impl EngineInner {
                     .copied()
             } else if entity.is_soldier() {
                 // GetPrimaryTarget — soldier's AI-picked priority target,
-                // which can differ from opponents[0].
+                // which can differ from opponents[0]. The stored handle is a
+                // raw element slot and the occupant is any human, not just a
+                // PC: soldiers routinely keep an enemy soldier as their
+                // primary target once a swordfight has ended, and facing it
+                // is what keeps the fighter turned toward the melee.
                 entity
                     .ai_controller()
-                    .map(|c| EntityId::Pc(crate::entity_id::PcId(c.primary_target)))
-                    .filter(|id| id.index() != 0)
+                    .map(|c| c.primary_target)
+                    .filter(|slot| *slot != 0)
+                    .and_then(|slot| self.world.entities.id_at_legacy_slot(slot))
             } else {
                 None
             };
@@ -6053,13 +6105,17 @@ impl EngineInner {
         // Elevation-line crossings detected during this tick. Dispatched
         // after the entity loop so `check_for_line_crossing` can borrow
         // `self` for the fast-grid query and obstacle swap.
-        // Each entry is `(entity_id, old_pos, new_pos, layer)` in projected
-        // map coordinates. Geometry queries convert at the call boundary.
-        let mut line_cross_checks: Vec<(EntityId, MapPoint, MapPoint, u16)> = Vec::new();
+        // Each entry is `(entity_id, old_pos, layer)` in projected map
+        // coordinates; the segment endpoint is resolved from the actor's
+        // live position when the checks are dispatched, because
+        // CheckForLineCrossing runs after the whole Execute arm and some
+        // arms reposition the actor in their completion branch. Geometry
+        // queries convert at the call boundary.
+        let mut line_cross_checks: Vec<(EntityId, MapPoint, u16)> = Vec::new();
         // Original collects all non-elevation LINE_CROSS kinds together,
         // sorts once by travel distance, then checks patch/script/sound flags
         // on each line in that order.
-        let mut non_elevation_cross_checks: Vec<(EntityId, MapPoint, MapPoint, u16)> = Vec::new();
+        let mut non_elevation_cross_checks: Vec<(EntityId, MapPoint, u16)> = Vec::new();
         // Final entity-seek orders whose live target no longer matches the
         // sampled endpoint. Original refreshes these only when the current
         // order itself terminates; merely exposing a stop-transition as the
@@ -6601,6 +6657,16 @@ impl EngineInner {
                     };
                     let fdx = opp_pos.x - face_origin.x;
                     let fdy = opp_pos.y - face_origin.y;
+                    tracing::trace!(
+                        entity = ?entity_id,
+                        frame = self.control.frame_counter,
+                        origin_x = face_origin.x,
+                        origin_y = face_origin.y,
+                        target_x = opp_pos.x,
+                        target_y = opp_pos.y,
+                        sector = crate::position_interface::vector_to_sector_0_to_15_iso(fdx, fdy),
+                        "combat facing target"
+                    );
                     if fdx * fdx + fdy * fdy > 0.01 {
                         elem.set_direction_goal(
                             crate::position_interface::vector_to_sector_0_to_15_iso(fdx, fdy),
@@ -7541,7 +7607,12 @@ impl EngineInner {
                             (
                                 dx_step,
                                 dy_step,
-                                state.pi.is_deviated(),
+                                // Only a committed deviation (blocked counter
+                                // reset) faces along its step and rebuilds the
+                                // increment here; a break-through barge keeps
+                                // the facing and cached increment the
+                                // anti-collision step left behind.
+                                state.pi.is_deviated() && state.pi.blocked_count == 0,
                                 was_deviated && !state.pi.is_deviated(),
                             )
                         } else {
@@ -7600,6 +7671,14 @@ impl EngineInner {
                     let should_snap =
                         !entity.position_iface().is_deviated() && order_tolerance == 0.0;
                     entity.position_iface_mut().zero_all_increments();
+                    tracing::trace!(
+                        ?entity_id,
+                        ?anim,
+                        ?goal,
+                        should_snap,
+                        from = ?entity.element_data().position_map(),
+                        "transition goal reached"
+                    );
                     if should_snap {
                         entity.element_data_mut().set_position_map(goal);
                     }
@@ -7608,17 +7687,15 @@ impl EngineInner {
                     }
                 }
                 // Actor::Hourglass runs CheckForLineCrossing after Execute
-                // returns, so use the final post-arrival position here. A
-                // TillLastFrame step may overshoot and snap back to its goal;
-                // the discarded overshoot must not trigger a boundary.
+                // returns, so the segment endpoint is resolved from the live
+                // position at dispatch time. A TillLastFrame step may
+                // overshoot and snap back to its goal; the discarded
+                // overshoot must not trigger a boundary.
                 if let Some((old_pos, layer, eligible)) = transition_crossing_start
                     && eligible
                 {
-                    let new_pos = entity.element_data().position_map();
-                    if self.world.fast_grid.level.map_bbox.contains_point(new_pos) {
-                        line_cross_checks.push((entity_id, old_pos, new_pos, layer));
-                        non_elevation_cross_checks.push((entity_id, old_pos, new_pos, layer));
-                    }
+                    line_cross_checks.push((entity_id, old_pos, layer));
+                    non_elevation_cross_checks.push((entity_id, old_pos, layer));
                 }
                 let transition_effect_motion = movement_execute_visible_motion(
                     order_action,
@@ -8104,6 +8181,54 @@ impl EngineInner {
                         continue 'actors;
                     }
 
+                    // The sibling case, where a stop transition is still
+                    // queued behind the movement order that just terminated.
+                    // A transition covers its own animation distance, so it
+                    // may only take over when the live target sits within
+                    // that travel plus the seek distance. A target that has
+                    // drifted beyond it refreshes the seek instead, and the
+                    // stale transition never plays.
+                    if !is_final_waypoint
+                        && let Some((target_position, _, target_point)) = live_seek_target
+                        && target_position != ft.last_seek_target_position
+                        && let Some(next_action) = self
+                            .orders
+                            .sequence_manager
+                            .get_element(move_seq_id, move_elem_idx)
+                            .and_then(|element| element.orders.get(1))
+                            .map(|order| order.order_type)
+                        && matches!(
+                            next_action,
+                            OrderType::TransitionRunningUprightWaitingUpright
+                                | OrderType::TransitionWalkingUprightWaitingUpright
+                                | OrderType::TransitionWalkingCrouchedWaitingCrouched
+                        )
+                    {
+                        let aim = target_point.unwrap_or(target_position);
+                        let here = entity.element_data().position_map();
+                        let dx = aim.x - here.x;
+                        let dy = if ft.directional {
+                            const INVERSE_ASPECT_RATIO: f32 = 1.743_446_8;
+                            (aim.y - here.y) * INVERSE_ASPECT_RATIO
+                        } else {
+                            aim.y - here.y
+                        };
+                        let reach =
+                            (f32::from(entity.sprite().distance_for_animation(next_action))
+                                + ft.tol)
+                                * 1.05;
+                        if dx * dx + dy * dy > reach * reach {
+                            transition_seek_refreshes.push((eid, move_seq_id, move_elem_idx));
+                            tracing::trace!(
+                                ?eid,
+                                ?next_action,
+                                reach,
+                                "tick_move: seek target out of stop-transition reach; refreshing",
+                            );
+                            continue 'actors;
+                        }
+                    }
+
                     let actor = entity.actor_data_mut().unwrap();
                     // The post-seek sequence fires whenever the seek
                     // arrival predicate is true and a post-seek sequence
@@ -8301,82 +8426,79 @@ impl EngineInner {
                     // (move box, half-diagonal) + the current path goal.  The
                     // persistent state (deviated / blocked_count / box_blocked /
                     // radius) lives on the actor's PI directly now.
-                    let (
-                        dx_step,
-                        dy_step,
-                        deviated,
-                        recovered_from_deviation,
-                        rebuild_after_deviation,
-                    ) = if anti_on
-                        && let Some(mover_snap) = anti_snapshots
-                            .get(actor_id)
-                            .and_then(|slot| slot.as_ref())
-                            .filter(|snapshot| snapshot.active)
-                    {
-                        let goal_map = crate::coordinates::MapPoint::new(goal.x, goal.y);
-                        let (move_box, half_diagonal) = {
-                            let pi = entity.position_iface();
-                            (*pi.get_move_box(), pi.get_half_diagonal())
+                    let (dx_step, dy_step, recovered_from_deviation, rebuild_after_deviation) =
+                        if anti_on
+                            && let Some(mover_snap) = anti_snapshots
+                                .get(actor_id)
+                                .and_then(|slot| slot.as_ref())
+                                .filter(|snapshot| snapshot.active)
+                        {
+                            let goal_map = crate::coordinates::MapPoint::new(goal.x, goal.y);
+                            let (move_box, half_diagonal) = {
+                                let pi = entity.position_iface();
+                                (*pi.get_move_box(), pi.get_half_diagonal())
+                            };
+                            let pi = entity.position_iface_mut();
+                            let was_deviated = pi.is_deviated();
+                            let mut state = super::anti_collision::AntiCollisionState {
+                                pi,
+                                move_box,
+                                half_diagonal,
+                                goal_map,
+                            };
+                            let (dx_step, dy_step) =
+                                super::anti_collision::apply_anti_collision_step(
+                                    mover_snap,
+                                    anti_snapshots.as_slice(),
+                                    &self.ai.global.repulsive_points,
+                                    prepared
+                                        .mobile_points_by_layer
+                                        .get(&mover_snap.layer)
+                                        .map(Vec::as_slice)
+                                        .unwrap_or(&[]),
+                                    prepared
+                                        .mobile_lines_by_layer
+                                        .get(&mover_snap.layer)
+                                        .map(Vec::as_slice)
+                                        .unwrap_or(&[]),
+                                    prepared
+                                        .mobile_polygons_by_layer
+                                        .get(&mover_snap.layer)
+                                        .map(Vec::as_slice)
+                                        .unwrap_or(&[]),
+                                    Some(&self.world.fast_grid),
+                                    Some(&mut state),
+                                    nx,
+                                    ny,
+                                    speed,
+                                    anti_on,
+                                );
+                            (
+                                dx_step,
+                                dy_step,
+                                was_deviated && !state.pi.is_deviated(),
+                                // A successfully committed deviation expands the
+                                // blocked box, resets the counter, and Original
+                                // rebuilds the cached increment. Its
+                                // blocked-count break-through path instead uses
+                                // MoveMap and deliberately retains the old cache.
+                                state.pi.is_deviated() && state.pi.blocked_count == 0,
+                            )
+                        } else {
+                            (nx * speed, ny * speed, false, false)
                         };
-                        let pi = entity.position_iface_mut();
-                        let was_deviated = pi.is_deviated();
-                        let mut state = super::anti_collision::AntiCollisionState {
-                            pi,
-                            move_box,
-                            half_diagonal,
-                            goal_map,
-                        };
-                        let (dx_step, dy_step) = super::anti_collision::apply_anti_collision_step(
-                            mover_snap,
-                            anti_snapshots.as_slice(),
-                            &self.ai.global.repulsive_points,
-                            prepared
-                                .mobile_points_by_layer
-                                .get(&mover_snap.layer)
-                                .map(Vec::as_slice)
-                                .unwrap_or(&[]),
-                            prepared
-                                .mobile_lines_by_layer
-                                .get(&mover_snap.layer)
-                                .map(Vec::as_slice)
-                                .unwrap_or(&[]),
-                            prepared
-                                .mobile_polygons_by_layer
-                                .get(&mover_snap.layer)
-                                .map(Vec::as_slice)
-                                .unwrap_or(&[]),
-                            Some(&self.world.fast_grid),
-                            Some(&mut state),
-                            nx,
-                            ny,
-                            speed,
-                            anti_on,
-                        );
-                        (
-                            dx_step,
-                            dy_step,
-                            state.pi.is_deviated(),
-                            was_deviated && !state.pi.is_deviated(),
-                            // A successfully committed deviation expands the
-                            // blocked box, resets the counter, and Original
-                            // rebuilds the cached increment. Its
-                            // blocked-count break-through path instead uses
-                            // MoveMap and deliberately retains the old cache.
-                            state.pi.is_deviated() && state.pi.blocked_count == 0,
-                        )
-                    } else {
-                        (nx * speed, ny * speed, false, false, false)
-                    };
                     let new_pos_x;
                     let new_pos_y;
                     {
                         let elem = entity.element_data_mut();
-                        if deviated && (dx_step != 0.0 || dy_step != 0.0) {
-                            // `UpdatePositionAntiCollision` faces along the
-                            // committed deviation, then invalidates and
-                            // reconstructs the cached increment from the new
-                            // position to the original goal.  The direction is
-                            // deliberately retained by ComputeIncrementAll(false).
+                        if rebuild_after_deviation && (dx_step != 0.0 || dy_step != 0.0) {
+                            // A committed deviation faces along the step it
+                            // just took, then invalidates and reconstructs the
+                            // cached increment from the new position to the
+                            // original goal (the rebuild deliberately retains
+                            // this direction rather than recomputing it).  The
+                            // break-through barge sets its own facing inside
+                            // the anti-collision step, so it is excluded here.
                             let raw = vector_to_sector_0_to_15(dx_step, dy_step);
                             elem.set_direction_goal(if order_reverse { raw ^ 8 } else { raw });
                         }
@@ -8400,6 +8522,33 @@ impl EngineInner {
                         }
                         new_pos_x = pm.x;
                         new_pos_y = pm.y;
+                    }
+
+                    // Refresh the movement forecast used to lead moving
+                    // targets (arrow / stone / apple aiming).  This sits at
+                    // the same point as the position commit: after the
+                    // anti-collision step, using the effective distance and
+                    // the wait time of the frame the sprite has just
+                    // reached.  A blocked step aborts before reaching it.
+                    //
+                    // The fast climb arms commit two motion calls in one
+                    // tick; only the later one's distance survives in the
+                    // forecast, so prefer the second speed when it moved.
+                    if !entity.position_iface().is_blocked() {
+                        let forecast_distance = match split_motion_speeds {
+                            Some((_, second)) if second != 0.0 => second,
+                            Some((first, _)) => first,
+                            None => speed,
+                        };
+                        if forecast_distance != 0.0 {
+                            let elem = entity.element_data_mut();
+                            let wait = elem
+                                .sprite
+                                .wait_time(elem.sprite.current_row, elem.sprite.current_frame);
+                            elem.sprite
+                                .position_iface
+                                .update_forecasted_movement(forecast_distance, wait + 1);
+                        }
                     }
 
                     // Water splash titbit emission.  Every walk tick
@@ -8578,10 +8727,8 @@ impl EngineInner {
                 "considered queuing elevation crossing"
             );
             if eligible_for_crossing {
-                if new_position_in_bounds {
-                    line_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
-                    non_elevation_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
-                }
+                line_cross_checks.push((entity_id, old_pos, entity_layer));
+                non_elevation_cross_checks.push((entity_id, old_pos, entity_layer));
             }
             // Order pops are drained after all actors so the current order is
             // still physically at the front here. Treat an already-queued
@@ -8676,6 +8823,31 @@ impl EngineInner {
         for entity_id in door_pass_transition_completion_effects {
             self.apply_door_pass_transition_completion_side_effects(assets, entity_id);
         }
+        // Resolve every queued crossing segment against the actor's live
+        // position now that all Execute-arm completion branches have run.
+        // CheckForLineCrossing samples GetPositionMap() at this point and
+        // gathers the crossed lines once; the elevation swap and the
+        // patch/script/sound tail then both work off that single segment,
+        // so the endpoint must not be re-sampled between the two passes.
+        // The in-bounds guard is the Original's GetBoxMap().IsInside early
+        // return, likewise evaluated on the live position.
+        let resolve_cross_checks = |engine: &Self, queued: Vec<(EntityId, MapPoint, u16)>| {
+            queued
+                .into_iter()
+                .filter_map(|(entity_id, old_pos, layer)| {
+                    let new_pos = engine.get_entity(entity_id)?.element_data().position_map();
+                    engine
+                        .world
+                        .fast_grid
+                        .level
+                        .map_bbox
+                        .contains_point(new_pos)
+                        .then_some((entity_id, old_pos, new_pos, layer))
+                })
+                .collect::<Vec<_>>()
+        };
+        let line_cross_checks = resolve_cross_checks(self, line_cross_checks);
+        let non_elevation_cross_checks = resolve_cross_checks(self, non_elevation_cross_checks);
         // Dispatch elevation-line crossings detected during the loop.
         // Runs as a post-pass after the per-actor movement update.
         // When a human actor crosses an elevation line, we also fire
@@ -10317,8 +10489,36 @@ impl EngineInner {
         // lift translation still applies to non-sword and authored climb
         // movement.
         if !sword_movement_context {
+            // The sword / shield / corpse movement tokens are only ever
+            // assigned to an element whose post-transition posture is
+            // Upright, so a movement that reaches a wall or ladder carries
+            // the plain walk or run action and the lift sector answers a run
+            // with the fast climb. Rust can still arrive here holding a
+            // carried-over variant token; normalise it to the speed the
+            // element is actually moving at before the lift translates it.
+            let lift_input = if matches!(
+                posture_after,
+                crate::element::Posture::OnWall | crate::element::Posture::OnLadder
+            ) && matches!(
+                move_action,
+                OrderType::WalkingUpright
+                    | OrderType::RunningUpright
+                    | OrderType::WalkingWithSword
+                    | OrderType::RunningWithSword
+                    | OrderType::WalkingWithShield
+                    | OrderType::WalkingCrouched
+                    | OrderType::WalkingWithCorpse
+            ) {
+                if is_fast {
+                    OrderType::RunningUpright
+                } else {
+                    OrderType::WalkingUpright
+                }
+            } else {
+                move_action
+            };
             move_action =
-                self.determine_lift_movement_animation(owner, posture_after, move_action, dest);
+                self.determine_lift_movement_animation(owner, posture_after, lift_input, dest);
         }
         // Write the rewritten action back onto the movement sequence
         // element so downstream consumers (refresh-seek, post-process,

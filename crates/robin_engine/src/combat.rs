@@ -178,6 +178,10 @@ pub struct ConcussionContext {
     /// When true, bypass the `script_locked && old >= WAKEUP_THRESHOLD`
     /// stay-asleep clause so a script can force-wake a script-locked NPC.
     pub force_value: bool,
+    /// Civilian carrying an attached scroll.  Such a civilian silently
+    /// discards life-point loss and concussion; every other part of the
+    /// damage pipeline — including the protection rolls — still runs.
+    pub scroll_attached: bool,
 }
 
 // ─── Concussion result ─────────────────────────────────────────────
@@ -351,7 +355,7 @@ pub fn add_concussion(
     life_points: i16,
     ctx: &ConcussionContext,
 ) -> ConcussionOutcome {
-    if ctx.is_invulnerable {
+    if ctx.is_invulnerable || ctx.scroll_attached {
         return ConcussionOutcome::NoChange;
     }
 
@@ -492,14 +496,20 @@ pub fn receive_sword_damage(
                     attacker.is_rank_soldier,
                 );
                 if cutting > 0 {
-                    get_wounded(
-                        life_points,
-                        cutting,
-                        concussion_ctx.is_invulnerable,
-                        params.max_life_points,
-                        concussion_ctx.is_sherwood_pc,
-                    );
-                    cutting_inflicted = cutting;
+                    // A scroll-carrying civilian overrides the wounding
+                    // primitive to a no-op, but the strike still counts as
+                    // cutting damage for the caller's translation and
+                    // sound decisions.
+                    if !concussion_ctx.scroll_attached {
+                        get_wounded(
+                            life_points,
+                            cutting,
+                            concussion_ctx.is_invulnerable,
+                            params.max_life_points,
+                            concussion_ctx.is_sherwood_pc,
+                        );
+                        cutting_inflicted = cutting;
+                    }
                     result |= SwordDamageResult::CUTTING_DAMAGE;
                 }
             }
@@ -1270,8 +1280,10 @@ pub struct StrikeSelectionContext<'a> {
     /// damage path.
     pub attacker_elevation: f32,
     pub attacker_camp: Camp,
-    /// Whether the attacker is currently in a swordfight (affects straight
-    /// strike targeting — only principal opponent when true).
+    /// Whether the attacker is currently in a swordfight, i.e. holds a
+    /// non-empty opponent list. False aborts the whole proposal (after the
+    /// skill draw); when true it also narrows straight-strike targeting to
+    /// the principal opponent.
     pub is_swordfighting: bool,
     /// Frames remaining until the opponent's current action completes.
     /// Used to reject strikes whose startup animation would be too slow.
@@ -1369,6 +1381,13 @@ pub fn propose_good_sword_strike(
         } else {
             return None;
         }
+    }
+
+    // An actor with no live opponent has nothing to propose against. The
+    // bail-out sits after the skill draw (so the RNG stream advances either
+    // way) and before any boredom bookkeeping.
+    if !ctx.is_swordfighting {
+        return None;
     }
 
     let mut best_strike: Option<SwordStrike> = None;

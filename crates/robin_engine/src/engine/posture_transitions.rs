@@ -1056,9 +1056,18 @@ impl EngineInner {
     /// Cumulative pixel distance of a given animation on the actor's
     /// current sprite. Returns `None` if the actor has no sprite or
     /// the animation isn't mapped to a row.
-    fn sprite_distance_for_animation(&self, entity: EntityId, anim: OrderType) -> Option<i16> {
-        let entity = self.get_entity(entity)?;
-        Some(entity.element_data().sprite.distance_for_animation(anim))
+    fn sprite_distance_for_animation(&self, entity_id: EntityId, anim: OrderType) -> Option<i16> {
+        let entity = self.get_entity(entity_id)?;
+        let sprite = &entity.element_data().sprite;
+        let distance = sprite.distance_for_animation(anim);
+        tracing::trace!(
+            owner = ?entity_id,
+            ?anim,
+            row = ?sprite.row_for_action(anim),
+            distance,
+            "transition animation distance lookup"
+        );
+        Some(distance)
     }
 }
 

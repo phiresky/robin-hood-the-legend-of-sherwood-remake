@@ -175,6 +175,18 @@ pub struct CampUnconsciousSoldierInfo {
     pub knocked_out_in_money_fight: bool,
 }
 
+/// One rank-soldier NPC considered by `CommandSoldiersToAttack`, in NPC
+/// registry order and without any camp filter.
+#[derive(Debug, Clone)]
+pub struct AlertSoldierCandidate {
+    pub handle: NpcHandle,
+    pub position: Position,
+    pub elevation: f32,
+    pub is_rider: bool,
+    pub view_radius: u16,
+    pub in_building: bool,
+}
+
 /// Lightweight snapshot of a same-camp soldier used by alert functions
 /// (`alert_officer`, `alert_soldiers`).  Populated by the engine each tick
 /// for all soldiers in the same camp, regardless of combat state.
@@ -324,6 +336,8 @@ pub(crate) fn soldier_detects_detection_point_360(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+#[track_caller]
 pub(crate) fn soldier_detects_target_360(
     viewer_position: Position,
     viewer_ground_z: f32,
@@ -395,43 +409,6 @@ pub fn soldier_is_able_to_help_state(
     }
 }
 
-/// 180-degree detection check evaluated from the perspective of an
-/// arbitrary [`FighterSnapshot`] (not necessarily `self`).  Used by
-/// `is_too_proud_to_attack` to ask whether a lower-pride ally is
-/// observing our primary target.
-pub(super) fn fighter_detects_position_180(
-    viewer: &FighterSnapshot,
-    target: Position,
-    sq_standard_view_radius: f32,
-) -> bool {
-    if !viewer.is_able_to_fight {
-        return false;
-    }
-
-    let dx = target.x - viewer.position.x;
-    let dy = (target.y - viewer.position.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-    let sq_distance = dx * dx + dy * dy;
-    if sq_distance > sq_standard_view_radius {
-        return false;
-    }
-
-    let dir = crate::shadow_polygon::sector_to_direction(viewer.direction as i16);
-    let fx = dir[0];
-    let fy = dir[1] * crate::position_interface::INVERSE_ASPECT_RATIO;
-
-    if sq_distance < 50.0 * 50.0 {
-        let fwd_len = dx * fx + dy * fy;
-        let fc_x = fx * fwd_len;
-        let fc_y = fy * fwd_len;
-        let perp_sq = (dx - fc_x) * (dx - fc_x) + (dy - fc_y) * (dy - fc_y);
-        if perp_sq >= fwd_len {
-            return true;
-        }
-    }
-
-    dx * fx + dy * fy >= 0.0
-}
-
 pub(super) fn soldier_detects_position_180(
     viewer: &CampSoldierInfo,
     target: Position,
@@ -468,9 +445,13 @@ pub(crate) fn detects_position_180_raw(
         return false;
     }
 
+    // The direction vector is built by compressing the sector table's Y by
+    // ASPECT_RATIO and then stretching it back by INVERSE_ASPECT_RATIO. The
+    // shared Rust table already holds the resulting uncompressed unit vector,
+    // so stretching here a second time would narrow the forward half-plane.
     let dir = crate::shadow_polygon::sector_to_direction(viewer_direction as i16);
     let fx = dir[0];
-    let fy = dir[1] * crate::position_interface::INVERSE_ASPECT_RATIO;
+    let fy = dir[1];
 
     if sq_distance < 50.0 * 50.0 {
         let fwd_len = dx * fx + dy * fy;
@@ -559,8 +540,11 @@ pub struct FighterSnapshot {
     pub in_sword_action_state: bool,
     /// Fighter's ground-plane elevation (world Z). Used by the
     /// archer run-to-archery-point path to remember the enemy's Z
-    /// when picking a bow posture.
-    pub elevation: u16,
+    /// when picking a bow posture, and to rebuild the fighter's world
+    /// position for the max-norm consideration radius. Kept at full
+    /// float precision: truncating it moved cross-layer fighters by up
+    /// to a unit and flipped boundary distance gates.
+    pub elevation: f32,
     /// Position the fighter is moving to (or current position for stationary
     /// fighters). Used by `propose_good_combat_position` to score friends at
     /// their *intended* combat position rather than their current pose.
@@ -651,6 +635,54 @@ pub(super) fn get_normal_right(v: (f32, f32)) -> (f32, f32) {
 /// Position difference as a 2D vector.
 pub(super) fn pos_diff(a: &Position, b: &Position) -> (f32, f32) {
     (a.x - b.x, a.y - b.y)
+}
+
+/// The AI's own squared distance metric: a stretched **3D** norm.
+///
+/// The elements' world-space points are subtracted, the Y component is
+/// stretched by `INVERSE_ASPECT_RATIO`, and all three components are
+/// squared. Positions in the AI snapshots are map-space, so world Y is
+/// recovered as `map_y + elevation`.
+///
+/// A flat 2D `square_norm` is not a substitute: it both under-reports
+/// screen-vertical separation and ignores height, so a soldier on a
+/// rampart reads as adjacent to one on the ground below.
+pub(super) fn ai_square_distance(
+    target: &Position,
+    target_elevation: f32,
+    me: &Position,
+    me_elevation: f32,
+) -> f32 {
+    let dx = target.x - me.x;
+    let dz = target_elevation - me_elevation;
+    let dy = ((target.y + target_elevation) - (me.y + me_elevation))
+        * crate::position_interface::INVERSE_ASPECT_RATIO;
+    dx * dx + dy * dy + dz * dz
+}
+
+/// The AI's `MaxNormDistance`: the stretched **3D** Chebyshev distance.
+///
+/// The world-space points are subtracted, the Y component is stretched by
+/// `INVERSE_ASPECT_RATIO`, and the largest absolute component wins.
+/// Snapshot positions are map-space, so world Y is recovered as
+/// `map_y + elevation` exactly as [`ai_square_distance`] does.
+///
+/// A 2D max-norm over raw map coordinates is not a substitute. Map Y
+/// already carries the elevation as a projection offset, so a friend one
+/// layer up reads as roughly twice their true separation and drops out of
+/// every consideration radius that should have contained them.
+pub(super) fn ai_max_norm_distance(
+    target: &Position,
+    target_elevation: f32,
+    me: &Position,
+    me_elevation: f32,
+) -> f32 {
+    let dx = (target.x - me.x).abs();
+    let dz = (target_elevation - me_elevation).abs();
+    let dy = (((target.y + target_elevation) - (me.y + me_elevation))
+        * crate::position_interface::INVERSE_ASPECT_RATIO)
+        .abs();
+    dx.max(dy).max(dz)
 }
 
 /// Convert a raw 2D map-space vector `(target - me)` to a 0–15 sector.

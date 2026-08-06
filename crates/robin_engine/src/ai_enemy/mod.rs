@@ -24,7 +24,7 @@ use crate::ai::*;
 use crate::entity_id::PcId;
 use crate::parameters_ai;
 use crate::position_interface::ASPECT_RATIO;
-use util::{fighter_detects_position_180, soldier_detects_position_180};
+use util::soldier_detects_position_180;
 
 // ---------------------------------------------------------------------------
 // EnemyAi — extends AiController with soldier-specific state
@@ -556,47 +556,49 @@ impl EnemyAi {
             return true;
         }
 
-        // Check if any lower-pride ally is engaging or observing our target
+        // Check if any lower-pride ally is engaging or observing our
+        // target. Original walks `mlistUs` — the allies that already
+        // passed this decision's own IsDetecting360Degrees gate — in the
+        // order BattleDecisions inserted them, not a fresh proximity list.
         let my_pride = self.soldier_profile_pride;
-        for f in &tick.nearby_fighters {
-            if !f.is_friendly || f.handle == self.base.me || !f.is_able_to_fight {
+        for &friend in &self.base.list_us {
+            if friend == self.base.me {
                 continue;
             }
-            if !f.is_soldier {
+            // PCs on the us-list fail Original's `IsSoldier()` test and
+            // are absent from the camp-soldier snapshot.
+            let Some(f) = tick
+                .camp_soldiers
+                .iter()
+                .find(|soldier| soldier.handle == friend)
+            else {
+                continue;
+            };
+            if !f.is_able_to_fight {
                 continue;
             }
             // Only consider allies with lower pride
-            if f.soldier_profile_pride >= my_pride {
+            if f.pride >= my_pride {
                 continue;
             }
             // Original tests the broad `_ANY_SWORDFIGHT_SUBSTATE_` AI
             // family here, not the actor's physical sword relationship.
             // Approaching allies (RunningToEnemy/WalkingToEnemy/Charging)
             // already count as committed to the same target.
-            if is_any_swordfight_substate(f.current_substate)
+            if is_any_swordfight_substate(f.ai_substate as u32)
                 && f.primary_target == self.base.primary_target
             {
                 return true;
             }
-            // Is this soldier observing (near our target)? Requires
-            // the observer to be IsDetecting180Degrees(target).
+            // Is this soldier observing our target? The 180° test runs
+            // from the observing ally's own eyes, radius and facing.
             let observe_substates = [
-                Substate::AttackingApproachToObserve as u32,
-                Substate::AttackingObserve as u32,
-                Substate::AttackingObserveAndMove as u32,
+                Substate::AttackingApproachToObserve,
+                Substate::AttackingObserve,
+                Substate::AttackingObserveAndMove,
             ];
-            if observe_substates.contains(&f.current_substate)
-                && let Some(target_view) = ctx.entity_view(self.base.primary_target)
-                && let Some(observer) = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|soldier| soldier.handle == f.handle)
-                && !observer.in_building
-                && fighter_detects_position_180(
-                    f,
-                    target_view.position,
-                    (observer.view_radius as f32).powi(2),
-                )
+            if observe_substates.contains(&f.ai_substate)
+                && self.is_detecting_180_degrees_from(friend, self.base.primary_target, ctx, tick)
             {
                 return true;
             }
@@ -1912,8 +1914,9 @@ impl EnemyAi {
             target_unconscious: view.is_unconscious,
             target_passing_door: view.passing_door,
         };
+        let viewer_entity = view_radius_memo_viewer(self.base.me, ctx);
         crate::ai_vision::compute_visibility_with_effective_radius(&q, || {
-            ctx.compute_view_radius_cached(view.obstacle_idx, || {
+            ctx.compute_view_radius_cached(viewer_entity, view.obstacle_idx, || {
                 crate::ai_vision::compute_view_radius(
                     q.viewer_world,
                     ctx.self_view_radius,
@@ -2233,135 +2236,240 @@ impl EnemyAi {
             in_building = ctx.in_building,
             "is_detecting_180_degrees: entry"
         );
-        // Step 1: viewer in a building — always returns false.
-        if ctx.in_building {
-            return false;
-        }
-        let Some(view) = ctx.entity_view(target) else {
-            tracing::trace!(
-                target,
-                "is_detecting_180_degrees: entity_view lookup failed"
-            );
-            return false;
-        };
-        // Step 2: both must be able to act — `is_able_to_fight`
-        // is the closest standalone "active" predicate we have.
-        if !view.is_able_to_fight {
-            return false;
-        }
-
         let viewer_eye = crate::stealth::eye_point_xy(
             crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y),
             ctx.posture,
             ctx.direction as i16,
             false,
         );
-        let viewer_eye_z =
-            ctx.elevation + crate::stealth::eye_z_for_posture(ctx.posture, ctx.self_is_rider);
-        let target_detection_xy = crate::stealth::detection_point_xy(
-            crate::coordinates::MapPoint::new(view.position.x, view.position.y),
-            view.posture,
-            view.direction as i16,
-        );
-        let target_detection_z =
-            view.elevation + crate::stealth::detection_z_for_posture(view.posture, view.is_rider);
-        let viewer_eye_ground =
-            crate::coordinates::GroundPoint::from_map_and_z(viewer_eye, ctx.elevation);
-        let target_detection_ground =
-            crate::coordinates::GroundPoint::from_map_and_z(target_detection_xy, view.elevation);
-
-        // Aspect-ratio-stretched view vector (`INVERSE_ASPECT_RATIO`
-        // on the Y component), from viewer eye to target detection point.
-        let dx = target_detection_ground.x - viewer_eye_ground.x;
-        let dy = (target_detection_ground.y - viewer_eye_ground.y)
-            * crate::position_interface::INVERSE_ASPECT_RATIO;
-        let sq_distance = dx * dx + dy * dy;
-        tracing::trace!(
-            target,
-            viewer_x = viewer_eye_ground.x,
-            viewer_y = viewer_eye_ground.y,
-            viewer_z = viewer_eye_z,
-            target_x = target_detection_ground.x,
-            target_y = target_detection_ground.y,
-            sq_distance,
-            sq_view_radius = ctx.sq_self_view_radius,
-            "is_detecting_180_degrees: geometry"
-        );
-        if sq_distance > ctx.sq_self_view_radius {
-            return false;
-        }
-
-        // `GetDirectionVector()` first compresses the table Y by
-        // ASPECT_RATIO; Original then stretches it back here.  The shared
-        // Rust table is already the resulting uncompressed unit vector, so
-        // applying INVERSE_ASPECT_RATIO a second time would narrow the
-        // forward half-plane incorrectly.
-        let dir = crate::shadow_polygon::sector_to_direction(ctx.direction as i16);
-        let fx = dir[0];
-        let fy = dir[1];
-
-        // Step 4: very-near "beside me" short-circuit.
-        if sq_distance < 50.0 * 50.0 {
-            let fwd_len = dx * fx + dy * fy;
-            let fc_x = fx * fwd_len;
-            let fc_y = fy * fwd_len;
-            let perp_sq = (dx - fc_x) * (dx - fc_x) + (dy - fc_y) * (dy - fc_y);
-            if perp_sq >= fwd_len {
-                return true;
-            }
-        }
-
-        // Step 5: forward half-plane.
-        if dx * fx + dy * fy < 0.0 {
-            return false;
-        }
-
-        // Step 6: second, tighter radius gate against the spherical and
-        // light-modulated radius. At night and in fog this is where the
-        // viewer samples the surrounding shadow-light sectors, so it must
-        // run for every target that survives the gates above — and only for
-        // those, since the sampling is observable through the shared
-        // per-surface radius cache.
-        let sight_obstacles = ctx.obstacle_list();
-        let target_obstacle = view.obstacle_idx.map(|handle| {
-            sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
-                panic!(
-                    "is_detecting_180_degrees: target {target} requires missing sight obstacle {handle}"
-                )
-            })
-        });
-        let effective_view_radius = ctx.compute_view_radius_cached(view.obstacle_idx, || {
-            crate::ai_vision::compute_view_radius(
-                crate::coordinates::WorldPoint3D::new(
-                    viewer_eye_ground.x,
-                    viewer_eye_ground.y,
-                    viewer_eye_z,
-                ),
-                ctx.self_view_radius,
-                (ctx.self_view_direction[0], ctx.self_view_direction[1]),
-                ctx.self_real_half_aperture,
-                ctx.is_night_or_fog,
-                &ctx.fast_grid,
-                sight_obstacles,
-                target_obstacle,
-            )
-        });
-        if sq_distance > effective_view_radius * effective_view_radius {
-            return false;
-        }
-
-        crate::sight_obstacle::is_reachable_3d(
-            ctx.obstacle_list(),
-            [viewer_eye_ground.x, viewer_eye_ground.y, viewer_eye_z],
-            [
-                target_detection_ground.x,
-                target_detection_ground.y,
-                target_detection_z,
-            ],
-            crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
-        )
+        let viewer = Viewer180 {
+            entity: view_radius_memo_viewer(self.base.me, ctx),
+            eye_ground: crate::coordinates::GroundPoint::from_map_and_z(viewer_eye, ctx.elevation),
+            eye_z: ctx.elevation
+                + crate::stealth::eye_z_for_posture(ctx.posture, ctx.self_is_rider),
+            direction: ctx.direction,
+            in_building: ctx.in_building,
+            view_radius: ctx.self_view_radius,
+            sq_view_radius: ctx.sq_self_view_radius,
+            view_direction: ctx.self_view_direction,
+            real_half_aperture: ctx.self_real_half_aperture,
+        };
+        detects_180_degrees(&viewer, target, ctx)
     }
 
+    /// `IsDetecting180Degrees` evaluated on another soldier's behalf.
+    ///
+    /// `IsTooProudToAttack` asks whether a lower-pride ally is observing
+    /// our primary target, so the viewer of that test is the ally, not the
+    /// deciding soldier. The geometry comes from the ally's entity view;
+    /// the post-`RefreshView` radius, cone direction and aperture come from
+    /// its camp-soldier snapshot.
+    fn is_detecting_180_degrees_from(
+        &self,
+        viewer_handle: HumanHandle,
+        target: HumanHandle,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) -> bool {
+        let Some(viewer_view) = ctx.entity_view(viewer_handle) else {
+            tracing::warn!(
+                viewer = viewer_handle,
+                target,
+                "is_detecting_180_degrees_from: viewer has no entity view"
+            );
+            return false;
+        };
+        let Some(viewer_snapshot) = tick
+            .camp_soldiers
+            .iter()
+            .find(|soldier| soldier.handle == viewer_handle)
+        else {
+            tracing::warn!(
+                viewer = viewer_handle,
+                target,
+                "is_detecting_180_degrees_from: viewer is absent from the camp-soldier snapshot"
+            );
+            return false;
+        };
+        let viewer_eye = crate::stealth::eye_point_xy(
+            crate::coordinates::MapPoint::new(
+                viewer_view.detection_position.x,
+                viewer_view.detection_position.y,
+            ),
+            viewer_view.posture,
+            viewer_view.direction as i16,
+            false,
+        );
+        let viewer = Viewer180 {
+            entity: view_radius_memo_viewer(viewer_handle, ctx),
+            eye_ground: crate::coordinates::GroundPoint::from_map_and_z(
+                viewer_eye,
+                viewer_view.elevation,
+            ),
+            eye_z: viewer_view.elevation
+                + crate::stealth::eye_z_for_posture(viewer_view.posture, viewer_view.is_rider),
+            direction: viewer_view.direction,
+            in_building: viewer_view.in_building,
+            view_radius: viewer_snapshot.view_radius,
+            sq_view_radius: (viewer_snapshot.view_radius as f32)
+                * (viewer_snapshot.view_radius as f32),
+            view_direction: viewer_snapshot.view_direction,
+            real_half_aperture: viewer_snapshot.real_half_aperture,
+        };
+        detects_180_degrees(&viewer, target, ctx)
+    }
+}
+
+/// Resolve the identity a `ComputeViewRadius` result is stored under.
+/// The memo lives on the surface and records which viewer produced it, so
+/// the acting NPC and any ally it reasons through must be distinguishable.
+fn view_radius_memo_viewer(handle: HumanHandle, ctx: &AiContext) -> crate::element::EntityId {
+    ctx.entity_id(handle).unwrap_or_else(|| {
+        panic!("view-radius memo viewer {handle} is absent from the AI entity view")
+    })
+}
+
+/// Viewer half of a 180° detection test, so the test can be evaluated
+/// either from the acting NPC or from an ally it is reasoning about.
+struct Viewer180 {
+    /// Identity the surface radius memo is keyed by — the ally when the
+    /// test runs through an ally's eyes, not the deciding soldier.
+    entity: crate::element::EntityId,
+    eye_ground: crate::coordinates::GroundPoint,
+    eye_z: f32,
+    direction: u16,
+    in_building: bool,
+    view_radius: u16,
+    sq_view_radius: f32,
+    view_direction: [f32; 2],
+    real_half_aperture: f32,
+}
+
+fn detects_180_degrees(viewer: &Viewer180, target: HumanHandle, ctx: &AiContext) -> bool {
+    // Step 1: viewer in a building — always returns false.
+    if viewer.in_building {
+        return false;
+    }
+    let Some(view) = ctx.entity_view(target) else {
+        tracing::trace!(
+            target,
+            "is_detecting_180_degrees: entity_view lookup failed"
+        );
+        return false;
+    };
+    // Step 2: both must be able to act — `is_able_to_fight`
+    // is the closest standalone "active" predicate we have.
+    if !view.is_able_to_fight {
+        return false;
+    }
+
+    let viewer_eye_z = viewer.eye_z;
+    let target_detection_xy = crate::stealth::detection_point_xy(
+        crate::coordinates::MapPoint::new(view.position.x, view.position.y),
+        view.posture,
+        view.direction as i16,
+    );
+    let target_detection_z =
+        view.elevation + crate::stealth::detection_z_for_posture(view.posture, view.is_rider);
+    let viewer_eye_ground = viewer.eye_ground;
+    let target_detection_ground =
+        crate::coordinates::GroundPoint::from_map_and_z(target_detection_xy, view.elevation);
+
+    // Aspect-ratio-stretched view vector (`INVERSE_ASPECT_RATIO`
+    // on the Y component), from viewer eye to target detection point.
+    let dx = target_detection_ground.x - viewer_eye_ground.x;
+    let dy = (target_detection_ground.y - viewer_eye_ground.y)
+        * crate::position_interface::INVERSE_ASPECT_RATIO;
+    let sq_distance = dx * dx + dy * dy;
+    tracing::trace!(
+        target,
+        viewer_x = viewer_eye_ground.x,
+        viewer_y = viewer_eye_ground.y,
+        viewer_z = viewer_eye_z,
+        target_x = target_detection_ground.x,
+        target_y = target_detection_ground.y,
+        sq_distance,
+        sq_view_radius = viewer.sq_view_radius,
+        "is_detecting_180_degrees: geometry"
+    );
+    if sq_distance > viewer.sq_view_radius {
+        return false;
+    }
+
+    // `GetDirectionVector()` first compresses the table Y by
+    // ASPECT_RATIO; Original then stretches it back here.  The shared
+    // Rust table is already the resulting uncompressed unit vector, so
+    // applying INVERSE_ASPECT_RATIO a second time would narrow the
+    // forward half-plane incorrectly.
+    let dir = crate::shadow_polygon::sector_to_direction(viewer.direction as i16);
+    let fx = dir[0];
+    let fy = dir[1];
+
+    // Step 4: very-near "beside me" short-circuit.
+    if sq_distance < 50.0 * 50.0 {
+        let fwd_len = dx * fx + dy * fy;
+        let fc_x = fx * fwd_len;
+        let fc_y = fy * fwd_len;
+        let perp_sq = (dx - fc_x) * (dx - fc_x) + (dy - fc_y) * (dy - fc_y);
+        if perp_sq >= fwd_len {
+            return true;
+        }
+    }
+
+    // Step 5: forward half-plane.
+    if dx * fx + dy * fy < 0.0 {
+        return false;
+    }
+
+    // Step 6: second, tighter radius gate against the spherical and
+    // light-modulated radius. At night and in fog this is where the
+    // viewer samples the surrounding shadow-light sectors, so it must
+    // run for every target that survives the gates above — and only for
+    // those, since the sampling is observable through the shared
+    // per-surface radius cache.
+    let sight_obstacles = ctx.obstacle_list();
+    let target_obstacle = view.obstacle_idx.map(|handle| {
+        sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
+            panic!(
+                "is_detecting_180_degrees: target {target} requires missing sight obstacle {handle}"
+            )
+        })
+    });
+    let compute_radius = || {
+        crate::ai_vision::compute_view_radius(
+            crate::coordinates::WorldPoint3D::new(
+                viewer_eye_ground.x,
+                viewer_eye_ground.y,
+                viewer_eye_z,
+            ),
+            viewer.view_radius,
+            (viewer.view_direction[0], viewer.view_direction[1]),
+            viewer.real_half_aperture,
+            ctx.is_night_or_fog,
+            &ctx.fast_grid,
+            sight_obstacles,
+            target_obstacle,
+        )
+    };
+    let effective_view_radius =
+        ctx.compute_view_radius_cached(viewer.entity, view.obstacle_idx, compute_radius);
+    if sq_distance > effective_view_radius * effective_view_radius {
+        return false;
+    }
+
+    crate::sight_obstacle::is_reachable_3d(
+        ctx.obstacle_list(),
+        [viewer_eye_ground.x, viewer_eye_ground.y, viewer_eye_z],
+        [
+            target_detection_ground.x,
+            target_detection_ground.y,
+            target_detection_z,
+        ],
+        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+    )
+}
+
+impl EnemyAi {
     /// Collects visible child-civilian NPCs (alive, conscious, in
     /// `STATE_DEFAULT`), picks the nearest as the antagonist,
     /// notifies the antagonist with `CALL_YOU_JUST_WAIT` and each
@@ -2471,6 +2579,20 @@ impl EnemyAi {
         let look_dx = angle.sin();
         let look_dy = -angle.cos();
         let dot = look_dx * stare_dx + look_dy * stare_dy;
+        tracing::trace!(
+            me = self.base.me,
+            frame = ctx.frame,
+            direction = ctx.direction,
+            stare_x = ctx.self_stare_point.x,
+            stare_y = ctx.self_stare_point.y,
+            actor_x = actor_ground.x,
+            actor_y = actor_ground.y,
+            elevation = ctx.elevation,
+            eye_status = ?ctx.self_eye_status,
+            dot,
+            behind = dot < 0.0,
+            "enemy_is_behind_me"
+        );
         dot < 0.0
     }
 
@@ -4135,8 +4257,8 @@ impl EnemyAi {
 
     /// `hypothetical` corresponds to the original `bHypoteticalQuestion`
     /// flag — when true, the outdoor branch is evaluated regardless of
-    /// where the NPC currently stands. Pass `false` from live ticks and
-    /// rely on `ctx.in_building` to route to the indoor branch.
+    /// where the NPC currently stands. Pass `false` from live ticks and let
+    /// `ctx.self_is_active` / `ctx.in_building` route to the indoor branch.
     pub fn answer_question_ex(
         &self,
         question: Question,
@@ -4168,7 +4290,7 @@ impl EnemyAi {
 
         // ── Outdoor / active branch ───────────────────────────────────
         // Gate: hypothetical || (active && outside building).
-        if hypothetical || !ctx.in_building {
+        if hypothetical || (ctx.self_is_active && !ctx.in_building) {
             return match question {
                 Question::ShallITakeAle => self.soldier_profile_beer > 0,
                 Question::ShallITakeMoney => self.soldier_profile_money > 0,
@@ -4231,20 +4353,25 @@ impl EnemyAi {
 
             Question::HasTheNewTaskPriority => self.has_the_new_task_priority(),
 
-            // Default arm asserts and recurses to
-            // ShallIStayOnMyPost; recursive call is
-            // `hypothetical=false`, NPC is still indoor, so recursion
-            // re-enters this indoor branch where ShallIStayOnMyPost
-            // returns `false` (see arm above). Mirror that — the assert
-            // is debug-only.
+            // These five reach no indoor arm. The Original's default arm
+            // asserts and then recurses on ShallIStayOnMyPost; that recursion
+            // is non-hypothetical and the NPC is still indoor, so it lands on
+            // the indoor ShallIStayOnMyPost arm above and yields `false`.
+            //
+            // The assertion is not an invariant that holds: the whistle and
+            // send-out-soldier askers are reached from ordinary wondering
+            // substates with no outdoor precondition, so a soldier that heard
+            // whistling from inside a building trips it in the shipped debug
+            // build too. Only the release-build answer is behaviour, so this
+            // stays a trace rather than a panic.
             Question::ShallILookWhistle
             | Question::ShallIFollowWhistle
             | Question::ShallISeekBeforeAlertingOfficer
             | Question::ShallISeekBeforeAlertingSoldiers
             | Question::ShallISendOutSoldier => {
-                debug_assert!(
-                    false,
-                    "AnswerQuestion: indoor caller asked whistle/seek-before-alert/send-out-soldier — asserted away upstream"
+                tracing::trace!(
+                    ?question,
+                    "answer_question: indoor branch has no arm for this question; answering false"
                 );
                 false
             }
@@ -5413,11 +5540,11 @@ mod tests {
             ..AiGlobalState::default()
         };
 
-        ai.the_16th_frame(sim, 0, &ctx, &global, &tick, None, false, false);
+        ai.the_16th_frame(sim, 0, &ctx, &global, &tick, None, false, false, false);
         assert!(!ai.base.timer_is_running);
 
         global.freeze = false;
-        ai.the_16th_frame(sim, 0, &ctx, &global, &tick, None, false, false);
+        ai.the_16th_frame(sim, 0, &ctx, &global, &tick, None, false, false, false);
         assert!(ai.base.timer_is_running);
     }
 
@@ -5444,6 +5571,7 @@ mod tests {
             &AiPerTickData::stub(),
             None,
             true,
+            false,
             false,
         );
 

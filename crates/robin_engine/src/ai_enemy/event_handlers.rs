@@ -252,6 +252,16 @@ impl EnemyAi {
                 if self.base.current_state == AiState::Attacking
                     && let StimulusInfo::Human(enemy) = stimulus.info
                 {
+                    tracing::trace!(
+                        me = self.base.me,
+                        frame = ctx.frame,
+                        substate = ?self.base.current_substate,
+                        enemy,
+                        primary_target = self.base.primary_target,
+                        enemy_seen_below = self.enemy_seen_below,
+                        list_them = ?self.list_them,
+                        "OUTOFVIEW while attacking"
+                    );
                     // Lost sight of enemy while attacking.
                     match self.base.current_substate {
                         Substate::AttackingBowObservingLoading

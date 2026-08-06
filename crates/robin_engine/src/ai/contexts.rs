@@ -101,6 +101,11 @@ pub struct AiContext {
     /// per-tick engine path (unit tests, fallback fields).
     pub in_uninterruptible_command: bool,
     pub in_building: bool,
+    /// The evaluating element's own active flag. Paired with `in_building`
+    /// it forms the "active and outside a building" predicate that gates the
+    /// outdoor arm of `answer_question`: an inactive actor answers from the
+    /// indoor arm even when it is standing outdoors.
+    pub self_is_active: bool,
     pub building_sector: Option<SectorHandle>,
     pub camp: crate::element::Camp,
     pub is_swordfighting: bool,
@@ -236,8 +241,15 @@ pub struct AiContext {
     /// dispatch seeds this immediately before Think and commits it immediately
     /// after Think, allowing immutable AI handlers to preserve Original's
     /// synchronous cache semantics without sharing rollback state by `Arc`.
+    /// Each surface holds exactly one entry, tagged with the viewer that
+    /// wrote it: a lookup by any other viewer misses, and its recomputation
+    /// replaces the entry. That is the surface-slot behaviour the AI has to
+    /// reproduce when it evaluates a detection test through an ally's eyes.
     pub(crate) view_radius_cache: std::cell::RefCell<
-        std::collections::HashMap<Option<crate::position_interface::ObstacleHandle>, f32>,
+        std::collections::HashMap<
+            Option<crate::position_interface::ObstacleHandle>,
+            (crate::element::EntityId, f32),
+        >,
     >,
     /// FastFindGrid snapshot used for `IsReachable` line-of-sight queries
     /// from AI code that only has an `AiContext`.
@@ -255,16 +267,22 @@ pub struct AiContext {
 }
 
 impl AiContext {
-    pub(crate) fn seed_view_radius_cache(
-        &self,
-        cache: &crate::ai_vision::ViewRadiusCache,
-        viewer: crate::element::EntityId,
-    ) {
+    /// Import every surface entry stored for the current frame, keeping the
+    /// viewer that wrote it. Entries belonging to other viewers have to be
+    /// carried too: they are what makes this Think miss a surface an ally
+    /// already claimed earlier in the same frame.
+    pub(crate) fn seed_view_radius_cache(&self, cache: &crate::ai_vision::ViewRadiusCache) {
         let mut values = self.view_radius_cache.borrow_mut();
         values.clear();
-        if let Some(radius) = cache.get(None, viewer, self.frame) {
-            values.insert(None, radius);
-        }
+        let mut seed = |surface, entry: Option<crate::ai_vision::ViewRadiusCacheEntry>| {
+            if let Some(entry) = entry
+                && entry.frame == self.frame
+                && entry.radius != 0.0
+            {
+                values.insert(surface, (entry.viewer, entry.radius));
+            }
+        };
+        seed(None, cache.ground);
         for (index, entry) in cache.obstacles.iter().enumerate() {
             let Some(handle) = u16::try_from(index)
                 .ok()
@@ -272,37 +290,49 @@ impl AiContext {
             else {
                 continue;
             };
-            if entry.is_some()
-                && let Some(radius) = cache.get(Some(handle), viewer, self.frame)
-            {
-                values.insert(Some(handle), radius);
-            }
+            seed(Some(handle), *entry);
         }
     }
 
     pub(crate) fn compute_view_radius_cached(
         &self,
+        viewer: crate::element::EntityId,
         surface: Option<crate::position_interface::ObstacleHandle>,
         compute: impl FnOnce() -> f32,
     ) -> f32 {
-        if let Some(radius) = self.view_radius_cache.borrow().get(&surface).copied() {
+        if let Some(&(stored_viewer, radius)) = self.view_radius_cache.borrow().get(&surface)
+            && stored_viewer == viewer
+        {
             return radius;
         }
         let radius = compute();
         // Original's getter uses zero as the miss sentinel even after its
         // setter stored a computed zero.
         if radius != 0.0 {
-            self.view_radius_cache.borrow_mut().insert(surface, radius);
+            self.view_radius_cache
+                .borrow_mut()
+                .insert(surface, (viewer, radius));
         }
         radius
     }
 
-    pub(crate) fn commit_view_radius_cache(
-        &self,
-        cache: &mut crate::ai_vision::ViewRadiusCache,
-        viewer: crate::element::EntityId,
-    ) {
-        for (&surface, &radius) in self.view_radius_cache.borrow().iter() {
+    /// Fold another context's surface-radius entries into this one.
+    ///
+    /// The memo lives on the surface, not on the context, so a radius any
+    /// clone of this context computed during a Think has to survive back to
+    /// the context the caller later commits from. Without this the writes are
+    /// dropped with the clone and the next Think in the same frame recomputes
+    /// a radius the surface already knows — visible as extra night/fog
+    /// barycentre rays.
+    pub(crate) fn absorb_view_radius_cache(&self, other: &Self) {
+        let mut values = self.view_radius_cache.borrow_mut();
+        for (&surface, &entry) in other.view_radius_cache.borrow().iter() {
+            values.insert(surface, entry);
+        }
+    }
+
+    pub(crate) fn commit_view_radius_cache(&self, cache: &mut crate::ai_vision::ViewRadiusCache) {
+        for (&surface, &(viewer, radius)) in self.view_radius_cache.borrow().iter() {
             cache.set(surface, viewer, self.frame, radius);
         }
     }
@@ -592,6 +622,9 @@ pub struct AiPerTickData {
     /// `alert_soldiers`).  Populated every tick from the engine's soldier
     /// snapshot list, filtered to the evaluating NPC's camp.
     pub camp_soldiers: Vec<crate::ai_enemy::CampSoldierInfo>,
+    /// Rank-soldier NPCs of every camp in registry order, the domain
+    /// `CommandSoldiersToAttack` scans.
+    pub alert_soldier_candidates: Vec<crate::ai_enemy::AlertSoldierCandidate>,
     /// Same-camp soldiers who are currently unconscious + alive.
     /// Populated alongside `camp_soldiers`, which skips unconscious
     /// entries; the money-fight scans walk the whole camp registry, so
@@ -673,12 +706,14 @@ pub struct AiPerTickData {
     /// approaching their own primary target.
     pub friend_swap_candidates: Vec<FriendSwapCandidate>,
 
-    /// Pre-computed fallback position for the "avenger on the roof"
-    /// branch. Populated by the engine when `couldnt_reachpoint` is set
-    /// and [`crate::gate::compute_avenger_wait_position`] finds a
-    /// blocking gate on the path from the primary target back to the
-    /// evaluating NPC. `None` when the branch doesn't apply.
-    pub avenger_on_roof_wait_position: Option<Position>,
+    /// Pre-computed fallback positions for the "avenger on the roof"
+    /// branch, keyed by target handle. Populated by the engine when
+    /// `couldnt_reachpoint` is set, for the current primary target and
+    /// every personal enemy-list candidate a decision arm could re-pick,
+    /// wherever [`crate::gate::compute_avenger_wait_position`] finds a
+    /// blocking gate on the path from that target back to the
+    /// evaluating NPC. Empty when the branch doesn't apply.
+    pub avenger_on_roof_wait_positions: Vec<(HumanHandle, Position)>,
 
     /// Handles in `me`'s `DETECTABLE_ENEMY` list whose `seen_last_frame`
     /// flag is set. Used by `RefreshArrowProtection` so a shield bearer
@@ -774,6 +809,17 @@ pub struct FriendSwapCandidate {
 }
 
 impl AiPerTickData {
+    /// Look up the precomputed avenger-on-roof wait position for a
+    /// specific target handle. Decision arms re-pick their target
+    /// mid-tick, so each caller resolves its own live handle here
+    /// instead of reusing a single snapshot-target position.
+    pub fn avenger_wait_position_for(&self, target: HumanHandle) -> Option<Position> {
+        self.avenger_on_roof_wait_positions
+            .iter()
+            .find(|(handle, _)| *handle == target)
+            .map(|&(_, pos)| pos)
+    }
+
     /// Return the profile table required by swordfight evaluation.
     pub fn required_profile_manager(&self) -> &crate::profiles::ProfileManager {
         self.profile_manager.as_deref().expect(
@@ -824,6 +870,7 @@ impl AiPerTickData {
             reconsider_swordfight_enemies: Vec::new(),
             reconsider_swordfight_friends: Vec::new(),
             camp_soldiers: Vec::new(),
+            alert_soldier_candidates: Vec::new(),
             camp_unconscious_soldiers: Vec::new(),
             visible_seeking_friends: 0,
             friend_seek_clears_help_flag: false,
@@ -846,7 +893,7 @@ impl AiPerTickData {
             primary_target_in_lift: false,
             primary_target_lift_entry: None,
             friend_swap_candidates: Vec::new(),
-            avenger_on_roof_wait_position: None,
+            avenger_on_roof_wait_positions: Vec::new(),
             seen_last_frame_enemies: Vec::new(),
             my_exit_door: None,
             phalanx_member_them_lists: Vec::new(),
@@ -1212,6 +1259,9 @@ impl AiGlobalState {
                     let max_norm = dx.abs().max(dy.abs());
                     if max_norm <= 5.0 {
                         sp.position = door_info.position_in;
+                        // First matching door wins: the point has moved
+                        // inside, so later doors must not re-teleport it.
+                        break;
                     }
                 }
             }

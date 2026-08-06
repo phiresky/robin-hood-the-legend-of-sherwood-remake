@@ -425,6 +425,14 @@ impl EnemyAi {
             self.my_seek_points.push(2222);
         }
 
+        tracing::trace!(
+            npc = self.base.me,
+            frame = ctx.frame,
+            seek_flags = ?self.seek_flags,
+            list = ?self.my_seek_points,
+            "SeekArea built its seek point list"
+        );
+
         // Clear actual seek point (critical — missing caused memory
         // bugs).
         self.actual_seek_point = None;
@@ -482,9 +490,11 @@ impl EnemyAi {
         let last_pos = resolve_pos(*self.my_seek_points.last().unwrap());
         let mut best_cost = pos_distance(sp_pos, last_pos);
         if sp_pos.level != last_pos.level {
-            // Scale the penalty by the layer delta.
+            // Signed layer delta, not its magnitude: descending to a lower
+            // layer makes appending *cheaper* here. The in-list insert cost
+            // below uses a flat penalty instead, so the two are asymmetric.
             best_cost += parameters_ai::LAYER_CHANGE_PENALTY
-                * (sp_pos.level as i32 - last_pos.level as i32).abs() as f32;
+                * (sp_pos.level as i32 - last_pos.level as i32) as f32;
         }
         let mut best_index = self.my_seek_points.len();
 

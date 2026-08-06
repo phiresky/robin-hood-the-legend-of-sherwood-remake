@@ -11,6 +11,34 @@ use crate::{
     sight_obstacle::SightObstacle,
 };
 
+/// Encode a map keyed by [`EntityId`] as a pair list.
+///
+/// A JSON object key must be a string, and `EntityId` is an enum; a pair list
+/// also keeps the length known up front, which the binary rollback snapshot
+/// encoder requires.
+mod entity_creation_order_pairs {
+    use super::{BTreeMap, EntityId};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(
+        map: &BTreeMap<EntityId, u32>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        map.iter()
+            .map(|(id, order)| (*id, *order))
+            .collect::<Vec<(EntityId, u32)>>()
+            .serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<BTreeMap<EntityId, u32>, D::Error> {
+        Ok(Vec::<(EntityId, u32)>::deserialize(deserializer)?
+            .into_iter()
+            .collect())
+    }
+}
+
 /// Authoritative entity storage and the spatial state indexed alongside it.
 ///
 /// The parallel collections remain stored in their original order. Validation
@@ -42,11 +70,10 @@ pub(crate) struct WorldState {
     /// Rust `Entities` slot, and Rust batches authored entity categories
     /// differently while loading a mission.
     ///
-    /// `EntityId` is a data-carrying enum, so JSON snapshots need the
-    /// any-key adapter to keep the map serializable. The sized variant
-    /// reports the map length so compact encoders that require
-    /// `SerializeSeq` lengths (rollback snapshots) also work.
-    #[serde(with = "serde_json_any_key::any_key_map_sized")]
+    /// `EntityId` is an enum, so it cannot be a JSON object key. Encode the
+    /// map as a length-prefixed pair list, which both the JSON engine dump
+    /// and the length-strict binary rollback snapshot accept.
+    #[serde(with = "entity_creation_order_pairs")]
     pub(crate) original_creation_order_by_entity: BTreeMap<EntityId, u32>,
     /// Original process-global `gulCreationCounter`.
     pub(crate) next_original_creation_order: u32,
@@ -86,6 +113,10 @@ impl WorldState {
         self.next_original_creation_order = creation_order
             .checked_add(1)
             .expect("Original element creation counter overflow");
+        tracing::trace!(
+            target: "robin_engine::creation_order",
+            "assign creation order {creation_order} to {entity_id}"
+        );
         if let Some(previous) = self
             .original_creation_order_by_entity
             .insert(entity_id, creation_order)

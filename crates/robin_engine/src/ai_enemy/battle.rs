@@ -46,23 +46,50 @@ fn enough_nearer_friends_to_observe(
 #[track_caller]
 fn battle_friend_detected_360(
     ctx: &AiContext,
+    me: HumanHandle,
+    friend: HumanHandle,
     friend_position_world: crate::coordinates::WorldPoint3D,
     friend_direction: u16,
     target: &crate::ai_entity_view::AiEntityView,
 ) -> bool {
-    super::soldier_detects_detection_point_360(
+    let detection_point = crate::stealth::detection_point_world(
+        friend_position_world,
+        target.posture,
+        friend_direction as i16,
+        target.is_rider,
+    );
+    let detected = super::soldier_detects_detection_point_360(
         ctx.self_upright_eye_world,
         ctx.self_view_radius,
         ctx.in_building,
-        crate::stealth::detection_point_world(
-            friend_position_world,
-            target.posture,
-            friend_direction as i16,
-            target.is_rider,
-        ),
+        detection_point,
         target.in_building,
         ctx.obstacle_list(),
-    )
+    );
+    let dx = detection_point.x - ctx.self_upright_eye_world.x;
+    let dy = (detection_point.y - ctx.self_upright_eye_world.y)
+        * crate::position_interface::INVERSE_ASPECT_RATIO;
+    let dz = detection_point.z - ctx.self_upright_eye_world.z;
+    tracing::trace!(
+        frame = ctx.frame,
+        me,
+        friend,
+        viewer_in_building = ctx.in_building,
+        viewer_radius = ctx.self_view_radius,
+        viewer_x = ctx.self_upright_eye_world.x,
+        viewer_y = ctx.self_upright_eye_world.y,
+        viewer_z = ctx.self_upright_eye_world.z,
+        friend_in_building = target.in_building,
+        friend_posture = ?target.posture,
+        friend_x = detection_point.x,
+        friend_y = detection_point.y,
+        friend_z = detection_point.z,
+        sq_distance = dx * dx + dy * dy + dz * dz,
+        sq_radius = (ctx.self_view_radius as f32).powi(2),
+        detected,
+        "BattleDecisions us-list 360 gate"
+    );
+    detected
 }
 
 #[track_caller]
@@ -467,6 +494,14 @@ impl EnemyAi {
                     AiState::Default | AiState::Wondering | AiState::Seeking | AiState::Attacking
                 )
             {
+                tracing::trace!(
+                    frame = ctx.frame,
+                    me = self.base.me,
+                    friend = friend.handle,
+                    able_to_fight = friend.is_able_to_fight,
+                    ai_state = ?friend.ai_state,
+                    "BattleDecisions us-list candidate rejected before the 360 gate"
+                );
                 continue;
             }
             // Original evaluates `mpMe->IsDetecting360Degrees(pHuman)` here,
@@ -481,7 +516,14 @@ impl EnemyAi {
                     friend.handle
                 )
             });
-            if !battle_friend_detected_360(ctx, friend.position_world, friend.direction, target) {
+            if !battle_friend_detected_360(
+                ctx,
+                self.base.me,
+                friend.handle,
+                friend.position_world,
+                friend.direction,
+                target,
+            ) {
                 continue;
             }
             self.base.list_us.push(friend.handle);
@@ -496,6 +538,40 @@ impl EnemyAi {
             battle_tick.us_battle_points += 100 + friend.pride as u32;
             battle_tick.simple_soldiers_near |= friend.rank == ProfileRank::Soldier;
             battle_tick.has_officer_nearby |= friend.rank == ProfileRank::Officer;
+        }
+        // Same-side PCs pass through the same registry walk. Their arm
+        // does exactly two things: join the us-list, and bump the
+        // lower-company counter whenever this soldier carries a company
+        // number at all. They contribute no pride / rank aggregates —
+        // MakeBattlePredecisions later scores each PC in the us-list at
+        // a flat 100 points. Registry interleaving with the soldier
+        // entries is irrelevant: every us-list consumer aggregates
+        // order-insensitively.
+        for pc in &battle_tick.fighter_registry {
+            if !pc.is_pc || !pc.is_friendly || !pc.is_able_to_fight {
+                continue;
+            }
+            let view = ctx.entity_view(pc.handle).unwrap_or_else(|| {
+                panic!(
+                    "BattleDecisions camp PC {} is absent from the AI entity view",
+                    pc.handle
+                )
+            });
+            if !battle_friend_detected_360(
+                ctx,
+                self.base.me,
+                pc.handle,
+                view.detection_position_world,
+                view.direction,
+                view,
+            ) {
+                continue;
+            }
+            self.base.list_us.push(pc.handle);
+            if self.company_number > 0 {
+                battle_tick.friends_lower_company =
+                    battle_tick.friends_lower_company.saturating_add(1);
+            }
         }
         let tick = &battle_tick;
 
@@ -646,27 +722,33 @@ impl EnemyAi {
                         .find_map(|&(attacker, target)| {
                             (attacker == cs.handle && target != 0).then_some(target)
                         });
+                let target = same_frame_target.unwrap_or_else(|| cs.primary_target);
+                tracing::trace!(
+                    frame = ctx.frame,
+                    me,
+                    friend = cs.handle,
+                    friend_state = ?cs.ai_state,
+                    friend_substate = ?cs.ai_substate,
+                    snapshot_target = cs.primary_target,
+                    same_frame_target,
+                    target,
+                    already_listed = self.list_them.contains(&target),
+                    "BattleDecisions friend-seen Them injection candidate"
+                );
                 if cs.ai_state != AiState::Attacking && same_frame_target.is_none() {
                     continue;
                 }
-                let target = same_frame_target.unwrap_or_else(|| cs.primary_target);
                 if target == 0 || target == me {
-                    continue;
-                }
-                // Don't inject same-camp by accident — primary_target
-                // can briefly be a same-camp during the cross-camp
-                // setup race; skip if the target maps to a friendly
-                // fighter snapshot.
-                let target_is_friendly = self
-                    .find_fighter(target, tick)
-                    .map(|f| f.is_friendly)
-                    .unwrap_or(false);
-                if target_is_friendly {
                     continue;
                 }
                 if super::util::is_any_swordfight_substate(cs.ai_substate as u32) {
                     *decision_target_multiplicity.entry(target).or_insert(0) += 1;
                 }
+                // The Them list rejects duplicates on insertion, so a target
+                // an earlier entry or friend already contributed is dropped
+                // here rather than appended a second time. A same-camp target
+                // is deliberately not filtered: the cleanup pass below is what
+                // removes friends from the list.
                 if self.list_them.contains(&target) || friend_seen.contains(&target) {
                     continue;
                 }
@@ -679,6 +761,8 @@ impl EnemyAi {
         // able-to-fight, drop it. Each removal that falls within
         // `num_enemies_i_can_see` decrements the personally-visible
         // counter. Friends accidentally on the list are also dropped.
+        // The same pass measures the nearest surviving enemy.
+        let mut min_square_enemy_distance = i32::MAX;
         let mut unconscious_enemies_from_them = Vec::new();
         {
             let mut idx = 0;
@@ -702,6 +786,22 @@ impl EnemyAi {
                                 is_robin: view.is_robin,
                                 is_vip: view.is_vip,
                             });
+                        }
+                        if !is_friend && view.is_able_to_fight {
+                            // The minimum enemy distance is measured over
+                            // the surviving Them list — which by now also
+                            // holds the targets contributed by nearby
+                            // attacking allies, so a fight raging next to
+                            // us counts even when our own nearest enemy is
+                            // far away. The stretched-Y square norm is
+                            // truncated to an integer before comparison.
+                            let dx = view.position.x - ctx.position.x;
+                            let dy = (view.position.y - ctx.position.y)
+                                * crate::position_interface::INVERSE_ASPECT_RATIO;
+                            let sq = (dx * dx + dy * dy) as i32;
+                            if sq < min_square_enemy_distance {
+                                min_square_enemy_distance = sq;
+                            }
                         }
                         if !is_friend
                             && view.is_able_to_fight
@@ -900,7 +1000,6 @@ impl EnemyAi {
             // Use engine-populated cached values for battle context.
             let friends_with_lower_company = tick.friends_lower_company;
             let soldiers_with_lower_pride = tick.soldiers_lower_pride;
-            let min_square_enemy_distance = tick.min_sq_enemy_distance;
 
             if self.combat_trainer {
                 decision = Decision::Observe;
@@ -1075,8 +1174,10 @@ impl EnemyAi {
             friends_lower_company = tick.friends_lower_company,
             "battle_decisions: chose decision"
         );
-        // Carry out decision (with possible fallback loop)
-        self.execute_battle_decision(
+        // Carry out decision (with possible fallback loop). The Observe
+        // arm's avenger-on-roof fallback returns from the whole routine
+        // before the log line is registered; every other path logs.
+        if self.execute_battle_decision(
             sim,
             decision,
             old_substate,
@@ -1086,15 +1187,19 @@ impl EnemyAi {
             ctx,
             tick,
             grid,
-        );
-
-        self.base
-            .register_log_line(LogLineType::BattleDecision, decision as u16);
+        ) {
+            self.base
+                .register_log_line(LogLineType::BattleDecision, decision as u16);
+        }
     }
 
     /// Execute a battle decision, with fallback to alternative decisions if needed.
     /// `cover_shield_bearer` is the handle of the shield bearer chosen during the
     /// decision phase for `CoverBehindShieldBearer`; 0 for all other decisions.
+    ///
+    /// Returns `false` only when the Observe arm's avenger-on-roof
+    /// fallback fires, which skips the caller's decision log line;
+    /// every other path returns `true`.
     fn execute_battle_decision(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1106,7 +1211,7 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) {
+    ) -> bool {
         // Allow up to 5 fallback decision changes to prevent infinite loops
         for _ in 0..5 {
             match decision {
@@ -1229,6 +1334,32 @@ impl EnemyAi {
                                 Substate::AttackingApproachToObserve,
                             );
                             self.base.launch_timer(50, ctx.frame);
+                        }
+
+                        // Couldn't-reachpoint avenger-on-roof fallback,
+                        // resolved against the target this arm just
+                        // re-picked. Returning from the whole decision
+                        // routine here also skips the decision log line.
+                        if self.base.couldnt_reachpoint
+                            && let Some(wait_pos) = tick.avenger_wait_position_for(target)
+                        {
+                            self.base.couldnt_reachpoint = false;
+                            self.go_near(
+                                AiState::Attacking,
+                                Substate::AttackingRunToAvengerOnRoof,
+                                wait_pos,
+                                50,
+                                GotoFlags::RUN,
+                                ctx,
+                            );
+                            if let Some(target_pos) = self
+                                .find_fighter(target, tick)
+                                .map(|f| f.position)
+                                .or_else(|| ctx.entity_view(target).map(|view| view.position))
+                            {
+                                self.base.seek_position = target_pos;
+                            }
+                            return false;
                         }
                     }
                 }
@@ -1357,7 +1488,7 @@ impl EnemyAi {
                         .map(|f| f.position)
                         .unwrap_or(self.base.seek_position);
                     match self.command_soldiers_to_attack(center, global, grid, ctx, tick) {
-                        super::alert::CommandSoldiersStart::Pending => return,
+                        super::alert::CommandSoldiersStart::Pending => return true,
                         super::alert::CommandSoldiersStart::Rejected => {
                             decision = Decision::Reserve;
                             continue;
@@ -1789,7 +1920,7 @@ impl EnemyAi {
                         // Remember enemy elevation for later bend decision
                         self.enemy_had_this_elevation = self
                             .find_fighter(self.base.primary_target, tick)
-                            .map(|f| f.elevation)
+                            .map(|f| f.elevation as u16)
                             .unwrap_or(0);
                         if wp.is_shooting_point {
                             // Run directly to shooting point (final
@@ -1833,6 +1964,7 @@ impl EnemyAi {
             }
             break; // Decision executed successfully
         }
+        true
     }
 
     // -----------------------------------------------------------------------
@@ -2043,11 +2175,10 @@ impl EnemyAi {
         let mut working_target = self.base.primary_target;
         let mut working_target_pos = live_target_pos;
         let mut working_distance = distance;
-        let mut swap_action: Option<(crate::element::EntityId, crate::ai::HumanHandle)> = None;
         // Iterate friends only when we have our own target —
         // Position(primary_target) would crash on NULL otherwise. Skip
         // the swap heuristic if our primary_target is unset so we never
-        // hand 0 to a friend via `pending_friend_primary_target_swap`.
+        // hand 0 to a friend via `friend_primary_target_swaps`.
         for cand in &tick.friend_swap_candidates {
             if working_target == 0 {
                 break;
@@ -2073,16 +2204,22 @@ impl EnemyAi {
             if me_to_friend_target + friend_to_my_target
                 < working_distance + friend_to_friend_target
             {
-                swap_action = Some((cand.friend_id, working_target));
+                // Each improving friend is retargeted immediately: the
+                // reference writes the friend's new primary target on the
+                // spot, so several friends can be swapped in a single
+                // reconsider pass. Each friend is visited once, so the
+                // handed-off target is always the pre-swap working target.
+                self.base
+                    .outbox
+                    .actor
+                    .friend_primary_target_swaps
+                    .push((cand.friend_id, working_target));
                 working_target = cand.friend_primary_target;
                 working_target_pos = cand.friend_primary_target_position;
                 working_distance =
                     reconsider_approach_distance(ctx.position, cand.friend_primary_target_position);
+                self.base.primary_target = working_target;
             }
-        }
-        if let Some((friend, new_tgt)) = swap_action {
-            self.base.primary_target = working_target;
-            self.base.outbox.actor.friend_primary_target_swap = Some((friend, new_tgt));
         }
 
         // Primary target is in a non-stairs lift: run to the entry
@@ -2317,11 +2454,12 @@ impl EnemyAi {
         }
 
         // Couldn't-reachpoint avenger-on-roof fallback.
-        // The engine tick pre-computes the blocking-gate wait position
-        // into `tick.avenger_on_roof_wait_position` via
-        // `compute_avenger_wait_position`; see engine/ai.rs.
+        // The engine tick pre-computes the blocking-gate wait positions
+        // per target into `tick.avenger_on_roof_wait_positions`; the
+        // friend-swap loop above may have replaced the snapshot target,
+        // so resolve through the live primary-target handle.
         if self.base.couldnt_reachpoint
-            && let Some(wait_pos) = tick.avenger_on_roof_wait_position
+            && let Some(wait_pos) = tick.avenger_wait_position_for(self.base.primary_target)
         {
             self.base.couldnt_reachpoint = false;
             self.go_near(
@@ -2332,7 +2470,10 @@ impl EnemyAi {
                 GotoFlags::RUN,
                 ctx,
             );
-            self.base.launch_timer(30, ctx.frame);
+            // No timer here: the guard waits for the reach-point event at
+            // the gate, and the seek position tracks the unreachable
+            // avenger rather than the wait spot.
+            self.base.seek_position = working_target_pos;
         }
     }
 
@@ -2942,6 +3083,8 @@ mod tests {
 
         assert!(battle_friend_detected_360(
             &ctx,
+            1,
+            2,
             target.detection_position_world,
             target.direction,
             &target,
@@ -2950,6 +3093,8 @@ mod tests {
         target.in_building = true;
         assert!(!battle_friend_detected_360(
             &ctx,
+            1,
+            2,
             target.detection_position_world,
             target.direction,
             &target,

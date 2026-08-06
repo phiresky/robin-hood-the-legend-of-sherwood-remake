@@ -981,6 +981,7 @@ impl NativeContext<'_, '_> {
                 // element inline. Launching through the live manager keeps
                 // its sequence id ordered with recorded Thanx sequences and
                 // yields to ProcessMessage before this callback resumes.
+                tracing::trace!(target_actor = actor, message = msg, "script SendMessage");
                 let mut sequence = Sequence::new();
                 sequence.append_element(self.build_send_message_element(1, actor, msg, 0, 0));
                 self.launch_script_sequence(sequence, 0);
@@ -1059,8 +1060,13 @@ impl NativeContext<'_, '_> {
                 }
             }
             SetPersistentProperty => {
-                let amount = stack.pop_i32();
-                let prop = stack.pop_i32();
+                // The property id and the amount are narrowed to a signed byte
+                // before they reach the implementation, so a script constant
+                // above 127 arrives negative (250 becomes -6). Missions rely on
+                // this: H07 sets the Sheriff's life points to 250, which lands
+                // as -6 and kills him.
+                let amount = i32::from(stack.pop_i32() as i8);
+                let prop = i32::from(stack.pop_i32() as i8);
                 let actor = stack.pop_i32();
                 self.set_persistent_property(actor, prop, amount) as i32
             }

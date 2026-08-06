@@ -1260,23 +1260,12 @@ impl EngineInner {
 
             let mut hit_indices = Vec::new();
 
+            // Victim eligibility is settled once, when the sweep seeds its
+            // list.  The per-frame pass only asks whether the arc has reached
+            // the victim's sector; a victim who dies, falls unconscious or
+            // otherwise stops qualifying mid-sweep still takes the blow that
+            // was already on its way.
             for (i, &victim_id) in active.sweep.pending_victims.iter().enumerate() {
-                let obstacles = crate::sight_obstacle::ObstacleList {
-                    static_obstacles: assets.static_sight_obstacles.as_slice(),
-                    dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-                    static_active: &self.world.static_sight_obstacle_active,
-                };
-                if !is_possible_sword_strike_victim_id(
-                    &self.world.entities,
-                    active.attacker_id,
-                    victim_id,
-                    &assets.profile_manager,
-                    &self.world.fast_grid,
-                    obstacles,
-                ) {
-                    hit_indices.push(i);
-                    continue;
-                }
                 let victim_pos = match self.get_entity(victim_id) {
                     Some(e) => e.element_data().position_map(),
                     None => {
@@ -1958,6 +1947,7 @@ impl EngineInner {
             attacker_camp: crate::element::Camp,
             attacker_pos: (f32, f32),
             attacker_elevation: f32,
+            is_swordfighting: bool,
             boredom: Vec<u16>,
         }
 
@@ -2066,6 +2056,7 @@ impl EngineInner {
                     (map.x, map.y)
                 },
                 attacker_elevation: soldier.element.position().z,
+                is_swordfighting: !soldier.human.opponents.is_empty(),
                 boredom: soldier.human.sword_strike_boredom.clone(),
             });
         }
@@ -2222,7 +2213,7 @@ impl EngineInner {
                 attacker_direction: attack.attacker_direction,
                 attacker_elevation: attack.attacker_elevation,
                 attacker_camp: attack.attacker_camp,
-                is_swordfighting: true,
+                is_swordfighting: attack.is_swordfighting,
                 opponent_time_limit,
                 strike_startup_frames: attacker_sprite_frames,
                 parry_startup_frames: parry_startup,

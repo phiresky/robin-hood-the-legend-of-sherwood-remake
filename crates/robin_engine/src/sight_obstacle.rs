@@ -896,22 +896,26 @@ impl SightObstacle {
             let cur_2d = pt(pt_i.x, pt_i.y);
             let edge = segment(last_2d, cur_2d);
 
+            // Only walls the ray runs *into* count.  The determinant of
+            // (edge, ray direction) is positive exactly on the front-facing
+            // half of the polygon's boundary, so a ray that starts inside
+            // the footprint — an arrow released from a hand that hangs over
+            // the parapet it is standing behind — leaves through the back
+            // wall without being stopped by it.
+            let edge_vec = (cur_2d.x - last_2d.x, cur_2d.y - last_2d.y);
+            if edge_vec.0 * dy - edge_vec.1 * dx <= 0.0 {
+                last_2d = cur_2d;
+                continue;
+            }
+
             if geo2d::segments_intersect(ray_seg, edge)
                 && let geo2d::Intersection2D::Point(ip) = geo2d::segment_intersection(ray_seg, edge)
             {
                 let ip_ground = GroundPoint::from_geo(ip);
                 let ray_z = ray_eq.z_at(ip_ground);
                 let top_z = self.compute_top_z(ip.x, ip.y);
-                let blocked = if self.on_ground {
-                    if !origin_above_top && !dest_above_top {
-                        true
-                    } else {
-                        top_z >= ray_z
-                    }
-                } else {
-                    let bot_z = self.compute_bottom_z(ip.x, ip.y);
-                    top_z >= ray_z && bot_z <= ray_z
-                };
+                let bot_z = self.compute_bottom_z(ip.x, ip.y);
+                let blocked = top_z >= ray_z && bot_z <= ray_z;
 
                 if blocked && ray_len_sq > 1e-9 {
                     // Compute parametric t from 2D projection.
@@ -1127,6 +1131,14 @@ pub struct ImpactResult3D {
 /// `type_filter` is the obstacle-type bitmask (`SIGHTOBSTACLE_SOLID` for
 /// projectile collision, `SIGHTOBSTACLE_OPAQUE` for view, etc.).
 ///
+/// Shield obstacles never take part, even though they carry the solid
+/// flag. The Original's obstacle-grid query has its shield-collection
+/// loop commented out, so a shield is invisible to every ray cast
+/// through the grid; the only thing that ever consults one is the
+/// per-arrow shield-holder test, which walks actors directly. Letting
+/// shields block here stopped an arrow dead on the frame it was
+/// released, because an archer's own shield sits right on the bow hand.
+///
 /// Degenerate vertical segments (origin and destination share the same
 /// `(x, y)`) short-circuit through [`is_reachable_impact_fall_3d`] or
 /// [`is_reachable_impact_up_3d`] depending on direction.
@@ -1159,7 +1171,7 @@ pub fn is_reachable_impact_3d(
         if !obstacles.is_active(idx) {
             continue;
         }
-        if !obs.is_of_type(type_filter) {
+        if !obs.is_of_type(type_filter) || obs.is_shield() {
             continue;
         }
         if let Some(t) = obs.blocking_ray_3d_ratio(origin_arr, dest_arr)
@@ -1248,7 +1260,7 @@ pub fn is_reachable_impact_fall_3d(
     let mut max_top_z: f32 = 0.0;
     let mut hit_idx: Option<u32> = None;
     for (idx, obs) in obstacles.iter_indexed().map(|(i, o)| (i as usize, o)) {
-        if !obstacles.is_active(idx) || !obs.is_of_type(type_filter) {
+        if !obstacles.is_active(idx) || !obs.is_of_type(type_filter) || obs.is_shield() {
             continue;
         }
         if !obs.box_ground.contains_point(p2d) || !obs.contains_point(p2d) {
@@ -1333,7 +1345,7 @@ pub fn is_reachable_impact_up_3d(
     let mut min_bot_z: f32 = f32::INFINITY;
     let mut hit_idx: Option<u32> = None;
     for (idx, obs) in obstacles.iter_indexed().map(|(i, o)| (i as usize, o)) {
-        if !obstacles.is_active(idx) || !obs.is_of_type(type_filter) {
+        if !obstacles.is_active(idx) || !obs.is_of_type(type_filter) || obs.is_shield() {
             continue;
         }
         if !obs.box_ground.contains_point(p2d) || !obs.contains_point(p2d) {

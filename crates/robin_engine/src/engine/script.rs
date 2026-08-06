@@ -2712,10 +2712,22 @@ impl EngineInner {
     /// the target entity, since the script session leases
     /// `self.world.entities` for the callback. The function is a
     /// no-op (returns `true`) for:
-    ///  - Actors with no script instance or no `FilterAIEvent`
-    ///    override (the base-class `FilterAIEvent` returns 1 / allow).
+    ///  - Actors with no script instance, or whose bound class does not
+    ///    define `FilterAIEvent` at all.  There is no base class to
+    ///    inherit from — function lookup is a flat search of the bound
+    ///    class's own function table, with no fallback.  The script
+    ///    compiler emits a `return 1` stub into every actor class it
+    ///    compiles, so "defined" always means "allow unless the script
+    ///    says otherwise", and the handful of classes that lack the
+    ///    symbol entirely are never reached by a filtered stimulus.
+    ///    Allow is therefore the correct verdict either way.
     ///  - Script VM errors — logged and treated as allow so a
     ///    script bug never blocks AI progress.
+    ///
+    /// Note: the return register is *not* observable across calls. Every
+    /// `FilterAIEvent` compiled into the shipping missions writes it on
+    /// all reachable paths, so a caller can never read a previous call's
+    /// value. See the commit that added this note for the audit.
     ///
     /// Source actor is extracted from `stimulus.info`: `Human(h)` becomes
     /// a script actor handle; other info variants become 0 (originally NULL).
@@ -2755,6 +2767,14 @@ impl EngineInner {
             None => return true,
         };
         if !has_override {
+            tracing::trace!(
+                target: "parity_stimulus_origin",
+                handle,
+                source,
+                code,
+                allowed = true,
+                "FilterAIEvent verdict (class defines no FilterAIEvent)"
+            );
             return true;
         }
 
@@ -2878,6 +2898,11 @@ impl EngineInner {
         if !self.filter_stimulus(sim, assets, handle, stimulus) {
             return false;
         }
+        // Every Think, however it was reached, must see the surface radii this
+        // viewer already computed earlier in the frame. Cross-NPC calls and
+        // the panic/report dispatch sites enter here without passing through
+        // the drain wrapper, and used to start from an empty memo.
+        ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
         // This predicate is live sequence-manager state in the Original,
         // queried inside ReconsiderSwordfight. AI contexts can predate a
         // re-entrant SendCondolationCard callback, so refresh it at the
@@ -2940,6 +2965,13 @@ impl EngineInner {
                 return false;
             }
         };
+        // The Think ran against a refreshed copy of the caller's context; any
+        // surface radius it computed belongs to the surface, so hand those
+        // entries back before the copy goes away and publish them now — the
+        // owner drain below can re-enter Think, and those nested calls read
+        // the surfaces through the persistent table.
+        ctx.absorb_view_radius_cache(&live_ctx);
+        ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
 
         // ReconsiderSwordfight calls ProposeGoodSwordStrike before returning
         // to its caller. Keep that event-owned RNG and sequence work ahead of

@@ -314,7 +314,16 @@ impl EngineInner {
                 // RHElementTarget::MouseClicked, whose ordinary click path
                 // directly builds AppendMoveToSequence rather than calling
                 // AddInteractionWithSeek.
-                if *command == Command::HitTarget
+                // ENTER_SWORDFIGHT is likewise unambiguous: it is only ever
+                // resolved by a soldier click, whose route is the classical
+                // sword seek (tolerance = the PC's own sword range) plus the
+                // VIP, table-swordfight and cross-gate forks. The generic
+                // AddInteractionWithSeek helper has no sword-range entry and
+                // would seek at the 30-unit interaction default instead,
+                // stopping the PC short of — or past — the opponent.
+                if *command == Command::EnterSwordfight {
+                    self.apply_enter_swordfight(sim, assets, *actor, *target, *running);
+                } else if *command == Command::HitTarget
                     && matches!(
                         self.get_entity(*target),
                         Some(crate::element::Entity::Target(_))
@@ -3393,13 +3402,64 @@ impl EngineInner {
             OrderType::WalkingUpright
         };
 
+        // The drop point's sector and layer come from the cursor, not from
+        // the actor: take the topmost sector under the point, resolve a patch
+        // overlay to the sector it covers, and resolve a jump sector to the
+        // sector it sits in. Jump sectors carry no sector number of their own,
+        // so reading the number off the raw hit loses the goal entirely and
+        // the seek never learns that it has to cross a gate.
+        //
+        // TODO: the original also refuses the whole action when the resolved
+        // sector is a door, or a lift that is a wall or ladder. Not ported
+        // yet — a mis-resolution here would silently drop a replayed command,
+        // so the guard needs its own validation pass.
+        let (goal_sector, goal_layer) = {
+            let reference = self
+                .get_entity(actor)
+                .map(|e| e.element_data().position_map())
+                .unwrap_or(target_pos);
+            let hit = self
+                .world
+                .fast_grid
+                .get_sector_screen(target_pos, reference);
+            let resolved = hit.sector_idx.and_then(|idx| {
+                let sector = self.world.fast_grid.level.sectors.get(usize::from(idx))?;
+                if sector.sector_type.is_patch() || sector.sector_type.is_jump() {
+                    let under_idx = sector.underlying_sector?;
+                    let under = self
+                        .world
+                        .fast_grid
+                        .level
+                        .sectors
+                        .get(usize::from(under_idx))?;
+                    Some((under.sector_number, sector.layer))
+                } else {
+                    Some((sector.sector_number, hit.layer))
+                }
+            });
+            match resolved {
+                Some((number, layer)) => (
+                    crate::position_interface::SectorHandle::new(u16::from(number)),
+                    layer,
+                ),
+                None => (
+                    hit.sector
+                        .map(u16::from)
+                        .and_then(crate::position_interface::SectorHandle::new),
+                    hit.layer,
+                ),
+            }
+        };
+
+        // The move box is authorised on the cursor's layer, the same one the
+        // seek element is stamped with.
         let mut destination_pos = target_pos;
         if move_box.is_somewhere() {
             let mut box_at_target = move_box.translated(target_pos);
             if self
                 .world
                 .fast_grid
-                .find_authorized_position(&mut box_at_target, layer)
+                .find_authorized_position(&mut box_at_target, goal_layer)
             {
                 let center = box_at_target.center();
                 destination_pos = crate::coordinates::MapPoint {
@@ -3409,7 +3469,7 @@ impl EngineInner {
             } else {
                 tracing::warn!(
                     ?actor,
-                    layer,
+                    goal_layer,
                     target_x = target_pos.x,
                     target_y = target_pos.y,
                     "apply_drop_ale_at: target move box has no authorized position"
@@ -3418,6 +3478,19 @@ impl EngineInner {
             }
         }
 
+        tracing::trace!(
+            ?actor,
+            actor_sector = ?self.get_entity(actor).and_then(|e| e.element_data().sector()),
+            actor_layer = layer,
+            ?goal_sector,
+            goal_layer,
+            target_x = target_pos.x,
+            target_y = target_pos.y,
+            dest_x = destination_pos.x,
+            dest_y = destination_pos.y,
+            "apply_drop_ale_at: resolved drop goal"
+        );
+
         let mut move_elem =
             SequenceElement::new_movement(1, Command::Seek, Some(actor), action_style);
         if let SequenceElementData::Movement {
@@ -3425,12 +3498,16 @@ impl EngineInner {
             tolerance,
             flags,
             post_seek_sequence,
+            sector,
+            layer: elem_layer,
             ..
         } = &mut move_elem.data
         {
             *destination = destination_pos;
             *tolerance = action_distance;
             *flags |= MoveFlags::SEEK;
+            *sector = goal_sector;
+            *elem_layer = goal_layer;
             let mut post_seek = Sequence::new();
             post_seek.append_element(SequenceElement::new(1, Command::DropAle, Some(actor)));
             *post_seek_sequence = Some(Box::new(post_seek));

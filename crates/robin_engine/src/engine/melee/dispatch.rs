@@ -1017,6 +1017,29 @@ impl EngineInner {
         // is a no-op on a scroll-carrying beggar.
         match command {
             Command::ReceiveSwordDamage => {
+                // Sword damage is the one receive-damage command gated on
+                // the element owner still being active.  A victim that has
+                // left the world (walked into a building, been removed)
+                // between the strike landing in the sweep queue and the
+                // sequence manager dispatching this element takes no damage
+                // at all — the element is terminated without rolling the
+                // two protection draws.
+                let owner_active = match self.get_entity(victim_id) {
+                    Some(e) => e.is_active(),
+                    None => {
+                        tracing::warn!(
+                            ?victim_id,
+                            "dispatch_receive_damage: sword damage victim is gone"
+                        );
+                        false
+                    }
+                };
+                if !owner_active {
+                    self.orders
+                        .sequence_manager
+                        .element_terminated(seq_id, elem_idx);
+                    return;
+                }
                 #[cfg(test)]
                 let test_life_before = self
                     .get_entity(victim_id)

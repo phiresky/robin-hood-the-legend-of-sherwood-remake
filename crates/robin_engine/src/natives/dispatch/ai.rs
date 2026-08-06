@@ -588,8 +588,11 @@ impl NativeContext<'_, '_> {
             ForbidNPCRemark => {
                 // ForbidNPCRemark(Actor, int remark_id, bool forbid)
                 // Adds or removes a remark ID from this NPC's forbidden list.
-                let forbid = stack.pop_i32();
-                let remark_id = stack.pop_i32();
+                // Both trailing arguments are narrowed to a signed byte before
+                // they reach the implementation, the same way
+                // `SetPersistentProperty` narrows its own.
+                let forbid = i32::from(stack.pop_i32() as i8);
+                let remark_id = i32::from(stack.pop_i32() as i8);
                 let actor = stack.pop_i32();
                 if let Some(entity) = self.get_entity_mut(actor)
                     && let Some(ai) = entity.ai_controller_mut()

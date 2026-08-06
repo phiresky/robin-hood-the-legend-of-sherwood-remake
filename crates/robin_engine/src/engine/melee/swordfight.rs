@@ -340,7 +340,7 @@ impl EngineInner {
     pub(crate) fn evaluate_opponents(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        _assets: &LevelAssets,
+        assets: &LevelAssets,
         entity_id: EntityId,
     ) {
         let count = self
@@ -376,6 +376,27 @@ impl EngineInner {
                 Command::QuitSwordfight,
                 Some(entity_id),
             ));
+
+            // The quit is announced to the owner immediately, in the same
+            // call: an orphaned PC regains its temporarily disabled actions,
+            // and a soldier's brain receives EVENT_QUIT_SWORDFIGHT before any
+            // later phase of this frame — in particular before its own
+            // RefreshDetection can emit VIEW / OUTOFVIEW. Deferring the
+            // stimulus to the `Command::QuitSwordfight` dispatcher left the
+            // soldier in its pre-quit substate while the falling-edge
+            // OUTOFVIEW arrived, which changed how that event was routed.
+            if let Some(entity) = self.world.entities.get_mut(entity_id)
+                && let Some(pc) = entity.pc_data_mut()
+            {
+                pc.enable_all_actions_temp(false);
+            } else if matches!(self.world.entities.get(entity_id), Some(Entity::Soldier(_))) {
+                self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                    sim,
+                    entity_id,
+                    assets,
+                    crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
+                );
+            }
         } else if count >= 2 {
             self.choose_principal_opponent(sim, entity_id);
         }
@@ -1420,6 +1441,47 @@ impl EngineInner {
     }
 
     // ─── PC coma / amulet death-save ────────────────────────────────
+
+    /// Close the PC wounded/coma virtual boundary at a damage-apply site.
+    ///
+    /// The wounding entry points dispatch `GetWounded` virtually, so a VIP
+    /// PC establishes its amulet coma (5-HP floor, maximum concussion)
+    /// *inside* the damage call — before the damage element is translated
+    /// and before the shared `SayOuch` classifies the result. Rust's shared
+    /// damage primitives cannot mutate campaign state, so every wounding
+    /// site closes that boundary here, immediately after writing the life
+    /// points.
+    ///
+    /// Returns `true` when the coma save activated, in which case the
+    /// caller's downstream death handling must be skipped.
+    pub(super) fn close_pc_wounded_coma_boundary(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+        damage: u16,
+        life_points_before: i16,
+        life_points_after: i16,
+    ) -> bool {
+        let victim_is_pc = self
+            .get_entity(victim_id)
+            .is_some_and(|victim| victim.kind().is_pc());
+        let coma_saved = victim_is_pc
+            && life_points_before > 0
+            && damage > 0
+            && life_points_after <= 0
+            && self.try_pc_coma_save(sim, assets, victim_id, damage);
+
+        // The coma branch marks the campaign coma, stores the 5-HP floor
+        // through the PC life-point setter (which emits HERO_HURT for a drop
+        // greater than twenty), and only then applies maximum concussion.
+        // The shared SayOuch path skips unconscious actors, so preserve that
+        // life-point-setter callback explicitly at this boundary.
+        if coma_saved && 5 < life_points_before - 20 {
+            self.hero_speaking(assets, victim_id, HERO_HURT);
+        }
+        coma_saved
+    }
 
     /// Check if a PC should be saved from death by an amulet (coma mechanic).
     ///

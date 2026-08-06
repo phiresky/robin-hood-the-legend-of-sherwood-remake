@@ -870,11 +870,15 @@ pub(super) fn build_ai_context_from_entity(
             crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
         ),
         in_uninterruptible_command: false,
-        // `is_inside_building`: the building sector check OR the
-        // door-transit branch — true during the few frames an actor is
-        // on a door whose inside-sector is a building but whose current
-        // sector pointer has not yet been swapped.
-        in_building: building_sector.is_some() || entity.is_in_door_transit(),
+        // Every AI-side building test resolves the actor's *sector*: the
+        // indoor early-outs, the 180°/360° detection short-circuits, and the
+        // outdoor question gate all ask whether the current sector is a
+        // building. A soldier standing on a door rail has no building sector
+        // yet and must still behave as an outdoor actor, so the door-transit
+        // branch (which only governs whether the view polygon is drawn) must
+        // not leak into this flag.
+        in_building: building_sector.is_some(),
+        self_is_active: elem.active,
         building_sector,
         camp,
         is_swordfighting,
@@ -1111,8 +1115,8 @@ pub(super) fn build_friend_swap_candidates(
 /// the live entity store.
 ///
 /// Returns `None` when any input is missing or the walker finds no
-/// blocking gate — the caller should leave
-/// `tick.avenger_on_roof_wait_position` as `None` in that case.
+/// blocking gate — the caller should record no entry in
+/// `tick.avenger_on_roof_wait_positions` for that target in that case.
 pub(super) fn precompute_avenger_on_roof_wait_position(
     entities: &crate::entities::Entities,
     doors: &[crate::gate::Door],
@@ -1719,6 +1723,7 @@ impl EngineInner {
         }
         tick.camp_soldiers =
             self.build_camp_soldier_tick_infos(npc_id, my_camp, scratch, build_forecasts);
+        tick.alert_soldier_candidates = self.build_alert_soldier_candidates(npc_id);
         if build_forecasts
             && let Some(enemy_ai) = soldier.npc.ai_brain.enemy()
             && enemy_ai.missed_pc != 0
@@ -1790,6 +1795,50 @@ impl EngineInner {
                 level: chief.element_data().layer(),
             };
             tick.patrol_chief_state = chief_ai.current_state;
+        }
+
+        // Avenger-on-roof wait positions — only computed when the AI
+        // set the `couldnt_reachpoint` flag.  Decision arms re-pick
+        // their target from the personal enemy list (even from a null
+        // pre-think target), so compute one wait position per
+        // candidate handle plus the current target; consumers resolve
+        // their own live handle at use time.
+        if couldnt_reachpoint {
+            assert!(
+                self.scripts.mission.is_some(),
+                "AI roof recovery requires an installed mission script"
+            );
+            let doors_slice = self.script_domains.interactables.doors.as_slice();
+            let mut candidates: Vec<crate::ai::HumanHandle> = Vec::new();
+            if let Some(enemy_ai) = soldier.npc.ai_brain.enemy() {
+                candidates.extend(enemy_ai.list_them.iter().copied());
+            }
+            if primary_target_handle != 0 {
+                candidates.push(primary_target_handle);
+            }
+            candidates.retain(|&h| h != 0);
+            candidates.dedup();
+            for handle in candidates {
+                if tick
+                    .avenger_on_roof_wait_positions
+                    .iter()
+                    .any(|(h, _)| *h == handle)
+                {
+                    continue;
+                }
+                let Some(candidate_id) = self.entity_id_for_index(handle) else {
+                    continue;
+                };
+                if let Some(wait) = precompute_avenger_on_roof_wait_position(
+                    &self.world.entities,
+                    doors_slice,
+                    npc_id,
+                    candidate_id,
+                    &|sector| self.get_sector_lift_type(sector),
+                ) {
+                    tick.avenger_on_roof_wait_positions.push((handle, wait));
+                }
+            }
         }
 
         let Some(target_id) = target_id else {
@@ -2019,24 +2068,55 @@ impl EngineInner {
             tick.my_exit_door = build_my_exit_door_info(stashed, doors_slice);
         }
 
-        // Avenger-on-roof wait position — only computed when the AI
-        // set the `couldnt_reachpoint` flag.
-        if couldnt_reachpoint {
-            assert!(
-                self.scripts.mission.is_some(),
-                "AI roof recovery requires an installed mission script"
-            );
-            let doors_slice = self.script_domains.interactables.doors.as_slice();
-            tick.avenger_on_roof_wait_position = precompute_avenger_on_roof_wait_position(
-                &self.world.entities,
-                doors_slice,
-                npc_id,
-                target_id,
-                &|sector| self.get_sector_lift_type(sector),
-            );
-        }
-
         tick
+    }
+
+    /// Rank-soldier NPCs of *every* camp, in NPC registry order.
+    ///
+    /// `CommandSoldiersToAttack` walks the whole NPC array and gates each
+    /// entry on rank, body state and the candidate's own 360° detection of
+    /// the officer — no camp test anywhere. Feeding it the same-camp
+    /// snapshot dropped the opposing camp's soldiers from both the alert
+    /// broadcast and the observable detection-call stream.
+    fn build_alert_soldier_candidates(
+        &self,
+        npc_id: crate::element::EntityId,
+    ) -> Vec<crate::ai_enemy::AlertSoldierCandidate> {
+        let mut candidates = Vec::new();
+        for other_id in self.world.entities.npc_ids() {
+            if other_id == npc_id {
+                continue;
+            }
+            let Some(entity) = self.world.entities.get(other_id) else {
+                continue;
+            };
+            let crate::element::Entity::Soldier(s) = entity else {
+                continue;
+            };
+            let Some(enemy_ai) = s.npc.ai_brain.enemy() else {
+                continue;
+            };
+            if enemy_ai.soldier_profile_rank != crate::profiles::ProfileRank::Soldier
+                || !crate::element::Human::is_able_to_fight(s)
+            {
+                continue;
+            }
+            let position = s.element.position_map();
+            candidates.push(crate::ai_enemy::AlertSoldierCandidate {
+                handle: other_id.index(),
+                position: crate::ai::Position {
+                    x: position.x,
+                    y: position.y,
+                    sector: s.element.sector(),
+                    level: s.element.layer(),
+                },
+                elevation: s.element.sprite.position_iface.get_elevation(),
+                is_rider: s.soldier.rider,
+                view_radius: s.npc.view_radius,
+                in_building: self.entity_data_in_building_sector(&s.element),
+            });
+        }
+        candidates
     }
 
     fn build_camp_soldier_tick_infos(
@@ -2065,7 +2145,7 @@ impl EngineInner {
             let Some(enemy_ai) = s.npc.ai_brain.enemy() else {
                 continue;
             };
-            let in_building = self.entity_data_inside_building(&s.element);
+            let in_building = self.entity_data_in_building_sector(&s.element);
             let forecast_destination = if forecast_destinations {
                 // Missing scripts are a recoverable developer-data load path;
                 // `init_ai` warns once before these per-NPC snapshots are built.
@@ -2212,6 +2292,7 @@ impl EngineInner {
             return Vec::new();
         };
         let me_pos_pt = soldier.element.position_map();
+        let me_elevation = soldier.element.position().z;
         let my_camp = soldier.soldier.cached_camp;
         let me_handle = enemy_ai.base.me;
 
@@ -2354,7 +2435,7 @@ impl EngineInner {
                 right_combat_neighbour: enemy_ai_other.right_combat_neighbour,
                 is_in_recovery_animation: in_recovery,
                 in_sword_action_state: s.actor.action_state.is_sword(),
-                elevation: s.element.position().z as u16,
+                elevation: s.element.position().z,
                 seek_position,
                 current_substate: s.npc.ai_substate() as u32,
                 archer_behind_me: enemy_ai_other.archer_behind_me,
@@ -2451,7 +2532,7 @@ impl EngineInner {
                 right_combat_neighbour: 0,
                 is_in_recovery_animation: in_recovery,
                 in_sword_action_state: pc.actor.action_state.is_sword(),
-                elevation: pc.element.sprite.position_iface.get_elevation() as u16,
+                elevation: pc.element.sprite.position_iface.get_elevation(),
                 seek_position: pc_seek_position,
                 current_substate: 0,
                 archer_behind_me: 0,
@@ -2483,9 +2564,10 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(id) else {
                 continue;
             };
-            let (position, snapshot) = match entity {
+            let (position, elevation, snapshot) = match entity {
                 Entity::Soldier(soldier) => (
                     soldier.element.position_map(),
+                    soldier.element.position().z,
                     // Radius-limited snapshots model
                     // FillListWithAllNearFighters and therefore exclude
                     // unable fighters. The complete registry is the backing
@@ -2494,12 +2576,25 @@ impl EngineInner {
                     // them.
                     build_soldier(id.index(), max_distance.is_some()),
                 ),
-                Entity::Pc(pc) => (pc.element.position_map(), build_pc(id.index())),
+                Entity::Pc(pc) => (
+                    pc.element.position_map(),
+                    pc.element.sprite.position_iface.get_elevation(),
+                    build_pc(id.index()),
+                ),
                 _ => continue,
             };
-            let dx = position.x - me_pos_pt.x;
-            let dy = (position.y - me_pos_pt.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-            if max_distance.is_some_and(|radius| dx.abs().max(dy.abs()) > radius) {
+            // `MaxNormDistance` subtracts full world positions before
+            // stretching Y, so the elevation enters twice: once as the
+            // projection offset baked into map Y and once as its own
+            // component. Comparing raw map coordinates instead pushed
+            // fighters standing a layer above or below out of every
+            // consideration radius built on this snapshot.
+            let world = crate::coordinates::GroundPoint::from_map_and_z(position, elevation);
+            let me_world = crate::coordinates::GroundPoint::from_map_and_z(me_pos_pt, me_elevation);
+            let dx = world.x - me_world.x;
+            let dy = (world.y - me_world.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+            let dz = elevation - me_elevation;
+            if max_distance.is_some_and(|radius| dx.abs().max(dy.abs()).max(dz.abs()) > radius) {
                 continue;
             }
             if let Some(snapshot) = snapshot {
@@ -2633,7 +2728,7 @@ impl EngineInner {
                 dead: entity.is_dead(),
                 unconscious: human.unconscious,
                 friend: entity.camp() == member_camp,
-                in_building: self.entity_data_inside_building(element),
+                in_building: self.entity_data_in_building_sector(element),
             }
         };
 
@@ -2690,7 +2785,7 @@ impl EngineInner {
                 posture: s.element.posture,
                 elevation: s.element.sprite.position_iface.get_elevation(),
                 is_rider: s.soldier.rider,
-                in_building: self.entity_data_inside_building(&s.element),
+                in_building: self.entity_data_in_building_sector(&s.element),
                 sq_view_radius: (s.npc.view_radius as f32) * (s.npc.view_radius as f32),
             });
             let next = neighbour_ai.right_combat_neighbour;
@@ -4263,13 +4358,29 @@ impl EngineInner {
         });
     }
 
-    /// Test whether the entity is inside a building: the
-    /// building-sector flag OR the door-transit branch — true during
-    /// the few frames an actor is on a door whose inside-sector is a
-    /// building but whose current sector pointer has not yet been
-    /// swapped.
+    /// The wide "indoors" test: the building-sector flag OR the
+    /// door-transit branch — true during the few frames an actor is on a
+    /// door whose inside-sector is a building but whose current sector
+    /// pointer has not yet been swapped.
+    ///
+    /// This is the predicate that governs whether the view polygon is
+    /// deactivated, so only the detection refresh may use it. Every other
+    /// indoor test in the AI resolves the sector alone; use
+    /// [`Self::entity_data_in_building_sector`] there.
     pub(super) fn entity_data_inside_building(&self, elem: &crate::element::ElementData) -> bool {
-        self.entity_building_sector(elem.sector()).is_some() || elem.is_in_door_transit()
+        self.entity_data_in_building_sector(elem) || elem.is_in_door_transit()
+    }
+
+    /// The narrow "indoors" test: the entity's current sector is a
+    /// building. An actor still on a door rail is outdoors by this
+    /// measure, which is what the 180°/360° detection short-circuits, the
+    /// them/us-list membership scans, the outdoor question gate, and the
+    /// stuck-on-ladder counter all ask for.
+    pub(super) fn entity_data_in_building_sector(
+        &self,
+        elem: &crate::element::ElementData,
+    ) -> bool {
+        self.entity_building_sector(elem.sector()).is_some()
     }
 
     /// Consume one NPC's deferred `inform_my_friends` edge at that NPC's
@@ -4733,6 +4844,8 @@ impl EngineInner {
             return;
         };
         if let Some(npc) = entity.npc_data_mut() {
+            let span = tracing::trace_span!("refresh_npc_view", npc = npc_id.index());
+            let _guard = span.enter();
             ai_vision::refresh_view(npc, &ctx);
         }
     }
@@ -6046,12 +6159,12 @@ impl EngineInner {
             self.set_as_new_principal_opponent(assets, npc_id, opponent_id);
         }
 
-        // Process friend primary-target swap.  The reference calls
+        // Process friend primary-target swaps.  The reference calls
         // `friend.set_primary_target(primary_target)` directly on the
-        // other soldier when the swap heuristic fires; we hand it off
-        // here so both soldiers are updated consistently after their
-        // AI ticks ran.
-        if let Some((friend_id, new_target)) = effects.friend_primary_target_swap {
+        // other soldier when the swap heuristic fires — for every
+        // improving friend in the pass, not just the last one — so we
+        // apply the whole queue here after the owner's AI tick ran.
+        for (friend_id, new_target) in effects.friend_primary_target_swaps {
             let friend = self.world.entities.get_mut(friend_id).unwrap_or_else(|| {
                 panic!(
                     "pending-drain NPC {} primary-target friend {} disappeared",
@@ -8457,9 +8570,12 @@ impl EngineInner {
                 )
             });
             let ai_state = npc.ai_state();
-            // IsDetecting360Degrees uses mViewParameters.uwRealRadius,
-            // not the currently displayed/growing cone radius.
-            let real_view_radius = npc.view_radius_base;
+            // IsDetecting360Degrees uses the post-RefreshView real radius,
+            // which is the growing/goal radius already multiplied by the
+            // long-range, stare/follow, rider and drunkenness factors. Using
+            // the pre-factor base radius loses every member a staring chief
+            // can still feel.
+            let real_view_radius = npc.view_radius;
             let move_box = *entity.position_iface().get_move_box();
             let is_civilian = entity.is_civilian();
             let is_able_to_help = match entity {
@@ -8501,7 +8617,7 @@ impl EngineInner {
                     ground_z: entity.element_data().position().z,
                     posture: entity.element_data().posture,
                     is_rider: entity.soldier_data().is_some_and(|soldier| soldier.rider),
-                    in_building: self.entity_data_inside_building(entity.element_data()),
+                    in_building: self.entity_data_in_building_sector(entity.element_data()),
                     ai_state,
                     is_alive: !entity.is_dead(),
                     is_active: entity.is_active(),
@@ -9378,9 +9494,22 @@ impl EngineInner {
                     target,
                     position,
                     direction,
+                    call_instruction,
                     ..
                 } => {
                     let target_id = EntityId::Soldier(SoldierId(target));
+                    tracing::trace!(
+                        target: "robin_engine::ai_enemy::phalanx",
+                        instructed = target,
+                        frame = self.control.frame_counter,
+                        ?position,
+                        direction,
+                        call_instruction,
+                        "InstructGatherPosition"
+                    );
+                    if call_instruction && !self.soldier_stands_in_phalanx(target_id) {
+                        continue;
+                    }
                     let ctx = {
                         let Some(entity @ Entity::Soldier(_)) =
                             self.world.entities.get_mut(target_id)
@@ -9411,6 +9540,9 @@ impl EngineInner {
                         }
                         ctx
                     };
+                    if !call_instruction {
+                        continue;
+                    }
                     // CrossNpcAction::InstructGatherPosition: target
                     // is an enemy soldier.  Build rich tick data so a
                     // subsequent think()-triggered BattleDecisions
@@ -9696,6 +9828,12 @@ impl EngineInner {
                     }
                 }
 
+                crate::ai::CrossNpcAction::SetPhalanxThemList {
+                    target,
+                    them,
+                    primary_target,
+                } => self.process_synchronous_set_phalanx_them_list(target, them, primary_target),
+
                 crate::ai::CrossNpcAction::Say { target, remark } => {
                     let target_id = EntityId::Soldier(SoldierId(target));
                     let Entity::Soldier(s) =
@@ -9872,7 +10010,7 @@ impl EngineInner {
         // result produced earlier in this universal frame. Keep AiContext's
         // immutable-handler facade bounded exactly by the synchronous Think
         // call, then commit any newly computed surfaces before later callbacks.
-        ctx.seed_view_radius_cache(&self.ai.view_radius_cache, npc_id);
+        ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
         let had_ai_at_entry = self
             .world
             .entities
@@ -9889,7 +10027,7 @@ impl EngineInner {
             owner_local_no_forecast,
             defer_turn_instruction,
         );
-        ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache, npc_id);
+        ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
 
         // `RHArtificialIntelligence::ExecuteWaypointScript` invokes the
         // waypoint VM directly from the active Think handler. Close that
@@ -10156,6 +10294,7 @@ impl EngineInner {
                         target,
                         position,
                         direction,
+                        call_instruction,
                     } => {
                         // Alert formations queue their result requests before
                         // the sibling gather instructions. Remember those
@@ -10179,7 +10318,12 @@ impl EngineInner {
                                 .contains(&target);
                         if still_alerted {
                             self.process_synchronous_gather_instruction(
-                                sim, target, position, direction, assets,
+                                sim,
+                                target,
+                                position,
+                                direction,
+                                call_instruction,
+                                assets,
                             );
                         }
                     }
@@ -10211,6 +10355,13 @@ impl EngineInner {
                         failure,
                         assets,
                     ),
+                    crate::ai::CrossNpcAction::SetPhalanxThemList {
+                        target,
+                        them,
+                        primary_target,
+                    } => {
+                        self.process_synchronous_set_phalanx_them_list(target, them, primary_target)
+                    }
                     crate::ai::CrossNpcAction::ResumeAfterLookThere {
                         caller,
                         continuation,
@@ -10334,6 +10485,34 @@ impl EngineInner {
             .reentrant
             .cross_npc_actions
             .push(action);
+    }
+
+    /// Install the completed phalanx them-list and its head target on one
+    /// member. This has to stay ordered against the `BreakPhalanx` batch:
+    /// the assignment happens while the rebuild recursion unwinds, before
+    /// any member's `BattleDecisions` prunes entries that can no longer
+    /// fight.
+    fn process_synchronous_set_phalanx_them_list(
+        &mut self,
+        target: u32,
+        them: Vec<crate::ai::HumanHandle>,
+        primary_target: crate::ai::HumanHandle,
+    ) {
+        let target_id = EntityId::Soldier(SoldierId(target));
+        let Some(Entity::Soldier(s)) = self.world.entities.get_mut(target_id) else {
+            return;
+        };
+        if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
+            tracing::trace!(
+                target: "robin_engine::ai_enemy::phalanx",
+                member = target,
+                ?them,
+                primary_target,
+                "phalanx them-list: installing on member"
+            );
+            enemy_ai.list_them = them;
+            enemy_ai.base.primary_target = primary_target;
+        }
     }
 
     /// Execute one member of Original's recursive
@@ -10530,15 +10709,43 @@ impl EngineInner {
         self.drain_direct_ai_owner_boundary_without_forecast(sim, source_id, assets);
     }
 
+    /// Whether a soldier is still holding its place in a phalanx.
+    ///
+    /// The phalanx-correction loops re-read this for every member right before
+    /// announcing the new slot, because an earlier member's `CALL_INSTRUCTION`
+    /// can re-enter and pull later members out of the formation.
+    fn soldier_stands_in_phalanx(&self, target_id: EntityId) -> bool {
+        self.world
+            .entities
+            .get(target_id)
+            .and_then(Entity::enemy_ai)
+            .is_some_and(|enemy| {
+                enemy.base.current_substate == crate::ai::Substate::AttackingPhalanx
+            })
+    }
+
     fn process_synchronous_gather_instruction(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         target: u32,
         position: crate::ai::Position,
         direction: u16,
+        call_instruction: bool,
         assets: &LevelAssets,
     ) {
         let target_id = EntityId::Soldier(SoldierId(target));
+        tracing::trace!(
+            target: "robin_engine::ai_enemy::phalanx",
+            instructed = target,
+            frame = self.control.frame_counter,
+            ?position,
+            direction,
+            call_instruction,
+            "synchronous InstructGatherPosition"
+        );
+        if call_instruction && !self.soldier_stands_in_phalanx(target_id) {
+            return;
+        }
         let enemy = self
             .world
             .entities
@@ -10550,6 +10757,9 @@ impl EngineInner {
         enemy.gather_position = position;
         enemy.gather_direction = direction;
         enemy.gather_position_instructed = true;
+        if !call_instruction {
+            return;
+        }
 
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
         let building_sector = self
@@ -11573,6 +11783,13 @@ impl EngineInner {
         wp_idx: u8,
     ) {
         let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(npc_id);
+        tracing::trace!(
+            frame = self.control.frame_counter,
+            owner = npc_id.index(),
+            path = ?path_idx,
+            wp = wp_idx,
+            "waypoint ReachPoint dispatch"
+        );
         if let Err(error) = self.call_script_vm(
             sim,
             assets,
@@ -11931,6 +12148,9 @@ impl EngineInner {
                 chief_id.index()
             )
         });
+        // `InitializePatrol` admits members through IsDetecting360Degrees,
+        // whose distance gate is the post-RefreshView real radius, not the
+        // pre-factor base radius the growing cone animates towards.
         let chief_real_view_radius = chief_entity
             .npc_data()
             .unwrap_or_else(|| {
@@ -11939,7 +12159,7 @@ impl EngineInner {
                     chief_id.index()
                 )
             })
-            .view_radius_base;
+            .view_radius;
 
         let snapshot = |id: EntityId| {
             let view = views.get(&id.index()).unwrap_or_else(|| {
@@ -11962,7 +12182,7 @@ impl EngineInner {
                 ground_z: entity.element_data().position().z,
                 posture: entity.element_data().posture,
                 is_rider: entity.soldier_data().is_some_and(|soldier| soldier.rider),
-                in_building: self.entity_data_inside_building(entity.element_data()),
+                in_building: self.entity_data_in_building_sector(entity.element_data()),
                 ai_state: entity
                     .npc_data()
                     .unwrap_or_else(|| {
@@ -12246,6 +12466,8 @@ impl EngineInner {
         // window where a teardown nulls the sequence-element
         // before the next animation tick resets `action_state`.
         let is_idle = self.actor_command(npc_id) == crate::element::Command::Wait;
+        let receiving_wasp_sting =
+            self.actor_command(npc_id) == crate::element::Command::ReceiveWaspSting;
         // C++ `RHElementActor::GetAnimation()` returns `mpOrder->action`, not
         // the sprite row most recently performed. A transition may complete
         // during Actor::Execute and promote its successor before NPC
@@ -12306,6 +12528,7 @@ impl EngineInner {
                         &tick_data,
                         Some(&self.world.fast_grid),
                         is_idle,
+                        receiving_wasp_sting,
                         sequence_null_about_to_launch,
                     );
             }
@@ -12704,7 +12927,7 @@ impl EngineInner {
             .ai_controller()
             .unwrap_or_else(|| panic!("ladder-tail NPC {} has no AI", npc_id.index()))
             .script_locked;
-        let in_building = self.entity_data_inside_building(entity.element_data());
+        let in_building = self.entity_data_in_building_sector(entity.element_data());
         let qualifies = on_ladder && in_wait_or_move_waiting && !script_locked && !in_building;
 
         // Bump or reset the counter; remember whether to fire.
