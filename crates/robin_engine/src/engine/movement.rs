@@ -7999,6 +7999,15 @@ impl EngineInner {
                         None
                     };
                     if final_entity_seek_arrival == Some(false) {
+                        // PerformSeek reports this frame as still in progress
+                        // once it decides to refresh, so the Execute arm never
+                        // reaches the switch that would retire the actor into
+                        // its waiting state. Drop the effect the terminating
+                        // transition queued a moment ago; leaving it applied
+                        // strands the actor at a standstill, and the refresh
+                        // then reads that as a walk rather than the run it was
+                        // already doing.
+                        movement_state_effects.retain(|(id, _, _)| *id != eid);
                         transition_seek_refreshes.push((eid, move_seq_id, move_elem_idx));
                         continue 'actors;
                     }
@@ -9057,7 +9066,15 @@ impl EngineInner {
                     .get_entity_mut(owner)
                     .and_then(|entity| entity.actor_data_mut())
                 {
+                    let before = actor.action_state;
                     actor.action_state = actor.action_state.set_moving(false, false);
+                    tracing::trace!(
+                        target: "parity_post_process_path",
+                        ?owner,
+                        ?before,
+                        after = ?actor.action_state,
+                        "transition seek refresh arming moving state",
+                    );
                 }
                 self.apply_seek_refresh(
                     sim,
