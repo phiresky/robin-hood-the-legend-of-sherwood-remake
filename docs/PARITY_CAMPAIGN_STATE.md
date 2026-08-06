@@ -81,7 +81,7 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #48 completed: `CMD_CHANGE_WAY` now preserves Original's explicit second BreakMacro + ReturnToDuty tail after AssignNewPatrolPath's synchronous callback, restoring the duplicate path request in 39 controls.
 - #49 completed: the complete fighter registry retains dead PCs for held Original pointers, and ShootArrowAt no longer invents a dead-target admission guard. The frame-1515 panic and command/animation mismatch clear; the same-frame extra post-shot seek RNG is #50.
 - #50 completed: queued bow shots retain active human targets that died while aiming, matching Original's ShootArrowAt and clearing the extra SeekArea/SeekPointSelection batch. The next projectile-position frontier is #54.
-- #51 active: investigate nicouzouf/S069 replay-005 Soldier 187's AI-substate frontier at frame 1332 after #47.
+- #51 completed: forced battle decisions persist after use, matching Original's never-cleared `mforcedNextBattleDecision`; nicouzouf/S069 replay-005 reaches exact EOF.
 - #52 completed: the sequence manager now retains the translating actor selection through synchronous condolence callbacks, and pending-command queries include that translating element. This prevents `EVENT_DONE` from recursively relaunching `EnterSwordfight`; the former frame-867 hang now exits normally at an unrelated visibility-query frontier after frame 866.
 - #54 completed: ground impact evaluation now mirrors Original's mixed-precision dominant-axis equation (`FLOAT` coefficients with `DOUBLE` secondary-coordinate evaluation), clearing Projectile192's exact-bit residual; the #50/#54 control reaches exact EOF.
 - #55 active: mine another high-leverage direction-goal or motion-state family.

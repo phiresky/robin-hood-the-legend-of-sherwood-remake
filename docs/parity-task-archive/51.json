@@ -1,0 +1,8 @@
+{
+  "id": "51",
+  "subject": "Preserve forced battle decisions after use",
+  "description": "DONE. Residual exposed after task #47 at parity-random-save-replays-60s-15x/Savegame_nicouzouf/Profile_001/Savegame_069/replay-005 frame 1332. Soldier 187 entered AttackingTooProudToAttackRetire in Rust while Original attacked PC 246. Both engines had the same enemy and ally lists, zero blood alcohol, and the same clear 360-degree visibility result for lower-pride Soldier 198. The deciding state was set earlier by the mission script: Soldier 187 used a forced Fight decision at frame 1262. Rust consumed and cleared forced_next_battle_decision, but Original RHArtificialMalignity::BattleDecisions never clears mforcedNextBattleDecision and never reads the serialized mbResetBattleDecision flag, so the forced Fight remains active for all later decisions until a script replaces it. Rust now preserves the forced value after each use. The existing queued-target engine regression now asserts that persistence. The exact replay matches through EOF after the fix.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

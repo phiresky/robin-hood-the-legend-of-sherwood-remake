@@ -4464,6 +4464,8 @@ fn npc_detection_view_rebinds_combat_data_to_the_queued_target() {
         .get_entity(soldier_id)
         .and_then(Entity::enemy_ai)
         .expect("target-rebind soldier retains enemy AI");
+    // RHArtificialMalignity::BattleDecisions does not clear the forced
+    // decision after using it. The serialized reset flag is never consulted.
     assert_eq!(
         (
             ai.base.primary_target,
@@ -4477,7 +4479,7 @@ fn npc_detection_view_rebinds_combat_data_to_the_queued_target() {
             Some(viewed_target_id.index()),
             AiState::Attacking,
             Substate::AttackingSwordfight,
-            Decision::None,
+            Decision::Fight,
         )
     );
     assert_eq!(ai.base.current_state, AiState::Attacking);

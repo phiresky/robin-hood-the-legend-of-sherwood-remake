@@ -956,7 +956,11 @@ impl EnemyAi {
             // back to the predecision flow rather than trusting the
             // forced value.
             let forced = self.forced_next_battle_decision;
-            self.forced_next_battle_decision = Decision::None;
+            // Original never consumes this field. Although
+            // `ForceNextBattleDecision` also stores `mbResetBattleDecision`,
+            // BattleDecisions does not read that flag or clear the forced
+            // value. A non-`None` decision therefore remains forced on every
+            // later pass until a script replaces it.
             let forced_allowed = matches!(
                 forced,
                 Decision::Cassos
@@ -981,9 +985,7 @@ impl EnemyAi {
                     "battle_decisions: forced decision not in whitelist; falling back to predecision"
                 );
                 // Fall through to predecision flow as a release-mode
-                // best-effort recovery.  We re-enter the else branch
-                // by recording None below.
-                self.forced_next_battle_decision = Decision::None;
+                // best-effort recovery.
                 // Simulate "no forced decision" by jumping into the
                 // else block via a goto-style early flag.
                 let predecision = self.make_battle_predecisions(sim, ctx, tick);
