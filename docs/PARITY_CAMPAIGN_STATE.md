@@ -15,9 +15,8 @@ Written when the session ran out of credits (limit resets 18:30 Berlin; earlier 
 - Universe: **5,164 traces** (corpora: `parity-random-save-replays-60s-15x/`, `-schema14/` [1,350 regen], `parity-save-replays-schema12/`, `parity-random-save-replays/`; `parity-save-replays/` = schema-11, permanently retired, 445 traces; retired regen saves listed in `tmp/regen14-saves.txt`).
 - Last complete sweep (re-sweep 12, runner db67cc978): **2,390 passing (46.3%)**, 2,418 failing. Ledger entry committed in `docs/ORIGINAL_PARITY_REPLAY.md`.
 - Failing-trace depth profile (sampled n=99): traces are ~1,384 frames; failures diverge at mean 630 frames = **mean 46.4% / median 41.4% progress**; 15% of failures get past 80%.
-- **Re-sweep 13 RUNNING on remote** at this dump: runner `original_parity_replay-69df41aeb`, audit dir `~/robinhood/output/parity-audits/resweep-69df41aeb`, 2,418-trace manifest, 11 shards in tmux session `parity-69df`. At last check: 2,076 graded, **30 passes**, 1,658 state-div, 380 rng-panic, 8 timeout. A local background watcher polls for SWEEP-DONE.
-  - When done: `rsync -a atlasbio-robin-cpu4:robinhood/output/parity-audits/resweep-69df41aeb/ output/parity-audits/resweep-69df41aeb/` then `python3 scripts/classify_parity_failures.py output/parity-audits/resweep-69df41aeb`, update ledger, dispatch from classification.
-  - NOTE: sweep 13 measures main @69df41aeb (has #12,#14,#18,#26,#29,#32). Merges AFTER it: #33,#27,#25,#30,#19 → need re-sweep 14.
+- **Re-sweep 13 DONE** (finished after the dump; results fetched + classified + ledger-committed): 31 passes, 1,948 state-div, 431 rng-panic, 8 timeouts → **cumulative 2,421/5,164 (46.9%)**. Classification: `output/parity-audits/resweep-69df41aeb/classification.json` (top: actor.animation 113, rng:VipIdleRemark 80 [mislabeled swordfight — task #38], direction_goal 79, position_goal_map.x 73, movement_map.x 71, motion_state 70, detectables.length 69).
+  - Sweep 13 measured main @69df41aeb (has #12,#14,#18,#26,#29,#32). Merges AFTER it: #33,#27,#25,#30,#19 → need re-sweep 14.
   - **Re-sweep 14 MUST be full-universe (all 5,164)** — failure-only manifests are blind to regressions on passing traces, and we have a confirmed regression (task #36).
 
 ## Main branch state
