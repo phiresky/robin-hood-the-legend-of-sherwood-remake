@@ -1,0 +1,8 @@
+{
+  "id": "46",
+  "subject": "Restore bespoke Human Execute routing for smalltalk strikes",
+  "description": "DONE. Task #28 cleared the extra observation-side-step draw at schema14 Savegame_linux2/Profile_002/Savegame_003/replay-002 frame 13984 and exposed the next RNG boundary at Original frame 14266: Rust consumed eight draws while Original consumed the same eight plus ReceiveSwordDamage and SwordDamageProtection draws. The missing hit belonged to Soldier 186's StrikingLeftSmalltalk against PC 102. Original handles smalltalk strikes in a bespoke RHElementActorHuman::Execute arm: at action-done it wounds an actor only when the target holds a sword and its direction-vector dot relative-position is positive, with no ordinary weapon-range test. Rust's generic animation path already implemented those exact semantics, but the execute-owner catalog routed all four smalltalk strike animations to the specialized Melee owner. MELEE_ORDERS and sword_strike_from_animation intentionally exclude smalltalk, so that owner performed no sprite work and never reached the action-done hit. The catalog now routes the four Human and PC smalltalk strike entries to GenericAnimation. A focused routing regression covers all four animations for both soldiers and PCs. The exact replay matches through EOF with the optimized parity runner.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

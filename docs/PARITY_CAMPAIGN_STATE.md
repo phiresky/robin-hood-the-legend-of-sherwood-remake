@@ -76,7 +76,7 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #43 completed: legacy sprite adoption now preserves Original's profile-switch-before-position ordering, including the transient row computed from the constructed mission direction when the saved alternate-profile flag differs.
 - #44 completed: final point-target Seek arrivals launch attached post-seek actions, and DropAle now uses Original's authored animation/DONE lifecycle and exact bottle placement/initialization. Three cross-family controls reach EOF.
 - #45 completed: removed the invented Attacking-state gate from BeginSwordfight, restoring synchronous EVENT_GOTHIT retaliation at f465. The later frame1299 RNG frontier is #47.
-- #46 active: investigate replay-002's later f14266 melee protection draws after #28.
+- #46 completed: smalltalk strikes now route to the bespoke Human animation executor instead of the specialized melee owner, restoring the missing action-DONE damage/protection pair; the exact replay reaches EOF.
 - #47 active: investigate nicouzouf/S069 r005 frame1299 SwordStrikeSelection RNG after #45.
 - #48 active: mine the near-complete baseline for the next broad family.
 

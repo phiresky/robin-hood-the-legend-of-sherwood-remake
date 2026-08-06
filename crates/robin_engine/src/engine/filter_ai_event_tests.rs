@@ -4357,6 +4357,28 @@ fn every_specialized_melee_and_beggar_order_routes_to_its_production_owner() {
 }
 
 #[test]
+fn smalltalk_strikes_route_to_their_distinct_human_execute_arm() {
+    use super::tick::{ExecuteOwnerFamily, classify_live_actor_execute_arm};
+    use crate::entity_id::{PcId, SoldierId};
+    use crate::order::OrderType;
+
+    for actor in [EntityId::Pc(PcId(0)), EntityId::Soldier(SoldierId(0))] {
+        for order in [
+            OrderType::StrikingLeftSmalltalk,
+            OrderType::StrikingRightSmalltalk,
+            OrderType::StrikingLowLeftSmalltalk,
+            OrderType::StrikingLowRightSmalltalk,
+        ] {
+            assert_eq!(
+                classify_live_actor_execute_arm(actor, order),
+                Some(ExecuteOwnerFamily::GenericAnimation),
+                "smalltalk strike {order:?} must retain its bespoke Human::Execute semantics"
+            );
+        }
+    }
+}
+
+#[test]
 fn later_smalltalk_hint_defers_for_already_visited_defender() {
     use crate::element::Command;
 
