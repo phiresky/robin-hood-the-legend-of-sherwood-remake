@@ -89,6 +89,11 @@ pub struct CurrentStepState {
     pub total_frames: u16,
     pub frames_elapsed: u16,
     pub order_id: std::num::NonZeroU32,
+    /// Fixed 3D increment authored when an airborne order initializes.
+    /// Original computes this once as `delta * (speed / distance)` and
+    /// `UpdatePosition` adds the stored vector on every Execute tick.
+    #[serde(default)]
+    pub airborne_increment: Option<WorldVec3D>,
     /// The step being executed — retained so `advance_jump_step` can
     /// snap position to the target and apply the posture transition
     /// when the animation completes.
@@ -1371,6 +1376,19 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_terminated(sequence_id, element_index);
+            // `RHSequenceElement::SetState(TERMINATED)` synchronously calls
+            // Ready/Instruct. `RHElementActor::Instruct` resets the retained
+            // `mmotionState` to IN_PROGRESS before the owner's frame ends,
+            // including when the resumed successor is the low-priority Wait.
+            // SequenceManager cannot mutate actor state itself, so mirror that
+            // owner-side part of Instruct at this jump completion boundary.
+            self.world
+                .entities
+                .get_mut(entity_id)
+                .and_then(crate::element::Entity::actor_data_mut)
+                .expect("completed jump owner disappeared during synchronous instruction")
+                .continuation
+                .motion_state = crate::sprite::MotionState::InProgress;
         }
         landing_finalize
     }
@@ -1417,9 +1435,10 @@ fn start_step(
     next_order_id: &mut u32,
     sequence_manager: &crate::sequence::SequenceManager,
 ) -> Option<(crate::sequence::SequenceId, usize, crate::order::Order)> {
-    if step.airborne {
-        start_airborne_jump_motion(entity, &step);
+    let airborne_increment = if step.airborne {
+        let increment = start_airborne_jump_motion(entity, &step);
         entity.position_iface_mut().turn();
+        increment
     } else if matches!(
         step.anim,
         OrderType::TransitionWaitingOnShouldersJumpingUp
@@ -1457,6 +1476,7 @@ fn start_step(
                 actor.action_state = ActionState::Moving;
             }
         }
+        None
     } else if matches!(
         step.anim,
         OrderType::TransitionJumpingUpWaitingCrouched
@@ -1481,7 +1501,10 @@ fn start_step(
             actor.action_state = action;
         }
         entity.position_iface_mut().turn();
-    }
+        None
+    } else {
+        None
+    };
 
     let (start_x, start_y, start_z) = {
         if step.airborne {
@@ -1523,6 +1546,7 @@ fn start_step(
         total_frames,
         frames_elapsed: 0,
         order_id,
+        airborne_increment,
         step: step.clone(),
     };
 
@@ -1561,12 +1585,15 @@ fn start_step(
     Some((jump_seq, jump_elem, order))
 }
 
-fn start_airborne_jump_motion(entity: &mut crate::element::Entity, step: &JumpStep) {
+fn start_airborne_jump_motion(
+    entity: &mut crate::element::Entity,
+    step: &JumpStep,
+) -> Option<WorldVec3D> {
     entity.set_posture(Posture::Flying);
 
     let Some(target) = step.target_3d else {
         tracing::warn!(?step.anim, "airborne jump step missing 3D target");
-        return;
+        return None;
     };
     let position = entity.element_data().position();
     let dx = target.x - position.x;
@@ -1575,8 +1602,18 @@ fn start_airborne_jump_motion(entity: &mut crate::element::Entity, step: &JumpSt
     let distance = (dx * dx + dy * dy + dz * dz).sqrt();
     if distance <= f32::EPSILON {
         tracing::warn!(?step.anim, "airborne jump step has zero-length motion");
-        return;
+        return None;
     }
+    // Preserve the Original's operation ordering. It scales the complete
+    // vector once (`vIncrement *= speed / fDistance`) rather than normalizing
+    // each component and multiplying by speed again on every frame. Those
+    // forms differ by an ulp for ordinary jumps.
+    let increment_scale = jump_airborne_speed(step.anim) / distance;
+    let increment = WorldVec3D {
+        x: dx * increment_scale,
+        y: dy * increment_scale,
+        z: dz * increment_scale,
+    };
     let mut wait_time = (distance * jump_flight_rate(step.anim) - 1.0) as u32;
     if wait_time == 0 {
         wait_time = 1;
@@ -1604,6 +1641,7 @@ fn start_airborne_jump_motion(entity: &mut crate::element::Entity, step: &JumpSt
         actor.seek_refresh_wait = 0;
         actor.wait_time = wait_time;
     }
+    Some(increment)
 }
 
 /// Ground transition steps whose Execute arm drives the sprite through
@@ -1867,39 +1905,22 @@ fn advance_airborne_flight(entity: &mut crate::element::Entity) {
         (actor.active_jump_target_3d, state)
     };
 
-    if let Some(target) = target_3d {
-        let full_dx = target.x - state.start_x;
-        let full_dy = target.y - state.start_y;
-        let full_dz = target.z - state.start_z;
-        let full_dist = (full_dx * full_dx + full_dy * full_dy + full_dz * full_dz).sqrt();
-
-        let frame_dist = jump_airborne_speed(state.step.anim);
-
-        if full_dist > f32::EPSILON && frame_dist > 0.0 {
-            let dir_x = full_dx / full_dist;
-            let dir_y = full_dy / full_dist;
-            let dir_z = full_dz / full_dist;
-            let elem = entity.element_data_mut();
-            let pos = elem.position();
-            let new_x = pos.x + dir_x * frame_dist;
-            let new_y = pos.y + dir_y * frame_dist;
-            let new_z = pos.z + dir_z * frame_dist;
-            let travelled_new = (new_x - state.start_x) * dir_x
-                + (new_y - state.start_y) * dir_y
-                + (new_z - state.start_z) * dir_z;
-            if travelled_new >= full_dist {
-                elem.set_position(target);
-            } else {
-                elem.set_position(crate::coordinates::WorldPoint3D {
-                    x: new_x,
-                    y: new_y,
-                    z: new_z,
-                });
-            }
-        }
-    } else {
+    if target_3d.is_none() {
         tracing::warn!(?state.step.anim, "airborne jump step missing 3D target");
     }
+    let increment = state.airborne_increment.unwrap_or_else(|| {
+        panic!(
+            "airborne jump step {:?} has no initialized 3D increment",
+            state.step.anim
+        )
+    });
+    let elem = entity.element_data_mut();
+    let pos = elem.position();
+    elem.set_position(crate::coordinates::WorldPoint3D {
+        x: pos.x + increment.x,
+        y: pos.y + increment.y,
+        z: pos.z + increment.z,
+    });
 
     if let Some(actor) = entity.actor_data_mut() {
         actor.jump_z_offset = 0.0;
