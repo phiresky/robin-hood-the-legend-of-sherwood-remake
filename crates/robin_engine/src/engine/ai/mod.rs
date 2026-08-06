@@ -5715,7 +5715,6 @@ impl EngineInner {
         positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
         _prepared: PreparedNpcOwnerPass,
         npc_id: EntityId,
-        derived_tail_order_type: crate::order::OrderType,
     ) {
         let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
             panic!(
@@ -5731,12 +5730,7 @@ impl EngineInner {
         // FrozenAll is volatile script state. Sample it at the consuming NPC
         // slot rather than caching it before earlier owners run callbacks.
         if self.actors_frozen() {
-            self.tick_npc_post_detection_tail_for_npc_with_animation(
-                sim,
-                npc_id,
-                assets,
-                derived_tail_order_type,
-            );
+            self.tick_npc_post_detection_tail_for_npc(sim, npc_id, assets);
             return;
         }
 
@@ -5748,7 +5742,6 @@ impl EngineInner {
             &world,
             Some(positions_before_movement),
             Some(npc_id),
-            Some(derived_tail_order_type),
             false,
         );
     }
@@ -5811,7 +5804,6 @@ impl EngineInner {
             assets,
             &world,
             positions_before_movement,
-            None,
             None,
             positions_before_movement.is_some(),
         );
@@ -12395,28 +12387,11 @@ impl EngineInner {
     // `hourglass`, staggered by NPC index so not all soldiers run on
     // the same frame.
 
-    #[cfg(test)]
     pub(super) fn tick_periodic_ai_for_npc(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
-    ) {
-        let live_animation = self
-            .orders
-            .sequence_manager
-            .current_order_for_actor(npc_id)
-            .map(|(_, _, order)| order.order_type)
-            .unwrap_or(crate::order::OrderType::NonanimationEnd);
-        self.tick_periodic_ai_for_npc_with_animation(sim, npc_id, assets, live_animation);
-    }
-
-    pub(super) fn tick_periodic_ai_for_npc_with_animation(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-        live_animation: crate::order::OrderType,
     ) {
         let current_frame = self.control.frame_counter;
 
@@ -12493,7 +12468,7 @@ impl EngineInner {
                 panic!("periodic NPC {} disappeared before call", npc_id.index())
             });
 
-        let mut ctx = build_ai_context_from_entity(
+        let ctx = build_ai_context_from_entity(
             entity,
             current_frame,
             building_sector,
@@ -12507,7 +12482,6 @@ impl EngineInner {
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
-        ctx.self_animation = live_animation;
 
         match entity {
             Entity::Soldier(s) => {

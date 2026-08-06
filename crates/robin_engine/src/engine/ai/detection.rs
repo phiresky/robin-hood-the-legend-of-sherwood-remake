@@ -1256,7 +1256,6 @@ impl EngineInner {
         world: &AiWorldView,
         positions_before_movement: Option<&EntitySlots<Option<crate::entities::BoundaryPosition>>>,
         owner: Option<EntityId>,
-        owner_tail_animation: Option<crate::order::OrderType>,
         dispatch_legacy_test_wakes: bool,
     ) {
         let universal_frame = self.control.frame_counter;
@@ -1437,13 +1436,7 @@ impl EngineInner {
             // focused detection-only seam passes no pre-movement positions
             // and deliberately stops at the RefreshDetection boundary.
             if positions_before_movement.is_some() {
-                if let Some(animation) = owner_tail_animation.filter(|_| owner == Some(npc_id)) {
-                    self.tick_npc_post_detection_tail_for_npc_with_animation(
-                        sim, npc_id, assets, animation,
-                    );
-                } else {
-                    self.tick_npc_post_detection_tail_for_npc(sim, npc_id, assets);
-                }
+                self.tick_npc_post_detection_tail_for_npc(sim, npc_id, assets);
             }
         }
     }
@@ -1611,7 +1604,7 @@ impl EngineInner {
     ) {
         let world = self.tick_enemy_ai_build_world_view(assets, None);
         mutate_live_state(self);
-        self.tick_enemy_ai_refresh_detection(sim, assets, &world, None, None, None, false);
+        self.tick_enemy_ai_refresh_detection(sim, assets, &world, None, None, false);
     }
 
     #[cfg(test)]

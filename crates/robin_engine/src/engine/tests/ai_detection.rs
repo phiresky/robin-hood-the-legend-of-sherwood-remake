@@ -119,6 +119,47 @@ fn actor_owner_envelope_closes_each_legacy_slot_before_the_next_owner() {
 }
 
 #[test]
+fn periodic_bored_roll_reads_installed_order_after_detection_boundary() {
+    use crate::element::InstalledActorOrder;
+    use crate::order::OrderType;
+    use crate::sim_rng::{RngSite, with_draw_trace};
+
+    let mut engine = EngineInner::new();
+    let npc_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    // Model a synchronous detection Think replacing mpOrder after Actor::Hourglass
+    // selected its tail order. The sequence manager deliberately has no selected
+    // order: only ActorData::installed_order mirrors Original's live mpOrder.
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(npc_id)
+            .is_none()
+    );
+    engine
+        .get_entity_mut(npc_id)
+        .and_then(Entity::actor_data_mut)
+        .expect("periodic owner has actor data")
+        .installed_order = Some(InstalledActorOrder {
+        order_id: std::num::NonZeroU32::new(1).unwrap(),
+        order_type: OrderType::WaitingUprightBored,
+    });
+    // Register zero reaches The16thFrame at frame 100.
+    engine.control.frame_counter = 100;
+
+    let sim = crate::sim_rng::test_context();
+    let (_, trace) = with_draw_trace(|| engine.tick_periodic_ai_for_npc(&sim, npc_id, &assets));
+
+    assert!(
+        trace.contains(&RngSite::VipIdleRemark),
+        "The16thFrame GetAnimation must read the installed mpOrder at its own boundary"
+    );
+}
+
+#[test]
 fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
     use crate::element::{Command, ElementData, ElementKind, TargetFilter};
     use crate::movement::{AbilityKind, ActiveAbility};
@@ -2546,20 +2587,7 @@ fn optical_detection_uses_owner_relative_positions_and_spawned_current_fallback(
 
         let sim = crate::sim_rng::test_context();
         let prepared = engine.prepare_npc_owner_pass(&sim, &assets);
-        let tail_animation = engine
-            .orders
-            .sequence_manager
-            .current_order_for_actor(observer_id)
-            .map(|(_, _, order)| order.order_type)
-            .unwrap_or(crate::order::OrderType::NonanimationEnd);
-        engine.tick_npc_owner_pass(
-            &sim,
-            &assets,
-            &positions,
-            prepared,
-            observer_id,
-            tail_animation,
-        );
+        engine.tick_npc_owner_pass(&sim, &assets, &positions, prepared, observer_id);
 
         engine
             .get_entity(observer_id)

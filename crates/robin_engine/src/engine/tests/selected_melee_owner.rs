@@ -97,6 +97,38 @@ fn install_selected_melee(
     seq_id
 }
 
+fn install_selected_smalltalk(
+    engine: &mut EngineInner,
+    attacker: EntityId,
+    victim: EntityId,
+) -> crate::sequence::SequenceId {
+    let seq_id = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(
+            1,
+            Command::SwordstrikeSmalltalkRight,
+            Some(attacker),
+        ));
+    let order_id = engine.orders.allocate_order_id();
+    let mut order = Order::new(OrderType::StrikingRightSmalltalk, 0.0, 0.0, order_id);
+    order.antagonist = Some(victim);
+    engine
+        .orders
+        .sequence_manager
+        .push_order_on(seq_id, 0, order);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(seq_id, 0);
+    engine
+        .get_entity_mut(attacker)
+        .expect("attacker exists")
+        .element_data_mut()
+        .active = true;
+    seq_id
+}
+
 fn run_owner_walk(engine: &mut EngineInner, assets: &LevelAssets) {
     let positions = positions(engine);
     engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), assets, &positions);
@@ -399,6 +431,42 @@ fn straight_done_hits_principal_without_common_victim_filter() {
                 element.command == Command::ReceiveSwordDamage && element.owner == Some(principal)
             }),
         "GetPossibleVictimsOfStraightSwordStrike must use principal + distance only for the completed hit as well as its warning"
+    );
+}
+
+#[test]
+fn smalltalk_done_uses_isometric_facing_for_back_hit_gate() {
+    let mut engine = EngineInner::new();
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_entity(make_test_pc(Posture::Upright));
+    set_map_position(&mut engine, attacker, 0.0, 0.0);
+    // For sector 2 and this relative position, a raw unit-circle dot
+    // product is negative while Original's aspect-scaled map-plane vector
+    // is positive.
+    set_map_position(&mut engine, victim, 60.0, 100.0);
+    {
+        let victim = engine.get_entity_mut(victim).unwrap();
+        victim.element_data_mut().set_direction_instantly(2);
+        victim.actor_data_mut().unwrap().action_state = crate::element::ActionState::WaitingSword;
+    }
+    bind_animation(&mut engine, attacker, OrderType::StrikingRightSmalltalk);
+    install_selected_smalltalk(&mut engine, attacker, victim);
+
+    let assets = straight_warning_assets(0, 1);
+    for _ in 0..4 {
+        run_owner_walk(&mut engine, &assets);
+    }
+
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| {
+                element.command == Command::ReceiveSwordDamage && element.owner == Some(victim)
+            }),
+        "smalltalk back-hit must use the Original isometric facing vector"
     );
 }
 

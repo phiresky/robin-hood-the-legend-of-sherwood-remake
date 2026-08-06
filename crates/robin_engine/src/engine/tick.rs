@@ -4187,7 +4187,6 @@ impl EngineInner {
                             positions_before_movement,
                             prepared,
                             owner,
-                            derived_tail_order_type,
                         );
                         #[cfg(test)]
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::NpcTail(owner));
@@ -5801,8 +5800,14 @@ impl EngineInner {
                     .unwrap_or_else(|| panic!("smalltalk antagonist {target_id:?} disappeared"));
                 let attacker_pos = attacker.element_data().position_map();
                 let target_pos = target.element_data().position_map();
-                let (dx, dy) =
-                    crate::element_kinds::direction_vector_16(target.element_data().direction());
+                // RHElement::GetDirectionVector returns a vector in the
+                // isometric map plane.  Smalltalk's "striking in the back"
+                // dot product therefore needs the aspect-scaled Y component;
+                // the ordinary unit-circle helper can flip this half-plane
+                // test and suppress the ensuing sword-damage RNG draws.
+                let [dx, dy] = crate::position_interface::sector_to_vector_iso(
+                    target.element_data().direction(),
+                );
                 let relative_x = target_pos.x - attacker_pos.x;
                 let relative_y = target_pos.y - attacker_pos.y;
                 target

@@ -1,8 +1,8 @@
 {
   "id": "40",
   "subject": "Audit The16thFrame periodic path for live-read animation",
-  "description": "Watch item from #19 (merged da65a5097): tick_periodic_ai_for_npc_with_animation and tick_npc_post_detection_tail_for_npc still thread a live-read animation instead of the latched installed_order mirror (C++ GetAnimation() reads mpOrder). Very likely the same stale-override bug class deleted in #19, but it feeds the bored-reroll gate fixed in #16 and there was no isolating repro, so it was left unchanged. If the next sweep shows a bored-reroll or 16th-frame timing family, fix these two sites first (derive from installed_order like build_ai_context_from_entity does).",
-  "status": "pending",
+  "description": "Completed: the NPC owner path captured installed_order before RefreshDetection and threaded that stale animation through the post-detection tail. Synchronous detection Think can replace mpOrder before The16thFrame; Original GetAnimation reads the live order at that boundary. The periodic path now constructs its AI context from ActorData::installed_order at consumption. A regression with no sequence-manager selection and a live bored installed order proves VipIdleRemark is drawn. Focused periodic/tail tests and the full library suite pass.",
+  "status": "completed",
   "blocks": [],
   "blockedBy": []
 }
