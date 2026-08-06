@@ -1833,18 +1833,8 @@ fn apply_soldier_execute_side_effects(
             set_states(entity, Posture::Upright, ActionState::Moving);
         }
 
-        // BEING_UNCONSCIOUS_*: START sets the settled lying state.
-        // The dispatch arm itself keeps the order alive only while
-        // `human.unconscious` is still true.
-        (OT::BeingUnconsciousSword, MS::Start) => {
-            set_states(entity, Posture::Lying, ActionState::WaitingSword);
-        }
-        (OT::BeingUnconsciousBow, MS::Start) => {
-            set_states(entity, Posture::Lying, ActionState::AimingWithBow);
-        }
-        (OT::BeingUnconscious, MS::Start) => {
-            set_states(entity, Posture::Lying, ActionState::Waiting);
-        }
+        // BEING_UNCONSCIOUS_* START is handled for every human by
+        // `apply_active_animation_start_state_side_effect`.
 
         // TRANSITION_RAISING_SWORD → WaitingSword on DONE
         (OT::TransitionRaisingSword, MS::Done) => {
@@ -2310,6 +2300,55 @@ fn apply_active_animation_start_state_side_effect(
             entity.set_posture(Posture::Upright);
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::WaitingSword;
+            }
+            return;
+        }
+        // The knock-out hold animations are owned by the human Execute
+        // switch, so every human — PC, soldier, civilian — settles into
+        // the lying pose on the first frame.  Leaving them soldier-only
+        // let a knocked-out PC keep whatever action state it carried
+        // into the blow (typically MovingSword or Bored).
+        (OrderType::BeingUnconsciousSword, MotionState::Start) if entity.is_human() => {
+            entity.set_posture(Posture::Lying);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::WaitingSword;
+            }
+            return;
+        }
+        (OrderType::BeingUnconsciousBow, MotionState::Start) if entity.is_human() => {
+            entity.set_posture(Posture::Lying);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::AimingWithBow;
+            }
+            return;
+        }
+        (OrderType::BeingUnconscious, MotionState::Start) if entity.is_human() => {
+            entity.set_posture(Posture::Lying);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            return;
+        }
+        // Corpse-carry idle hold: only a PC ever executes it, and its
+        // first frame settles the carrier back into Waiting.  Without
+        // it a carrier that stops walking keeps the Moving state the
+        // walk order stamped, and every later carry frame — including
+        // the drop transition — inherits it.
+        (OrderType::WaitingWithCorpse, MotionState::Start) if entity.is_pc() => {
+            entity.set_posture(Posture::CarryingCorpse);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            return;
+        }
+        // End of the lift animation: the carrier owns the body and is
+        // standing still with it.
+        (OrderType::TransitionWaitingUprightCarryingCorpse, MotionState::Done)
+            if entity.is_pc() =>
+        {
+            entity.set_posture(Posture::CarryingCorpse);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
             }
             return;
         }
