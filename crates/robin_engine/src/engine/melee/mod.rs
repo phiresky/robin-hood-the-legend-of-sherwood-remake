@@ -4455,6 +4455,82 @@ mod tests {
     }
 
     #[test]
+    fn reconsider_direct_entry_does_not_prepare_or_stop_opponent() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let initiator = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let opponent = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+
+        let mut selected = crate::sequence::Sequence::new();
+        selected.append_element(crate::sequence::SequenceElement::new(
+            1,
+            Command::Point,
+            Some(opponent),
+        ));
+        let selected_id = engine.launch_sequence(selected);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(selected_id, 0);
+        engine
+            .get_entity_mut(opponent)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .continuation
+            .motion_state = crate::sprite::MotionState::InProgress;
+
+        assert!(engine.reconsider_enter_swordfight(
+            &sim,
+            &LevelAssets::default(),
+            initiator,
+            opponent,
+        ));
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(selected_id, 0)
+                .unwrap()
+                .state,
+            crate::sequence::SequenceState::InProgress,
+            "direct EnterSwordFight must not run PrepareToEnterSwordFight's Stop"
+        );
+        assert_eq!(
+            engine
+                .get_entity(opponent)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .continuation
+                .motion_state,
+            crate::sprite::MotionState::InProgress
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .element_is_about_to_be_launched(opponent, Command::EnterSwordfight),
+            "direct entry still queues the reciprocal Enter command"
+        );
+    }
+
+    #[test]
     fn preparing_swordfight_delivers_interrupted_done_before_enter_event() {
         use crate::ai::{AiState, LogLineType, StimulusType, Substate};
         use crate::profiles::{CharacterProfile, HtHWeaponProfile, ProfileManager, SoldierProfile};

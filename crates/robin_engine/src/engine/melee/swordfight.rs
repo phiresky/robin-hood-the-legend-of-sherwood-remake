@@ -627,6 +627,41 @@ impl EngineInner {
         sword_hurted: bool,
         aggressor_jump_line: Option<crate::jump_line::JumpLineIndex>,
     ) -> bool {
+        self.enter_swordfight_impl(
+            sim,
+            assets,
+            initiator,
+            opponent,
+            sword_hurted,
+            aggressor_jump_line,
+            true,
+        )
+    }
+
+    /// Direct `RHElementActorHuman::EnterSwordFight` entry used by
+    /// `ReconsiderSwordfight`. Unlike the ENTER_SWORDFIGHT command's
+    /// `Translate` path, the direct Original call does not first invoke
+    /// `pOpponent->PrepareToEnterSwordFight(this)`.
+    pub(crate) fn reconsider_enter_swordfight(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        initiator: EntityId,
+        opponent: EntityId,
+    ) -> bool {
+        self.enter_swordfight_impl(sim, assets, initiator, opponent, false, None, false)
+    }
+
+    fn enter_swordfight_impl(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        initiator: EntityId,
+        opponent: EntityId,
+        sword_hurted: bool,
+        aggressor_jump_line: Option<crate::jump_line::JumpLineIndex>,
+        prepare_opponent: bool,
+    ) -> bool {
         let scratch = self.build_sim_scratch(sim, assets);
         if opponent.index() == 0 {
             // Opponent==0 is a legitimate input upstream now — the
@@ -677,20 +712,18 @@ impl EngineInner {
             ai.outbox.actor.shoot_target = None;
         }
 
-        // The "prepare to enter swordfight" step runs `stop(PREFERENCE)`
-        // on the opponent and synchronously pumps EventEnterSwordfight
-        // through their think — both gated on
-        // `is_swordfighting() == false`.  Done here at the top so a
-        // rejection by the downstream gates doesn't strand the
-        // opponent in their pre-swordfight state.
-        let opponent_was_swordfighting = self
-            .world
-            .entities
-            .get(opponent)
-            .and_then(|e| e.human_data())
-            .map(|h| !h.opponents.is_empty())
-            .unwrap_or(false);
-        if !opponent_was_swordfighting {
+        // ENTER_SWORDFIGHT's Translate calls PrepareToEnterSwordFight before
+        // calling EnterSwordFight. ReconsiderSwordfight calls EnterSwordFight
+        // directly, so it must bypass this opponent Stop/Think boundary.
+        let should_prepare_opponent = prepare_opponent
+            && !self
+                .world
+                .entities
+                .get(opponent)
+                .and_then(|e| e.human_data())
+                .map(|h| !h.opponents.is_empty())
+                .unwrap_or(false);
+        if should_prepare_opponent {
             self.stop_owner(opponent, crate::sequence::SequencePriority::Preference);
             // Original `PrepareToEnterSwordFight` calls `Stop(PREFERENCE)`
             // before `Think(EVENT_ENTER_SWORDFIGHT)`. `Stop` reaches

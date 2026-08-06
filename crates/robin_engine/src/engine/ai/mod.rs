@@ -6208,9 +6208,7 @@ impl EngineInner {
                         target_handle,
                         "AI reconsider swordfight target",
                     );
-                    self.enter_swordfight_with_jump_line(
-                        sim, assets, npc_id, target_id, false, None,
-                    );
+                    self.reconsider_enter_swordfight(sim, assets, npc_id, target_id);
                 }
             }
         }
