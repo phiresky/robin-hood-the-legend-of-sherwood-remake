@@ -673,12 +673,14 @@ pub struct AiPerTickData {
     /// approaching their own primary target.
     pub friend_swap_candidates: Vec<FriendSwapCandidate>,
 
-    /// Pre-computed fallback position for the "avenger on the roof"
-    /// branch. Populated by the engine when `couldnt_reachpoint` is set
-    /// and [`crate::gate::compute_avenger_wait_position`] finds a
-    /// blocking gate on the path from the primary target back to the
-    /// evaluating NPC. `None` when the branch doesn't apply.
-    pub avenger_on_roof_wait_position: Option<Position>,
+    /// Pre-computed fallback positions for the "avenger on the roof"
+    /// branch, keyed by target handle. Populated by the engine when
+    /// `couldnt_reachpoint` is set, for the current primary target and
+    /// every personal enemy-list candidate a decision arm could re-pick,
+    /// wherever [`crate::gate::compute_avenger_wait_position`] finds a
+    /// blocking gate on the path from that target back to the
+    /// evaluating NPC. Empty when the branch doesn't apply.
+    pub avenger_on_roof_wait_positions: Vec<(HumanHandle, Position)>,
 
     /// Handles in `me`'s `DETECTABLE_ENEMY` list whose `seen_last_frame`
     /// flag is set. Used by `RefreshArrowProtection` so a shield bearer
@@ -774,6 +776,17 @@ pub struct FriendSwapCandidate {
 }
 
 impl AiPerTickData {
+    /// Look up the precomputed avenger-on-roof wait position for a
+    /// specific target handle. Decision arms re-pick their target
+    /// mid-tick, so each caller resolves its own live handle here
+    /// instead of reusing a single snapshot-target position.
+    pub fn avenger_wait_position_for(&self, target: HumanHandle) -> Option<Position> {
+        self.avenger_on_roof_wait_positions
+            .iter()
+            .find(|(handle, _)| *handle == target)
+            .map(|&(_, pos)| pos)
+    }
+
     /// Return the profile table required by swordfight evaluation.
     pub fn required_profile_manager(&self) -> &crate::profiles::ProfileManager {
         self.profile_manager.as_deref().expect(
@@ -846,7 +859,7 @@ impl AiPerTickData {
             primary_target_in_lift: false,
             primary_target_lift_entry: None,
             friend_swap_candidates: Vec::new(),
-            avenger_on_roof_wait_position: None,
+            avenger_on_roof_wait_positions: Vec::new(),
             seen_last_frame_enemies: Vec::new(),
             my_exit_door: None,
             phalanx_member_them_lists: Vec::new(),

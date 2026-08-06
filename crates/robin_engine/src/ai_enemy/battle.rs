@@ -497,6 +497,34 @@ impl EnemyAi {
             battle_tick.simple_soldiers_near |= friend.rank == ProfileRank::Soldier;
             battle_tick.has_officer_nearby |= friend.rank == ProfileRank::Officer;
         }
+        // Same-side PCs pass through the same registry walk. Their arm
+        // does exactly two things: join the us-list, and bump the
+        // lower-company counter whenever this soldier carries a company
+        // number at all. They contribute no pride / rank aggregates —
+        // MakeBattlePredecisions later scores each PC in the us-list at
+        // a flat 100 points. Registry interleaving with the soldier
+        // entries is irrelevant: every us-list consumer aggregates
+        // order-insensitively.
+        for pc in &battle_tick.fighter_registry {
+            if !pc.is_pc || !pc.is_friendly || !pc.is_able_to_fight {
+                continue;
+            }
+            let view = ctx.entity_view(pc.handle).unwrap_or_else(|| {
+                panic!(
+                    "BattleDecisions camp PC {} is absent from the AI entity view",
+                    pc.handle
+                )
+            });
+            if !battle_friend_detected_360(ctx, view.detection_position_world, view.direction, view)
+            {
+                continue;
+            }
+            self.base.list_us.push(pc.handle);
+            if self.company_number > 0 {
+                battle_tick.friends_lower_company =
+                    battle_tick.friends_lower_company.saturating_add(1);
+            }
+        }
         let tick = &battle_tick;
 
         // Original `BattleDecisions` snapshots `mCurrentSubstate` into a
@@ -1075,8 +1103,10 @@ impl EnemyAi {
             friends_lower_company = tick.friends_lower_company,
             "battle_decisions: chose decision"
         );
-        // Carry out decision (with possible fallback loop)
-        self.execute_battle_decision(
+        // Carry out decision (with possible fallback loop). The Observe
+        // arm's avenger-on-roof fallback returns from the whole routine
+        // before the log line is registered; every other path logs.
+        if self.execute_battle_decision(
             sim,
             decision,
             old_substate,
@@ -1086,15 +1116,19 @@ impl EnemyAi {
             ctx,
             tick,
             grid,
-        );
-
-        self.base
-            .register_log_line(LogLineType::BattleDecision, decision as u16);
+        ) {
+            self.base
+                .register_log_line(LogLineType::BattleDecision, decision as u16);
+        }
     }
 
     /// Execute a battle decision, with fallback to alternative decisions if needed.
     /// `cover_shield_bearer` is the handle of the shield bearer chosen during the
     /// decision phase for `CoverBehindShieldBearer`; 0 for all other decisions.
+    ///
+    /// Returns `false` only when the Observe arm's avenger-on-roof
+    /// fallback fires, which skips the caller's decision log line;
+    /// every other path returns `true`.
     fn execute_battle_decision(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1106,7 +1140,7 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    ) {
+    ) -> bool {
         // Allow up to 5 fallback decision changes to prevent infinite loops
         for _ in 0..5 {
             match decision {
@@ -1229,6 +1263,32 @@ impl EnemyAi {
                                 Substate::AttackingApproachToObserve,
                             );
                             self.base.launch_timer(50, ctx.frame);
+                        }
+
+                        // Couldn't-reachpoint avenger-on-roof fallback,
+                        // resolved against the target this arm just
+                        // re-picked. Returning from the whole decision
+                        // routine here also skips the decision log line.
+                        if self.base.couldnt_reachpoint
+                            && let Some(wait_pos) = tick.avenger_wait_position_for(target)
+                        {
+                            self.base.couldnt_reachpoint = false;
+                            self.go_near(
+                                AiState::Attacking,
+                                Substate::AttackingRunToAvengerOnRoof,
+                                wait_pos,
+                                50,
+                                GotoFlags::RUN,
+                                ctx,
+                            );
+                            if let Some(target_pos) = self
+                                .find_fighter(target, tick)
+                                .map(|f| f.position)
+                                .or_else(|| ctx.entity_view(target).map(|view| view.position))
+                            {
+                                self.base.seek_position = target_pos;
+                            }
+                            return false;
                         }
                     }
                 }
@@ -1357,7 +1417,7 @@ impl EnemyAi {
                         .map(|f| f.position)
                         .unwrap_or(self.base.seek_position);
                     match self.command_soldiers_to_attack(center, global, grid, ctx, tick) {
-                        super::alert::CommandSoldiersStart::Pending => return,
+                        super::alert::CommandSoldiersStart::Pending => return true,
                         super::alert::CommandSoldiersStart::Rejected => {
                             decision = Decision::Reserve;
                             continue;
@@ -1833,6 +1893,7 @@ impl EnemyAi {
             }
             break; // Decision executed successfully
         }
+        true
     }
 
     // -----------------------------------------------------------------------
@@ -2043,11 +2104,10 @@ impl EnemyAi {
         let mut working_target = self.base.primary_target;
         let mut working_target_pos = live_target_pos;
         let mut working_distance = distance;
-        let mut swap_action: Option<(crate::element::EntityId, crate::ai::HumanHandle)> = None;
         // Iterate friends only when we have our own target —
         // Position(primary_target) would crash on NULL otherwise. Skip
         // the swap heuristic if our primary_target is unset so we never
-        // hand 0 to a friend via `pending_friend_primary_target_swap`.
+        // hand 0 to a friend via `friend_primary_target_swaps`.
         for cand in &tick.friend_swap_candidates {
             if working_target == 0 {
                 break;
@@ -2073,16 +2133,22 @@ impl EnemyAi {
             if me_to_friend_target + friend_to_my_target
                 < working_distance + friend_to_friend_target
             {
-                swap_action = Some((cand.friend_id, working_target));
+                // Each improving friend is retargeted immediately: the
+                // reference writes the friend's new primary target on the
+                // spot, so several friends can be swapped in a single
+                // reconsider pass. Each friend is visited once, so the
+                // handed-off target is always the pre-swap working target.
+                self.base
+                    .outbox
+                    .actor
+                    .friend_primary_target_swaps
+                    .push((cand.friend_id, working_target));
                 working_target = cand.friend_primary_target;
                 working_target_pos = cand.friend_primary_target_position;
                 working_distance =
                     reconsider_approach_distance(ctx.position, cand.friend_primary_target_position);
+                self.base.primary_target = working_target;
             }
-        }
-        if let Some((friend, new_tgt)) = swap_action {
-            self.base.primary_target = working_target;
-            self.base.outbox.actor.friend_primary_target_swap = Some((friend, new_tgt));
         }
 
         // Primary target is in a non-stairs lift: run to the entry
@@ -2317,11 +2383,12 @@ impl EnemyAi {
         }
 
         // Couldn't-reachpoint avenger-on-roof fallback.
-        // The engine tick pre-computes the blocking-gate wait position
-        // into `tick.avenger_on_roof_wait_position` via
-        // `compute_avenger_wait_position`; see engine/ai.rs.
+        // The engine tick pre-computes the blocking-gate wait positions
+        // per target into `tick.avenger_on_roof_wait_positions`; the
+        // friend-swap loop above may have replaced the snapshot target,
+        // so resolve through the live primary-target handle.
         if self.base.couldnt_reachpoint
-            && let Some(wait_pos) = tick.avenger_on_roof_wait_position
+            && let Some(wait_pos) = tick.avenger_wait_position_for(self.base.primary_target)
         {
             self.base.couldnt_reachpoint = false;
             self.go_near(

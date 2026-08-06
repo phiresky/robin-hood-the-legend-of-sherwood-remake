@@ -1103,8 +1103,8 @@ pub(super) fn build_friend_swap_candidates(
 /// the live entity store.
 ///
 /// Returns `None` when any input is missing or the walker finds no
-/// blocking gate — the caller should leave
-/// `tick.avenger_on_roof_wait_position` as `None` in that case.
+/// blocking gate — the caller should record no entry in
+/// `tick.avenger_on_roof_wait_positions` for that target in that case.
 pub(super) fn precompute_avenger_on_roof_wait_position(
     entities: &crate::entities::Entities,
     doors: &[crate::gate::Door],
@@ -1784,6 +1784,50 @@ impl EngineInner {
             tick.patrol_chief_state = chief_ai.current_state;
         }
 
+        // Avenger-on-roof wait positions — only computed when the AI
+        // set the `couldnt_reachpoint` flag.  Decision arms re-pick
+        // their target from the personal enemy list (even from a null
+        // pre-think target), so compute one wait position per
+        // candidate handle plus the current target; consumers resolve
+        // their own live handle at use time.
+        if couldnt_reachpoint {
+            assert!(
+                self.scripts.mission.is_some(),
+                "AI roof recovery requires an installed mission script"
+            );
+            let doors_slice = self.script_domains.interactables.doors.as_slice();
+            let mut candidates: Vec<crate::ai::HumanHandle> = Vec::new();
+            if let Some(enemy_ai) = soldier.npc.ai_brain.enemy() {
+                candidates.extend(enemy_ai.list_them.iter().copied());
+            }
+            if primary_target_handle != 0 {
+                candidates.push(primary_target_handle);
+            }
+            candidates.retain(|&h| h != 0);
+            candidates.dedup();
+            for handle in candidates {
+                if tick
+                    .avenger_on_roof_wait_positions
+                    .iter()
+                    .any(|(h, _)| *h == handle)
+                {
+                    continue;
+                }
+                let Some(candidate_id) = self.entity_id_for_index(handle) else {
+                    continue;
+                };
+                if let Some(wait) = precompute_avenger_on_roof_wait_position(
+                    &self.world.entities,
+                    doors_slice,
+                    npc_id,
+                    candidate_id,
+                    &|sector| self.get_sector_lift_type(sector),
+                ) {
+                    tick.avenger_on_roof_wait_positions.push((handle, wait));
+                }
+            }
+        }
+
         let Some(target_id) = target_id else {
             // No target selected — primary-target fields stay None,
             // enemy_sq_distances stays empty.  Friend-swap still
@@ -2009,23 +2053,6 @@ impl EngineInner {
             );
             let doors_slice = self.script_domains.interactables.doors.as_slice();
             tick.my_exit_door = build_my_exit_door_info(stashed, doors_slice);
-        }
-
-        // Avenger-on-roof wait position — only computed when the AI
-        // set the `couldnt_reachpoint` flag.
-        if couldnt_reachpoint {
-            assert!(
-                self.scripts.mission.is_some(),
-                "AI roof recovery requires an installed mission script"
-            );
-            let doors_slice = self.script_domains.interactables.doors.as_slice();
-            tick.avenger_on_roof_wait_position = precompute_avenger_on_roof_wait_position(
-                &self.world.entities,
-                doors_slice,
-                npc_id,
-                target_id,
-                &|sector| self.get_sector_lift_type(sector),
-            );
         }
 
         tick
@@ -6038,12 +6065,12 @@ impl EngineInner {
             self.set_as_new_principal_opponent(assets, npc_id, opponent_id);
         }
 
-        // Process friend primary-target swap.  The reference calls
+        // Process friend primary-target swaps.  The reference calls
         // `friend.set_primary_target(primary_target)` directly on the
-        // other soldier when the swap heuristic fires; we hand it off
-        // here so both soldiers are updated consistently after their
-        // AI ticks ran.
-        if let Some((friend_id, new_target)) = effects.friend_primary_target_swap {
+        // other soldier when the swap heuristic fires — for every
+        // improving friend in the pass, not just the last one — so we
+        // apply the whole queue here after the owner's AI tick ran.
+        for (friend_id, new_target) in effects.friend_primary_target_swaps {
             let friend = self.world.entities.get_mut(friend_id).unwrap_or_else(|| {
                 panic!(
                     "pending-drain NPC {} primary-target friend {} disappeared",
