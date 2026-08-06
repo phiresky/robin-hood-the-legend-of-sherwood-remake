@@ -12,7 +12,7 @@ Written when the session ran out of credits (limit resets 18:30 Berlin; earlier 
 
 ## Score
 
-- Universe: **5,164 traces** (corpora: `parity-random-save-replays-60s-15x/`, `-schema14/` [1,350 regen], `parity-save-replays-schema12/`, `parity-random-save-replays/`; `parity-save-replays/` = schema-11, permanently retired, 445 traces; retired regen saves listed in `tmp/regen14-saves.txt`).
+- Universe: **5,164 traces** (corpora: `parity-random-save-replays-60s-15x/`, `-schema14/` [1,350 regen], `parity-save-replays-schema12/`, `parity-random-save-replays/`; `parity-save-replays/` = schema-11, permanently retired, 445 traces; retired regen saves listed in tracked `docs/PARITY_RETIRED_SAVES.txt`, with `tmp/regen14-saves.txt` retained as the local capture-workflow copy).
 - Last complete sweep (re-sweep 12, runner db67cc978): **2,390 passing (46.3%)**, 2,418 failing. Ledger entry committed in `docs/ORIGINAL_PARITY_REPLAY.md`.
 - Failing-trace depth profile (sampled n=99): traces are ~1,384 frames; failures diverge at mean 630 frames = **mean 46.4% / median 41.4% progress**; 15% of failures get past 80%.
 - **Re-sweep 13 DONE** (finished after the dump; results fetched + classified + ledger-committed): 31 passes, 1,948 state-div, 431 rng-panic, 8 timeouts → **cumulative 2,421/5,164 (46.9%)**. Classification: `output/parity-audits/resweep-69df41aeb/classification.json` (top: actor.animation 113, rng:VipIdleRemark 80 [mislabeled swordfight — task #38], direction_goal 79, position_goal_map.x 73, movement_map.x 71, motion_state 70, detectables.length 69).
@@ -65,7 +65,7 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #31 360-gate LOS/detection us-list composition (2 repros @f33630/f13778, all-soldier membership, relates to detection.detectables.length cluster 68)
 - #34 tolerance-arrival + StrangleCmd post-seek Moving stamp (nicouzouf/S069 r005 f457) — check if survives sweep first
 - #35 LeaveSpy/LeaveTree priority NotYetSet latent hazard
-- #37 exclude/re-record 11 nicouzouf_061 old-schema traces (lack hero_refused_action records — unfixable as recorded; add to retired list or re-record with schema-14 recorder, original-code commit d494273)
+- #37 completed: retired the old nicouzouf_061 save family in `docs/PARITY_RETIRED_SAVES.txt` and the local `tmp/regen14-saves.txt`; all 15 schema-14 replacement traces already exist (the 11 affected old-schema captures lacked `hero_refused_action` records and were unfixable as recorded; original-code commit d494273).
 - #38 swordfight RNG divergence — the "rng:VipIdleRemark" cluster (80) is MISLABELED (classifier keys on first RNG site of frame); real mismatches are UpdateSwordfightDistance (offsets 1807002/1807253), ReceiveSwordDamage (1746896/1747024), EvaluateSwordfight (1814391), FindPositionForTableSwordfight (~1804390), SwordDamageProtection. Offsets symbolized via addr2line on original-code/build/native-full/robin.
 - #39 heard-steps noise delivery (fix-corpsewalk, interrupted at start)
 - #40 The16thFrame periodic path live-read animation audit (tick_periodic_ai_for_npc_with_animation, tick_npc_post_detection_tail_for_npc) — fix if sweep shows bored-reroll/16th-frame family
@@ -77,7 +77,7 @@ Standing clusters not yet tasked: actor.animation 133 (top cluster, resweep-db67
 1. Merge reported agent branches into main (verify suite 2629/0 + debug build).
 2. When agents free up / finish: assign next task from board, or spawn fresh (`Agent` tool, `isolation: "worktree"`, prompt template: symlink setup + TaskGet + debug-only + narrow validation + faithful-C++ rules — copy any recent spawn prompt from this file's history).
 3. After a batch of merges: rsync source to remote, release-build, freeze runner as `original_parity_replay-<commit>`, make manifest, launch 11-shard tmux sweep (`scripts/run_parity_release_sweep.sh CORPUS AUDIT RUNNER SHARD SHARDS`, wrapper `run-parity-*.sh` pattern), watcher on SWEEP-DONE, rsync back, classify, update ledger, dispatch.
-4. **Next sweep (14) must be FULL-UNIVERSE** — build manifest from ALL 5,164 minus schema-11 (`parity-save-replays__`) minus `tmp/regen14-saves.txt` retirees minus the 11 nicouzouf_061 (#37, once retired). The passing set must be re-verified because of the #36 regression.
+4. **Next sweep (14) must be FULL-UNIVERSE** — build manifest from ALL 5,164 minus schema-11 (`parity-save-replays__`) minus `docs/PARITY_RETIRED_SAVES.txt` retirees (now including nicouzouf_061). The passing set must be re-verified because of the #36 regression.
 
 ## Key mechanics reference (hard-won, do not relearn)
 
@@ -96,5 +96,5 @@ Standing clusters not yet tasked: actor.animation 133 (top cluster, resweep-db67
 2. Recreate the open task board from `docs/parity-task-archive/*.json` (open items: #9, #20, #21, #23, #24, #28, #31, #34–#40; the JSON descriptions carry the accumulated analysis — copy them verbatim into new TaskCreate calls).
 3. **First dispatch: task #36 (seek-RNG regression)** — spawn a fresh worktree agent with the task JSON's content; 4 shallow repros make it a fast bisect over `git log --oneline --merges db67cc978..78a792ed6`.
 4. Spawn agents for #20 (attach wip patch as head-start), #21 (ditto), #39, and further board items as slots allow. Spawn template: Agent tool with isolation:"worktree"; prompt = symlink setup block (original-code, datadirs, corpora → absolute paths into this repo) + task text + rules (debug builds only; never --release/clippy/filtered cargo; faithful C++ only, no invented guards; validate 2-4 repros + 2-3 short controls; cargo fmt; commit on own branch; report worktree+branch+root cause+validation).
-5. After merging a batch: remote release build + freeze runner + **FULL-UNIVERSE re-sweep 14** (all 5,164 minus `parity-save-replays__` schema-11 minus `tmp/regen14-saves.txt` minus the 11 nicouzouf_061 once #37 retires them). Failure-only sweeps are banned until #36 is resolved (regressions on passing traces are invisible to them).
+5. After merging a batch: release build + freeze runner + **FULL-UNIVERSE re-sweep 14** (all 5,164 minus `parity-save-replays__` schema-11 minus `docs/PARITY_RETIRED_SAVES.txt`, which includes the retired nicouzouf_061 family). Failure-only sweeps are banned until a clean post-#36 full-universe result verifies the passing set.
 6. Continue the wave loop (previous section) until 100% parity. Do not stop.
