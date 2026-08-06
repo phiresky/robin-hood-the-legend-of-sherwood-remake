@@ -2566,7 +2566,14 @@ impl EngineInner {
                                     .element_terminated(seq_id, elem_idx);
                             }
                         }
-                        accepted_instruct_owners.push(owner);
+                        if self
+                            .world
+                            .entities
+                            .get(owner)
+                            .is_some_and(|entity| entity.actor_data().is_some())
+                        {
+                            accepted_instruct_owners.push(owner);
+                        }
                         // Accepted Actor::Instruct publishes the translated
                         // current order through mpOrder. Keep this write at the
                         // dispatch boundary rather than inferring it later from

@@ -6812,7 +6812,7 @@ mod bow_command_body_parity_tests {
         }
         .dispatch(owner, Command::Turn, seq_id, 0);
 
-        assert_eq!(barrier, OwnerActionBarrier::Skip);
+        assert_eq!(barrier, OwnerActionBarrier::Reach);
         let entity = engine.world.entities.get(owner).unwrap();
         assert_eq!(entity.element_data().direction(), 0);
         assert_eq!(
@@ -7380,7 +7380,7 @@ mod bow_command_body_parity_tests {
         }
         .dispatch(owner, seq_id, 0);
 
-        assert_eq!(barrier, OwnerActionBarrier::Reach);
+        assert_eq!(barrier, OwnerActionBarrier::Skip);
         assert_eq!(
             engine
                 .orders
