@@ -35,6 +35,10 @@ const BLIP_CONE_APERTURE_FACTOR: f32 = 1.0;
 struct EnemyOpticalTarget {
     id: EntityId,
     position: MapPoint,
+    /// Owner-boundary feet position used by `Position(pEnemy)` in Think.
+    /// This can be newer than `position` when Rust has deferred a later
+    /// element slot's batched movement past the current NPC owner.
+    planning_position: MapPoint,
     ground_position: GroundPoint,
     sector: Option<crate::position_interface::SectorHandle>,
     layer: u16,
@@ -2266,6 +2270,20 @@ impl EngineInner {
                     // drive the swap heuristic.
                     ..AiPerTickData::stub()
                 };
+                tick_data.enemy_detectable_positions = enemy_targets
+                    .iter()
+                    .map(|target| {
+                        (
+                            target.id.index(),
+                            crate::ai::Position {
+                                x: target.planning_position.x,
+                                y: target.planning_position.y,
+                                sector: target.sector,
+                                level: target.layer,
+                            },
+                        )
+                    })
+                    .collect();
                 // Build them-list: visible enemies with distances.
                 //
                 // Cleanup pass during battle decisions: an enemy
@@ -3123,6 +3141,11 @@ impl EngineInner {
                     Some(EnemyOpticalTarget {
                         id: entity_id,
                         position: snapshot.position,
+                        planning_position: MapPoint::from_world_xyz(
+                            snapshot.position_world.x,
+                            snapshot.position_world.y,
+                            snapshot.position_world.z,
+                        ),
                         ground_position: GroundPoint::from_map_and_z(
                             snapshot.position,
                             ground_z,
@@ -3193,6 +3216,11 @@ impl EngineInner {
                     Some(EnemyOpticalTarget {
                         id: entity_id,
                         position,
+                        planning_position: MapPoint::from_world_xyz(
+                            position_world.x,
+                            position_world.y,
+                            position_world.z,
+                        ),
                         ground_position: GroundPoint::from_map_and_z(
                             position,
                             soldier.element.position().z,

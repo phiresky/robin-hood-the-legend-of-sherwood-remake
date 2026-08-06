@@ -62,7 +62,7 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #23 completed: `ForecastDestinationForIA` now preserves the independent direct-passage latch after the live door clears; both primary Seek RNG boundaries advance to separate later door/building residuals.
 - #24 completed as source-verified no-op: shipped proto loading never registers `RHSectorAssociated` (both Original lift `AddSector` calls are commented out); Rust already discards the dead click polygon.
 - #28 strike resolution one frame early (f19137) + CombatObserveSideStep misattribution (8)
-- #31 360-gate LOS/detection us-list composition (2 repros @f33630/f13778, all-soldier membership, relates to detection.detectables.length cluster 68)
+- #31 completed: threaded owner-boundary `Position(enemy)` into `EVENT_VIEW` and made `SeekingCombatAlert` ignore `EventTimer`; the two archived list-us symptoms were separate timing/position causes, not a shared 360-LOS composition bug.
 - #34 tolerance-arrival + StrangleCmd post-seek Moving stamp (nicouzouf/S069 r005 f457) — check if survives sweep first
 - #35 completed: Rust-only LeaveSpy/LeaveTree commands inherit Original CROUCH_UP's Preference priority; Original appends the cape/tree transition order to that same posture-toggle element.
 - #37 completed: retired the old nicouzouf_061 save family in `docs/PARITY_RETIRED_SAVES.txt` and the local `tmp/regen14-saves.txt`; all 15 schema-14 replacement traces already exist (the 11 affected old-schema captures lacked `hero_refused_action` records and were unfixable as recorded; original-code commit d494273).

@@ -2179,9 +2179,7 @@ impl EnemyAi {
             }
 
             Substate::SeekingCombatAlert => {
-                if stimulus_type == StimulusType::EventReachPoint
-                    || stimulus_type == StimulusType::EventTimer
-                {
+                if stimulus_type == StimulusType::EventReachPoint {
                     self.get_battle_overview(0x0001, ctx, tick); // FAST_OVERVIEW
                 }
             }
@@ -6172,6 +6170,25 @@ impl EnemyAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn combat_alert_ignores_timer_until_reaching_the_alert_point() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.set_state(AiState::Seeking, Substate::SeekingCombatAlert);
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.current_state, AiState::Seeking);
+        assert_eq!(ai.base.current_substate, Substate::SeekingCombatAlert);
+    }
 
     #[test]
     fn parade_timer_stops_only_an_active_normal_parry() {

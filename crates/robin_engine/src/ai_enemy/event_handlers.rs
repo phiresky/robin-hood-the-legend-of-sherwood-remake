@@ -1877,8 +1877,9 @@ impl EnemyAi {
         // destination — the reference re-reads `Position(pEnemy)`
         // literally at each call site rather than using the stale
         // `mposSeekPosition`.
-        let enemy_pos = enemy_view
-            .map(|v| v.position)
+        let enemy_pos = tick
+            .enemy_detectable_position(enemy)
+            .or_else(|| enemy_view.map(|v| v.position))
             .unwrap_or(self.base.seek_position);
 
         // Update recon report.
@@ -1972,7 +1973,6 @@ impl EnemyAi {
                 * crate::position_interface::INVERSE_ASPECT_RATIO;
             dx.max(dy)
         };
-
         if max_norm_dist < 50.0 {
             // Enemy very near — skip the turn and dispatch BattleDecisions
             // immediately. `IAmInTrouble` is called only on this branch
@@ -2824,6 +2824,54 @@ mod tests {
             report_seen_bodies: Vec::new(),
             report_charly: 0,
         }
+    }
+
+    #[test]
+    fn event_view_uses_owner_boundary_position_instead_of_stale_live_map() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        let mut enemy_view = object_view(ObjectType::None);
+        enemy_view.kind = EntityKind::Pc;
+        enemy_view.is_pc = true;
+        enemy_view.position = Position {
+            x: 10.0,
+            y: 0.0,
+            sector: None,
+            level: 0,
+        };
+        let mut views = AiEntityViewMap::new();
+        views.insert(12, enemy_view);
+        let ctx = AiContext {
+            position: Position::default(),
+            entity_views: Arc::new(views),
+            ..AiContext::default()
+        };
+
+        let mut tick = AiPerTickData::stub();
+        tick.enemy_detectable_positions.push((
+            12,
+            Position {
+                x: 100.0,
+                y: 0.0,
+                sector: None,
+                level: 0,
+            },
+        ));
+
+        ai.event_view_standard_procedure(
+            &sim,
+            12,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(ai.base.current_state, AiState::Attacking);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingReactiontimeTurning
+        );
     }
 
     #[test]

@@ -641,6 +641,10 @@ pub struct AiPerTickData {
     /// pointer order. `EVENT_OUTOFVIEW` is delivered for the detectable
     /// whose visibility edge fell, which need not be `primary_target`.
     pub enemy_detectable_forecasts: Vec<(HumanHandle, PreparedForecastDestination)>,
+    /// Owner-boundary `Position(enemy)` values for detection stimuli. Rust
+    /// batches movement globally, so the live entity map can still trail the
+    /// position the Original has committed when this NPC handles EVENT_VIEW.
+    pub enemy_detectable_positions: Vec<(HumanHandle, Position)>,
     /// True when the primary target is a player character.
     /// Used by lost-sight logic in `reconsider_swordfight` to decide
     /// whether to chase (PC) or pull a battle overview (NPC).
@@ -820,6 +824,13 @@ impl AiPerTickData {
             .map(|&(_, pos)| pos)
     }
 
+    pub fn enemy_detectable_position(&self, target: HumanHandle) -> Option<Position> {
+        self.enemy_detectable_positions
+            .iter()
+            .find(|(handle, _)| *handle == target)
+            .map(|&(_, position)| position)
+    }
+
     /// Return the profile table required by swordfight evaluation.
     pub fn required_profile_manager(&self) -> &crate::profiles::ProfileManager {
         self.profile_manager.as_deref().expect(
@@ -876,6 +887,7 @@ impl AiPerTickData {
             friend_seek_clears_help_flag: false,
             primary_target_forecast: None,
             enemy_detectable_forecasts: Vec::new(),
+            enemy_detectable_positions: Vec::new(),
             primary_target_is_pc: false,
             missed_pc_forecast: None,
             missed_pc_is_pc: false,
