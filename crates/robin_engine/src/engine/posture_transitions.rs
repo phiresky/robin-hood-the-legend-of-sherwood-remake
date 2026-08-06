@@ -659,6 +659,22 @@ impl EngineInner {
                 ed.sector(),
             )
         };
+        tracing::trace!(
+            target: "parity_post_process_path",
+            ?owner,
+            ?seq_id,
+            elem_idx,
+            ?state,
+            live_action_state = ?self
+                .get_entity(owner)
+                .and_then(|e| e.actor_data())
+                .map(|a| a.action_state),
+            ?elem_action_state_after,
+            ?elem_posture_after,
+            ?current_action_state,
+            ?current_posture,
+            "PostProcessPath start-transition inputs",
+        );
 
         // ── Decide which transitions to insert ──────────────────
         if matches!(current_posture, Posture::OnWall | Posture::OnLadder)
