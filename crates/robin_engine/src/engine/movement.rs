@@ -8181,6 +8181,54 @@ impl EngineInner {
                         continue 'actors;
                     }
 
+                    // The sibling case, where a stop transition is still
+                    // queued behind the movement order that just terminated.
+                    // A transition covers its own animation distance, so it
+                    // may only take over when the live target sits within
+                    // that travel plus the seek distance. A target that has
+                    // drifted beyond it refreshes the seek instead, and the
+                    // stale transition never plays.
+                    if !is_final_waypoint
+                        && let Some((target_position, _, target_point)) = live_seek_target
+                        && target_position != ft.last_seek_target_position
+                        && let Some(next_action) = self
+                            .orders
+                            .sequence_manager
+                            .get_element(move_seq_id, move_elem_idx)
+                            .and_then(|element| element.orders.get(1))
+                            .map(|order| order.order_type)
+                        && matches!(
+                            next_action,
+                            OrderType::TransitionRunningUprightWaitingUpright
+                                | OrderType::TransitionWalkingUprightWaitingUpright
+                                | OrderType::TransitionWalkingCrouchedWaitingCrouched
+                        )
+                    {
+                        let aim = target_point.unwrap_or(target_position);
+                        let here = entity.element_data().position_map();
+                        let dx = aim.x - here.x;
+                        let dy = if ft.directional {
+                            const INVERSE_ASPECT_RATIO: f32 = 1.743_446_8;
+                            (aim.y - here.y) * INVERSE_ASPECT_RATIO
+                        } else {
+                            aim.y - here.y
+                        };
+                        let reach =
+                            (f32::from(entity.sprite().distance_for_animation(next_action))
+                                + ft.tol)
+                                * 1.05;
+                        if dx * dx + dy * dy > reach * reach {
+                            transition_seek_refreshes.push((eid, move_seq_id, move_elem_idx));
+                            tracing::trace!(
+                                ?eid,
+                                ?next_action,
+                                reach,
+                                "tick_move: seek target out of stop-transition reach; refreshing",
+                            );
+                            continue 'actors;
+                        }
+                    }
+
                     let actor = entity.actor_data_mut().unwrap();
                     // The post-seek sequence fires whenever the seek
                     // arrival predicate is true and a post-seek sequence

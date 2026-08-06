@@ -891,13 +891,26 @@ impl PassDoorLaunchContext<'_> {
             }
         };
         let destination = if direct { pt_in } else { pt_out };
-        action = super::movement::determine_lift_movement_animation_for(
-            entity,
-            self.fast_grid,
-            entity.element_data().posture,
+        // The sword branch above (and the PC-only shield branch) is the arm a
+        // derived actor resolves entirely on its own — it never reaches the
+        // base implementation that asks the lift sector to translate the
+        // action. Running the translation anyway collapses the combat token
+        // to the stairs walk, so an armed soldier crossing a stairs door
+        // loses its sword animation for the whole pass.
+        let derived_override_is_authoritative = matches!(
             action,
-            destination,
-        );
+            OrderType::WalkingWithSword | OrderType::RunningWithSword
+        ) || (is_pc
+            && action == OrderType::WalkingWithShield);
+        if !derived_override_is_authoritative {
+            action = super::movement::determine_lift_movement_animation_for(
+                entity,
+                self.fast_grid,
+                entity.element_data().posture,
+                action,
+                destination,
+            );
+        }
 
         let sector_out_forces_crouch = self.sector_forces_crouch(door_sector_out);
         let sector_in_forces_crouch = self.sector_forces_crouch(sector_in);
