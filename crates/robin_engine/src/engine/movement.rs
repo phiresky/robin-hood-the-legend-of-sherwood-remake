@@ -5595,15 +5595,17 @@ impl EngineInner {
                     "orphaned sword movement owner {owner:?} failed to retire rejected movement: {error:?}"
                 )
             });
-        let lowering_id = self.orders.allocate_order_id();
-        self.launch_single_order_sequence_stamped_ex(
-            sim,
-            assets,
-            owner,
+        // Human::Execute only registers this command here. Its ABORTED return
+        // reaches Actor::Hourglass first; SequenceManager::Hourglass later
+        // calls the ordinary Actor::Instruct path, which translates the
+        // lowering order and overwrites mmotionState with IN_PROGRESS. Direct
+        // prebuilt-order instruction at this Execute boundary left the later
+        // ABORTED latch authoritative for the whole frame.
+        self.launch_element(crate::sequence::SequenceElement::new(
+            1,
             crate::element::Command::QuitSwordfight,
-            crate::order::Order::new(OrderType::TransitionLoweringSword, 0.0, 0.0, lowering_id),
-            false,
-        );
+            Some(owner),
+        ));
 
         // Original announces EVENT_QUIT_SWORDFIGHT from this guard in the
         // same call, before the Execute arm returns ABORTED — so the soldier's
@@ -11405,8 +11407,10 @@ mod orphaned_sword_movement_tests {
     #[test]
     fn nonforced_sword_movement_without_opponents_aborts_before_motion_and_quits_once() {
         let (mut engine, owner, movement_sequence, order_id, start) = install_sword_movement(false);
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
 
-        engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+        engine.tick_entity_movement(&sim, &assets);
 
         let owner_entity = engine.get_entity(owner).unwrap();
         assert_eq!(
@@ -11428,7 +11432,7 @@ mod orphaned_sword_movement_tests {
                 .state,
             SequenceState::Impossible
         );
-        let quit_count = engine
+        let quit_elements = engine
             .orders
             .sequence_manager
             .sequences_iter()
@@ -11436,10 +11440,50 @@ mod orphaned_sword_movement_tests {
             .filter(|element| {
                 element.owner == Some(owner) && element.command == Command::QuitSwordfight
             })
-            .count();
+            .collect::<Vec<_>>();
         assert_eq!(
-            quit_count, 1,
+            quit_elements.len(),
+            1,
             "one rejected Execute invocation must launch exactly one QuitSwordfight"
+        );
+        assert_eq!(
+            quit_elements[0].state,
+            SequenceState::Todo,
+            "Human::Execute registers QuitSwordfight; the later manager Hourglass owns Actor::Instruct"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .current_element_for_actor(owner),
+            None,
+            "the rejected movement is already gone but deferred QuitSwordfight is not selected until manager dispatch"
+        );
+
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .continuation
+            .motion_state = crate::sprite::MotionState::Aborted;
+        let mut display = crate::engine::HostDisplayState::default();
+        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .continuation
+                .motion_state,
+            crate::sprite::MotionState::InProgress,
+            "the later accepted Actor::Instruct must overwrite Execute's ABORTED result"
+        );
+        assert_eq!(
+            engine.actor_order_type(owner),
+            Some(OrderType::TransitionLoweringSword)
         );
     }
 

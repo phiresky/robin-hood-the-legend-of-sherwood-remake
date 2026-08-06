@@ -1,0 +1,8 @@
+{
+  "id": "69",
+  "subject": "Defer orphaned sword-movement Quit instruction",
+  "description": "DONE. After task #67 cleared schema14 Savegame_linux3/Profile_001/Continue/replay-001 through frame 1837, PC171 reported Aborted in Rust while Original reported InProgress. Both implementations correctly entered the Human::Execute orphan guard when the selected non-forced WalkingWithSword MoveOk found its opponent list empty, retired the movement as Impossible, registered QuitSwordfight, and returned ABORTED. Original LaunchSequenceElement only registers that plain command from Execute; the later SequenceManager::Hourglass reaches Actor::Instruct, translates TransitionLoweringSword, and overwrites mmotionState with IN_PROGRESS. Rust instead synchronously instructed a synthetic prebuilt lowering order inside the Execute arm, before the outer ABORTED result was latched, so the later manager boundary had nothing left to overwrite it. The orphan guard now registers an ordinary deferred QuitSwordfight element and leaves translation/order publication to the manager Instruct boundary. The focused regression asserts the command is Todo and unselected after Execute, then that manager dispatch installs TransitionLoweringSword and replaces Aborted with InProgress. The exact replay matches every recorded frame through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
