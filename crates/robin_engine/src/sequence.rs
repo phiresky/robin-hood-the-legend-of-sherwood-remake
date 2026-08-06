@@ -2884,7 +2884,6 @@ impl SequenceManager {
         self.sequences.values()
     }
 
-    #[cfg(test)]
     pub(crate) fn is_registered_to_go(&self, seq_id: SequenceId, elem_idx: usize) -> bool {
         self.elements_to_go.contains(&(seq_id, elem_idx))
     }
@@ -4496,6 +4495,25 @@ impl SequenceManager {
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
     ) {
+        self.stop_owner_current_from_root(owner, root, stop_priority, resolver);
+        self.stop_pending_elements(owner, stop_priority, resolver);
+    }
+
+    /// Stop only the actor-selected element and its postponed graph.
+    ///
+    /// Original `RHElementActor::Stop` has an observable callback boundary:
+    /// stopping `mpSequenceElement` synchronously invokes
+    /// `SendCondolationCard`, and only after that callback returns does Actor
+    /// call `StopNotYetLaunchedSequenceElements`. Engine call sites which can
+    /// pump that callback use this phase separately, then call
+    /// [`Self::stop_pending_elements`] after the callback has completed.
+    pub fn stop_owner_current_from_root(
+        &mut self,
+        owner: EntityId,
+        root: Option<(SequenceId, usize)>,
+        stop_priority: SequencePriority,
+        resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
+    ) {
         let parity_debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
         // Original `RHElementActor::Stop` starts from exactly
         // `mpSequenceElement`. Scanning every InProgress/Postponed element is
@@ -4607,15 +4625,6 @@ impl SequenceManager {
                 eprintln!("parity stop: manager after clear stopped links owner={owner:?}");
             }
         }
-
-        // Also stop not-yet-launched elements for this owner.
-        if parity_debug_stage_timing {
-            eprintln!("parity stop: manager before stop_pending_elements owner={owner:?}");
-        }
-        self.stop_pending_elements(owner, stop_priority, resolver);
-        if parity_debug_stage_timing {
-            eprintln!("parity stop: manager after stop_pending_elements owner={owner:?}");
-        }
     }
 
     /// Drop blocker links whose postponed target was stopped either directly
@@ -4679,15 +4688,46 @@ impl SequenceManager {
         // stop while still owning a postponed pointer; RHSequenceElement::Stop
         // follows that pointer unconditionally, so retain the cross-sequence
         // targets returned by Rust's split-storage representation.
-        let mut targets = self
-            .elements_to_go
+        let roots = self.pending_elements_for_owner(owner);
+        self.stop_pending_roots(owner, roots, stop_priority, resolver);
+    }
+
+    /// Snapshot the entries which Original's
+    /// `StopNotYetLaunchedSequenceElements` will visit. The C++ loop captures
+    /// the list size on entry, so callback-appended work is deliberately not
+    /// part of this result.
+    pub fn pending_elements_for_owner(&self, owner: EntityId) -> Vec<(SequenceId, usize)> {
+        self.elements_to_go
             .iter()
             .copied()
             .filter(|(seq_id, elem_idx)| {
                 self.get_element(*seq_id, *elem_idx)
                     .is_some_and(|element| element.owner == Some(owner))
             })
-            .collect::<VecDeque<_>>();
+            .collect()
+    }
+
+    /// Stop one root from a previously captured pending-list snapshot.
+    /// Callers that model `Actor::Stop` can close the resulting synchronous
+    /// condolence stack before visiting the next captured root.
+    pub fn stop_pending_element_from_root(
+        &mut self,
+        owner: EntityId,
+        root: (SequenceId, usize),
+        stop_priority: SequencePriority,
+        resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
+    ) {
+        self.stop_pending_roots(owner, [root], stop_priority, resolver);
+    }
+
+    fn stop_pending_roots(
+        &mut self,
+        owner: EntityId,
+        roots: impl IntoIterator<Item = (SequenceId, usize)>,
+        stop_priority: SequencePriority,
+        resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
+    ) {
+        let mut targets = roots.into_iter().collect::<VecDeque<_>>();
         let mut visited = HashSet::new();
 
         while let Some((seq_id, elem_idx)) = targets.pop_front() {
@@ -6067,6 +6107,69 @@ mod tests {
             mgr.get_element(injury_seq, 0).unwrap().cross_postponed,
             None,
             "the injury must not retain a resumable link to stopped actor work"
+        );
+    }
+
+    #[test]
+    fn split_stop_scans_work_registered_by_selected_element_callback() {
+        let mut mgr = SequenceManager::new();
+        let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
+        let resolver = |element: &SequenceElement| element.priority;
+
+        let mut current = make_simple_element(1, Command::Turn, Some(owner));
+        current.priority = SequencePriority::Normal;
+        let current_seq = mgr.launch_element(current);
+        let _ = mgr.hourglass();
+        mgr.element_in_progress(current_seq, 0);
+
+        mgr.stop_owner_current_from_root(
+            owner,
+            Some((current_seq, 0)),
+            SequencePriority::Preference,
+            &resolver,
+        );
+        assert_eq!(
+            mgr.get_element(current_seq, 0).unwrap().state,
+            SequenceState::Interrupted
+        );
+
+        // Model SendCondolationCard -> Think registering overview work while
+        // Actor::Stop is still between its selected and pending phases.
+        let mut callback_look = make_simple_element(1, Command::LookLeft, Some(owner));
+        callback_look.priority = SequencePriority::Normal;
+        let callback_look_seq = mgr.launch_element(callback_look);
+
+        let pending_snapshot = mgr.pending_elements_for_owner(owner);
+
+        // Model a card from the pending scan registering another command
+        // after the scan captured its stable membership.
+        let mut pending_card_look = make_simple_element(1, Command::LookRight, Some(owner));
+        pending_card_look.priority = SequencePriority::Normal;
+        let pending_card_look_seq = mgr.launch_element(pending_card_look);
+        for root in pending_snapshot {
+            mgr.stop_pending_element_from_root(
+                owner,
+                root,
+                SequencePriority::Preference,
+                &resolver,
+            );
+        }
+        assert_eq!(
+            mgr.get_element(callback_look_seq, 0).unwrap().state,
+            SequenceState::Interrupted,
+            "StopNotYetLaunched must see work registered by the selected element's synchronous callback"
+        );
+
+        // Original snapshots the list size when StopNotYetLaunched begins.
+        // Work registered by a captured entry's card belongs to the next
+        // manager Hourglass, not this scan.
+        assert_eq!(
+            mgr.get_element(pending_card_look_seq, 0).unwrap().state,
+            SequenceState::Todo
+        );
+        assert!(
+            mgr.v48_elements_to_go()
+                .contains(&(pending_card_look_seq, 0))
         );
     }
 

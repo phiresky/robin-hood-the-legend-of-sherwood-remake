@@ -1,0 +1,8 @@
+{
+  "id": "67",
+  "subject": "Restore PrepareToEnterSwordFight Stop callback ordering",
+  "description": "DONE. After task #64 restored Soldier111's reciprocal EnterSwordfight promotion in schema14 Savegame_linux3/Profile_001/Continue/replay-001, Rust still resumed a queued LookLeft at frame 1601, advanced to LookRight, generated TransitionLoweringSword, and quit the new fight; Original remained Wait/AttackingSwordfight with reciprocal links. Original RHElementActor::Stop first stops the selected mpSequenceElement, whose SetState synchronously delivers SendCondolationCard/Think, and only after that callback returns calls StopNotYetLaunchedSequenceElements. Rust stopped both selected and pending work before delivering the selected element's queued condolence, so its old Overview completion registered LookLeft after the pending scan and left it alive underneath the reciprocal Enter. Stop is now split into selected and pending phases for the PrepareToEnterSwordFight boundary. The selected card closes before the pending membership snapshot; each captured pending root then stops and closes its own card before the scan advances, while callback-appended work is excluded from the stable snapshot as in Original's fixed list-length loop. The focused regression covers callback-registered pending work and scan-snapshot exclusion. The exact replay now matches the complete frame-1601 Soldier/PC state and reciprocal links, remains exact through frame 1837, and advances to an independent PC171 Aborted-versus-InProgress motion frontier.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

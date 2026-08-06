@@ -2975,6 +2975,61 @@ impl EngineInner {
         owner: EntityId,
         stop_priority: crate::sequence::SequencePriority,
     ) {
+        self.stop_owner_phase(owner, stop_priority, true);
+    }
+
+    /// Run the actor-selected half of `RHElementActor::Stop`, leaving the
+    /// not-yet-launched queue untouched until the caller has closed the
+    /// selected element's synchronous condolence callback.
+    fn stop_owner_current(
+        &mut self,
+        owner: EntityId,
+        stop_priority: crate::sequence::SequencePriority,
+    ) {
+        self.stop_owner_phase(owner, stop_priority, false);
+    }
+
+    /// Finish `RHElementActor::Stop` after the selected element's synchronous
+    /// condolence callback. Original snapshots the pending-list length, then
+    /// each stopped entry sends its own card before the scan advances.
+    fn stop_owner_pending_after_callback(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        stop_priority: crate::sequence::SequencePriority,
+    ) {
+        let pending = self
+            .orders
+            .sequence_manager
+            .pending_elements_for_owner(owner);
+        for (sequence_id, element_index) in pending {
+            if !self
+                .orders
+                .sequence_manager
+                .is_registered_to_go(sequence_id, element_index)
+            {
+                continue;
+            }
+            {
+                let resolver = Self::priority_resolver(&self.world.entities);
+                self.orders.sequence_manager.stop_pending_element_from_root(
+                    owner,
+                    (sequence_id, element_index),
+                    stop_priority,
+                    &resolver,
+                );
+            }
+            self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
+        }
+    }
+
+    fn stop_owner_phase(
+        &mut self,
+        owner: EntityId,
+        stop_priority: crate::sequence::SequencePriority,
+        include_pending: bool,
+    ) {
         let parity_debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
         if parity_debug_stage_timing {
             eprintln!(
@@ -3087,9 +3142,22 @@ impl EngineInner {
         if parity_debug_stage_timing {
             eprintln!("parity stop: before sequence stop_owner owner={owner:?}");
         }
-        self.orders
-            .sequence_manager
-            .stop_owner(owner, stop_priority, &resolver);
+        if include_pending {
+            self.orders
+                .sequence_manager
+                .stop_owner(owner, stop_priority, &resolver);
+        } else {
+            let root = self
+                .orders
+                .sequence_manager
+                .current_element_for_actor(owner);
+            self.orders.sequence_manager.stop_owner_current_from_root(
+                owner,
+                root,
+                stop_priority,
+                &resolver,
+            );
+        }
         drop(resolver);
         if let Some(installed_order) = rewritten_selected_order {
             self.world

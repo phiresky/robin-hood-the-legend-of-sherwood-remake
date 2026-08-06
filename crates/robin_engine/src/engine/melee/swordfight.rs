@@ -724,7 +724,7 @@ impl EngineInner {
                 .map(|h| !h.opponents.is_empty())
                 .unwrap_or(false);
         if should_prepare_opponent {
-            self.stop_owner(opponent, crate::sequence::SequencePriority::Preference);
+            self.stop_owner_current(opponent, crate::sequence::SequencePriority::Preference);
             // Original `PrepareToEnterSwordFight` calls `Stop(PREFERENCE)`
             // before `Think(EVENT_ENTER_SWORDFIGHT)`. `Stop` reaches
             // `SetState(INTERRUPTED)`, whose `SendCondolationCard` callback
@@ -734,6 +734,19 @@ impl EngineInner {
             // after EventEnterSwordfight lets that old completion run as a
             // swordfight completion and can immediately quit the new fight.
             self.dispatch_condolations_for_owner_boundary(sim, opponent, assets);
+            // Actor::Stop resumes after that synchronous card and only now
+            // calls StopNotYetLaunchedSequenceElements. The old completion
+            // can have queued fresh overview work (LookLeft in the retained
+            // linux3 control), which must be included in this trailing scan.
+            // The finish phase snapshots the queue before its scan, matching
+            // Original's fixed `uwNumberOfSeqElements`, but closes each
+            // stopped root's card before advancing to the next captured root.
+            self.stop_owner_pending_after_callback(
+                sim,
+                assets,
+                opponent,
+                crate::sequence::SequencePriority::Preference,
+            );
             // Synchronous Think on the opponent if they're a soldier.
             let is_soldier = matches!(self.world.entities.get(opponent), Some(Entity::Soldier(_)));
             if is_soldier {
