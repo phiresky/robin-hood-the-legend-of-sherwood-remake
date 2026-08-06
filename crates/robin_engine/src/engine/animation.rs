@@ -2630,6 +2630,9 @@ fn apply_pc_taking_side_effect(
 ///  - Soldier/NPC `TAKING` → `SEARCHING` (the order remains
 ///    `TAKING` so pickup side effects still dispatch there).
 ///  - `WAITING_CAPE_ANONYMOUS_ARCHER` → `WAITING_CAPE`.
+///  - `FALLING_LADDER_WALL` → `FALLING_BACK_UPRIGHT`.  The ladder/wall
+///    fall is a pure dispatch token with no sprite row of its own; only
+///    the flight bookkeeping keys off the original action.
 ///
 /// Identity for everything else (most order types play their own
 /// sprite anim).
@@ -2645,9 +2648,10 @@ pub(crate) fn sprite_anim_for_order(
             OT::TransitionLoweringSword
         }
         OT::ParryingShield if !sprite.has_animation(OT::ParryingShield) => OT::ParryingSword,
-        OT::FallingHitUpright | OT::FallingHitHarderUpright | OT::FallingPushedUpright => {
-            OT::FallingBackUpright
-        }
+        OT::FallingHitUpright
+        | OT::FallingHitHarderUpright
+        | OT::FallingPushedUpright
+        | OT::FallingLadderWall => OT::FallingBackUpright,
         OT::FallingHitWithBow | OT::FallingHitHarderWithBow | OT::FallingPushedWithBow => {
             OT::FallingBackBow
         }
@@ -3086,6 +3090,8 @@ fn fall_state_trigger_matches(anim_type: OrderType, motion: MotionState) -> bool
 /// legacy implementation `ExecuteFallingHit` enters `(Flying, Moving)`; legacy implementation
 /// `ExecuteFallingPushed` enters `(Flying, WaitingSword)` before the
 /// wrapper later restores the variant-specific action on termination.
+/// The ladder/wall fall enters `(Flying, Moving)` on the same event, so it
+/// rides along with the falling-hit group.
 /// The `FALLING_HIT_HARDER_*` branch uses `PerformAction`, not flight,
 /// and deliberately keeps the current posture/action until landing.
 /// Other fall families set state on later motion events — handled by
@@ -3100,6 +3106,7 @@ fn apply_falling_start_side_effect(entity: &mut Entity, anim_type: OrderType, mo
             | OrderType::FallingHitWithBow
             | OrderType::FallingHitWithSword
             | OrderType::FallingHitCrouched
+            | OrderType::FallingLadderWall
     ) {
         Some(ActionState::Moving)
     } else if matches!(

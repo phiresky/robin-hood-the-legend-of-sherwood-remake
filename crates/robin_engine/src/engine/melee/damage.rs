@@ -169,21 +169,18 @@ impl EngineInner {
         sword_strike: SwordStrike,
         attacker_profile_idx: u32,
     ) {
-        let Some(victim) = self.get_entity(victim_id) else {
-            return;
-        };
-        // Dead/unconscious humans are pruned from active swordfight
-        // state: setting concussion calls quit_swordfight, victim
-        // discovery rejects unconscious/dead, and the CheckOpponents
-        // invariant asserts no such opponent remains.  Sweep/charge
-        // queues can otherwise keep a stale victim into a later frame,
-        // so do not launch fresh damage.
-        if victim.is_dead() || victim.human_data().is_some_and(|h| h.unconscious) {
-            tracing::debug!(
+        // Dead and unconscious victims are *not* filtered out here: the
+        // sweep launchers hand every in-sector victim to the sequence
+        // manager, and a dead / unconscious human still admits
+        // `ReceiveSwordDamage` through its own instruction gate.  The
+        // decision to decline belongs to arbitration, not to the
+        // launcher.
+        if self.get_entity(victim_id).is_none() {
+            tracing::warn!(
                 ?victim_id,
                 ?attacker_id,
                 ?sword_strike,
-                "sword damage skipped: victim already dead or unconscious"
+                "sword damage victim vanished before its element could be launched"
             );
             return;
         }

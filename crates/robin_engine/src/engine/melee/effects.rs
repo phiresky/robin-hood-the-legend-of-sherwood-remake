@@ -319,6 +319,12 @@ impl EngineInner {
         // Compute flight tick count from the FallingLadderWall
         // sprite.  Uses the sum of per-frame delays rather than raw
         // frame count.
+        // TODO: the Original does not time this flight from a sprite row
+        // at all — it sets a per-tick increment of fixed length 10 toward
+        // the low entry point and waits `0.1 * distance` ticks, so the
+        // fall speed is constant and the duration scales with the drop.
+        // Porting that needs the 3D low-entry point (the plane-projected
+        // z), which this helper does not resolve yet.
         let frames = {
             let from_sprite = self
                 .get_entity(victim_id)
