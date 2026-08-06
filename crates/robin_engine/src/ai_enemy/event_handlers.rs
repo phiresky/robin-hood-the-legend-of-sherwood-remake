@@ -3085,8 +3085,25 @@ mod tests {
             );
 
             assert_eq!(ai.base.primary_target, 77, "substate {substate:?}");
+            // begin_swordfight raises Engage before its SetState suspends
+            // the actor-outbox prefix into the queued state-change owner
+            // work; read the request from either place.
+            let engage = ai.base.outbox.actor.enter_swordfight.or_else(|| {
+                ai.base
+                    .outbox
+                    .reentrant
+                    .owner_work
+                    .iter()
+                    .find_map(|work| match work {
+                        crate::ai::AiOwnerWork::StateChange(notification) => notification
+                            .actor_effects_before_callback
+                            .as_ref()
+                            .and_then(|effects| effects.enter_swordfight),
+                        _ => None,
+                    })
+            });
             assert_eq!(
-                ai.base.outbox.actor.enter_swordfight,
+                engage,
                 Some(EnterSwordfightRequest::Engage(77)),
                 "substate {substate:?}"
             );

@@ -4590,7 +4590,14 @@ mod tests {
         officer.ai_state = AiState::Default;
         officer.ai_substate = Substate::DefaultOnPost;
 
+        // The acting Charly (handle 1) must be present in the entity view so
+        // detection can resolve its viewer identity; keep its view fields in
+        // lockstep with the context's self geometry below.
+        let mut charly = soldier_view(test_position(0.0, 0.0));
+        charly.direction = 4;
+
         let mut views = AiEntityViewMap::new();
+        views.insert(1, charly);
         views.insert(2, officer);
         let obstacle_count = obstacles.len();
         AiContext {
@@ -4683,7 +4690,12 @@ mod tests {
         target.detection_position = MapPoint::new(100.0, 0.0);
         target.detection_position_world = crate::coordinates::WorldPoint3D::new(100.0, 0.0, 0.0);
         target.passing_door = true;
+        // Self view for the acting soldier (handle 1), matching the context's
+        // self geometry so the viewer identity resolves during detection.
+        let mut viewer = soldier_view(test_position(0.0, 0.0));
+        viewer.direction = 4;
         let mut views = AiEntityViewMap::new();
+        views.insert(1, viewer);
         views.insert(2, target);
         let ctx = AiContext {
             direction: 4,
@@ -4800,6 +4812,18 @@ mod tests {
         let ctx = charly_to_officer_context(test_position(200.0, 0.0), Vec::new());
 
         ai.resolve_charly_officer_report(sim, false, &ctx, &AiPerTickData::stub());
+
+        // The refused report enters ReturnToDuty, which suspends its common
+        // tail at the owner boundary so the engine can run InitializePatrol
+        // in between. Drain that continuation directly for the unit check.
+        let resume = std::mem::take(&mut ai.base.outbox.reentrant.owner_work)
+            .into_iter()
+            .find_map(|work| match work {
+                AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { flags, .. } => Some(flags),
+                _ => None,
+            })
+            .expect("refused report queues the return-to-duty continuation");
+        ai.resume_return_to_duty_after_patrol_init(sim, resume, &ctx);
 
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);

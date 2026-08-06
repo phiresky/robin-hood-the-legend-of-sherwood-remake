@@ -4556,6 +4556,15 @@ mod tests {
         );
         let order = sm.current_order_for_actor(shooter).unwrap().2.clone();
         let before_sprite = entities.get(shooter).unwrap().sprite().clone();
+        // The shoot order samples its target only while the owner slot has
+        // the execute order in its initialising window; arm it the way the
+        // production Execute path does.
+        entities
+            .get_mut(shooter)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .execute_order_initialising = true;
 
         let events =
             tick_bow_shot_for_owner(&sim, &mut entities, &mut sm, shooter, order.order_id, true);
@@ -6651,7 +6660,7 @@ mod tests {
 
     #[test]
     fn arrow_trajectory_retains_exact_terminal_obstacle_identity() {
-        let obstacle = compute_shield_obstacle(
+        let mut obstacle = compute_shield_obstacle(
             MapPoint::new(0.0, 0.0),
             0.0,
             4,
@@ -6663,8 +6672,21 @@ mod tests {
                 z_offset: 0.0,
             },
         );
+        // The trajectory raycast skips shield obstacles entirely (shield
+        // blocking is the per-arrow shield-holder test, not the obstacle
+        // grid), so make this wall a plain solid to stay visible to it.
+        obstacle.set_flag(crate::sight_obstacle::SIGHTOBSTACLE_SHIELD, false);
         let obstacles = [obstacle];
-        let grid = crate::fast_find_grid::FastFindGrid::default();
+        // The trajectory raycast forces a bare ground impact for any origin
+        // outside the level's map bbox, and a default grid has an empty
+        // (hyperspace) bbox — give the flight path an open field instead.
+        let mut grid = crate::fast_find_grid::FastFindGrid::default();
+        {
+            let mut level = (*grid.level).clone();
+            level.map_bbox =
+                crate::coordinates::MapBBox::from_coords(-10_000.0, -10_000.0, 10_000.0, 10_000.0);
+            grid.level = std::sync::Arc::new(level);
+        }
         let check = TrajectoryObstacleCheck {
             fast_find_grid: &grid,
             layer: 0,
@@ -7031,14 +7053,27 @@ mod tests {
     #[test]
     fn non_shield_arrow_ricochet_advances_immediately() {
         crate::sim_rng::with_seed(1, |sim| {
-            let trajectory = vec![TrajectoryPoint {
-                position: WorldPoint3D {
-                    x: 50.0,
-                    y: 0.0,
-                    z: 0.0,
+            // Two waypoints: the spawn primer consumes the first segment, so
+            // the ricochet still sees a queued waypoint and derives its fall
+            // sector from live flight rather than the orientation cache.
+            let trajectory = vec![
+                TrajectoryPoint {
+                    position: WorldPoint3D {
+                        x: 25.0,
+                        y: 0.0,
+                        z: 0.0,
+                    },
+                    time: 1,
                 },
-                time: 2,
-            }];
+                TrajectoryPoint {
+                    position: WorldPoint3D {
+                        x: 50.0,
+                        y: 0.0,
+                        z: 0.0,
+                    },
+                    time: 2,
+                },
+            ];
             let arrow = spawn_arrow(SpawnArrowParams {
                 shooter: EntityId::Pc(crate::entity_id::PcId(0)),
                 bow_point: WorldPoint3D {
@@ -7071,6 +7106,20 @@ mod tests {
             assert!(projectile.projectile.falling);
             assert!(projectile.projectile.flying);
             assert_eq!(
+                projectile.projectile.falling_direction, 12,
+                "armor ricochet reverses the flight sector for the fall"
+            );
+            assert_ne!(
+                projectile.element.position(),
+                impact_position,
+                "C++ MakeFallingDown calls Hourglass for armor ricochets too"
+            );
+
+            // The tumble visual is a presentation pass: it renders on the
+            // deferred refresh before the next hourglass, not inside
+            // MakeFallingDown itself.
+            refresh_arrow_after_previous_hourglass(sim, &mut projectile);
+            assert_eq!(
                 projectile.element.sprite.current_row, 12,
                 "impact-frame render uses the first falling sector"
             );
@@ -7078,11 +7127,6 @@ mod tests {
             assert_eq!(
                 projectile.projectile.falling_direction, 10,
                 "falling refresh rotates the next tumble sector by -2"
-            );
-            assert_ne!(
-                projectile.element.position(),
-                impact_position,
-                "C++ MakeFallingDown calls Hourglass for armor ricochets too"
             );
         });
     }
@@ -7283,14 +7327,16 @@ mod tests {
 
         refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
 
-        assert_eq!(arrow.projectile.last_orientation_sector, 0);
+        // The +X ground direction lies in compass sector 4 (the original
+        // sector partition puts (0,-1) in sector 0 and (1,0) in sector 4).
+        assert_eq!(arrow.projectile.last_orientation_sector, 4);
         assert_eq!(arrow.projectile.last_orientation_azimuth, 60);
         assert_eq!(
             (
                 arrow.element.sprite.current_row,
                 arrow.element.sprite.current_frame
             ),
-            (0, 8)
+            (4, 8)
         );
     }
 

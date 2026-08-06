@@ -175,18 +175,21 @@ fn civilian_macro_run_sanitizes_flags_after_nested_path_completion() {
     use crate::ai::macro_patrol::{MacroOpcode, PathId, PatrolPath};
     use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
 
+    // Keep every waypoint strictly inside the positive map quadrant:
+    // GoTo fails fast with couldnt_reachpoint for any destination whose
+    // x or y is <= 0, exactly as the Original bounds check does.
     let paths = vec![RawHikingPath {
         waypoints: vec![
             RawWaypoint {
-                x: 0,
-                y: 0,
+                x: 10,
+                y: 10,
                 sector: 1,
                 level: 0,
                 command: WaypointCommand::None,
             },
             RawWaypoint {
-                x: 20,
-                y: 0,
+                x: 30,
+                y: 10,
                 sector: 1,
                 level: 0,
                 command: WaypointCommand::None,
@@ -202,8 +205,8 @@ fn civilian_macro_run_sanitizes_flags_after_nested_path_completion() {
     ai.number_of_remaining_macro_bytes = 1;
     let ctx = AiContext {
         position: Position {
-            x: 0.0,
-            y: 0.0,
+            x: 10.0,
+            y: 10.0,
             sector: SectorHandle::new(1),
             level: 0,
         },
@@ -221,9 +224,14 @@ fn civilian_macro_run_sanitizes_flags_after_nested_path_completion() {
     );
     assert_eq!(ai.default_path_walking_flags, GotoFlags::RUN);
     let order = ai.take_pending_orders().pop().expect("nested patrol GoTo");
-    let emitted_flags = GotoFlags::from_bits_retain(order.move_flags);
-    assert!(emitted_flags.contains(GotoFlags::RUN));
-    assert!(!emitted_flags.contains(GotoFlags::BACK));
+    // The intent encodes GOTO_RUN as the running animation and GOTO_BACK as
+    // the reversed-movement bit, mirroring how GoTo translates its flags
+    // before launching the movement.
+    assert_eq!(order.order_type, crate::order::OrderType::RunningUpright);
+    assert!(
+        !order.reverse,
+        "the masked civilian GOTO_BACK must not reach the emitted movement"
+    );
 }
 
 #[test]
@@ -756,13 +764,14 @@ fn goto_route_arrival_launches_turn_even_when_already_facing_route() {
         ..AiContext::default()
     };
 
-    ai.think_expected_event_common_stuff(
-        &crate::sim_rng::test_context(),
-        &Stimulus::new(StimulusType::EventReachPoint),
-        &ctx,
-    );
-
+    let sim = crate::sim_rng::test_context();
+    ai.think_expected_event_common_stuff(&sim, &Stimulus::new(StimulusType::EventReachPoint), &ctx);
     assert_eq!(ai.current_substate, Substate::DefaultGotoRouteTurn);
+    // The REACHPOINT handler suspends across the SetState callback barrier;
+    // the engine's owner-work drain runs this continuation. Invoke it
+    // directly for the controller-level check.
+    ai.resume_goto_route_reach_point(&sim, &ctx);
+
     assert!(
         ai.outbox.reentrant.self_stimuli.is_empty(),
         "route arrival uses an explicit Turn, not FaceTo's same-direction EventDone shortcut"
@@ -815,11 +824,12 @@ fn goto_route_turn_lookup_preserves_original_endpoint_direction_flip() {
         ..AiContext::default()
     };
 
-    ai.think_expected_event_common_stuff(
-        &crate::sim_rng::test_context(),
-        &Stimulus::new(StimulusType::EventReachPoint),
-        &ctx,
-    );
+    let sim = crate::sim_rng::test_context();
+    ai.think_expected_event_common_stuff(&sim, &Stimulus::new(StimulusType::EventReachPoint), &ctx);
+    // The REACHPOINT handler suspends across the SetState callback barrier;
+    // run the engine-drained continuation directly to reach the live
+    // --path/++path lookup.
+    ai.resume_goto_route_reach_point(&sim, &ctx);
 
     let path = ai.patrol_path.as_ref().expect("patrol path");
     assert_eq!(path.current_waypoint_index, 0);

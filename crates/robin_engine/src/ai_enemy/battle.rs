@@ -3162,10 +3162,25 @@ mod tests {
 
         ai.reconsider_enemy_approach(false, 0.0, &ctx, &tick, None);
 
-        assert_eq!(
-            ai.base.outbox.actor.enter_swordfight,
-            Some(EnterSwordfightRequest::Engage(91))
-        );
+        // begin_swordfight raises Engage before its SetState suspends the
+        // actor-outbox prefix into the queued state-change owner work; the
+        // engine reapplies that prefix when it drains the callback. Read the
+        // request from either place.
+        let engage = ai.base.outbox.actor.enter_swordfight.or_else(|| {
+            ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .find_map(|work| match work {
+                    crate::ai::AiOwnerWork::StateChange(notification) => notification
+                        .actor_effects_before_callback
+                        .as_ref()
+                        .and_then(|effects| effects.enter_swordfight),
+                    _ => None,
+                })
+        });
+        assert_eq!(engage, Some(EnterSwordfightRequest::Engage(91)));
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
     }
 
@@ -3254,7 +3269,35 @@ mod tests {
         ai.base.primary_target = 198;
         ai.list_them = vec![198, 199];
 
+        // The predecision pass walks the persistent us-list through the
+        // shared entity-view table, and that list always includes the
+        // evaluating soldier itself.
+        let me_entity = crate::element::Entity::Soldier(crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                active: true,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: crate::element::NpcData {
+                life_points: 50,
+                ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                ..Default::default()
+            },
+            soldier: Default::default(),
+        });
+        let me_view = crate::ai_entity_view::entity_view_from_entity(
+            &me_entity,
+            40,
+            false,
+            None,
+            None,
+            crate::order::OrderType::NonanimationEnd,
+        );
         let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(91, me_view);
         views.insert(198, pc_view());
         views.insert(199, pc_view());
         assert!(views[&198].is_able_to_fight);

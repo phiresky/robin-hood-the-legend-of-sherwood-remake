@@ -58,7 +58,7 @@ const MERRY_MAN_ARROWS: u16 = 3;
 /// the "create list of detectable enemies" pass inside the per-NPC
 /// init for both enemy and friendly AI.
 #[derive(Debug, Clone, Copy)]
-struct PotentialDetectable {
+pub(super) struct PotentialDetectable {
     id: EntityId,
     is_pc: bool,
     is_soldier: bool,
@@ -108,7 +108,7 @@ pub(super) struct CategorySpeechRejectionFinalization {
 /// Build a snapshot of every live human in the engine.  Called once at
 /// the start of [`EngineInner::init_ai`] and handed to every per-NPC init
 /// pass.
-fn build_potential_detectables(engine: &EngineInner) -> Vec<PotentialDetectable> {
+pub(super) fn build_potential_detectables(engine: &EngineInner) -> Vec<PotentialDetectable> {
     let mut out = Vec::new();
     for (id, entity) in engine.world.entities.humans() {
         if !entity.element_data().active {
@@ -164,7 +164,7 @@ fn build_potential_detectables(engine: &EngineInner) -> Vec<PotentialDetectable>
 /// - Lacklandist soldier: detects Royalist soldiers + PCs.
 /// - Royalist civilian: detects PCs.
 /// - Lacklandist civilian (hostile civ): detects PCs.
-fn build_detectable_enemies_for(
+pub(super) fn build_detectable_enemies_for(
     self_camp: Camp,
     self_is_civilian: bool,
     self_id: EntityId,
@@ -431,17 +431,25 @@ mod parity_tests {
         let sector = crate::position_interface::SectorHandle::new(42).unwrap();
         let doors = lift_doors();
 
-        let high = primary_target_lift_approach(&grid, &doors, sector, 3)
+        // High/low is decided by point_out screen-Y (smallest Y = high door),
+        // never by the authored door-type tags. In this fixture the door at
+        // (10, 20) / layer 1 is therefore the high door even though it is
+        // tagged LiftLow.
+        let high = primary_target_lift_approach(&grid, &doors, sector, 1)
             .expect("target is in a lift")
             .expect("ladder has an approach entry");
-        assert_eq!((high.x, high.y, high.level), (30.0, 40.0, 3));
-        assert_eq!(high.sector.map(u16::from), Some(8));
+        assert_eq!((high.x, high.y, high.level), (10.0, 20.0, 1));
+        assert_eq!(high.sector.map(u16::from), Some(5));
 
-        let low = primary_target_lift_approach(&grid, &doors, sector, 2)
-            .expect("target is in a lift")
-            .expect("ladder has an approach entry");
-        assert_eq!((low.x, low.y, low.level), (10.0, 20.0, 1));
-        assert_eq!(low.sector.map(u16::from), Some(5));
+        // Every layer other than the high door's layer falls back to the low
+        // entry, including layers matching neither door.
+        for attacker_layer in [2, 3] {
+            let low = primary_target_lift_approach(&grid, &doors, sector, attacker_layer)
+                .expect("target is in a lift")
+                .expect("ladder has an approach entry");
+            assert_eq!((low.x, low.y, low.level), (30.0, 40.0, 3));
+            assert_eq!(low.sector.map(u16::from), Some(8));
+        }
     }
 
     #[test]

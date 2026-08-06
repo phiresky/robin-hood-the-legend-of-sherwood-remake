@@ -6199,9 +6199,20 @@ mod tests {
                 None,
             );
 
+            // The stop-parry command is issued before the handler's SetState
+            // suspends the actor-outbox prefix into the queued state-change
+            // owner work; collect commands from both places.
+            let mut launch_commands: Vec<crate::element::Command> = Vec::new();
+            for work in &ai.base.outbox.reentrant.owner_work {
+                if let crate::ai::AiOwnerWork::StateChange(notification) = work
+                    && let Some(effects) = &notification.actor_effects_before_callback
+                {
+                    launch_commands.extend(effects.launch_commands.iter().copied());
+                }
+            }
+            launch_commands.extend(ai.base.outbox.actor.launch_commands.iter().copied());
             assert_eq!(
-                ai.base.outbox.actor.launch_commands
-                    == vec![crate::element::Command::StopParrySword],
+                launch_commands == vec![crate::element::Command::StopParrySword],
                 should_stop,
                 "unexpected stop-parry emission for {action_state:?}"
             );

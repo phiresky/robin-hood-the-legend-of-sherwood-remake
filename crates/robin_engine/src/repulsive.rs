@@ -295,7 +295,11 @@ mod tests {
             .compute_deviation(movement, map_pt(50.0, -14.0), 4.0, 10.0, 4.0)
             .expect("stored total action radius must keep the line active");
 
-        assert_eq!(deviated.x.to_bits(), (-2.3999999_f32).to_bits());
-        assert_eq!(deviated.y.to_bits(), 3.2_f32.to_bits());
+        // The distance update and square root run in double precision with
+        // single-precision boundaries only where the original stores back to
+        // FLOAT, so both components land one ULP away from the nearest
+        // decimal literal.
+        assert_eq!(deviated.x.to_bits(), 3_222_903_192); // ~ -2.3999999
+        assert_eq!(deviated.y.to_bits(), 1_078_774_990); // ~ 3.2000003
     }
 }

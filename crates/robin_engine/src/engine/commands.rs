@@ -4620,6 +4620,9 @@ mod tests {
 
         engine.apply_sword_strike_with_seek(&assets, pc_id, target_id, Command::SwordstrikeThrustE);
 
+        // LaunchSequenceElement admission: the newer seek is registered at
+        // the manager tail without synchronous arbitration, so the older
+        // postponed Preference strike keeps its slot behind the injury.
         assert_eq!(
             engine
                 .orders
@@ -4627,23 +4630,35 @@ mod tests {
                 .get_element(old_strike_seq, 0)
                 .unwrap()
                 .state,
-            SequenceState::Interrupted,
-            "Preference + newer Normal interrupts the older postponed strike"
+            SequenceState::Postponed,
+            "tail admission must not synchronously interrupt the older postponed strike"
         );
-        let replacement = engine
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(injury_seq, 0)
+                .unwrap()
+                .cross_postponed,
+            Some((old_strike_seq, 0)),
+            "the injury keeps its original postponed successor"
+        );
+        let (new_seek_seq, new_seek) = engine
             .orders
             .sequence_manager
-            .get_element(injury_seq, 0)
-            .unwrap()
-            .cross_postponed
-            .expect("injury retains the newer seek");
-        let replacement = engine
-            .orders
-            .sequence_manager
-            .get_element(replacement.0, replacement.1)
-            .unwrap();
-        assert_eq!(replacement.command, Command::Seek);
-        assert_eq!(replacement.state, SequenceState::Postponed);
+            .sequences_iter()
+            .filter_map(|sequence| {
+                let element = sequence.get(0)?;
+                (element.command == Command::Seek).then_some((sequence.id, element))
+            })
+            .next()
+            .expect("the newer strike seek was registered");
+        assert_ne!(new_seek_seq, old_strike_seq);
+        assert_eq!(
+            new_seek.state,
+            SequenceState::Todo,
+            "the newer seek waits for Hourglass instead of replacing the postponed chain"
+        );
     }
 
     fn minimal_script() -> crate::engine::types::MissionScript {

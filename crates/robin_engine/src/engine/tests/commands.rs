@@ -1494,6 +1494,8 @@ fn dead_pc_triggers_failure() {
     });
     let id = engine.add_entity(entity);
     engine.mission_domain.dead_pc = Some(id);
+    // The portrait refresh reads every registered PC's character profile and
+    // campaign description each frame, dead or not.
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let result = engine

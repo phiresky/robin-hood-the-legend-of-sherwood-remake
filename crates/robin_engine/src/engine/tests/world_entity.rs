@@ -602,10 +602,10 @@ fn category_rejection_tail_clears_recursive_emergency_line() {
         engine
             .feedback
             .sound_sim
-            .playing_exclamations
+            .pending_exclamations
             .iter()
             .any(|line| line.actor_id == owner.index()
-                && line.exclamation_id == Remark::Arrow as u32),
+                && line.exclamation_id == Remark::Arrow as u16),
         "the recursive line started, but the outer rejected Say overwrote its latch"
     );
 }
@@ -835,6 +835,25 @@ fn speech_fifo_preserves_rejected_accepted_busy_and_emergency_attempts() {
     let ai = mytalk_ai(&engine, owner);
     assert_eq!(ai.current_remark, Remark::Wounded);
     assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+    // Accepted lines wait as pending requests until the concrete sound
+    // manager resolves a duration; only then do they start playing.
+    assert_eq!(
+        engine
+            .feedback
+            .sound_sim
+            .pending_exclamations
+            .iter()
+            .map(|pending| pending.exclamation_id)
+            .collect::<Vec<_>>(),
+        vec![Remark::Wounded as u16]
+    );
+    engine.queue_resolved_exclamations(vec![crate::sound::ResolvedExclamation {
+        actor_id: owner.index(),
+        identifier: u32::from(Remark::Wounded as u16) | (501 & 0xFFFF_0000),
+        exclamation_id: Remark::Wounded as u16,
+        duration_frames: 5,
+    }]);
+    engine.hourglass_phase_deferred_effects_start(&crate::sim_rng::test_context(), &assets);
     assert_eq!(engine.feedback.sound_sim.playing_exclamations.len(), 1);
     assert_eq!(
         engine.feedback.sound_sim.playing_exclamations[0].exclamation_id,
@@ -1449,6 +1468,18 @@ fn original_pc_registry_is_independent_from_portrait_priority_order() {
     assert_eq!(engine.world.original_pc_registry_ids, vec![first]);
 }
 
+/// Give the default (empty) test grid a real map bounding box.
+///
+/// Position authorization rejects boxes wholly outside the level's map
+/// bbox, and a default-constructed grid has no bbox at all — every
+/// placement query fails. Tests that exercise formation placement need
+/// an open field instead.
+pub(super) fn install_test_open_field_bbox(engine: &mut EngineInner) {
+    let mut level = (*engine.world.fast_grid.level).clone();
+    level.map_bbox = MapBBox::from_coords(-10_000.0, -10_000.0, 10_000.0, 10_000.0);
+    engine.world.fast_grid.level = std::sync::Arc::new(level);
+}
+
 pub(super) fn install_test_building_sector(engine: &mut EngineInner, raw_sector: u16) {
     let _sector = crate::position_interface::SectorHandle::new(raw_sector)
         .expect("test building sector must be non-zero");
@@ -1512,8 +1543,10 @@ fn enter_swordfight_clears_pending_bow_shot_list() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
     let pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
     let opponent = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let mut shot = crate::sequence::SequenceElement::new_interaction(
         1,
@@ -1525,7 +1558,7 @@ fn enter_swordfight_clears_pending_bow_shot_list() {
     let shot_seq = engine.orders.sequence_manager.launch_element(shot);
     assert!(engine.pc_has_pending_shoot_bow(pc));
 
-    let _ = engine.enter_swordfight(sim, &LevelAssets::new(), pc, opponent, false);
+    let _ = engine.enter_swordfight(sim, &assets, pc, opponent, false);
 
     assert_eq!(
         engine
@@ -1911,6 +1944,17 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
     let mut engine = EngineInner::new();
     engine.control.frame_counter = 100;
     engine.world.weather.ambiance = crate::engine::types::Ambiance::Night;
+    // Occupy slot 0 with a non-human entity: handle 0 is the null element
+    // in AI handle space, so Charly must not land there or his viewer
+    // identity cannot be resolved from the entity-view snapshot.
+    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::Target,
+            ..Default::default()
+        },
+        fx: Default::default(),
+        target: Default::default(),
+    }));
     let charly_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let officer_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let mut assets = LevelAssets::new();
@@ -2081,6 +2125,7 @@ fn run_synchronous_civilian_alert(
         .ai_brain
         .friendly_mut()
         .expect("test civilian has FriendlyAi");
+    friendly.base.owner_entity_id = Some(civilian_id);
     friendly.base.antagonist = soldier_id.index();
     friendly.base.my_reconnaissance_report.update(
         crate::ai::ReportType::Enemy,
@@ -2114,6 +2159,7 @@ fn run_synchronous_civilian_alert(
         .enemy_mut()
         .expect("test soldier has EnemyAi");
     enemy.base.me = soldier_id.index();
+    enemy.base.owner_entity_id = Some(soldier_id);
     enemy.set_state(
         soldier_state,
         if soldier_state == AiState::Default {
@@ -2640,6 +2686,7 @@ fn setup_review2_officer_and_soldier() -> (EngineInner, EntityId, EntityId, Leve
         };
         soldier.element.active = true;
         soldier.element.set_position_map(MapPoint::new(x, 0.0));
+        soldier.element.index_in_elements_list = id.index() as u16;
         soldier.npc.life_points = 100;
         let ai = soldier
             .npc
@@ -2972,7 +3019,12 @@ fn final_review_alert_all_refused_resumes_caller_failure() {
         .expect("alert caller retains EnemyAi");
     assert!(officer.alerted_us.is_empty());
     assert_eq!(officer.base.current_state, AiState::Default);
-    assert_eq!(officer.base.current_substate, Substate::DefaultGotoPost);
+    // The all-refused failure resumes ReturnToDuty. The officer already
+    // stands on its post facing its initial direction, so the goto-post
+    // reach-point fires inside the same synchronous Think tail and the
+    // already-facing turn short-circuits straight through GotoPost into
+    // OnPost before the drain returns.
+    assert_eq!(officer.base.current_substate, Substate::DefaultOnPost);
     assert!(
         !engine
             .orders
@@ -3017,6 +3069,7 @@ fn final_review_alert_partial_refusal_forms_group_from_acceptors_only() {
     accepted_ai.soldier_profile_rank = ProfileRank::Soldier;
     accepted_ai.set_state(AiState::Default, Substate::DefaultOnPost);
     complete_test_runtime_fixture(&mut engine, &mut assets);
+    install_test_open_field_bbox(&mut engine);
     engine
         .get_entity_mut(officer_id)
         .expect("partial alert officer exists")
@@ -3161,6 +3214,7 @@ fn final_review_combat_alert_partial_refusal_uses_only_acceptor_for_formation() 
     accepted_ai.soldier_profile_rank = ProfileRank::Soldier;
     accepted_ai.set_state(AiState::Default, Substate::DefaultOnPost);
     complete_test_runtime_fixture(&mut engine, &mut assets);
+    install_test_open_field_bbox(&mut engine);
     engine
         .get_entity_mut(officer_id)
         .expect("partial-refusal officer exists")
@@ -3560,6 +3614,7 @@ fn closure_review_final_alert_report_boundary_precedes_formation() {
     body.element.active = true;
     body.pc.life_points = 0;
     complete_test_runtime_fixture(&mut engine, &mut assets);
+    install_test_open_field_bbox(&mut engine);
     engine
         .get_entity_mut(officer_id)
         .expect("final-alert officer exists")

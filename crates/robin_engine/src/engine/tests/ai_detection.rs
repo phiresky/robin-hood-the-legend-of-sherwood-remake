@@ -823,7 +823,6 @@ fn patrol_member_thinks_before_the_chief_applies_its_direction() {
 fn patrol_direction_macro_effect_closes_at_the_chief_owner_boundary() {
     use crate::ai::Substate;
     use crate::element::{ActionState, Camp, Entity};
-    use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
     let chief = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
@@ -865,14 +864,16 @@ fn patrol_direction_macro_effect_closes_at_the_chief_owner_boundary() {
 
     let member_ai = engine.get_entity(member).unwrap().ai_controller().unwrap();
     assert_eq!(member_ai.patrol_direction, 7);
-    assert_eq!(
+    // FaceTo launches a sequence; the Turn element becomes the actor's live
+    // order only when the sequence manager promotes it, so the synchronous
+    // observable at the chief macro boundary is the about-to-be-launched
+    // Turn, not an already-current Turning order.
+    assert!(
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(member)
-            .map(|(_, _, order)| order.order_type),
-        Some(OrderType::Turning),
-        "CMD_PATROL_DIRECTION must synchronously drain the waiting member's FaceTo before the chief macro boundary returns"
+            .element_is_about_to_be_launched(member, crate::element::Command::Turn),
+        "CMD_PATROL_DIRECTION must synchronously enqueue the waiting member's FaceTo Turn before the chief macro boundary returns"
     );
 }
 
@@ -1614,7 +1615,10 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
         y: 0.0,
         ..Position::default()
     };
-    engine.control.frame_counter = (periodic_owner.index() + 100) & 255;
+    // The16thFrame's cadence is keyed on the NPC's register number (0 for
+    // every fixture civilian), not its entity index: phase is
+    // (frame & 255) - ((register + 100) & 255) and must be ≡ 0 mod 16.
+    engine.control.frame_counter = 100;
     engine.tick_periodic_ai_for_npc(sim, periodic_owner, &assets);
     assert_drained(&engine, periodic_owner, "civilian The16thFrame");
     assert_eq!(
@@ -1761,6 +1765,12 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
         current_reverse: false,
         saved_action_state: None,
     });
+    // Forecast preparation only treats the actor as mid door transit while
+    // its position interface still holds the live door pointer.
+    pc.element
+        .sprite
+        .position_iface
+        .set_door_for_test(crate::position_interface::DoorHandle(0));
 
     let building_sector = SectorNumber::new(8);
     engine.script_domains.interactables.doors = vec![
@@ -1823,12 +1833,23 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
     }];
     engine.control.frame_counter = (quiet_owner.index() + 101) & 255;
 
+    // Building scratch no longer burns BuildingExitGate eagerly: the
+    // prepared forecast defers the gate selection draw until an AI statement
+    // actually resolves it. Prove the fixture is armed by resolving the
+    // door-passing actor's prepared forecast directly.
+    let control_scratch = engine.build_sim_scratch(sim, &assets);
     let (_, control_trace) = with_draw_trace(|| {
-        drop(engine.build_sim_scratch(sim, &assets));
+        control_scratch
+            .ai_entity_views
+            .get(&door_actor.index())
+            .expect("door-passing actor has an AI entity view")
+            .forecasted_destination
+            .resolve(sim);
     });
+    drop(control_scratch);
     assert!(
         control_trace.contains(&RngSite::BuildingExitGate),
-        "the fixture must exercise BuildingExitGate when scratch is really built"
+        "the fixture must exercise BuildingExitGate when its prepared forecast is resolved"
     );
 
     let (_, empty_drain_trace) =
@@ -1951,6 +1972,13 @@ fn npc_body_broadcast_respects_swapped_creation_order_boundary() {
         ai.base.current_substate = Substate::SeekingJustWatching;
         ai.current_task_priority = task_priority::NONE;
         ai.base.locks_flag_field = AiLockFlags::FREEZE;
+
+        // The Body bucket refreshes strictly on the modulo-8 cadence of the
+        // observer's modified frame (universal frame + creation order); open
+        // that gate so the boundary question — did the broadcast land before
+        // or after the observer's slot — is what decides the outcome.
+        let observer_order = engine.world.original_creation_order(observer_id);
+        engine.control.frame_counter = (8 - (observer_order % 8)) % 8;
 
         let mut positions_before_movement =
             crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
@@ -2865,12 +2893,16 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
         "later officer must see that the earlier EVENT_VIEW made its friend unable to help"
     );
     assert_ne!(attacker_first.2, Substate::SeekingOfficerCallSoldier);
+    // The officer already faces the helpful soldier, so the Face inside the
+    // FRIEND sighting is a no-op and the Think tail posts EVENT_DONE
+    // synchronously: CallSoldier hails the soldier in the same slot and the
+    // officer ends the tick already waiting for him.
     assert_eq!(
         observe(false),
         (
             AiState::Attacking,
             AiState::Seeking,
-            Substate::SeekingOfficerCallSoldier,
+            Substate::SeekingOfficerWaitForSoldier,
         ),
         "earlier officer must see the still-helpful soldier before that soldier handles EVENT_VIEW"
     );
@@ -3108,7 +3140,12 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
         fx: Default::default(),
         target: Default::default(),
     }));
-    engine.control.frame_counter = 1;
+    // The observer's modified frame is universal frame + its creation order
+    // (31 hidden pre-mission elements, then the Target, so the observer sits
+    // at 32). Every strict per-bucket cadence in this oracle — hearing (3),
+    // Body (8), Object (4), Enemy-PC (2) — must be open in the same tick,
+    // so pick a frame with 16 + 32 = 48 ≡ 0 mod lcm(3, 8, 4, 2) = 24.
+    engine.control.frame_counter = 16;
 
     let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
     let first_visible_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
@@ -3191,9 +3228,8 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
     friend.npc.eye_status = crate::element::EyeStatus::Closed;
 
     // RunningUpright produces the production 70-volume TAPTAPTAP used by
-    // RefreshDetection's acoustic pass. With observer slot 1, the Original's
-    // hidden +31 creation-order prefix, and frame 1, its three-frame hearing
-    // cadence is open.
+    // RefreshDetection's acoustic pass; the frame chosen above keeps the
+    // observer's three-frame hearing cadence open.
     let mut movement = SequenceElement::new_movement(
         1,
         crate::element::Command::Move,
@@ -4890,11 +4926,28 @@ fn royalist_civilian_enemy_list_accepts_pc_but_not_lacklandist_soldier() {
     profile.detection_speed_in_city = 100;
     profile.detection_speed_in_forest = 100;
 
+    // Enemy membership is established once by AI init's AddDetectable policy
+    // (the tick preserves it, never rebuilds it): a Royalist civilian keeps
+    // PCs and rejects soldiers of either camp.
+    let init_detectables = crate::engine::ai::build_detectable_enemies_for(
+        Camp::Royalists,
+        true,
+        civilian_id,
+        &crate::engine::ai::build_potential_detectables(&engine),
+    );
+    assert_eq!(
+        init_detectables
+            .iter()
+            .map(|detectable| detectable.element)
+            .collect::<Vec<_>>(),
+        vec![Some(pc_id)],
+        "Original Royalist civilian AddDetectable accepts PCs only"
+    );
     let civilian = engine
         .get_entity_mut(civilian_id)
         .and_then(Entity::npc_data_mut)
         .expect("Royalist civilian retains NPC state");
-    civilian.detectable_lists[DetectableType::Enemy as usize].clear();
+    civilian.detectable_lists[DetectableType::Enemy as usize] = init_detectables;
     civilian.detection_suspects[DetectableType::Enemy as usize] = 999;
     civilian
         .ai_brain
@@ -5754,9 +5807,17 @@ fn civilian_enemy_optics_uses_the_common_npc_walk() {
         ai.stimulus_queue[0].info,
         StimulusInfo::Human(pc_id.index())
     );
+    // The PC stands 80 units east of the civilian's eye point (beyond both
+    // the very-close and halfcircle radii), so the committed sharpness is
+    // BASE_VIEW_SPEED × DETECTION_FREQUENCY_ENEMY_PC × the distance curve,
+    // truncated to an integer like the engine does.
+    let expected_sharpness = (f32::from(crate::ai_vision::BASE_VIEW_SPEED)
+        * crate::ai_vision::DETECTION_FREQUENCY_ENEMY_PC as f32
+        * crate::ai_vision::distance_sharpness(80.0 * 80.0, 300.0))
+        as u32;
+    assert!(expected_sharpness > 0);
     assert_eq!(
-        ai.max_visibility,
-        u32::from(crate::ai_vision::BASE_VIEW_SPEED) * 2,
+        ai.max_visibility, expected_sharpness,
         "the shared NPC maximum must be published through FriendlyAi too"
     );
 }

@@ -329,10 +329,14 @@ fn concrete_static_objects_run_once_and_broad_objects_stay_in_their_lanes() {
     let positions = empty_positions(&engine);
     engine.tick_actor_owner_envelopes(&sim, &assets, &positions);
 
-    assert!(
-        engine.get_entity(ale).is_none(),
-        "inactive RHElementAle returns false"
-    );
+    // An inactive ale reports false from its Hourglass, but the engine's
+    // default removal only deactivates: the slot stays occupied because
+    // other elements may still reference it, and its sprite never advances.
+    let ale_entity = engine
+        .get_entity(ale)
+        .expect("inactive RHElementAle stays in the element table (deactivate-only removal)");
+    assert!(!ale_entity.element_data().active);
+    assert_eq!(ale_entity.element_data().sprite.current_frame, 0);
     assert_eq!(
         engine
             .get_entity(cape)

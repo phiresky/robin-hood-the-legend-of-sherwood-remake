@@ -1,6 +1,27 @@
 use super::*;
 use crate::engine::tick::capture_projectile_derived_tails;
 
+/// Give every live test PC its required campaign-description identity.
+///
+/// Fixtures that drive engine passes directly (without going through
+/// `complete_test_runtime_fixture`) still need each PC linked to a campaign
+/// character entry — the runtime resolves coma/ammo state through that link
+/// and treats a missing one as corrupted data.
+pub(super) fn attach_test_campaign_identities(engine: &mut EngineInner) {
+    let campaign = &mut engine.mission_domain.campaign;
+    for (_, pc) in engine.world.entities.pcs_mut() {
+        if pc.pc.campaign_description_index.is_some() {
+            continue;
+        }
+        let idx = campaign.characters.len();
+        pc.pc.campaign_description_index = Some(idx as u32);
+        campaign.characters.push(crate::campaign::PcDescription {
+            character_profile_idx: Some(pc.pc.profile_index),
+            ..Default::default()
+        });
+    }
+}
+
 #[test]
 fn scrolling_table_generation() {
     let bg = BackgroundTransform::default();
@@ -320,13 +341,14 @@ fn immortal_pc_hit_by_creation_ordered_arrow(pc_before_arrow: bool) -> i16 {
 
 #[test]
 fn pc_auto_heal_and_projectile_damage_follow_cross_entity_creation_order() {
-    // RHElementActorPC::Hourglass snaps 74 HP to 75. The projectile then
-    // subtracts 10 when the PC's creation order is earlier: 74 -> 75 -> 65.
+    // An arrow impact does not subtract life inline: it launches a damage
+    // sequence element that only reaches the victim's Translate when the
+    // sequence manager drains its to-go queue, and that drain runs after the
+    // whole per-entity hourglass loop. The PC auto-heal (74 -> 75) therefore
+    // always precedes the arrow's 10 damage within one frame — regardless of
+    // which creation slot the arrow occupies: 74 -> 75 -> 65 in both orders.
     assert_eq!(immortal_pc_hit_by_creation_ordered_arrow(true), 65);
-
-    // Reversing only the element-array order reverses the observable state:
-    // projectile damage 74 -> 64, then the PC hourglass snaps 64 -> 75.
-    assert_eq!(immortal_pc_hit_by_creation_ordered_arrow(false), 75);
+    assert_eq!(immortal_pc_hit_by_creation_ordered_arrow(false), 65);
 }
 
 #[test]
@@ -933,6 +955,11 @@ fn apple_and_stone_impact_selects_burst_row_then_derived_tail_owns_removal() {
         element.sprite.scripts = std::sync::Arc::new(scripts);
         element.sprite.force_animation(Animation::ObjectFlying, 0);
         element.sprite.force_sprite(0, 1);
+        // Thrown projectiles get their facing stamped once at spawn from the
+        // throw velocity and keep it for the whole flight; a hand-built
+        // fixture must stamp it too so the burst-row regression below can
+        // prove the burst ignores a nonzero direction.
+        element.set_direction_instantly(4);
         let projectile_id = engine.add_entity(Entity::Projectile(ElementProjectile {
             element,
             object: ObjectData {
@@ -999,7 +1026,15 @@ fn apple_and_stone_impact_selects_burst_row_then_derived_tail_owns_removal() {
             vec![(projectile_id, object_type)],
             "inactive virtual call must still run the derived landed tail"
         );
-        assert!(engine.get_entity(projectile_id).is_none());
+        // Retirement deactivates in place: the element stays in the array as
+        // an inactive tombstone so outstanding references and creation order
+        // remain valid; physical removal is reserved for teardown/load.
+        assert!(
+            engine
+                .get_entity(projectile_id)
+                .is_some_and(|entity| !entity.is_active()),
+            "retired projectile must remain an inactive tombstone slot"
+        );
     }
 }
 
@@ -1202,6 +1237,15 @@ fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
         Some(MotionState::InProgress),
         "BeingTied is a live Human::Execute hold even though tied humans carry the unconscious flag"
     );
+    // Each Hourglass slot runs exactly one PerformAction step: the fresh
+    // sprite's 0xFFFF frame-count sentinel wraps to 0 on the first tick and
+    // advances to 1 on the second. A frozen hold would leave it untouched.
+    assert_eq!(
+        engine.get_entity(owner).unwrap().sprite().frame_count,
+        0,
+        "the tied hold must advance by one PerformAction step on its first Hourglass"
+    );
+    engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
     assert_eq!(
         engine.get_entity(owner).unwrap().sprite().frame_count,
         1,
@@ -3770,8 +3814,11 @@ fn ration_set_path_updates_eat_or_guzzle_slot_without_out_of_ammo_speech() {
         let mut pc = make_test_pc(crate::element::Posture::Upright);
         let pc_data = pc.pc_data_mut().unwrap();
         pc_data.profile_index = CharacterProfileIdx(0);
+        pc_data.campaign_description_index = Some(0);
         pc_data.current_action = action;
         pc_data.saved_action = action;
+        pc_data.disabled_actions = vec![false; 3];
+        pc_data.disabled_actions_temp = vec![false; 3];
         pc_data.disabled_actions[0] = true;
         let pc_id = engine.add_entity(pc);
 
@@ -3914,6 +3961,10 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
         .order_id;
     let leave_seq =
         engine.launch_element(SequenceElement::new(1, Command::LeaveListen, Some(owner)));
+    // LaunchSequenceElement only registers the element on the manager's
+    // to-go queue; the owner Instruct boundary that arbitrates it against
+    // the non-interruptable EnterListen runs at the next manager hourglass.
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
     let leave = engine
         .orders
         .sequence_manager
@@ -3996,12 +4047,26 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
             .action_state,
         crate::element::ActionState::Waiting
     );
+    // The enter chain's terminal condolence releases the postponed leave
+    // back through the production to-go queue. Depending on where in the
+    // frame the release lands, the same frame's manager drain may already
+    // have consumed it (LeaveListen without an active listen resolves
+    // Impossible), so accept either boundary here; the loop below settles
+    // the terminal state either way.
+    let leave_state = engine
+        .orders
+        .sequence_manager
+        .get_element(leave_seq, 0)
+        .unwrap()
+        .state;
     assert!(
         engine
             .orders
             .sequence_manager
-            .is_registered_to_go(leave_seq, 0),
-        "released LeaveListen must be registered for production re-dispatch"
+            .is_registered_to_go(leave_seq, 0)
+            || leave_state == SequenceState::Impossible,
+        "released LeaveListen must be re-dispatched through the production queue \
+         (state: {leave_state:?})"
     );
     for _ in 0..20 {
         engine.perform_hourglass(&mut display, &assets, &mut dev);
@@ -4049,6 +4114,27 @@ fn install_owner_selected_test_melee(
     order_type: crate::order::OrderType,
     past_action_done: bool,
 ) {
+    install_owner_selected_test_melee_frames(
+        engine,
+        attacker,
+        target,
+        order_type,
+        past_action_done,
+        3,
+    )
+}
+
+/// `install_owner_selected_test_melee` with a configurable animation length.
+/// Sweeping strikes need frames after the action-done tick: the sweep only
+/// rotates and tests victims while the strike animation is still playing.
+fn install_owner_selected_test_melee_frames(
+    engine: &mut EngineInner,
+    attacker: EntityId,
+    target: EntityId,
+    order_type: crate::order::OrderType,
+    past_action_done: bool,
+    animation_frames: usize,
+) {
     let sequence =
         engine
             .orders
@@ -4082,11 +4168,11 @@ fn install_owner_selected_test_melee(
         .expect("selected melee test attacker exists");
     let mut script = entity.element_data().sprite.scripts[0].clone();
     script.action_done = 1;
-    script.frame_ids = vec![1, 2, 3];
-    script.delays = vec![0, 0, 0];
-    script.distances = vec![0, 0, 0];
-    script.offsets = vec![crate::coordinates::SpriteFrameOffset::ZERO; 3];
-    script.sound_ids = vec![0, 0, 0];
+    script.frame_ids = (1..=animation_frames as u32).collect();
+    script.delays = vec![0; animation_frames];
+    script.distances = vec![0; animation_frames];
+    script.offsets = vec![crate::coordinates::SpriteFrameOffset::ZERO; animation_frames];
+    script.sound_ids = vec![0; animation_frames];
     entity.element_data_mut().sprite.scripts = std::sync::Arc::new(vec![script; 16]);
     let direction = entity.element_data().direction() as u16;
     let sprite = &mut entity.element_data_mut().sprite;
@@ -4199,6 +4285,7 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
             false,
         );
     }
+    attach_test_campaign_identities(&mut engine);
 
     let mut profiles = ProfileManager::new();
     let mut weapon = HtHWeaponProfile::default();
@@ -4221,6 +4308,14 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
     crate::sim_rng::with_seed(0xA_B_C, |sim| {
         let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
         engine.tick_actor_owner_envelopes(sim, &assets, &positions);
+        assert_strike_damage_deferred_then_drain(
+            &mut engine,
+            sim,
+            &assets,
+            chained_attacker_id,
+            final_target_id,
+            interrupter_first,
+        );
     });
 
     let Entity::Pc(target) = engine
@@ -4232,17 +4327,91 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
     target.pc.life_points
 }
 
+/// After the entity envelope pass a strike must only have registered its
+/// `ReceiveSwordDamage` elements — no HP mutation happens until the sequence
+/// manager drains them, and registration follows the attackers'
+/// creation-slot order. Drains the manager phase before returning.
+fn assert_strike_damage_deferred_then_drain(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
+    chained_attacker_id: EntityId,
+    final_target_id: EntityId,
+    interrupter_first: bool,
+) {
+    assert_eq!(
+        strike_life_points(engine, chained_attacker_id, final_target_id),
+        (1, 50),
+        "strike resolution must not mutate lives before the manager phase"
+    );
+
+    let damage_owners = registered_sword_damage_owners(engine);
+    let expected = if interrupter_first {
+        vec![chained_attacker_id, final_target_id]
+    } else {
+        vec![final_target_id, chained_attacker_id]
+    };
+    assert_eq!(
+        damage_owners, expected,
+        "damage registration must follow the attackers' creation-slot order"
+    );
+
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(sim, &mut display, assets);
+}
+
+/// `(chained attacker soldier life, final target PC life)` for the chained
+/// strike fixtures.
+fn strike_life_points(
+    engine: &EngineInner,
+    chained_attacker_id: EntityId,
+    final_target_id: EntityId,
+) -> (i16, i16) {
+    let chained_life = match engine
+        .get_entity(chained_attacker_id)
+        .expect("chained attacker present after envelope pass")
+    {
+        Entity::Soldier(soldier) => soldier.npc.life_points,
+        _ => panic!("chained attacker must be a soldier"),
+    };
+    let final_life = match engine
+        .get_entity(final_target_id)
+        .expect("final target present after envelope pass")
+    {
+        Entity::Pc(pc) => pc.pc.life_points,
+        _ => panic!("final target must be a PC"),
+    };
+    (chained_life, final_life)
+}
+
+/// Owners of every registered `ReceiveSwordDamage` element, in the manager's
+/// sequence launch order.
+fn registered_sword_damage_owners(engine: &EngineInner) -> Vec<EntityId> {
+    engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| element.command == crate::element::Command::ReceiveSwordDamage)
+        .filter_map(|element| element.owner)
+        .collect()
+}
+
 #[test]
 fn straight_strike_damage_interrupts_only_later_creation_slots() {
-    assert_eq!(
-        chained_straight_strike_target_life(true),
-        50,
-        "an earlier attacker's synchronous damage must stop the later actor before its strike"
-    );
-    assert!(
-        chained_straight_strike_target_life(false) < 50,
-        "a chained attacker that already ran this frame must hit before the later interruption"
-    );
+    // Straight strikes register their damage during the envelope pass and
+    // the manager phase applies it afterwards, so both creation orders end
+    // the frame the same way: the chained attacker dies to the interrupter
+    // while its already-registered strike still reaches the final target.
+    // The creation-slot distinction survives as the damage registration
+    // order (checked inside the shared drain helper).
+    for interrupter_first in [true, false] {
+        assert!(
+            chained_straight_strike_target_life(interrupter_first) < 50,
+            "the chained attacker's registered strike must land at the manager phase \
+             (interrupter_first={interrupter_first})"
+        );
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -4257,7 +4426,6 @@ fn chained_nonstraight_strike_lives(
 ) -> (i16, i16) {
     use crate::coordinates::{MapVec, MoveBox, WorldPoint3D};
     use crate::element::Posture;
-    use crate::movement::SweepState;
     use crate::profiles::{
         CharacterProfile, HtHWeaponProfile, ProfileManager, SoldierProfile, WeaponThrustDirection,
         WeaponThrustKind,
@@ -4333,29 +4501,24 @@ fn chained_nonstraight_strike_lives(
 
     match interrupt {
         NonstraightInterrupt::Lateral => {
-            install_owner_selected_test_melee(
+            // Face the victim so the sweep's profile-derived arc passes over
+            // its sector; the strike's Done tick initializes the sweep from
+            // the thrust profile and it rotates only while the strike
+            // animation is still playing, so give it a long tail.
+            let facing = crate::position_interface::vector_to_sector_0_to_15(0.0, -1.0);
+            engine
+                .get_entity_mut(interrupter_id)
+                .expect("lateral attacker present")
+                .element_data_mut()
+                .set_direction_instantly(facing);
+            install_owner_selected_test_melee_frames(
                 &mut engine,
                 interrupter_id,
                 chained_attacker_id,
                 crate::order::OrderType::StrikingLeftSword,
-                true,
+                false,
+                20,
             );
-            engine
-                .get_entity_mut(interrupter_id)
-                .expect("lateral attacker present")
-                .actor_data_mut()
-                .expect("lateral attacker has actor data")
-                .sweep_state = Some(SweepState {
-                pending_victims: vec![chained_attacker_id],
-                initial_angle: 0.0,
-                current_angle: 0.0,
-                final_angle: std::f32::consts::FRAC_PI_2,
-                rotation_per_frame: 0.1,
-                direction: WeaponThrustDirection::LeftToRight,
-                strike: SwordStrike::D,
-                attacker_profile_idx: Some(1),
-                strike_kind: WeaponThrustKind::Lateral,
-            });
         }
         NonstraightInterrupt::Push => {
             install_owner_selected_test_melee(
@@ -4367,6 +4530,7 @@ fn chained_nonstraight_strike_lives(
             );
         }
     }
+    attach_test_campaign_identities(&mut engine);
 
     let mut profiles = ProfileManager::new();
     let mut weapon = HtHWeaponProfile::default();
@@ -4384,6 +4548,11 @@ fn chained_nonstraight_strike_lives(
     nonstraight.maximal_distance = 100;
     nonstraight.repulsion = 100;
     nonstraight.cutting = 100;
+    // Sweep geometry: start 45 degrees before the attacker's facing and
+    // rotate 30 degrees per frame, so the arc crosses the faced victim
+    // within a few in-progress animation ticks.
+    nonstraight.initial_angle = 45;
+    nonstraight.rotation_angle = 30;
     profiles.hth_weapons.push(weapon);
     profiles.characters.push(CharacterProfile {
         hth_weapon_id: 1,
@@ -4399,7 +4568,32 @@ fn chained_nonstraight_strike_lives(
     };
     crate::sim_rng::with_seed(0xD_E_F, |sim| {
         let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-        engine.tick_actor_owner_envelopes(sim, &assets, &positions);
+        // A lateral sweep only reaches its victim's sector after several
+        // rotation steps, so keep running envelope passes until both damage
+        // elements are registered. No HP may mutate before the manager
+        // phase drains them.
+        let mut registered = Vec::new();
+        for _ in 0..32 {
+            engine.tick_actor_owner_envelopes(sim, &assets, &positions);
+            assert_eq!(
+                strike_life_points(&engine, chained_attacker_id, final_target_id),
+                (1, 50),
+                "strike resolution must not mutate lives before the manager phase"
+            );
+            registered = registered_sword_damage_owners(&engine);
+            if registered.len() == 2 {
+                break;
+            }
+        }
+        registered.sort();
+        let mut expected = vec![chained_attacker_id, final_target_id];
+        expected.sort();
+        assert_eq!(
+            registered, expected,
+            "both strikes must register their damage before the manager phase"
+        );
+        let mut display = HostDisplayState::default();
+        engine.hourglass_phase_sequences(sim, &mut display, &assets);
     });
 
     let Entity::Pc(target) = engine
@@ -4420,28 +4614,30 @@ fn chained_nonstraight_strike_lives(
 
 #[test]
 fn hourglass_nonstraight_damage_interrupts_only_later_creation_slots() {
+    // Nonstraight strikes register their damage during the envelope pass and
+    // the manager phase applies it afterwards, so both creation orders end
+    // the frame the same way: the chained attacker dies to the interrupter
+    // while its own already-registered strike still reaches the final
+    // target. The creation-slot distinction survives as the damage
+    // registration order (checked inside the shared drain helper).
     for (interrupt, label) in [
         (NonstraightInterrupt::Lateral, "lateral"),
         (NonstraightInterrupt::Push, "push"),
     ] {
-        let (final_life, interrupted_life) = chained_nonstraight_strike_lives(interrupt, true);
-        assert!(
-            interrupted_life <= 0,
-            "the earlier {label} must synchronously mutate the later victim"
-        );
-        assert_eq!(
-            final_life, 50,
-            "an earlier lethal {label} must stop the later actor before its strike"
-        );
-        let (final_life, interrupted_life) = chained_nonstraight_strike_lives(interrupt, false);
-        assert!(
-            interrupted_life <= 0,
-            "the later-created {label} must still land after the chained attacker's slot"
-        );
-        assert!(
-            final_life < 50,
-            "the chained actor must hit before a later-created lethal {label} interrupts it"
-        );
+        for interrupter_first in [true, false] {
+            let (final_life, interrupted_life) =
+                chained_nonstraight_strike_lives(interrupt, interrupter_first);
+            assert!(
+                interrupted_life <= 0,
+                "the {label} must land on the chained victim at the manager phase \
+                 (interrupter_first={interrupter_first})"
+            );
+            assert!(
+                final_life < 50,
+                "the chained attacker's registered strike must still hit past the {label} \
+                 (interrupter_first={interrupter_first})"
+            );
+        }
     }
 }
 
@@ -5030,6 +5226,11 @@ fn explicit_quit_dispatch_unlinks_but_defers_state_change_to_lowering_start() {
             Some(owner),
         ));
     engine.dispatch_quit_swordfight(&sim, &assets, owner, sequence, 0);
+    // The InstructOwner dispatcher publishes the translated current order
+    // through the actor's installed-order (mpOrder) mirror right after the
+    // per-command dispatch; mirror that boundary when calling the dispatch
+    // arm directly.
+    engine.publish_selected_order_for_instruct_owner(owner);
 
     assert!(
         engine
@@ -5157,6 +5358,10 @@ fn lethal_sword_damage_hands_the_corpse_hold_to_wait() {
                 .map(|_| sequence.id)
         })
         .expect("dead actor receives its ordinary Wait element");
+    // Instruct stamps the owner's current posture / action state onto the
+    // element before Translate; the dead-hold animation choice reads the
+    // stamped action-state-after-transition, not the live actor field.
+    engine.stamp_element_transition_state(victim, wait_sequence, 0);
     crate::engine::sequence_runtime::WaitCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,

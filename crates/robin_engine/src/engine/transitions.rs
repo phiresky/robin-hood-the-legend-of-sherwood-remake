@@ -2358,8 +2358,27 @@ mod tests {
     #[test]
     fn sword_exit_transition_synchronously_quits_the_fight() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(P::Upright, AS::WaitingSword));
+        // LOOK_LEFT only carries transition flags in the soldier arm of
+        // GetTransitionFlags; a PC ordered to look sideways generates no
+        // transition at all, so the sword-exit translation must be
+        // exercised through a soldier owner.
+        let owner = engine.add_entity(make_soldier(P::Upright, AS::WaitingSword, false));
         let opponent = engine.add_entity(make_pc(P::Upright, AS::WaitingSword));
+        // The synchronous quit notifies the AI, which reads every live PC's
+        // campaign-description identity.
+        engine
+            .mission_domain
+            .campaign
+            .characters
+            .push(crate::campaign::PcDescription {
+                character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
+                ..Default::default()
+            });
+        engine
+            .get_entity_mut(opponent)
+            .and_then(Entity::pc_data_mut)
+            .expect("opponent is a PC")
+            .campaign_description_index = Some(0);
         assert!(EngineInner::add_opponent(
             &mut engine.world.entities,
             owner,
@@ -2374,7 +2393,30 @@ mod tests {
         ));
 
         let (seq, idx) = launch(&mut engine, owner, Command::LookLeft);
-        assert!(generate_transition(&mut engine, owner, seq, idx));
+        // The synchronous quit runs the soldier's AI callbacks, which read
+        // the registered soldier/character/weapon profiles.
+        let mut assets = crate::engine::LevelAssets::default();
+        {
+            let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+            profiles.soldiers.push(crate::profiles::SoldierProfile {
+                hth_weapon_id: 1,
+                ..Default::default()
+            });
+            profiles.characters.push(crate::profiles::CharacterProfile {
+                hth_weapon_id: 1,
+                ..Default::default()
+            });
+            profiles
+                .hth_weapons
+                .push(crate::profiles::HtHWeaponProfile::default());
+        }
+        // Weapon ids are 1-based; a live fighter always references a
+        // registered hand-to-hand weapon profile.
+        if let Some(enemy) = engine.get_entity_mut(owner).and_then(Entity::enemy_ai_mut) {
+            enemy.hth_weapon_id = 1;
+        }
+        let sim = crate::sim_rng::test_context();
+        assert!(engine.generate_transition(&sim, &assets, owner, seq, idx));
 
         assert_eq!(
             orders_for(&engine, seq, idx),
@@ -2713,15 +2755,25 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let assets = crate::engine::LevelAssets::default();
 
+        // Both attentive elements reach Instruct through the ordinary
+        // sequence-manager Hourglass; that boundary resolves priorities and
+        // arbitrates, so drive it instead of manually staging states.
+        let mut display = crate::engine::HostDisplayState::default();
         let enter = engine.launch_element(SequenceElement::new(
             1,
             Command::EnterAttentiveMode,
             Some(owner),
         ));
-        engine
-            .drain_script_synchronous_actions(&sim, &assets, &mut Vec::new())
-            .expect("enter-attentive instruction should drain");
-        engine.orders.sequence_manager.element_in_progress(enter, 0);
+        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(enter, 0)
+                .expect("enter element registered")
+                .state,
+            crate::sequence::SequenceState::InProgress
+        );
 
         if let Some(enemy) = engine.get_entity_mut(owner).and_then(Entity::enemy_ai_mut) {
             enemy.will_be_attentive = false;
@@ -2731,9 +2783,7 @@ mod tests {
             Command::LeaveAttentiveMode,
             Some(owner),
         ));
-        engine
-            .drain_script_synchronous_actions(&sim, &assets, &mut Vec::new())
-            .expect("postponed leave instruction should drain");
+        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
         let leave_element = engine
             .orders
@@ -2754,7 +2804,6 @@ mod tests {
         }
         engine.orders.sequence_manager.element_terminated(enter, 0);
 
-        let mut display = crate::engine::HostDisplayState::default();
         engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
         assert_eq!(

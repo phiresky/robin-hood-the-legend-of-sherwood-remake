@@ -2284,6 +2284,15 @@ mod tests {
         );
         {
             let entity = engine.world.entities.get_mut(owner).unwrap();
+            // The preceding walk step has already delivered the actor to the
+            // transition point; a terminated transition short of its goal
+            // would instead spawn the Original's distance-continuation copy.
+            entity
+                .element_data_mut()
+                .set_position_map(crate::coordinates::MapPoint::new(
+                    transition_order.target_x,
+                    transition_order.target_y,
+                ));
             let sprite = &mut entity.element_data_mut().sprite;
             sprite
                 .position_iface
@@ -2878,23 +2887,66 @@ mod tests {
                 OrderType::ClimbingWallUpFast,
             );
             {
-                let sprite = &mut engine
+                let element = engine
                     .world
                     .entities
                     .get_mut(owner)
                     .unwrap()
-                    .element_data_mut()
-                    .sprite;
+                    .element_data_mut();
+                // Walk/Run motion terminates only on map arrival, never on
+                // the animation loop. Give the climb frames real distance and
+                // start within one projected step of the goal so the first
+                // PerformMotion pair reaches it.
+                let mut conversion = vec![
+                    crate::sprite_script::UNMAPPED;
+                    crate::sprite_script::NONANIMATION_END
+                        .max(OrderType::ClimbingWallUpFast as usize + 1)
+                ];
+                conversion[OrderType::ClimbingWallUpFast as usize] = 0;
+                conversion[OrderType::ClimbingWallUp as usize] = 0;
+                let script = crate::sprite_script::SpriteScript {
+                    action_id: OrderType::ClimbingWallUpFast as u16,
+                    action_done: 1,
+                    average_speed: 10.0,
+                    hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+                    sum_distance: 30,
+                    frame_ids: vec![1, 2, 3],
+                    delays: vec![10, 10, 10],
+                    distances: vec![10, 10, 10],
+                    offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+                    sound_ids: vec![0, 0, 0],
+                };
+                element.sprite = crate::sprite::Sprite::new(
+                    std::sync::Arc::new(std::iter::repeat_n(script, 16).collect()),
+                    std::sync::Arc::new(conversion),
+                );
+                element.set_position_map(crate::coordinates::MapPoint::new(20.0, 26.0));
+                let sprite = &mut element.sprite;
+                sprite
+                    .position_iface
+                    .set_sector(crate::position_interface::SectorHandle::new(7));
+                // Door-pass translation disables anti-collision for the
+                // duration of the pass.
+                sprite.position_iface.set_anti_collision_on(false);
                 sprite.last_processed_order_id = order_id.get();
                 sprite.last_action = OrderType::ClimbingWallUp;
                 sprite.current_row = 0;
                 sprite.current_frame = 2;
-                sprite.frame_count = 9;
+                sprite.frame_count = 10;
                 sprite
                     .position_iface
                     .set_map_goal(crate::coordinates::MapPoint::new(20.0, 30.0));
                 sprite.position_iface.compute_increment_all(false);
             }
+            // The skipped initialising Execute stamped the lift direction as
+            // the retained turn goal; only the per-tick Turn steps remain.
+            engine
+                .world
+                .entities
+                .get_mut(owner)
+                .unwrap()
+                .element_data_mut()
+                .set_direction_goal(5);
 
             engine.tick_entity_movement_owner(
                 &crate::sim_rng::test_context(),

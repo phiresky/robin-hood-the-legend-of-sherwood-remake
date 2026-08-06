@@ -844,11 +844,11 @@ mod tests {
         push_sprite(bytes);
     }
 
-    fn push_repulsive_point(bytes: &mut Vec<u8>, abi_profile: LegacySaveAbiProfile) {
-        let point_width = match abi_profile {
-            LegacySaveAbiProfile::RetailWindowsX86V48 => 16,
-            LegacySaveAbiProfile::PortLinuxI386V48 => 8,
-        };
+    fn push_repulsive_point(bytes: &mut Vec<u8>, _abi_profile: LegacySaveAbiProfile) {
+        // The standalone trajectory helper is serialized by RHElementObject,
+        // whose retail stream keeps the ordinary narrow geometry — both
+        // audited producer ABIs write the 8-byte point form here.
+        let point_width = 8;
         bytes.resize(bytes.len() + point_width, 0);
         bytes.push(0);
         bytes.resize(bytes.len() + point_width * 2, 0);

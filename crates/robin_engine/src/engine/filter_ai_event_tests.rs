@@ -219,6 +219,19 @@ fn build_scb() -> ScbFile {
 
 // ───────── Engine fixture ─────────
 
+/// A minimal campaign whose character table backs the PCs built by
+/// [`make_pc`]: every test PC carries campaign-description index 0, so the
+/// table needs a matching entry at that slot.
+fn test_campaign() -> crate::campaign::Campaign {
+    crate::campaign::Campaign {
+        characters: vec![crate::campaign::PcDescription {
+            character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+}
+
 fn make_pc(robin: bool) -> Entity {
     let mut element = ElementData {
         kind: ElementKind::ActorPc,
@@ -234,6 +247,8 @@ fn make_pc(robin: bool) -> Entity {
         pc: PcData {
             life_points: 50,
             robin,
+            profile_index: crate::profiles::CharacterProfileIdx(0),
+            campaign_description_index: Some(0),
             ..PcData::default()
         },
     })
@@ -265,7 +280,7 @@ fn make_scripted_soldier(script_class: &str) -> Entity {
 /// source-sensitive NPC, and a no-override NPC.
 fn build_engine() -> (EngineInner, i32, i32, i32) {
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    engine.mission_domain.campaign = test_campaign();
     let script = MissionScript::from_scb(build_scb()).expect("mission script builds");
     engine.scripts.mission = Some(script);
     engine.attach_script_bindings(&LevelAssets::new());
@@ -422,6 +437,10 @@ fn reentrant_return_to_duty_uses_absent_live_order_not_stale_sprite_animation() 
     );
 
     engine.drain_self_stimuli_for_npc(&sim, actor, &assets);
+    // The Think boundary only registers the launched Turn with the sequence
+    // manager; the manager's own Hourglass dispatches it later in the frame.
+    let mut display = crate::engine::HostDisplayState::default();
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
     let ai = engine
         .get_entity(actor)
@@ -594,7 +613,7 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     engine.control.frame_counter = 100;
-    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    engine.mission_domain.campaign = test_campaign();
     engine.scripts.mission =
         Some(MissionScript::from_scb(build_scb()).expect("closure-review mission script builds"));
 
@@ -704,7 +723,15 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
         .get_entity(officer_id)
         .and_then(Entity::enemy_ai)
         .expect("closure-review officer retains EnemyAi");
-    let expected: Vec<_> = candidates[3..23].iter().map(|id| id.index()).collect();
+    // Acceptances happen in roster order, but each accepted soldier is
+    // inserted into the alerted list sorted by decreasing distance from the
+    // officer; candidate distance grows with index here, so the list reads
+    // back in reverse roster order.
+    let expected: Vec<_> = candidates[3..23]
+        .iter()
+        .rev()
+        .map(|id| id.index())
+        .collect();
     assert_eq!(officer.alerted_us, expected);
     assert_eq!(officer.alerted_us.len(), 20);
     assert!(
@@ -1473,7 +1500,7 @@ fn script_session_preserves_nested_pending_call_resume_and_restoration() {
     let outer_handle = 1;
     let inner_handle = 2;
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    engine.mission_domain.campaign = test_campaign();
     engine.scripts.mission = Some(script);
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
@@ -1658,7 +1685,7 @@ fn nested_prototype_callback_observes_canonical_ai_global_mutation() {
     drop(capabilities);
 
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    engine.mission_domain.campaign = test_campaign();
     engine.scripts.mission = Some(script);
     let mut assets = LevelAssets::new();
     assets.scripts.location_count = 1;
@@ -2086,7 +2113,7 @@ fn action_change_ordering_engine(
     mutator_before_observer: bool,
 ) -> (EngineInner, LevelAssets, EntityId, EntityId) {
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    engine.mission_domain.campaign = test_campaign();
 
     let (first_class, second_class) = if mutator_before_observer {
         ("PostureMutator", "ActionObserver")
@@ -2157,7 +2184,7 @@ fn observed_action_args(engine: &EngineInner, actor: EntityId) -> (i32, i32) {
 #[test]
 fn action_change_unbound_nonempty_script_class_does_not_consume_transition() {
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    engine.mission_domain.campaign = test_campaign();
     let actor = engine.add_entity(make_scripted_soldier("ActionObserver"));
     let handle = crate::natives::ScriptHandleCodec::actor_handle(actor);
     engine.scripts.mission = Some(
@@ -2239,7 +2266,7 @@ fn action_change_later_callback_mutation_waits_for_visited_actor_next_pass() {
 #[test]
 fn action_change_self_mutation_stores_live_post_callback_animation() {
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    engine.mission_domain.campaign = test_campaign();
     let actor = engine.add_entity(make_scripted_soldier("SelfPostureMutator"));
     let handle = crate::natives::ScriptHandleCodec::actor_handle(actor);
     engine.scripts.mission = Some(
@@ -2354,7 +2381,7 @@ fn generic_animation_skip_does_not_skip_action_change() {
         "unconscious",
     ] {
         let mut engine = EngineInner::new();
-        engine.mission_domain.campaign = crate::campaign::Campaign::default();
+        engine.mission_domain.campaign = test_campaign();
         let actor = engine.add_entity(make_scripted_soldier("ActionObserver"));
         let stale = engine.add_entity(make_scripted_soldier(""));
         engine.remove_entity(stale);
@@ -2462,6 +2489,18 @@ fn generic_animation_skip_does_not_skip_action_change() {
             ),
             "{skip} actors still own the base-Hourglass ActionChange boundary"
         );
+        // The engine Hourglass runs every element's Hourglass regardless of
+        // active state — `active` controls world presence/rendering, not
+        // sequence time — so an inactive actor still executes its selected
+        // order. Likewise a stale moving action-state cannot suppress
+        // ordinary Execute of a selected generic order; only movement
+        // elements belong to the movement driver. The remaining gates skip
+        // generic sprite execution.
+        let expected_last_action = if matches!(skip, "inactive" | "moving") {
+            OrderType::WalkingUpright
+        } else {
+            last_action_before
+        };
         assert_eq!(
             engine
                 .world
@@ -2471,8 +2510,8 @@ fn generic_animation_skip_does_not_skip_action_change() {
                 .element_data()
                 .sprite
                 .last_action,
-            last_action_before,
-            "{skip} must skip generic sprite execution"
+            expected_last_action,
+            "{skip} generic sprite execution gate"
         );
     }
 }
@@ -2492,6 +2531,17 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
                 .entities
                 .get_mut(actor)
                 .expect("token-skip actor exists");
+            // An instructed movement stamps the moving action state; only
+            // that live state routes the token to the movement driver
+            // instead of generic Execute.
+            entity
+                .actor_data_mut()
+                .expect("token-skip actor is typed")
+                .action_state = if movement_order == OrderType::WalkingWithSword {
+                crate::element::ActionState::MovingSword
+            } else {
+                crate::element::ActionState::Moving
+            };
             entity
                 .human_data_mut()
                 .expect("token-skip actor is human")
@@ -2514,8 +2564,15 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
         let order =
             crate::order::Order::new(movement_order, 0.0, 0.0, engine.orders.allocate_order_id())
                 .with_antagonist(stale);
-        let mut element =
-            crate::sequence::SequenceElement::new(1, crate::element::Command::Move, Some(actor));
+        // A movement token belongs to the movement driver only when it is
+        // carried by a real Movement element; a generic element's order is
+        // dispatched through ordinary Execute regardless of action state.
+        let mut element = crate::sequence::SequenceElement::new_movement(
+            1,
+            crate::element::Command::Move,
+            Some(actor),
+            movement_order,
+        );
         element.orders.push_back(order);
         let sequence = engine.orders.sequence_manager.launch_element(element);
         engine
@@ -2554,7 +2611,7 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
 #[test]
 fn per_actor_wait_initialization_does_not_publish_later_wait_to_earlier_callback() {
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    engine.mission_domain.campaign = test_campaign();
     let first = engine.add_entity(make_scripted_soldier("WaitProbe"));
     let later = engine.add_entity(make_scripted_soldier(""));
     let first_handle = crate::natives::ScriptHandleCodec::actor_handle(first);
@@ -2611,8 +2668,9 @@ fn per_actor_wait_initialization_does_not_publish_later_wait_to_earlier_callback
             .npc_data()
             .expect("first wait-probe actor remains NPC")
             .custom_values[0],
-        0,
-        "the earlier callback must observe the later actor before that actor's lazy Wait slot"
+        crate::order::OrderType::NonanimationEnd as i32,
+        "the earlier callback must observe the later actor before that actor's lazy Wait slot: \
+         an orderless actor reports the no-animation sentinel, never a published Wait"
     );
     assert!(
         engine
@@ -2915,7 +2973,7 @@ fn terminating_animation_promotes_next_order_before_same_actor_action_change() {
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    engine.mission_domain.campaign = test_campaign();
     let actor = engine.add_entity(make_scripted_soldier("ActionObserver"));
     let assets = LevelAssets::new();
     bind_action_observer(&mut engine, &assets, actor);
@@ -3002,7 +3060,7 @@ fn wait_timer_zero_completes_after_execute_and_before_action_change() {
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
-    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    engine.mission_domain.campaign = test_campaign();
     let actor = engine.add_entity(make_scripted_soldier("ActionObserver"));
     let assets = LevelAssets::new();
     bind_action_observer(&mut engine, &assets, actor);
@@ -4416,6 +4474,11 @@ fn earlier_opponent_prune_synchronously_quits_both_combatants() {
                 .and_then(|entity| entity.actor_data_mut())
                 .expect("opponent-prune fighter is typed")
                 .action_state = ActionState::WaitingSword;
+            engine
+                .get_entity_mut(actor)
+                .and_then(Entity::enemy_ai_mut)
+                .expect("opponent-prune fighter has enemy AI")
+                .hth_weapon_id = 1;
         }
         for (actor, x, z, sector) in [(pruner, 100.0, 0.0, 1), (mutated, 130.0, 41.0, 2)] {
             let element = engine
@@ -4454,16 +4517,43 @@ fn earlier_opponent_prune_synchronously_quits_both_combatants() {
         crate::sim_rng::with_seed(5, |sim| {
             engine.tick_actor_animation_action_change_slots(sim, &assets);
         });
-
+        // The prune launches both QuitSwordfight elements at the owner slot,
+        // but a normal-priority launch is only registered with the sequence
+        // manager; the manager's own Hourglass — which runs after every
+        // element Hourglass in the frame — dispatches and completes them.
+        let mut display = crate::engine::HostDisplayState::default();
+        crate::sim_rng::with_seed(5, |sim| {
+            engine.hourglass_phase_sequences(sim, &mut display, &assets);
+        });
         for actor in [pruner, mutated] {
+            // QuitSwordfight is a real animated command: the manager
+            // Hourglass instructs it this frame, its lower-sword transition
+            // then plays out over the following frames before the action
+            // state settles back to Waiting.
+            assert_eq!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .current_element_for_actor(actor)
+                    .and_then(|(sequence, index)| engine
+                        .orders
+                        .sequence_manager
+                        .get_element(sequence, index))
+                    .map(|element| (element.command, element.state)),
+                Some((
+                    crate::element::Command::QuitSwordfight,
+                    crate::sequence::SequenceState::InProgress,
+                )),
+                "both QuitSwordfight launches are instructed by the same frame's manager Hourglass"
+            );
             assert_eq!(
                 engine
                     .get_entity(actor)
                     .and_then(|entity| entity.actor_data())
                     .expect("pruned fighter remains an actor")
                     .action_state,
-                ActionState::Waiting,
-                "the earlier owner must synchronously execute both QuitSwordfight launches; their command elements are terminal by the time the owner drain returns"
+                ActionState::WaitingSword,
+                "the sword action state persists until the quit transition finishes"
             );
             assert!(
                 engine
@@ -4600,6 +4690,14 @@ fn waking_up_creation_order_engine(
     }
     let mut assets = LevelAssets::new();
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    // The target starts unconscious, so the shared fixture skips its combat
+    // attachments — but it wakes up mid-test and then needs a live HtH
+    // weapon profile for its fighter snapshot.
+    engine
+        .get_entity_mut(target)
+        .and_then(Entity::enemy_ai_mut)
+        .expect("wake target has enemy AI")
+        .hth_weapon_id = 1;
     (engine, assets, rescuer, target)
 }
 
@@ -5124,7 +5222,7 @@ fn ai_state_native_probe_class(
 }
 
 fn install_state_change_script(engine: &mut EngineInner, scb: ScbFile) -> LevelAssets {
-    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    engine.mission_domain.campaign = test_campaign();
     engine.scripts.mission = Some(MissionScript::from_scb(scb).expect("state-change SCB builds"));
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
@@ -5504,20 +5602,58 @@ fn script_native_state_effects_stabilize_before_adjacent_instruction() {
     run_ai_state_native_probe(&mut engine, &assets, seeking);
     let seeking_values = npc_custom_values(&engine, seeking);
     assert_eq!(&seeking_values[0..3], &[103, 103, 3]);
+    // SeekArea's causal Move is only registered with the sequence manager;
+    // normal-priority launches are dispatched by the manager's Hourglass
+    // later in the frame, so an adjacent GetCurrentAction still reads the
+    // orderless no-animation sentinel.
     assert_eq!(
         seeking_values[3],
-        crate::order::OrderType::TransitionWaitingUprightRunningUpright as i32,
-        "SeekArea translates its GoTo transition before VM resumption"
+        crate::order::OrderType::NonanimationEnd as i32,
+        "SeekArea's GoTo Move stays registered-not-instructed at the adjacent instruction"
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| {
+                element.owner == Some(seeking)
+                    && element.command == crate::element::Command::Move
+                    && element.state == crate::sequence::SequenceState::Todo
+            }),
+        "the causal SeekArea Move is queued for the manager Hourglass"
     );
 
     engine.ai.global.seek_points[0].locked = false;
     run_ai_state_native_probe(&mut engine, &assets, seeking_filter_zero);
     let zero_values = npc_custom_values(&engine, seeking_filter_zero);
-    assert_eq!(&zero_values[0..3], &[103, 103, 3]);
+    // An orderless actor reports the no-animation sentinel, so GoTo's
+    // already-at-point gate fires the recursive Think(EVENT_REACHPOINT).
+    // The zero filter refuses that Think, stopping the seek recursion:
+    // the last recorded callback is the REACHPOINT filter itself and no
+    // causal Move is queued.
+    assert_eq!(
+        &zero_values[0..3],
+        &[3, 3, 3],
+        "the refused REACHPOINT filter is the last callback; the typed Seeking state still commits"
+    );
     assert_eq!(
         zero_values[3],
-        crate::order::OrderType::TransitionWaitingUprightRunningUpright as i32,
-        "FilterAIEvent returning zero still allows SetAIState's SeekArea effect"
+        crate::order::OrderType::NonanimationEnd as i32,
+        "the filter-zero actor stays orderless at the adjacent instruction"
+    );
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| {
+                element.owner == Some(seeking_filter_zero)
+                    && element.command == crate::element::Command::Move
+            }),
+        "the refused REACHPOINT recursion must not queue a causal Move"
     );
 
     engine.ai.global.seek_points[0].locked = false;
@@ -5543,10 +5679,14 @@ fn script_native_state_effects_stabilize_before_adjacent_instruction() {
     assert_eq!(at_point_ai.think_recursion_depth, 0);
 
     run_ai_state_native_probe(&mut engine, &assets, default);
+    // The orderless actor reports the no-animation sentinel, so ReturnToDuty's
+    // GoTo takes the already-at-post gate (REACHPOINT) before the map-bounds
+    // check can fail; the resulting already-facing turn completes immediately
+    // and Think(EVENT_DONE) is the final synchronous callback.
     assert_eq!(
         &npc_custom_values(&engine, default)[0..3],
-        &[4, 4, 1],
-        "Think(EVENT_RETURN_TO_DUTY) is the synchronous callback and commits Default"
+        &[5, 5, 1],
+        "Think(EVENT_DONE) closes the synchronous ReturnToDuty recursion and Default commits"
     );
 }
 
@@ -5573,30 +5713,44 @@ fn pre_existing_same_owner_moves_are_stopped_without_being_dispatched_as_causal_
 
     run_ai_state_native_probe(&mut engine, &assets, actor);
 
+    // The causal SeekArea Move is only registered at launch; the manager's
+    // Hourglass instructs it later in the frame, so the adjacent
+    // GetCurrentAction reads the orderless no-animation sentinel.
     assert_eq!(
         npc_custom_values(&engine, actor)[3],
-        crate::order::OrderType::TransitionWaitingUprightRunningUpright as i32,
-        "the causal SeekArea Move translates before VM resumption"
+        crate::order::OrderType::NonanimationEnd as i32,
+        "the causal SeekArea Move stays registered-not-instructed at the adjacent instruction"
     );
     assert!(
         engine.orders.pending_move_requests.is_empty(),
         "StopAll/Halt cancels the older pre-sequence Move intent before SeekArea queues its causal Move"
     );
+    // A registered-but-unlaunched Move that Halt cancels keeps its element in
+    // the sequence in a cancelled state; only the to-go registration is
+    // removed. The stale 333/444 intent may therefore survive as a dead
+    // element, but must never remain runnable.
     assert!(
-        !engine
+        engine
             .orders
             .sequence_manager
             .sequences_iter()
             .flat_map(|sequence| sequence.elements.iter())
-            .any(|element| {
+            .filter(|element| {
                 element.owner == Some(actor)
                     && matches!(
                         &element.data,
                         crate::sequence::SequenceElementData::Movement { destination, .. }
                             if *destination == crate::coordinates::MapPoint::new(333.0, 444.0)
                     )
+            })
+            .all(|element| {
+                matches!(
+                    element.state,
+                    crate::sequence::SequenceState::Impossible
+                        | crate::sequence::SequenceState::Interrupted
+                )
             }),
-        "the stale pending 333/444 intent must be dropped at Halt, never translated before the causal Move"
+        "the stale 333/444 intent must be cancelled at Halt, never runnable as a causal Move"
     );
 
     let deferred_after = engine
@@ -5647,7 +5801,7 @@ fn set_ai_state_seeking_and_fleeing_do_not_draw_unrelated_building_exit_gate_rng
     let sim = crate::sim_rng::test_context();
     let (mut seeking_engine, seeking_assets, seeking) =
         setup_ai_state_native_probe("SeekingRngProbe", 3);
-    install_unrelated_multi_exit_building_actor(&mut seeking_engine);
+    let door_actor = install_unrelated_multi_exit_building_actor(&mut seeking_engine);
     {
         let entity = seeking_engine.world.entities.get_mut(seeking).unwrap();
         entity
@@ -5655,12 +5809,22 @@ fn set_ai_state_seeking_and_fleeing_do_not_draw_unrelated_building_exit_gate_rng
             .set_position(WorldPoint3D::new(198.0, 100.0, 0.0));
         entity.actor_data_mut().unwrap().old_action = crate::order::OrderType::WaitingUpright;
     }
+    // Scratch construction prepares forecasts without drawing; only an AI
+    // statement that resolves the door actor's alternatives would draw. The
+    // control proves the fixture really carries a resolvable multi-exit gate.
+    let control_scratch = seeking_engine.build_sim_scratch(&sim, &seeking_assets);
     let (_, control_trace) = with_draw_trace(|| {
-        drop(seeking_engine.build_sim_scratch(&sim, &seeking_assets));
+        control_scratch
+            .ai_entity_views
+            .get(&door_actor.index())
+            .expect("unrelated door actor has an AI entity view")
+            .forecasted_destination
+            .resolve(&sim);
     });
+    drop(control_scratch);
     assert!(
         control_trace.contains(&RngSite::BuildingExitGate),
-        "the unrelated multi-exit fixture must exercise BuildingExitGate under global forecasting"
+        "the unrelated multi-exit fixture must draw BuildingExitGate when its forecast is resolved"
     );
     let (_, seeking_trace) = with_draw_trace(|| {
         run_ai_state_native_probe(&mut seeking_engine, &seeking_assets, seeking);
@@ -5701,7 +5865,7 @@ fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
     use crate::sim_rng::{RngSite, with_draw_trace};
 
     let (mut engine, assets, owner) = setup_ai_state_native_probe("EnvelopeRngProbe", 3);
-    install_unrelated_multi_exit_building_actor(&mut engine);
+    let door_actor = install_unrelated_multi_exit_building_actor(&mut engine);
     engine
         .get_entity_mut(owner)
         .expect("forecast control owner exists")
@@ -5713,10 +5877,21 @@ fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
         positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
     }
 
-    let (_, control_trace) = with_draw_trace(|| drop(engine.build_sim_scratch(&sim, &assets)));
+    // Scratch construction prepares forecasts without drawing; the control
+    // proves the unrelated door actor's alternatives would draw if resolved.
+    let control_scratch = engine.build_sim_scratch(&sim, &assets);
+    let (_, control_trace) = with_draw_trace(|| {
+        control_scratch
+            .ai_entity_views
+            .get(&door_actor.index())
+            .expect("unrelated door actor has an AI entity view")
+            .forecasted_destination
+            .resolve(&sim);
+    });
+    drop(control_scratch);
     assert!(
         control_trace.contains(&RngSite::BuildingExitGate),
-        "the fixture must prove that a global forecast would draw for the unrelated door actor"
+        "the fixture must prove that resolving the unrelated door actor's forecast would draw"
     );
     let (_, fused_trace) =
         with_draw_trace(|| engine.tick_actor_owner_envelopes(&sim, &assets, &positions));

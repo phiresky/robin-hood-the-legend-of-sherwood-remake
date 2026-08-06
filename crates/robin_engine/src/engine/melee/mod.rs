@@ -2369,7 +2369,15 @@ mod tests {
     };
 
     fn make_engine() -> EngineInner {
-        EngineInner::new()
+        let mut engine = EngineInner::new();
+        // Every PC built by `make_pc` carries campaign-description index 0,
+        // so the campaign character table needs a matching entry backing the
+        // required live-PC identity.
+        engine.mission_domain.campaign.characters = vec![crate::campaign::PcDescription {
+            character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
+            ..Default::default()
+        }];
+        engine
     }
 
     fn make_soldier(
@@ -2424,6 +2432,8 @@ mod tests {
             human: HumanData::default(),
             pc: PcData {
                 life_points: 50,
+                profile_index: crate::profiles::CharacterProfileIdx(0),
+                campaign_description_index: Some(0),
                 ..PcData::default()
             },
         })
@@ -2753,7 +2763,14 @@ mod tests {
         engine.control.rng = SimulationRng::with_original_replay(Vec::new());
         {
             let target = engine.get_entity_mut(target).unwrap();
-            target.actor_data_mut().unwrap().old_action = OrderType::Invalid;
+            let actor = target.actor_data_mut().unwrap();
+            actor.old_action = OrderType::Invalid;
+            // The live animation is the installed order (the Original's
+            // mpOrder), not the action-change history in `old_action`.
+            actor.installed_order = Some(crate::element::InstalledActorOrder {
+                order_id: std::num::NonZeroU32::new(1).unwrap(),
+                order_type: OrderType::BeingHitSword,
+            });
             target.element_data_mut().sprite.last_action = OrderType::BeingHitSword;
         }
 
@@ -3509,6 +3526,10 @@ mod tests {
         replacement_order.order_type = strike_to_animation(SwordStrike::E);
         replacement_order.antagonist = Some(victim);
         replacement_order.reseed_id(replacement_order_id);
+        // A live replacement strike is published as the actor's installed
+        // order at Instruct; Execute's Start arm resolves the strike from
+        // that installed animation, not from the sequence element.
+        engine.publish_selected_order_as_installed(attacker);
         {
             let entity = engine.get_entity_mut(attacker).unwrap();
             let sprite = &mut entity.element_data_mut().sprite;
@@ -3606,10 +3627,22 @@ mod tests {
             strike_kind: crate::profiles::WeaponThrustKind::FalseHalfCircle,
         });
 
+        let queued_damage_count = |engine: &EngineInner| {
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| sequence.elements.iter())
+                .filter(|element| {
+                    element.command == Command::ReceiveSwordDamage && element.owner == Some(victim)
+                })
+                .count()
+        };
+
         engine.tick_sweep_for(sim, &assets, attacker, false);
         assert_eq!(
-            soldier_life(&engine, victim),
-            50,
+            queued_damage_count(&engine),
+            0,
             "the victim in the newly reached sector cannot be tested before the circle tail advance"
         );
         let sweep = engine
@@ -3623,8 +3656,9 @@ mod tests {
         assert!((sweep.current_angle - std::f32::consts::FRAC_PI_2).abs() < f32::EPSILON);
 
         engine.tick_sweep_for(sim, &assets, attacker, false);
-        assert!(
-            soldier_life(&engine, victim) < 50,
+        assert_eq!(
+            queued_damage_count(&engine),
+            1,
             "the next IN_PROGRESS effect must test the angle reached by the prior tail advance"
         );
     }
