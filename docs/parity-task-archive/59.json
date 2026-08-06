@@ -1,0 +1,8 @@
+{
+  "id": "59",
+  "subject": "Preserve WaitingSword across redundant EnterSwordfight",
+  "description": "DONE. A redundant EnterSwordfight against an already-linked opponent correctly interrupts the selected Wait and terminates through the normal synchronous callback lifecycle, but Original retains the actor's installed WaitingSword animation until the replacement Wait takes over. Rust cleared that installed order at the terminal condolence boundary, exposing NonanimationEnd at frame 2141, then restarted the replacement idle one sprite tick behind at frame 2142. The fix restores only the orphaned installed WaitingSword after the terminal callback and transfers actor/sprite execute identity to the replacement Wait without retaining the obsolete sequence selection. The SuN1Sh1nE Profile_004 Savegame_013 replay-014 scan-all control now has exact RNG and no frame-2141 animation or frame-2142 sprite-frame divergence; only the independent task-58 frame-785 motion-state frontier remains.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

@@ -652,6 +652,60 @@ impl EngineInner {
                             self.dispatch_condolations(sim, assets);
                             break 'action;
                         }
+                        // A redundant EnterSwordfight still replaces and
+                        // terminates the selected Wait element, but Original's
+                        // actor keeps driving the already installed
+                        // WaitingSword order until the fresh idle is published
+                        // on the following frame. Preserve only that stable
+                        // order; arbitration and its synchronous EventDone
+                        // callbacks must continue to observe the ordinary
+                        // replacement lifecycle.
+                        let satisfied_enter_swordfight_order = (self.control.frame_counter > 0
+                            && command == Some(crate::element::Command::EnterSwordfight))
+                            .then(|| {
+                                self.orders
+                                    .sequence_manager
+                                    .get_element(seq_id, elem_idx)
+                                    .and_then(|element| {
+                                        element.get_property(crate::sequence::Field::Opponent)
+                                    })
+                                    .and_then(|value| match value {
+                                        crate::sequence::FieldValue::Element(opponent) => {
+                                            Some(*opponent)
+                                        }
+                                        _ => None,
+                                    })
+                                    .and_then(|opponent| {
+                                        self.get_entity(owner)
+                                            .and_then(|entity| entity.human_data())
+                                            .filter(|human| {
+                                                human.opponents.contains(&opponent)
+                                                    && self
+                                                        .current_sequence_element_for_actor(owner)
+                                                        .and_then(|(sequence, index)| {
+                                                            self.orders
+                                                                .sequence_manager
+                                                                .get_element(sequence, index)
+                                                        })
+                                                        .is_some_and(|element| {
+                                                            element.command
+                                                                == crate::element::Command::Wait
+                                                                && element
+                                                                    .current_order()
+                                                                    .is_some_and(|order| {
+                                                                        order.order_type
+                                                                            == crate::order::OrderType::WaitingSword
+                                                                    })
+                                                        })
+                                            })
+                                            .and_then(|_| {
+                                                self.get_entity(owner)
+                                                    .and_then(|entity| entity.actor_data())
+                                                    .and_then(|actor| actor.installed_order)
+                                            })
+                                    })
+                            })
+                            .flatten();
                         if !self.arbitrate_instruct(seq_id, elem_idx) {
                             // Abandon/Impossible calls SetState synchronously in
                             // Original too. Postpone produces no card, making this
@@ -2579,6 +2633,20 @@ impl EngineInner {
                         // dispatch boundary rather than inferring it later from
                         // whichever element happens to be selected.
                         self.publish_selected_order_for_instruct_owner(owner);
+                        if let Some(retained_order) = satisfied_enter_swordfight_order {
+                            // The terminal Enter card clears mpOrder while the
+                            // incoming element is still the translating
+                            // selection. Let that callback finish first, then
+                            // restore the outgoing idle at the same stable
+                            // boundary as Original Actor::Instruct.
+                            self.dispatch_condolations(sim, assets);
+                            let entity = self
+                                .get_entity_mut(owner)
+                                .expect("satisfied EnterSwordfight owner disappeared");
+                            let actor = entity.actor_data_mut().unwrap();
+                            actor.installed_order = Some(retained_order);
+                            actor.retained_waiting_sword_order_id = Some(retained_order.order_id);
+                        }
                     }
                     crate::sequence::SequenceAction::ExecuteImmediateOwner {
                         owner,

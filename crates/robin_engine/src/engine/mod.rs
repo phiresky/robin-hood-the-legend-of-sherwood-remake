@@ -1307,17 +1307,63 @@ impl EngineInner {
     /// the C++ source performs that assignment (Hourglass, accepted Instruct,
     /// or corrected movement retranslation), never as a read-time fallback.
     pub(crate) fn publish_selected_order_as_installed(&mut self, actor: EntityId) {
-        let installed_order = self
+        let selected_order = self
             .orders
             .sequence_manager
             .current_order_for_actor(actor)
-            .map(|(_, _, order)| crate::element::InstalledActorOrder {
-                order_id: order.order_id,
-                order_type: order.order_type,
+            .map(|(seq_id, elem_idx, order)| {
+                (
+                    seq_id,
+                    elem_idx,
+                    crate::element::InstalledActorOrder {
+                        order_id: order.order_id,
+                        order_type: order.order_type,
+                    },
+                )
             });
+        let installed_order = selected_order.map(|(_, _, order)| order);
         tracing::trace!(?actor, ?installed_order, "publishing installed order");
-        self.get_entity_mut(actor)
-            .and_then(Entity::actor_data_mut)
+        let waiting_sword_handoff = selected_order.and_then(|(seq_id, elem_idx, new_order)| {
+            (new_order.order_type == crate::order::OrderType::WaitingSword
+                && self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .is_some_and(|element| element.command == crate::element::Command::Wait))
+            .then(|| {
+                self.get_entity(actor)
+                    .and_then(Entity::actor_data)
+                    .and_then(|actor| actor.installed_order)
+                    .filter(|old_order| {
+                        old_order.order_type == crate::order::OrderType::WaitingSword
+                            && self
+                                .get_entity(actor)
+                                .and_then(Entity::actor_data)
+                                .and_then(|actor| actor.retained_waiting_sword_order_id)
+                                == Some(old_order.order_id)
+                    })
+                    .map(|old_order| (old_order.order_id, new_order.order_id))
+            })
+            .flatten()
+        });
+        let entity = self
+            .get_entity_mut(actor)
+            .expect("mpOrder publication owner disappeared");
+        entity
+            .actor_data_mut()
+            .expect("mpOrder publication owner lost actor data")
+            .retained_waiting_sword_order_id = None;
+        if let Some((old_order_id, new_order_id)) = waiting_sword_handoff {
+            if entity.sprite().last_processed_order_id == old_order_id.get() {
+                entity.sprite_mut().last_processed_order_id = new_order_id.get();
+            }
+            entity
+                .actor_data_mut()
+                .expect("mpOrder publication owner lost actor data")
+                .last_execute_order_id = Some(new_order_id);
+        }
+        entity
+            .actor_data_mut()
             .expect("mpOrder publication owner lost actor data")
             .installed_order = installed_order;
     }

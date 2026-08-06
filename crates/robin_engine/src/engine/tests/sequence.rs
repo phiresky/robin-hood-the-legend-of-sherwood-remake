@@ -97,6 +97,48 @@ fn postponed_generic_order_carrier_resumes_in_progress() {
 }
 
 #[test]
+fn retained_waiting_sword_handoff_preserves_running_sprite_identity() {
+    use crate::element::{Command, InstalledActorOrder, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let old_order_id = engine.orders.allocate_order_id();
+    let new_order_id = engine.orders.allocate_order_id();
+    {
+        let entity = engine.get_entity_mut(soldier).unwrap();
+        let actor = entity.actor_data_mut().unwrap();
+        actor.installed_order = Some(InstalledActorOrder {
+            order_id: old_order_id,
+            order_type: OrderType::WaitingSword,
+        });
+        actor.retained_waiting_sword_order_id = Some(old_order_id);
+        entity.sprite_mut().last_processed_order_id = old_order_id.get();
+        entity.sprite_mut().frame_count = 5;
+    }
+
+    let mut wait = SequenceElement::new_generic(1, Command::Wait, Some(soldier));
+    wait.orders
+        .push_back(Order::new(OrderType::WaitingSword, 0.0, 0.0, new_order_id));
+    let sequence = engine.orders.sequence_manager.launch_element(wait);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+
+    engine.publish_selected_order_as_installed(soldier);
+
+    let entity = engine.get_entity(soldier).unwrap();
+    let actor = entity.actor_data().unwrap();
+    assert_eq!(actor.installed_order.unwrap().order_id, new_order_id);
+    assert_eq!(actor.retained_waiting_sword_order_id, None);
+    assert_eq!(actor.last_execute_order_id, Some(new_order_id));
+    assert_eq!(entity.sprite().last_processed_order_id, new_order_id.get());
+    assert_eq!(entity.sprite().frame_count, 5);
+}
+
+#[test]
 fn exhausted_generic_order_carrier_terminates_on_resume() {
     use crate::element::{Command, Posture};
     use crate::sequence::{SequenceElement, SequenceState};

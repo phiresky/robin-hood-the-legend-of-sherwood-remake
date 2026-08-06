@@ -679,6 +679,10 @@ pub struct ActorData {
     /// Original `mbNewOrder` for the currently-entered Execute call. Set at
     /// owner selection and cleared after Execute/completion/ActionChange.
     pub execute_order_initialising: bool,
+    /// Orphaned WaitingSword identity retained across an already-satisfied
+    /// EnterSwordfight terminal callback until the replacement Wait publishes.
+    #[serde(default)]
+    pub retained_waiting_sword_order_id: Option<std::num::NonZeroU32>,
 
     // Wait
     pub wait_time: u32,
@@ -861,6 +865,7 @@ impl Default for ActorData {
             last_execute_order_id: None,
             installed_order: None,
             execute_order_initialising: false,
+            retained_waiting_sword_order_id: None,
             wait_time: 0,
             listen_wait_time: 0,
             whistle_wait_time: 0,
