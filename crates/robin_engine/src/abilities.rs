@@ -2704,18 +2704,17 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
         };
         let elem = &entity.element;
 
-        // Check the carrier's profile for LittleJohnCarry or the
-        // equivalent FarmerCarry.
+        // Only the LittleJohnCarry contextual action selects the
+        // LittleJohn carried-animation set. FarmerCarry grants the same
+        // *ability* (carry availability checks accept either), but a
+        // FarmerCarry carrier still plays the PeasantC lift/carry/drop
+        // rows on the body it carries.
         let little_john_style = profiles
             .get_character(pc.profile_index)
             .map(|cp| {
-                cp.contextual_actions.iter().any(|&a| {
-                    matches!(
-                        a,
-                        crate::profiles::Action::LittleJohnCarry
-                            | crate::profiles::Action::FarmerCarry
-                    )
-                })
+                cp.contextual_actions
+                    .iter()
+                    .any(|&a| a == crate::profiles::Action::LittleJohnCarry)
             })
             .unwrap_or(false);
 
