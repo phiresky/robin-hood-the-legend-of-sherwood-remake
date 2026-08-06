@@ -73,8 +73,11 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #41 completed: opening a scroll now forces the live BonusThree sprite at the shared SetStatus boundary, clearing the repeated Scroll(111) row/frame family found in 25 completed baseline controls.
 - #42 completed: Strangle's two pre-action TurnFast short-circuit arms now retain Original's due victim virgin increment, clearing the real Soldier197 frame skew; the comparator also excludes only out-of-range uninitialized Original motion telemetry. The next f465 visibility/combat frontier is #45.
 - #43 completed: legacy sprite adoption now preserves Original's profile-switch-before-position ordering, including the transient row computed from the constructed mission direction when the saved alternate-profile flag differs.
-- #44 active: restore the Original animated DropAle lifecycle and DONE-edge bottle/ammo effect for the 26-control family.
-- #45 active: investigate nicouzouf/S069 r005 f465 visibility/combat entry after #42.
+- #44 completed: final point-target Seek arrivals launch attached post-seek actions, and DropAle now uses Original's authored animation/DONE lifecycle and exact bottle placement/initialization. Three cross-family controls reach EOF.
+- #45 completed: removed the invented Attacking-state gate from BeginSwordfight, restoring synchronous EVENT_GOTHIT retaliation at f465. The later frame1299 RNG frontier is #47.
+- #46 active: investigate replay-002's later f14266 melee protection draws after #28.
+- #47 active: investigate nicouzouf/S069 r005 frame1299 SwordStrikeSelection RNG after #45.
+- #48 active: mine the near-complete baseline for the next broad family.
 
 Standing clusters not yet tasked: actor.animation 133 (top cluster, resweep-db67cc978 classification), direction_goal 76, position_goal_map.x 72, motion_state 70, MoveOk→MoveWaiting 57, BoredAnimationChoice 56, AiRandomValueRectangle 55, path_events.length 54, RuntimeBuildingExitWait 51, visibility_queries.length 45 (+43 ai.list_them etc.). Full breakdown: `output/parity-audits/resweep-db67cc978/classification.json`.
 

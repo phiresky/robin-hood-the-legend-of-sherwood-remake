@@ -5696,6 +5696,98 @@ impl EngineInner {
         // coin pickup, remarks, blood-alcohol bump).
         let sides = outcomes.execute_sides;
 
+        for pc_id in sides.drop_ale_done {
+            let action = crate::profiles::Action::Ale;
+            let (position, layer, sector, obstacle, direction, material, status_idx) = {
+                let pc = self
+                    .get_entity(pc_id)
+                    .unwrap_or_else(|| panic!("DropAle DONE references missing PC {pc_id:?}"));
+                let position = pc.cxx_current_point_map().unwrap_or_else(|| {
+                    panic!("DropAle DONE PC {pc_id:?} has no current sprite action point")
+                });
+                let crate::element::Entity::Pc(pc) = pc else {
+                    panic!("DropAle DONE owner {pc_id:?} is not a PC");
+                };
+                let element = &pc.element;
+                (
+                    position,
+                    element.layer(),
+                    element.sector(),
+                    element.obstacle_index(),
+                    element.direction(),
+                    element.material(),
+                    self.pc_description_index_for_pc_data(&pc.pc),
+                )
+            };
+            let status_idx = status_idx.unwrap_or_else(|| {
+                panic!("DropAle DONE PC {pc_id:?} has no campaign character status")
+            });
+
+            // RHElementAle::CopyPositionMapEtc copies the actor placement
+            // exactly; unlike cursor authorization, the action point does not
+            // search for a nearby walkable position.
+            let mut ale_element = crate::element::ElementData {
+                kind: crate::element::ElementKind::ObjectOther,
+                active: true,
+                // RHElementAle constructs RHElementObject with bBlipped=false.
+                blipped: false,
+                ..Default::default()
+            };
+            ale_element.sprite.apply_placement(
+                position,
+                layer,
+                sector,
+                direction,
+                material,
+                obstacle,
+                crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
+                    obstacle,
+                    assets.static_sight_obstacles.as_slice(),
+                ),
+            );
+            let ale = crate::element::Entity::Bonus(crate::element::ElementBonus {
+                element: ale_element,
+                object: crate::element::ObjectData {
+                    quantity: 1,
+                    object_type: crate::element::ObjectType::Ale,
+                    associated_action: action,
+                    animation: crate::element::Animation::ObjectLying,
+                    ..Default::default()
+                },
+            });
+            let ale_id = self.add_entity(ale);
+            // RHElementAle::Create clones the ACCESSORIES_Ale master before
+            // SetAnimation(OBJECT_LYING), whose ForceAnimation resets the
+            // new sprite to frame/count zero.
+            self.attach_accessory_sprite(assets, ale_id);
+            let ale_sprite = &mut self
+                .get_entity_mut(ale_id)
+                .expect("newly-added ale must still exist")
+                .element_data_mut()
+                .sprite;
+            assert!(
+                ale_sprite.has_animation(crate::order::OrderType::ObjectLying),
+                "DropAle requires the preloaded ACCESSORIES_Ale ObjectLying animation"
+            );
+            ale_sprite.force_animation(crate::order::OrderType::ObjectLying, 0);
+            self.add_detectable_for_all_npc(ale_id, crate::element::DetectableType::Object);
+
+            // Original consumes the inventory item only after the new ale is
+            // in the engine and visible to every NPC's detection list.
+            let status = &mut self.mission_domain.campaign.characters[status_idx].status;
+            let removed = status.decrease_ammo(action, 1);
+            assert_eq!(removed, 1, "DropAle DONE PC {pc_id:?} had no ale ammo");
+            let now_empty = status.get_ammo(action) == 0;
+            if now_empty {
+                self.disable_pc_action(assets, pc_id, action);
+            }
+            tracing::debug!(
+                pc = ?pc_id,
+                ?ale_id,
+                "DropAle DONE: decremented ale ammo and spawned bottle"
+            );
+        }
+
         for pc_id in sides.pc_bow_equip_action {
             // RHElementActorHuman::Execute forwards this synchronously from
             // the TransitionEquipBow START arm after setting AimingWithBow.
@@ -7817,6 +7909,7 @@ mod drop_ammo_merge_tests {
     use super::*;
     use crate::campaign::{Campaign, PcDescription};
     use crate::element::{ActorPc, ElementData, ElementKind, EntityId, Posture};
+    use crate::engine::animation::{AnimCompletionOutcomes, ExecuteSideOutcomes};
     use crate::profiles::{Action, CharacterProfileIdx};
     use crate::sequence::{Field, FieldValue, SequenceElement};
 
@@ -7849,6 +7942,24 @@ mod drop_ammo_merge_tests {
             profile_name: "TEST".into(),
             ..Default::default()
         });
+        let mut ale_conversion =
+            vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        ale_conversion[crate::order::OrderType::ObjectLying as usize] = 0;
+        assets.accessory_sprite_prototypes.insert(
+            crate::element::ObjectType::Ale,
+            crate::sprite::Sprite::new(
+                std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+                    action_id: crate::order::OrderType::ObjectLying as u16,
+                    frame_ids: vec![1],
+                    delays: vec![0],
+                    distances: vec![0],
+                    offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+                    sound_ids: vec![0],
+                    ..Default::default()
+                }]),
+                std::sync::Arc::new(ale_conversion),
+            ),
+        );
 
         let mut campaign = Campaign::default();
         let mut desc = PcDescription {
@@ -7867,6 +7978,10 @@ mod drop_ammo_merge_tests {
         };
         element.set_position_map(crate::coordinates::MapPoint { x: 100.0, y: 100.0 });
         element.set_direction_instantly(0);
+        element.sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+            hotspot: crate::coordinates::SpriteLocalPoint::new(8.0, 4.0),
+            ..Default::default()
+        }]);
         // Seed a non-empty move box so try_get_drop_position's
         // is_somewhere check passes.  The exact dims don't matter on
         // an empty grid.
@@ -7913,6 +8028,11 @@ mod drop_ammo_merge_tests {
     #[test]
     fn drop_ale_spawns_object_other_and_survives_its_next_live_owner_slot() {
         let (mut engine, pc_id, assets) = build_engine_with_pc(0);
+        let expected_action_point = engine
+            .get_entity(pc_id)
+            .unwrap()
+            .cxx_current_point_map()
+            .unwrap();
         engine.mission_domain.campaign.characters[0]
             .status
             .set_ammo(Action::Ale, 1);
@@ -7924,9 +8044,36 @@ mod drop_ammo_merge_tests {
 
         let mut display = HostDisplayState::default();
         let mut dev = DevState::default();
-        // DropAle executes in the sequence phase after this frame's owner
-        // walk, appending the bottle as a new legacy creation slot.
+        // Translation installs the authored drop order; the bottle itself is
+        // created only when that animation reaches its DONE action point.
         engine.perform_hourglass(&mut display, &assets, &mut dev);
+        let (_, _, order) = engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(pc_id)
+            .expect("DropAle must install its animation order");
+        assert_eq!(order.order_type, crate::order::OrderType::DroppingAle);
+        assert_eq!(
+            engine.mission_domain.campaign.characters[0]
+                .status
+                .get_ammo(Action::Ale),
+            1,
+            "translation must not consume ale before the action point"
+        );
+
+        // The fixture intentionally has a placeholder sprite, so inject the
+        // animation's DONE outcome rather than inventing profile frames.
+        engine.process_anim_completion_outcomes(
+            &crate::sim_rng::test_context(),
+            AnimCompletionOutcomes {
+                execute_sides: ExecuteSideOutcomes {
+                    drop_ale_done: vec![pc_id],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            &assets,
+        );
         let ale_id = engine
             .world
             .entities
@@ -7937,9 +8084,16 @@ mod drop_ammo_merge_tests {
                     .is_some_and(|object| object.object_type == crate::element::ObjectType::Ale))
                 .then_some(id)
             })
-            .expect("DropAle must append its RHElementAle-equivalent");
+            .expect("DropAle DONE must append its RHElementAle-equivalent");
         let ale = engine.get_entity(ale_id).unwrap();
         assert_eq!(ale.kind(), ElementKind::ObjectOther);
+        assert_eq!(ale.element_data().position_map(), expected_action_point);
+        assert!(!ale.element_data().blipped);
+        assert_eq!(ale.sprite().frame_count, 0);
+        assert_eq!(
+            ale.object_data().unwrap().animation,
+            crate::element::Animation::ObjectLying
+        );
         assert_eq!(
             ale.original_hourglass_class(),
             crate::element::OriginalHourglassClass::Ale

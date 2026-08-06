@@ -8027,6 +8027,25 @@ impl EngineInner {
                         continue 'actors;
                     }
                     let actor = entity.actor_data_mut().expect("actor-only branch");
+                    // Point-target Seek reaches this early transition arm
+                    // after its authored stop transition terminates. Unlike
+                    // an entity seek it has no live target to revalidate, so
+                    // the transition itself is the final arrival barrier.
+                    // Retiring it through the ordinary order-pop path first
+                    // creates a fallback Wait and leaves the post-seek action
+                    // stranded on ActorData for one frame (or forever).
+                    if is_final_waypoint
+                        && movement_is_last_sequence_element
+                        && ft.target_id.is_none()
+                        && actor.post_seek_sequence.is_some()
+                        && actor.active_door_pass.is_none()
+                    {
+                        post_seek_arrivals.push((eid, move_seq_id, move_elem_idx));
+                        actor.clear_path();
+                        actor.active_movement.clear();
+                        actor.active_door_pass = None;
+                        continue 'actors;
+                    }
                     // Pop via the element we actually dispatched (`move_seq_id` /
                     // `move_elem_idx`), not `actor.active_movement.sequence_id`
                     // — the latter can be stale/None when the Move element was

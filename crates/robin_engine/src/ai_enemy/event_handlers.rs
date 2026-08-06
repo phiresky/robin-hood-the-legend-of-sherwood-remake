@@ -2964,6 +2964,52 @@ mod tests {
     }
 
     #[test]
+    fn got_hit_can_begin_close_swordfight_from_default_state() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        assert_eq!(ai.base.current_state, AiState::Default);
+
+        let mut attacker = object_view(ObjectType::None);
+        attacker.kind = EntityKind::Pc;
+        attacker.is_pc = true;
+        attacker.camp = Camp::Royalists;
+        let mut views = AiEntityViewMap::new();
+        views.insert(2, attacker);
+        let ctx = AiContext {
+            camp: Camp::Lacklandists,
+            entity_views: Arc::new(views),
+            ..AiContext::default()
+        };
+
+        ai.think_alerting_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::EventGotHit, 2),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        let engage = ai.base.outbox.actor.enter_swordfight.or_else(|| {
+            ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .find_map(|work| match work {
+                    crate::ai::AiOwnerWork::StateChange(notification) => notification
+                        .actor_effects_before_callback
+                        .as_ref()
+                        .and_then(|effects| effects.enter_swordfight),
+                    _ => None,
+                })
+        });
+        assert_eq!(engage, Some(EnterSwordfightRequest::Engage(2)));
+        assert_eq!(ai.base.current_state, AiState::Attacking);
+        assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
+    }
+
+    #[test]
     fn seeing_shadow_raises_music_alert_without_accelerating_view_refresh() {
         let mut ai = EnemyAi::new(1);
         let ctx = AiContext {

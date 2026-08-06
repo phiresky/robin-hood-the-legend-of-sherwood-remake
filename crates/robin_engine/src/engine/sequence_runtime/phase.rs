@@ -2134,142 +2134,26 @@ impl EngineInner {
                                     .element_terminated(seq_id, elem_idx);
                             }
                             // ── Drop ale bottle ───────────────────────
-                            // Spawn a fresh ale at the PC's position,
-                            // mark it detectable for all NPCs, and
-                            // decrement ale ammo.  We collapse the
-                            // animation into an immediate state change
-                            // (no DROPPING_ALE order frames) — the
-                            // observable result is the same: ammo ticks
-                            // down and an ale bottle appears at the PC's
-                            // feet.
-                            //
-                            // The Rust model represents the same dropped accessory
-                            // bottle as `Entity::Bonus` + `ObjectType::Ale`.
-                            // `spawn_dropped_ale` clones the `ACCESSORIES_Ale`
-                            // sprite and forces `OBJECT_LYING`, so no
-                            // dedicated enum variant is needed for parity.
                             Command::DropAle => {
-                                let action = crate::profiles::Action::Ale;
-
-                                let pc_snap = self.get_entity(owner).map(|e| {
-                                    let el = e.element_data();
-                                    (
-                                        el.position_map(),
-                                        el.layer(),
-                                        el.sector(),
-                                        el.obstacle_index(),
-                                        el.direction(),
-                                        el.material(),
-                                    )
-                                });
-                                let Some((pos, layer, sector, obstacle, direction, material)) =
-                                    pc_snap
-                                else {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                    break 'action;
-                                };
-
-                                // Decrement ammo (clamped to current count).
-                                let status_idx = self.get_entity(owner).and_then(|e| match e {
-                                    crate::element::Entity::Pc(pc) => {
-                                        self.pc_description_index_for_pc_data(&pc.pc)
-                                    }
-                                    _ => None,
-                                });
-                                let Some(status_idx) = status_idx else {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                    break 'action;
-                                };
-                                let dropped = if let Some(campaign) =
-                                    Some(&mut self.mission_domain.campaign)
-                                    && let Some(pc_desc) = campaign.characters.get_mut(status_idx)
-                                {
-                                    let current = pc_desc.status.get_ammo(action);
-                                    let take = 1u16.min(current);
-                                    pc_desc.status.decrease_ammo(action, take);
-                                    take
-                                } else {
-                                    0
-                                };
-                                if dropped == 0 {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                    break 'action;
-                                }
-                                // Auto-disable when empty.
-                                let now_empty = Some(&self.mission_domain.campaign)
-                                    .and_then(|c| c.characters.get(status_idx))
-                                    .map(|d| d.status.get_ammo(action) == 0)
-                                    .unwrap_or(false);
-                                if now_empty {
-                                    self.disable_pc_action(assets, owner, action);
-                                }
-
-                                // Spawn an ale bottle at the PC's
-                                // position, nudged onto a walkable cell
-                                // when possible (same authorized-position
-                                // handoff as generic DropAmmo above).
-                                let spawn_pos = {
-                                    let mut b = crate::coordinates::MapBBox::new();
-                                    b.expand_point(pos);
-                                    if self
-                                        .world
-                                        .fast_grid
-                                        .find_authorized_position_toward(&mut b, pos, layer)
+                                let order_type = match self.get_entity(owner) {
+                                    Some(entity)
+                                        if entity.element_data().posture
+                                            == crate::element::Posture::Crouched =>
                                     {
-                                        b.center()
-                                    } else {
-                                        pos
+                                        crate::order::OrderType::DroppingAleCrouched
+                                    }
+                                    Some(_) => crate::order::OrderType::DroppingAle,
+                                    None => {
+                                        self.orders
+                                            .sequence_manager
+                                            .element_impossible(seq_id, elem_idx);
+                                        break 'action;
                                     }
                                 };
-
-                                // Spawn the concrete RHElementAle-equivalent at
-                                // the resolved position. Rust shares the
-                                // `Entity::Bonus` payload, but the Original Ale
-                                // constructor inherits RHElementObject's
-                                // OBJECT_OTHERS category, not OBJECT_BONUS.
-                                let mut ale_element = crate::element::ElementData {
-                                    kind: crate::element::ElementKind::ObjectOther,
-                                    active: true,
-                                    blipped: !self.world.weather.is_forest_level,
-                                    ..Default::default()
-                                };
-                                ale_element.sprite.apply_placement(
-                                    spawn_pos,
-                                    layer,
-                                    sector,
-                                    direction,
-                                    material,
-                                    obstacle,
-                                    crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                                        obstacle,
-                                        assets.static_sight_obstacles.as_slice(),
-                                    ),
-                                );
-                                let ale =
-                                    crate::element::Entity::Bonus(crate::element::ElementBonus {
-                                        element: ale_element,
-                                        object: crate::element::ObjectData {
-                                            quantity: 1,
-                                            object_type: crate::element::ObjectType::Ale,
-                                            associated_action: action,
-                                            ..Default::default()
-                                        },
-                                    });
-                                let ale_id = self.add_entity(ale);
-                                tracing::debug!(
-                                    pc = ?owner,
-                                    ?ale_id,
-                                    "DropAle: decremented PC ale ammo and spawned ale bottle"
-                                );
+                                self.push_new_order(seq_id, elem_idx, order_type, 0.0, 0.0);
                                 self.orders
                                     .sequence_manager
-                                    .element_terminated(seq_id, elem_idx);
+                                    .element_in_progress(seq_id, elem_idx);
                             }
                             // ── Turn ───────────────────────────────
                             // Rotate the actor to face the `CameraPoint`

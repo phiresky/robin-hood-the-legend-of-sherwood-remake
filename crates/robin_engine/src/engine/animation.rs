@@ -1646,6 +1646,10 @@ pub(super) fn soldier_is_attentive(entity: &Entity) -> bool {
 /// etc.).
 #[derive(Debug, Clone, Default)]
 pub(super) struct ExecuteSideOutcomes {
+    /// PCs whose DROPPING_ALE animation reached DONE. Original creates the
+    /// bottle and consumes one ale at this action point, before the order's
+    /// later TERMINATED edge advances the sequence.
+    pub drop_ale_done: Vec<EntityId>,
     /// Antagonist IDs whose `is_active` should be cleared (bottle hide
     /// on DRINKING_ALE DONE).
     pub deactivate_entities: Vec<EntityId>,
@@ -4635,6 +4639,15 @@ impl EngineInner {
                     } else {
                         effective_anim
                     };
+                    // RHNONANIMATION_DROPPING_ALE_CROUCHED is only a
+                    // dispatch token. The PC override plays the authored
+                    // TAKING_CROUCHED sprite while retaining the drop order
+                    // for command/state and DONE-side-effect handling.
+                    let effective_anim = if effective_anim == OrderType::DroppingAleCrouched {
+                        OrderType::TakingCrouched
+                    } else {
+                        effective_anim
+                    };
                     let mut weak_sword_held = false;
                     let owner_is_pc = entity.is_pc();
                     // Jump steps whose Execute arm calls PerformMotion rather
@@ -5249,6 +5262,12 @@ impl EngineInner {
                         }
                         if entity.is_pc() && motion_state == MotionState::Done {
                             match anim_type {
+                                OrderType::DroppingAle | OrderType::DroppingAleCrouched => {
+                                    completion_outcomes
+                                        .execute_sides
+                                        .drop_ale_done
+                                        .push(entity_id);
+                                }
                                 OrderType::TransitionWaitingUprightSimulatingBeggar => {
                                     completion_outcomes
                                         .execute_sides

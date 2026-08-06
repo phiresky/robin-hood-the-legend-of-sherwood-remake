@@ -2929,21 +2929,6 @@ impl EnemyAi {
             );
             return;
         }
-        // begin_swordfight assumes the AI is already committed to a
-        // fight (BeginSwordFight runs only from the Attacking state
-        // machine). If the caller got here from Default/Wondering,
-        // that's a stale `reconsider_enemy_approach` tick firing against
-        // a soldier whose state changed underneath it — don't launch
-        // combat, just bail.
-        if !matches!(self.base.current_state, AiState::Attacking) {
-            tracing::warn!(
-                current_state = ?self.base.current_state,
-                current_substate = ?self.base.current_substate,
-                primary_target = self.base.primary_target,
-                "Enemy AI: begin_swordfight called from non-Attacking state — aborting (stale timer tick?)",
-            );
-            return;
-        }
         tracing::info!(
             target = self.base.primary_target,
             jump_line = ?tick.primary_target_jump_line,

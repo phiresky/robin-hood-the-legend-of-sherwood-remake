@@ -1,0 +1,8 @@
+{
+  "id": "44",
+  "subject": "Restore the DropAle animation and DONE action point",
+  "description": "DONE. The feefc57f5 baseline exposed the same DropAle boundary in 26 controls across linux2, linux3, Cyrdach, Nescafe, SuN1Sh1nE, and randomguy. Two coupled bugs caused it. The final point-target Seek stop transition retired through ordinary order-pop, installed Wait, and stranded its attached post-seek action; it now hands arrival to the post-seek queue. Rust also collapsed RHCOMMAND_DROP_ALE into an immediate effect. Original installs DroppingAle (or the crouched dispatch token) and creates the ale/consumes ammo only at sprite DONE. Rust now installs that lifecycle, maps the crouched token to TakingCrouched, clones the accessory sprite, forces ObjectLying, copies the PC action point/placement, remains unblipped, registers detection, then consumes ammo. Focused coverage passes. Exact optimized validation reaches EOF for linux2 P002/S037 r006, Cyrdach P156/S015 r015, and Nescafe P001/S015 r013.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

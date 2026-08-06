@@ -1,0 +1,8 @@
+{
+  "id": "45",
+  "subject": "Allow hit retaliation to enter swordfight from non-attacking AI states",
+  "description": "DONE. After #42, nicouzouf S069 r005 frame465 showed Soldier197 receiving synchronous EVENT_GOTHIT outside STATE_ATTACKING. Original's generic hit arm calls AttackEnemy/ReconsiderEnemyApproach and BeginSwordfight when close; BeginSwordfight has no state admission gate. Rust invented current_state == Attacking and discarded this path, omitting EnterSwordfight, reciprocal opponents, and the LOS query. Removing the gate restores the source behavior. A focused Default-state close retaliation regression passes. Exact replay clears frame465 and advances to unrelated #47 SwordStrikeSelection RNG at frame1299.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
