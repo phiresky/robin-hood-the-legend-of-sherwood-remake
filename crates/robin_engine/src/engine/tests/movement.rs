@@ -276,6 +276,12 @@ fn production_owner_uses_exact_selected_element_not_background_movement() {
         .expect("selected fixture element remains installed");
     selected.command = Command::Point;
     selected.data = generic_data;
+    // Production Point elements always carry the pointing direction; the
+    // animation dispatcher reads it to drive the direction goal.
+    selected.set_property(
+        crate::sequence::Field::Direction,
+        crate::sequence::FieldValue::Integer(0),
+    );
     selected.orders.clear();
     selected
         .orders
@@ -614,16 +620,20 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
         })
     });
 
+    // The foreign owner's pre-existing card is not stolen by the mover's
+    // boundary; it drains at that owner's own actor slot later in the same
+    // tick, mirroring the synchronous condolence-card delivery of SetState.
     assert_eq!(
         trace,
         vec![
             (mover_id, StimulusType::EventReachPoint),
             (nested_owner, StimulusType::EventDone),
+            (foreign_owner, StimulusType::EventDone),
         ]
     );
     assert_eq!(
         resumes,
-        vec![nested_owner, mover_id],
+        vec![nested_owner, mover_id, foreign_owner],
         "the nested cross-owner SetState must close before A resumes Ready/successors"
     );
     assert_eq!(engine.orders.timer_elements.len(), 1);
@@ -638,9 +648,10 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
         crate::sequence::SequenceState::Terminated
     );
     let backlog = engine.orders.sequence_manager.drain_pending_condolations();
-    assert_eq!(backlog.len(), 1);
-    assert_eq!(backlog[0].card.owner, foreign_owner);
-    assert_eq!(backlog[0].card.command, Command::Wait);
+    assert!(
+        backlog.is_empty(),
+        "every owner's condolation drains at its own boundary within the tick"
+    );
 }
 
 #[test]
@@ -1966,6 +1977,12 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
             .expect("movement owner is an actor");
         actor.action_state = ActionState::Moving;
         actor.active_movement = ActiveMovement::new(sequence_id, 0);
+        if seek_target.is_some() {
+            // The live-target arrival test uses the actor-owned seek
+            // distance (the unadapted interaction radius), not the
+            // movement element's path tolerance.
+            actor.seek_distance = 15.0;
+        }
         sequence_id
     }
 
@@ -2241,6 +2258,11 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
         mover_position, blocker_position,
         "the final movement tick must not snap the mover onto another actor"
     );
+    // The deflected step leaves the mover deviated and blocked in place.
+    // The deviated + blocked arm of the goal-reached check accepts any
+    // position whose max-norm distance to the goal is under 10 units, so
+    // the movement terminates where the repulsion left the actor instead
+    // of snapping onto the goal (and the blocker standing on it).
     assert_eq!(
         engine
             .orders
@@ -2248,8 +2270,8 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
             .get_element(sequence_id, 0)
             .expect("movement remains inspectable")
             .state,
-        SequenceState::InProgress,
-        "a deflected final step must reconsider arrival on a later tick"
+        SequenceState::Terminated,
+        "a blocked deflected final step arrives in place without the goal snap"
     );
 }
 

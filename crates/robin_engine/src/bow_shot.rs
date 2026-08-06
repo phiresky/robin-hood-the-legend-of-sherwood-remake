@@ -6660,7 +6660,7 @@ mod tests {
 
     #[test]
     fn arrow_trajectory_retains_exact_terminal_obstacle_identity() {
-        let obstacle = compute_shield_obstacle(
+        let mut obstacle = compute_shield_obstacle(
             MapPoint::new(0.0, 0.0),
             0.0,
             4,
@@ -6672,8 +6672,21 @@ mod tests {
                 z_offset: 0.0,
             },
         );
+        // The trajectory raycast skips shield obstacles entirely (shield
+        // blocking is the per-arrow shield-holder test, not the obstacle
+        // grid), so make this wall a plain solid to stay visible to it.
+        obstacle.set_flag(crate::sight_obstacle::SIGHTOBSTACLE_SHIELD, false);
         let obstacles = [obstacle];
-        let grid = crate::fast_find_grid::FastFindGrid::default();
+        // The trajectory raycast forces a bare ground impact for any origin
+        // outside the level's map bbox, and a default grid has an empty
+        // (hyperspace) bbox — give the flight path an open field instead.
+        let mut grid = crate::fast_find_grid::FastFindGrid::default();
+        {
+            let mut level = (*grid.level).clone();
+            level.map_bbox =
+                crate::coordinates::MapBBox::from_coords(-10_000.0, -10_000.0, 10_000.0, 10_000.0);
+            grid.level = std::sync::Arc::new(level);
+        }
         let check = TrajectoryObstacleCheck {
             fast_find_grid: &grid,
             layer: 0,

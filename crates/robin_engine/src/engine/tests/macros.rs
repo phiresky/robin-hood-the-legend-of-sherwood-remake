@@ -8,7 +8,7 @@ use super::*;
 /// these fixtures need a real entity rather than a synthetic `PcId` handle.
 #[cfg(test)]
 fn add_test_pc(engine: &mut EngineInner) -> crate::element::EntityId {
-    engine.add_entity(Entity::Pc(crate::element::ActorPc {
+    let pc = engine.add_entity(Entity::Pc(crate::element::ActorPc {
         element: crate::element::ElementData {
             kind: crate::element::ElementKind::ActorPc,
             active: true,
@@ -21,7 +21,21 @@ fn add_test_pc(engine: &mut EngineInner) -> crate::element::EntityId {
             life_points: 100,
             ..Default::default()
         },
-    }))
+    }));
+    // Macro playback dispatches real group-move commands, whose formation
+    // geometry reads the mover's map position and move box. A default
+    // entity has an empty (hyperspace) box, so give it real geometry.
+    let entity = engine.get_entity_mut(pc).unwrap();
+    entity
+        .position_iface_mut()
+        .set_move_box(crate::coordinates::MoveBox::from_corners(
+            crate::coordinates::MapVec::new(-5.0, -5.0),
+            crate::coordinates::MapVec::new(5.0, 5.0),
+        ));
+    entity
+        .element_data_mut()
+        .set_position_map(crate::coordinates::MapPoint::new(10.0, 10.0));
+    pc
 }
 
 /// Seed a PC's macro slot with a recorded "move to (x,y)" step and a
@@ -97,8 +111,6 @@ fn has_quick_action_reads_macro_store() {
 /// slot.
 #[test]
 fn abort_quick_action_clears_slot_and_titbit() {
-    use crate::element::EntityId;
-
     let mut engine = EngineInner::new();
     let pc = add_test_pc(&mut engine);
 

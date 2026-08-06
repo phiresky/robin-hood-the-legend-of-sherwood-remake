@@ -1944,6 +1944,17 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
     let mut engine = EngineInner::new();
     engine.control.frame_counter = 100;
     engine.world.weather.ambiance = crate::engine::types::Ambiance::Night;
+    // Occupy slot 0 with a non-human entity: handle 0 is the null element
+    // in AI handle space, so Charly must not land there or his viewer
+    // identity cannot be resolved from the entity-view snapshot.
+    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::Target,
+            ..Default::default()
+        },
+        fx: Default::default(),
+        target: Default::default(),
+    }));
     let charly_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let officer_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let mut assets = LevelAssets::new();

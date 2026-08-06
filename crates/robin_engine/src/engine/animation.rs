@@ -1386,16 +1386,18 @@ mod tests {
     #[test]
     fn unconscious_sword_start_sets_lying_waiting_sword() {
         let mut entity = weak_soldier_at_action_done(0);
+        // The knock-out START arm is human-gated; the shared fixture leaves
+        // the element kind unset, so stamp the real soldier kind.
+        entity.element_data_mut().kind = crate::element::ElementKind::ActorSoldier;
         entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
 
-        apply_soldier_execute_side_effects(
+        // The knock-out hold START states are owned by the human-level
+        // dispatcher (they apply to PCs and soldiers alike), not the
+        // soldier-only side-effect switch.
+        apply_active_animation_start_state_side_effect(
             &mut entity,
             OrderType::BeingUnconsciousSword,
             MotionState::Start,
-            None,
-            EntityId::Pc(crate::entity_id::PcId(7)),
-            &mut ExecuteSideOutcomes::default(),
-            &crate::profiles::ProfileManager::default(),
         );
 
         assert_eq!(entity.element_data().posture, Posture::Lying);

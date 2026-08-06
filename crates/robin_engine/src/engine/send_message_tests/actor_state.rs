@@ -177,7 +177,12 @@ fn persistent_setters_use_original_narrowing_and_virtual_kill_path() {
     let mut assets = LevelAssets::new();
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    for amount in [-1, 65_535, 40_000] {
+    // The VM hands the trailing arguments to the native through a
+    // signed-byte read, so every script constant above 127 already arrives
+    // negative (250 becomes -6). The concussion setter then narrows the
+    // sign-extended amount to UWORD and zeroes any value that re-reads
+    // negative as SWORD.
+    for amount in [-1, 65_535, 250] {
         assert_eq!(
             engine
                 .call_external_native(
@@ -196,7 +201,7 @@ fn persistent_setters_use_original_narrowing_and_virtual_kill_path() {
             .expect("human");
         assert_eq!(
             human.concussion_of_the_brain, 0,
-            "UWORD {amount:#x} is negative when re-read as SWORD"
+            "byte-narrowed amount {amount:#x} is negative when re-read as SWORD"
         );
         assert!(!human.unconscious);
     }
@@ -323,12 +328,15 @@ fn scripted_pc_concussion_and_ko_unselect_immediately() {
     let posture_handle = ScriptHandleCodec::actor_handle(posture_pc);
     engine.players.seats[0].selection = vec![persistent_pc, posture_pc];
 
+    // The native's trailing arguments pass through a signed-byte read, so
+    // the KO amount must sit in 70..=127 to survive narrowing above the
+    // concussion threshold (CONCUSSION_MAX itself would wrap to 44).
     engine
         .call_external_native(
             &crate::sim_rng::test_context(),
             &assets,
             "SetPersistentProperty",
-            &[persistent_handle, 3, crate::combat::CONCUSSION_MAX as i32],
+            &[persistent_handle, 3, 100],
         )
         .expect("persistent concussion");
     assert_eq!(engine.players.seats[0].selection, vec![posture_pc]);
