@@ -1109,13 +1109,21 @@ fn project_post_completion_motion(
 /// place and calls `NewID()`.  That identity change is not `DoNextOrder`: the
 /// motion result already returned by `Execute` remains authoritative.
 fn is_start_stop_movement_rewrite(
+    entry_order_id: std::num::NonZeroU32,
     entry_order: crate::order::OrderType,
+    live_order_id: std::num::NonZeroU32,
     live_order: crate::order::OrderType,
     execute_motion: crate::sprite::MotionState,
 ) -> bool {
     use crate::order::OrderType;
 
     execute_motion == crate::sprite::MotionState::Start
+        // StopMovement calls NewID on the existing order. Runtime order IDs
+        // are monotonic, whereas a translated stop-transition successor was
+        // allocated before path waypoints that may later be inserted ahead of
+        // it. This separates an in-place reseed from DoNextOrder exposing an
+        // already queued transition after a fresh waypoint reaches its goal.
+        && live_order_id > entry_order_id
         && matches!(
             (entry_order, live_order),
             (
@@ -1174,28 +1182,45 @@ mod specialized_execute_motion_tests {
     #[test]
     fn stop_movement_new_id_is_not_a_successor_order_advance() {
         assert!(is_start_stop_movement_rewrite(
+            std::num::NonZeroU32::new(10).unwrap(),
             OrderType::WalkingUpright,
+            std::num::NonZeroU32::new(11).unwrap(),
             OrderType::TransitionWalkingUprightWaitingUpright,
             MotionState::Start,
         ));
         assert!(!is_start_stop_movement_rewrite(
+            std::num::NonZeroU32::new(10).unwrap(),
             OrderType::RunningUpright,
+            std::num::NonZeroU32::new(11).unwrap(),
             OrderType::TransitionRunningUprightWaitingUpright,
             MotionState::Done,
         ));
         assert!(!is_start_stop_movement_rewrite(
+            std::num::NonZeroU32::new(10).unwrap(),
             OrderType::WalkingCrouched,
+            std::num::NonZeroU32::new(11).unwrap(),
             OrderType::TransitionWalkingCrouchedWaitingCrouched,
             MotionState::InProgress,
         ));
         assert!(!is_start_stop_movement_rewrite(
+            std::num::NonZeroU32::new(10).unwrap(),
             OrderType::WalkingUpright,
+            std::num::NonZeroU32::new(11).unwrap(),
             OrderType::TransitionWalkingUprightWaitingUpright,
             MotionState::Terminated,
         ));
         assert!(!is_start_stop_movement_rewrite(
+            std::num::NonZeroU32::new(10).unwrap(),
             OrderType::WalkingUpright,
+            std::num::NonZeroU32::new(11).unwrap(),
             OrderType::WalkingUpright,
+            MotionState::Start,
+        ));
+        assert!(!is_start_stop_movement_rewrite(
+            std::num::NonZeroU32::new(11).unwrap(),
+            OrderType::RunningUpright,
+            std::num::NonZeroU32::new(10).unwrap(),
+            OrderType::TransitionRunningUprightWaitingUpright,
             MotionState::Start,
         ));
     }
@@ -3935,7 +3960,9 @@ impl EngineInner {
                                                     && live_idx == entry_idx
                                                     && live_order.order_id != entry_order_id
                                                     && is_start_stop_movement_rewrite(
+                                                        entry_order_id,
                                                         entry_order_type,
+                                                        live_order.order_id,
                                                         live_order.order_type,
                                                         motion,
                                                     )
@@ -7248,6 +7275,87 @@ mod bow_command_body_parity_tests {
             OrderType::TransitionWalkingUprightWaitingUpright
         );
         assert_ne!(rewritten.order_id, entry_order_id);
+    }
+
+    #[test]
+    fn fresh_waypoint_start_advancing_to_older_stop_transition_is_in_progress() {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let owner = engine.add_entity(make_aiming_pc(ActionState::MovingFast));
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(owner),
+            OrderType::RunningUpright,
+        );
+        movement.priority = crate::sequence::SequencePriority::Normal;
+        let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+        // PostProcessPath allocates its final transition before inserting
+        // path waypoints ahead of it, so the waypoint has the newer ID.
+        let transition_order_id = engine.orders.allocate_order_id();
+        let waypoint_order_id = engine.orders.allocate_order_id();
+        engine.orders.sequence_manager.push_order_on(
+            sequence_id,
+            0,
+            crate::order::Order::new(OrderType::RunningUpright, 20.0, 0.0, waypoint_order_id),
+        );
+        engine.orders.sequence_manager.push_order_on(
+            sequence_id,
+            0,
+            crate::order::Order::new(
+                OrderType::TransitionRunningUprightWaitingUpright,
+                20.0,
+                0.0,
+                transition_order_id,
+            ),
+        );
+
+        engine.tick_actor_animation_action_change_slots_with_hooks(
+            &crate::sim_rng::test_context(),
+            &assets,
+            |_, _| {},
+            |_, _| {},
+            |engine, execute_owner, selected_movement, _, _, _, _| {
+                assert_eq!(execute_owner, owner);
+                assert!(selected_movement.is_some());
+                engine
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .unwrap()
+                    .element_data_mut()
+                    .sprite
+                    .last_motion_state = Some(crate::sprite::MotionState::Start);
+                engine.do_next_order(sequence_id, 0);
+            },
+            |_, _, _| {},
+        );
+
+        let actor = engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap();
+        assert_eq!(
+            actor.continuation.motion_state,
+            crate::sprite::MotionState::InProgress
+        );
+        let (_, _, successor) = engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(owner)
+            .expect("pre-existing stop transition must remain selected");
+        assert_eq!(successor.order_id, transition_order_id);
+        assert_eq!(
+            successor.order_type,
+            OrderType::TransitionRunningUprightWaitingUpright
+        );
     }
 
     #[test]
