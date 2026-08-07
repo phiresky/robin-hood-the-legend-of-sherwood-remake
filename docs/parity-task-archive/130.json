@@ -1,0 +1,9 @@
+{
+  "id": "130",
+  "subject": "Return terminal motion from ladder-fall arrival",
+  "description": "SuN1Sh1nE Profile_004 Savegame_021 replay-009 advanced through the repaired ladder-arrow damage at frame 977 and reached a frame-978 motion-state mismatch for PC 167: Original serialized RHMOTION_TERMINATED while Rust retained MotionState::Start. Original RHElementActorHuman::Execute handles RHNONANIMATION_FALLING_LADDER_WALL inline and returns RHMOTION_TERMINATED on the exact tick its fall countdown reaches zero. Rust splits the sprite Execute and flight tail: the flight tail correctly landed the actor, applied concussion, set Terminated, and retired the fall order, but the actor-hourglass code subsequently overwrote that terminal edge with the earlier FallingBackUpright sprite Start result. The fix makes the owner-scoped flight tail return the ladder-arrival motion edge and replaces the generic Execute result before the actor latch. Focused coverage constructs a live one-tick FallingLadderWall flight and requires both the returned and serialized motion states to be Terminated with the order retired. On the combined parity runner dated 2026-08-07 23:28:42, the representative clears frame 978 and advances to an independent PC 167 lethal/coma-save frontier at frame 1302, where Original has life 5 and remains alive while Rust has life 0 and is dead. The shared task-36 controls, Cyrdach Profile_156 Savegame_001 replay-009 and Nescafe Profile_001 Savegame_001 replay-009, continue to match every recorded frame through exact EOF on the same combined runner.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task130_ladder_fall_motion"
+}

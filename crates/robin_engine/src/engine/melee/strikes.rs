@@ -1481,16 +1481,17 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-    ) {
+    ) -> Option<crate::sprite::MotionState> {
         if self.actors_frozen()
             || self
                 .get_entity(owner)
                 .and_then(Entity::actor_data)
                 .is_some_and(|actor| actor.execution_frozen)
         {
-            return;
+            return None;
         }
-        self.tick_push_flights_at_owner(sim, assets, Some(owner), false, true);
+        self.tick_push_flights_at_owner(sim, assets, Some(owner), false, true)
+            .then_some(crate::sprite::MotionState::Terminated)
     }
 
     fn tick_push_flight_terminal_landings(
@@ -1508,7 +1509,7 @@ impl EngineInner {
         selected_owner: Option<EntityId>,
         terminal_only: bool,
         skip_terminal: bool,
-    ) {
+    ) -> bool {
         // Domino sweeps fire after positions have advanced, so collect
         // (flyer, hitter, post-advance increment) here and dispatch in a
         // second pass — `apply_domino_effect` reads many entities and
@@ -1723,6 +1724,7 @@ impl EngineInner {
         // put them on their back, and retire the fall order — the
         // original does all of this inside the fall Execute arm on the
         // tick its countdown reaches zero.
+        let ladder_arrived = !ladder_arrivals.is_empty();
         for victim_id in ladder_arrivals {
             let (concussion, life_points) = {
                 let entity = self
@@ -1789,6 +1791,8 @@ impl EngineInner {
         for (flyer_id, hitter_id, inc_x, inc_y) in domino_sweeps {
             self.apply_domino_effect(flyer_id, hitter_id, inc_x, inc_y);
         }
+
+        ladder_arrived
     }
 
     /// Bud-Spencer-style domino punch propagation.
@@ -3002,6 +3006,59 @@ mod tests {
                 .position_map(),
             MapPoint::new(15.0, 20.0)
         );
+    }
+
+    #[test]
+    fn ladder_arrival_returns_terminated_from_owner_execute_tail() {
+        use crate::element::Command;
+        use crate::order::OrderType;
+        use crate::sequence::SequenceElement;
+
+        let sim = crate::sim_rng::test_context();
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles
+            .soldiers
+            .push(crate::profiles::SoldierProfile::default());
+        let assets = LevelAssets {
+            profile_manager: std::sync::Arc::new(profiles),
+            ..LevelAssets::default()
+        };
+        let mut entity = falling_pushed_soldier(false);
+        let actor = entity.actor_data_mut().unwrap();
+        let flight = actor.active_flight.as_mut().unwrap();
+        flight.antagonist = None;
+        flight.ladder_fall = true;
+        actor.continuation.motion_state = crate::sprite::MotionState::Start;
+
+        let mut engine = EngineInner::new();
+        let victim = engine.add_entity(entity);
+        let damage =
+            SequenceElement::new_damage(1, Command::ReceiveArrowDamage, Some(victim), None, 20, 0);
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        let order_id = engine.push_new_order(sequence, 0, OrderType::FallingLadderWall, 0.0, 0.0);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .installed_order = Some(crate::element::InstalledActorOrder {
+            order_id,
+            order_type: OrderType::FallingLadderWall,
+        });
+
+        let motion = engine.tick_push_flight_for_owner(&sim, &assets, victim);
+
+        assert_eq!(motion, Some(crate::sprite::MotionState::Terminated));
+        let actor = engine.get_entity(victim).unwrap().actor_data().unwrap();
+        assert_eq!(
+            actor.continuation.motion_state,
+            crate::sprite::MotionState::Terminated
+        );
+        assert_eq!(actor.installed_order, None);
     }
 
     #[test]
