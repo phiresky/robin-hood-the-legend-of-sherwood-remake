@@ -1311,8 +1311,8 @@ impl EnemyAi {
                     } else {
                         self.base.outbox.actor.set_unfocus();
                     }
-                    self.base.set_emoticon(EmoticonType::XMark);
                     if self.combat_trainer {
+                        self.base.set_emoticon(EmoticonType::XMark);
                         self.set_state(AiState::Attacking, Substate::AttackingApproachToObserve);
                         self.base.launch_timer(1, ctx.frame);
                     } else {
@@ -1321,34 +1321,38 @@ impl EnemyAi {
                         // and launches a 50-tick timer even while approaching
                         // so observers keep reconsidering if the active
                         // fighter drops or the formation changes.
-                        if let Some(target_pos) = tick
-                            .nearby_fighters
-                            .iter()
-                            .find(|f| f.handle == target)
-                            .map(|f| f.position)
-                        {
-                            self.base.seek_position = target_pos;
-                            let observe_distance = AiController::value_between(
-                                parameters_ai::OBSERVE_SWORDFIGHT_MAX_DISTANCE,
-                                parameters_ai::OBSERVE_SWORDFIGHT_MIN_DISTANCE,
-                                self.get_courage() as u8,
-                            );
-                            self.go_near(
-                                AiState::Attacking,
-                                Substate::AttackingApproachToObserve,
-                                target_pos,
-                                observe_distance as i32,
-                                GotoFlags::empty(),
-                                ctx,
-                            );
-                            self.base.launch_timer(50, ctx.frame);
-                        } else {
-                            self.set_state(
-                                AiState::Attacking,
-                                Substate::AttackingApproachToObserve,
-                            );
-                            self.base.launch_timer(50, ctx.frame);
-                        }
+                        // GetNewPrimaryTarget selects from the persistent
+                        // Them list, which can include an opponent outside
+                        // the nearby-fighter snapshot. Original dereferences
+                        // that selected actor directly for Position().
+                        let target_pos = ctx
+                            .entity_view(target)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "Observe target {} is absent from owner {}'s live entity view",
+                                    target, self.base.me
+                                )
+                            })
+                            .position;
+                        self.base.seek_position = target_pos;
+                        let observe_distance = AiController::value_between(
+                            parameters_ai::OBSERVE_SWORDFIGHT_MAX_DISTANCE,
+                            parameters_ai::OBSERVE_SWORDFIGHT_MIN_DISTANCE,
+                            self.get_courage() as u8,
+                        );
+                        // Original issues GoNear before SetState. Keep the
+                        // movement in SetState's synchronous actor-effect
+                        // prefix so a preceding StopAll and its walking
+                        // replacement settle before FilterAIEvent.
+                        self.base.go_near(
+                            target_pos,
+                            observe_distance as i32,
+                            GotoFlags::empty(),
+                            ctx,
+                        );
+                        self.base.set_emoticon(EmoticonType::XMark);
+                        self.set_state(AiState::Attacking, Substate::AttackingApproachToObserve);
+                        self.base.launch_timer(50, ctx.frame);
 
                         // Couldn't-reachpoint avenger-on-roof fallback,
                         // resolved against the target this arm just
@@ -3211,6 +3215,65 @@ mod tests {
         // nearer friends are therefore insufficient; four are sufficient.
         assert!(!enough_nearer_friends_to_observe(3, 1, 45));
         assert!(enough_nearer_friends_to_observe(4, 1, 45));
+    }
+
+    #[test]
+    fn observe_move_precedes_state_change_callback() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(91);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingReactiontimeRunning;
+        ai.list_them = vec![198];
+        ai.base.stop_all();
+
+        let target_position = Position {
+            x: 500.0,
+            ..Position::default()
+        };
+        let mut target_view = pc_view();
+        target_view.position = target_position;
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(198, target_view);
+        let ctx = AiContext {
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        // Deliberately leave nearby_fighters empty: the persistent Them-list
+        // target can lie just outside that 500-unit decision snapshot.
+        let tick = AiPerTickData::stub();
+
+        assert!(ai.execute_battle_decision(
+            &sim,
+            Decision::Observe,
+            Substate::AttackingReactiontimeRunning,
+            0,
+            &std::collections::BTreeMap::from([(198, 0)]),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        ));
+
+        let prefix = ai
+            .base
+            .outbox
+            .reentrant
+            .owner_work
+            .iter()
+            .find_map(|work| match work {
+                crate::ai::AiOwnerWork::StateChange(notification) => {
+                    notification.actor_effects_before_callback.as_ref()
+                }
+                _ => None,
+            })
+            .expect("Observe SetState must capture StopAll and GoNear");
+        assert!(prefix.halt);
+        assert_eq!(prefix.orders.len(), 1);
+        assert_eq!(
+            prefix.orders[0].order_type,
+            crate::order::OrderType::WalkingUpright
+        );
+        assert!(ai.base.outbox.actor.orders.is_empty());
     }
 
     fn proud_decision_speech(
