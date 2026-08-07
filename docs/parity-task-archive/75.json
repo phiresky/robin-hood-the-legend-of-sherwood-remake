@@ -1,0 +1,8 @@
+{
+  "id": "75",
+  "subject": "Classify schema-12 H12 building-exit RNG cohort",
+  "description": "CAPTURE REQUIRED / NO CODE FIX. The Nescafe H12 schema-12 RuntimeBuildingExitWait cohort cannot support a source-faithful production change because the captures omit macro_timer_running/ring, macro cursor/remaining, was_busy, and very_busy at the divergent boundary. In the representative Profile_001 Restart replay-002 (seed 4002), Rust Civilian 85 enters building sector 166 toward (1735,3449), becomes inactive, runs DefaultInMacro path 58, arms WAIT 250 at frame 208 and WAIT 50 at frame 458, then constructs the exit sequence and consumes the extra RuntimeBuildingExitWait pair before recorded frame 508. Original Civilian 85 remains inactive in Wait/DefaultInMacro through at least frame 580. The apparent Original pair at frame 526 is not a delayed match: it belongs to Civilian 95, which changes from inactive Wait/InMacro at frame 525 to WaitTimer/DefaultEnroute at frame 526 and later exits. Original source iterates every element regardless of active state, Actor/NPC hourglass has no inactive skip, CMD_WAIT always calls LaunchTimer(..., true), and macro timers are always polled, so neither suppressing inactive AI nor inventing a timer exception is justified. Recapture this exact control with current schema-14 diagnostics before changing code or retiring/replacing the old cohort. The available current Original native-full executable is 32-bit i386; this host cannot run it until /lib/ld-linux.so.2 and the required 32-bit SDL2_ttf, freetype, theora, vorbis, ogg, crypto, SDL2, libstdc++, and libc runtime libraries are available.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
