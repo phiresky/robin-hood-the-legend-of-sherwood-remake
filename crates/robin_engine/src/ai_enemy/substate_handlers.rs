@@ -4966,10 +4966,6 @@ impl EnemyAi {
                         self.battle_decisions(sim, global, ctx, tick, grid);
                     }
                 }
-                StimulusType::CallCoordinate => {
-                    self.base.stop_all();
-                    self.battle_decisions(sim, global, ctx, tick, grid);
-                }
                 _ => {}
             },
 
@@ -4988,11 +4984,6 @@ impl EnemyAi {
                             ((110u32).saturating_sub(self.get_shooting_ability(ctx) as u32)) / 2;
                         self.base.launch_timer(aim_time.max(5), ctx.frame);
                     }
-                    StimulusType::CallCoordinate => {
-                        // Defensive: shield bearer moved, re-evaluate.
-                        self.base.stop_all();
-                        self.battle_decisions(sim, global, ctx, tick, grid);
-                    }
                     _ => {}
                 }
             }
@@ -5003,10 +4994,6 @@ impl EnemyAi {
                 StimulusType::EventDone => {
                     self.set_state(AiState::Attacking, Substate::AttackingBowObserving);
                     self.base.launch_timer(50, ctx.frame);
-                }
-                StimulusType::CallCoordinate => {
-                    self.base.stop_all();
-                    self.battle_decisions(sim, global, ctx, tick, grid);
                 }
                 _ => {}
             },
@@ -6526,6 +6513,43 @@ mod tests {
 
             assert_eq!(ai.base.current_state, AiState::Seeking);
             assert_eq!(ai.base.current_substate, substate);
+        }
+    }
+
+    #[test]
+    fn bow_transition_states_ignore_shield_bearer_coordinate_calls() {
+        let sim = crate::sim_rng::test_context();
+
+        // RHArtificialMalignity::ThinkExpectedAttackingEvent only handles
+        // CALL_COORDINATE while the archer is in BOW_SHOOTING.  A shield
+        // bearer can still make the synchronous call while its archer is
+        // loading or aiming; these substates deliberately ignore it.
+        for substate in [
+            Substate::AttackingBowObservingLoading,
+            Substate::AttackingBowLoading,
+            Substate::AttackingBowAiming,
+        ] {
+            let mut ai = EnemyAi::new(1);
+            ai.base.current_state = AiState::Attacking;
+            ai.base.current_substate = substate;
+            ai.base.timer_is_running = true;
+            ai.base.when_does_timer_ring = 777;
+
+            ai.think_expected_event(
+                &sim,
+                &Stimulus::new(StimulusType::CallCoordinate),
+                &mut AiGlobalState::default(),
+                &AiContext::default(),
+                &AiPerTickData::stub(),
+                None,
+            );
+
+            assert_eq!(ai.base.current_state, AiState::Attacking);
+            assert_eq!(ai.base.current_substate, substate);
+            assert!(ai.base.timer_is_running);
+            assert_eq!(ai.base.when_does_timer_ring, 777);
+            assert!(ai.base.outbox.actor.orders.is_empty());
+            assert!(ai.base.outbox.actor.launch_sequences.is_empty());
         }
     }
 

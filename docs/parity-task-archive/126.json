@@ -1,0 +1,9 @@
+{
+  "id": "126",
+  "subject": "Ignore shield-bearer coordinate calls during bow transitions",
+  "description": "Cyrdach Profile_156 Restart replay-014 diverged at frame 1418 when Soldier69 was aiming its bow and its shield bearer synchronously sent CALL_COORDINATE. Original remained in AttackingBowAiming with Wait and EYES_FOLLOW; Rust stopped the archer, ran BattleDecisions, and entered AttackingBowRunningBehindShieldBearer with MoveOk and EYES_LOOK_FORWARD. RHArtificialMalignity::ThinkExpectedAttackingEvent handles CALL_COORDINATE only in SUBSTATE_ATTACKING_BOW_SHOOTING. The BowAiming, BowLoading, and BowObservingLoading switches deliberately ignore it, while Rust had invented defensive StopAll plus BattleDecisions arms in all three transition states. Removing those non-original arms preserves the in-progress bow transition and its timer. A focused regression covers all three ignored substates. The representative clears the assigned frame-1418 divergence and advances to an independent frame-1480 battle-decision frontier, split into task 127. Both task-36 schema-14 replay-009 controls match every recorded frame through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task126_bow_coordinate_transition"
+}
