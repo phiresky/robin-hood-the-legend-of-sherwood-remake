@@ -2881,6 +2881,76 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
 }
 
 #[test]
+fn moving_hit_victim_receives_synchronous_event_stop_and_blinks_enemy() {
+    use crate::element::{ActionState, Command, Detectable, DetectableType, Posture};
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    let crate::element::Entity::Soldier(victim_soldier) = engine.get_entity_mut(victim).unwrap()
+    else {
+        unreachable!()
+    };
+    victim_soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
+    victim_soldier.actor.action_state = ActionState::MovingFast;
+    victim_soldier.npc.detectable_lists[DetectableType::Enemy as usize].push(Detectable {
+        element: Some(attacker),
+        detectable_type: DetectableType::Enemy,
+        seen_now: true,
+        seen_last_frame: true,
+        ..Detectable::default()
+    });
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let seq = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new_interaction(
+            1,
+            Command::HitCmd,
+            Some(attacker),
+            Some(victim),
+        ));
+    engine.hourglass_phase_sequences(&sim, &mut HostDisplayState::default(), &assets);
+
+    let hit = engine
+        .orders
+        .sequence_manager
+        .get_element(seq, 0)
+        .expect("Hit remains selected after the victim's re-entrant EventStop");
+    assert_eq!(hit.state, SequenceState::InProgress);
+    assert_eq!(
+        hit.current_order().unwrap().order_type,
+        crate::order::OrderType::Hitting
+    );
+    let victim = engine.get_entity(victim).unwrap();
+    let ai = victim.ai_controller().unwrap();
+    assert_eq!(ai.current_state, crate::ai::AiState::Seeking);
+    assert_eq!(
+        ai.current_substate,
+        crate::ai::Substate::SeekingGotStopEvent
+    );
+    assert_eq!(ai.view_alert_status, crate::ai::AlertLevel::Yellow);
+    assert_eq!(ai.current_music_alert_status, crate::ai::AlertLevel::Yellow);
+    assert_eq!(
+        ai.ai_log
+            .iter()
+            .filter(|line| {
+                line.line_type == crate::ai::LogLineType::Event
+                    && line.info == crate::ai::StimulusType::EventStop as u16
+            })
+            .count(),
+        1
+    );
+    let enemy = &victim.npc_data().unwrap().detectable_lists[DetectableType::Enemy as usize][0];
+    assert!(!enemy.seen_now);
+    assert!(!enemy.seen_last_frame);
+}
+
+#[test]
 fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_starts_same_done_tick()
 {
     use crate::element::{Command, Posture};

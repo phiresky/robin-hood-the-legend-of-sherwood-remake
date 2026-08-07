@@ -3216,8 +3216,11 @@ impl EnemyAi {
                 Substate::SeekingLookingResurrectedCharly
                 | Substate::SeekingHeardstepsPreReactiontime => (bfalse_if_not_forced, false),
                 Substate::SeekingGotStopEvent => {
-                    // Nothing — leave attentive flag alone.
+                    // Original SetState's attentive-mode switch does nothing
+                    // for GotStop, but it still falls through to the shared
+                    // SetAlertStatus(ALERT_YELLOW) tail.
                     self.base.outbox.actor.set_attentive_mode = None;
+                    self.set_alert_status(crate::ai::AlertLevel::Yellow);
                     return self.finish_set_state(substate);
                 }
                 _ => (true, false),

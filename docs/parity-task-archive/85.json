@@ -1,0 +1,8 @@
+{
+  "id": "85",
+  "subject": "Deliver synchronous EventStop when HIT targets a moving NPC",
+  "description": "DONE. Nescafe Profile_002 Savegame_001 replay-002 first diverged at frame 686 because Original RHElementActorHuman::Translate(RHCOMMAND_HIT) inserts the Hitting order and then synchronously calls the moving antagonist's Think(EVENT_STOP). Rust routed Hit through the generic direct-ability path and omitted that re-entrant callback, leaving Soldier181 attacking/running, red-alerted, and still seeing PC252. Hit now shares Strangle's source-backed translation boundary: after the action is installed, a moving target receives EventStop and all queued effects drain before action initialization continues. The callback moves the victim to SeekingGotStopEvent, halts it, and blinks its enemy. Rust's SeekingGotStopEvent SetState arm also incorrectly returned before the shared alert tail; Original skips only SetAttentiveMode for that substate and still calls SetAlertStatus(ALERT_YELLOW), so Rust now does the same. A focused regression covers state, substate, halt transition, single EventStop delivery, blinked detection, and both alert fields. The representative clears frame 686 and advances exactly to an unrelated Soldier180 attentive-mode frontier at frame 1651. Schema-14 Cyrdach Profile_156 Savegame_001 replay-009 and Nescafe Profile_001 Savegame_001 replay-009 controls match every recorded frame through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

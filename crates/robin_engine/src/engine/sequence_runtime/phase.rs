@@ -1626,7 +1626,7 @@ impl EngineInner {
                                     }
                                 }
                             }
-                            Command::StrangleCmd => {
+                            Command::HitCmd | Command::StrangleCmd => {
                                 let Some(target) = self
                                     .orders
                                     .sequence_manager
@@ -1644,15 +1644,28 @@ impl EngineInner {
                                         .element_impossible(seq_id, elem_idx);
                                     break 'action;
                                 };
-                                match abilities::begin_strangle(
-                                    &mut self.world.entities,
-                                    &mut self.orders.sequence_manager,
-                                    owner,
-                                    target,
-                                    seq_id,
-                                    elem_idx,
-                                    &mut self.orders.next_order_id,
-                                ) {
+                                let begin = match cmd {
+                                    Command::HitCmd => abilities::begin_hit(
+                                        &mut self.world.entities,
+                                        &mut self.orders.sequence_manager,
+                                        owner,
+                                        target,
+                                        seq_id,
+                                        elem_idx,
+                                        &mut self.orders.next_order_id,
+                                    ),
+                                    Command::StrangleCmd => abilities::begin_strangle(
+                                        &mut self.world.entities,
+                                        &mut self.orders.sequence_manager,
+                                        owner,
+                                        target,
+                                        seq_id,
+                                        elem_idx,
+                                        &mut self.orders.next_order_id,
+                                    ),
+                                    _ => unreachable!(),
+                                };
+                                match begin {
                                     AbilityBeginResult::Impossible => self
                                         .orders
                                         .sequence_manager
@@ -1662,21 +1675,19 @@ impl EngineInner {
                                             .sequence_manager
                                             .element_in_progress(seq_id, elem_idx);
 
-                                        // Translate inserts the Strangling order before calling
+                                        // Human::Translate inserts the Hit/Strangle order before
                                         // a moving antagonist's Think(EVENT_STOP). Think and all
                                         // of its re-entrant effects finish in this stack frame,
                                         // before Perform's initialization acquires AILOCK_FREEZE.
                                         let moving = self
                                         .get_entity(target)
                                         .unwrap_or_else(|| {
-                                            panic!(
-                                                "strangle victim {target:?} vanished after translation for {seq_id:?}/{elem_idx}"
-                                            )
+                                            panic!("Hit/Strangle victim {target:?} vanished after translation for {seq_id:?}/{elem_idx}")
                                         })
                                         .actor_data()
                                         .unwrap_or_else(|| {
                                             panic!(
-                                                "strangle victim {target:?} lost actor state after translation"
+                                                "Hit/Strangle victim {target:?} lost actor state after translation"
                                             )
                                         })
                                         .action_state
@@ -1698,7 +1709,6 @@ impl EngineInner {
                             | Command::HealCmd
                             | Command::WhistleCmd
                             | Command::EatCmd
-                            | Command::HitCmd
                             | Command::ReceivePurse
                             | Command::EnterListen
                             | Command::LeaveListen
