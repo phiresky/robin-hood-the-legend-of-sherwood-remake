@@ -4380,28 +4380,23 @@ impl EngineInner {
                 ))
             })
             .and_then(|sector| match sector.lift_type {
-                Some(crate::sector::LiftType::Wall) => {
-                    Some((crate::element::Posture::OnWall, sector.lift_direction))
-                }
-                Some(crate::sector::LiftType::Ladder) => {
-                    Some((crate::element::Posture::OnLadder, sector.lift_direction))
-                }
+                Some(crate::sector::LiftType::Wall) => Some(crate::element::Posture::OnWall),
+                Some(crate::sector::LiftType::Ladder) => Some(crate::element::Posture::OnLadder),
                 _ => None,
             });
-        if let Some((posture, direction)) = lift_idle
+        if let Some(posture) = lift_idle
             && let Some(entity) = self.get_entity_mut(entity_id)
         {
             entity.set_posture(posture);
-            entity.element_data_mut().set_direction_instantly(direction);
             // Actor::Wait translates to the non-animation Freezing order on
             // a ladder or wall. Original MakeActionTransition has no
             // OnLadder/OnWall arm, so it deliberately preserves the current
-            // action state (normally Moving) while holding the climb frame.
+            // action state (normally Moving) and facing while holding the
+            // climb frame.
             tracing::debug!(
                 entity = ?entity_id,
                 ?posture,
-                direction,
-                "Wait: normalized idle actor in lift sector"
+                "Wait: normalized idle actor posture in lift sector"
             );
         }
 

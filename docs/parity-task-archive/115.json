@@ -1,0 +1,9 @@
+{
+  "id": "115",
+  "subject": "Apply climb lift facing only during order initialization",
+  "description": "SuN1Sh1nE Profile_004 Savegame_021 replay-009 advanced past the fast-climb animation fix and diverged at frame 594 when a second soldier entered the ladder: Original retained direction/direction-goal 1 and sprite row 273, while Rust turned toward lift direction 15 and published row 272. Original RHElementActor::Execute calls SetDirection(lift direction) only inside IsInitialisation(). This ladder order was reached recursively after a door step, so it was not initializing and inherited the transition facing. Rust instead reapplied lift facing on every authored climb tick. Gating that assignment advanced the replay to frame 604, where Rust's door-pass completion helper independently reset the goal to 15. Original RHElementActor::PassDoor changes topology without changing facing (its old SetDirection call is commented out), so lift completion now preserves the inherited goal too. At frame 605, fallback Wait exposed a third invented normalization: Rust instantly snapped every idle lift actor to the lift direction, while Original Actor::Wait only launches WAIT and its OnLadder/OnWall translation selects FREEZING without touching facing. Fallback lift waits now preserve facing as well. Focused regressions cover recursively reached climbs, lift completion, and fallback ladder Wait. The representative clears this entire direction chain and advances to an independent Soldier97 AI command/substate and visibility frontier at frame 614. Both task-36 schema-14 replay-009 controls match every recorded frame through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task115_ladder_exit_direction"
+}

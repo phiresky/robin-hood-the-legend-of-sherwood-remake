@@ -1644,8 +1644,6 @@ impl EngineInner {
                 "completed PassDoor for {entity_id:?}, door {door_index} targets non-lift sector {target_sector}"
             )
         });
-        let lift_direction = sector.lift_direction;
-
         let posture = match lift_type {
             LiftType::Wall => crate::element::Posture::OnWall,
             LiftType::Ladder => crate::element::Posture::OnLadder,
@@ -1656,7 +1654,6 @@ impl EngineInner {
             panic!("completed PassDoor for door {door_index} lost owner {entity_id:?}")
         });
         entity.set_posture(posture);
-        entity.element_data_mut().set_direction_goal(lift_direction);
         entity
             .actor_data_mut()
             .unwrap_or_else(|| panic!("completed PassDoor owner {entity_id:?} is not an actor"))
@@ -1665,8 +1662,7 @@ impl EngineInner {
             entity = ?entity_id,
             sector = %target_sector,
             ?posture,
-            lift_direction,
-            "DoorPass: completed into lift, preserving climb idle state"
+            "DoorPass: completed into lift, preserving climb state and facing"
         );
     }
 
@@ -2043,6 +2039,34 @@ mod tests {
             gate_indices: Vec::new(),
             underlying_sector: None,
         });
+    }
+
+    #[test]
+    fn fallback_wait_on_ladder_preserves_inherited_facing() {
+        let mut engine = EngineInner::new();
+        install_lift_sector(&mut engine, LiftType::Ladder);
+        let owner = engine.add_entity(make_pc(42));
+        {
+            let entity = engine.world.entities.get_mut(owner).unwrap();
+            entity.set_posture(Posture::OnLadder);
+            entity.element_data_mut().set_direction_instantly(1);
+        }
+
+        engine.ensure_wait_element(owner);
+
+        let entity = engine.world.entities.get(owner).unwrap();
+        assert_eq!(entity.element_data().direction(), 1);
+        assert_eq!(entity.position_iface().get_direction_goal().as_u8(), 1);
+        let element = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .find(|element| {
+                element.owner == Some(owner) && element.command == crate::element::Command::Wait
+            })
+            .expect("fallback Wait must be installed");
+        assert_eq!(element.command, crate::element::Command::Wait);
     }
 
     fn bind_single_animation(engine: &mut EngineInner, owner: EntityId, action: OrderType) {
@@ -2779,6 +2803,13 @@ mod tests {
                     5,
                     "{lift_type:?} transition must use the inside lift sector's direction goal"
                 );
+                engine
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .unwrap()
+                    .element_data_mut()
+                    .set_direction_goal(7);
                 engine.apply_completed_door_pass_lift_entry_state(
                     owner,
                     crate::gate::DoorIndex(0),
@@ -2794,6 +2825,18 @@ mod tests {
                         .direction(),
                     expected_direction,
                     "door-pass completion must preserve the gradual Turn() result"
+                );
+                assert_eq!(
+                    engine
+                        .world
+                        .entities
+                        .get(owner)
+                        .unwrap()
+                        .position_iface()
+                        .get_direction_goal()
+                        .as_u8(),
+                    7,
+                    "PassingDoor changes lift topology but must not set a new facing goal"
                 );
             }
         }

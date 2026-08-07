@@ -193,6 +193,20 @@ mod group_move_authorization_tests {
             OrderType::ClimbingLadderUpFast
         );
     }
+
+    #[test]
+    fn recursively_reached_climb_keeps_transition_facing() {
+        assert!(!initialising_climb_uses_lift_direction(
+            OrderType::ClimbingLadderUp,
+            crate::sector::LiftType::Ladder,
+            false,
+        ));
+        assert!(initialising_climb_uses_lift_direction(
+            OrderType::ClimbingLadderUp,
+            crate::sector::LiftType::Ladder,
+            true,
+        ));
+    }
 }
 
 /// Apply the lift-sector portion of Original
@@ -485,6 +499,36 @@ fn sprite_motion_order_for_nonanimation(order: OrderType) -> OrderType {
         OrderType::ClimbingLadderDownFast => OrderType::ClimbingLadderDown,
         other => other,
     }
+}
+
+/// Whether an actor climb order applies the lift's fixed facing.
+///
+/// Original `RHElementActor::Execute` does this only inside
+/// `IsInitialisation()`. A climb order reached recursively after a door step
+/// can therefore start without replacing the facing inherited from that
+/// transition.
+fn initialising_climb_uses_lift_direction(
+    action: OrderType,
+    lift_type: crate::sector::LiftType,
+    initialising: bool,
+) -> bool {
+    initialising
+        && matches!(
+            (action, lift_type),
+            (
+                OrderType::ClimbingWallUp
+                    | OrderType::ClimbingWallDown
+                    | OrderType::ClimbingWallUpFast
+                    | OrderType::ClimbingWallDownFast,
+                crate::sector::LiftType::Wall
+            ) | (
+                OrderType::ClimbingLadderUp
+                    | OrderType::ClimbingLadderDown
+                    | OrderType::ClimbingLadderUpFast
+                    | OrderType::ClimbingLadderDownFast,
+                crate::sector::LiftType::Ladder
+            )
+        )
 }
 
 fn rider_charge_point_in_quad(point: MapPoint, quad: [(f32, f32); 4]) -> bool {
@@ -7195,24 +7239,13 @@ impl EngineInner {
                 lift_direction,
                 ..
             }) = lift_translations[actor_id]
+                && initialising_climb_uses_lift_direction(
+                    anim,
+                    lift_type,
+                    execute_order_initialising,
+                )
             {
-                match (anim, lift_type) {
-                    (
-                        OrderType::ClimbingWallUp
-                        | OrderType::ClimbingWallDown
-                        | OrderType::ClimbingWallUpFast
-                        | OrderType::ClimbingWallDownFast,
-                        crate::sector::LiftType::Wall,
-                    )
-                    | (
-                        OrderType::ClimbingLadderUp
-                        | OrderType::ClimbingLadderDown
-                        | OrderType::ClimbingLadderUpFast
-                        | OrderType::ClimbingLadderDownFast,
-                        crate::sector::LiftType::Ladder,
-                    ) => elem.set_direction_goal(lift_direction),
-                    _ => {}
-                }
+                elem.set_direction_goal(lift_direction);
             }
             match (anim, door_pass_anim) {
                 (
