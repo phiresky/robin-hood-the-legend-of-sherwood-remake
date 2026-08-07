@@ -4156,10 +4156,12 @@ impl EngineInner {
                 // Execute arm. Sampling here preserves creation-order
                 // visibility of the moving target, and a replacement does
                 // not itself execute until this owner returns next frame.
-                if movement.is_some()
-                    && engine.tick_refresh_seek_for_owner(sim, assets, owner)
-                {
-                    return;
+                if movement.is_some() {
+                    if engine.tick_refreshing_seek_for_owner(sim, assets, owner)
+                        || engine.tick_refresh_seek_for_owner(sim, assets, owner)
+                    {
+                        return;
+                    }
                 }
                 engine.tick_entity_movement_owner(sim, assets, owner, movement);
                 if let Some(selection) = melee {

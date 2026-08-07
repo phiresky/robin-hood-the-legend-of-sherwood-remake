@@ -50,6 +50,81 @@ pub(crate) struct ResolvedEntitySeek {
 }
 
 impl crate::engine::EngineInner {
+    /// Execute Original's explicit `RHNONANIMATION_REFRESHING_SEEK` hold.
+    ///
+    /// Unlike ordinary movement arms, this order calls `RefreshSeek`
+    /// unconditionally: there is no countdown or target-displacement gate.
+    /// It is installed when a final Move|SEEK reaches a building and executes
+    /// on the actor's following Hourglass slot.
+    pub(super) fn tick_refreshing_seek_for_owner(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) -> bool {
+        let Some((seq_id, elem_idx)) = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner)
+        else {
+            return false;
+        };
+        let Some((target, action, flags, tolerance)) = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .and_then(|element| {
+                let order = element.current_order()?;
+                if order.order_type != crate::order::OrderType::RefreshingSeek {
+                    return None;
+                }
+                let SequenceElementData::Movement {
+                    element: target,
+                    action,
+                    flags,
+                    tolerance,
+                    ..
+                } = &element.data
+                else {
+                    panic!(
+                        "RefreshingSeek owner {owner:?} selected non-movement element {seq_id:?}/{elem_idx}"
+                    )
+                };
+                Some((*target, *action, *flags, *tolerance))
+            })
+        else {
+            return false;
+        };
+
+        let Some(target) = target else {
+            // The point-target arm returns TERMINATED without refreshing.
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
+            return true;
+        };
+        let target_position = self
+            .get_entity(target)
+            .unwrap_or_else(|| {
+                panic!("RefreshingSeek owner {owner:?} requires missing target {target:?}")
+            })
+            .element_data()
+            .position_map();
+        self.apply_seek_refresh(
+            sim,
+            assets,
+            owner,
+            seq_id,
+            elem_idx,
+            target,
+            action,
+            flags,
+            tolerance,
+            target_position,
+        );
+        true
+    }
+
     /// Prepare a selected Seek for the terminal `SetState` used by Original's
     /// `RefreshSeek` overloads. Original sends the actor's condolence card
     /// synchronously before launching any replacement, so the still-selected

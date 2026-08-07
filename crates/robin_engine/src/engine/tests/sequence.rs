@@ -1242,6 +1242,119 @@ fn initial_seek_dispatch_clears_outgoing_movement_goal_until_first_execute() {
 }
 
 #[test]
+fn final_move_seek_inside_building_installs_refreshing_seek_hold() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::position_interface::SectorHandle;
+    use crate::sequence::{
+        MoveFlags, Sequence, SequenceElement, SequenceElementData, SequenceState,
+    };
+
+    let mut engine = EngineInner::new();
+    install_test_building_sector(&mut engine, 42);
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let start = MapPoint::new(10.0, 20.0);
+    let target_position = MapPoint::new(30.0, 40.0);
+    let target = engine.add_entity(make_test_soldier(Posture::Upright));
+    {
+        let element = engine.get_entity_mut(owner).unwrap().element_data_mut();
+        element.set_position_map(start);
+        element.set_sector(SectorHandle::new(42));
+    }
+    {
+        let element = engine.get_entity_mut(target).unwrap().element_data_mut();
+        element.set_position_map(target_position);
+        element.set_sector(SectorHandle::new(42));
+    }
+    let mut post_seek = Sequence::new();
+    post_seek.append_element(SequenceElement::new_generic(1, Command::Wait, Some(owner)));
+    {
+        let actor = engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap();
+        actor.seek_target = Some(target);
+        actor.seek_distance = 4.0;
+        actor.post_seek_sequence = Some(Box::new(post_seek));
+    }
+
+    // Gate traversal rewrites the original Seek as a trailing Move while
+    // retaining RHMOVE_SEEK. In a building, Original does not teleport or
+    // terminate this final element: it installs RHNONANIMATION_REFRESHING_SEEK.
+    let destination = MapPoint::new(100.0, 200.0);
+    let mut movement =
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+    if let SequenceElementData::Movement {
+        destination: stored,
+        flags,
+        element,
+        ..
+    } = &mut movement.data
+    {
+        *stored = destination;
+        *flags = MoveFlags::SEEK | MoveFlags::SEEK_IN_BUILDINGS;
+        *element = Some(target);
+    } else {
+        unreachable!("new_movement must produce movement data");
+    }
+    let sequence = engine.orders.sequence_manager.launch_element(movement);
+
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    let movement = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .expect("final seek movement remains selected");
+    assert_eq!(movement.state, SequenceState::InProgress);
+    assert_eq!(movement.orders.len(), 1);
+    assert_eq!(
+        movement.current_order().map(|order| order.order_type),
+        Some(OrderType::RefreshingSeek)
+    );
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .element_data()
+            .position_map(),
+        start,
+        "final Move|SEEK must not take the ordinary building teleport branch"
+    );
+
+    assert!(engine.tick_refreshing_seek_for_owner(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::default(),
+        owner,
+    ));
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .element_data()
+            .position_map(),
+        target_position,
+        "the explicit RefreshingSeek order refreshes on the following owner slot"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated,
+        "same-building SEEK_IN_BUILDINGS starts the attached post-seek tail"
+    );
+}
+
+#[test]
 fn parry_sword_queues_transition_and_hold_orders() {
     use crate::element::{ActionState, Command, Posture};
     use crate::order::OrderType;

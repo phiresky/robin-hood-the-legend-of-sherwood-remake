@@ -1,0 +1,9 @@
+{
+  "id": "108",
+  "subject": "Retain final Move seek refresh inside buildings",
+  "description": "Savegame_linux2 Profile_002 Savegame_031 replay-002 diverged at frame 11906 when PC168 completed a building door traversal: Original retained command Move with RHNONANIMATION_REFRESHING_SEEK (animation 328), while Rust terminated the orderless trailing Move and exposed its fallback Wait (animation 283). Original's building Move translation tests the retained RHMOVE_SEEK flag as well as whether the movement is the sequence tail; Rust tested only whether the source command was Seek, overlooking gate-expanded trailing Move|SEEK elements. Final building Move|SEEK now installs RefreshingSeek and remains InProgress. The explicit RefreshingSeek Execute arm also unconditionally invokes RefreshSeek on the following actor slot, independently of the ordinary seek countdown/displacement gate; this lets SEEK_IN_BUILDINGS snap to the target and start its attached post-seek action on the source-authored next frame. A focused regression covers both the installation frame and following refresh/post-seek frame. The representative clears frame 11906 and advances to an independent Soldier58 position-goal frontier at frame 13016. Schema-14 Cyrdach Profile_156 Savegame_001 replay-009 and Nescafe Profile_001 Savegame_001 replay-009 match every recorded frame through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task108_move_seek_flag"
+}
