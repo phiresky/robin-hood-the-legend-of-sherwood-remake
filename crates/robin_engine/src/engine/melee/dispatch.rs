@@ -970,13 +970,16 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
-        self.world
-            .entities
-            .get_mut(victim_id)
-            .and_then(Entity::actor_data_mut)
-            .expect("accepted empty damage lost its actor")
-            .continuation
-            .motion_state = crate::sprite::MotionState::InProgress;
+        // A deferred Hades kill can outlive an already removed entity slot.
+        // There is no Actor::Instruct receiver (and therefore no motion field)
+        // in that case, but its synthetic damage element still has to close.
+        if let Some(victim) = self.world.entities.get_mut(victim_id) {
+            victim
+                .actor_data_mut()
+                .expect("accepted damage victim lost actor state")
+                .continuation
+                .motion_state = crate::sprite::MotionState::InProgress;
+        }
         self.orders.sequence_manager.set_translating_element(None);
         self.orders
             .sequence_manager
