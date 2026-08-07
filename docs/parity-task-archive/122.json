@@ -1,0 +1,9 @@
+{
+  "id": "122",
+  "subject": "Preserve soldier-registry order when civilians build friend detectables",
+  "description": "DONE. The original Nescafe Profile_001 Restart replay-009 visibility-query frontier was already cleared by later fixes; the current runner reached frame 286, where Civilian 92's DETECTABLE_FRIEND list contained the right 114 soldiers in a nondeterministic order. Original RHArtificialBonhomie::AlertSoldier walks RHEngine::GetSoldier(camp, i) in soldier-registry order and calls AddDetectable inline. Rust iterated the per-tick entity-view HashMap and accumulated additions in bucket order. AlertSoldier now walks AiContext's authoritative all_soldier_handles registry snapshot and strictly resolves each corresponding live view before applying the existing camp, combat, and script-lock gates. Focused coverage inserts views in a different order and verifies that queued friend detectables follow registry order. The representative clears both the old frame-251 visibility frontier and frame-286 list-order mismatch, advancing to an independent frame-441 missing path event; both task-36 schema-14 controls match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task122_friend_registry_order"
+}

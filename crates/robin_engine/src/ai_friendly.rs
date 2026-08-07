@@ -1763,7 +1763,13 @@ impl FriendlyAi {
             crate::element::DetectableType,
         )> = Vec::new();
 
-        for (&handle, view) in ctx.entity_views.iter() {
+        // RHEngine::GetSoldier(camp, i) walks the soldier registry, and
+        // AddDetectable preserves that order. Hash-map iteration here made
+        // the FRIEND list nondeterministic even when its membership matched.
+        for &handle in ctx.all_soldier_handles.iter() {
+            let view = ctx.entity_view(handle).unwrap_or_else(|| {
+                panic!("alert-soldier registry handle {handle} has no live AI entity view")
+            });
             if handle == self.base.me {
                 continue;
             }
@@ -3074,6 +3080,7 @@ mod tests {
             // Large enough so the alerted soldier is "detected 360°"
             sq_standard_view_radius: 1_000_000.0,
             sq_self_view_radius: 1_000_000.0,
+            all_soldier_handles: std::sync::Arc::new(vec![10, 20]),
             entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
@@ -3128,6 +3135,7 @@ mod tests {
             camp: Camp::Royalists,
             sq_standard_view_radius: 1.0, // too small for short-circuit
             sq_self_view_radius: 1.0,
+            all_soldier_handles: std::sync::Arc::new(vec![10, 20]),
             entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
@@ -3151,6 +3159,19 @@ mod tests {
 
         let mut views = AiEntityViewMap::new();
         views.insert(
+            20,
+            make_soldier_view(
+                Position {
+                    x: 200.0,
+                    y: 0.0,
+                    sector: None,
+                    level: 0,
+                },
+                Camp::Royalists,
+                AiState::Default,
+            ),
+        );
+        views.insert(
             10,
             make_soldier_view(
                 Position {
@@ -3173,6 +3194,9 @@ mod tests {
             camp: Camp::Royalists,
             sq_standard_view_radius: 1.0,
             sq_self_view_radius: 1.0,
+            // Deliberately opposite the insertion order above: the Original
+            // observes registry order, not HashMap bucket order.
+            all_soldier_handles: std::sync::Arc::new(vec![20, 10]),
             entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
@@ -3186,10 +3210,12 @@ mod tests {
                 .add_detectables
                 .iter()
                 .filter(|(_, t)| *t == DetectableType::Friend)
+                .map(|(entity, _)| entity.index())
                 .collect();
-            assert!(
-                !friends.is_empty(),
-                "alert_soldier must queue DETECTABLE_FRIEND adds on first pass"
+            assert_eq!(
+                friends,
+                vec![20, 10],
+                "friend detectables must preserve the soldier registry order"
             );
         });
     }
