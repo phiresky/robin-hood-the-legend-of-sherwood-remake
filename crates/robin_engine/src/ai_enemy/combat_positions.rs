@@ -2742,7 +2742,11 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) -> bool {
         // Right perpendicular of our facing direction in isometric space.
-        let dir_vec = sector_to_vector(ctx.direction);
+        // RHElement::GetDirectionVector builds its vector with
+        // SetSector0to15(direction, ASPECT_RATIO).  The aspect-scaled
+        // components are observable here because the following scalar
+        // products are truncated to SWORD before left/right scoring.
+        let dir_vec = sector_to_vector_iso(ctx.direction, ASPECT_RATIO);
         let right_vec = get_normal_iso(dir_vec, false, ASPECT_RATIO);
 
         let mut points_for_right: i32 = 0;

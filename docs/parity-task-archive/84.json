@@ -1,0 +1,8 @@
+{
+  "id": "84",
+  "subject": "Restore isometric combat-observation side-step scoring",
+  "description": "DONE. Task #80 exposed Nescafe schema-14 Profile_001 Savegame_001 replay-008 frame 1106, where Soldier 178 consumed the same two CombatObserveSideStep RNG draws as Original but selected the opposite perpendicular destination. Original ProposeStepDirectionWhileObservingCombat obtains the observer direction through RHElement::GetDirectionVector, whose SetSector0to15 call uses ASPECT_RATIO, then obtains an aspect-corrected normal and truncates each friend scalar product to SWORD. Rust incorrectly seeded that calculation with the ordinary unit-circle sector_to_vector before applying the isometric normal. It now uses sector_to_vector_iso, matching the source geometry and truncation inputs. The debug replay matches every recorded frame through EOF, all 84 ai_enemy focused tests pass, cargo fmt is clean, and git diff --check is clean.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
