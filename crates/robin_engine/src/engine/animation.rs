@@ -2142,9 +2142,9 @@ pub(super) fn apply_npc_execute_side_effects(
         }
 
         // BEGGAR_SHOWING_FACE: TERMINATED → (Upright, Waiting).
-        // Rolling fallback when the beggar doesn't have the
-        // showing-face animation is checked at booking time (see
-        // beggar ability), so nothing to do here.
+        // The sprite-animation selection above falls back to Rolling when
+        // the beggar lacks the showing-face animation; dispatch remains
+        // keyed on this original order type, matching the Original.
         (OT::BeggarShowingFace, MS::Terminated) => {
             set_states(entity, Posture::Upright, ActionState::Waiting);
         }
@@ -2629,6 +2629,8 @@ fn apply_pc_taking_side_effect(
 ///  - `LOWERING_SHIELD` / `PARRYING_SHIELD` fall back to
 ///    `TRANSITION_LOWERING_SWORD` / `PARRYING_SWORD` when the sprite
 ///    lacks the shield variant.
+///  - NPC `BEGGAR_SHOWING_FACE` falls back to `ROLLING` when the sprite
+///    lacks the showing-face animation.
 ///  - `TRANSITION_WAITING_SWORD_PARRYING_SWORD_LOW`
 ///    → `TRANSITION_WAITING_SWORD_PARRYING_SWORD` — the `_LOW`
 ///    non-animation token re-uses the regular transition sprite anim.
@@ -2653,6 +2655,7 @@ pub(crate) fn sprite_anim_for_order(
             OT::TransitionLoweringSword
         }
         OT::ParryingShield if !sprite.has_animation(OT::ParryingShield) => OT::ParryingSword,
+        OT::BeggarShowingFace if !sprite.has_animation(OT::BeggarShowingFace) => OT::Rolling,
         OT::FallingHitUpright
         | OT::FallingHitHarderUpright
         | OT::FallingPushedUpright
@@ -5682,6 +5685,26 @@ mod soldier_take_drink_parity_tests {
         assert_eq!(
             sprite_anim_for_order(&sprite, OrderType::Taking, true),
             OrderType::Taking
+        );
+    }
+
+    #[test]
+    fn beggar_show_face_falls_back_to_rolling_only_when_the_animation_is_missing() {
+        use crate::sprite_script::UNMAPPED;
+
+        let missing = crate::sprite::Sprite::default();
+        assert_eq!(
+            sprite_anim_for_order(&missing, OrderType::BeggarShowingFace, false),
+            OrderType::Rolling
+        );
+
+        let mut available = crate::sprite::Sprite::default();
+        let mut conversion = vec![UNMAPPED; OrderType::BeggarShowingFace as usize + 1];
+        conversion[OrderType::BeggarShowingFace as usize] = 0;
+        available.conversion = std::sync::Arc::new(conversion);
+        assert_eq!(
+            sprite_anim_for_order(&available, OrderType::BeggarShowingFace, false),
+            OrderType::BeggarShowingFace
         );
     }
 }

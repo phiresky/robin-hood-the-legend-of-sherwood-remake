@@ -1,0 +1,8 @@
+{
+  "id": "95",
+  "subject": "Restore missing beggar-show-face animation fallback",
+  "description": "DONE. In schema-14 linux3 Profile_001 Savegame_045 replay-008 at frame 45007, Civilian 63 was executing BeggarShowFace with a Mendiant sprite profile that does not author BeggarShowingFace. Original RHElementActorNPC::Execute tests HasAnimation(RHANIMATION_BEGGAR_SHOWING_FACE) and plays RHANIMATION_ROLLING when absent, while retaining the showing-face order for state dispatch. Rust attempted the missing animation, aborted the order, and returned to its civilian wait. The shared sprite-animation selection now applies the exact BeggarShowingFace-to-Rolling fallback without changing the order token. Focused coverage verifies both the missing and authored-animation branches. The parity-profile replay clears frame 45007 and advances to an independent Soldier 119 direction/direction-goal frontier at frame 45041.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
