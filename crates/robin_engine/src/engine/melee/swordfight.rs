@@ -1491,7 +1491,7 @@ impl EngineInner {
     ///
     /// Returns `true` when the coma save activated, in which case the
     /// caller's downstream death handling must be skipped.
-    pub(super) fn close_pc_wounded_coma_boundary(
+    pub(in crate::engine) fn close_pc_wounded_coma_boundary(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,

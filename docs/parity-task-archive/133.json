@@ -1,0 +1,9 @@
+{
+  "id": "133",
+  "subject": "Honor VIP PC coma save for GetKilledAtBottom",
+  "description": "SuN1Sh1nE Profile_004 Savegame_021 replay-009 reached a frame-1302 lethal-boundary mismatch for unconscious PC 167: Original survived lying in a coma with 5 life points, while Rust set DeadBack with zero life. The command was GetKilledAtBottom from Soldier 96. Original RHElementActorHuman::Execute calls virtual GetWounded(GetLifePoints()) before its death translation, so RHElementActorPC::GetWounded consumes an available amulet for a VIP PC, stores the 5-HP coma floor, applies maximum concussion, and leaves the PC alive. Rust's sequence handler called the pure combat::get_wounded primitive directly and therefore bypassed the existing campaign-aware PC wounded/coma boundary. The fix closes that virtual boundary immediately after the raw life write, then performs Original's SayOuch and rider/non-rider terminal translation. Focused integration coverage executes GetKilledAtBottom against an unconscious VIP PC with one amulet and requires life 5, Lying posture, alive/in-coma state, and amulet consumption. On the combined parity runner dated 2026-08-07 23:39:26, the representative matches every recorded frame through exact EOF. The shared task-36 controls, Cyrdach Profile_156 Savegame_001 replay-009 and Nescafe Profile_001 Savegame_001 replay-009, also match every recorded frame through exact EOF on the same runner.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task133_get_killed_pc_coma"
+}

@@ -1436,35 +1436,40 @@ impl EngineInner {
                                         } => antagonist,
                                         _ => None,
                                     });
-                                let Some(victim) = self.world.entities.get_mut(owner) else {
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                    break 'action;
-                                };
-                                let damage = victim
-                                    .human_and_life_points_mut()
-                                    .map(|(_, lp)| (*lp).max(0) as u16);
-                                let Some(damage) = damage else {
-                                    tracing::warn!(
-                                        ?owner,
-                                        ?killer,
-                                        "GetKilledAtBottom owner is not a human"
+                                let (damage, raw_life_points_after) = {
+                                    let Some(victim) = self.world.entities.get_mut(owner) else {
+                                        self.orders
+                                            .sequence_manager
+                                            .element_impossible(seq_id, elem_idx);
+                                        break 'action;
+                                    };
+                                    let damage = victim
+                                        .human_and_life_points_mut()
+                                        .map(|(_, lp)| (*lp).max(0) as u16);
+                                    let Some(damage) = damage else {
+                                        tracing::warn!(
+                                            ?owner,
+                                            ?killer,
+                                            "GetKilledAtBottom owner is not a human"
+                                        );
+                                        self.orders
+                                            .sequence_manager
+                                            .element_impossible(seq_id, elem_idx);
+                                        break 'action;
+                                    };
+                                    let max_life_points = match victim {
+                                        crate::element::Entity::Pc(_) => {
+                                            crate::combat::LIFEPOINTS_PC
+                                        }
+                                        crate::element::Entity::Soldier(s) => {
+                                            s.soldier.cached_max_life_points
+                                        }
+                                        crate::element::Entity::Civilian(_) => 100,
+                                        _ => 100,
+                                    };
+                                    let (_, lp) = victim.human_and_life_points_mut().expect(
+                                        "validated GetKilledAtBottom human lost life points",
                                     );
-                                    self.orders
-                                        .sequence_manager
-                                        .element_impossible(seq_id, elem_idx);
-                                    break 'action;
-                                };
-                                let max_life_points = match victim {
-                                    crate::element::Entity::Pc(_) => crate::combat::LIFEPOINTS_PC,
-                                    crate::element::Entity::Soldier(s) => {
-                                        s.soldier.cached_max_life_points
-                                    }
-                                    crate::element::Entity::Civilian(_) => 100,
-                                    _ => 100,
-                                };
-                                if let Some((_, lp)) = victim.human_and_life_points_mut() {
                                     crate::combat::get_wounded(
                                         lp,
                                         damage,
@@ -1472,7 +1477,28 @@ impl EngineInner {
                                         max_life_points,
                                         false,
                                     );
-                                }
+                                    (damage, *lp)
+                                };
+
+                                // Original calls virtual GetWounded here. A
+                                // VIP PC therefore establishes its amulet coma
+                                // inside this command before the posture/death
+                                // translation continues.
+                                self.close_pc_wounded_coma_boundary(
+                                    sim,
+                                    assets,
+                                    owner,
+                                    damage,
+                                    damage as i16,
+                                    raw_life_points_after,
+                                );
+                                self.say_ouch(sim, assets, owner, Some(damage));
+
+                                let victim = self
+                                    .world
+                                    .entities
+                                    .get_mut(owner)
+                                    .expect("GetKilledAtBottom owner vanished after wounding");
                                 let is_rider = matches!(
                                     victim,
                                     crate::element::Entity::Soldier(s) if s.soldier.rider

@@ -3303,6 +3303,54 @@ fn get_killed_at_bottom_kills_lying_victim_immediately() {
     assert_eq!(entity.element_data().posture, Posture::DeadBack);
 }
 
+#[test]
+fn get_killed_at_bottom_uses_vip_pc_amulet_coma_save() {
+    use crate::campaign::CampaignValue;
+    use crate::element::{Command, Posture};
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let killer = engine.add_entity(make_test_soldier(Posture::Upright));
+    let victim = engine.add_entity(make_test_pc(Posture::Lying));
+    if let Some(crate::element::Entity::Pc(pc)) = engine.world.entities.get_mut(victim) {
+        pc.pc.life_points = 80;
+        pc.human.unconscious = true;
+    }
+    bind_test_action_point(
+        &mut engine,
+        victim,
+        crate::order::OrderType::BeingUnconscious,
+        crate::coordinates::SpriteLocalPoint::ZERO,
+        crate::coordinates::SpriteAnchor::ZERO,
+    );
+
+    let elem =
+        SequenceElement::new_interaction(1, Command::GetKilledAtBottom, Some(victim), Some(killer));
+    engine.launch_element(elem);
+    engine.ensure_wait_element(victim);
+
+    let mut display = HostDisplayState::default();
+    let mut assets = LevelAssets::new();
+    let mut dev = DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut profiles = (*assets.profile_manager).clone();
+    profiles.characters[0].vip = true;
+    assets.profile_manager = std::sync::Arc::new(profiles);
+    engine.mission_domain.campaign.values[CampaignValue::Amulets] = 1;
+
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+    let entity = engine.get_entity(victim).expect("victim still present");
+    assert!(!entity.is_dead());
+    assert_eq!(entity.human_life_points(), 5);
+    assert_eq!(entity.element_data().posture, Posture::Lying);
+    assert!(engine.mission_domain.campaign.characters[0].status.in_coma);
+    assert_eq!(
+        engine.mission_domain.campaign.values[CampaignValue::Amulets],
+        0
+    );
+}
+
 /// When the `TransitionWaitingUprightSitting` animation completes,
 /// the actor's posture flips to `Sitting`.
 #[test]
