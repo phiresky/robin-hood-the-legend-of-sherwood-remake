@@ -11911,6 +11911,28 @@ impl EngineInner {
             );
             self.dispatch_condolations_for_npc(sim, npc_id, assets);
         }
+
+        let finish_macro = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::ai_controller_mut)
+            .is_some_and(|ai| {
+                std::mem::take(&mut ai.outbox.reentrant.finish_macro_after_self_stimuli)
+            });
+        if finish_macro {
+            self.world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "post-reentrant macro owner {} lost its AI controller",
+                        npc_id.index()
+                    )
+                })
+                .finish_patrol_macro();
+        }
     }
 
     // ── Per-waypoint ReachPoint dispatch ──────────────────────────

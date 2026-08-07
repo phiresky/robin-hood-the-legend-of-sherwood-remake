@@ -90,6 +90,11 @@ pub struct AiDetectionOutbox {
 pub struct AiReentrantOutbox {
     pub cross_npc_actions: Vec<CrossNpcAction>,
     pub self_stimuli: Vec<StimulusType>,
+    /// Finish an outside-Think multi-point patrol macro after its synthetic
+    /// `EventReachPoint` recursion has settled. The nested reach-point path
+    /// may write a new macro deadline; the outer completion then clears only
+    /// the two running flags, matching Original call-stack order.
+    pub finish_macro_after_self_stimuli: bool,
     /// Synchronous work produced while the AI owns its call stack.
     ///
     /// `RHArtificialIntelligence::Say` and Enemy/Friendly `SetState` are

@@ -2399,10 +2399,7 @@ impl AiController {
                     } else {
                         // Already here → synthesize a REACH_POINT event so
                         // the stimulus queue picks up the next waypoint.
-                        self.macro_in_progress = false;
-                        // Original `KillTimer(true)` kills the macro timer.
-                        // Do not touch the independent normal AI timer here.
-                        self.macro_timer_is_running = false;
+                        self.finish_patrol_macro();
                         self.current_substate = Substate::DefaultEnroute;
                         self.fire_self_stimulus(StimulusType::EventReachPoint);
                     }
@@ -2430,19 +2427,38 @@ impl AiController {
                             level: wp.level,
                         })
                     {
+                        let self_stimuli_before = self.outbox.reentrant.self_stimuli.len();
                         self.go_to(next_wp, walk_flags, ctx);
+                        let queued_outside_think_reach_point = self.think_recursion_depth == 0
+                            && self.outbox.reentrant.self_stimuli.len() > self_stimuli_before
+                            && self.outbox.reentrant.self_stimuli.last()
+                                == Some(&StimulusType::EventReachPoint);
+                        if queued_outside_think_reach_point {
+                            // Original GoTo invokes this already-on-point
+                            // EventReachPoint synchronously. The nested path
+                            // may start its next WAIT before the outer macro
+                            // completion clears the running flags.
+                            self.outbox.reentrant.finish_macro_after_self_stimuli = true;
+                        } else {
+                            self.finish_patrol_macro();
+                        }
                     } else {
                         self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
+                        self.finish_patrol_macro();
                     }
-                    self.macro_in_progress = false;
-                    // Original `KillTimer(true)` kills the macro timer.
-                    // A concurrently armed normal AI timer survives patrol
-                    // macro completion.
-                    self.macro_timer_is_running = false;
                 }
                 return;
             }
         }
+    }
+
+    /// Apply the tail of Original's completed patrol macro without erasing a
+    /// deadline written by a synchronous nested reach-point handler.
+    pub(crate) fn finish_patrol_macro(&mut self) {
+        self.macro_in_progress = false;
+        // Original `KillTimer(true)` kills only the macro timer. The normal AI
+        // timer and the serialized macro deadline both remain untouched.
+        self.macro_timer_is_running = false;
     }
 
     /// Read a u16 LE at the macro PC cursor, advance the cursor by 2,

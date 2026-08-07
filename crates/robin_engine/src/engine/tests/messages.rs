@@ -60,6 +60,55 @@ fn self_stimulus_chain_reenters_until_stable_in_originating_frame() {
 }
 
 #[test]
+fn post_reentrant_macro_cleanup_preserves_nested_wait_deadline() {
+    use crate::ai::{AiState, MacroOpcode, StimulusType, Substate};
+
+    let sim_context = crate::sim_rng::test_context();
+    let sim = &sim_context;
+    let mut engine = EngineInner::new();
+    engine.control.frame_counter = 458;
+    let mut entity = make_test_civilian(crate::element::Posture::Upright);
+    let Entity::Civilian(civilian_data) = &mut entity else {
+        unreachable!("civilian fixture changed entity kind")
+    };
+    civilian_data.npc.ai_brain =
+        crate::element::AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(0)));
+    let civilian = engine.add_entity(entity);
+    {
+        let ai = engine
+            .get_entity_mut(civilian)
+            .and_then(Entity::ai_controller_mut)
+            .expect("test civilian has AI");
+        ai.current_state = AiState::Default;
+        ai.current_substate = Substate::DefaultInMacroWaitingForDone;
+        ai.macro_command = vec![MacroOpcode::Wait as u8, 50, 0];
+        ai.macro_command_offset = 0;
+        ai.number_of_remaining_macro_bytes = 3;
+        ai.macro_in_progress = true;
+        ai.macro_timer_is_running = false;
+        ai.outbox
+            .reentrant
+            .self_stimuli
+            .push(StimulusType::EventDone);
+        ai.outbox.reentrant.finish_macro_after_self_stimuli = true;
+    }
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.drain_self_stimuli_for_npc(sim, civilian, &assets);
+
+    let ai = engine
+        .get_entity(civilian)
+        .and_then(Entity::ai_controller)
+        .expect("test civilian retains AI");
+    assert_eq!(ai.when_does_macro_timer_ring, 508);
+    assert!(!ai.macro_in_progress);
+    assert!(!ai.macro_timer_is_running);
+    assert!(!ai.outbox.reentrant.finish_macro_after_self_stimuli);
+    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+}
+
+#[test]
 fn condolation_reenters_think_before_dispatch_returns() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;

@@ -46,7 +46,9 @@ fn substate_groups() {
 }
 
 #[test]
-fn finishing_patrol_macro_kills_only_the_macro_timer() {
+fn outside_think_patrol_macro_finishes_after_reentrant_reach_point() {
+    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+
     let sim = crate::sim_rng::test_context();
     let mut ai = AiController::new(17);
     ai.current_state = AiState::Default;
@@ -56,7 +58,7 @@ fn finishing_patrol_macro_kills_only_the_macro_timer() {
         current_waypoint_index: 0,
         last_waypoint_index: 0,
         forward: true,
-        size: 1,
+        size: 6,
         history: Vec::new(),
     });
     ai.number_of_remaining_macro_bytes = 0;
@@ -67,20 +69,84 @@ fn finishing_patrol_macro_kills_only_the_macro_timer() {
     ai.macro_timer_is_running = true;
     ai.when_does_macro_timer_ring = 700;
 
-    ai.execute_next_macro_command(&sim, &AiContext::default());
+    let waypoints = vec![
+        RawWaypoint {
+            x: 5,
+            y: 5,
+            sector: 1,
+            level: 0,
+            command: WaypointCommand::None,
+        },
+        RawWaypoint {
+            x: 10,
+            y: 10,
+            sector: 1,
+            level: 0,
+            command: WaypointCommand::None,
+        },
+        RawWaypoint {
+            x: 20,
+            y: 20,
+            sector: 1,
+            level: 0,
+            command: WaypointCommand::None,
+        },
+        RawWaypoint {
+            x: 30,
+            y: 30,
+            sector: 1,
+            level: 0,
+            command: WaypointCommand::None,
+        },
+        RawWaypoint {
+            x: 40,
+            y: 40,
+            sector: 1,
+            level: 0,
+            command: WaypointCommand::None,
+        },
+        RawWaypoint {
+            x: 50,
+            y: 50,
+            sector: 1,
+            level: 0,
+            command: WaypointCommand::None,
+        },
+    ];
+    let ctx = AiContext {
+        position: Position {
+            x: 10.0,
+            y: 10.0,
+            sector: SectorHandle::new(1),
+            level: 0,
+        },
+        self_animation: crate::order::OrderType::WaitingUpright,
+        hiking_paths: std::sync::Arc::new(vec![RawHikingPath { waypoints }]),
+        ..AiContext::default()
+    };
 
+    ai.execute_next_macro_command(&sim, &ctx);
+
+    assert!(ai.macro_in_progress);
+    assert!(ai.macro_timer_is_running);
+    assert!(ai.outbox.reentrant.finish_macro_after_self_stimuli);
+    assert_eq!(
+        ai.outbox.reentrant.self_stimuli,
+        [StimulusType::EventReachPoint]
+    );
+
+    // Model the nested waypoint WAIT50 before the outer ExecuteNextMacroCommand
+    // tail resumes. Its deadline survives the outer KillTimer(true).
+    ai.when_does_macro_timer_ring = 508;
+    ai.finish_patrol_macro();
     assert!(
         ai.timer_is_running,
         "Original KillTimer(true) preserves the normal timer"
     );
     assert_eq!(ai.when_does_timer_ring, 900);
     assert!(!ai.macro_timer_is_running);
-    assert_eq!(ai.when_does_macro_timer_ring, 700);
+    assert_eq!(ai.when_does_macro_timer_ring, 508);
     assert_eq!(ai.current_substate, Substate::DefaultEnroute);
-    assert_eq!(
-        ai.outbox.reentrant.self_stimuli,
-        [StimulusType::EventReachPoint]
-    );
 }
 
 #[test]

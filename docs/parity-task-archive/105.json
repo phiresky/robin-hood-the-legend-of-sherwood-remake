@@ -1,0 +1,9 @@
+{
+  "id": "105",
+  "subject": "Finish patrol macros after synchronous reach-point recursion",
+  "description": "Nescafe Profile_001 Restart replay-002 consumed two Rust-only RuntimeBuildingExitWait draws at frame 508. Task 75 correctly deferred a code change until a diagnostic recapture was available. The fresh schema-14 seed-4002 recapture exposed the actual earlier divergence at frame 458: Civilian 85 completed a six-point patrol macro while already on its next waypoint. Original ExecuteNextMacroCommand calls GoTo outside Think; GoTo synchronously dispatches EventReachPoint, whose nested waypoint path arms WAIT50 (ring 508), then the outer macro completion clears macro_in_progress and macro_timer_is_running without erasing that deadline. Rust queued the self-stimulus, performed the outer cleanup first, then let the nested WAIT overwrite both flags to true; at frame 508 that incorrectly built a building-exit sequence and consumed two draws. Outside-Think multi-point macro completion now queues a post-self-stimulus cleanup marker when GoTo emits EventReachPoint. The owner drain applies the outer cleanup after the recursive stimulus stack, preserving the ring while clearing both flags. Controller and engine-level regressions cover the ordering. The fresh schema-14 recapture matches every frame; the frozen representative clears frame 508 and advances to an independent frame-1495 motion-state frontier. Nescafe Profile_002 Continue replay-012 clears its frame-507 RNG pair and advances to an independent frame-634 state frontier. The schema-14 Cyrdach Profile_156 and Nescafe Profile_001 replay-009 task-36 controls remain exact through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task64_vip_idle_rng"
+}
