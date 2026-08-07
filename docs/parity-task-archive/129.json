@@ -1,0 +1,9 @@
+{
+  "id": "129",
+  "subject": "Apply piercing damage before ladder-wall fall translation",
+  "description": "SuN1Sh1nE Profile_004 Savegame_021 replay-009 reached an independent frame-977 mismatch where PC 167 had 80 life points in Original but remained at 100 in Rust after an otherwise matching arrow hit and FallingLadderWall reaction. Original RHElementActorHuman dispatches ReceiveArrowDamage by calling ReceivePiercingDamage before TranslateArrowDamage; only the latter posture switch routes OnLadder and OnWall victims through TranslateLadderWallFall. Rust apply_piercing_damage instead returned through the ladder fall before damage math, accidentally making ladder and wall occupants immune to arrows and stones. The fix retains the pre-hit posture, applies piercing life/concussion effects and the damage titbit first, then performs the ladder-wall fall translation. Focused coverage requires both the 100-to-80 life change and the FallingLadderWall order. On the combined parity runner dated 2026-08-07 23:17:36, the representative clears frame 977 and advances to a sole independent PC 167 motion-state frontier at frame 978. The shared task-36 controls, Cyrdach Profile_156 Savegame_001 replay-009 and Nescafe Profile_001 Savegame_001 replay-009, continue to match every recorded frame through exact EOF on the same combined runner, as validated with Task125.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task129_ladder_piercing_damage"
+}

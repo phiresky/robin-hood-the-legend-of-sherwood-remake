@@ -1057,17 +1057,14 @@ impl EngineInner {
             return;
         }
 
-        // Ladder/wall arm — route to `translate_ladder_wall_fall`
-        // before damage math, like `apply_generic_damage` and
-        // `apply_push_effect`.
+        // Capture the translation posture before applying damage.  Unlike
+        // generic damage, Original's ReceiveArrowDamage / ReceiveStoneDamage
+        // dispatch calls ReceivePiercingDamage first and only then runs the
+        // posture switch in TranslateArrowDamage / TranslateDamage.
         let pre_posture = self
             .get_entity(victim_id)
             .map(|e| e.element_data().posture)
             .unwrap_or_default();
-        if matches!(pre_posture, Posture::OnLadder | Posture::OnWall) {
-            self.translate_ladder_wall_fall(assets, victim_id, damage_element);
-            return;
-        }
 
         let victim = match self.world.entities.get(victim_id) {
             Some(e) => e,
@@ -1104,6 +1101,14 @@ impl EngineInner {
         // Raw attempted damage — overkill hits show the same number
         // as a non-overkill hit would.  `add_damage_number` no-ops on 0.
         self.add_damage_number(victim_id, damage);
+
+        // The ladder/wall translation is an arrow/stone hit reaction, not a
+        // damage-immunity arm: ReceivePiercingDamage has already subtracted
+        // life and applied concussion when Original gets here.
+        if matches!(pre_posture, Posture::OnLadder | Posture::OnWall) {
+            self.translate_ladder_wall_fall(assets, victim_id, damage_element);
+            return;
+        }
 
         // Already-lying arm: `Lying/UnderNet/Flying/Carried/
         // OnShoulders/Tied` falls through to `Dead/DeadBack`, which

@@ -86,6 +86,43 @@ fn terminal_building_move_preserves_prior_actor_done_edge() {
 }
 
 #[test]
+fn piercing_damage_on_ladder_applies_damage_before_fall_translation() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let victim = engine.add_entity(make_test_pc(Posture::OnLadder));
+    attach_test_campaign_identities(&mut engine);
+
+    let damage =
+        SequenceElement::new_damage(1, Command::ReceiveArrowDamage, Some(victim), None, 20, 0);
+    let sequence = engine.orders.sequence_manager.launch_element(damage);
+
+    engine.dispatch_receive_damage(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::default(),
+        victim,
+        sequence,
+        0,
+    );
+
+    assert_eq!(engine.get_entity(victim).unwrap().human_life_points(), 80);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .orders
+            .front()
+            .map(|order| order.order_type),
+        Some(OrderType::FallingLadderWall),
+        "the piercing hit still translates to the ladder-fall reaction"
+    );
+}
+
+#[test]
 fn zoom_state_machine() {
     let display = HostDisplayState::default();
     let mut engine = EngineInner::new();
