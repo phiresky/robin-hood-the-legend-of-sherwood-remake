@@ -1,0 +1,8 @@
+{
+  "id": "74",
+  "subject": "Translate recorded group-move sectors through retained topology",
+  "description": "DONE. Three schema-12 random-save controls (Cyrdach Profile_156 Restart/replay-006, Cyrdach Profile_156 Savegame_000/replay-006, and Nescafe Profile_001 Savegame_000/replay-006) panicked while decoding a group move to (1443,1135): recorded goal sector 55 had no geometrically containing Rust motion area. Original RHParity::RecordGroupMove records pSectorGoal->GetSectorNumber(); when a patch is selected, pSectorGoal is the patch's underlying position sector while the command destination is the patch waypoint, which need not lie inside that sector polygon. The replay already retains an exact Original sparse-sector to Rust canonical position-sector mapping in EntityMap, so GroupMove now uses that topology identity directly. Only sparse door/jump semantic overlays, which intentionally have no Rust position-sector identity, re-enter spatial selection; an unmapped non-semantic sector still panics rather than inventing a fallback. A focused regression covers sector-55 translation without click containment, and all three target controls reach exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

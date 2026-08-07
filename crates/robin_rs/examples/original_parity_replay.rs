@@ -27,6 +27,7 @@ use robin_engine::fast_find_grid::LineIndex;
 use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::profiles::Action;
+use robin_engine::sector::SectorNumber;
 use robin_engine::sprite::BBox;
 use robin_rs::Host;
 use robin_rs::gfx_types::BlendMode;
@@ -934,87 +935,65 @@ impl TraceCommand {
                 goal_layer,
             } => {
                 let destination: MapPoint = destination.into();
-                let goal_override = {
-                    let raw_index = usize::try_from(goal_sector).unwrap_or_else(|_| {
-                        panic!("group-move has negative sector index {goal_sector}")
-                    });
-                    // The Original records its heterogeneous fast-grid
-                    // sector-array index, which Rust does not retain. Resolve
-                    // its isomorphic motion area from the other authoritative
-                    // command fields.
-                    let containing = engine
-                        .fast_grid()
-                        .level
-                        .sectors
-                        .iter()
-                        .filter(|sector| {
-                            sector.layer == goal_layer && sector.contains_point(destination)
-                        })
-                        .collect::<Vec<_>>();
-                    let has_semantic_overlay = containing
-                        .iter()
-                        .any(|sector| sector.sector_type.is_door() || sector.sector_type.is_jump())
-                        || engine.group_move_door_at(destination).is_some();
-                    if has_semantic_overlay {
-                        // Door and jump polygons intentionally overlap their
-                        // underlying motion areas. A motion-only override
-                        // would erase the Original's selected overlay and
-                        // change route construction (notably MoveToLine's
-                        // nearest jump-line point). Re-enter the ordinary
-                        // spatial selection with the recorded point and the
-                        // parity-matched live PC reference instead.
-                        None
-                    } else {
-                        let candidates = engine
+                let goal_override = match entity_map
+                    .translate_position_sector(goal_sector, goal_layer)
+                {
+                    Some(goal) => {
+                        engine
+                            .fast_grid()
+                            .level
+                            .sector_number_map
+                            .get(&goal.0)
+                            .and_then(|&index| engine.fast_grid().level.sectors.get(index))
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "group-move Original sector {goal_sector} maps to missing Rust \
+                                     position sector {}",
+                                    goal.0
+                                )
+                            });
+                        Some(goal)
+                    }
+                    None => {
+                        let raw_index = usize::try_from(goal_sector).unwrap_or_else(|_| {
+                            panic!("group-move has negative sector index {goal_sector}")
+                        });
+                        // RecordGroupMove writes RHSector::GetSectorNumber().
+                        // Motion/building identities have an exact translation
+                        // in EntityMap. Door and jump click sectors do not:
+                        // Rust intentionally represents those semantic overlays
+                        // outside the canonical position-sector id space, so
+                        // re-run the spatial selection only for such an overlay.
+                        let containing = engine
                             .fast_grid()
                             .level
                             .sectors
                             .iter()
                             .filter(|sector| {
-                                sector.layer == goal_layer
-                                    && sector.sector_type.is_motion()
-                                    && sector.sector_type.is_area()
-                                    && sector.contains_point(destination)
+                                sector.layer == goal_layer && sector.contains_point(destination)
                             })
                             .collect::<Vec<_>>();
-                        match candidates.as_slice() {
-                            [sector] => Some((sector.sector_number, goal_layer)),
-                            [] => {
-                                match containing.as_slice() {
-                                    [sector]
-                                        if sector.sector_type.is_door()
-                                            || sector.sector_type.is_jump() =>
-                                    {
-                                        // Preserve semantic overlay selection.
-                                        // Re-running the ordinary spatial lookup
-                                        // lets perform_group_move use its canonical
-                                        // door/jump routing instead of collapsing
-                                        // the hit to an underlying motion area.
-                                        None
-                                    }
-                                    _ => panic!(
-                                        "group-move raw sector index {raw_index} has no \
-                                     motion area at {destination:?} on layer {goal_layer}; containing \
-                                     semantic sectors: {:?}",
-                                        containing
-                                            .iter()
-                                            .map(|sector| (
-                                                sector.sector_number,
-                                                sector.sector_type,
-                                                sector.underlying_sector,
-                                                sector.door_index,
-                                            ))
-                                            .collect::<Vec<_>>()
-                                    ),
-                                }
-                            }
-                            many => panic!(
-                                "group-move raw sector index {raw_index} is ambiguous \
-                             at {destination:?} on layer {goal_layer}: {:?}",
-                                many.iter()
-                                    .map(|sector| sector.sector_number)
-                                    .collect::<Vec<_>>(),
-                            ),
+                        let has_semantic_overlay =
+                            containing.iter().any(|sector| {
+                                sector.sector_type.is_door() || sector.sector_type.is_jump()
+                            }) || engine.group_move_door_at(destination).is_some();
+                        if has_semantic_overlay {
+                            None
+                        } else {
+                            panic!(
+                                "group-move Original sector {raw_index} has no retained position-sector \
+                                 identity and no semantic overlay at {destination:?} on layer \
+                                 {goal_layer}; containing sectors: {:?}",
+                                containing
+                                    .iter()
+                                    .map(|sector| (
+                                        sector.sector_number,
+                                        sector.sector_type,
+                                        sector.underlying_sector,
+                                        sector.door_index,
+                                    ))
+                                    .collect::<Vec<_>>()
+                            )
                         }
                     }
                 };
@@ -4460,6 +4439,21 @@ impl EntityMap {
             .unwrap_or_else(|| panic!("original entity {original:?} has no Rust correspondence"))
     }
 
+    /// Translate an Original `RHSector::GetSectorNumber()` into Rust's compact
+    /// canonical position-sector identity. Sparse door/jump/patch overlay
+    /// sectors deliberately return `None`; they are replayed through spatial
+    /// semantic selection instead.
+    fn translate_position_sector(&self, original: i16, layer: u16) -> Option<(SectorNumber, u16)> {
+        let original = u16::try_from(original)
+            .unwrap_or_else(|_| panic!("Original position sector is negative: {original}"));
+        self.sectors.get(&original).map(|&runtime| {
+            let runtime = i16::try_from(runtime).unwrap_or_else(|_| {
+                panic!("Rust position sector {runtime} exceeds its signed identity domain")
+            });
+            (SectorNumber::new(runtime), layer)
+        })
+    }
+
     fn sectors_equivalent(&self, original: u16, rust: u16) -> bool {
         original == rust || self.sectors.get(&original) == Some(&rust)
     }
@@ -7881,6 +7875,25 @@ mod tests {
         map.refresh_trace_index(shifted_trace_id, 158);
 
         assert_eq!(map.translate(shifted_trace_id), rust_id);
+    }
+
+    #[test]
+    fn group_move_translates_retained_sector_identity_without_click_containment() {
+        let map = EntityMap {
+            entities: BTreeMap::new(),
+            entities_by_creation_order: BTreeMap::new(),
+            sectors: BTreeMap::from([(55, 23)]),
+            runtime_creation_order_boundary: 0,
+        };
+
+        // Patch moves record the patch's underlying position sector while the
+        // recorded waypoint may lie outside that sector's polygon. Translation
+        // therefore depends only on retained construction topology.
+        assert_eq!(
+            map.translate_position_sector(55, 0),
+            Some((SectorNumber::new(23), 0))
+        );
+        assert_eq!(map.translate_position_sector(56, 0), None);
     }
 
     #[test]
