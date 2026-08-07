@@ -1098,10 +1098,13 @@ fn estimate_damage(
             // position's attacker) for range/effects, but `mpMe->GetSword()`
             // (the AI currently evaluating all positions) for strike
             // direction when querying the defender's local protection.
+            // `combatPosition.uwTargetDirection` may describe how the target
+            // would face this proposed position, but `RHSword::GetProtection`
+            // dereferences the target and reads its live `GetDirection()`.
             let strike_dir = crate::combat::get_strike_direction(evaluator_prof, strike);
             let protection = crate::combat::get_sword_protection(
                 def_prof,
-                cp.target_direction as i16,
+                target.direction as i16,
                 target_to_attacker_sector,
                 strike_dir,
                 attacker.elevation as f32,
@@ -1535,6 +1538,63 @@ mod required_combat_input_tests {
                 50,
             ),
             123
+        );
+    }
+
+    #[test]
+    fn damage_protection_uses_live_target_facing_not_proposed_facing() {
+        use crate::profiles::{
+            HtHWeaponProfile, ThrustProfile, WeaponThrustDirection, WeaponThrustKind,
+        };
+
+        let mut weapon = HtHWeaponProfile {
+            // Front is unprotected while the left side absorbs 90%. If the
+            // proposed facing leaks into GetProtection, this test returns 1
+            // damage instead of the Original's 10.
+            protection_by_localization: [0, 0, 90, 0, 0],
+            ..HtHWeaponProfile::default()
+        };
+        weapon.thrusts[0] = ThrustProfile {
+            kind: WeaponThrustKind::Straight,
+            direction: WeaponThrustDirection::NonApplicable,
+            cutting: 90,
+            maximal_distance: 100,
+            ..ThrustProfile::default()
+        };
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles.hth_weapons.push(weapon);
+
+        let attacker = FighterSnapshot {
+            position: Position {
+                y: -10.0,
+                ..Position::default()
+            },
+            ..fighter(1)
+        };
+        let target = FighterSnapshot {
+            // Live facing is sector 0. The hypothetical combat position says
+            // sector 4, as EvaluateCombatPosition may do when the defender is
+            // expected to turn toward a proposed attacker position.
+            direction: 0,
+            position: Position::default(),
+            ..fighter(2)
+        };
+        let fighters = [attacker, target];
+        let mut position = CombatPosition {
+            attacker: 1,
+            attacker_position: Position::default(),
+            target: 2,
+            target_position: Position {
+                x: 10.0,
+                ..Position::default()
+            },
+            target_direction: 4,
+            ..CombatPosition::default()
+        };
+
+        assert_eq!(
+            estimate_damage(1, &mut position, view(&fighters), &profiles, 0),
+            10
         );
     }
 

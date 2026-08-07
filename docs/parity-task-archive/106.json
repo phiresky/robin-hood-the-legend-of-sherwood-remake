@@ -1,0 +1,9 @@
+{
+  "id": "106",
+  "subject": "Use live defender facing for combat-position protection",
+  "description": "SuN1Sh1nE Profile_004 Savegame_036 replay-002 diverged at frame 672 when Soldier 179 selected sword-circle sector 12 instead of Original sector 13. Both implementations enumerated the same authorized candidates from the same pre-movement PC 319 position. Rust scored sectors 12 and 13 at an equal four points and retained the earlier sector, while Original selected sector 13. Original RHArtificialMalignity::EstimateDamage uses the candidate-adjusted uwTargetDirection only for its from-behind heuristic; RHSword::GetProtection dereferences the defender and reads its live GetDirection. Rust incorrectly passed the candidate-adjusted direction into localized protection, inflating sector 12 by one damage point and creating the false tie. Protection scoring now uses the fighter snapshot's live target direction while retaining the candidate direction for from-behind evaluation. A focused asymmetric-protection regression distinguishes those inputs. The representative clears frame 672 and advances to an independent frame-898 Soldier 181 command/substate frontier. Savegame_004 replay-002 and replay-003, plus Savegame_009 replay-003, retain their known later unrelated frontiers at frames 15965, 16390, and 22354.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task75_building_exit_rng"
+}
