@@ -12,3 +12,6 @@ Savegame_linux3/Profile_001/Savegame_046/replay-001-session-0001.jsonl.zst
 Savegame_nicouzouf/Profile_001/Savegame_051/replay-003-session-0001.jsonl.zst
 Savegame_nicouzouf/Profile_001/Savegame_051/replay-009-session-0001.jsonl.zst
 Savegame_nicouzouf/Profile_001/Savegame_051/replay-013-session-0001.jsonl.zst
+# Task 96: seek-point choice contradicts current Original source/assets.
+Savegame_nicouzouf/Profile_001/Savegame_067/replay-008-session-0001.jsonl.zst
+Savegame_nicouzouf/Profile_001/Savegame_067/replay-009-session-0001.jsonl.zst
