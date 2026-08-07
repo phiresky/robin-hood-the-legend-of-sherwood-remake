@@ -6663,6 +6663,47 @@ fn ai_human_handle_resolution_preserves_soldier_kind() {
 }
 
 #[test]
+fn ai_focus_accepts_live_object_element() {
+    let mut engine = EngineInner::new();
+    let observer = engine.add_entity(make_scripted_soldier(""));
+    let ale = engine.add_entity(Entity::Bonus(ElementBonus {
+        element: ElementData {
+            kind: ElementKind::ObjectBonus,
+            active: true,
+            ..Default::default()
+        },
+        object: ObjectData {
+            object_type: ObjectType::Ale,
+            ..Default::default()
+        },
+    }));
+    engine
+        .world
+        .entities
+        .get_mut(observer)
+        .and_then(Entity::ai_controller_mut)
+        .expect("observer retains AI")
+        .outbox
+        .actor
+        .set_focus(ale.index());
+
+    engine.drain_pending_for_npc(
+        &crate::sim_rng::test_context(),
+        observer,
+        &LevelAssets::new(),
+    );
+
+    let npc = engine
+        .world
+        .entities
+        .get(observer)
+        .and_then(Entity::npc_data)
+        .expect("observer retains NPC data");
+    assert_eq!(npc.follow_target, Some(ale));
+    assert_eq!(npc.eye_status, crate::element::EyeStatus::Follow);
+}
+
+#[test]
 fn direct_parade_and_special_strike_drain_boundary_does_not_leak() {
     let mut engine = EngineInner::new();
     let enemy = engine.add_entity(make_scripted_soldier("StateRecorder"));

@@ -286,7 +286,10 @@ pub struct AiActorOutbox {
     pub set_principal: Option<HumanHandle>,
     pub friend_primary_target_swaps: Vec<(EntityId, HumanHandle)>,
     pub shoot_target: Option<HumanHandle>,
-    pub focus: Option<HumanHandle>,
+    /// Raw element-table handle passed to Original `Focus(RHElement*)`.
+    /// Unlike combat targets, this may name an object (for example an ale
+    /// bottle that an NPC is considering picking up).
+    pub focus: Option<ElementHandle>,
     pub unalert_near_charly_seekers: Option<CharlySeekerTarget>,
     pub refill_bow_ammo: bool,
     pub set_reported_to_officer: Vec<(NpcHandle, bool)>,
@@ -325,7 +328,7 @@ impl AiActorOutbox {
     /// Queue `Focus(element)` with Original's synchronous last-write-wins
     /// semantics. A Think call can issue `Focus(NULL)` and then focus a new
     /// target before the deferred engine drain.
-    pub fn set_focus(&mut self, target: HumanHandle) {
+    pub fn set_focus(&mut self, target: ElementHandle) {
         // `Focus(element)` with a null element is `Unfocus()` in the
         // Original; handle 0 is the AI's null-target sentinel.
         if target == 0 {
@@ -369,7 +372,7 @@ pub(crate) struct AiActorCoreEffects {
     pub set_principal: Option<HumanHandle>,
     pub friend_primary_target_swaps: Vec<(EntityId, HumanHandle)>,
     pub shoot_target: Option<HumanHandle>,
-    pub focus: Option<HumanHandle>,
+    pub focus: Option<ElementHandle>,
     pub focus_point: Option<Position>,
     pub unfocus: bool,
     pub set_direction_instantly: Option<i16>,

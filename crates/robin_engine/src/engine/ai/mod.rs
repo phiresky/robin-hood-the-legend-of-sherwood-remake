@@ -6272,7 +6272,11 @@ impl EngineInner {
         // itself is deferred.
         let mut focus_channel_fired = false;
         if let Some(target_handle) = effects.focus {
-            let target_id = self.expect_human_id_for_ai_handle(target_handle, "AI focus target");
+            // Original `RHElementActorNPC::Focus` accepts an arbitrary
+            // `RHElement*`. Object-handling AI legitimately focuses bonuses
+            // such as ale bottles, so preserve the element kind while still
+            // treating a missing raw slot as corrupted state.
+            let target_id = self.expect_entity_id_for_index(target_handle, "AI focus target");
             let npc = self
                 .world
                 .entities

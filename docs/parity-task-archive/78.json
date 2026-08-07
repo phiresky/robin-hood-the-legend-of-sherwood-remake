@@ -1,0 +1,8 @@
+{
+  "id": "78",
+  "subject": "Allow AI focus to target generic elements",
+  "description": "DONE. SuN1Sh1nE Profile_004 Savegame_034 replay-014 panicked at frame 1008 because the AI focus drain asserted that raw slot 246 was human, while that live slot correctly contained a Bonus/Ale. This was not stale-slot reuse: the Ale event handler deliberately calls Focus on its interesting object. Original RHelementactornpc.cpp::Focus(RHElement*) accepts any element and stores it as pMobileTarget. AiActorOutbox now types the focus channel as ElementHandle and the drain resolves it through the strict live entity-table resolver without imposing a human kind; combat-only target channels retain their HumanHandle validation. A focused integration regression queues an Ale bonus focus and verifies the observer follows that exact object. The representative clears the former frame-1008 invariant panic and advances to an independent VipIdleRemark RNG frontier at frame 1035; the schema-14 Cyrdach replay-009 control remains exact through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
