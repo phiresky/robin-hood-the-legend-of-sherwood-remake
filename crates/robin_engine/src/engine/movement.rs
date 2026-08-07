@@ -47,6 +47,32 @@ fn path_request_needs_source_extraction(direct_dispatch: bool, source_authorized
     !direct_dispatch && !source_authorized
 }
 
+/// Input passed to a ladder/wall lift's action translation.
+///
+/// Original `DetermineMovementAnimation` passes an authored upright walk/run
+/// action through verbatim: the lift itself maps `RunningUpright` to its fast
+/// climb row, independently of `RHMOVE_FAST`. Rust can also reach this point
+/// with a carried movement variant, where the element's speed flag remains the
+/// useful normalization signal.
+#[inline]
+fn climb_lift_translation_input(action: OrderType, is_fast: bool) -> OrderType {
+    match action {
+        OrderType::WalkingUpright | OrderType::RunningUpright => action,
+        OrderType::WalkingWithSword
+        | OrderType::RunningWithSword
+        | OrderType::WalkingWithShield
+        | OrderType::WalkingCrouched
+        | OrderType::WalkingWithCorpse => {
+            if is_fast {
+                OrderType::RunningUpright
+            } else {
+                OrderType::WalkingUpright
+            }
+        }
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod group_move_authorization_tests {
     use super::*;
@@ -151,6 +177,21 @@ mod group_move_authorization_tests {
             Some(MotionState::Terminated)
         );
         assert_eq!(non_sprite_movement_motion(OrderType::WalkingUpright), None);
+    }
+
+    #[test]
+    fn authored_running_action_stays_fast_on_climb_without_fast_flag() {
+        assert_eq!(
+            climb_lift_translation_input(OrderType::RunningUpright, false),
+            OrderType::RunningUpright
+        );
+        assert_eq!(
+            crate::sector::LiftType::Ladder.translate_climb_action(
+                climb_lift_translation_input(OrderType::RunningUpright, false),
+                false,
+            ),
+            OrderType::ClimbingLadderUpFast
+        );
     }
 }
 
@@ -10732,21 +10773,8 @@ impl EngineInner {
             let lift_input = if matches!(
                 posture_after,
                 crate::element::Posture::OnWall | crate::element::Posture::OnLadder
-            ) && matches!(
-                move_action,
-                OrderType::WalkingUpright
-                    | OrderType::RunningUpright
-                    | OrderType::WalkingWithSword
-                    | OrderType::RunningWithSword
-                    | OrderType::WalkingWithShield
-                    | OrderType::WalkingCrouched
-                    | OrderType::WalkingWithCorpse
             ) {
-                if is_fast {
-                    OrderType::RunningUpright
-                } else {
-                    OrderType::WalkingUpright
-                }
+                climb_lift_translation_input(move_action, is_fast)
             } else {
                 move_action
             };

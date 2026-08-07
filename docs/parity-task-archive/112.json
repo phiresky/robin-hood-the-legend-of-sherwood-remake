@@ -1,0 +1,9 @@
+{
+  "id": "112",
+  "subject": "Preserve authored running action during climb-lift translation",
+  "description": "SuN1Sh1nE Profile_004 Savegame_021 replay-009 diverged at frame 518 when Soldier99 handed off from PassDoor to its following ladder MoveOk: Original published RHNONANIMATION_CLIMBING_LADDER_UP_FAST (296), while Rust published ordinary ClimbingLadderUp (35). Original DetermineMovementAnimation passes the movement element's authored action directly to RHSectorLift; the ladder maps RunningUpright to its fast-climb token independently of RHMOVE_FAST. Rust instead normalized every upright climb input solely from the flag, downgrading an explicitly authored RunningUpright action when the gate-generated move had empty flags. Climb-lift input normalization now preserves explicit WalkingUpright and RunningUpright while retaining flag-based normalization for carried sword, shield, crouch, and corpse variants. A focused regression covers RunningUpright without FAST mapping to ClimbingLadderUpFast. The representative clears frame 518 and advances to an independent Soldier99 direction/sprite-row frontier at frame 594. Both task-36 schema-14 replay-009 controls match every recorded frame through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task64_vip_idle_rng"
+}
