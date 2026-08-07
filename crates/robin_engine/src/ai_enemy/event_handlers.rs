@@ -2391,12 +2391,14 @@ impl EnemyAi {
             // Focus on the interesting object — locks the eye-tracking
             // cone onto the arrow's interesting object so the detection
             // cone narrows along the threat axis.
-            if self.base.interesting_object != 0 {
-                self.base
-                    .outbox
-                    .actor
-                    .set_focus(self.base.interesting_object);
-            }
+            // `Focus(mpInterestingObject)` is unconditional in the Original.
+            // A null interesting object is meaningful: `Focus(NULL)` calls
+            // `Unfocus()` and clears a stale point-focus left by an earlier
+            // CALL_LOOKTHERE in the patrol's synchronous arrow broadcast.
+            self.base
+                .outbox
+                .actor
+                .set_focus(self.base.interesting_object);
             if !self.hey_folks_look_there(pos, 200, LookThereContinuation::EventGetArrow, ctx) {
                 self.event_get_arrow_after_look_there(ctx, tick);
             }

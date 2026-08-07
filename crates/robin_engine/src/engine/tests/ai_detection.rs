@@ -2290,6 +2290,65 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
 }
 
 #[test]
+fn arrow_reaction_with_null_interesting_object_clears_stale_look_there_focus() {
+    use crate::ai::{AiState, CrossNpcAction, Position, StimulusInfo, StimulusType, Substate};
+    use crate::element::{Camp, Entity, EyeStatus};
+
+    let mut engine = EngineInner::new();
+    let source_id = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
+    let receiver_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    for id in [source_id, receiver_id] {
+        let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
+            panic!("arrow-focus test NPC changed kind")
+        };
+        soldier.element.active = true;
+        soldier.npc.life_points = 100;
+    }
+    {
+        let receiver = engine.get_entity_mut(receiver_id).unwrap();
+        receiver.npc_data_mut().unwrap().eye_status = EyeStatus::Stare;
+        assert_eq!(receiver.enemy_ai().unwrap().base.interesting_object, 0);
+    }
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .get_entity_mut(source_id)
+        .and_then(Entity::ai_controller_mut)
+        .unwrap()
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .push(CrossNpcAction::SendStimulus {
+            target: receiver_id.index(),
+            stimulus_type: StimulusType::EventGetArrow,
+            info: StimulusInfo::Position(Position::default()),
+            fallback_to_sender: None,
+            to_whole_patrol: false,
+        });
+
+    crate::sim_rng::with_seed(0xA013_1091, |sim| {
+        engine.process_synchronous_reentrant_actions_for(sim, source_id, &assets);
+    });
+
+    let receiver_ai = engine.get_entity(receiver_id).unwrap().enemy_ai().unwrap();
+    assert_eq!(receiver_ai.base.current_state, AiState::Seeking);
+    assert_eq!(
+        receiver_ai.base.current_substate,
+        Substate::SeekingArrowReactiontime
+    );
+    assert_eq!(
+        engine
+            .get_entity(receiver_id)
+            .and_then(Entity::npc_data)
+            .unwrap()
+            .eye_status,
+        EyeStatus::LookForward,
+        "Focus(NULL) must unfocus the stale CALL_LOOKTHERE point stare"
+    );
+}
+
+#[test]
 fn look_there_broadcast_skips_attacking_chief_and_reacts_on_eligible_member() {
     use crate::ai::{AiState, CrossNpcAction, LookThereContinuation, Position, Substate};
     use crate::element::{Camp, Entity};

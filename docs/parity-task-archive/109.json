@@ -1,0 +1,9 @@
+{
+  "id": "109",
+  "subject": "Clear nested look-there focus during patrol arrow reactions",
+  "description": "SuN1Sh1nE Profile_004 Savegame_011 replay-001 diverged at frame 694 for Soldiers 89, 90, 92, and 93: Original retained LookForward while Rust retained Stare, although both reached SeekingArrowReactiontime. DispatchStimulusToWholePatrol delivers EVENT_GET_ARROW synchronously across the patrol; nested HeyFolksLookThere calls temporarily set eligible members to a point Stare. When the outer patrol walk later delivers each member's own EventGetArrowStandardProcedure, Original unconditionally calls Focus(mpInterestingObject). A null interesting-object pointer calls Unfocus and restores LookForward. Rust incorrectly guarded the focus effect on a nonzero handle, leaving the nested point focus live. EventGetArrow now always queues set_focus; the existing null-handle semantics translate it to Unfocus. A focused synchronous-stimulus test covers stale Stare plus a null interesting object. The representative replay matches every recorded frame through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task64_vip_idle_rng"
+}
