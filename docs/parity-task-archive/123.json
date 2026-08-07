@@ -1,0 +1,9 @@
+{
+  "id": "123",
+  "subject": "Apply conscious hit eye status at the synchronous Think boundary",
+  "description": "The original Nescafe Profile_001 Restart replay-012 view-status cluster representative was already exact after later fixes, but Profile_001 Savegame_007 replay-002 retained a single frame-309 difference: Original Soldier21 had EYES_DIE_OR_GET_UNCONSCIOUS while Rust still had EYES_LOOK_FORWARD. The actor command, animation, AI state/substate, and hit response otherwise matched. Original RHArtificialMalignity handles a conscious EVENT_GOTHIT by calling SetViewStatus(EYES_DIE_OR_GET_UNCONSCIOUS) inline before RHElementActorHuman::TranslateHitDamage continues to the falling-hit order. Rust's AI correctly produced the eye-status recovery effect, but apply_hit_damage returned from the synchronous Think with that effect still queued, delaying the visible status beyond the frame boundary. The knockout path already consumed the identical recovery effect synchronously after EVENT_LOSE_CONSCIOUSNESS; the conscious EVENT_GOTHIT path now drains it at the corresponding source boundary. A focused engine regression proves that conscious hit damage installs DieOrGetUnconscious immediately and leaves no deferred eye write. Profile_001 Savegame_007 replay-002 now matches every recorded frame through EOF, and both task-36 schema-14 replay-009 controls remain exact through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task123_synchronous_hit_eyes"
+}

@@ -2665,6 +2665,63 @@ mod tests {
         );
     }
 
+    #[test]
+    fn conscious_hit_applies_ai_eye_status_synchronously() {
+        let mut engine = make_engine();
+        let null_slot = engine.add_entity(make_soldier(WorldPoint3D::default(), None));
+        engine
+            .get_entity_mut(null_slot)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap()
+            .hth_weapon_id = 1;
+        let attacker = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 20.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap()
+            .hth_weapon_id = 1;
+        let damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveHitDamage, Some(victim));
+        let seq_id = engine.launch_element(damage);
+        let assets = assets_with_sword_profile(1, 50);
+
+        engine.apply_hit_damage(
+            &crate::sim_rng::test_context(),
+            &assets,
+            victim,
+            Some(attacker),
+            1,
+            true,
+            (seq_id, 0),
+        );
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        assert_eq!(
+            victim_entity.npc_data().unwrap().eye_status,
+            EyeStatus::DieOrGetUnconscious
+        );
+        assert_eq!(
+            victim_entity
+                .ai_controller()
+                .unwrap()
+                .outbox
+                .recovery
+                .set_eye_status,
+            None,
+            "the synchronous EVENT_GOTHIT write must not wait for the next owner slot"
+        );
+    }
+
     fn assets_with_sword_profile(energy: u16, max_distance: u16) -> LevelAssets {
         let mut profile_manager = crate::profiles::ProfileManager::new();
         let mut weapon = crate::profiles::HtHWeaponProfile::default();

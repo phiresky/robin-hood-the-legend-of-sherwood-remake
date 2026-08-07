@@ -1303,6 +1303,11 @@ impl EngineInner {
                 self.dispatch_synchronous_ai_think_preserving_detection_fifo(
                     sim, victim_id, assets, stimulus,
                 );
+                // EVENT_GOTHIT applies SetViewStatus inline before
+                // RHElementActorHuman::TranslateHitDamage continues to the
+                // fall animation. Rust represents that synchronous write in
+                // the AI recovery outbox, so consume it at the same boundary.
+                self.tick_ai_pending_resurrection_and_eyes_for_npc(victim_id);
             }
         }
 
