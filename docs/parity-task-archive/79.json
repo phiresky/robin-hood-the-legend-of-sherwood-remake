@@ -1,0 +1,8 @@
+{
+  "id": "79",
+  "subject": "Exclude individually malformed parity recordings",
+  "description": "DONE. Three old-corpus linux3 recordings (Profile_001 ExQuickSave replay-007/replay-008 and Savegame_046 replay-001) panic before simulation because a JSONL record ends mid-value. Their zstd containers pass `zstd --long=28 -t`, proving this is capture-record truncation rather than compressed-file corruption; the reader reports EOF at the exact malformed line. The full-snapshot builder now supports docs/PARITY_RETIRED_TRACES.txt and excludes individual old-corpus traces while retaining every neighboring replay. The manifest also excludes task #73's four source-inconsistent Cyrdach recordings pending fresh captures. Rebuilding the canonical snapshot removes exactly seven records.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
