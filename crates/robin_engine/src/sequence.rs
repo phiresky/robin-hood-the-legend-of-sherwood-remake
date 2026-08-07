@@ -4380,6 +4380,15 @@ impl SequenceManager {
 
     /// Remove completed/interrupted sequences.
     pub fn friday_evening_cleanup(&mut self) {
+        self.friday_evening_cleanup_preserving(&std::collections::BTreeSet::new());
+    }
+
+    /// Remove completed/interrupted sequences except those still addressed by
+    /// an external legacy pointer emulation.
+    pub fn friday_evening_cleanup_preserving(
+        &mut self,
+        retained_sequences: &std::collections::BTreeSet<SequenceId>,
+    ) {
         // `BTreeMap::retain` preserves keys, so every `SequenceId`
         // stored elsewhere (`elements_to_go`, `actor_live`,
         // `actor_in_progress`,
@@ -4390,7 +4399,8 @@ impl SequenceManager {
         // down without a terminal state change. `elements_to_go`
         // entries for removed ids are dropped lazily by `hourglass`'s
         // existence check.
-        self.sequences.retain(|_, seq| !seq.is_to_be_deleted());
+        self.sequences
+            .retain(|seq_id, seq| retained_sequences.contains(seq_id) || !seq.is_to_be_deleted());
 
         let sequences = &self.sequences;
         self.actor_live.retain(|_, refs| {

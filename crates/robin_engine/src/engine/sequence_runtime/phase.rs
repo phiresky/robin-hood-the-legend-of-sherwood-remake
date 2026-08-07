@@ -30,6 +30,7 @@ impl EngineInner {
                 element.state
             );
         }
+        let retained_terminal = element.state == SequenceState::Terminated;
 
         if element.priority == SequencePriority::NotYetSet {
             let priority = {
@@ -53,6 +54,16 @@ impl EngineInner {
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
             self.dispatch_condolations(sim, assets);
+            return false;
+        }
+        // `RHElementActor::Instruct` checks the element state again after
+        // `GenerateTransition`. Its entry assertion is absent from retail, so
+        // a terminal pointer retained in Human's shoot list reaches this
+        // point, but the explicit runtime guard still rejects it before
+        // priority arbitration or translation. ProcessShootList consequently
+        // keeps the pointer and the actor continues its already-started bow
+        // Wait order instead of restarting that order on this frame.
+        if retained_terminal {
             return false;
         }
         if !self.arbitrate_held_shoot_instruct(seq_id, elem_idx) {

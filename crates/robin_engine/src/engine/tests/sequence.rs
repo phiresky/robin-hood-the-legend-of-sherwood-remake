@@ -2067,9 +2067,9 @@ fn pc_shoot_bow_waits_through_load_and_wait_then_retries_only_while_aiming() {
 
 #[test]
 fn pc_shoot_list_readmits_retained_terminated_element() {
-    use crate::element::{Command, Posture};
-    use crate::order::OrderType;
-    use crate::sequence::{SequenceElement, SequenceState};
+    use crate::element::{ActionState, Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
     let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::default();
@@ -2098,26 +2098,55 @@ fn pc_shoot_list_readmits_retained_terminated_element() {
         SequenceState::Terminated
     );
 
-    // Retail Original retains and serializes raw shoot-list pointers. Its
-    // only guard against re-instructing a terminated entry is a debug assert,
-    // so a loaded retail save re-admits the pointer once the PC aims again.
+    // Model the first fresh bow-Wait slot after the retained shot terminated.
+    // Original serializes this as command Wait with animation AimingWithBow.
+    let wait_order_id = engine.orders.allocate_order_id();
+    let mut wait = SequenceElement::new_generic(1, Command::Wait, Some(pc));
+    wait.priority = SequencePriority::Wait;
+    wait.posture_after_transition = Posture::Upright;
+    wait.action_state_after_transition = ActionState::AimingWithBow;
+    wait.orders.push_back(Order::new(
+        OrderType::AimingWithBow,
+        0.0,
+        0.0,
+        wait_order_id,
+    ));
+    let wait_seq = engine.orders.sequence_manager.launch_element(wait);
     engine
-        .get_entity_mut(pc)
-        .unwrap()
-        .element_data_mut()
-        .sprite
-        .last_action = OrderType::AimingWithBow;
+        .orders
+        .sequence_manager
+        .element_in_progress(wait_seq, 0);
+    bind_test_action_point(
+        &mut engine,
+        pc,
+        OrderType::AimingWithBow,
+        crate::coordinates::SpriteLocalPoint::ZERO,
+        crate::coordinates::SpriteAnchor::ZERO,
+    );
+    {
+        let entity = engine.get_entity_mut(pc).unwrap();
+        entity.actor_data_mut().unwrap().action_state = ActionState::AimingWithBow;
+        let sprite = entity.sprite_mut();
+        sprite.last_action = OrderType::AimingWithBow;
+        sprite.last_processed_order_id = wait_order_id.get();
+        sprite.frame_count = u16::MAX;
+    }
+
+    // Retail drops the entry assertion and therefore re-enters Instruct, but
+    // its post-GenerateTransition terminal-state guard returns false. The
+    // retained pointer stays queued and, crucially, the live Wait is not
+    // interrupted and recreated with a fresh order ID.
     engine.process_shoot_list_for(&sim, &assets, pc);
 
-    assert!(
+    assert_eq!(
         engine
             .get_entity(pc)
             .unwrap()
             .human_data()
             .unwrap()
-            .pending_shoots
-            .is_empty(),
-        "accepted re-instruction must consume the retained shoot-list entry"
+            .pending_shoots,
+        [crate::sequence::SequenceElementRef::new(incoming_seq, 0)],
+        "the post-transition terminal guard must reject and retain the pointer"
     );
     assert_eq!(
         engine
@@ -2126,8 +2155,39 @@ fn pc_shoot_list_readmits_retained_terminated_element() {
             .get_element(incoming_seq, 0)
             .unwrap()
             .state,
-        SequenceState::Impossible,
-        "the missing target deterministically proves that translation ran"
+        SequenceState::Terminated
+    );
+    let (selected_seq, _, selected_order) = engine
+        .orders
+        .sequence_manager
+        .current_order_for_actor(pc)
+        .expect("the live bow Wait must remain selected");
+    assert_eq!(selected_seq, wait_seq);
+    assert_eq!(selected_order.order_id, wait_order_id);
+
+    let retained = std::collections::BTreeSet::from([incoming_seq]);
+    engine
+        .orders
+        .sequence_manager
+        .friday_evening_cleanup_preserving(&retained);
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(incoming_seq, 0)
+            .is_some(),
+        "Friday cleanup must preserve the backing allocation of a retained raw shoot pointer"
+    );
+
+    let (_, _, result) = engine.tick_actor_animation_for(&sim, &assets, pc);
+    assert_eq!(
+        result.unwrap().motion,
+        crate::sprite::MotionState::InProgress
+    );
+    assert_eq!(
+        engine.get_entity(pc).unwrap().sprite().frame_count,
+        0,
+        "the second Wait tick must increment the START sentinel instead of restarting it"
     );
 }
 

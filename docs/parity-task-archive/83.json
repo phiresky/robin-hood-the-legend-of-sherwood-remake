@@ -1,0 +1,8 @@
+{
+  "id": "83",
+  "subject": "Preserve live bow Wait across retained terminal shoot retry",
+  "description": "DONE. The schema-14 linux3 Profile_001 Savegame_022 replay-012 frame-738 sprite-frame-count mismatch followed task #81's retail re-admission of ShootBow sequence 272195/0. Original's entry terminal-state assertion is absent in retail, but RHElementActor::Instruct has a second explicit state guard after GenerateTransition: the retained Terminated element reaches transition generation, then returns false before priority arbitration and Translate. Rust omitted that second guard, interrupted the fresh command-Wait/AimingWithBow order created at frame 737, and installed another Wait at frame 738; RHSprite correctly treated its new order ID as START and left frame_count at 0xFFFF instead of advancing the existing order to 0. The held-shoot path now reproduces the post-transition rejection, leaves the raw pointer in Human's FIFO, and preserves its backing terminal sequence across Friday cleanup while referenced. A focused regression verifies the terminal pointer remains queued, the selected bow-Wait order ID is unchanged, its second PerformAction advances 0xFFFF to 0, and cleanup retains the backing element. The representative clears frame 738 and the related cleanup boundary at frame 768, advancing to an independent Pc 80 position-goal frontier at frame 999. Both schema-14 Cyrdach Profile_156 Savegame_001 replay-009 and Nescafe Profile_001 Savegame_001 replay-009 controls match every recorded frame through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

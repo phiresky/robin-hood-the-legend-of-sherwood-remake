@@ -2573,7 +2573,27 @@ impl EngineInner {
         // ── Sequence manager cleanup ─────────────────────────────
         // Run every 256 frames (or every frame in debug).
         if self.control.frame_counter.is_multiple_of(256) {
-            self.orders.sequence_manager.friday_evening_cleanup();
+            // Human's shoot list stores raw RHSequenceElement pointers. A
+            // retail save can retain a terminal pointer past Friday cleanup;
+            // the allocation then remains readable as stale legacy state.
+            // Keep the Rust backing sequence alive while that explicit pointer
+            // emulation exists, rather than turning the next ProcessShootList
+            // call into a missing-element panic.
+            let retained_shoot_sequences = self
+                .world
+                .entities
+                .occupied()
+                .filter_map(|(_, entity)| entity.human_data())
+                .flat_map(|human| {
+                    human
+                        .pending_shoots
+                        .iter()
+                        .map(|element_ref| element_ref.sequence_id)
+                })
+                .collect::<std::collections::BTreeSet<_>>();
+            self.orders
+                .sequence_manager
+                .friday_evening_cleanup_preserving(&retained_shoot_sequences);
         }
 
         // ── Process pending AI orders ─────────────────────────────
