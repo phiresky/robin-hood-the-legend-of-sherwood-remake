@@ -1,0 +1,9 @@
+{
+  "id": "124",
+  "subject": "Preserve StopMovement stages in deferred same-point GoTo",
+  "description": "SuN1Sh1nE Profile_004 Savegame_021 replay-009 advanced through the frame-854 synchronous-Halt seek fix and reached an EnemySeekDirectionShuffle RNG over-consumption at frame 897. Soldier 99 entered SeekArea from AttackingReactiontime while its installed order was TransitionWalkingUprightWaitingUpright. Original GoTo does not treat that transition as idle, so it books MoveOk toward the same personal seek point and consumes no direction-shuffle draw in that frame; Rust treated every queued Halt as if it had already exposed NONANIMATION_END and recursively reached the point. The preceding frame-854 case is distinct: AttackingReactiontimeRunning and SeekArea issue two StopAll calls around a walk-to-run transition, so Original does expose an accepted idle order before GoTo and recursively advances. The fix counts deferred Halt multiplicity across both the live actor outbox and SetState effect prefixes, then projects it through Original RHSequenceElementMovement::StopMovement: one Halt retains exactly WalkingUpright, RunningUpright, and WalkingCrouched by rewriting them to their three transition-to-wait twins; those six base/result actions remain non-idle, while an interruptible upright action outside that family exposes the default idle order, and a second Halt interrupts a transition installed by the first. Focused table-driven coverage exercises the six retained negatives, the walk-to-run positive, two-Halt ordinary and speed GoTo positives, and the non-interruptable negative. The representative clears both frame 854 and frame 897 and advances to an independent PC life-point frontier at frame 977. Task-36 schema-14 replay-009 controls remain delegated to the shared repaired runner validation.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task124_halt_goto_stages"
+}

@@ -2937,24 +2937,61 @@ impl AiController {
         }
     }
 
-    /// Whether an Original-synchronous `Halt()` is waiting anywhere in the
+    /// Number of Original-synchronous `Halt()` calls waiting anywhere in the
     /// owner-local effect FIFO. `SetState` moves the current actor prefix into
     /// a state-change notification, so checking only the live actor outbox
     /// misses halts issued earlier in the same Think call.
-    fn has_pending_actor_halt(&self) -> bool {
-        self.outbox.actor.halt
-            || self
+    fn pending_actor_halt_count(&self) -> u16 {
+        let count = |effects: &crate::ai::effects::AiActorOutbox| {
+            u16::from(effects.halt) + u16::from(effects.additional_halts)
+        };
+        count(&self.outbox.actor)
+            + self
                 .outbox
                 .reentrant
                 .owner_work
                 .iter()
-                .any(|work| match work {
+                .map(|work| match work {
                     AiOwnerWork::StateChange(notification) => notification
                         .actor_effects_before_callback
                         .as_ref()
-                        .is_some_and(|effects| effects.halt),
-                    _ => false,
+                        .map_or(0, count),
+                    _ => 0,
                 })
+                .sum::<u16>()
+    }
+
+    /// Predict whether deferred synchronous `Halt()` calls leave the actor in
+    /// one of Original GoTo's three accepted idle animations.
+    ///
+    /// `RHSequenceElementMovement::StopMovement` retains exactly three base
+    /// movement actions by rewriting them to their transition-to-wait twins.
+    /// The twins can already be visible in the cloned AI context after an
+    /// earlier owner barrier, so they are retained here as well. Every other
+    /// interruptible action falls through to `RHSEQ_INTERRUPTED`; an upright
+    /// soldier's default Wait then exposes `WAITING_UPRIGHT`,
+    /// `WAITING_ALERTED`, or `NONANIMATION_END`. A second Halt interrupts any
+    /// transition installed by the first.
+    fn pending_halt_exposes_goto_idle(&self, ctx: &AiContext) -> bool {
+        let halt_count = self.pending_actor_halt_count();
+        if halt_count == 0
+            || ctx.posture != crate::element::Posture::Upright
+            || ctx.in_uninterruptible_command
+        {
+            return false;
+        }
+        if halt_count >= 2 {
+            return true;
+        }
+        !matches!(
+            ctx.self_animation,
+            crate::order::OrderType::WalkingUpright
+                | crate::order::OrderType::RunningUpright
+                | crate::order::OrderType::WalkingCrouched
+                | crate::order::OrderType::TransitionWalkingUprightWaitingUpright
+                | crate::order::OrderType::TransitionRunningUprightWaitingUpright
+                | crate::order::OrderType::TransitionWalkingCrouchedWaitingCrouched
+        )
     }
 
     /// Low-level movement primitive — queues a movement intent without
@@ -2999,10 +3036,9 @@ impl AiController {
         //   - animation state ∈ {WAITING_UPRIGHT, WAITING_ALERTED,
         //                         NONANIMATION_END}
         // When the gate fires, `end_think` drains `already_on_point`
-        // into a `Think(EVENT_REACHPOINT)` re-entry. Original applies Halt
-        // synchronously, so a Halt queued earlier in this Think has already
-        // removed the stale moving animation by the time GoTo reads it.
-        let idle_for_goto_short_circuit = self.has_pending_actor_halt()
+        // into a `Think(EVENT_REACHPOINT)` re-entry. Deferred Halt effects are
+        // projected through Original StopMovement by the helper above.
+        let idle_for_goto_short_circuit = self.pending_halt_exposes_goto_idle(ctx)
             || matches!(
                 ctx.self_animation,
                 crate::order::OrderType::WaitingUpright
@@ -3151,7 +3187,7 @@ impl AiController {
         // idle animations; a running patrol member may pass within five
         // units of a newly coordinated formation point and must still book
         // the replacement walk rather than synthesize EventReachPoint.
-        let idle_for_goto_short_circuit = self.has_pending_actor_halt()
+        let idle_for_goto_short_circuit = self.pending_halt_exposes_goto_idle(ctx)
             || matches!(
                 ctx.self_animation,
                 crate::order::OrderType::WaitingUpright

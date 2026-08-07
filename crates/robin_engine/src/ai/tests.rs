@@ -706,8 +706,9 @@ fn goto_already_on_point_uses_original_animation_gate() {
 }
 
 #[test]
-fn goto_already_on_point_observes_synchronous_pending_halt() {
-    let ctx = goto_short_circuit_ctx(crate::order::OrderType::RunningUpright);
+fn goto_already_on_point_observes_synchronous_pending_halt_multiplicity() {
+    let ctx =
+        goto_short_circuit_ctx(crate::order::OrderType::TransitionWalkingUprightRunningUpright);
     let mut ai = AiController::new(1);
     ai.think_recursion_depth = 1;
     ai.outbox.actor.queue_halt();
@@ -723,19 +724,69 @@ fn goto_already_on_point_observes_synchronous_pending_halt() {
             source: AiStateChangeSource::SelfActor,
             actor_effects_before_callback: Some(halted_prefix),
         }));
-
     ai.go_to(ctx.position, GotoFlags::empty(), &ctx);
 
     assert!(ai.already_on_point);
     assert!(ai.take_pending_orders().is_empty());
 
+    let running_ctx = goto_short_circuit_ctx(crate::order::OrderType::RunningUpright);
     let mut speed_ai = AiController::new(1);
     speed_ai.think_recursion_depth = 1;
     speed_ai.outbox.actor.queue_halt();
-    speed_ai.go_to_speed(ctx.position, GotoFlags::empty(), 1.5, &ctx);
+    speed_ai.outbox.actor.queue_halt();
+    speed_ai.go_to_speed(running_ctx.position, GotoFlags::empty(), 1.5, &running_ctx);
 
     assert!(speed_ai.already_on_point);
     assert!(speed_ai.take_pending_orders().is_empty());
+
+    for animation in [
+        crate::order::OrderType::WalkingUpright,
+        crate::order::OrderType::RunningUpright,
+        crate::order::OrderType::WalkingCrouched,
+        crate::order::OrderType::TransitionWalkingUprightWaitingUpright,
+        crate::order::OrderType::TransitionRunningUprightWaitingUpright,
+        crate::order::OrderType::TransitionWalkingCrouchedWaitingCrouched,
+    ] {
+        let transition_ctx = goto_short_circuit_ctx(animation);
+        let mut one_halt_ai = AiController::new(1);
+        one_halt_ai.think_recursion_depth = 1;
+        one_halt_ai.outbox.actor.queue_halt();
+
+        one_halt_ai.go_to(transition_ctx.position, GotoFlags::empty(), &transition_ctx);
+
+        assert!(!one_halt_ai.already_on_point, "animation {animation:?}");
+        assert_eq!(
+            one_halt_ai.take_pending_orders().len(),
+            1,
+            "animation {animation:?}"
+        );
+    }
+
+    let walking_ctx = goto_short_circuit_ctx(crate::order::OrderType::WalkingUpright);
+    let mut two_halt_ai = AiController::new(1);
+    two_halt_ai.think_recursion_depth = 1;
+    two_halt_ai.outbox.actor.queue_halt();
+    two_halt_ai.outbox.actor.queue_halt();
+
+    two_halt_ai.go_to(walking_ctx.position, GotoFlags::empty(), &walking_ctx);
+
+    assert!(two_halt_ai.already_on_point);
+    assert!(two_halt_ai.take_pending_orders().is_empty());
+
+    let mut uninterruptible_ctx = ctx.clone();
+    uninterruptible_ctx.in_uninterruptible_command = true;
+    let mut uninterruptible_ai = AiController::new(1);
+    uninterruptible_ai.think_recursion_depth = 1;
+    uninterruptible_ai.outbox.actor.queue_halt();
+
+    uninterruptible_ai.go_to(
+        uninterruptible_ctx.position,
+        GotoFlags::empty(),
+        &uninterruptible_ctx,
+    );
+
+    assert!(!uninterruptible_ai.already_on_point);
+    assert_eq!(uninterruptible_ai.take_pending_orders().len(), 1);
 }
 
 #[test]
