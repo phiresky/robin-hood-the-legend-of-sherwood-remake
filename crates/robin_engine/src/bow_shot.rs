@@ -1872,8 +1872,10 @@ fn tick_bow_shots_matching(
     let mut events = BowTickEvents::default();
     let mut pending_fired = Vec::new();
     let mut target_ground_positions = EntitySlots::filled(entities.len(), None);
+    let mut target_map_positions = EntitySlots::filled(entities.len(), None);
     for (entity_id, entity) in entities.occupied() {
         target_ground_positions[entity_id] = Some(bow_target_ground_position(entity));
+        target_map_positions[entity_id] = Some(entity.element_data().position_map());
     }
 
     #[cfg(test)]
@@ -1958,15 +1960,27 @@ fn tick_bow_shots_matching(
                 let target_id = shot.target.unwrap_or_else(|| {
                     panic!("active bow shot for {shooter_id:?} has no target at initialization")
                 });
-                let target_pos = target_ground_positions
-                    .get(target_id)
+                // The soldier override for a downward leaning-out shot uses
+                // GetPositionMap on both participants. Ordinary and high bow
+                // shots remain in the Human arm, which uses PositionGround.
+                let leaning_out = current_order_type == OrderType::ShootingWithBowLeaningOut;
+                let target_pos = (if leaning_out {
+                    target_map_positions.get(target_id)
+                } else {
+                    target_ground_positions.get(target_id)
+                })
                     .and_then(|position| *position)
                     .unwrap_or_else(|| {
                         panic!(
                             "active bow shot for {shooter_id:?} lost target {target_id:?} at initialization"
                         )
                     });
-                let shooter_pos = entity.element_data().position();
+                let shooter_pos = if leaning_out {
+                    entity.element_data().position_map()
+                } else {
+                    let position = entity.element_data().position();
+                    MapPoint::new(position.x, position.y)
+                };
                 let dx = target_pos.x - shooter_pos.x;
                 let dy = target_pos.y - shooter_pos.y;
                 entity.element_data_mut().set_direction_goal(
@@ -5102,6 +5116,66 @@ mod tests {
             direction_goal,
             "the live target is sampled once per shooting order"
         );
+    }
+
+    #[test]
+    fn leaning_out_shot_initializes_from_live_map_positions_and_holds_while_turning() {
+        let sim = crate::sim_rng::test_context();
+        let mut target = make_pc(50.0, 20.0);
+        target.element_data_mut().set_position(WorldPoint3D {
+            x: 50.0,
+            y: 120.0,
+            z: 100.0,
+        });
+        let mut shooter = make_soldier(0.0, 0.0);
+        shooter.element_data_mut().posture = Posture::LeaningOut;
+        shooter.actor_data_mut().unwrap().action_state = ActionState::AimingWithBowDown;
+        shooter.element_data_mut().set_direction_instantly(14);
+        bind_test_bow_release_rows(&mut shooter, OrderType::ShootingWithBowLeaningOut);
+
+        let shooter_id = EntityId::Soldier(crate::entity_id::SoldierId(0));
+        let target_id = EntityId::Pc(crate::entity_id::PcId(1));
+        let mut entities = entity_table(vec![Some(shooter), Some(target)]);
+        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(shooter_id, target_id);
+        assert_eq!(
+            begin_bow_shot(
+                &mut entities,
+                &mut sm,
+                shooter_id,
+                target_id,
+                seq_id,
+                elem_idx,
+                false,
+                10,
+                Some(ShootMode::Down),
+                &mut 1u32,
+            ),
+            BeginShotResult::Started
+        );
+        entities
+            .get_mut(shooter_id)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .execute_order_initialising = true;
+
+        let events = tick_bow_shots(&sim, &mut entities, &mut sm);
+        assert!(events.fired.is_empty());
+
+        let shooter = entities.get(shooter_id).unwrap();
+        let expected_goal = crate::position_interface::vector_to_sector_0_to_15_iso(50.0, 20.0);
+        assert_ne!(
+            expected_goal,
+            crate::position_interface::vector_to_sector_0_to_15_iso(50.0, 120.0),
+            "the fixture must distinguish PositionMap from PositionGround"
+        );
+        assert_eq!(
+            i16::from(shooter.position_iface().get_direction_goal()),
+            expected_goal
+        );
+        assert_eq!(i16::from(shooter.position_iface().get_direction()), 13);
+        assert_eq!(shooter.sprite().current_row, 13);
+        assert_eq!(shooter.sprite().current_frame, 0);
     }
 
     #[test]

@@ -1,0 +1,8 @@
+{
+  "id": "97",
+  "subject": "Aim leaning-out bow shots from live map positions",
+  "description": "DONE. In schema-14 linux3 Profile_001 Savegame_045 replay-008 at frame 45041, Soldier 119 began ShootingWithBowLeaningOut at direction 14. Original RHElementActorSoldier::Execute initializes this override from antagonist GetPositionMap minus shooter GetPositionMap, producing goal 10, then Turn advances to direction 13 and PerformAction holds the first frame. Rust's selected bow owner already supplied the per-tick Turn and FrozenFirstFrame behavior but initialized every bow family from the Human arm's PositionGround target, leaving the leaning-out shot at goal/direction 14. The bow owner now snapshots live PositionMap for the downward override while preserving PositionGround for ordinary and high shots. Focused coverage distinguishes the two coordinate spaces and verifies goal, one-sector turn, direction row, and frozen first frame. The parity-profile replay clears frame 45041 and advances to an independent Projectile 391 spawn-Y frontier at frame 45043.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
