@@ -1,0 +1,9 @@
+{
+  "id": "101",
+  "subject": "Preserve the first deferred attentive-mode transition variant",
+  "description": "Savegame_linux3/Profile_001/Savegame_016 replays 002-008, 010-012, 014, and 015 diverged when Soldier 80 left an officer-report flow: Original launched LeaveAttentiveModeOfficer while Rust launched ordinary LeaveAttentiveMode. Original SetAttentiveMode updates will_be_attentive synchronously, so after the first same-target request launches its officer-fast transition, the later Default-state ordinary request returns without replacing it. Rust deferred that actor effect and used an Option with last-write-wins semantics, allowing ReturnToDuty's ordinary request to erase the officer variant. AiActorOutbox now preserves the first queued request when a later request has the same target. A focused regression covers fast-then-ordinary coalescing. Replays 002, 003, 008, and 015 clear frame 7670 and advance uniformly to the independent frame-7728 visibility-query frontier; the schema-14 Cyrdach Profile_156 and Nescafe Profile_001 replay-009 controls remain exact through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task72-moveok-waiting"
+}

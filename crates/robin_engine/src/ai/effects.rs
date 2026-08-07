@@ -313,6 +313,24 @@ pub struct AiActorOutbox {
 }
 
 impl AiActorOutbox {
+    /// Queue an owner-local `SetAttentiveMode` call without replacing an
+    /// earlier request for the same target state.
+    ///
+    /// Original updates `will_be_attentive` synchronously when the first
+    /// call launches its transition element. A later call with the same
+    /// target therefore returns immediately, leaving the first call's
+    /// officer-fast choice authoritative. Rust drains this outbox after the
+    /// AI borrow is released, so preserve that ordering explicitly.
+    pub fn queue_set_attentive_mode(&mut self, request: AttentiveModeEffect) {
+        if self
+            .set_attentive_mode
+            .is_some_and(|pending| pending.target == request.target)
+        {
+            return;
+        }
+        self.set_attentive_mode = Some(request);
+    }
+
     /// Queue one synchronous actor `Halt()` without losing multiplicity.
     pub fn queue_halt(&mut self) {
         if self.halt {
@@ -513,6 +531,20 @@ impl AiActorOutbox {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_attentive_target_preserves_first_transition_variant() {
+        let mut effects = AiActorOutbox::default();
+
+        effects.queue_set_attentive_mode(AttentiveModeEffect::new(false, true));
+        effects.queue_set_attentive_mode(AttentiveModeEffect::new(false, false));
+
+        let pending = effects
+            .set_attentive_mode
+            .expect("first attentive-mode request remains queued");
+        assert!(!pending.target);
+        assert!(pending.fast_officer_variant);
+    }
 
     #[test]
     fn focus_operations_are_last_write_wins() {

@@ -3209,10 +3209,13 @@ impl EnemyAi {
         // skipped the element launch, which in turn meant the
         // `TransitionWaitingUprightWaitingAlerted` lean-forward animation
         // never played.  `set_attentive_mode` owns the flag flip.
-        self.base.outbox.actor.set_attentive_mode = Some(AttentiveModeEffect::new(
-            target_attentive,
-            fast_officer_variant,
-        ));
+        self.base
+            .outbox
+            .actor
+            .queue_set_attentive_mode(AttentiveModeEffect::new(
+                target_attentive,
+                fast_officer_variant,
+            ));
 
         // `change_alert_status` writes `alert` from the same
         // (state, substate) table and calls `set_alert_status(alert)`
@@ -4063,8 +4066,10 @@ impl EnemyAi {
         // LeaveAttentiveMode alongside the return route. This is deliberately
         // queued after the common routine has built that route, matching the
         // observable sequence-manager registration order of the virtual call.
-        self.base.outbox.actor.set_attentive_mode =
-            Some(AttentiveModeEffect::new(self.forced_attentive, false));
+        self.base
+            .outbox
+            .actor
+            .queue_set_attentive_mode(AttentiveModeEffect::new(self.forced_attentive, false));
 
         // Preserve the corresponding script callback item explicitly.
         // Without this final FIFO entry, an older queued transition (notably
