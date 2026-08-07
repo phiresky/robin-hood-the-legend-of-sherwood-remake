@@ -3720,6 +3720,96 @@ mod tests {
     }
 
     #[test]
+    fn saved_human_sweep_is_rehydrated_for_the_live_strike_order() {
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let assets = assets_with_nonstraight_profile(
+            SwordStrike::E,
+            crate::profiles::WeaponThrustKind::Lateral,
+        );
+        install_test_melee_order(&mut engine, attacker, victim, SwordStrike::E, true);
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .sword_sweep = crate::element::HumanSwordSweepState {
+            victims: vec![victim],
+            initial_angle: 0.0,
+            current_angle: 0.0,
+            final_angle: std::f32::consts::PI,
+        };
+        assert!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .sweep_state
+                .is_none()
+        );
+
+        engine.rebind_retained_sweep_to_active_strike(&assets, attacker);
+
+        let sweep = engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .sweep_state
+            .as_ref()
+            .expect("serialized human sweep must regain its executable mirror");
+        assert_eq!(sweep.pending_victims, vec![victim]);
+        assert_eq!(sweep.initial_angle, 0.0);
+        assert_eq!(sweep.current_angle, 0.0);
+        assert_eq!(sweep.final_angle, std::f32::consts::PI);
+        assert_eq!(sweep.strike, SwordStrike::E);
+        assert_eq!(
+            sweep.strike_kind,
+            crate::profiles::WeaponThrustKind::Lateral
+        );
+
+        engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
+        assert!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .sword_sweep
+                .victims
+                .is_empty(),
+            "consuming the executable victim must consume the serialized human mirror too"
+        );
+        engine.rebind_retained_sweep_to_active_strike(&assets, attacker);
+        assert!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .sweep_state
+                .is_none(),
+            "the consumed save victim must not be rehydrated and hit again next frame"
+        );
+    }
+
+    #[test]
     fn later_circle_frame_tests_existing_angle_before_tail_advance() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;

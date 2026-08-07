@@ -1025,6 +1025,15 @@ impl EngineInner {
         let Some(entity) = self.get_entity(attacker_id) else {
             return;
         };
+        // The legacy save owns these fields on RHElementActorHuman itself.
+        // Rust's SweepState is only the executable mirror, so reconstruct it
+        // lazily when a loaded strike resumes in the middle of its sweep.
+        // Fresh strikes have an empty HumanSwordSweepState until their DONE
+        // action point initializes the effect and therefore cannot enter this
+        // path accidentally.
+        let saved_sweep = entity.human_data().and_then(|human| {
+            (!human.sword_sweep.victims.is_empty()).then(|| human.sword_sweep.clone())
+        });
         let Some(profile_idx) = get_hth_weapon_id_full(entity, &assets.profile_manager) else {
             return;
         };
@@ -1054,11 +1063,28 @@ impl EngineInner {
             } else {
                 1.0
             };
-        if let Some(sweep) = self
+        if let Some(actor) = self
             .get_entity_mut(attacker_id)
             .and_then(Entity::actor_data_mut)
-            .and_then(|actor| actor.sweep_state.as_mut())
         {
+            if actor.sweep_state.is_none()
+                && let Some(saved) = saved_sweep
+            {
+                actor.sweep_state = Some(crate::movement::SweepState {
+                    pending_victims: saved.victims,
+                    initial_angle: saved.initial_angle,
+                    current_angle: saved.current_angle,
+                    final_angle: saved.final_angle,
+                    rotation_per_frame: signed_rotation,
+                    direction: thrust.direction,
+                    strike,
+                    attacker_profile_idx: Some(profile_idx),
+                    strike_kind: thrust.kind,
+                });
+            }
+            let Some(sweep) = actor.sweep_state.as_mut() else {
+                return;
+            };
             sweep.rotation_per_frame = signed_rotation;
             sweep.direction = thrust.direction;
             sweep.strike = strike;
@@ -1157,10 +1183,18 @@ impl EngineInner {
             strike_kind,
         };
 
-        if let Some(entity) = self.world.entities.get_mut(attacker_id)
-            && let Some(actor) = entity.actor_data_mut()
-        {
-            actor.sweep_state = Some(sweep);
+        if let Some(entity) = self.world.entities.get_mut(attacker_id) {
+            if let Some(human) = entity.human_data_mut() {
+                human.sword_sweep = crate::element::HumanSwordSweepState {
+                    victims: sweep.pending_victims.clone(),
+                    initial_angle: sweep.initial_angle,
+                    current_angle: sweep.current_angle,
+                    final_angle: sweep.final_angle,
+                };
+            }
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.sweep_state = Some(sweep);
+            }
         }
 
         tracing::debug!(
@@ -1348,9 +1382,7 @@ impl EngineInner {
 
         // Phase 3: write back updated sweep states
         for active in sweeps {
-            if let Some(entity) = self.world.entities.get_mut(active.attacker_id)
-                && let Some(actor) = entity.actor_data_mut()
-            {
+            if let Some(entity) = self.world.entities.get_mut(active.attacker_id) {
                 let true_sweep = matches!(
                     active.sweep.strike_kind,
                     WeaponThrustKind::TrueCircle | WeaponThrustKind::TrueHalfCircle
@@ -1365,10 +1397,18 @@ impl EngineInner {
                 // victims and true-circle rotation state for the next
                 // Hourglass so the final sector is observable before the
                 // state is cleared.
-                if active.sweep.pending_victims.is_empty() && !keep_for_terminal_execute {
-                    actor.sweep_state = None;
-                } else {
-                    actor.sweep_state = Some(active.sweep);
+                let retain_executable =
+                    !active.sweep.pending_victims.is_empty() || keep_for_terminal_execute;
+                if let Some(human) = entity.human_data_mut() {
+                    human.sword_sweep = crate::element::HumanSwordSweepState {
+                        victims: active.sweep.pending_victims.clone(),
+                        initial_angle: active.sweep.initial_angle,
+                        current_angle: active.sweep.current_angle,
+                        final_angle: active.sweep.final_angle,
+                    };
+                }
+                if let Some(actor) = entity.actor_data_mut() {
+                    actor.sweep_state = retain_executable.then_some(active.sweep);
                 }
             }
         }

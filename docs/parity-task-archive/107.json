@@ -1,0 +1,8 @@
+{
+  "id": "107",
+  "subject": "Resume serialized human sword sweeps after legacy-save adoption",
+  "description": "DONE. Savegame_SuN1Sh1nE Profile_004 Savegame_009 replay-001 first diverged at frame 22639 on tied Soldier134: Original briefly cleared the BeingTied wait order while Rust retained it. PC343 was resuming a serialized SwordstrikeThrustE lateral sweep whose saved human-owned victim list contained Soldier134. Rust restored the authoritative HumanSwordSweepState victims and angles but left its executable ActorData sweep mirror empty, so the arc never advanced and never launched Original's ReceiveSwordDamage element. Retained sweeps now lazily rehydrate from the serialized human fields when their live sweep-strike order resumes, and initialization/advancement synchronizes the human-owned fields so a consumed victim cannot be rehydrated and hit again on the following frame. A focused regression covers hydration, consumption, and the no-repeat boundary. The representative replay and schema-14 Cyrdach Profile_156 Savegame_001 replay-009 and Nescafe Profile_001 Savegame_001 replay-009 controls match every recorded frame through EOF. Sibling SuN replays 005 and 013 clear the former Soldier134 divergence but this older validation worktree encounters the already-fixed Civilian82 motion-state cluster at frame 22622 first.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
