@@ -1,0 +1,9 @@
+{
+  "id": "127",
+  "subject": "Reject cover behind an untargeted shield bearer",
+  "description": "Cyrdach Profile_156 Restart replay-014 diverged at frame 1480 when archers Soldier69 and Soldier70 selected free shield bearers whose primary targets were null. Original briefly links each archer to the selected shield bearer, adopts that null target, and then ComputePositionBehindMyShieldBearer returns false before calculating a cover point. The failed CoverBehindShieldBearer decision falls through Shoot; with no valid shot target, both archers enter AttackingBowObservingLoading and equip their bows. Rust instead calculated a cover point despite the null target and substituted the archer's own position when checking the cover point's view radius, incorrectly accepting the formation and entering AttackingBowRunningBehindShieldBearer. The execution path now requires the selected shield bearer snapshot and preserves Original's explicit null-primary-target failure, clearing the link and falling through Shoot without inventing position data. A focused regression exercises the complete CoverBehindShieldBearer -> Shoot -> ArcherObserve fallback and verifies the EquipBow command. The representative clears frame 1480 and advances to an independent frame-1481 RNG/frame-1482 Soldier72 phalanx-timer frontier.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task127_untargeted_shield_bearer"
+}

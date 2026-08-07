@@ -1863,8 +1863,21 @@ impl EnemyAi {
                     // Run to cover position behind shield bearer.
                     self.update_shield_bearer_before_me(cover_shield_bearer);
                     // Adopt the shield bearer's primary target.
-                    if let Some(sb_snap) = self.find_fighter(cover_shield_bearer, tick) {
-                        self.base.primary_target = sb_snap.primary_target;
+                    let Some(sb_snap) = self.find_fighter(cover_shield_bearer, tick) else {
+                        self.update_shield_bearer_before_me(0);
+                        decision = Decision::Shoot;
+                        continue;
+                    };
+                    self.base.primary_target = sb_snap.primary_target;
+
+                    // Original ComputePositionBehindMyShieldBearer returns false
+                    // when the shield bearer has no primary target.  Do not
+                    // invent a target position here: the failed cover decision
+                    // must flow through Shoot (and potentially ArcherObserve).
+                    if self.base.primary_target == 0 {
+                        self.update_shield_bearer_before_me(0);
+                        decision = Decision::Shoot;
+                        continue;
                     }
                     if let Some(cover_pos) = self.compute_position_behind_shield_bearer(
                         self.shield_bearer_before_me,
@@ -1878,7 +1891,16 @@ impl EnemyAi {
                         let target_pos = self
                             .find_fighter(self.base.primary_target, tick)
                             .map(|f| f.position)
-                            .unwrap_or(ctx.position);
+                            .or_else(|| {
+                                ctx.entity_view(self.base.primary_target)
+                                    .map(|view| view.position)
+                            })
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "shield bearer target {} is missing from the live AI snapshot",
+                                    self.base.primary_target
+                                )
+                            });
                         let d = pos_diff(&target_pos, &cover_pos);
                         if square_norm(d) >= ctx.sq_standard_view_radius {
                             // Cover point too far from target — fall back to shoot
@@ -3334,6 +3356,59 @@ mod tests {
             ai.list_them.contains(&199),
             "BattleDecisions must not replace the persistent list with its tick snapshot"
         );
+    }
+
+    #[test]
+    fn cover_behind_untargeted_shield_bearer_falls_back_to_archer_observe() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(69);
+        ai.is_archer_unit = true;
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingReactiontimeRunning;
+        ai.base.primary_target = 126;
+
+        let ctx = AiContext {
+            remaining_arrows: 10,
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.nearby_fighters = vec![FighterSnapshot {
+            handle: 73,
+            is_friendly: true,
+            is_soldier: true,
+            is_shield_bearer: true,
+            primary_target: 0,
+            ..FighterSnapshot::default()
+        }];
+
+        assert!(ai.execute_battle_decision(
+            &sim,
+            Decision::CoverBehindShieldBearer,
+            Substate::AttackingReactiontimeRunning,
+            73,
+            &std::collections::BTreeMap::new(),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        ));
+
+        assert_eq!(ai.shield_bearer_before_me, 0);
+        assert_eq!(ai.base.primary_target, 0);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingBowObservingLoading
+        );
+        let mut launch_commands = Vec::new();
+        for work in &ai.base.outbox.reentrant.owner_work {
+            if let crate::ai::AiOwnerWork::StateChange(notification) = work
+                && let Some(effects) = &notification.actor_effects_before_callback
+            {
+                launch_commands.extend(effects.launch_commands.iter().copied());
+            }
+        }
+        launch_commands.extend(ai.base.outbox.actor.launch_commands.iter().copied());
+        assert_eq!(launch_commands, vec![crate::element::Command::EquipBow]);
     }
 }
 #[test]
