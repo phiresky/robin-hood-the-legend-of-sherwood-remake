@@ -1,0 +1,8 @@
+{
+  "id": "100",
+  "subject": "Scale downward bow launch shift in isometric Y",
+  "description": "DONE. In schema-14 linux3 Profile_001 Savegame_045 replay-008 at frame 45043, Projectile 391 spawned at map Y 2063.1184 in Rust versus 2067.7705 in Original after Soldier 119's diagonal downward shot. Original RHElementActorHuman::ComputeBowPoint(DownShoot) adds GetDirectionVector()*20; RHElement::GetDirectionVector constructs its sector vector with ASPECT_RATIO, scaling Y. Rust used the ordinary unit compass vector for this shift. Downward bow points now use sector_to_vector_iso, preserving the already-exact X and correcting the 4.65-unit Y residue. A focused diagonal regression distinguishes scaled from unscaled Y. The parity-profile replay clears frame 45043 and advances to an independent Soldier 118 StopMenace/path frontier at frame 45056.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

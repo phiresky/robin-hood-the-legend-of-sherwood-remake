@@ -1223,8 +1223,9 @@ pub fn compute_bow_point(
         },
         ShootMode::Down => {
             // Leaning-out soldiers shift the bow point by 20 units
-            // along the direction vector.
-            let (dx, dy) = crate::element::direction_vector_16(direction);
+            // along RHElement::GetDirectionVector(), whose Y component is
+            // scaled by the isometric aspect ratio.
+            let [dx, dy] = crate::position_interface::sector_to_vector_iso(direction);
             WorldPoint3D {
                 x: sprite_hand_point.x + dx * 20.0,
                 y: hand_y + dy * 20.0,
@@ -1969,12 +1970,12 @@ fn tick_bow_shots_matching(
                 } else {
                     target_ground_positions.get(target_id)
                 })
-                    .and_then(|position| *position)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "active bow shot for {shooter_id:?} lost target {target_id:?} at initialization"
-                        )
-                    });
+                .and_then(|position| *position)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "active bow shot for {shooter_id:?} lost target {target_id:?} at initialization"
+                    )
+                });
                 let shooter_pos = if leaning_out {
                     entity.element_data().position_map()
                 } else {
@@ -6722,6 +6723,13 @@ mod tests {
         assert_eq!(pt_down.z, BOW_Z_OFFSET_NORMAL);
         // Sector 4 = east (+x), so x shifts by ~20
         assert!(pt_down.x > pos.x + 15.0, "down-shot should shift x");
+
+        let diagonal = compute_bow_point(pos, ShootMode::Down, 10, hand);
+        let [iso_x, iso_y] = crate::position_interface::sector_to_vector_iso(10);
+        let (_, unscaled_y) = crate::element::direction_vector_16(10);
+        assert_ne!(iso_y, unscaled_y);
+        assert_eq!(diagonal.x, hand.x + iso_x * 20.0);
+        assert_eq!(diagonal.y, hand.y + iso_y * 20.0);
 
         // With non-zero elevation, Z should be elevation + offset,
         // and Y should have elevation added (isometric projection
