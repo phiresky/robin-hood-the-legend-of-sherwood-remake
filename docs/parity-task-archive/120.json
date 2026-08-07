@@ -1,0 +1,9 @@
+{
+  "id": "120",
+  "subject": "Start a lost-enemy seek after reaching a combat-alert hint",
+  "description": "DONE. Nescafe Profile_002 Continue replay-008 reached frame 465 with Soldier 112 in SeekingCombatAlert, then Original consumed 234 SeekPointSelection draws while Rust ran a fast battle overview, reacquired PC 342, switched to AttackingRunningToEnemy, and consumed only six unrelated idle draws. Original RHArtificialMalignity handles EVENT_REACHPOINT in SUBSTATE_SEEKING_COMBAT_ALERT by calling SeekArea(mposSeekPosition, AI_LOST_ENEMY_SEEK_RADIUS) with the default empty flags and undefined direction. Rust incorrectly called get_battle_overview(FAST_OVERVIEW). The reach-point handler now mirrors the Original lost-enemy search call. Focused coverage proves it builds a plain seek around the stored hint instead of entering combat. The representative Nescafe replay and both task-36 schema-14 controls match every recorded frame through exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task120_combat_alert_seek"
+}

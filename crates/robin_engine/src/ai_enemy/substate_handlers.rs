@@ -2193,7 +2193,19 @@ impl EnemyAi {
 
             Substate::SeekingCombatAlert => {
                 if stimulus_type == StimulusType::EventReachPoint {
-                    self.get_battle_overview(0x0001, ctx, tick); // FAST_OVERVIEW
+                    // Original does not reevaluate combat here. The officer's
+                    // hint target becomes the center of a plain lost-enemy
+                    // search as soon as the soldier reaches it.
+                    self.seek_area(
+                        sim,
+                        self.base.seek_position,
+                        parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
+                        SeekFlags::empty(),
+                        UNDEFINED_DIRECTION,
+                        global,
+                        ctx,
+                        tick,
+                    );
                 }
             }
 
@@ -6282,6 +6294,34 @@ mod tests {
 
         assert_eq!(ai.base.current_state, AiState::Seeking);
         assert_eq!(ai.base.current_substate, Substate::SeekingCombatAlert);
+    }
+
+    #[test]
+    fn combat_alert_reachpoint_starts_lost_enemy_seek() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.set_state(AiState::Seeking, Substate::SeekingCombatAlert);
+        ai.base.seek_position = Position {
+            x: 120.0,
+            y: 240.0,
+            ..Position::default()
+        };
+        let mut global = AiGlobalState::default();
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventReachPoint),
+            &mut global,
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.current_state, AiState::Seeking);
+        assert_eq!(ai.seek_center, ai.base.seek_position);
+        assert!(ai.seek_flags.is_empty());
+        assert!(ai.personal_seek_point_2.is_some());
+        assert_ne!(ai.base.current_substate, Substate::SeekingCombatAlert);
     }
 
     #[test]
