@@ -7348,6 +7348,18 @@ impl EngineInner {
                 second_frame_dist_raw = Some(second_distance);
                 frame_dist_raw += second_distance;
             }
+            // PerformMotion refreshes RHPositionInterface::mpTargetElement
+            // when a new order is initialized. Anti-collision follows that
+            // call in the same actor slot in Original, so the mover snapshot
+            // must observe the newly installed order's antagonist now rather
+            // than the target retained from the preceding order at the
+            // top-of-tick snapshot boundary.
+            if let Some(snapshot) = anti_snapshots
+                .get_mut(actor_id)
+                .and_then(|slot| slot.as_mut())
+            {
+                snapshot.target_element = sprite.position_iface.target_element();
+            }
             executed_sword_movement = is_sword_motion;
             if is_pc {
                 executed_pc_movement_actions.push((entity_id, order_action));

@@ -1,0 +1,8 @@
+{
+  "id": "92",
+  "subject": "Refresh anti-collision target at the motion-order boundary",
+  "description": "DONE. Cyrdach Profile_156 Restart replay-006 and Savegame_000 replay-006 repeatedly diverged when PC 126 began a walking transition toward Soldier 94. Original RHSprite::PerformMotion copied the new transition order's null antagonist to RHPositionInterface::mpTargetElement before the same actor-slot anti-collision query, allowing Soldier 94 to repel the mover and producing direction goal 12. Rust built top-of-tick snapshots correctly from the durable position-interface field after task 88, but kept the preceding seek order's Soldier 94 exemption for the remainder of that frame, suppressing repulsion and producing direction goal 10. The mover snapshot now refreshes from PositionInterface immediately after PerformMotion initializes the live order. Both representative release controls match every recorded frame, and all focused anti-collision tests pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
