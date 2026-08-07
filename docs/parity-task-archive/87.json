@@ -1,0 +1,8 @@
+{
+  "id": "87",
+  "subject": "Use raw actor anchors for standalone 180-degree detection",
+  "description": "DONE. Nescafe Profile_002 Savegame_001 replay-002 diverged at frame 1651 when Soldier180 completed TooProudToAttackApproach. Original RHElementActorNPC::IsDetecting180Degrees calls ComputeEyesPoint and ComputeDetectionPoint on the actors' raw element positions; its clear ray to PC252 keeps Soldier180 in TooProudToAttackApproach and immediately queues another Move. Rust instead based the target endpoint on AiEntityView.position, which is RHArtificialIntelligence::Position and may substitute a door endpoint or carrier position, so its shifted ray hit an opaque obstacle and incorrectly entered OverviewLookLeft/EnterAttentiveMode. The acting viewer now uses the raw ComputeEyesPoint snapshot in AiContext, and target geometry starts from AiEntityView.detection_position before applying the posture offset. Ally-viewer geometry continues to start from that same raw anchor. A focused opaque-wall regression distinguishes the clear raw-position ray from the blocked AI-position ray. The representative and schema-14 Cyrdach Profile_156 Savegame_001 replay-009 and Nescafe Profile_001 Savegame_001 replay-009 controls all match every recorded frame through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

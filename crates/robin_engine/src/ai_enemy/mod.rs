@@ -2236,17 +2236,16 @@ impl EnemyAi {
             in_building = ctx.in_building,
             "is_detecting_180_degrees: entry"
         );
-        let viewer_eye = crate::stealth::eye_point_xy(
-            crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y),
-            ctx.posture,
-            ctx.direction as i16,
-            false,
-        );
         let viewer = Viewer180 {
             entity: view_radius_memo_viewer(self.base.me, ctx),
-            eye_ground: crate::coordinates::GroundPoint::from_map_and_z(viewer_eye, ctx.elevation),
-            eye_z: ctx.elevation
-                + crate::stealth::eye_z_for_posture(ctx.posture, ctx.self_is_rider),
+            // `self_eye_position` is built directly from the element's raw
+            // position by `ComputeEyesPoint`. `ctx.position` may instead be
+            // an AI-facing substituted position (a door endpoint/carrier).
+            eye_ground: crate::coordinates::GroundPoint::from_map_and_z(
+                ctx.self_eye_position,
+                ctx.elevation,
+            ),
+            eye_z: ctx.self_eye_z,
             direction: ctx.direction,
             in_building: ctx.in_building,
             view_radius: ctx.self_view_radius,
@@ -2292,10 +2291,7 @@ impl EnemyAi {
             return false;
         };
         let viewer_eye = crate::stealth::eye_point_xy(
-            crate::coordinates::MapPoint::new(
-                viewer_view.detection_position.x,
-                viewer_view.detection_position.y,
-            ),
+            viewer_view.detection_position,
             viewer_view.posture,
             viewer_view.direction as i16,
             false,
@@ -2364,8 +2360,10 @@ fn detects_180_degrees(viewer: &Viewer180, target: HumanHandle, ctx: &AiContext)
     }
 
     let viewer_eye_z = viewer.eye_z;
+    // ComputeDetectionPoint starts from the raw element position. The
+    // AI-facing `view.position` may be a substituted door endpoint/carrier.
     let target_detection_xy = crate::stealth::detection_point_xy(
-        crate::coordinates::MapPoint::new(view.position.x, view.position.y),
+        view.detection_position,
         view.posture,
         view.direction as i16,
     );
@@ -4765,6 +4763,75 @@ mod tests {
         wall.bottom_plane_points = [[95.0, -10.0, 0.0], [105.0, -10.0, 0.0], [95.0, 10.0, 0.0]];
         wall.rebuild_geometry();
         wall
+    }
+
+    #[test]
+    fn detection_180_uses_raw_actor_xy_instead_of_ai_position() {
+        let ai = EnemyAi::new(1);
+        let mut viewer = soldier_view(test_position(0.0, 0.0));
+        viewer.direction = 4;
+        let mut target = soldier_view(test_position(200.0, 0.0));
+        // AI Position() can be displaced from the raw element anchor, for
+        // example while passing a door. Original's standalone 180° overload
+        // calls ComputeDetectionPoint on the raw actor position instead.
+        target.position = test_position(200.0, 30.0);
+
+        // This wall intersects the AI-position ray (0,0)->(200,30) at
+        // y=15, but not the original-compatible raw ray (0,0)->(200,0).
+        let mut wall = SightObstacle::new_default(0);
+        wall.obstacle_points = vec![
+            ObstaclePoint {
+                x: 95.0,
+                y: 10.0,
+                z_top: 80.0,
+                z_bottom: 0.0,
+            },
+            ObstaclePoint {
+                x: 105.0,
+                y: 10.0,
+                z_top: 80.0,
+                z_bottom: 0.0,
+            },
+            ObstaclePoint {
+                x: 105.0,
+                y: 20.0,
+                z_top: 80.0,
+                z_bottom: 0.0,
+            },
+            ObstaclePoint {
+                x: 95.0,
+                y: 20.0,
+                z_top: 80.0,
+                z_bottom: 0.0,
+            },
+        ];
+        wall.top_plane_points = [[95.0, 10.0, 80.0], [105.0, 10.0, 80.0], [95.0, 20.0, 80.0]];
+        wall.bottom_plane_points = [[95.0, 10.0, 0.0], [105.0, 10.0, 0.0], [95.0, 20.0, 0.0]];
+        wall.rebuild_geometry();
+
+        let mut views = AiEntityViewMap::new();
+        views.insert(1, viewer);
+        views.insert(2, target);
+        let ctx = AiContext {
+            position: test_position(0.0, 0.0),
+            direction: 4,
+            posture: Posture::Upright,
+            self_eye_position: MapPoint::ZERO,
+            self_eye_z: 45.0,
+            self_view_radius: 400,
+            sq_self_view_radius: 400.0 * 400.0,
+            self_view_direction: [1.0, 0.0],
+            self_real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
+            entity_views: Arc::new(views),
+            sight_obstacles: SharedSightObstacles {
+                static_obstacles: Arc::new(vec![wall]),
+                dynamic_obstacles: Arc::new(Vec::new()),
+                static_active: Arc::new(vec![true]),
+            },
+            ..AiContext::default()
+        };
+
+        assert!(ai.is_detecting_180_degrees(2, &ctx));
     }
 
     #[test]
