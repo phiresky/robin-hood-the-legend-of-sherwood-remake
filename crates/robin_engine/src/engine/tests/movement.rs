@@ -85,6 +85,38 @@ fn make_fast_does_not_postprocess_an_unrelated_live_movement() {
 }
 
 #[test]
+fn menacing_ai_move_keeps_stop_menace_and_move_in_one_ordered_sequence() {
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .active = true;
+    let mut intent =
+        crate::order::AiOrderIntent::new(crate::order::OrderType::RunningUpright, 100.0, 200.0);
+    intent.stop_menace_before_move = true;
+
+    engine.orders.pending_move_requests.push((owner, intent));
+    let sequence_id = engine
+        .drain_pending_move_requests_for_owner(&crate::sim_rng::test_context(), owner)
+        .into_iter()
+        .next()
+        .expect("same-sector AI move launches");
+    let sequence = engine
+        .orders
+        .sequence_manager
+        .get_sequence(sequence_id)
+        .expect("movement sequence remains registered");
+
+    assert_eq!(sequence.elements.len(), 2);
+    assert_eq!(sequence.elements[0].command, Command::StopMenace);
+    assert_eq!(sequence.elements[0].command_level, 1);
+    assert_eq!(sequence.elements[1].command, Command::Move);
+    assert_eq!(sequence.elements[1].command_level, 2);
+}
+
+#[test]
 fn production_owner_execution_frozen_blocks_rider_charge_execute_entirely() {
     use crate::engine::melee::{
         clear_test_sword_damage_observations, take_test_sword_damage_observations,

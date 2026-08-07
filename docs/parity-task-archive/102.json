@@ -1,0 +1,8 @@
+{
+  "id": "102",
+  "subject": "Keep GoTo StopMenace in the movement sequence",
+  "description": "DONE. In schema-14 linux3 Profile_001 Savegame_045 replay-008 at frame 45056, Soldier 118 was menacing when SeekNextPoint authored a GoTo. Original RHArtificialIntelligence::GoTo creates one sequence containing level-1 STOP_MENACE followed by level-2 MOVE, so no path is requested until the menace-exit transition completes. Rust emitted a standalone stop_menace outbox effect and then launched an independent movement in the same drain; Move preempted StopMenace and immediately queued a path. AiOrderIntent now serializes stop_menace_before_move, and both local and gate-path movement builders insert the ordered prefix with correct level accounting. GoTo no longer uses the standalone channel, which remains intact for other producers. Focused tests cover intent serialization/no standalone effect and the exact two-element sequence. The parity-profile replay clears frame 45056 and advances to an independent Soldier 140 motion-state frontier at frame 45294. The task-36 Cyrdach Profile_156/Savegame_001 replay-009 and Nescafe Profile_001/Savegame_001 replay-009 controls both remain exact through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

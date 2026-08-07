@@ -531,6 +531,32 @@ fn ordinary_goto_from_sword_state_carries_ordered_quit_prefix() {
 }
 
 #[test]
+fn ordinary_goto_from_menacing_carries_serialized_stop_prefix() {
+    let mut ctx = goto_short_circuit_ctx(crate::order::OrderType::Menacing);
+    ctx.self_action_state = crate::element::ActionState::Menacing;
+    let destination = Position {
+        x: 200.0,
+        y: 200.0,
+        ..ctx.position
+    };
+    let mut ai = AiController::new(1);
+
+    ai.go_to(destination, GotoFlags::RUN, &ctx);
+
+    let orders = ai.take_pending_orders();
+    assert_eq!(orders.len(), 1);
+    assert!(orders[0].stop_menace_before_move);
+    assert!(
+        !ai.outbox.actor.stop_menace,
+        "GoTo StopMenace belongs to the movement sequence, not a standalone launch"
+    );
+    let encoded = serde_json::to_string(&orders[0]).expect("serialize movement intent");
+    let restored: crate::order::AiOrderIntent =
+        serde_json::from_str(&encoded).expect("deserialize movement intent");
+    assert!(restored.stop_menace_before_move);
+}
+
+#[test]
 fn goto_find_accessible_and_ask_obstacle_survive_order_intent() {
     let order = AiController::make_move_order(
         &Position {

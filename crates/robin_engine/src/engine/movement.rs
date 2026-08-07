@@ -5065,6 +5065,13 @@ impl EngineInner {
                     Some(entity_id),
                 ));
             }
+            if intent.stop_menace_before_move {
+                prefix.push(crate::sequence::SequenceElement::new(
+                    prefix.len() as u16 + 1,
+                    crate::element::Command::StopMenace,
+                    Some(entity_id),
+                ));
+            }
             if intent.lower_shield_before_move {
                 prefix.push(crate::sequence::SequenceElement::new(
                     prefix.len() as u16 + 1,
@@ -5106,6 +5113,7 @@ impl EngineInner {
                 tolerance = intent.tolerance,
                 speed_factor = intent.speed_factor,
                 quit_swordfight = intent.quit_swordfight_before_move,
+                stop_menace = intent.stop_menace_before_move,
                 door_goal = ?door_goal,
                 gate_path = ?gate_path,
                 "about to build cross-sector AI GoTo sequence"
@@ -5129,6 +5137,7 @@ impl EngineInner {
 
         let move_level = 1
             + u16::from(intent.quit_swordfight_before_move)
+            + u16::from(intent.stop_menace_before_move)
             + u16::from(intent.lower_shield_before_move);
         let mut elem = crate::sequence::SequenceElement::new_movement(
             move_level,
@@ -5170,9 +5179,20 @@ impl EngineInner {
                 Some(entity_id),
             ));
         }
+        if intent.stop_menace_before_move {
+            sequence.append_element(crate::sequence::SequenceElement::new(
+                sequence
+                    .last()
+                    .map_or(1, |element| element.command_level.saturating_add(1)),
+                crate::element::Command::StopMenace,
+                Some(entity_id),
+            ));
+        }
         if intent.lower_shield_before_move {
             sequence.append_element(crate::sequence::SequenceElement::new(
-                move_level - 1,
+                sequence
+                    .last()
+                    .map_or(1, |element| element.command_level.saturating_add(1)),
                 crate::element::Command::LowerShield,
                 Some(entity_id),
             ));

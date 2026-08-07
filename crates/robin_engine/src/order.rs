@@ -740,6 +740,10 @@ pub struct AiOrderIntent {
     /// drain.
     #[serde(default)]
     pub quit_swordfight_before_move: bool,
+    /// A non-sword GoTo issued while menacing carries `StopMenace` as the
+    /// first element of the same sequence, ahead of the movement.
+    #[serde(default)]
+    pub stop_menace_before_move: bool,
     /// The same sequence also carries a `LowerShield` element ahead of
     /// the movement whenever the actor is in a shield action state.
     /// Because it shares the movement's sequence, the shield element is
@@ -795,6 +799,7 @@ impl AiOrderIntent {
             speed_factor: 1.0,
             no_halt: false,
             quit_swordfight_before_move: false,
+            stop_menace_before_move: false,
             lower_shield_before_move: false,
             append_special_action_tail: false,
             retained_movement_goal: None,
