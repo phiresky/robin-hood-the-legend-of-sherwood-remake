@@ -230,7 +230,14 @@ impl EngineInner {
             }
         }
 
-        self.tick_push_flights(sim, assets);
+        // In-flight displacement now runs at each actor's Execute slot. Keep
+        // only terminal landing reconciliation here: existing synchronous
+        // completion callbacks can refresh the position latch before this
+        // legacy Rust cleanup boundary.
+        // TODO(original-parity): move this terminal-only cleanup into the
+        // owner slot once those callbacks preserve PerformFlight's final
+        // NewMove delta themselves.
+        self.tick_push_flight_terminal_landings(sim, assets);
         self.tick_enemy_sword_attacks(sim, assets);
         self.tick_pc_combat_anim_speech(sim, assets);
         self.tick_refresh_purse_disable(assets);
@@ -1414,10 +1421,53 @@ impl EngineInner {
     /// actors in the flight direction and queue a `ReceiveHitDamage`
     /// element citing the original hitter — fired per frame at the
     /// tail of `ExecuteFallingHit` / `ExecuteFallingPushed`.
+    #[cfg(test)]
     pub(super) fn tick_push_flights(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+    ) {
+        self.tick_push_flights_at_owner(sim, assets, None, false, false);
+    }
+
+    /// Advance flight work at one actor's live creation slot. Original
+    /// `ExecuteFallingHit` / `ExecuteFallingPushed` calls `PerformFlight`
+    /// inline, so a later NPC's detection pass observes the resulting
+    /// position while an earlier NPC cannot. The optional owner also keeps
+    /// the broad helper available to focused tests without restoring the
+    /// production-wide post-detection batch.
+    pub(in crate::engine) fn tick_push_flight_for_owner(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        if self.actors_frozen()
+            || self
+                .get_entity(owner)
+                .and_then(Entity::actor_data)
+                .is_some_and(|actor| actor.execution_frozen)
+        {
+            return;
+        }
+        self.tick_push_flights_at_owner(sim, assets, Some(owner), false, true);
+    }
+
+    fn tick_push_flight_terminal_landings(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
+        self.tick_push_flights_at_owner(sim, assets, None, true, false);
+    }
+
+    fn tick_push_flights_at_owner(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        selected_owner: Option<EntityId>,
+        terminal_only: bool,
+        skip_terminal: bool,
     ) {
         // Domino sweeps fire after positions have advanced, so collect
         // (flyer, hitter, post-advance increment) here and dispatch in a
@@ -1438,6 +1488,9 @@ impl EngineInner {
         let mut ladder_arrivals: Vec<EntityId> = Vec::new();
 
         for (entity_id, entity) in self.world.entities.actors_mut() {
+            if selected_owner.is_some_and(|owner| owner != EntityId::from(entity_id)) {
+                continue;
+            }
             // Read flight state without holding a mutable borrow.
             let flight_info = entity.actor_data().and_then(|a| a.active_flight);
 
@@ -1445,6 +1498,11 @@ impl EngineInner {
                 Some(f) => f,
                 None => continue,
             };
+            if (terminal_only && flight.frames_remaining != 0)
+                || (skip_terminal && flight.frames_remaining == 0)
+            {
+                continue;
+            }
 
             // Ladder/wall falls only progress while the FallingLadderWall
             // order is live — the original drives this flight from that
@@ -2865,6 +2923,45 @@ mod tests {
         assert_eq!(victim.element_data().layer(), 3);
         assert_eq!(victim.element_data().sector(), SectorHandle::new(4));
         assert!(victim.actor_data().unwrap().active_flight.is_none());
+    }
+
+    #[test]
+    fn owner_scoped_push_flight_advances_only_the_selected_creation_slot() {
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::default();
+        let mut engine = EngineInner::new();
+        let earlier = engine.add_entity(falling_pushed_soldier(false));
+        let later = engine.add_entity(falling_pushed_soldier(false));
+
+        engine.tick_push_flight_for_owner(&sim, &assets, earlier);
+
+        assert_eq!(
+            engine
+                .get_entity(earlier)
+                .unwrap()
+                .element_data()
+                .position_map(),
+            MapPoint::new(15.0, 20.0)
+        );
+        assert_eq!(
+            engine
+                .get_entity(later)
+                .unwrap()
+                .element_data()
+                .position_map(),
+            MapPoint::new(10.0, 20.0),
+            "a later actor must retain its pre-Hourglass position"
+        );
+
+        engine.tick_push_flight_for_owner(&sim, &assets, later);
+        assert_eq!(
+            engine
+                .get_entity(later)
+                .unwrap()
+                .element_data()
+                .position_map(),
+            MapPoint::new(15.0, 20.0)
+        );
     }
 
     #[test]

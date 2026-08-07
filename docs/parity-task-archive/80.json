@@ -1,0 +1,8 @@
+{
+  "id": "80",
+  "subject": "Restore owner-ordered flight positions for body detection",
+  "description": "DONE. Rust advanced active combat flights in the global post-NPC melee pass, but Original ExecuteFallingHit calls PerformFlight and ApplyDominoEffect inline during the falling actor's Hourglass. A later-created observer therefore saw Rust's pre-flight body position even though the end-of-frame body position matched. In Nescafe schema-14 Profile_001 Savegame_001 replay-008, Soldier 177 (creation order 208) moves from (1468.743652,2762.533203) to (1468.115479,2764.299805) during frame 382. Original Soldier 179 (creation order 210) uses the latter point for its second visibility query and faces direction 11; Rust used the former point, copied it into the reconnaissance seek position, and faced direction 12. In-flight displacement and domino work now execute at each selected actor owner slot, while terminal landing reconciliation remains after synchronous completion callbacks to preserve the previously exact final NewMove delta. The representative clears frame 382 and remains exact through frame 1105 before an independent Soldier 178 movement frontier. Nescafe Profile_002 Savegame_001 replay-015 clears its analogous frame-1518 visibility destination and advances to an independent frame-1603 AI lifecycle frontier. A focused regression verifies that owner-scoped flight advances the selected earlier actor without moving a later actor before its creation slot.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

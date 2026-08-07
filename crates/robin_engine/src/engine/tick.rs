@@ -3687,6 +3687,11 @@ impl EngineInner {
                             } else {
                                 self.tick_actor_animation_for(sim, assets, entity_id)
                             };
+                        // Falling-hit/pushed/lift flight is part of this
+                        // actor's selected Execute arm in Original. Advance it
+                        // before the derived NPC tail so later creation slots
+                        // observe the committed flight position.
+                        self.tick_push_flight_for_owner(sim, assets, entity_id);
                         if execute_result.as_ref().is_some_and(|result| {
                             result.motion == crate::sprite::MotionState::Start
                         }) && self
