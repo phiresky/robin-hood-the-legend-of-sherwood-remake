@@ -674,6 +674,61 @@ fn synchronous_redundant_parry_skips_instruct_epilogue() {
 }
 
 #[test]
+fn manager_redundant_parry_skips_instruct_epilogue_after_generated_transition() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::sequence::{SequenceElement, SequenceState};
+    use crate::sprite::MotionState;
+
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    {
+        let actor = engine
+            .get_entity_mut(soldier)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap();
+        actor.action_state = ActionState::ParryingSword;
+        actor.continuation.motion_state = MotionState::Start;
+    }
+
+    // GenerateTransition first appends the parry-to-waiting prefix. Translate
+    // then discovers that the live actor is already parrying and terminates
+    // the incoming element synchronously. Actor::Instruct returns before its
+    // IN_PROGRESS epilogue when that callback changes mpSequenceElement.
+    let sequence =
+        engine.launch_element(SequenceElement::new(1, Command::ParrySword, Some(soldier)));
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .unwrap();
+    assert_eq!(element.state, SequenceState::Terminated);
+    assert_eq!(
+        element.orders.len(),
+        1,
+        "generated prefix remains diagnostic"
+    );
+    assert_eq!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        MotionState::Start,
+        "terminal Translate must preserve the preceding Execute edge"
+    );
+}
+
+#[test]
 fn synchronous_redundant_stop_parry_skips_instruct_epilogue() {
     use crate::element::{ActionState, Command, Posture};
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};

@@ -1,0 +1,8 @@
+{
+  "id": "104",
+  "subject": "Verify sprite Start across redundant parry Translate",
+  "description": "DONE. In schema-14 linux3 Profile_001 Savegame_045 replay-008 at frame 45294, Soldier 140's TransitionParryingSwordWaitingSword sprite correctly returned Start. A same-frame ParrySword then generated its parry-to-waiting transition prefix and synchronously terminated during Translate because the live actor was already parrying. Original RHElementActor::Instruct observes that Translate changed mpSequenceElement and returns before writing mmotionState=IN_PROGRESS. The OwnerActionBarrier::Skip handling already added in task 76 for ParrySword, ParrySwordLow, and StopParrySword preserves that behavior and clears this later frontier without another production change. A focused manager-path regression covers the exact generated-prefix lifecycle. The representative and task-36 Cyrdach Profile_156/Savegame_001 replay-009 and Nescafe Profile_001/Savegame_001 replay-009 controls all match every recorded frame through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
