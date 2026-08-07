@@ -958,6 +958,32 @@ impl<'a> ShieldCommandContext<'a> {
 impl EngineInner {
     // ─── Receive damage dispatch ────────────────────────────────────
 
+    /// Complete Actor::Instruct's accepted-empty-order path for damage.
+    ///
+    /// Original publishes `RHMOTION_IN_PROGRESS`, discovers that Translate
+    /// produced no current order, clears `mpSequenceElement`, and only then
+    /// terminates the accepted element. Its condolence card therefore cannot
+    /// clear a movement goal belonging to the element that will resume next.
+    fn terminate_accepted_empty_damage(
+        &mut self,
+        victim_id: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        self.world
+            .entities
+            .get_mut(victim_id)
+            .and_then(Entity::actor_data_mut)
+            .expect("accepted empty damage lost its actor")
+            .continuation
+            .motion_state = crate::sprite::MotionState::InProgress;
+        self.orders.sequence_manager.set_translating_element(None);
+        self.orders
+            .sequence_manager
+            .element_terminated(seq_id, elem_idx);
+        OwnerActionBarrier::Reach
+    }
+
     /// Dispatch a receive-damage command from the sequence system.
     ///
     /// Reads damage data from the sequence element, applies it to the
@@ -1014,13 +1040,7 @@ impl EngineInner {
                     ?command,
                     "dispatch_receive_damage: element is not Damage"
                 );
-                self.orders
-                    .sequence_manager
-                    .element_terminated(seq_id, elem_idx);
-                // This termination is Rust's stand-in for Actor::Instruct's
-                // accepted empty-order epilogue, not a source Translate
-                // SetState branch. Preserve the preceding IN_PROGRESS edge.
-                return OwnerActionBarrier::Reach;
+                return self.terminate_accepted_empty_damage(victim_id, seq_id, elem_idx);
             }
         };
 
@@ -1204,10 +1224,7 @@ impl EngineInner {
                 .element_in_progress(seq_id, elem_idx);
             return OwnerActionBarrier::Reach;
         }
-        self.orders
-            .sequence_manager
-            .element_terminated(seq_id, elem_idx);
-        OwnerActionBarrier::Reach
+        self.terminate_accepted_empty_damage(victim_id, seq_id, elem_idx)
     }
 }
 

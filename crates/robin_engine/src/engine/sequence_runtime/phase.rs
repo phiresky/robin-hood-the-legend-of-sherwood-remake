@@ -2719,5 +2719,28 @@ impl EngineInner {
                 .expect("accepted InstructOwner lost its actor");
             actor.continuation.motion_state = crate::sprite::MotionState::InProgress;
         }
+
+        // The redundant-EnterSwordfight retention above is only a bridge
+        // across a re-entrant actor-Hourglass lazy Wait. If that Wait is
+        // published, `publish_selected_order_as_installed` consumes the marker
+        // and transfers the running sprite identity. Work first instructed by
+        // SequenceManager::Hourglass is already past every actor slot, so an
+        // unconsumed marker here means no replacement Wait exists this frame.
+        // Original's interrupted Wait has cleared mpOrder in that case.
+        for (_, entity) in self.world.entities.actors_mut() {
+            let actor = entity
+                .actor_data_mut()
+                .expect("actor iterator yielded non-actor entity");
+            let Some(retained_order_id) = actor.retained_waiting_sword_order_id else {
+                continue;
+            };
+            if actor
+                .installed_order
+                .is_some_and(|order| order.order_id == retained_order_id)
+            {
+                actor.installed_order = None;
+            }
+            actor.retained_waiting_sword_order_id = None;
+        }
     }
 }

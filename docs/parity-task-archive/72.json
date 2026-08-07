@@ -1,0 +1,8 @@
+{
+  "id": "72",
+  "subject": "Preserve movement goals across accepted empty sword damage",
+  "description": "DONE. In schema14 Savegame_linux3/Profile_003/Restart/replay-004, Soldier 80's second ReceiveSwordDamage at frame 920 is successfully parried while the actor is already ParryingSword, so translation produces no reaction order. Rust terminated the accepted empty damage element while it remained the selected translating element; its synchronous condolence therefore cleared the live position goal belonging to the postponed WalkingWithSword element that resumed next. Original Actor::Instruct first stamps mmotionState=IN_PROGRESS and clears mpSequenceElement after discovering there is no current order, then terminates the accepted element, so the condolence cannot clear that resumed movement goal. The damage dispatcher now performs that source-ordered accepted-empty epilogue for both valid zero-order and malformed-data fallbacks, while source-explicit Translate terminal branches retain their distinct Skip behavior. A focused successful-parry regression asserts the element terminates, motion reports InProgress, and the live map goal survives; the existing malformed accepted-empty regression remains green. The exact replay clears frame 920 and advances to an independent Civilian 37 movement-map precision mismatch after frame 968.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

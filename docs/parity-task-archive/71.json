@@ -1,0 +1,8 @@
+{
+  "id": "71",
+  "subject": "Clear orphaned WaitingSword retention after manager dispatch",
+  "description": "DONE. The full-universe sweep exposed a common actor.animation frontier across Cyrdach and Nescafe controls: a soldier's redundant EnterSwordfight interrupted its selected Wait during SequenceManager::Hourglass, Original cleared mpOrder to RHNONANIMATION_END, but Rust restored the interrupted WaitingSword order and left it installed. Task #59's retention is source-correct only when a re-entrant actor-Hourglass lazy Wait replaces the interrupted element and consumes the retained sprite identity. SequenceManager::Hourglass runs after all actor slots, so an unconsumed retention marker at the end of that drain cannot acquire a replacement Wait in the current frame. Rust now clears only such orphaned retained orders and their marker at that exact boundary. The focused regression constructs an already-linked WaitingSword actor whose redundant EnterSwordfight terminates during manager dispatch and asserts both installed order and marker are cleared; task #59's consumed handoff behavior remains separately covered.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

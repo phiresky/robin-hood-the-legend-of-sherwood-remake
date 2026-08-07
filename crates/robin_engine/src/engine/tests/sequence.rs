@@ -139,6 +139,77 @@ fn retained_waiting_sword_handoff_preserves_running_sprite_identity() {
 }
 
 #[test]
+fn sequence_phase_clears_unconsumed_waiting_sword_retention() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{Field, FieldValue, SequenceElement, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    engine.control.frame_counter = 1;
+    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let opponent = engine.add_entity(make_test_soldier(Posture::Upright));
+    engine
+        .get_entity_mut(soldier)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents
+        .push(opponent);
+    engine
+        .get_entity_mut(opponent)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents
+        .push(soldier);
+    engine
+        .get_entity_mut(soldier)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .action_state = ActionState::WaitingSword;
+
+    let wait_order_id = engine.orders.allocate_order_id();
+    let mut wait = SequenceElement::new_generic(1, Command::Wait, Some(soldier));
+    wait.priority = SequencePriority::Wait;
+    wait.posture_after_transition = Posture::Upright;
+    wait.orders
+        .push_back(Order::new(OrderType::WaitingSword, 0.0, 0.0, wait_order_id));
+    let wait_sequence = engine.orders.sequence_manager.launch_element(wait);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(wait_sequence, 0);
+    engine.publish_selected_order_as_installed(soldier);
+
+    let mut enter = SequenceElement::new_generic(1, Command::EnterSwordfight, Some(soldier));
+    enter.priority = SequencePriority::PostponeEverythingButInjuries;
+    enter.posture_after_transition = Posture::Upright;
+    enter.set_property(Field::Opponent, FieldValue::Element(opponent));
+    let enter_sequence = engine.orders.sequence_manager.launch_element(enter);
+
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(enter_sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated
+    );
+    let actor = engine.get_entity(soldier).unwrap().actor_data().unwrap();
+    assert_eq!(actor.installed_order, None);
+    assert_eq!(actor.retained_waiting_sword_order_id, None);
+}
+
+#[test]
 fn exhausted_generic_order_carrier_terminates_on_resume() {
     use crate::element::{Command, Posture};
     use crate::sequence::{SequenceElement, SequenceState};
@@ -328,28 +399,37 @@ fn synchronous_accepted_wait_stamps_in_progress_motion_and_publishes_order() {
 
 #[test]
 fn synchronous_accepted_zero_order_damage_stamps_in_progress_motion() {
+    use crate::coordinates::MapPoint;
     use crate::element::{Command, Posture};
-    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+    use crate::sequence::{SequenceElement, SequenceElementData, SequencePriority, SequenceState};
     use crate::sprite::MotionState;
+    use crate::weapons::SwordStrike;
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
-    engine
-        .get_entity_mut(soldier)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .continuation
-        .motion_state = MotionState::Done;
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    let retained_goal = MapPoint::new(70.0, 80.0);
+    {
+        let entity = engine.get_entity_mut(victim).unwrap();
+        let actor = entity.actor_data_mut().unwrap();
+        actor.action_state = crate::element::ActionState::ParryingSword;
+        actor.continuation.motion_state = MotionState::Done;
+        entity.position_iface_mut().set_map_goal(retained_goal);
+    }
 
-    let mut damage = SequenceElement::new_generic(1, Command::ReceiveSwordDamage, Some(soldier));
+    // A successful parry while already in the parrying state translates to
+    // no reaction order. Actor::Instruct detaches that accepted empty element
+    // before its terminal condolence, so the interrupted movement goal stays
+    // live for the postponed movement that resumes afterward.
+    let mut damage = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+    damage.data = SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 0);
     damage.priority = SequencePriority::Wait;
     damage.posture_after_transition = Posture::Upright;
     let sequence = engine.launch_element(damage);
     engine
         .drain_script_synchronous_actions(&sim, &LevelAssets::default(), &mut Vec::new())
-        .expect("synchronous malformed damage should dispatch");
+        .expect("synchronous parried damage should dispatch");
 
     assert_eq!(
         engine
@@ -362,7 +442,7 @@ fn synchronous_accepted_zero_order_damage_stamps_in_progress_motion() {
     );
     assert_eq!(
         engine
-            .get_entity(soldier)
+            .get_entity(victim)
             .unwrap()
             .actor_data()
             .unwrap()
@@ -370,6 +450,15 @@ fn synchronous_accepted_zero_order_damage_stamps_in_progress_motion() {
             .motion_state,
         MotionState::InProgress,
         "accepted empty translation must retain Actor::Instruct's motion edge"
+    );
+    assert_eq!(
+        engine
+            .get_entity(victim)
+            .unwrap()
+            .position_iface()
+            .map_goal(),
+        retained_goal,
+        "an accepted empty damage card must not clear the resuming movement goal"
     );
 }
 
