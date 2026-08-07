@@ -1,0 +1,8 @@
+{
+  "id": "99",
+  "subject": "Cool Enemy suspicion when no fresh sharpness is added",
+  "description": "DONE. Savegame_linux2 Profile_002 Savegame_018 replay-011 first diverged at frame 8660 on Soldier65: Original reduced Enemy detection_suspects/maximal_detection_suspect from 40 to 39 while Rust retained 40. The PC remained visible, but its detectable was already latched (seen_last_frame=true), so Original RHElementActorNPC::HandleDetection added no fresh sharpness and applied the periodic UNSUSPECT_FREQUENCY cooldown. Rust incorrectly gated Enemy cooldown on no target being visible at all. Enemy now uses the same source-faithful zero-fresh-sharpness cooldown rule as the other detectable types. A focused regression covers the recorded 40-to-39 boundary. The representative replay and schema-14 Cyrdach Profile_156 Savegame_001 replay-009 and Nescafe Profile_001 Savegame_001 replay-009 controls match every recorded frame through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

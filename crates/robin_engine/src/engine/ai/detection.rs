@@ -439,6 +439,19 @@ fn refresh_detection_modified_frame(universal_frame: u32, creation_order: u32) -
     universal_frame.wrapping_add(creation_order) as u16 as u32
 }
 
+/// Original's per-type `HandleDetection` cooldown. The sum is fresh
+/// sharpness only: a visible target that is already latched contributes zero.
+fn cool_detection_suspect(sum_of_sharpnesses: u16, suspect: u16, universal_frame: u32) -> u16 {
+    if sum_of_sharpnesses == 0
+        && suspect > 0
+        && universal_frame.is_multiple_of(ai_vision::UNSUSPECT_FREQUENCY)
+    {
+        suspect.saturating_sub(1)
+    } else {
+        suspect
+    }
+}
+
 impl EngineInner {
     /// Return the exact `RHElement::mulCreationOrder` assigned by the
     /// Original-compatible construction stream.
@@ -1812,7 +1825,6 @@ impl EngineInner {
             // for "no target yet" so the first visible PC always
             // replaces it.
             let mut sum_sharpness_new: u16 = 0;
-            let mut any_seen_now = false;
             let mut best_target: Option<(EntityId, MapPoint, u32)> = None;
             let mut max_sharpness: u32 = 0;
             let viewer_in_building = viewer_building_sector.is_some();
@@ -2136,7 +2148,6 @@ impl EngineInner {
                 }
 
                 if is_visible {
-                    any_seen_now = true;
                     // Unoccupied-preferred primary-target scoring:
                     //   distance = Distance(enemy)
                     //   distance += 100 * primary_target_multiplicity
@@ -2980,12 +2991,8 @@ impl EngineInner {
             if threshold_hit || instant_hit {
                 // Reset suspects on commit.
                 *suspects = 0;
-            } else if !any_seen_now
-                && *suspects > 0
-                && universal_frame.is_multiple_of(ai_vision::UNSUSPECT_FREQUENCY)
-            {
-                // Suspect cooldown when nothing visible.
-                *suspects = suspects.saturating_sub(1);
+            } else {
+                *suspects = cool_detection_suspect(sum_sharpness_new, *suspects, universal_frame);
             }
 
             // Seed the frame maximum from Enemy. Body and Object fold their
@@ -4109,15 +4116,12 @@ impl EngineInner {
             });
         }
 
-        // (6) Suspect cooldown when nothing visible.
-        if sum_of_sharpnesses == 0
-            && npc.detection_suspects[kind_idx] > 0
-            && ctx
-                .universal_frame
-                .is_multiple_of(ai_vision::UNSUSPECT_FREQUENCY)
-        {
-            npc.detection_suspects[kind_idx] = npc.detection_suspects[kind_idx].saturating_sub(1);
-        }
+        // (6) Suspect cooldown when this scan added no fresh sharpness.
+        npc.detection_suspects[kind_idx] = cool_detection_suspect(
+            sum_of_sharpnesses,
+            npc.detection_suspects[kind_idx],
+            ctx.universal_frame,
+        );
 
         // (7) maximal_detection_suspect contribution
         // (`type < FRIEND` only).
@@ -4411,6 +4415,15 @@ mod tests {
     #[test]
     fn detection_sharpness_accumulation_wraps_as_uword() {
         assert_eq!(accumulate_detection_sharpness(u16::MAX - 5, 10), 4);
+    }
+
+    #[test]
+    fn already_seen_enemy_zero_fresh_sharpness_allows_suspect_cooldown() {
+        // Savegame_018 replay-011 frame 8660: Soldier 65 still sees its
+        // already-latched PC, but that target adds no fresh sharpness.
+        assert_eq!(cool_detection_suspect(0, 40, 8660), 39);
+        assert_eq!(cool_detection_suspect(1, 40, 8660), 40);
+        assert_eq!(cool_detection_suspect(0, 40, 8661), 40);
     }
     use crate::ai::{Position, Substate};
     use crate::element::Posture;
