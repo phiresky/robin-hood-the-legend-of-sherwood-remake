@@ -95,6 +95,9 @@ pub struct MotionOrderContext {
     pub directional_tolerance: bool,
     pub compute_direction: bool,
     pub next_destination_same_action: Option<MapPoint>,
+    /// `RHOrder::pAntagonist`, copied into the position interface when this
+    /// order is initialized for anti-collision target exemption.
+    pub target_element: Option<crate::entity_id::EntityId>,
 }
 
 /// Broken cached state for a motion order that the sprite has already started.
@@ -586,6 +589,7 @@ impl Sprite {
             pi.set_goal_next_valid(false);
         }
         pi.compute_increment_all(ctx.compute_direction);
+        pi.set_target_element(ctx.target_element);
         pi.reset_box_blocked();
     }
 
@@ -2435,6 +2439,7 @@ mod tests {
             directional_tolerance: false,
             compute_direction: true,
             next_destination_same_action: Some(MapPoint::new(1864.0, 969.0)),
+            target_element: None,
         };
 
         assert_eq!(
@@ -2462,6 +2467,7 @@ mod tests {
             directional_tolerance: false,
             compute_direction: true,
             next_destination_same_action: None,
+            target_element: None,
         };
 
         assert_eq!(
@@ -2490,6 +2496,7 @@ mod tests {
             directional_tolerance: false,
             compute_direction: true,
             next_destination_same_action: None,
+            target_element: Some(crate::element::EntityId::Pc(crate::entity_id::PcId(7))),
         };
 
         assert!(s.motion_order_state_mismatch(ctx).is_none());
@@ -2506,6 +2513,7 @@ mod tests {
         );
 
         assert_eq!(state, MotionState::Start);
+        assert_eq!(s.position_iface.target_element(), ctx.target_element);
         assert_eq!(s.last_processed_order_id, new_order_id.get());
         assert_eq!(s.position_iface.map_goal(), ctx.destination);
         assert!(s.position_iface.is_increment_map_computed());
@@ -2533,6 +2541,7 @@ mod tests {
                 directional_tolerance: false,
                 compute_direction: true,
                 next_destination_same_action: None,
+                target_element: None,
             }),
             OrderType::WaitingUprightBored,
             0,
@@ -2613,6 +2622,7 @@ mod tests {
             directional_tolerance: false,
             compute_direction: true,
             next_destination_same_action: None,
+            target_element: None,
         };
 
         let (state, distance) = sprite.perform_motion(
@@ -2650,6 +2660,7 @@ mod tests {
             directional_tolerance: false,
             compute_direction: true,
             next_destination_same_action: None,
+            target_element: None,
         };
         let (state, distance) = sprite.perform_motion(
             &sim_context,
@@ -2681,6 +2692,7 @@ mod tests {
             directional_tolerance: false,
             compute_direction: true,
             next_destination_same_action: None,
+            target_element: None,
         };
 
         let _ = sprite.perform_motion(

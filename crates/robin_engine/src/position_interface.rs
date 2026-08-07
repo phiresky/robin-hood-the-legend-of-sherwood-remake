@@ -1695,6 +1695,20 @@ impl PositionInterface {
         }
     }
 
+    /// Element exempted from this actor's repulsive-neighbour scan.
+    /// Original stores this pointer directly on `RHPositionInterface` and
+    /// refreshes it only when `RHSprite::PerformMotion` initializes a new
+    /// order; it therefore survives sequence interruption and cleanup.
+    #[inline]
+    pub fn target_element(&self) -> Option<crate::entity_id::EntityId> {
+        self.saved_target_element
+    }
+
+    #[inline]
+    pub fn set_target_element(&mut self, target: Option<crate::entity_id::EntityId>) {
+        self.saved_target_element = target;
+    }
+
     #[inline]
     pub fn is_deviated(&self) -> bool {
         self.deviated

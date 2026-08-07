@@ -2416,6 +2416,7 @@ impl EngineInner {
             directional_tolerance: false,
             compute_direction: order.compute_direction,
             next_destination_same_action,
+            target_element: order.antagonist,
         };
         let (motion_state, actual_frame) = {
             let entity = self.world.entities[rider_id]
@@ -6229,11 +6230,8 @@ impl EngineInner {
         // so later entities in the same tick see the serial
         // "already-moved" view: each actor's anti-collision lookup
         // reads live positions from earlier-processed actors.
-        let mut anti_snapshots = super::anti_collision::snapshot_all(
-            &self.world.entities,
-            &self.orders.sequence_manager,
-            &assets.profile_manager,
-        );
+        let mut anti_snapshots =
+            super::anti_collision::snapshot_all(&self.world.entities, &assets.profile_manager);
 
         // Collect movement results that need sequence manager notification.
         // We can't call sequence_manager while iterating entities mutably.
@@ -6406,6 +6404,7 @@ impl EngineInner {
                 order_tolerance,
                 mut order_compute_direction,
                 order_reverse,
+                order_antagonist,
                 transition_distance_continuation,
                 deferred_movement_state_start,
                 next_destination_same_action,
@@ -6502,6 +6501,7 @@ impl EngineInner {
                 let order_tolerance = order.tolerance;
                 let order_compute_direction = order.compute_direction;
                 let order_reverse = order.reverse;
+                let order_antagonist = order.antagonist;
                 let transition_distance_continuation = order.transition_distance_continuation;
                 let deferred_movement_state_start = order.deferred_movement_state_start;
                 let next_destination_same_action = self
@@ -6586,6 +6586,7 @@ impl EngineInner {
                     order_tolerance,
                     order_compute_direction,
                     order_reverse,
+                    order_antagonist,
                     transition_distance_continuation,
                     deferred_movement_state_start,
                     next_destination_same_action,
@@ -7213,6 +7214,7 @@ impl EngineInner {
                     .contains(crate::sequence::MoveFlags::DIRECTIONAL_TOLERANCE),
                 compute_direction: order_compute_direction,
                 next_destination_same_action,
+                target_element: order_antagonist,
             });
 
             if let Some(motion_order) = motion_order

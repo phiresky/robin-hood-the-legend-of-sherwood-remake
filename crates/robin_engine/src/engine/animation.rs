@@ -5123,6 +5123,7 @@ impl EngineInner {
                                     directional_tolerance: false,
                                     compute_direction: false,
                                     next_destination_same_action: None,
+                                    target_element: order_antagonist,
                                 };
                                 return Some(super::jump::perform_jump_ground_motion(
                                     entity,

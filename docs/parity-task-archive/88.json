@@ -1,0 +1,8 @@
+{
+  "id": "88",
+  "subject": "Restore position-owned anti-collision target lifetime",
+  "description": "DONE. In schema-14 linux3 Profile_001 Savegame_045 replay-008, Friday cleanup at frame 44032 legitimately removed Pc342's interrupted sequence 375065 while the derived Rust active_movement latch still named element 5. Anti-collision snapshot construction then panicked by dereferencing that stale sequence solely to reconstruct the current order antagonist. Original stores mpTargetElement directly on RHPositionInterface, serializes it, and refreshes it when RHSprite::PerformMotion initializes a new order; anti-collision reads that durable pointer without consulting the sequence. Rust now exposes the existing serialized position-interface target, copies each initialized motion order's antagonist into it, and snapshots read it directly. A focused regression deliberately leaves active_movement pointing to a nonexistent sequence and verifies the position-owned target is used. The representative release replay clears the frame-44032 panic and advances to an independent detection.detectables.length frontier at frame 44569.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

@@ -1635,6 +1635,7 @@ fn current_movement_bootstraps_from_waiting_with_destination_state() {
                 directional_tolerance: false,
                 compute_direction: false,
                 next_destination_same_action: None,
+                target_element: None,
             }),
         None,
         "the first movement tick must seed the order's destination instead of generic action state"

@@ -15,7 +15,6 @@ use crate::fast_find_grid::FastFindGrid;
 use crate::position_interface::{RADIUS_GUY, compute_deviated_future};
 use crate::profiles::ProfileManager;
 use crate::repulsive::{RepulsiveLine, RepulsivePoint};
-use crate::sequence::SequenceManager;
 
 /// Both constants are used for the repulsive lines built around
 /// motion-sector perimeters.
@@ -75,7 +74,6 @@ pub struct ActorSnapshot {
 /// overrides so the right force parameters end up on each snapshot.
 pub fn snapshot_all(
     entities: &Entities,
-    sequence_manager: &SequenceManager,
     profile_manager: &ProfileManager,
 ) -> EntitySlots<Option<ActorSnapshot>> {
     let mut snapshots = EntitySlots::filled(entities.len(), None);
@@ -91,19 +89,7 @@ pub fn snapshot_all(
         // eventual target. Using either persistent value here makes actors
         // ignore that target for the entire path instead of only on the final
         // approach order.
-        let target_element = actor.and_then(|actor| {
-            let seq_id = actor.active_movement.sequence_id?;
-            let element = sequence_manager
-                .get_element(seq_id, actor.active_movement.element_index)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "anti-collision snapshot for {snapshot_id:?} references missing active \
-                         movement {seq_id:?}/{}",
-                        actor.active_movement.element_index
-                    )
-                });
-            element.current_order().and_then(|order| order.antagonist)
-        });
+        let target_element = entity.position_iface().target_element();
         snapshots[entity_id] = Some(ActorSnapshot {
             id: snapshot_id,
             active: elem.active,
@@ -1079,18 +1065,13 @@ mod tests {
     fn snapshot_mover_and_corpse(
         order_antagonist: Option<EntityId>,
     ) -> (ActorSnapshot, ActorSnapshot) {
-        use std::num::NonZeroU32;
-
         use crate::element::{
-            ActorData, ActorPc, ActorSoldier, Command, ElementData, HumanData, NpcData, PcData,
-            SoldierData,
+            ActorData, ActorPc, ActorSoldier, ElementData, HumanData, NpcData, PcData, SoldierData,
         };
         use crate::entity_id::{PcId, SoldierId};
         use crate::movement::ActiveMovement;
-        use crate::order::{Order, OrderType};
-        use crate::sequence::SequenceElement;
+        use crate::sequence::SequenceId;
 
-        let mover_id = EntityId::Pc(PcId(0));
         let corpse_id = EntityId::Soldier(SoldierId(1));
 
         let mut mover_element = ElementData {
@@ -1101,10 +1082,19 @@ mod tests {
         };
         mover_element.set_position_map(map_pt(0.0, 0.0));
         mover_element.set_sector(crate::position_interface::SectorHandle::new(1));
-        let mut mover_actor = ActorData {
+        mover_element
+            .sprite
+            .position_iface
+            .set_target_element(order_antagonist);
+        let mover_actor = ActorData {
             // Deliberately stale: the preceding Seek targeted this soldier,
             // but the current sprite order is authoritative for anti-collision.
             seek_target: Some(corpse_id),
+            // Friday cleanup can remove an interrupted movement sequence
+            // before this derived Rust latch is reconciled. Original's
+            // anti-collision reads RHPositionInterface::mpTargetElement and
+            // never dereferences the old sequence pointer here.
+            active_movement: ActiveMovement::new(SequenceId(999), 5),
             ..Default::default()
         };
 
@@ -1116,25 +1106,6 @@ mod tests {
         };
         corpse_element.set_position_map(map_pt(8.0, 0.0));
         corpse_element.set_sector(crate::position_interface::SectorHandle::new(1));
-
-        let mut sequence_manager = SequenceManager::new();
-        let mut order = Order::new(
-            OrderType::WalkingUpright,
-            20.0,
-            0.0,
-            NonZeroU32::new(1).unwrap(),
-        );
-        order.antagonist = order_antagonist;
-        let mut movement = SequenceElement::new_movement(
-            1,
-            Command::Move,
-            Some(mover_id),
-            OrderType::WalkingUpright,
-        );
-        movement.orders.push_back(order);
-        let sequence_id = sequence_manager.launch_element(movement);
-        sequence_manager.element_in_progress(sequence_id, 0);
-        mover_actor.active_movement = ActiveMovement::new(sequence_id, 0);
 
         let entities = Entities::from_legacy_slots(vec![
             Some(Entity::Pc(ActorPc {
@@ -1151,7 +1122,7 @@ mod tests {
                 soldier: SoldierData::default(),
             })),
         ]);
-        let snapshots = snapshot_all(&entities, &sequence_manager, &ProfileManager::new());
+        let snapshots = snapshot_all(&entities, &ProfileManager::new());
         (
             snapshots[PcId(0)].clone().expect("mover snapshot"),
             snapshots[SoldierId(1)].clone().expect("corpse snapshot"),
