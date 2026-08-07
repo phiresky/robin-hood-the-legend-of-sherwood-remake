@@ -1602,8 +1602,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 53;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v53.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 54;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v54.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -3422,7 +3422,36 @@ fn serde_value_key_to_string(key: serde_value::Value) -> String {
     }
 }
 
-fn trace_source_fingerprint(trace_path: &std::path::Path) -> String {
+fn trace_content_sha256(trace_path: &Path) -> String {
+    let mut source = File::open(trace_path).unwrap_or_else(|error| {
+        panic!(
+            "open parity trace for fingerprint {}: {error}",
+            trace_path.display()
+        )
+    });
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = source.read(&mut buffer).unwrap_or_else(|error| {
+            panic!(
+                "read parity trace for fingerprint {}: {error}",
+                trace_path.display()
+            )
+        });
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    let digest = digest.finalize();
+    let mut content_sha256 = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        write!(&mut content_sha256, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    content_sha256
+}
+
+fn trace_source_fingerprint(trace_path: &Path) -> String {
     let metadata = std::fs::metadata(trace_path)
         .unwrap_or_else(|error| panic!("stat parity trace {}: {error}", trace_path.display()));
     let modified = metadata
@@ -3431,8 +3460,9 @@ fn trace_source_fingerprint(trace_path: &std::path::Path) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("parity trace modification time predates Unix epoch")
         .as_nanos();
+    let content_sha256 = trace_content_sha256(trace_path);
     format!(
-        "parity-cache-v{TRACE_CACHE_VERSION}:length={}:modified={modified}",
+        "parity-cache-v{TRACE_CACHE_VERSION}:length={}:modified={modified}:sha256={content_sha256}",
         metadata.len()
     )
 }
@@ -6663,6 +6693,22 @@ mod tests {
             TRACE_CACHE_SUFFIX.contains(&format!("-v{TRACE_CACHE_VERSION}.")),
             "native parity-cache suffix {TRACE_CACHE_SUFFIX:?} does not identify header version {TRACE_CACHE_VERSION}"
         );
+    }
+
+    #[test]
+    fn trace_content_hash_distinguishes_equal_length_sources() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = directory.path().join("first.jsonl.zst");
+        let second = directory.path().join("second.jsonl.zst");
+        std::fs::write(&first, b"equal-length-a").unwrap();
+        std::fs::write(&second, b"equal-length-b").unwrap();
+
+        assert_eq!(
+            std::fs::metadata(&first).unwrap().len(),
+            std::fs::metadata(&second).unwrap().len()
+        );
+        assert_ne!(trace_content_sha256(&first), trace_content_sha256(&second));
+        assert!(trace_source_fingerprint(&first).contains(":sha256="));
     }
 
     fn valid_initial_save_with_profile(source_profile: TraceSaveSourceProfile) -> TraceInitialSave {

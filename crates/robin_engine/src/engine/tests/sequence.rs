@@ -291,6 +291,56 @@ fn accepted_zero_order_damage_preserves_in_progress_motion_edge() {
 }
 
 #[test]
+fn manager_redundant_stop_parry_skips_instruct_motion_epilogue() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::sequence::{SequenceElement, SequenceState};
+    use crate::sprite::MotionState;
+
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    {
+        let actor = engine
+            .get_entity_mut(soldier)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap();
+        actor.action_state = ActionState::WaitingSword;
+        actor.continuation.motion_state = MotionState::Terminated;
+    }
+    let mut stop = SequenceElement::new(1, Command::StopParrySword, Some(soldier));
+    stop.posture_after_transition = Posture::Upright;
+    let sequence_id = engine.orders.sequence_manager.launch_element(stop);
+
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .expect("redundant stop-parry remains inspectable")
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        MotionState::Terminated,
+        "redundant StopParry returns before Actor::Instruct's motion epilogue"
+    );
+}
+
+#[test]
 fn assert_position_translation_preserves_terminal_motion_edge() {
     use crate::coordinates::MapPoint;
     use crate::element::{Command, Posture};

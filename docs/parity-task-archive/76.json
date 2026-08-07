@@ -1,0 +1,8 @@
+{
+  "id": "76",
+  "subject": "Preserve terminal motion after redundant parry commands",
+  "description": "DONE. Savegame_SuN1Sh1nE/Profile_004/Savegame_008 replay-004 diverged at frame 800 because PC 241's actor slot correctly latched RHMOTION_TERMINATED after TransitionParryingSwordWaitingSword, but the subsequent SequenceManager drain instructed a redundant StopParrySword. The normal manager dispatcher ignored the translator's OwnerActionBarrier::Skip and later applied Actor::Instruct's generic IN_PROGRESS epilogue; Original returns before that epilogue when StopParry translation terminates immediately. The manager path now honors Skip for ParrySword, ParrySwordLow, and StopParrySword, with a focused regression for redundant StopParry. The representative now matches through frame 800 and advances to an unrelated frame-957 movement divergence; schema-14 linux3/Profile_001/Savegame_013 replay-006 remains exact through all 1500 frames. Native parity caches were also bumped to v54 and their source fingerprint now includes a streaming SHA-256 so equal-size trace replacements cannot reuse stale decoded data.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

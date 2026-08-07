@@ -511,11 +511,9 @@ impl EngineInner {
 
         // ── Sequence manager dispatch ────────────────────────────
         // Process pending sequence elements in the manager's emitted order.
-        // Record the actual accepted Actor::Instruct boundaries. Looking at
-        // the selected element after the drain is insufficient: translation
-        // may validly produce no order and terminate the incoming element
-        // synchronously, after Original has already written
-        // mmotionState=IN_PROGRESS.
+        // Record actual accepted Actor::Instruct boundaries. Translation
+        // arms that return `Skip` bypass this list just as Original returns
+        // before its IN_PROGRESS epilogue.
         let mut accepted_instruct_owners = Vec::new();
         let mut phase = SequencePhase::begin(&mut self.orders);
 
@@ -1072,13 +1070,25 @@ impl EngineInner {
 
                             // ── Parry commands ──────────────────────
                             Command::ParrySword => {
-                                self.dispatch_parry_sword(owner, false, seq_id, elem_idx);
+                                if self.dispatch_parry_sword(owner, false, seq_id, elem_idx)
+                                    == OwnerActionBarrier::Skip
+                                {
+                                    break 'action;
+                                }
                             }
                             Command::ParrySwordLow => {
-                                self.dispatch_parry_sword(owner, true, seq_id, elem_idx);
+                                if self.dispatch_parry_sword(owner, true, seq_id, elem_idx)
+                                    == OwnerActionBarrier::Skip
+                                {
+                                    break 'action;
+                                }
                             }
                             Command::StopParrySword => {
-                                self.dispatch_stop_parry(owner, seq_id, elem_idx);
+                                if self.dispatch_stop_parry(owner, seq_id, elem_idx)
+                                    == OwnerActionBarrier::Skip
+                                {
+                                    break 'action;
+                                }
                             }
 
                             // ── Damage reception commands ───────────
