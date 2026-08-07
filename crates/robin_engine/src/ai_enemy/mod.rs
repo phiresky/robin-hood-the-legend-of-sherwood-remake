@@ -529,9 +529,16 @@ impl EnemyAi {
             .map(|f| f.is_swordfighting)
             .unwrap_or(false);
         if !target_swordfighting && let Some(target) = self.find_fighter(new_target, tick) {
-            let dx = (target.position.x - ctx.position.x).abs();
-            let dy = (target.position.y - ctx.position.y).abs();
-            let max_norm = dx.max(dy);
+            // Original calls RHArtificialIntelligence::MaxNormDistance:
+            // subtract full world positions, stretch Y for the isometric
+            // projection, then take the 3D max norm. Raw map-space Y can
+            // incorrectly put a target inside sword range.
+            let max_norm = ai_max_norm_distance(
+                &target.position,
+                target.elevation,
+                &ctx.position,
+                ctx.elevation,
+            );
             let my_max_range = self
                 .find_fighter(self.base.me, tick)
                 .map(|f| f.sword_range_maximal as f32)
@@ -5865,5 +5872,51 @@ mod tests {
         );
 
         assert_eq!(target, 199);
+    }
+
+    #[test]
+    fn too_proud_range_gate_uses_isometric_world_distance() {
+        // Task 94 representative geometry: Soldier72 versus PC107 at frame
+        // 815. Raw map max-norm is 41.82 (inside the 50-unit sword range),
+        // while Original's isometric MaxNormDistance is 83.64 (outside).
+        let me_position = test_position(621.35455, 822.2824);
+        let target_position = test_position(615.2868, 780.4628);
+
+        let mut ai = EnemyAi::new(72);
+        ai.soldier_profile_pride = 1;
+        ai.base.current_substate = Substate::AttackingOfficerGivingOrdersWaiting;
+        ai.list_them = vec![107];
+
+        let mut target_view = soldier_view(target_position);
+        target_view.is_pc = true;
+        target_view.kind = EntityKind::Pc;
+        let mut views = AiEntityViewMap::new();
+        views.insert(107, target_view);
+        let ctx = AiContext {
+            position: me_position,
+            elevation: 0.0,
+            camp: Camp::Lacklandists,
+            entity_views: Arc::new(views),
+            ..AiContext::default()
+        };
+
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry = vec![
+            FighterSnapshot {
+                handle: 72,
+                position: me_position,
+                sword_range_maximal: 50,
+                ..FighterSnapshot::default()
+            },
+            FighterSnapshot {
+                handle: 107,
+                position: target_position,
+                is_pc: true,
+                ..FighterSnapshot::default()
+            },
+        ];
+
+        assert!(ai.is_too_proud_to_attack(&ctx, &tick));
+        assert_eq!(ai.base.primary_target, 107);
     }
 }

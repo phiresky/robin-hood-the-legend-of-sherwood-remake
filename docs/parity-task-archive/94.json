@@ -1,0 +1,8 @@
+{
+  "id": "94",
+  "subject": "Use Original's isometric world distance for TooProudToAttack",
+  "description": "DONE. The nicouzouf Profile_001 Savegame_067 replay-008 frame-815 PC107/Soldier72 EnterSwordfight and opponent-link mismatch came from IsTooProudToAttack's enemy-range gate. Original calls RHArtificialIntelligence::MaxNormDistance, which subtracts full 3D world positions, stretches Y by INVERSE_ASPECT_RATIO, and takes the Chebyshev norm. Rust instead used an unstretched 2D map-space max norm. At the representative geometry, raw map distance was 41.82 (inside Soldier72's 50-unit maximal sword range), while Original's isometric distance was 83.64. Rust therefore returned false and entered swordfight; Original remained too proud and selected AttackingTooProudToAttackRetire. The gate now uses the existing ai_max_norm_distance helper. A focused regression preserves the recorded geometry. The representative clears frame 815 and advances to an independent frame-862 Soldier61 path-goal mismatch. Schema-14 Cyrdach Profile_156 Savegame_001 replay-009 and Nescafe Profile_001 Savegame_001 replay-009 controls match every recorded frame through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
