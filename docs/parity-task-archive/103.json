@@ -1,0 +1,8 @@
+{
+  "id": "103",
+  "subject": "Use modified IQ when broadcasting newly disguised beggars",
+  "description": "DONE. Savegame_linux2 Profile_002 Savegame_016 replay-013 first diverged at frame 23146 on Soldier104's detectable-list length: Original had 67 entries and Rust 66. Both rebuilt the Beggar list when Soldier104 entered SeekingSeekpoint, adding existing true beggar Civilian40. Later in the same frame PC172 (mapped Rust PC171) completed its beggar-entry transition. Original AddBeggarForAllIntelligentSeekingSoldiers admitted Soldier104 because GetIQ applies Hard difficulty to its base IQ 15, reaching the threshold 30. Rust's broadcast helper incorrectly tested the raw profile IQ and omitted the new PC. The helper now receives the active difficulty and applies the same enemy-IQ capacity modifiers used by EnemyAi::get_iq. The focused eligibility test covers Hard base IQ 15 admitted and 14 rejected, plus camp, seek-substate, and uniqueness gates. The representative replay and schema-14 Cyrdach Profile_156 Savegame_001 replay-009 and Nescafe Profile_001 Savegame_001 replay-009 controls match every recorded frame through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

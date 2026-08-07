@@ -5948,6 +5948,7 @@ impl EngineInner {
                 super::beggar::add_beggar_for_all_intelligent_seeking_soldiers(
                     &mut self.world.entities,
                     pc_id,
+                    self.control.sim_config.difficulty,
                 );
             }
         }

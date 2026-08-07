@@ -6220,8 +6220,10 @@ fn entering_beggar_registers_only_intelligent_lacklandist_seekers() {
     let wrong_camp = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
 
     for (id, iq, substate) in [
-        (eligible, 30, Substate::SeekingSeekpointApproachingBeggar),
-        (low_iq, 29, Substate::SeekingSeekpoint),
+        // Hard difficulty doubles enemy IQ: the recorded boundary has a
+        // base-IQ-15 seeker that Original admits at the effective threshold.
+        (eligible, 15, Substate::SeekingSeekpointApproachingBeggar),
+        (low_iq, 14, Substate::SeekingSeekpoint),
         (not_seeking, 100, Substate::DefaultOnPost),
         (wrong_camp, 100, Substate::SeekingSeekpoint),
     ] {
@@ -6244,12 +6246,14 @@ fn entering_beggar_registers_only_intelligent_lacklandist_seekers() {
     crate::engine::beggar::add_beggar_for_all_intelligent_seeking_soldiers(
         &mut engine.world.entities,
         beggar,
+        crate::player_profile::DifficultyLevel::Hard,
     );
     // Original AddDetectable requires uniqueness; a repeated entry boundary
     // must not append the same beggar twice.
     crate::engine::beggar::add_beggar_for_all_intelligent_seeking_soldiers(
         &mut engine.world.entities,
         beggar,
+        crate::player_profile::DifficultyLevel::Hard,
     );
 
     let beggar_idx = DetectableType::Beggar as usize;

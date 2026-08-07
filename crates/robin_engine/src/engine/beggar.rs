@@ -65,22 +65,30 @@ pub(super) fn set_flags_of_near_coins_on_ground(
 ///
 /// This is the exact scope of Original
 /// `RHElementActorNPC::AddBeggarForAllIntelligentSeekingSoldiers`: the camp
-/// registry is scanned in order, IQ is compared against
-/// `CHECK_BEGGAR_MIN_IQ`, and `_ANY_SEEK_AREA_SUBSTATE_` is the only admitted
-/// state family. `AddDetectable` appends to the Beggar list and requires the
-/// pair not to be present already.
+/// registry is scanned in order, difficulty-modified `GetIQ()` is compared
+/// against `CHECK_BEGGAR_MIN_IQ`, and `_ANY_SEEK_AREA_SUBSTATE_` is the only
+/// admitted state family. `AddDetectable` appends to the Beggar list and
+/// requires the pair not to be present already.
 pub(super) fn add_beggar_for_all_intelligent_seeking_soldiers(
     entities: &mut crate::entities::Entities,
     beggar_id: EntityId,
+    difficulty: crate::player_profile::DifficultyLevel,
 ) {
     use crate::element::{Camp, Detectable, DetectableType};
+    use crate::player_profile::difficulty_params;
 
     let eligible: Vec<_> = entities
         .soldiers()
         .filter_map(|(soldier_id, soldier)| {
             let ai = soldier.npc.ai_brain.enemy()?;
+            let iq = difficulty.modify_capacity(
+                ai.soldier_profile_iq,
+                difficulty_params::EASY_ENEMY_IQ,
+                difficulty_params::HARD_ENEMY_IQ,
+                100,
+            );
             (soldier.soldier.cached_camp == Camp::Lacklandists
-                && ai.soldier_profile_iq >= CHECK_BEGGAR_MIN_IQ
+                && iq >= CHECK_BEGGAR_MIN_IQ
                 && ai.base.current_substate.is_seek_area())
             .then_some(soldier_id)
         })
