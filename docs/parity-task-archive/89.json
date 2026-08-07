@@ -1,0 +1,8 @@
+{
+  "id": "89",
+  "subject": "Archive source-inconsistent projectile landing membership traces",
+  "description": "DONE as source/assets-verified no-fix. Three old nicouzouf Profile_001 Savegame_051 captures (replays 003, 009, and 013) first diverge when a newly spawned arrow reports Original layer/sector 0 while Rust reports layer 0xFFFF and null sector. Current assets place the relevant terminal landing points inside both the layer-0 ground area (sector 0) and non-area motion obstacle sector 18; the points are robustly interior, not boundary cases. Current Original RHElementProjectile::ComputeTrajectory queries SECTOR_MOTION in source order, assigns ground sector 0, then when it finds the containing non-area obstacle explicitly SetSector(NULL) and returns before SetLayer, preserving layer 0xFFFF. Rust's landing resolver reproduces exactly that sequence. The recorded arrow's first-frame position and movement match Rust bit-for-bit, excluding a launch/trajectory divergence at the reported boundary. These three old captures therefore contradict the current Original source/assets and are excluded individually in docs/PARITY_RETIRED_TRACES.txt pending recapture. No Rust trace-specific behavior was introduced.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

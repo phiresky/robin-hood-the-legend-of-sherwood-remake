@@ -8,3 +8,7 @@ Savegame_Cyrdach/Profile_156/Savegame_023/replay-011-session-0001.jsonl.zst
 Savegame_linux3/Profile_001/ExQuickSave/replay-007-session-0001.jsonl.zst
 Savegame_linux3/Profile_001/ExQuickSave/replay-008-session-0001.jsonl.zst
 Savegame_linux3/Profile_001/Savegame_046/replay-001-session-0001.jsonl.zst
+# Task 89: projectile membership contradicts current Original source/assets.
+Savegame_nicouzouf/Profile_001/Savegame_051/replay-003-session-0001.jsonl.zst
+Savegame_nicouzouf/Profile_001/Savegame_051/replay-009-session-0001.jsonl.zst
+Savegame_nicouzouf/Profile_001/Savegame_051/replay-013-session-0001.jsonl.zst
