@@ -6139,3 +6139,70 @@ fn bonus_refresh_discovered_observes_owner_callback_order_and_spawned_later_slot
     assert_eq!(observed(true), (true, true));
     assert_eq!(observed(false), (false, true));
 }
+
+#[test]
+fn entering_beggar_registers_only_intelligent_lacklandist_seekers() {
+    use crate::ai::{AiState, Substate};
+    use crate::element::{Camp, DetectableType, Posture};
+
+    let mut engine = EngineInner::new();
+    let beggar = engine.add_entity(make_test_pc(Posture::SimulatingBeggar));
+    let eligible = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let low_iq = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let not_seeking = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let wrong_camp = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
+
+    for (id, iq, substate) in [
+        (eligible, 30, Substate::SeekingSeekpointApproachingBeggar),
+        (low_iq, 29, Substate::SeekingSeekpoint),
+        (not_seeking, 100, Substate::DefaultOnPost),
+        (wrong_camp, 100, Substate::SeekingSeekpoint),
+    ] {
+        let Entity::Soldier(soldier) = engine
+            .get_entity_mut(id)
+            .expect("test observer must remain present")
+        else {
+            panic!("test observer must remain a soldier");
+        };
+        let ai = soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("test observer must retain enemy AI");
+        ai.soldier_profile_iq = iq;
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = substate;
+    }
+
+    crate::engine::beggar::add_beggar_for_all_intelligent_seeking_soldiers(
+        &mut engine.world.entities,
+        beggar,
+    );
+    // Original AddDetectable requires uniqueness; a repeated entry boundary
+    // must not append the same beggar twice.
+    crate::engine::beggar::add_beggar_for_all_intelligent_seeking_soldiers(
+        &mut engine.world.entities,
+        beggar,
+    );
+
+    let beggar_idx = DetectableType::Beggar as usize;
+    for (id, expected) in [
+        (eligible, true),
+        (low_iq, false),
+        (not_seeking, false),
+        (wrong_camp, false),
+    ] {
+        let list = &engine
+            .get_entity(id)
+            .and_then(Entity::npc_data)
+            .expect("test observer must retain NPC data")
+            .detectable_lists[beggar_idx];
+        assert_eq!(list.len(), usize::from(expected));
+        assert!(
+            list.iter()
+                .all(|detectable| detectable.element == Some(beggar)
+                    && detectable.detectable_type == DetectableType::Beggar),
+            "unexpected beggar registration for {id:?}"
+        );
+    }
+}

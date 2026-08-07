@@ -31,6 +31,9 @@ const BEGGAR_PROXIMITY: f32 = 70.0;
 /// Radius (MaxNorm, map units) for the near-coins toggle sweep.
 const NEAR_COINS_RADIUS: f32 = 100.0;
 
+/// Original `CHECK_BEGGAR_MIN_IQ`.
+const CHECK_BEGGAR_MIN_IQ: u16 = 30;
+
 /// Toggle nearby ground coins for the stealth-command transition without
 /// borrowing the rest of [`EngineInner`].
 pub(super) fn set_flags_of_near_coins_on_ground(
@@ -53,6 +56,54 @@ pub(super) fn set_flags_of_near_coins_on_ground(
             && object.object_type == ObjectType::Coin
         {
             object.belongs_to_beggar = value;
+        }
+    }
+}
+
+/// Register a newly disguised PC with every intelligent Lacklandist soldier
+/// currently searching an area.
+///
+/// This is the exact scope of Original
+/// `RHElementActorNPC::AddBeggarForAllIntelligentSeekingSoldiers`: the camp
+/// registry is scanned in order, IQ is compared against
+/// `CHECK_BEGGAR_MIN_IQ`, and `_ANY_SEEK_AREA_SUBSTATE_` is the only admitted
+/// state family. `AddDetectable` appends to the Beggar list and requires the
+/// pair not to be present already.
+pub(super) fn add_beggar_for_all_intelligent_seeking_soldiers(
+    entities: &mut crate::entities::Entities,
+    beggar_id: EntityId,
+) {
+    use crate::element::{Camp, Detectable, DetectableType};
+
+    let eligible: Vec<_> = entities
+        .soldiers()
+        .filter_map(|(soldier_id, soldier)| {
+            let ai = soldier.npc.ai_brain.enemy()?;
+            (soldier.soldier.cached_camp == Camp::Lacklandists
+                && ai.soldier_profile_iq >= CHECK_BEGGAR_MIN_IQ
+                && ai.base.current_substate.is_seek_area())
+            .then_some(soldier_id)
+        })
+        .collect();
+    let beggar_idx = DetectableType::Beggar as usize;
+    for soldier_id in eligible {
+        let soldier = entities
+            .get_mut(soldier_id)
+            .and_then(Entity::npc_data_mut)
+            .expect("eligible beggar observer disappeared from the soldier registry");
+        let list = soldier
+            .detectable_lists
+            .get_mut(beggar_idx)
+            .expect("NPC detectable lists must include the Beggar bucket");
+        if !list.iter().any(|detectable| {
+            detectable.element == Some(beggar_id)
+                && detectable.detectable_type == DetectableType::Beggar
+        }) {
+            list.push(Detectable {
+                element: Some(beggar_id),
+                detectable_type: DetectableType::Beggar,
+                ..Detectable::default()
+            });
         }
     }
 }

@@ -1,0 +1,8 @@
+{
+  "id": "91",
+  "subject": "Register newly disguised PC beggars with seeking soldiers",
+  "description": "DONE. In schema-14 linux3 Profile_001 Savegame_045 replay-008 at frame 44569, PC 344 completed TransitionWaitingUprightSimulatingBeggar. Original appended a type-5 Beggar detectable for PC 344 to Soldier 118, increasing its detectable count from 74 to 75; Rust performed the posture and nearby-coin side effects but retained an explicit TODO instead of registering the beggar. Original RHElementActorNPC::AddBeggarForAllIntelligentSeekingSoldiers scans Lacklandist soldiers, requires IQ >= CHECK_BEGGAR_MIN_IQ (30), and admits exactly _ANY_SEEK_AREA_SUBSTATE_. Rust now performs that ordered animation-DONE side effect and preserves AddDetectable uniqueness. A focused test covers the camp, IQ, substate, and duplicate gates. The representative release replay clears frame 44569 and advances to an independent Soldier 118 command/animation frontier at frame 44976.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

@@ -5944,11 +5944,12 @@ impl EngineInner {
                 pc_id,
                 enabled,
             );
-            // TODO(parity): Entering beggar mode also calls
-            // AddBeggarForAllIntelligentSeekingSoldiers. Model that ordered
-            // AI-list mutation once its Original container semantics are
-            // represented; coin eligibility and actor state are already
-            // applied at the authoritative animation-DONE boundary here.
+            if enabled {
+                super::beggar::add_beggar_for_all_intelligent_seeking_soldiers(
+                    &mut self.world.entities,
+                    pc_id,
+                );
+            }
         }
 
         for (actor_id, target_id, strike) in sides.smalltalk_strikes {
