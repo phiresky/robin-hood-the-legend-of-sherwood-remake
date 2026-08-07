@@ -368,6 +368,13 @@ fn missed_patrol_member_reacquired(
     detected && is_able_to_help && ai_state == crate::ai::AiState::Default
 }
 
+/// Original `NearbyCiviliansPanic` asks every active outdoor civilian whether
+/// it detects the source. Dead and unconscious civilians are not rejected
+/// before `IsDetecting360Degrees`, so they can still emit its LOS query.
+fn nearby_panic_civilian_reaches_visibility(active: bool, in_building: bool) -> bool {
+    active && !in_building
+}
+
 #[cfg(test)]
 mod parity_tests {
     use super::*;
@@ -432,6 +439,31 @@ mod parity_tests {
         );
         assert!(!reacquired);
         assert_eq!(calls.get(), 1, "inactive actors return before LOS");
+    }
+
+    #[test]
+    fn nearby_panic_uses_active_outdoor_gate_without_life_filter() {
+        // A dead body's element can remain active outdoors. Life and
+        // consciousness are intentionally absent from Original's gate.
+        let mut civilian = crate::element::ActorCivilian {
+            element: crate::element::ElementData {
+                active: true,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            civilian: Default::default(),
+        };
+        civilian.npc.life_points = 0;
+        civilian.human.unconscious = true;
+
+        assert!(nearby_panic_civilian_reaches_visibility(
+            civilian.element.active,
+            false,
+        ));
+        assert!(!nearby_panic_civilian_reaches_visibility(false, false));
+        assert!(!nearby_panic_civilian_reaches_visibility(true, true));
     }
 
     fn lift_grid(lift_type: crate::sector::LiftType) -> crate::fast_find_grid::FastFindGrid {
@@ -6830,6 +6862,31 @@ impl EngineInner {
             self.launch_element(elem);
         }
 
+        // Cross-actor speech authored directly after a target command. The
+        // beggar-identification path, for example, launches SHOW_FACE and
+        // then synchronously calls Say on that civilian. Queue through the
+        // target AI's ordinary owner-work path so all Say gates, sound
+        // requests, and automatic forbids remain authoritative.
+        for (target_handle, remark) in effects.say_on_target {
+            let target_id = self.expect_human_id_for_ai_handle(target_handle, "AI speech target");
+            let target = self.world.entities.get_mut(target_id).unwrap_or_else(|| {
+                panic!(
+                    "AI speech target {} disappeared before Say",
+                    target_id.index()
+                )
+            });
+            target
+                .ai_controller_mut()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "AI speech target {} has no AI controller",
+                        target_id.index()
+                    )
+                })
+                .say(remark);
+            self.drain_ai_owner_work_for(sim, assets, target_id);
+        }
+
         // Full sequences the AI wants to launch verbatim — the
         // `launch_sequence(SEQ_INFO, sequence)` calls inside AI
         // handlers (e.g. the officer's turn/gather/point alert
@@ -7592,14 +7649,13 @@ impl EngineInner {
                 let Entity::Civilian(c) = entity else {
                     continue;
                 };
-                if c.npc.life_points <= 0 || c.human.unconscious {
-                    continue;
-                }
-                // IsActiveAndOutsideBuilding on the civilian.
-                if !c.element.active {
-                    continue;
-                }
-                if self.entity_building_sector(c.element.sector()).is_some() {
+                // IsDetecting360Degrees tests only active/outside-building
+                // lifecycle here. In particular, it does not reject dead or
+                // unconscious civilians before its distance and LOS work.
+                let civilian_in_building =
+                    self.entity_building_sector(c.element.sector()).is_some();
+                if !nearby_panic_civilian_reaches_visibility(c.element.active, civilian_in_building)
+                {
                     continue;
                 }
                 // `GetPositionGround()` is the cached world-space X/Y pair,

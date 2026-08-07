@@ -305,6 +305,11 @@ pub struct AiActorOutbox {
     pub set_guarded_pc: Option<GuardedPcEffect>,
     pub launch_commands: Vec<crate::element::Command>,
     pub launch_on_target: Vec<(NpcHandle, crate::element::Command)>,
+    /// Ordered NPC `Say` calls made on another actor. These remain in the
+    /// actor outbox so a preceding `LaunchSequenceElement` on the same target
+    /// is applied first at the owner boundary.
+    #[serde(default)]
+    pub say_on_target: Vec<(NpcHandle, Remark)>,
     pub launch_sequences: Vec<crate::sequence::Sequence>,
     pub look_sidewards: Option<LookDirection>,
     pub posture: Option<crate::element::Posture>,
@@ -399,6 +404,7 @@ pub(crate) struct AiActorCoreEffects {
     pub deactivate: bool,
     pub launch_commands: Vec<crate::element::Command>,
     pub launch_on_target: Vec<(NpcHandle, crate::element::Command)>,
+    pub say_on_target: Vec<(NpcHandle, Remark)>,
     pub launch_sequences: Vec<crate::sequence::Sequence>,
     pub look_sidewards: Option<LookDirection>,
     pub add_detectables: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
@@ -448,6 +454,7 @@ impl AiActorOutbox {
             || self.set_guarded_pc.is_some()
             || !self.launch_commands.is_empty()
             || !self.launch_on_target.is_empty()
+            || !self.say_on_target.is_empty()
             || !self.launch_sequences.is_empty()
             || self.look_sidewards.is_some()
             || self.posture.is_some()
@@ -509,6 +516,7 @@ impl AiActorOutbox {
             deactivate: std::mem::take(&mut self.deactivate),
             launch_commands: std::mem::take(&mut self.launch_commands),
             launch_on_target: std::mem::take(&mut self.launch_on_target),
+            say_on_target: std::mem::take(&mut self.say_on_target),
             launch_sequences: std::mem::take(&mut self.launch_sequences),
             look_sidewards: self.look_sidewards.take(),
             add_detectables: std::mem::take(&mut self.add_detectables),

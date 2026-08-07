@@ -1760,6 +1760,15 @@ impl EnemyAi {
                             self.beggar_to_examine,
                             crate::element::Command::BeggarShowFace,
                         ));
+                        // Original immediately follows the show-face launch
+                        // with `beggar->Say(CIV_REMARK_BEGGAR_IDENTIFIES_HIMSELF)`.
+                        // Keep both calls in the ordered actor-effect prefix:
+                        // SetState below snapshots that prefix before its
+                        // synchronous script callback.
+                        self.base.outbox.actor.say_on_target.push((
+                            self.beggar_to_examine,
+                            crate::ai::Remark::CivBeggarIdentifiesHimself,
+                        ));
                         self.set_state(
                             AiState::Seeking,
                             Substate::SeekingSeekpointIdentifyingBeggar2,
@@ -6349,6 +6358,52 @@ mod tests {
             ));
             assert_eq!(ai.base.when_does_timer_ring, 400 + timer);
         }
+    }
+
+    #[test]
+    fn identified_npc_beggar_shows_face_then_identifies_himself() {
+        use crate::ai::{AiOwnerWork, Remark};
+        use crate::element::Command;
+
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.set_state(
+            AiState::Seeking,
+            Substate::SeekingSeekpointIdentifyingBeggar1,
+        );
+        ai.base.outbox = crate::ai::AiOutbox::default();
+        ai.beggar_to_examine = 70;
+        ai.beggar_is_npc = true;
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        let prefix = ai
+            .base
+            .outbox
+            .reentrant
+            .owner_work
+            .iter()
+            .find_map(|work| match work {
+                AiOwnerWork::StateChange(change) => change.actor_effects_before_callback.as_ref(),
+                _ => None,
+            })
+            .expect("beggar response must precede the identifying-2 SetState callback");
+        assert_eq!(prefix.launch_on_target, vec![(70, Command::BeggarShowFace)]);
+        assert_eq!(
+            prefix.say_on_target,
+            vec![(70, Remark::CivBeggarIdentifiesHimself)]
+        );
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingSeekpointIdentifyingBeggar2
+        );
     }
 
     #[test]
