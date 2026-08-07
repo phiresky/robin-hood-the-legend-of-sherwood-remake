@@ -1,0 +1,9 @@
+{
+  "id": "132",
+  "subject": "Run the enemy SetState tail on goto-post arrival",
+  "description": "The 12-trace LeaveAttentiveMode-to-Turn cluster was represented by nicouzouf Profile_001 Savegame_065 replay-001 at frame 440. Soldier57 reached its authored post while attentive. Original ThinkExpectedEventCommonStuff executes FaceTo(initial direction) and then calls virtual SetState(Default, GotoPostTurn); the enemy override consequently requests ordinary LeaveAttentiveMode and ALERT_GREEN after registering the Turn. Rust delegated to the base controller handler, which requested the Turn but directly assigned state/substate and bypassed EnemyAi::set_state, leaving the soldier attentive/Yellow and exposing Turn instead of the higher-priority LeaveAttentiveMode transition. The enemy wrapper now handles GotoPost arrival and the following GotoPostTurn completion through EnemyAi::set_state, preserving Original's Face/posture-before-SetState and timer-after-SetState ordering. A focused regression verifies that the Turn request is captured in the pre-SetState actor prefix while the ordinary target-false attentive barrier and Green alert are emitted by the enemy tail. On the combined task-131/132 runner, the representative clears frame 440 and advances to an independent frame-688 three-soldier MoveWaiting/path-request frontier. Both shared schema-14 replay-009 controls match every recorded frame through EOF on the same runner.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task132_goto_post_attentive_tail"
+}

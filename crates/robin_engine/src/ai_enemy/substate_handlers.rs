@@ -108,9 +108,40 @@ impl EnemyAi {
     ) -> bool {
         let stimulus_type = stimulus.stimulus_type;
         match self.base.current_substate {
-            Substate::DefaultGotoPost
-            | Substate::DefaultGotoPostTurn
-            | Substate::DefaultGotoRoute
+            Substate::DefaultGotoPost => {
+                if stimulus_type == StimulusType::EventReachPoint {
+                    // Original common handler calls virtual FaceTo followed
+                    // by virtual SetState. For an enemy soldier that second
+                    // call must reach EnemyAi::set_state so returning to
+                    // Default queues LeaveAttentiveMode and ALERT_GREEN.
+                    self.base
+                        .face_direction(self.base.initial_view_direction, ctx);
+                    self.set_state(AiState::Default, Substate::DefaultGotoPostTurn);
+                    return true;
+                }
+                return self
+                    .base
+                    .think_expected_event_common_stuff(sim, stimulus, ctx);
+            }
+
+            Substate::DefaultGotoPostTurn => {
+                if stimulus_type == StimulusType::EventDone {
+                    if self.base.likes_to_sit_around {
+                        self.base.outbox.actor.posture = Some(crate::element::Posture::Sitting);
+                    } else if self.base.special_action {
+                        self.base.outbox.actor.posture = Some(crate::element::Posture::Leisure);
+                    }
+                    self.set_state(AiState::Default, Substate::DefaultOnPost);
+                    let bored = self.base.get_bored_time(sim, ctx);
+                    self.base.launch_timer(bored as u32, ctx.frame);
+                    return true;
+                }
+                return self
+                    .base
+                    .think_expected_event_common_stuff(sim, stimulus, ctx);
+            }
+
+            Substate::DefaultGotoRoute
             | Substate::DefaultGotoRouteTurn
             | Substate::DefaultOnPost
             | Substate::DefaultEnroute
@@ -6194,6 +6225,62 @@ impl EnemyAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn goto_post_arrival_runs_enemy_attentive_tail_after_turn_request() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(57);
+        ai.base.current_state = AiState::Default;
+        ai.base.current_substate = Substate::DefaultGotoPost;
+        ai.base.initial_view_direction = 4;
+        ai.attentive = true;
+        ai.will_be_attentive = true;
+        let ctx = AiContext {
+            direction: 0,
+            self_action_state: crate::element::ActionState::Waiting,
+            ..AiContext::default()
+        };
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventReachPoint),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.current_substate, Substate::DefaultGotoPostTurn);
+        let state_change = ai
+            .base
+            .outbox
+            .reentrant
+            .owner_work
+            .iter()
+            .find_map(|work| match work {
+                crate::ai::AiOwnerWork::StateChange(change) => Some(change),
+                _ => None,
+            })
+            .expect("goto-post arrival must use EnemyAi::set_state");
+        let turn_prefix = state_change
+            .actor_effects_before_callback
+            .as_ref()
+            .expect("FaceTo must precede the virtual SetState call");
+        assert_eq!(turn_prefix.orders.len(), 1);
+        assert_eq!(
+            turn_prefix.orders[0].order_type,
+            crate::order::OrderType::Turning
+        );
+        let attentive = ai
+            .base
+            .outbox
+            .actor
+            .set_attentive_mode
+            .expect("Default SetState must queue its attentive-mode tail");
+        assert!(!attentive.target);
+        assert!(!attentive.fast_officer_variant);
+        assert_eq!(ai.base.view_alert_status, crate::ai::AlertLevel::Green);
+    }
 
     #[test]
     fn reached_beggar_launches_one_ordered_turn_then_response_sequence() {
