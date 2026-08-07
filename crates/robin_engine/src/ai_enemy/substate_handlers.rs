@@ -1665,38 +1665,51 @@ impl EnemyAi {
                     );
                     self.base.say(Remark::ControlsBeggar);
 
-                    // Face toward the beggar's position.
-                    self.base.face_position(self.base.seek_position);
+                    // Original authors one two-level sequence, not two
+                    // independent LaunchSequenceElement calls: TurnFast must
+                    // retain actor ownership until it terminates before the
+                    // menace/equip command can begin.
+                    use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
+                    let beggar_position = ctx
+                        .entity_view(self.beggar_to_examine)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "beggar {} disappeared before identification turn",
+                                self.beggar_to_examine
+                            )
+                        })
+                        .position;
+                    let turn_direction = crate::position_interface::vector_to_sector_0_to_15_iso(
+                        beggar_position.x - ctx.position.x,
+                        beggar_position.y - ctx.position.y,
+                    );
+                    let owner = self.base.owner_entity_id;
+                    let mut sequence = Sequence::new();
+                    let mut turn =
+                        SequenceElement::new_generic(1, crate::element::Command::TurnFast, owner);
+                    turn.set_property(Field::Direction, FieldValue::Integer(turn_direction as u32));
+                    sequence.append_element(turn);
 
-                    // Archers equip bow; melee soldiers menace.
-                    // TurnFast + EquipBow for archers, StartMenace for melee.
-                    // Timer = 50 (NPC target) / 100 (PC target) for archers, 30 for melee.
+                    // Archers equip bow; melee soldiers menace. Timer = 50
+                    // (NPC target) / 100 (PC target) for archers, 30 for
+                    // melee.
                     if self.is_archer() {
-                        self.base
-                            .outbox
-                            .actor
-                            .launch_commands
-                            .push(crate::element::Command::TurnFast);
-                        self.base
-                            .outbox
-                            .actor
-                            .launch_commands
-                            .push(crate::element::Command::EquipBow);
+                        sequence.append_element(SequenceElement::new(
+                            2,
+                            crate::element::Command::EquipBow,
+                            owner,
+                        ));
                         let timer = if self.beggar_is_npc { 50 } else { 100 };
                         self.base.launch_timer(timer, ctx.frame);
                     } else {
-                        self.base
-                            .outbox
-                            .actor
-                            .launch_commands
-                            .push(crate::element::Command::TurnFast);
-                        self.base
-                            .outbox
-                            .actor
-                            .launch_commands
-                            .push(crate::element::Command::StartMenace);
+                        sequence.append_element(SequenceElement::new(
+                            2,
+                            crate::element::Command::StartMenace,
+                            owner,
+                        ));
                         self.base.launch_timer(30, ctx.frame);
                     }
+                    self.base.outbox.actor.launch_sequences.push(sequence);
                 }
             }
 
@@ -6179,6 +6192,77 @@ impl EnemyAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reached_beggar_launches_one_ordered_turn_then_response_sequence() {
+        use std::sync::Arc;
+
+        use crate::element::{Command, EntityId, Posture};
+        use crate::entity_id::SoldierId;
+        use crate::sequence::{Field, FieldValue};
+
+        for (archer, response, timer) in [
+            (false, Command::StartMenace, 30),
+            (true, Command::EquipBow, 100),
+        ] {
+            let sim = crate::sim_rng::test_context();
+            let mut ai = EnemyAi::new(1);
+            ai.base.owner_entity_id = Some(EntityId::Soldier(SoldierId(1)));
+            ai.set_state(
+                AiState::Seeking,
+                Substate::SeekingSeekpointApproachingBeggar,
+            );
+            ai.beggar_to_examine = 17;
+            ai.beggar_is_npc = false;
+            ai.is_archer_unit = archer;
+
+            let mut beggar = pc_view(Posture::SimulatingBeggar);
+            beggar.position = Position {
+                x: 140.0,
+                y: 80.0,
+                ..Position::default()
+            };
+            let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+            views.insert(17, beggar);
+            let ctx = AiContext {
+                frame: 400,
+                position: Position {
+                    x: 100.0,
+                    y: 100.0,
+                    ..Position::default()
+                },
+                entity_views: Arc::new(views),
+                ..AiContext::default()
+            };
+
+            ai.think_expected_event(
+                &sim,
+                &Stimulus::new(StimulusType::EventReachPoint),
+                &mut AiGlobalState::default(),
+                &ctx,
+                &AiPerTickData::stub(),
+                None,
+            );
+
+            assert!(ai.base.outbox.actor.orders.is_empty());
+            assert!(ai.base.outbox.actor.launch_commands.is_empty());
+            let [sequence] = ai.base.outbox.actor.launch_sequences.as_slice() else {
+                panic!("beggar identification must launch exactly one sequence");
+            };
+            assert_eq!(sequence.elements.len(), 2);
+            assert_eq!(sequence.elements[0].command, Command::TurnFast);
+            assert_eq!(sequence.elements[0].command_level, 1);
+            assert_eq!(sequence.elements[1].command, response);
+            assert_eq!(sequence.elements[1].command_level, 2);
+            let expected_direction =
+                crate::position_interface::vector_to_sector_0_to_15_iso(40.0, -20.0);
+            assert!(matches!(
+                sequence.elements[0].get_property(Field::Direction),
+                Some(FieldValue::Integer(direction)) if *direction == expected_direction as u32
+            ));
+            assert_eq!(ai.base.when_does_timer_ring, 400 + timer);
+        }
+    }
 
     #[test]
     fn combat_alert_ignores_timer_until_reaching_the_alert_point() {

@@ -1,0 +1,8 @@
+{
+  "id": "93",
+  "subject": "Preserve ordered beggar-identification sequence",
+  "description": "DONE. In schema-14 linux3 Profile_001 Savegame_045 replay-008 at frame 44976, Soldier 118 reached the beggar while in SeekingSeekpointApproachingBeggar. Original constructed one RHSequence containing level-1 TURN_FAST with the direction to the live beggar followed by level-2 START_MENACE (or EQUIP_BOW for archers), leaving TurnFast in progress. Rust emitted an ordinary face intent plus independent TurnFast and StartMenace launch commands; the same drain allowed StartMenace to interrupt both turns. Rust now authors and launches the exact two-level sequence using the live beggar entity-view position. A focused regression covers melee and archer response commands, levels, direction property, and timer deadlines. The parity-profile replay clears frame 44976 and advances to an independent Civilian 63 BeggarShowFace frontier at frame 45007.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
