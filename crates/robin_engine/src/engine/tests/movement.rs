@@ -117,6 +117,72 @@ fn menacing_ai_move_keeps_stop_menace_and_move_in_one_ordered_sequence() {
 }
 
 #[test]
+fn deferred_ai_move_builds_route_from_enqueue_time_topology() {
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let source_sector = crate::position_interface::SectorHandle::new(7);
+    {
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity.element_data_mut().active = true;
+        entity
+            .element_data_mut()
+            .set_position_map(crate::coordinates::MapPoint::new(100.0, 200.0));
+        entity.element_data_mut().set_sector(source_sector);
+        entity.element_data_mut().set_layer(0);
+    }
+
+    let mut intent =
+        crate::order::AiOrderIntent::new(crate::order::OrderType::RunningUpright, 400.0, 500.0);
+    intent.target_sector = source_sector;
+    intent.target_layer = Some(0);
+    engine.launch_ai_move(owner, &intent);
+
+    // A selected non-interruptible door element may commit its far-side
+    // topology before SequenceManager gets to instruct the postponed GoTo.
+    // Route construction must nevertheless use the topology at GoTo call
+    // time, exactly as Original's synchronous AppendMoveToSequence does.
+    {
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity
+            .element_data_mut()
+            .set_position_map(crate::coordinates::MapPoint::new(125.0, 225.0));
+        entity
+            .element_data_mut()
+            .set_sector(crate::position_interface::SectorHandle::new(77));
+        entity.element_data_mut().set_layer(1);
+    }
+
+    let sequence_id = engine
+        .drain_pending_move_requests_for_owner(&crate::sim_rng::test_context(), owner)
+        .into_iter()
+        .next()
+        .expect("deferred same-sector route launches");
+    let sequence = engine
+        .orders
+        .sequence_manager
+        .get_sequence(sequence_id)
+        .expect("movement sequence remains registered");
+
+    assert_eq!(sequence.elements.len(), 1);
+    assert_eq!(sequence.elements[0].command, Command::Move);
+    let crate::sequence::SequenceElementData::Movement {
+        destination,
+        sector: target_sector,
+        layer: target_layer,
+        ..
+    } = &sequence.elements[0].data
+    else {
+        panic!("call-time same-sector route must remain a movement element");
+    };
+    assert_eq!(
+        *destination,
+        crate::coordinates::MapPoint::new(400.0, 500.0)
+    );
+    assert_eq!(*target_sector, source_sector);
+    assert_eq!(*target_layer, 0);
+}
+
+#[test]
 fn production_owner_execution_frozen_blocks_rider_charge_execute_entirely() {
     use crate::engine::melee::{
         clear_test_sword_damage_observations, take_test_sword_damage_observations,

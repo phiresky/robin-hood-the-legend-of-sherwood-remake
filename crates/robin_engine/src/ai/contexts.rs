@@ -585,6 +585,11 @@ pub struct AiPerTickData {
     /// `RHProfileManager.h::GetHandToHandProfile` asserts that the requested
     /// profile exists; `RHSword` therefore always owns a real profile.
     pub profile_manager: Option<std::sync::Arc<crate::profiles::ProfileManager>>,
+    /// Owner's literal `RHElement::GetPosition()` value for call sites that
+    /// bypass `RHArtificialIntelligence::Position`. During a door pass this
+    /// remains the interpolated body position rather than the committed
+    /// destination-side forecast carried by [`AiContext::position`].
+    pub owner_live_position: Option<Position>,
     pub patrol_chief_position: Position,
     pub patrol_chief_state: AiState,
     pub enemy_sq_distances: Vec<(HumanHandle, i32)>,
@@ -865,6 +870,7 @@ impl AiPerTickData {
     pub fn stub() -> Self {
         Self {
             profile_manager: None,
+            owner_live_position: None,
             patrol_chief_position: Position::default(),
             patrol_chief_state: AiState::Default,
             enemy_sq_distances: Vec::new(),

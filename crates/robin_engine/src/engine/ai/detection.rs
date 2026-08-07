@@ -160,6 +160,9 @@ fn listen_distance_squared(
 }
 
 struct SoldierSightContext {
+    /// Literal owner position, before the AI `Position(actor)` door-side
+    /// forecast used by shared entity views.
+    position: crate::ai::Position,
     eye: MapPoint,
     /// World-space `ComputeEyesPoint` result, used verbatim as the origin of
     /// opaque-reachability queries.
@@ -263,6 +266,12 @@ impl SoldierSightContext {
         let (eye, eye_world) = human_eye_point_for_visibility(entity);
 
         Some(Self {
+            position: crate::ai::Position {
+                x: entity.element_data().position_map().x,
+                y: entity.element_data().position_map().y,
+                sector: entity.element_data().sector(),
+                level: entity.element_data().layer(),
+            },
             eye,
             eye_world,
             dir: entity.element_data().direction(),
@@ -2251,6 +2260,7 @@ impl EngineInner {
                 // ── Populate combat context from engine ──────
                 let mut tick_data = AiPerTickData {
                     profile_manager: Some(assets.profile_manager.clone()),
+                    owner_live_position: Some(viewer.position),
                     // Prepared without RNG only after this scan produces an
                     // Enemy stimulus block.
                     primary_target_forecast: None,

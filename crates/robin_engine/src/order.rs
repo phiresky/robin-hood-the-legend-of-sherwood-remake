@@ -703,6 +703,16 @@ pub struct AiOrderIntent {
     /// order rather than a full AI `RHposition` destination.
     pub target_sector: Option<crate::position_interface::SectorHandle>,
     pub target_layer: Option<u16>,
+    /// Actor topology captured when the AI's synchronous `GoTo` call reaches
+    /// the engine boundary. Sequence construction may be deferred until a
+    /// non-interruptible element yields, but Original constructs the route
+    /// against this call-time source rather than the actor's later position.
+    #[serde(default)]
+    pub source_position: Option<crate::coordinates::MapPoint>,
+    #[serde(default)]
+    pub source_sector: Option<crate::position_interface::SectorHandle>,
+    #[serde(default)]
+    pub source_layer: Option<u16>,
     pub target_actor: Option<u32>,
     pub compute_direction: bool,
     pub defer_initial_turn_step: bool,
@@ -784,6 +794,9 @@ impl AiOrderIntent {
             target_y: y,
             target_sector: None,
             target_layer: None,
+            source_position: None,
+            source_sector: None,
+            source_layer: None,
             target_actor: None,
             compute_direction: true,
             defer_initial_turn_step: false,

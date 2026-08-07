@@ -1,0 +1,9 @@
+{
+  "id": "125",
+  "subject": "Preserve GoTo call-time topology and literal moving-fast distance",
+  "description": "Nescafe Profile_001 Restart replay-009 was missing Original's frame-441 Soldier134 path request. EVENT_VIEW issued GoNear while Soldier134 was interpolating through a selected non-interruptible PassDoor: Original synchronously chose a simple same-topology Move from the actor's raw call-time sector/layer and postponed that already-built sequence, whereas Rust deferred route construction until after the door committed sector77/layer1 and incorrectly built a gate route. AI move intents now snapshot Original's call-time source decision at enqueue: a raw same-topology GoTo remains raw, while only the cross-topology AppendMoveToSequence branch snapshots the selected door's adapted far side. This distinction also preserves the independent SuN door-route behavior that regressed under an unconditional raw snapshot. Once the missing request was restored, its tolerance exposed a related source distinction: Original Distance(pEnemy) directly reads the owner's literal GetPosition during door interpolation, while Rust used AiContext's intentionally far-side-forecasted AI Position(owner). Production per-tick data now carries the required literal owner position, and the moving-fast EVENT_VIEW branch uses it strictly for the GoNear distance. Focused regressions cover both deferred route construction and the 161-unit literal-position tolerance. The representative clears frame 441 exactly and advances to an independent frame-451 Soldier134 animation/goal frontier. Both task-36 schema-14 replay-009 controls match every recorded frame through exact EOF on the shared Tasks125/128/129 runner (mtime 2026-08-07 23:17:36.845093094 +0200).",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task125_goto_calltime_topology"
+}

@@ -4946,7 +4946,11 @@ impl EngineInner {
         }
     }
 
-    fn launch_ai_move(&mut self, entity_id: EntityId, intent: &crate::order::AiOrderIntent) {
+    pub(super) fn launch_ai_move(
+        &mut self,
+        entity_id: EntityId,
+        intent: &crate::order::AiOrderIntent,
+    ) {
         // The AI think loop can legitimately emit two distinct `GoTo`
         // intents for the same actor in one tick (e.g. a SEEK retarget
         // dispatched immediately after a macro-GoTo).  `halt_actor`
@@ -4967,9 +4971,56 @@ impl EngineInner {
                 "launch_ai_move: replacing prior pending Move (AI re-issued GoTo this tick)"
             );
         }
-        self.orders
-            .pending_move_requests
-            .push((entity_id, intent.clone()));
+        let mut intent = intent.clone();
+        if intent.source_position.is_none() {
+            let (raw_source, raw_sector, raw_layer, door_handle, door_direction) = {
+                let entity = self.get_entity(entity_id).unwrap_or_else(|| {
+                    panic!("AI GoTo source actor {entity_id:?} disappeared before enqueue")
+                });
+                let element = entity.element_data();
+                let (door_handle, door_direction) = current_door_for_route_source(entity);
+                (
+                    element.position_map(),
+                    element.sector(),
+                    element.layer(),
+                    door_handle,
+                    door_direction,
+                )
+            };
+            // Original chooses the simple same-topology Move from the raw
+            // actor topology. Only the cross-topology branch calls
+            // AppendMoveToSequence, which adapts an actor already committed
+            // to a selected door onto its far side. Snapshot that exact
+            // call-time decision rather than the actor's potentially
+            // different door state at the later drain.
+            let goal_layer = intent.target_layer.unwrap_or(raw_layer);
+            let goal_sector = intent.target_sector.or(raw_sector);
+            let crosses_raw_topology = goal_layer != raw_layer || goal_sector != raw_sector;
+            let adapted_source = crosses_raw_topology
+                .then(|| {
+                    self.scripts.mission.as_ref().and_then(|_| {
+                        adapt_source_to_current_door(
+                            &self.script_domains.interactables.doors,
+                            door_handle,
+                            door_direction,
+                        )
+                    })
+                })
+                .flatten();
+            let (source, sector, layer) = adapted_source
+                .map(|(point, sector, layer)| {
+                    (
+                        point,
+                        crate::position_interface::SectorHandle::new(sector),
+                        layer,
+                    )
+                })
+                .unwrap_or((raw_source, raw_sector, raw_layer));
+            intent.source_position = Some(source);
+            intent.source_sector = sector;
+            intent.source_layer = Some(layer);
+        }
+        self.orders.pending_move_requests.push((entity_id, intent));
     }
 
     /// Drain the pending-move-request queue and launch a Move
@@ -5042,31 +5093,44 @@ impl EngineInner {
         // RHSequence::AppendMoveToSequence adapts a source that is currently
         // crossing a gate to the committed far side before comparing sectors
         // or searching the gate graph.
-        let (source, source_layer, source_sector) = self
-            .scripts
-            .mission
-            .as_ref()
-            .and_then(|_| {
-                adapt_source_to_current_door(
-                    &self.script_domains.interactables.doors,
-                    door_handle,
-                    door_direction,
-                )
-            })
-            .map(|(point, sector, layer)| {
-                (
-                    point,
-                    layer,
-                    crate::position_interface::SectorHandle::new(sector),
-                )
-            })
-            .unwrap_or((raw_source, raw_source_layer, raw_source_sector));
+        let (source, source_layer, source_sector) = if let Some(source) = intent.source_position {
+            (
+                source,
+                intent.source_layer.unwrap_or_else(|| {
+                    panic!("AI GoTo for {entity_id:?} captured a source position without a layer")
+                }),
+                intent.source_sector,
+            )
+        } else {
+            // Backward-compatible fallback for old serialized intents that
+            // predate the enqueue-time topology snapshot.
+            self.scripts
+                .mission
+                .as_ref()
+                .and_then(|_| {
+                    adapt_source_to_current_door(
+                        &self.script_domains.interactables.doors,
+                        door_handle,
+                        door_direction,
+                    )
+                })
+                .map(|(point, sector, layer)| {
+                    (
+                        point,
+                        layer,
+                        crate::position_interface::SectorHandle::new(sector),
+                    )
+                })
+                .unwrap_or((raw_source, raw_source_layer, raw_source_sector))
+        };
         let goal_layer = intent.target_layer.unwrap_or(source_layer);
         let goal_sector = intent.target_sector.or(source_sector);
         let move_flags =
             crate::sequence::MoveFlags::from_bits_truncate(u32::from(intent.move_flags));
 
         let action = intent.order_type;
+        // A layer transition requires gate routing even when the numeric
+        // sector handle happens to remain the same.
         let crosses_topology = goal_layer != source_layer || goal_sector != source_sector;
         if crosses_topology {
             let Some(source_sector) = source_sector else {

@@ -1927,9 +1927,15 @@ impl EnemyAi {
             self.base.outbox.actor.set_focus(enemy);
             self.reinitialize_them_list(ctx, tick);
             // GoNear(Position(pEnemy), Distance/3, GOTO_RUN)
-            let dx = enemy_pos.x - ctx.position.x;
-            let dy =
-                (enemy_pos.y - ctx.position.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+            let owner_live_position = tick.owner_live_position.unwrap_or_else(|| {
+                panic!(
+                    "moving-fast EVENT_VIEW for {} requires the owner's literal live position",
+                    self.base.me
+                )
+            });
+            let dx = enemy_pos.x - owner_live_position.x;
+            let dy = (enemy_pos.y - owner_live_position.y)
+                * crate::position_interface::INVERSE_ASPECT_RATIO;
             let distance = (dx * dx + dy * dy).sqrt();
             let radius = (distance / 3.0).max(0.0) as i32;
             self.base
@@ -2868,6 +2874,70 @@ mod tests {
         assert_eq!(
             ai.base.current_substate,
             Substate::AttackingReactiontimeTurning
+        );
+    }
+
+    #[test]
+    fn moving_fast_event_view_distance_uses_literal_owner_position_during_door_pass() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(134);
+        let enemy_position = Position {
+            x: 1648.9281,
+            y: 1804.8717,
+            sector: crate::position_interface::SectorHandle::new(0),
+            level: 0,
+        };
+        let mut enemy_view = object_view(ObjectType::None);
+        enemy_view.kind = EntityKind::Pc;
+        enemy_view.is_pc = true;
+        enemy_view.position = enemy_position;
+        let mut views = AiEntityViewMap::new();
+        views.insert(342, enemy_view);
+        let ctx = AiContext {
+            // AI Position(owner) is already forecast onto the selected
+            // door's far side, but Original Distance(enemy) directly reads
+            // the still-interpolating element position instead.
+            position: Position {
+                x: 1151.0,
+                y: 1817.0,
+                sector: crate::position_interface::SectorHandle::new(77),
+                level: 1,
+            },
+            self_action_state: crate::element::ActionState::MovingFast,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.owner_live_position = Some(Position {
+            x: 1171.3004,
+            y: 1846.5278,
+            sector: crate::position_interface::SectorHandle::new(0),
+            level: 0,
+        });
+        tick.enemy_detectable_positions.push((342, enemy_position));
+
+        ai.event_view_standard_procedure(
+            &sim,
+            342,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingReactiontimeRunning
+        );
+        assert_eq!(
+            ai.base
+                .outbox
+                .actor
+                .orders
+                .last()
+                .expect("moving-fast EventView queues GoNear")
+                .tolerance,
+            161.0
         );
     }
 

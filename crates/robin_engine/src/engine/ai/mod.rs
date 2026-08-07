@@ -1775,6 +1775,12 @@ impl EngineInner {
             .unwrap_or(false);
 
         let mut tick = AiPerTickData::stub();
+        tick.owner_live_position = Some(crate::ai::Position {
+            x: me_pos.x,
+            y: me_pos.y,
+            sector: soldier.element.sector(),
+            level: me_layer,
+        });
         let enemy_idx = DetectableType::Enemy as usize;
         tick.seen_last_frame_enemies =
             seen_last_frame_detectable_handles(&soldier.npc.detectable_lists[enemy_idx]);
