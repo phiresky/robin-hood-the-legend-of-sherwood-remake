@@ -1,0 +1,8 @@
+{
+  "id": "70",
+  "subject": "Preserve synchronous Actor::Instruct epilogue semantics",
+  "description": "DONE. The script-synchronous InstructOwner path translated commands and published the selected order, but omitted Original Actor::Instruct's accepted mmotionState=IN_PROGRESS write and ignored command dispatchers' pointer-changing terminal barrier. This could leave accepted WAIT-priority work reporting an older motion result, while a naive unconditional fix would overwrite the authentic terminal result from ASSERT_POSITION or an already-satisfied ENTER_SWORDFIGHT. Synchronous owner dispatch now propagates OwnerActionBarrier explicitly: Skip returns before the shared epilogue, while Reach publishes mpOrder and stamps IN_PROGRESS regardless of the element's final Rust state. The latter distinction preserves Original's accepted empty-order behavior, where motion is stamped before the element is subsequently terminated. Focused synchronous tests cover a normal WAIT order, malformed zero-order RECEIVE_SWORD_DAMAGE, ASSERT_POSITION, and terminal ENTER_SWORDFIGHT; the corresponding manager-phase regressions remain green.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

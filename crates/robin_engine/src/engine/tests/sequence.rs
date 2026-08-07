@@ -285,6 +285,208 @@ fn assert_position_translation_preserves_terminal_motion_edge() {
 }
 
 #[test]
+fn synchronous_accepted_wait_stamps_in_progress_motion_and_publishes_order() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+    use crate::sprite::MotionState;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    engine
+        .get_entity_mut(soldier)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .continuation
+        .motion_state = MotionState::Done;
+
+    let mut wait = SequenceElement::new(1, Command::Wait, Some(soldier));
+    wait.priority = SequencePriority::Wait;
+    wait.posture_after_transition = Posture::Upright;
+    let sequence = engine.launch_element(wait);
+    engine
+        .drain_script_synchronous_actions(&sim, &LevelAssets::default(), &mut Vec::new())
+        .expect("synchronous Wait should dispatch");
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::InProgress
+    );
+    let actor = engine.get_entity(soldier).unwrap().actor_data().unwrap();
+    assert_eq!(actor.continuation.motion_state, MotionState::InProgress);
+    assert!(
+        actor.installed_order.is_some(),
+        "accepted synchronous Instruct must publish its current order"
+    );
+}
+
+#[test]
+fn synchronous_accepted_zero_order_damage_stamps_in_progress_motion() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+    use crate::sprite::MotionState;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    engine
+        .get_entity_mut(soldier)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .continuation
+        .motion_state = MotionState::Done;
+
+    let mut damage = SequenceElement::new_generic(1, Command::ReceiveSwordDamage, Some(soldier));
+    damage.priority = SequencePriority::Wait;
+    damage.posture_after_transition = Posture::Upright;
+    let sequence = engine.launch_element(damage);
+    engine
+        .drain_script_synchronous_actions(&sim, &LevelAssets::default(), &mut Vec::new())
+        .expect("synchronous malformed damage should dispatch");
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        MotionState::InProgress,
+        "accepted empty translation must retain Actor::Instruct's motion edge"
+    );
+}
+
+#[test]
+fn synchronous_assert_position_skips_instruct_epilogue() {
+    use crate::coordinates::MapPoint;
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceElementData, SequencePriority, SequenceState};
+    use crate::sprite::MotionState;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let civilian = engine.add_entity(make_test_civilian(Posture::Upright));
+    engine
+        .get_entity_mut(civilian)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .continuation
+        .motion_state = MotionState::Terminated;
+
+    let mut assertion = SequenceElement::new_movement(
+        1,
+        Command::AssertPosition,
+        Some(civilian),
+        OrderType::WalkingUpright,
+    );
+    assertion.priority = SequencePriority::Wait;
+    assertion.posture_after_transition = Posture::Upright;
+    if let SequenceElementData::Movement {
+        destination,
+        tolerance,
+        ..
+    } = &mut assertion.data
+    {
+        *destination = MapPoint::ZERO;
+        *tolerance = 10.0;
+    }
+    let sequence = engine.launch_element(assertion);
+    engine
+        .drain_script_synchronous_actions(&sim, &LevelAssets::default(), &mut Vec::new())
+        .expect("synchronous AssertPosition should dispatch");
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        engine
+            .get_entity(civilian)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        MotionState::Terminated
+    );
+}
+
+#[test]
+fn synchronous_terminal_enter_swordfight_skips_instruct_epilogue() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::sequence::{Field, FieldValue, SequenceElement, SequencePriority, SequenceState};
+    use crate::sprite::MotionState;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let opponent = engine.add_entity(make_test_soldier(Posture::Upright));
+    {
+        let actor = engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap();
+        actor.action_state = ActionState::WaitingSword;
+        actor.continuation.motion_state = MotionState::Terminated;
+    }
+
+    let mut enter = SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
+    enter.priority = SequencePriority::Wait;
+    enter.posture_after_transition = Posture::Upright;
+    enter.set_property(Field::Opponent, FieldValue::Element(opponent));
+    let sequence = engine.launch_element(enter);
+    engine
+        .drain_script_synchronous_actions(&sim, &LevelAssets::default(), &mut Vec::new())
+        .expect("synchronous satisfied EnterSwordfight should dispatch");
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        MotionState::Terminated,
+        "terminal Translate must bypass Actor::Instruct's motion epilogue"
+    );
+}
+
+#[test]
 fn entity_phase_completion_resumes_postponed_work_in_same_manager_drain() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};

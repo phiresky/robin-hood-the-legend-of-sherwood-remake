@@ -176,7 +176,7 @@ impl EngineInner {
                     .ok_or_else(|| {
                         format!("missing synchronous owner element {sequence_id:?}/{element_index}")
                     })?;
-                if command == Command::Move {
+                let barrier = if command == Command::Move {
                     self.dispatch_synchronous_move_instruct(
                         sim,
                         assets,
@@ -184,6 +184,7 @@ impl EngineInner {
                         sequence_id,
                         element_index,
                     )?;
+                    OwnerActionBarrier::Reach
                 } else if command == Command::Seek {
                     // `SetState(TERMINATED)` calls Ready() and then
                     // StartPostponedSequenceElement() on the same C++ stack.
@@ -198,6 +199,7 @@ impl EngineInner {
                         sequence_id,
                         element_index,
                     );
+                    OwnerActionBarrier::Reach
                 } else if command == Command::QuitSwordfight {
                     // A GoTo issued from a sword action state is one
                     // Original sequence: QuitSwordfight followed by Move.
@@ -206,6 +208,7 @@ impl EngineInner {
                     // hourglass dispatcher; the movement remains behind the
                     // lowering animation until this element completes.
                     self.dispatch_quit_swordfight(sim, assets, owner, sequence_id, element_index);
+                    OwnerActionBarrier::Reach
                 } else if matches!(
                     command,
                     Command::EnterSwordfight | Command::PrepareSwordfight
@@ -231,7 +234,7 @@ impl EngineInner {
                         opponent,
                         sequence_id,
                         element_index,
-                    );
+                    )
                 } else if matches!(
                     command,
                     Command::SwordstrikeSmalltalkLeft
@@ -245,6 +248,7 @@ impl EngineInner {
                         next_order_id: &mut self.orders.next_order_id,
                     }
                     .dispatch(owner, command, sequence_id, element_index);
+                    OwnerActionBarrier::Reach
                 } else if command == Command::Provoke {
                     // A sword-movement TERMINATED callback registers this
                     // Wait-priority successor before DoNextOrder. Original
@@ -252,13 +256,14 @@ impl EngineInner {
                     // movement closes, so use the ordinary Provoke
                     // translator at this owner boundary.
                     self.dispatch_provoke(sim, assets, owner, sequence_id, element_index);
+                    OwnerActionBarrier::Reach
                 } else if command == Command::AssertPosition {
                     self.orders.sequence_manager.begin_instruct_callback(
                         owner,
                         sequence_id,
                         element_index,
                     );
-                    PositionAssertionContext {
+                    let barrier = PositionAssertionContext {
                         entities: &self.world.entities,
                         sequence_manager: &mut self.orders.sequence_manager,
                     }
@@ -268,6 +273,7 @@ impl EngineInner {
                         sequence_id,
                         element_index,
                     );
+                    barrier
                 } else if matches!(command, Command::Turn | Command::TurnFast) {
                     // A terminal condolation can synchronously resume a
                     // postponed Face Turn through Ready -> Go -> Instruct.
@@ -279,7 +285,7 @@ impl EngineInner {
                         sequence_manager: &mut self.orders.sequence_manager,
                         next_order_id: &mut self.orders.next_order_id,
                     }
-                    .dispatch(owner, command, sequence_id, element_index);
+                    .dispatch(owner, command, sequence_id, element_index)
                 } else if matches!(
                     command,
                     Command::ParrySword | Command::ParrySwordLow | Command::StopParrySword
@@ -296,6 +302,7 @@ impl EngineInner {
                         }
                         _ => unreachable!(),
                     }
+                    OwnerActionBarrier::Reach
                 } else if matches!(
                     command,
                     Command::LookLeft | Command::LookRight | Command::LeanOut
@@ -309,7 +316,7 @@ impl EngineInner {
                         sequence_manager: &mut self.orders.sequence_manager,
                         next_order_id: &mut self.orders.next_order_id,
                     }
-                    .dispatch(owner, command, sequence_id, element_index);
+                    .dispatch(owner, command, sequence_id, element_index)
                 } else if matches!(
                     command,
                     Command::EnterAttentiveMode
@@ -325,7 +332,7 @@ impl EngineInner {
                         sequence_manager: &mut self.orders.sequence_manager,
                         next_order_id: &mut self.orders.next_order_id,
                     }
-                    .dispatch(owner, command, sequence_id, element_index);
+                    .dispatch(owner, command, sequence_id, element_index)
                 } else if matches!(
                     command,
                     Command::Wait | Command::WaitTimer | Command::WaitFreeLift
@@ -336,7 +343,7 @@ impl EngineInner {
                         next_order_id: &mut self.orders.next_order_id,
                         profiles: &assets.profile_manager,
                     }
-                    .dispatch(owner, command, sequence_id, element_index);
+                    .dispatch(owner, command, sequence_id, element_index)
                 } else if matches!(
                     command,
                     Command::ReceiveSwordDamage
@@ -354,15 +361,30 @@ impl EngineInner {
                     // condolence stack returns. Use the same damage
                     // translator as the ordinary manager Hourglass path.
                     self.dispatch_receive_damage(sim, assets, owner, sequence_id, element_index);
+                    OwnerActionBarrier::Reach
                 } else {
                     return Err(format!(
                         "unsupported synchronous owner command {command:?} at {sequence_id:?}/{element_index}"
                     )
                     .into());
+                };
+                if barrier == OwnerActionBarrier::Skip {
+                    return Ok(());
                 }
                 // Accepted Actor::Instruct assigns mpOrder after Translate
-                // and any zero-frame completion cascade has settled.
+                // and any zero-frame completion cascade has settled. Motion
+                // is stamped from this accepted boundary rather than final
+                // element state: an empty translated order list terminates
+                // only after Original has written IN_PROGRESS.
                 self.publish_selected_order_for_instruct_owner(owner);
+                if let Some(actor) = self
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .and_then(Entity::actor_data_mut)
+                {
+                    actor.continuation.motion_state = crate::sprite::MotionState::InProgress;
+                }
             }
             SequenceAction::EngineCommand {
                 sequence_id,
