@@ -575,6 +575,18 @@ fn is_sword_movement_nonanimation(order: OrderType) -> bool {
     )
 }
 
+fn is_sword_motion_context(
+    action_state: crate::element::ActionState,
+    door_pass_action: Option<OrderType>,
+    order_action: OrderType,
+) -> bool {
+    matches!(
+        action_state,
+        crate::element::ActionState::MovingSword | crate::element::ActionState::MovingFastSword
+    ) || door_pass_action.is_some_and(is_sword_movement_nonanimation)
+        || is_sword_movement_nonanimation(order_action)
+}
+
 /// Match `RHElementActorHuman::DetermineMovementAnimation`: these are logical
 /// dispatch tokens consumed by the Human Execute override, not sprite rows.
 /// `FaceOpponent` chooses the concrete forward/backward/strafe sword animation
@@ -6957,18 +6969,8 @@ impl EngineInner {
             // forward/backward/strafe animation based on angle between
             // movement vector and facing vector.
             let combat_target = combat_face_targets[actor_id];
-            let door_pass_sword_nonanimation =
-                door_pass_anim.is_some_and(is_sword_movement_nonanimation);
-            let order_sword_nonanimation = is_sword_movement_nonanimation(order_action);
-            let forced_sword_motion =
-                active_move_flags.contains(crate::sequence::MoveFlags::FORCE_SWORD_MOVEMENT);
-            let is_sword_motion = matches!(
-                action_state,
-                crate::element::ActionState::MovingSword
-                    | crate::element::ActionState::MovingFastSword
-            ) || door_pass_sword_nonanimation
-                || order_sword_nonanimation
-                || forced_sword_motion;
+            let is_sword_motion =
+                is_sword_motion_context(action_state, door_pass_anim, order_action);
             let is_shield_motion =
                 matches!(action_state, crate::element::ActionState::MovingShield);
             let is_combat = (is_shield_motion && combat_target.is_some()) || is_sword_motion;
@@ -10672,7 +10674,7 @@ impl EngineInner {
         // WalkingWithSword / RunningWithSword are logical non-animation
         // dispatch tokens. The Human Execute override resolves them through
         // FaceOpponent to a concrete forward/backward/strafe sword row.
-        let (posture_after, mut action_after) = self
+        let (posture_after, action_after) = self
             .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
@@ -10688,28 +10690,15 @@ impl EngineInner {
             })
             .unwrap_or(crate::sequence::MoveFlags::empty());
         let is_fast = elem_flags.contains(crate::sequence::MoveFlags::FAST);
-        // STEP_BACK_IN_COMBAT describes how an authored sword move was
-        // selected; unlike FORCE_SWORD_MOVEMENT it does not keep the move in
-        // sword form after the actor has lowered the weapon.
-        let force_sword_movement =
-            elem_flags.contains(crate::sequence::MoveFlags::FORCE_SWORD_MOVEMENT);
-        if force_sword_movement && posture_after == crate::element::Posture::Upright {
-            action_after = if is_fast || matches!(move_action, OrderType::RunningUpright) {
-                crate::element::ActionState::MovingFastSword
-            } else {
-                crate::element::ActionState::MovingSword
-            };
-            if let Some(elem) = self
-                .orders
-                .sequence_manager
-                .get_element_mut(seq_id, elem_idx)
-            {
-                elem.action_state_after_transition = action_after;
-            }
-        }
-        let sword_movement_context = (posture_after == crate::element::Posture::Upright
-            && action_after.is_sword())
-            || force_sword_movement;
+        // Human::DetermineMovementAnimation chooses the sword token only
+        // from the action state stamped by Actor::Instruct. The FORCE flag
+        // does not participate in translation; Human::Execute reads it later
+        // solely to keep an already-translated sword move alive after the
+        // opponent list becomes empty. This distinction matters when an
+        // upright Move|FORCE is postponed behind QuitSwordfight: on resume
+        // the freshly stamped Waiting state must produce an ordinary walk.
+        let sword_movement_context =
+            posture_after == crate::element::Posture::Upright && action_after.is_sword();
         if sword_movement_context {
             move_action = sword_movement_dispatch_action(move_action);
         }
@@ -11683,6 +11672,103 @@ mod orphaned_sword_movement_tests {
                     element.owner != Some(owner) || element.command != Command::QuitSwordfight
                 }),
             "forced movement must not launch QuitSwordfight"
+        );
+    }
+
+    #[test]
+    fn postponed_forced_move_resuming_after_sword_lowered_walks_upright() {
+        let mut engine = EngineInner::new();
+        let start = MapPoint::new(100.0, 100.0);
+        let destination = MapPoint::new(140.0, 100.0);
+        let mut element = ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        };
+        element
+            .sprite
+            .position_iface
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -4.0, -4.0, 4.0, 4.0,
+            ));
+        element.sprite.position_iface.set_anti_collision_on(false);
+        element.set_position_map(start);
+        let owner = engine.add_entity(Entity::Pc(ActorPc {
+            element,
+            actor: ActorData {
+                // QuitSwordfight's lowering animation has completed before
+                // the postponed Move is instructed again.
+                action_state: ActionState::Waiting,
+                ..ActorData::default()
+            },
+            human: HumanData::default(),
+            pc: PcData {
+                life_points: 50,
+                ..PcData::default()
+            },
+        }));
+
+        let mut movement =
+            SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+        movement.priority = SequencePriority::Normal;
+        movement.posture_after_transition = Posture::Upright;
+        movement.action_state_after_transition = ActionState::Waiting;
+        let SequenceElementData::Movement {
+            destination: stored_destination,
+            flags,
+            ..
+        } = &mut movement.data
+        else {
+            unreachable!("new_movement must create movement data")
+        };
+        *stored_destination = destination;
+        *flags |= MoveFlags::FORCE_SWORD_MOVEMENT;
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+
+        assert!(matches!(
+            engine.try_dispatch_move_path(
+                &crate::sim_rng::test_context(),
+                &LevelAssets::new(),
+                owner,
+                sequence,
+                0,
+                destination,
+                OrderType::WalkingUpright,
+            ),
+            MovePathOutcome::Success
+        ));
+
+        let movement = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .expect("dispatched postponed movement must remain registered");
+        let SequenceElementData::Movement { action, .. } = &movement.data else {
+            panic!("dispatched movement changed data kind")
+        };
+        assert_eq!(*action, OrderType::WalkingUpright);
+        assert_eq!(
+            movement.orders.front().map(|order| order.order_type),
+            Some(OrderType::TransitionWaitingUprightWalkingUpright)
+        );
+        assert_eq!(
+            movement.action_state_after_transition,
+            ActionState::Waiting,
+            "FORCE is an Execute guard, not a translated action-state override"
+        );
+        assert!(matches!(
+            &movement.data,
+            SequenceElementData::Movement { flags, .. }
+                if flags.contains(MoveFlags::FORCE_SWORD_MOVEMENT)
+        ));
+        assert!(
+            !is_sword_motion_context(
+                ActionState::Waiting,
+                None,
+                OrderType::TransitionWaitingUprightWalkingUpright,
+            ),
+            "FORCE on the owning element must not reroute an ordinary transition through FaceOpponent"
         );
     }
 }
