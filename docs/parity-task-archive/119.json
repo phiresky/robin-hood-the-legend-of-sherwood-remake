@@ -1,0 +1,9 @@
+{
+  "id": "119",
+  "subject": "Observe synchronous Halt before same-position seek GoTo",
+  "description": "SuN1Sh1nE Profile_004 Savegame_021 replay-009 advanced past the frame-614 event-view distance fix and hit a seek RNG frontier at frame 854 (trace frame_after 855) when Soldier 99 left AttackingReactiontimeRunning. Original consumed 15 interest/insertion draw pairs, two SeekNextPoint acceptance draws, and two following movement/path draws; Rust consumed the same selection pairs but only one acceptance and never reached the following movement draws. The attacking handler calls StopAll before BattleDecisions, which immediately calls SeekArea after losing sight of every enemy. Original StopAll synchronously Halts the actor. The first personal seek point is the actor's current position, so the subsequent GoTo observes the halted owner and completes through EndThink(EVENT_REACHPOINT), recursively accepts the next global seek point, and starts its path in the same frame. Rust deferred Halt until the engine drain and tested GoTo against the stale running animation, incorrectly booking a move to the current point. SetState also suspends pre-callback actor effects into owner_work, so the source-faithful close-point gate must recognize queued Halts in both the live actor outbox and state-change effect prefixes. Focused coverage reproduces the suspended-Halt layout for ordinary and speed GoTo. The representative clears frame 854 and advances through frame 896 to an independent EnemySeekDirectionShuffle RNG frontier at frame 897. Both task-36 schema-14 replay-009 controls match every recorded frame through EOF on the shared parity runner.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task119_synchronous_halt_seek"
+}

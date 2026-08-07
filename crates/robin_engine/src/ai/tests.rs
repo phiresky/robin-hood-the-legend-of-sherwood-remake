@@ -706,6 +706,39 @@ fn goto_already_on_point_uses_original_animation_gate() {
 }
 
 #[test]
+fn goto_already_on_point_observes_synchronous_pending_halt() {
+    let ctx = goto_short_circuit_ctx(crate::order::OrderType::RunningUpright);
+    let mut ai = AiController::new(1);
+    ai.think_recursion_depth = 1;
+    ai.outbox.actor.queue_halt();
+    let halted_prefix = std::mem::take(&mut ai.outbox.actor);
+    ai.outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::StateChange(AiStateChangeNotification {
+            outgoing_state: AiState::Attacking,
+            outgoing_substate: Substate::AttackingReactiontimeRunning,
+            incoming_state: AiState::Seeking,
+            incoming_substate: Substate::SeekingSeekpoint,
+            source: AiStateChangeSource::SelfActor,
+            actor_effects_before_callback: Some(halted_prefix),
+        }));
+
+    ai.go_to(ctx.position, GotoFlags::empty(), &ctx);
+
+    assert!(ai.already_on_point);
+    assert!(ai.take_pending_orders().is_empty());
+
+    let mut speed_ai = AiController::new(1);
+    speed_ai.think_recursion_depth = 1;
+    speed_ai.outbox.actor.queue_halt();
+    speed_ai.go_to_speed(ctx.position, GotoFlags::empty(), 1.5, &ctx);
+
+    assert!(speed_ai.already_on_point);
+    assert!(speed_ai.take_pending_orders().is_empty());
+}
+
+#[test]
 fn run_to_map_exit_queues_running_map_movement() {
     let mut ai = AiController::new(1);
     let destination = Position {

@@ -2937,6 +2937,26 @@ impl AiController {
         }
     }
 
+    /// Whether an Original-synchronous `Halt()` is waiting anywhere in the
+    /// owner-local effect FIFO. `SetState` moves the current actor prefix into
+    /// a state-change notification, so checking only the live actor outbox
+    /// misses halts issued earlier in the same Think call.
+    fn has_pending_actor_halt(&self) -> bool {
+        self.outbox.actor.halt
+            || self
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .any(|work| match work {
+                    AiOwnerWork::StateChange(notification) => notification
+                        .actor_effects_before_callback
+                        .as_ref()
+                        .is_some_and(|effects| effects.halt),
+                    _ => false,
+                })
+    }
+
     /// Low-level movement primitive — queues a movement intent without
     /// committing to a substate transition.  Prefer the `EnemyAi::go_to` /
     /// `FriendlyAi::go_to` wrappers, which enforce the Shape 1 contract
@@ -2979,13 +2999,16 @@ impl AiController {
         //   - animation state ∈ {WAITING_UPRIGHT, WAITING_ALERTED,
         //                         NONANIMATION_END}
         // When the gate fires, `end_think` drains `already_on_point`
-        // into a `Think(EVENT_REACHPOINT)` re-entry.
-        let idle_for_goto_short_circuit = matches!(
-            ctx.self_animation,
-            crate::order::OrderType::WaitingUpright
-                | crate::order::OrderType::WaitingAlerted
-                | crate::order::OrderType::NonanimationEnd
-        );
+        // into a `Think(EVENT_REACHPOINT)` re-entry. Original applies Halt
+        // synchronously, so a Halt queued earlier in this Think has already
+        // removed the stale moving animation by the time GoTo reads it.
+        let idle_for_goto_short_circuit = self.has_pending_actor_halt()
+            || matches!(
+                ctx.self_animation,
+                crate::order::OrderType::WaitingUpright
+                    | crate::order::OrderType::WaitingAlerted
+                    | crate::order::OrderType::NonanimationEnd
+            );
         let may_short_circuit =
             idle_for_goto_short_circuit && !self.likes_to_sit_around && !self.special_action;
         tracing::trace!(
@@ -3128,12 +3151,13 @@ impl AiController {
         // idle animations; a running patrol member may pass within five
         // units of a newly coordinated formation point and must still book
         // the replacement walk rather than synthesize EventReachPoint.
-        let idle_for_goto_short_circuit = matches!(
-            ctx.self_animation,
-            crate::order::OrderType::WaitingUpright
-                | crate::order::OrderType::WaitingAlerted
-                | crate::order::OrderType::NonanimationEnd
-        );
+        let idle_for_goto_short_circuit = self.has_pending_actor_halt()
+            || matches!(
+                ctx.self_animation,
+                crate::order::OrderType::WaitingUpright
+                    | crate::order::OrderType::WaitingAlerted
+                    | crate::order::OrderType::NonanimationEnd
+            );
         let may_short_circuit =
             idle_for_goto_short_circuit && !self.likes_to_sit_around && !self.special_action;
         if may_short_circuit && self.check_already_on_point(&destination, 5.0, ctx) {
