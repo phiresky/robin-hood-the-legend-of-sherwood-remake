@@ -2016,6 +2016,72 @@ fn pc_shoot_bow_waits_through_load_and_wait_then_retries_only_while_aiming() {
 }
 
 #[test]
+fn pc_shoot_list_readmits_retained_terminated_element() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::default();
+    let mut engine = EngineInner::new();
+    let pc = engine.add_entity(make_test_pc(Posture::Upright));
+    engine
+        .get_entity_mut(pc)
+        .unwrap()
+        .element_data_mut()
+        .sprite
+        .last_action = OrderType::TransitionLoadingBow;
+
+    let incoming = SequenceElement::new_interaction(1, Command::ShootBow, Some(pc), None);
+    let incoming_seq = engine.launch_element_for_owner(&sim, &assets, incoming);
+    engine
+        .orders
+        .sequence_manager
+        .element_terminated(incoming_seq, 0);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(incoming_seq, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated
+    );
+
+    // Retail Original retains and serializes raw shoot-list pointers. Its
+    // only guard against re-instructing a terminated entry is a debug assert,
+    // so a loaded retail save re-admits the pointer once the PC aims again.
+    engine
+        .get_entity_mut(pc)
+        .unwrap()
+        .element_data_mut()
+        .sprite
+        .last_action = OrderType::AimingWithBow;
+    engine.process_shoot_list_for(&sim, &assets, pc);
+
+    assert!(
+        engine
+            .get_entity(pc)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .pending_shoots
+            .is_empty(),
+        "accepted re-instruction must consume the retained shoot-list entry"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(incoming_seq, 0)
+            .unwrap()
+            .state,
+        SequenceState::Impossible,
+        "the missing target deterministically proves that translation ran"
+    );
+}
+
+#[test]
 fn started_pass_door_rejects_new_move() {
     use crate::element::{Command, Posture};
     use crate::order::OrderType;

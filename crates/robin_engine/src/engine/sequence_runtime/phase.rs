@@ -23,7 +23,7 @@ impl EngineInner {
         assert_eq!(element.command, Command::ShootBow);
         if !matches!(
             element.state,
-            SequenceState::Todo | SequenceState::Postponed
+            SequenceState::Todo | SequenceState::Postponed | SequenceState::Terminated
         ) {
             panic!(
                 "shoot-list element {seq_id:?}/{elem_idx} has invalid state {:?}",
@@ -55,7 +55,7 @@ impl EngineInner {
             self.dispatch_condolations(sim, assets);
             return false;
         }
-        if !self.arbitrate_instruct(seq_id, elem_idx) {
+        if !self.arbitrate_held_shoot_instruct(seq_id, elem_idx) {
             self.dispatch_condolations(sim, assets);
             return false;
         }

@@ -1,0 +1,8 @@
+{
+  "id": "81",
+  "subject": "Re-admit retained terminal PC shoot-list elements",
+  "description": "DONE. The schema-14 linux3 Profile_001 Savegame_022 replay-012 save contains a Human shoot-list pointer to ShootBow sequence 272195/0 in Terminated state. Rust panicked when the PC reached AimingWithBow and ProcessShootList retried it. Original serializes and restores raw mShootList pointers regardless of element state; RHElementActor::Instruct's terminal-state check is only a debug assert, so the retail build proceeds through transition and priority admission. The held-shoot path now accepts Terminated in addition to Todo/Postponed and uses a narrowly scoped arbitration mode that bypasses the ordinary manager's terminal idempotency guard without rewriting the state before admission. Other terminal manager work remains rejected, and missing sequence pointers still panic. A focused regression terminates a retained shot, changes the PC to aiming, and verifies that retail-style re-instruction consumes the list entry and reaches deterministic translation. The representative clears the invariant panic and advances to a frame-738 sprite frame-count residual; the schema-14 Cyrdach replay-009 control remains exact through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

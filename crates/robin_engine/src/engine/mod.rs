@@ -2324,6 +2324,26 @@ impl EngineInner {
         new_seq: crate::sequence::SequenceId,
         new_idx: usize,
     ) -> bool {
+        self.arbitrate_instruct_mode(new_seq, new_idx, false)
+    }
+
+    /// Run Actor::Instruct arbitration while preserving retail Original's
+    /// re-admission of a terminated pointer retained by Human's shoot list.
+    /// The ordinary manager path must continue rejecting terminal elements.
+    pub(in crate::engine) fn arbitrate_held_shoot_instruct(
+        &mut self,
+        new_seq: crate::sequence::SequenceId,
+        new_idx: usize,
+    ) -> bool {
+        self.arbitrate_instruct_mode(new_seq, new_idx, true)
+    }
+
+    fn arbitrate_instruct_mode(
+        &mut self,
+        new_seq: crate::sequence::SequenceId,
+        new_idx: usize,
+        allow_terminated_shoot: bool,
+    ) -> bool {
         use crate::element::Command;
         use crate::sequence::{PriorityDecision, SequenceState};
 
@@ -2344,6 +2364,12 @@ impl EngineInner {
         // interrupt on cascading priorities).
         match new_elem.state {
             SequenceState::Todo => { /* fall through — normal case */ }
+            SequenceState::Terminated if allow_terminated_shoot => {
+                // RHElementActor::Instruct's terminal-state check is an
+                // assert only. Retail saves can retain such a pointer in
+                // Human::mShootList, and the shipped build proceeds without
+                // rewriting its state before transition/arbitration.
+            }
             SequenceState::InProgress => {
                 // Element is already the actor's current (e.g.
                 // `launch_single_order_sequence_stamped` promoted it
