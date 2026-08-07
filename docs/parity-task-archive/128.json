@@ -1,0 +1,9 @@
+{
+  "id": "128",
+  "subject": "Preserve and reciprocally tear down combat-neighbour links",
+  "description": "Cyrdach Profile_156 Restart replay-014 diverged during Original frame 1481 / Rust frame 1482 when Soldier72's phalanx timer ran. Original still recognized Soldier72 as the leftmost live phalanx member, rebuilt the formation enemy list (including its visibility/RNG work), and remained in AttackingPhalanx with Wait. Rust retained a stale left_combat_neighbour link to Soldier74 after Soldier74 left the formation at frame 1465, so Soldier72 skipped the leftmost-member rebuild and entered AttackingOverviewLookLeft with LookLeft. Original SetState tears down combat neighbours through reciprocal UpdateLeftCombatNeighbour(NULL) and UpdateRightCombatNeighbour(NULL), while Rust had cleared only the transitioning soldier's local fields. Rust now queues the matching reverse-link clears before dropping its local pointers. The same source block also deliberately computes both its nominal old and new line modes from the incoming substate parameter. Rust had used current_substate for the old mode, so SetState(...RunningToPhalanx) erased links assigned immediately before the call and created asymmetric formations. Preserving Original's incoming-substate quirk keeps newly assigned formation links intact and makes reciprocal teardown safe. Focused tests cover both orientations: entering a phalanx preserves preassigned links, and leaving one clears the old neighbours' reciprocal pointers in Original statement order. The representative and both task-36 schema-14 replay-009 controls match every recorded frame through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task128_combat_neighbour_teardown"
+}

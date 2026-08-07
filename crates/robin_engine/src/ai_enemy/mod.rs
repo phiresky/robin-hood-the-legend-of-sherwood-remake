@@ -2992,11 +2992,11 @@ impl EnemyAi {
             }
         }
 
-        // Combat-neighbour teardown on line-mode change.  Compute
-        // the *outgoing* and *incoming* line modes (1=Phalanx,
-        // 2=Close-combat, 0=None); when the new mode is None or
-        // differs from the old, drop the left/right combat-neighbour
-        // pairings.
+        // Combat-neighbour teardown on leaving a line mode. Original's
+        // "old" and "new" switches both inspect the incoming `substate`
+        // parameter (rather than mCurrentSubstate for the first switch), so
+        // their modes can never differ. Preserve that quirk: links assigned
+        // immediately before SetState(...RunningToPhalanx) must survive.
         if self.left_combat_neighbour != 0 || self.right_combat_neighbour != 0 {
             let line_mode_for = |s: Substate| -> u8 {
                 match s {
@@ -3007,9 +3007,31 @@ impl EnemyAi {
                     _ => 0,
                 }
             };
-            let old_mode = line_mode_for(self.base.current_substate);
+            let old_mode = line_mode_for(substate);
             let new_mode = line_mode_for(substate);
             if new_mode == 0 || new_mode != old_mode {
+                // Original calls UpdateLeftCombatNeighbour(NULL) and
+                // UpdateRightCombatNeighbour(NULL), which clear the reverse
+                // link on each neighbour as well as our local pointers.
+                // Leaving only the local half cleared makes a former neighbour
+                // incorrectly believe it is not the left/right end of a
+                // phalanx on its next timer tick.
+                if self.left_combat_neighbour != 0 {
+                    self.base.outbox.reentrant.cross_npc_actions.push(
+                        CrossNpcAction::SetRightCombatNeighbour {
+                            target: self.left_combat_neighbour,
+                            neighbour: 0,
+                        },
+                    );
+                }
+                if self.right_combat_neighbour != 0 {
+                    self.base.outbox.reentrant.cross_npc_actions.push(
+                        CrossNpcAction::SetLeftCombatNeighbour {
+                            target: self.right_combat_neighbour,
+                            neighbour: 0,
+                        },
+                    );
+                }
                 self.left_combat_neighbour = 0;
                 self.right_combat_neighbour = 0;
             }
@@ -5877,6 +5899,47 @@ mod tests {
             ai.get_new_primary_target(PrimaryTargetFlags::empty(), &ctx, &tick),
             0
         );
+    }
+
+    #[test]
+    fn leaving_phalanx_clears_reciprocal_combat_neighbour_links() {
+        let mut ai = EnemyAi::new(74);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingPhalanx;
+        ai.left_combat_neighbour = 75;
+        ai.right_combat_neighbour = 72;
+
+        ai.set_state(AiState::Attacking, Substate::AttackingOverviewLookLeft);
+
+        assert_eq!(ai.left_combat_neighbour, 0);
+        assert_eq!(ai.right_combat_neighbour, 0);
+        assert!(matches!(
+            ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
+            [
+                CrossNpcAction::SetRightCombatNeighbour {
+                    target: 75,
+                    neighbour: 0
+                },
+                CrossNpcAction::SetLeftCombatNeighbour {
+                    target: 72,
+                    neighbour: 0
+                }
+            ]
+        ));
+    }
+
+    #[test]
+    fn entering_phalanx_preserves_preassigned_combat_neighbour_links() {
+        let mut ai = EnemyAi::new(73);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingOverviewLookLeft;
+        ai.left_combat_neighbour = 72;
+
+        ai.set_state(AiState::Attacking, Substate::AttackingRunningToPhalanx);
+
+        assert_eq!(ai.left_combat_neighbour, 72);
+        assert_eq!(ai.right_combat_neighbour, 0);
+        assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
     }
 
     #[test]
