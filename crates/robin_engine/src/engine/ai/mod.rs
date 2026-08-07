@@ -6012,35 +6012,16 @@ impl EngineInner {
         // `try_dispatch_move_path`s onto the actor a few ticks later,
         // restoring `active_movement` and re-driving the run animation
         // — the visual "stuck in running pose" symptom.
-        let (halt_count, preserve_goal_for_raise_shield) = {
+        let halt_count = {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
             let Some(ai) = entity.ai_controller_mut() else {
                 return;
             };
-            let preserve_goal = ai.outbox.actor.take_preserve_goal_for_raise_shield();
-            (ai.outbox.actor.take_halt_count(), preserve_goal)
+            ai.outbox.actor.take_halt_count()
         };
         if halt_count != 0 {
-            // StopAll normally clears an interrupted movement's cached goal.
-            // The Original shield path is different: StopAll is immediately
-            // followed by the non-directional RaiseShield element, leaving
-            // the preceding movement goal intact while the shield animation
-            // takes ownership. Preserve that otherwise-stale field across
-            // the deferred halt barrier as well.
-            let preserved_goal = preserve_goal_for_raise_shield.then(|| {
-                self.world
-                    .entities
-                    .get(npc_id)
-                    .expect("AI halt owner disappeared before RaiseShield")
-                    .position_iface()
-                    .map_goal()
-            });
-            for _ in 0..halt_count {
-                self.halt_actor(npc_id);
-                self.dispatch_condolations_for_npc(sim, npc_id, assets);
-            }
             // `StopAll` calls `Stop(PREFERENCE)` synchronously before the
             // handler continues into SetState/SetAttentiveMode and other
             // replacement work. Deliver the halt condolence at that same
@@ -6049,13 +6030,9 @@ impl EngineInner {
             // become the selected element. `from_halt` suppresses the NPC
             // EventDone/Impossible callbacks while retaining that base
             // selected-element cleanup.
-            if let Some(goal) = preserved_goal {
-                self.world
-                    .entities
-                    .get_mut(npc_id)
-                    .expect("AI halt owner disappeared during RaiseShield")
-                    .position_iface_mut()
-                    .set_map_goal(goal);
+            for _ in 0..halt_count {
+                self.halt_actor(npc_id);
+                self.dispatch_condolations_for_npc(sim, npc_id, assets);
             }
         }
 

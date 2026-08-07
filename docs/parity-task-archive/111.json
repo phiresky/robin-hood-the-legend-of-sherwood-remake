@@ -1,0 +1,9 @@
+{
+  "id": "111",
+  "subject": "Clear interrupted movement goal before RaiseShield",
+  "description": "Savegame_linux2 Profile_002 Savegame_031 replay-002 diverged at frame 13016 when Soldier58 stopped a running Move and entered AttackingProtectingWithShield: Original cleared position_goal_map while Rust retained the old destination. Rust's Halt and selected-movement condolence already performed the source-faithful cleanup, but an obsolete preserve_goal_for_raise_shield outbox flag restored the stale goal immediately afterward. That workaround predated the corrected synchronous Halt/condolence barrier and encoded the opposite of RHArtificialIntelligence::StopAll -> RHElementActorNPC::Halt -> RHElementActor::Stop plus the selected outgoing movement's condolence cleanup. Removing the flag and restoration leaves the goal cleared before the non-directional RaiseShield sequence takes ownership. The representative and both task-36 schema-14 replay-009 controls match every recorded frame through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task108_move_seek_flag"
+}

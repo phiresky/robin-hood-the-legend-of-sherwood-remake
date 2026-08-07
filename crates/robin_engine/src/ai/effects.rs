@@ -276,9 +276,6 @@ pub struct AiActorOutbox {
     /// then interrupts that transition.
     #[serde(default)]
     pub additional_halts: u8,
-    /// Preserve the interrupted movement goal across the next Halt because
-    /// an AI-issued RaiseShield command immediately takes ownership.
-    pub preserve_goal_for_raise_shield: bool,
     pub blink_all_enemies: bool,
     pub enemy_in_house_alert: bool,
     pub add_detectables: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
@@ -475,10 +472,6 @@ impl AiActorOutbox {
         }
         1u8.checked_add(std::mem::take(&mut self.additional_halts))
             .expect("actor Halt count overflow")
-    }
-
-    pub(crate) fn take_preserve_goal_for_raise_shield(&mut self) -> bool {
-        std::mem::take(&mut self.preserve_goal_for_raise_shield)
     }
 
     pub(crate) fn take_lost_enemy_overview_after_quit(&mut self) -> bool {

@@ -1250,7 +1250,6 @@ impl AiController {
         );
         let mut sequence = Sequence::new();
         sequence.append_element(element);
-        self.outbox.actor.preserve_goal_for_raise_shield = true;
         self.outbox.actor.launch_sequences.push(sequence);
     }
 
