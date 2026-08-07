@@ -426,13 +426,6 @@ impl EnemyAi {
                             tick,
                         );
                     }
-                    Substate::AttackingRunningToEnemy
-                    | Substate::AttackingWalkingToEnemy
-                    | Substate::AttackingChargingEnemy => {
-                        // Can't reach enemy — try observe instead
-                        self.reinitialize_them_list(ctx, tick);
-                        self.battle_decisions(sim, global, ctx, tick, grid);
-                    }
                     Substate::AttackingObserve => {
                         // Ignore.
                     }
@@ -3265,5 +3258,37 @@ mod tests {
         assert_eq!(ai.base.primary_target, 12);
         assert_eq!(ai.base.outbox.actor.enter_swordfight, None);
         assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
+    }
+
+    #[test]
+    fn couldnt_reach_running_enemy_enters_battle_overview() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunningToEnemy;
+        ai.base.list_us = vec![1, 2];
+
+        ai.think_unexpected_event(
+            &sim_context,
+            &Stimulus::new(StimulusType::EventCouldntReachPoint),
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingOverviewLookLeft
+        );
+        assert_eq!(
+            ai.base.outbox.actor.look_sidewards,
+            Some(LookDirection::Left)
+        );
+        assert_eq!(
+            ai.base.list_us,
+            vec![1, 2],
+            "GetBattleOverview must not rebuild the persistent friend list"
+        );
     }
 }

@@ -1,0 +1,9 @@
+{
+  "id": "121",
+  "subject": "Route failed enemy approaches through the emergency overview",
+  "description": "Nescafe Profile_003 Restart replay-008 advanced past task 116 and diverged at frame 396 when Soldier114's attacking approach received EVENT_COULDNT_REACHPOINT. Original entered AttackingOverviewLookLeft, preserved its persistent Us list, cleared the red view, and launched LookLeft. Rust instead retained AttackingRunningToEnemy, added Soldiers134 and 243 to Us, and queued two replacement paths through BattleDecisions. Original's unexpected-event switch gives explicit EVENT_COULDNT_REACHPOINT behavior only to SeekingSeekpoint, SeekingBody, FleeingPanic, and AttackingObserve; AttackingRunningToEnemy, AttackingWalkingToEnemy, and AttackingChargingEnemy fall through to CouldntReachpointEmergencyRoutine, whose non-swordfighting Attacking arm calls GetBattleOverview. Rust had invented a special approach-substate arm that reinitialized Them and called BattleDecisions. Removing that arm restores the existing source-faithful emergency path. A focused regression proves a failed running approach enters AttackingOverviewLookLeft, launches the left glance, and preserves Us. The representative now matches every recorded frame through EOF, and both task-36 schema-14 replay-009 controls remain exact through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task121_failed_enemy_approach"
+}
