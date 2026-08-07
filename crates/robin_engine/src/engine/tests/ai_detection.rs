@@ -2290,6 +2290,73 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
 }
 
 #[test]
+fn look_there_broadcast_skips_attacking_chief_and_reacts_on_eligible_member() {
+    use crate::ai::{AiState, CrossNpcAction, LookThereContinuation, Position, Substate};
+    use crate::element::{Camp, Entity};
+
+    let mut engine = EngineInner::new();
+    let source_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let chief_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let member_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    for id in [source_id, chief_id, member_id] {
+        let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
+            panic!("LOOKTHERE broadcast test NPC changed kind")
+        };
+        soldier.element.active = true;
+        soldier.npc.life_points = 100;
+        soldier.npc.view_radius = 400;
+    }
+    {
+        let chief = engine
+            .get_entity_mut(chief_id)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap();
+        chief.current_state = AiState::Attacking;
+        chief.current_substate = Substate::AttackingReactiontime;
+    }
+    engine
+        .get_entity_mut(member_id)
+        .and_then(Entity::ai_controller_mut)
+        .unwrap()
+        .patrol_chief = Some(chief_id);
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .get_entity_mut(source_id)
+        .and_then(Entity::ai_controller_mut)
+        .unwrap()
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .push(CrossNpcAction::BroadcastLookThere {
+            caller: source_id.index(),
+            position: Position::default(),
+            radius: 100,
+            continuation: LookThereContinuation::SeekingArrowReactiontime,
+        });
+
+    crate::sim_rng::with_seed(0xA013_1090, |sim| {
+        engine.process_synchronous_reentrant_actions_for(sim, source_id, &assets);
+    });
+
+    let chief = engine
+        .get_entity(chief_id)
+        .unwrap()
+        .ai_controller()
+        .unwrap();
+    assert_eq!(chief.current_state, AiState::Attacking);
+    assert_eq!(chief.current_substate, Substate::AttackingReactiontime);
+    let member = engine
+        .get_entity(member_id)
+        .unwrap()
+        .ai_controller()
+        .unwrap();
+    assert_eq!(member.current_state, AiState::Wondering);
+    assert_eq!(member.current_substate, Substate::WonderingWatching);
+}
+
+#[test]
 fn enemy_tick_data_populates_live_patrol_chief_without_a_primary_target() {
     use crate::ai::AiState;
     use crate::coordinates::MapPoint;

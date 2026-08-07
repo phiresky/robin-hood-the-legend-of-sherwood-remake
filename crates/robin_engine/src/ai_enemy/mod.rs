@@ -1285,6 +1285,20 @@ impl EnemyAi {
             // Short-circuit: a non-soldier chief never reaches the LOS
             // query, so no visibility-cache traffic is generated for it.
             if chief_is_soldier && self.is_detecting_360_degrees(chief as HumanHandle, ctx) {
+                // Original calls the chief's
+                // `DispatchStimulusToWholePatrol` method directly here; it
+                // does not call `chief->Think(stimulus)`. A chief which has
+                // already entered Attacking (or another ineligible state)
+                // therefore rejects the delegation without processing the
+                // stimulus itself, and this subordinate handles it locally.
+                let chief_dispatches = ctx.entity_view(chief).is_some_and(|view| {
+                    matches!(view.ai_state, AiState::Wondering)
+                        || (view.ai_state == AiState::Default
+                            && view.ai_substate != Substate::DefaultPatrolEnrouteRunning)
+                });
+                if !chief_dispatches {
+                    return false;
+                }
                 self.base
                     .outbox
                     .reentrant
@@ -2720,88 +2734,36 @@ impl EnemyAi {
         let radius_sq = (radius as f32) * (radius as f32);
         let my_camp = ctx.camp;
         let my_pos = ctx.position;
-        let hint = Hint {
-            seek_point: *pos,
-            seek_flags: 0,
-            who_tells_me: self.base.me,
-        };
-
-        // GetSoldier(camp, index) walks the Original engine's camp registry in
-        // construction order. HashMap iteration would permute synchronous
-        // CALL_LOOKTHERE delivery, so materialize that same stable order.
-        let mut friends: Vec<_> = ctx
+        // The engine performs the state-filtered registry walk against live
+        // recipients. Use this snapshot only to avoid suspending the caller
+        // when no same-camp soldier is even in range.
+        let any_friend_in_range = ctx
             .entity_views
             .iter()
             .filter(|(handle, view)| {
                 **handle != self.base.me && view.is_soldier() && view.camp == my_camp
             })
-            .collect();
-        friends.sort_by_key(|(_, view)| view.original_creation_order);
+            .any(|(_, view)| {
+                let dx = view.position.x - my_pos.x;
+                let dz = view.elevation - ctx.elevation;
+                let dy = (view.position.y + view.elevation) - (my_pos.y + ctx.elevation);
+                dx * dx + dy * dy + dz * dz < radius_sq
+            });
+        if !any_friend_in_range {
+            return false;
+        }
 
-        let mut called_anyone = false;
-        for (&handle, view) in friends {
-            // Filter `friend.ai_state`: DEFAULT or WONDERING, or
-            // SEEKING with substate SeekingJustWatching /
-            // SeekingJustWatchingSidewards.  Deliberately do NOT gate
-            // on `is_able_to_fight` — a wounded/stunned friend still
-            // in a Default/Wondering state is a valid look-there
-            // target.
-            let state_ok = matches!(view.ai_state, AiState::Default | AiState::Wondering)
-                || (view.ai_state == AiState::Seeking
-                    && matches!(
-                        view.ai_substate,
-                        Substate::SeekingJustWatching | Substate::SeekingJustWatchingSidewards
-                    ));
-            if !state_ok {
-                continue;
-            }
-            // Range check against my position (not against `pos`).  The
-            // original subtracts RHElement::GetPosition(), i.e. full
-            // world-space `(map_x, map_y + z, z)` points, before calling
-            // SquareNorm.  A projected map-space check incorrectly lets a
-            // guard on a raised platform alert soldiers far below it.
-            let dx = view.position.x - my_pos.x;
-            let dz = view.elevation - ctx.elevation;
-            let dy = (view.position.y + view.elevation) - (my_pos.y + ctx.elevation);
-            if dx * dx + dy * dy + dz * dz >= radius_sq {
-                continue;
-            }
-
-            self.base
-                .outbox
-                .reentrant
-                .cross_npc_actions
-                .push(CrossNpcAction::SendStimulus {
-                    target: handle,
-                    stimulus_type: StimulusType::CallLookThere,
-                    info: StimulusInfo::Hint(hint),
-                    fallback_to_sender: None,
-                    to_whole_patrol: false,
-                });
-            tracing::trace!(
-                target: "look_there",
-                sender = self.base.me,
-                friend = handle,
-                friend_state = ?view.ai_state,
-                friend_substate = ?view.ai_substate,
+        self.base
+            .outbox
+            .reentrant
+            .cross_npc_actions
+            .push(CrossNpcAction::BroadcastLookThere {
+                caller: self.base.me,
+                position: *pos,
                 radius,
-                "hey_folks_look_there: queued synchronous call"
-            );
-            called_anyone = true;
-        }
-
-        if called_anyone {
-            // Queued last, so the ordered synchronous drain runs it only after
-            // every look-there above (and everything those cascade into) has
-            // closed.
-            self.base.outbox.reentrant.cross_npc_actions.push(
-                CrossNpcAction::ResumeAfterLookThere {
-                    caller: self.base.me,
-                    continuation,
-                },
-            );
-        }
-        called_anyone
+                continuation,
+            });
+        true
     }
 
     pub(crate) fn resume_after_look_there(

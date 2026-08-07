@@ -9545,6 +9545,11 @@ impl EngineInner {
                         "HeyFolksLookThere resume for caller {caller} escaped its owner boundary"
                     )
                 }
+                crate::ai::CrossNpcAction::BroadcastLookThere { caller, .. } => {
+                    panic!(
+                        "HeyFolksLookThere broadcast for caller {caller} escaped its owner boundary"
+                    )
+                }
                 crate::ai::CrossNpcAction::RelayStimulusToPatrolMembers {
                     stimulus_type,
                     members,
@@ -10460,6 +10465,21 @@ impl EngineInner {
                         continuation,
                         assets,
                     ),
+                    crate::ai::CrossNpcAction::BroadcastLookThere {
+                        caller,
+                        position,
+                        radius,
+                        continuation,
+                    } => self.process_synchronous_look_there_broadcast(
+                        sim,
+                        source_id,
+                        caller,
+                        position,
+                        radius,
+                        continuation,
+                        assets,
+                        defer_turn_instruction,
+                    ),
                     crate::ai::CrossNpcAction::SendStimulus { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
                         self.process_synchronous_stimuli_for(
@@ -10727,6 +10747,106 @@ impl EngineInner {
             .unwrap_or_else(|| panic!("AlertSoldiers caller {caller} lost its EnemyAi"))
             .finalize_alert_soldiers(sim, failure, global, grid, &ctx, &tick);
         self.drain_direct_ai_owner_boundary_without_forecast(sim, source_id, assets);
+    }
+
+    fn process_synchronous_look_there_broadcast(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        source_id: crate::element::EntityId,
+        caller: u32,
+        position: crate::ai::Position,
+        radius: u16,
+        continuation: crate::ai::LookThereContinuation,
+        assets: &LevelAssets,
+        defer_turn_instruction: bool,
+    ) {
+        assert_eq!(
+            source_id.index(),
+            caller,
+            "HeyFolksLookThere broadcast caller must be its owner"
+        );
+        let (caller_camp, caller_position) = self
+            .world
+            .entities
+            .get(source_id)
+            .map(|entity| (entity.camp(), entity.element_data().position()))
+            .unwrap_or_else(|| panic!("HeyFolksLookThere caller {caller} disappeared"));
+        let radius_sq = f32::from(radius) * f32::from(radius);
+        let candidates = self.world.fighter_registry_order();
+
+        for target_id in candidates {
+            if target_id == source_id {
+                continue;
+            }
+            let eligible = self
+                .world
+                .entities
+                .get(target_id)
+                .filter(|entity| {
+                    matches!(entity, Entity::Soldier(_)) && entity.camp() == caller_camp
+                })
+                .and_then(Entity::enemy_ai)
+                .is_some_and(|enemy| {
+                    matches!(
+                        enemy.base.current_state,
+                        crate::ai::AiState::Default | crate::ai::AiState::Wondering
+                    ) || (enemy.base.current_state == crate::ai::AiState::Seeking
+                        && matches!(
+                            enemy.base.current_substate,
+                            crate::ai::Substate::SeekingJustWatching
+                                | crate::ai::Substate::SeekingJustWatchingSidewards
+                        ))
+                });
+            if !eligible {
+                continue;
+            }
+
+            // Original evaluates the state and range together immediately
+            // before the direct Think call. An earlier recipient may have
+            // re-entered and changed this soldier since the loop began.
+            let target_position = self
+                .world
+                .entities
+                .get(target_id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "HeyFolksLookThere target {} disappeared during the registry walk",
+                        target_id.index()
+                    )
+                })
+                .element_data()
+                .position();
+            let dx = target_position.x - caller_position.x;
+            let dy = target_position.y - caller_position.y;
+            let dz = target_position.z - caller_position.z;
+            if dx * dx + dy * dy + dz * dz >= radius_sq {
+                continue;
+            }
+
+            let hint = crate::ai::Hint {
+                seek_point: position,
+                seek_flags: 0,
+                who_tells_me: caller,
+            };
+            self.world
+                .entities
+                .get_mut(source_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| panic!("HeyFolksLookThere caller {caller} lost its AI"))
+                .outbox
+                .reentrant
+                .cross_npc_actions
+                .push(crate::ai::CrossNpcAction::SendStimulus {
+                    target: target_id.index(),
+                    stimulus_type: crate::ai::StimulusType::CallLookThere,
+                    info: crate::ai::StimulusInfo::Hint(hint),
+                    fallback_to_sender: None,
+                    to_whole_patrol: false,
+                });
+            self.process_synchronous_stimuli_for(sim, source_id, assets, defer_turn_instruction);
+        }
+
+        self.process_synchronous_look_there_resume(sim, source_id, caller, continuation, assets);
     }
 
     fn process_synchronous_look_there_resume(

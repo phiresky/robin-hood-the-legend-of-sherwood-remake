@@ -1575,6 +1575,16 @@ pub enum CrossNpcAction {
     /// `EventSeesCharlyStandardProcedure` when the reuniting soldier
     /// still needs to wait at the sync waypoint for its macro friend.
     RegisterSynchronizingActor { target: NpcHandle, actor: NpcHandle },
+    /// Run `HeyFolksLookThere`'s soldier-registry walk at the owner boundary.
+    /// Each recipient's live state is tested immediately before its direct
+    /// `Think(CALL_LOOKTHERE)`, because an earlier recipient can re-enter and
+    /// mutate a later one during the same broadcast.
+    BroadcastLookThere {
+        caller: NpcHandle,
+        position: Position,
+        radius: u16,
+        continuation: LookThereContinuation,
+    },
     /// Resume the procedure that called `HeyFolksLookThere` once every
     /// `CALL_LOOKTHERE` it emitted has been delivered and its cascade has
     /// closed. The look-there broadcast is a plain synchronous call in the
