@@ -3344,8 +3344,17 @@ impl EnemyAi {
                                     AiState::Seeking,
                                     Substate::SeekingRunningToOfficerSeen,
                                 );
-                                // Re-dispatch.
-                                self.base.launch_timer(1, ctx.frame);
+                                // Original recursively calls
+                                // Think(EVENT_REACHPOINT) here.  Keep that
+                                // same-frame lifecycle edge in the reentrant
+                                // drain; a one-frame timer lets an officer who
+                                // is no longer waiting leave this soldier in
+                                // the transient Seen state for a frame.
+                                self.base
+                                    .outbox
+                                    .reentrant
+                                    .self_stimuli
+                                    .push(StimulusType::EventReachPoint);
                             }
                         } else {
                             // Officer busy — look for another
@@ -6188,6 +6197,72 @@ mod tests {
 
         assert_eq!(ai.base.current_state, AiState::Seeking);
         assert_eq!(ai.base.current_substate, Substate::SeekingCombatAlert);
+    }
+
+    #[test]
+    fn reaching_near_officer_redispatches_reachpoint_synchronously() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.set_state(AiState::Seeking, Substate::SeekingRunningToOfficer);
+        ai.base.antagonist = 2;
+        let mut tick = AiPerTickData::stub();
+        tick.camp_soldiers.push(crate::ai_enemy::CampSoldierInfo {
+            handle: 2,
+            active: true,
+            position: Position::default(),
+            position_world: crate::coordinates::WorldPoint3D::ZERO,
+            direction: 0,
+            rank: ProfileRank::Officer,
+            ai_state: AiState::Default,
+            ai_substate: Substate::DefaultOnPost,
+            is_able_to_fight: true,
+            is_dead: false,
+            primary_target: 0,
+            pride: 0,
+            is_able_to_help: true,
+            script_locked: false,
+            ai_lock_frozen: false,
+            layer: 0,
+            report_type: ReportType::Nothing,
+            report_seek_position: Position::default(),
+            report_seen_bodies: Vec::new(),
+            report_charly: 0,
+            alert_soldiers_point: Position::default(),
+            patrol_chief: None,
+            antagonist: 0,
+            duty_flag: false,
+            is_tower_guard: false,
+            company_number: 0,
+            in_building: false,
+            forecast_destination: None,
+            detectable_bodies: Vec::new(),
+            seek_position: Position::default(),
+            current_task_priority: 0,
+            minimal_task_priority: 0,
+            view_direction: [1.0, 0.0],
+            view_radius: 400,
+            real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
+            eye_blind: false,
+        });
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventReachPoint),
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &tick,
+            None,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingRunningToOfficerSeen
+        );
+        assert_eq!(
+            ai.base.outbox.reentrant.self_stimuli,
+            vec![StimulusType::EventReachPoint]
+        );
+        assert!(!ai.base.timer_is_running);
     }
 
     #[test]

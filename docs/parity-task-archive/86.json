@@ -1,0 +1,8 @@
+{
+  "id": "86",
+  "subject": "Restore synchronous reached-officer lifecycle callback",
+  "description": "DONE. Task #80's second control, schema-14 Nescafe Profile_002 Savegame_001 replay-015, next diverged at frame 1603 on Soldier 131: Original had returned to Default and launched LeaveAttentiveMode, while Rust remained in SeekingRunningToOfficerSeen with Yellow alert and Wait. Both reached the nearby officer in SeekingRunningToOfficer. Original changes to SeekingRunningToOfficerSeen and recursively calls Think(EVENT_REACHPOINT); Rust had replaced this with launch_timer(1). The target officer was already in Default, so the recursively dispatched Seen handler immediately calls ReturnToDuty in Original, whereas Rust exposed the transient state for a frame. The replacement now queues EventReachPoint through the engine's same-frame reentrant self-stimulus drain. A focused regression covers the exact near-officer transition, all 85 ai_enemy tests pass, and the representative debug replay matches every recorded frame through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
