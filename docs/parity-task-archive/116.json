@@ -1,0 +1,9 @@
+{
+  "id": "116",
+  "subject": "Preserve Original tower-guard runner selection bugs",
+  "description": "Nescafe Profile_001 Restart replay-008 advanced past task 113's tower-guard seek-RNG frontier and diverged at frame 307 when Soldier225 received CALL_TOWER_GUARD_CALLS_ME, entered SeekingRunningToOfficer, and added an attentive-mode detectable. Original left the soldier in WonderingWatchingTowerGuard. The runner fallback in Original TowerGuardCallAlert contains two observable bugs: it bounds its scan with listSimpleSoldiersWhoHearMe.Size() but dereferences GetSoldier(camp, i), so it examines the first N camp-registry soldiers rather than the hearers; it also compares every candidate with the fixed far-officer distance and never updates that threshold, so the last qualifying registry-prefix actor wins rather than the nearest one. Rust explicitly declined to preserve those bugs and selected the closest actual hearer, Soldier225. The fallback now retains the hearing-list count but applies Original's registry-prefix scan, fixed threshold, overwrite order, and stored 3D GetPosition geometry. A focused selector regression covers both selection bugs. Profile_001 now matches every recorded frame through EOF; Profile_003 clears the same frame-307 frontier and advances to an independent frame-396 Soldier114 group/list-us and MoveWaiting frontier. Both task-36 schema-14 replay-009 controls match every recorded frame through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task116_attentive_frontier"
+}

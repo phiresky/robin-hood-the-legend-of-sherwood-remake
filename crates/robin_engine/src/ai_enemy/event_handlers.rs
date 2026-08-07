@@ -9,7 +9,7 @@
 use crate::ai::*;
 use crate::parameters_ai;
 
-use super::util::enemy_is_below_me;
+use super::util::{ai_max_norm_distance, enemy_is_below_me};
 use super::{EnemyAi, ProfileRank, SeekFlags, UNDEFINED_DIRECTION, combat, task_priority};
 
 impl EnemyAi {
@@ -1965,14 +1965,17 @@ impl EnemyAi {
         // reaction-time window closes.
 
         // Three-branch dispatch based on distance and below-flag.
-        let max_norm_dist = {
-            // `MaxNormDistance` applies `StretchY(INVERSE_ASPECT_RATIO)`
-            // before `MaxNorm()`.
-            let dx = (enemy_pos.x - ctx.position.x).abs();
-            let dy = (enemy_pos.y - ctx.position.y).abs()
-                * crate::position_interface::INVERSE_ASPECT_RATIO;
-            dx.max(dy)
-        };
+        // Original `MaxNormDistance(pEnemy)` subtracts the actors' full
+        // world-space positions, stretches world Y, and retains elevation as
+        // the third max-norm component.  `enemy_pos` and `ctx.position` are
+        // map-space snapshots, where elevation has already been projected out
+        // of Y, so using their raw Y delta double-counts vertical separation.
+        let enemy_elevation = ctx
+            .entity_view(enemy)
+            .map(|view| view.elevation)
+            .unwrap_or(ctx.elevation);
+        let max_norm_dist =
+            ai_max_norm_distance(&enemy_pos, enemy_elevation, &ctx.position, ctx.elevation);
         if max_norm_dist < 50.0 {
             // Enemy very near — skip the turn and dispatch BattleDecisions
             // immediately. `IAmInTrouble` is called only on this branch
@@ -2758,7 +2761,6 @@ mod tests {
     use crate::element::{Camp, Posture};
     use crate::element_kinds::ObjectType;
     use crate::order::OrderType;
-    use std::sync::Arc;
 
     fn object_view(object_type: ObjectType) -> AiEntityView {
         AiEntityView {
@@ -2845,7 +2847,7 @@ mod tests {
         views.insert(12, enemy_view);
         let ctx = AiContext {
             position: Position::default(),
-            entity_views: Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
 
@@ -2871,6 +2873,67 @@ mod tests {
 
         assert_eq!(ai.base.current_state, AiState::Attacking);
         assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingReactiontimeTurning
+        );
+    }
+
+    #[test]
+    fn event_view_near_gate_uses_world_y_and_elevation() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        // Make the immediate BattleDecisions path terminate predictably once
+        // it observes the empty visible-enemy list.
+        ai.combat_trainer = true;
+
+        let mut enemy_view = object_view(ObjectType::None);
+        enemy_view.kind = EntityKind::Pc;
+        enemy_view.is_pc = true;
+        enemy_view.position = Position {
+            x: 609.0,
+            y: 2299.0,
+            sector: None,
+            level: 2,
+        };
+        enemy_view.elevation = 150.001;
+        let mut views = AiEntityViewMap::new();
+        views.insert(12, enemy_view);
+        let ctx = AiContext {
+            position: Position {
+                x: 575.6,
+                y: 2360.0,
+                sector: None,
+                level: 1,
+            },
+            elevation: 105.001,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        let mut tick = AiPerTickData::stub();
+        tick.enemy_detectable_positions.push((
+            12,
+            Position {
+                x: 609.0,
+                y: 2299.0,
+                sector: None,
+                level: 2,
+            },
+        ));
+
+        ai.event_view_standard_procedure(
+            &sim,
+            12,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        // Raw map Y differs by 61 (and would take the turn branch), while
+        // Original world Y differs by only 16 after adding elevation.  The
+        // 45-unit elevation component keeps the 3D max norm below 50.
+        assert_ne!(
             ai.base.current_substate,
             Substate::AttackingReactiontimeTurning
         );
@@ -2942,7 +3005,7 @@ mod tests {
         views.insert(2, attacker);
         let ctx = AiContext {
             is_swordfighting: false,
-            entity_views: Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
 
@@ -2979,7 +3042,7 @@ mod tests {
         views.insert(2, attacker);
         let ctx = AiContext {
             camp: Camp::Lacklandists,
-            entity_views: Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
 
@@ -3039,7 +3102,7 @@ mod tests {
         let mut views = AiEntityViewMap::new();
         views.insert(2, object_view(object_type));
         AiContext {
-            entity_views: Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             posture: Posture::Upright,
             ..AiContext::default()
         }
@@ -3105,7 +3168,7 @@ mod tests {
         let mut views = AiEntityViewMap::new();
         views.insert(17, beggar_view);
         let ctx = AiContext {
-            entity_views: Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
 

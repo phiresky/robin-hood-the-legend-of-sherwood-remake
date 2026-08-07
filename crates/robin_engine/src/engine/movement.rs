@@ -3588,6 +3588,7 @@ impl EngineInner {
                         u16::from(goal_sector),
                         pc_auth.as_ref(),
                         false,
+                        &|sector| self.building_sector_is_authorized(sector),
                         &|sector| {
                             level
                                 .sectors
@@ -5120,6 +5121,7 @@ impl EngineInner {
                         u16::from(goal_sector),
                         auth.as_ref(),
                         move_flags.contains(crate::sequence::MoveFlags::MAP),
+                        &|sector| self.building_sector_is_authorized(sector),
                         &|sector| {
                             level
                                 .sectors

@@ -1,0 +1,9 @@
+{
+  "id": "118",
+  "subject": "Use world-space 3D MaxNormDistance for near-enemy sight reactions",
+  "description": "SuN1Sh1nE Profile_004 Savegame_021 replay-009 advanced past the ladder handoff fixes and diverged at frame 614 when crossbowman Soldier 97 saw PC 168. Original immediately entered BattleDecisions, selected AttackingBowObservingLoading (legacy substate 180), and launched EquipBow, while Rust entered AttackingReactiontimeTurning (substate 152) and launched TurnFast. Original EventViewStandardProcedure gates the immediate branch with MaxNormDistance(mpPrimaryTarget) < 50. That distance subtracts full actor world positions, stretches world Y, and retains elevation as the third max-norm component. Rust instead compared raw map-space Y, where elevation has already been projected out, and therefore double-counted the 45-unit elevation difference: it treated the actors' 61-unit map-Y gap as distant even though their world-Y gap was only 16 and the correct 3D max norm was 45. EventView now uses the existing source-faithful ai_max_norm_distance helper with the boundary target position and live target elevation. Focused coverage reproduces the exact vertical geometry and proves the near branch runs. The representative clears frame 614 and advances through frame 853 to an independent SeekPointSelection RNG frontier at frame 854. Both task-36 schema-14 replay-009 controls match every recorded frame through EOF on the shared debug parity runner.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task118_event_view_distance"
+}

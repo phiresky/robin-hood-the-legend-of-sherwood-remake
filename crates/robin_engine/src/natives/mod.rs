@@ -1008,6 +1008,7 @@ impl NativeContext<'_, '_> {
                 goal_sector,
                 auth.as_ref(),
                 allow_leave_map,
+                &|sector| self.building_sector_is_authorized(sector),
                 &|sector| self.sector_lift_type(sector),
             )
         };

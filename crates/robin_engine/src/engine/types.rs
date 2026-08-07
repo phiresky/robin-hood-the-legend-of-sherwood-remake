@@ -1104,7 +1104,7 @@ pub struct SimScratch {
 impl Default for SimScratch {
     fn default() -> Self {
         Self {
-            ai_entity_views: std::sync::Arc::new(crate::ai_entity_view::AiEntityViewMap::new()),
+            ai_entity_views: std::sync::Arc::new(crate::ai_entity_view::AiEntityViews::default()),
             ai_sight_obstacles: crate::sight_obstacle::SharedSightObstacles::default(),
         }
     }

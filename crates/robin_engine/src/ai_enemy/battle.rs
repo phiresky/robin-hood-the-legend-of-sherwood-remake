@@ -3147,7 +3147,7 @@ mod tests {
                 y: 2119.0,
                 ..Position::default()
             },
-            entity_views: std::sync::Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
 
@@ -3215,7 +3215,7 @@ mod tests {
         views.insert(198, target_view);
         let ctx = AiContext {
             camp: crate::element::Camp::Lacklandists,
-            entity_views: std::sync::Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
         let mut tick = AiPerTickData::stub();
@@ -3303,7 +3303,7 @@ mod tests {
         assert!(views[&199].is_able_to_fight);
         let ctx = AiContext {
             camp: crate::element::Camp::Lacklandists,
-            entity_views: std::sync::Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
         let mut tick = AiPerTickData::stub();

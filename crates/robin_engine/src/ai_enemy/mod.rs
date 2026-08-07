@@ -4595,7 +4595,7 @@ mod tests {
             self_real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
             self_eye_status: EyeStatus::LookForward,
             sq_self_view_radius: 400.0 * 400.0,
-            entity_views: Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             sight_obstacles: SharedSightObstacles {
                 static_obstacles: Arc::new(obstacles),
                 dynamic_obstacles: Arc::new(Vec::new()),
@@ -4631,7 +4631,7 @@ mod tests {
                 building_sector: None,
                 self_upright_eye_world: crate::coordinates::WorldPoint3D::new(0.0, 0.0, 45.0),
                 sq_self_view_radius: 200.0 * 200.0,
-                entity_views: Arc::new(views),
+                entity_views: crate::ai_entity_view::shared_entity_views(views),
                 ..AiContext::default()
             };
             assert!(
@@ -4646,7 +4646,7 @@ mod tests {
             assert!(!ai.is_detecting_360_degrees(
                 2,
                 &AiContext {
-                    entity_views: Arc::new(views),
+                    entity_views: crate::ai_entity_view::shared_entity_views(views),
                     ..ctx.clone()
                 }
             ));
@@ -4658,7 +4658,7 @@ mod tests {
             assert!(!ai.is_detecting_360_degrees(
                 2,
                 &AiContext {
-                    entity_views: Arc::new(views),
+                    entity_views: crate::ai_entity_view::shared_entity_views(views),
                     ..ctx
                 }
             ));
@@ -4687,7 +4687,7 @@ mod tests {
             self_view_radius: 400,
             self_real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
             self_eye_status: EyeStatus::LookForward,
-            entity_views: Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
 
@@ -4796,7 +4796,7 @@ mod tests {
             sq_self_view_radius: 400.0 * 400.0,
             self_view_direction: [1.0, 0.0],
             self_real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
-            entity_views: Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             sight_obstacles: SharedSightObstacles {
                 static_obstacles: Arc::new(vec![wall]),
                 dynamic_obstacles: Arc::new(Vec::new()),
@@ -5651,7 +5651,7 @@ mod tests {
         views.insert(1, stale_view);
         let ctx = AiContext {
             self_animation: OrderType::WaitingUprightBored,
-            entity_views: Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
 
@@ -5745,7 +5745,7 @@ mod tests {
             sq_standard_view_radius: 500.0 * 500.0,
             sq_self_view_radius: 500.0 * 500.0,
             move_box: crate::coordinates::MoveBox::from_coords(-5.0, -5.0, 5.0, 5.0),
-            entity_views: Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
         let mut tick = AiPerTickData::stub();
@@ -5801,7 +5801,7 @@ mod tests {
             sq_standard_view_radius: 500.0 * 500.0,
             sq_self_view_radius: 500.0 * 500.0,
             move_box: crate::coordinates::MoveBox::from_coords(-5.0, -5.0, 5.0, 5.0),
-            entity_views: Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
 
@@ -5829,7 +5829,7 @@ mod tests {
             let mut views = AiEntityViewMap::new();
             views.insert(1, soldier_view(Position::default()));
             let ctx = AiContext {
-                entity_views: Arc::new(views),
+                entity_views: crate::ai_entity_view::shared_entity_views(views),
                 ..AiContext::default()
             };
             let tick = AiPerTickData::stub();
@@ -5889,7 +5889,7 @@ mod tests {
         let ctx = AiContext {
             position: test_position(0.0, 0.0),
             camp: Camp::Lacklandists,
-            entity_views: Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
         let mut tick = AiPerTickData::stub();
@@ -5930,7 +5930,7 @@ mod tests {
             position: me_position,
             elevation: 0.0,
             camp: Camp::Lacklandists,
-            entity_views: Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
 

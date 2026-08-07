@@ -6,7 +6,7 @@
 //! and the report-merging helper `get_report_from_soldier`.
 
 use crate::ai::*;
-use crate::coordinates::MapPoint;
+use crate::coordinates::{MapPoint, WorldPoint3D};
 use crate::parameters_ai;
 use crate::position_interface::INVERSE_ASPECT_RATIO;
 
@@ -26,6 +26,25 @@ fn attack_point_direction(ctx: &AiContext, target: Position) -> u16 {
     let dx = target_world.x - ctx.position.x;
     let dy = target_world.y - (ctx.position.y + ctx.elevation);
     vec_to_sector(dx, dy)
+}
+
+fn tower_guard_runner_from_registry_prefix(
+    camp_registry: impl IntoIterator<Item = (NpcHandle, WorldPoint3D)>,
+    hearing_simple_soldier_count: usize,
+    officer_position: WorldPoint3D,
+    officer_distance_from_tower_squared: f32,
+) -> Option<NpcHandle> {
+    let mut runner = None;
+    for (handle, position) in camp_registry.into_iter().take(hearing_simple_soldier_count) {
+        let dx = position.x - officer_position.x;
+        let dy = (position.y - officer_position.y) * INVERSE_ASPECT_RATIO;
+        let dz = position.z - officer_position.z;
+        let square_distance = dx * dx + dy * dy + dz * dz;
+        if square_distance < officer_distance_from_tower_squared {
+            runner = Some(handle);
+        }
+    }
+    runner
 }
 
 impl EnemyAi {
@@ -1335,8 +1354,9 @@ impl EnemyAi {
         //   2. Officers *outside* the radius who can be reached via a
         //      runner (nearest far officer, picked by distance).
         let mut in_range_soldiers: Vec<crate::ai::NpcHandle> = Vec::new();
+        let mut simple_soldiers_who_hear_me = 0usize;
         let mut nearest_officer: Option<(crate::ai::NpcHandle, f32)> = None;
-        let mut nearest_far_officer: Option<(crate::ai::NpcHandle, f32, Position)> = None;
+        let mut nearest_far_officer: Option<(crate::ai::NpcHandle, f32, WorldPoint3D)> = None;
         let sqr_radius = combat::SQR_TOWER_GUARD_ALERT_RADIUS as f32;
 
         // GetSoldier(camp, i) walks the camp registry in stable order.  Do
@@ -1374,10 +1394,20 @@ impl EnemyAi {
                 // classification happens in this same camp-registry walk in
                 // the reference, reusing the exact SquareDistance result.
                 in_range_soldiers.push(handle);
-                if soldier.rank == ProfileRank::Officer
-                    && nearest_officer.is_none_or(|(_, distance)| sq_dist < distance)
-                {
-                    nearest_officer = Some((handle, sq_dist));
+                match soldier.rank {
+                    ProfileRank::Soldier if nearest_officer.is_none() => {
+                        // Original stores the soldier in
+                        // listSimpleSoldiersWhoHearMe here. Its later runner
+                        // scan accidentally uses only the list's size, not
+                        // its contents; retain that observable count.
+                        simple_soldiers_who_hear_me += 1;
+                    }
+                    ProfileRank::Officer
+                        if nearest_officer.is_none_or(|(_, distance)| sq_dist < distance) =>
+                    {
+                        nearest_officer = Some((handle, sq_dist));
+                    }
+                    _ => {}
                 }
             } else if soldier.rank == ProfileRank::Officer
                 && sq_dist
@@ -1388,7 +1418,7 @@ impl EnemyAi {
                 // Only consider RANK_OFFICER for the
                 // far-officer fallback.  AiEntityView carries `rank`
                 // so we can apply the same gate here.
-                nearest_far_officer = Some((handle, sq_dist, view.position));
+                nearest_far_officer = Some((handle, sq_dist, soldier.position_world));
             }
         }
 
@@ -1427,35 +1457,25 @@ impl EnemyAi {
             return;
         }
 
-        // No in-range officer — look for a runner. Pick
-        // the in-range soldier that is closest to the nearest
-        // out-of-range officer, and have them run to that officer.
-        //
-        // Note: the reference contains a long-standing bug —
-        // it iterates `i < listSimpleSoldiersWhoHearMe.Size()` but
-        // dereferences `GetSoldier(camp, i)` rather than
-        // `listSimpleSoldiersWhoHearMe[i]`, picking the first N
-        // soldiers of the camp roster instead of the actual hearing
-        // list.  We do *not* replicate the bug — the Rust port walks
-        // `in_range_soldiers` and picks the closest hearer to the
-        // far officer.
-        let Some((_, _, officer_pos)) = nearest_far_officer else {
+        // No in-range officer — look for a runner. Preserve two observable
+        // Original bugs: the loop is bounded by the hearing-list size but
+        // dereferences GetSoldier(camp, i), and each candidate is compared
+        // with the far officer's tower distance instead of the previously
+        // selected runner distance. The result is the last qualifying actor
+        // in the first N camp-registry entries, not the nearest hearer.
+        let Some((_, officer_distance, officer_pos)) = nearest_far_officer else {
             return;
         };
-        let mut runner: Option<(crate::ai::NpcHandle, f32)> = None;
-        for handle in &in_range_soldiers {
-            let Some(view) = ctx.entity_view(*handle) else {
-                continue;
-            };
-            let dx = view.position.x - officer_pos.x;
-            let dy = (view.position.y - officer_pos.y) * INVERSE_ASPECT_RATIO;
-            let sq_dist = dx * dx + dy * dy;
-            if runner.is_none_or(|(_, d)| sq_dist < d) {
-                runner = Some((*handle, sq_dist));
-            }
-        }
+        let runner = tower_guard_runner_from_registry_prefix(
+            tick.camp_soldiers
+                .iter()
+                .map(|soldier| (soldier.handle, soldier.position_world)),
+            simple_soldiers_who_hear_me,
+            officer_pos,
+            officer_distance,
+        );
 
-        if let Some((runner_handle, _)) = runner {
+        if let Some(runner_handle) = runner {
             self.base
                 .outbox
                 .reentrant
@@ -1606,6 +1626,23 @@ mod tests {
         assert_ne!(
             attack_point_direction(&ctx, target),
             vec_to_sector(100.0, 100.0)
+        );
+    }
+
+    #[test]
+    fn tower_guard_runner_uses_registry_prefix_and_last_qualifier() {
+        let position = |x| WorldPoint3D { x, y: 0.0, z: 0.0 };
+        let registry = [
+            (10, position(50.0)),
+            (11, position(5.0)),
+            (12, position(9.0)),
+            (13, position(1.0)),
+        ];
+
+        assert_eq!(
+            tower_guard_runner_from_registry_prefix(registry, 3, position(0.0), 100.0),
+            Some(12),
+            "Original ignores the closest actor outside the first N registry entries and keeps the last qualifying prefix actor"
         );
     }
 }

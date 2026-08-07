@@ -998,6 +998,17 @@ where
     lift_type.is_actor_authorized(actor)
 }
 
+#[inline]
+fn building_has_capacity(
+    door: &Door,
+    direct: bool,
+    building_is_authorized: &impl Fn(SectorNumber) -> bool,
+) -> bool {
+    !direct
+        || !matches!(door.door_type, DoorType::Building | DoorType::BuildingTrap)
+        || building_is_authorized(door.sector_in)
+}
+
 /// Rebuild the `gate_links` on every door so that gates sharing a
 /// motion sector are linked.  Each motion-area sector collects every
 /// gate that touches it; the cross product of those sets becomes the
@@ -1113,6 +1124,10 @@ fn dist(a: MapPoint, b: MapPoint) -> f32 {
 ///
 /// `allow_leave_map` is set on map-leaving move orders: when true,
 /// reinforcement doors are not hard-blocked by `is_actor_authorized`.
+///
+/// `building_is_authorized` mirrors `RHSectorBuilding::IsAuthorized`.
+/// Original checks it whenever an NPC route enters a building door in the
+/// direct direction, both while seeding the search and while expanding it.
 #[allow(clippy::too_many_arguments)]
 pub fn find_path_gates(
     doors: &[Door],
@@ -1122,6 +1137,7 @@ pub fn find_path_gates(
     goal_sector: u16,
     auth: Option<&ActorAuthInfo>,
     allow_leave_map: bool,
+    building_is_authorized: &impl Fn(SectorNumber) -> bool,
     sector_lift_type: &impl Fn(SectorNumber) -> Option<LiftType>,
 ) -> Option<Vec<GatePathStep>> {
     let source = MapPoint::new(source.0, source.1);
@@ -1143,16 +1159,16 @@ pub fn find_path_gates(
         if !door.active {
             continue;
         }
-        // Authorization check: skip doors the actor cannot pass.
-        // Building capacity is assumed true for pathfinding purposes
-        // (the actual capacity check happens at door-pass dispatch time).
+        // Authorization check: skip doors the actor cannot pass. Original
+        // tests building capacity during path construction, before an actor
+        // can be dispatched toward the door.
         if let Some(a) = auth {
             let direct_candidate = door.sector_out == source_sector;
             if !is_actor_authorized_for_gate(
                 door,
                 direct_candidate,
                 a,
-                true,
+                building_has_capacity(door, direct_candidate, building_is_authorized),
                 allow_leave_map,
                 sector_lift_type,
             ) {
@@ -1251,7 +1267,7 @@ pub fn find_path_gates(
                     next,
                     next_direct,
                     a,
-                    true,
+                    building_has_capacity(next, next_direct, building_is_authorized),
                     allow_leave_map,
                     sector_lift_type,
                 ) {
@@ -1379,7 +1395,7 @@ pub fn find_path_into_door(
                 goal_door,
                 true,
                 a,
-                building_is_authorized(goal_door.sector_in),
+                building_has_capacity(goal_door, true, building_is_authorized),
                 allow_leave_map,
                 sector_lift_type,
             )
@@ -1431,7 +1447,7 @@ pub fn find_path_into_door(
                 door,
                 direct_candidate,
                 a,
-                !direct_candidate || building_is_authorized(door.sector_in),
+                building_has_capacity(door, direct_candidate, building_is_authorized),
                 allow_leave_map,
                 sector_lift_type,
             ) {
@@ -1517,7 +1533,7 @@ pub fn find_path_into_door(
                     next,
                     next_direct,
                     a,
-                    !next_direct || building_is_authorized(next.sector_in),
+                    building_has_capacity(next, next_direct, building_is_authorized),
                     allow_leave_map,
                     sector_lift_type,
                 ) {
@@ -1684,6 +1700,7 @@ pub fn compute_avenger_wait_position(
     me_pos: (f32, f32),
     me_sector: u16,
     me_auth: &ActorAuthInfo,
+    building_is_authorized: &impl Fn(SectorNumber) -> bool,
     sector_lift_type: &impl Fn(SectorNumber) -> Option<LiftType>,
 ) -> Option<GateWaitPosition> {
     // A* runs avenger → me, gated by the avenger's authorization.
@@ -1695,6 +1712,7 @@ pub fn compute_avenger_wait_position(
         me_sector,
         Some(avenger_auth),
         false,
+        building_is_authorized,
         sector_lift_type,
     )?;
     if path.is_empty() {
@@ -2269,6 +2287,77 @@ mod tests {
     }
 
     #[test]
+    fn gate_path_blocks_direct_npc_entry_into_full_building() {
+        let mut doors = vec![
+            Door {
+                sector_out: SectorNumber::new(1),
+                sector_in: SectorNumber::new(2),
+                point_out: MapPoint::new(0.0, 0.0),
+                point_in: MapPoint::new(10.0, 0.0),
+                ..Door::default()
+            },
+            Door {
+                door_type: DoorType::Building,
+                sector_out: SectorNumber::new(2),
+                sector_in: SectorNumber::new(3),
+                point_out: MapPoint::new(20.0, 0.0),
+                point_in: MapPoint::new(30.0, 0.0),
+                ..Door::default()
+            },
+        ];
+        build_gate_links(&mut doors);
+        let soldier = soldier_actor(false);
+
+        let full = |sector: SectorNumber| sector != SectorNumber::new(3);
+        assert!(
+            find_path_gates(
+                &doors,
+                (0.0, 0.0),
+                1,
+                (30.0, 0.0),
+                3,
+                Some(&soldier),
+                false,
+                &full,
+                &no_lift,
+            )
+            .is_none(),
+            "neighbor expansion must reject direct entry into a full building"
+        );
+        assert!(
+            find_path_gates(
+                &doors,
+                (20.0, 0.0),
+                2,
+                (30.0, 0.0),
+                3,
+                Some(&soldier),
+                false,
+                &full,
+                &no_lift,
+            )
+            .is_none(),
+            "seed gates must reject direct entry into a full building"
+        );
+
+        let available = |_: SectorNumber| true;
+        let path = find_path_gates(
+            &doors,
+            (0.0, 0.0),
+            1,
+            (30.0, 0.0),
+            3,
+            Some(&soldier),
+            false,
+            &available,
+            &no_lift,
+        )
+        .expect("the same route is valid while the building has capacity");
+        assert_eq!(path.len(), 2);
+        assert!(path.iter().all(|step| step.direct));
+    }
+
+    #[test]
     fn auth_building_trap_never_allows_civilians() {
         let door = Door {
             door_type: DoorType::BuildingTrap,
@@ -2514,6 +2603,7 @@ mod tests {
             (100.0, 0.0),
             1,
             &me,
+            &|_| true,
             &no_lift,
         )
         .expect("path exists, me blocked by civilian lock");
@@ -2553,6 +2643,7 @@ mod tests {
             (100.0, 0.0),
             1,
             &me,
+            &|_| true,
             &no_lift,
         )
         .expect("path exists, me blocked by civilian lock");
@@ -2586,6 +2677,7 @@ mod tests {
             (100.0, 0.0),
             1,
             &me,
+            &|_| true,
             &no_lift,
         );
         assert!(wait.is_none());
@@ -2607,6 +2699,7 @@ mod tests {
             (100.0, 0.0),
             1,
             &me,
+            &|_| true,
             &no_lift,
         );
         assert!(wait.is_none());

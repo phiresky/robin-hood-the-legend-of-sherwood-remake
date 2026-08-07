@@ -19,7 +19,7 @@ pub(crate) use post_detection::{
 
 use super::*;
 use crate::ai::{AiContext, AiPerTickData, StimulusType};
-use crate::ai_entity_view::{self, AiEntityViewMap, SharedAiEntityViews};
+use crate::ai_entity_view::{self, AiEntityViewMap, AiEntityViews, SharedAiEntityViews};
 use crate::ai_vision;
 use crate::coordinates::MapPoint;
 use crate::element::{
@@ -559,7 +559,9 @@ mod parity_tests {
 
     #[test]
     fn generic_owner_zero_context_may_lack_an_ai_entity_view() {
-        let views = std::sync::Arc::new(crate::ai_entity_view::AiEntityViewMap::new());
+        let views = crate::ai_entity_view::shared_entity_views(
+            crate::ai_entity_view::AiEntityViewMap::new(),
+        );
         assert_eq!(context_original_creation_order(0, &views), None);
     }
 
@@ -1186,6 +1188,7 @@ pub(super) fn precompute_avenger_on_roof_wait_position(
     doors: &[crate::gate::Door],
     me_id: impl Into<crate::element::EntityId>,
     target_id: impl Into<crate::element::EntityId>,
+    building_is_authorized: &impl Fn(crate::sector::SectorNumber) -> bool,
     sector_lift_type: &impl Fn(crate::sector::SectorNumber) -> Option<crate::sector::LiftType>,
 ) -> Option<crate::ai::Position> {
     let me_id = me_id.into();
@@ -1215,6 +1218,7 @@ pub(super) fn precompute_avenger_on_roof_wait_position(
         (me_elem.position_map().x, me_elem.position_map().y),
         me_sector.into(),
         &me_auth,
+        building_is_authorized,
         sector_lift_type,
     )?;
 
@@ -1502,7 +1506,7 @@ impl EngineInner {
         assets: &LevelAssets,
     ) -> SimScratch {
         let scratch = SimScratch {
-            ai_entity_views: std::sync::Arc::new(build_entity_views(self)),
+            ai_entity_views: self.share_ai_entity_views(build_entity_views(self)),
             ai_sight_obstacles: self.build_ai_sight_obstacles(assets),
         };
         scratch
@@ -1513,7 +1517,7 @@ impl EngineInner {
         assets: &LevelAssets,
     ) -> SimScratch {
         SimScratch {
-            ai_entity_views: std::sync::Arc::new(build_entity_views_without_forecast(self)),
+            ai_entity_views: self.share_ai_entity_views(build_entity_views_without_forecast(self)),
             ai_sight_obstacles: self.build_ai_sight_obstacles(assets),
         }
     }
@@ -1555,9 +1559,34 @@ impl EngineInner {
             }
         }
         SimScratch {
-            ai_entity_views: std::sync::Arc::new(views),
+            ai_entity_views: self.share_ai_entity_views(views),
             ai_sight_obstacles: self.build_ai_sight_obstacles(assets),
         }
+    }
+
+    fn share_ai_entity_views(&self, entities: AiEntityViewMap) -> SharedAiEntityViews {
+        let building_authorizations = self
+            .script_domains
+            .interactables
+            .doors
+            .iter()
+            .filter(|door| {
+                matches!(
+                    door.door_type,
+                    crate::gate::DoorType::Building | crate::gate::DoorType::BuildingTrap
+                )
+            })
+            .map(|door| {
+                (
+                    door.sector_in,
+                    self.building_sector_is_authorized(door.sector_in),
+                )
+            })
+            .collect();
+        std::sync::Arc::new(AiEntityViews {
+            entities,
+            building_authorizations,
+        })
     }
 
     /// Build a per-NPC [`AiPerTickData`] snapshot on demand, outside
@@ -1906,6 +1935,7 @@ impl EngineInner {
                     doors_slice,
                     npc_id,
                     candidate_id,
+                    &|sector| self.building_sector_is_authorized(sector),
                     &|sector| self.get_sector_lift_type(sector),
                 ) {
                     tick.avenger_on_roof_wait_positions.push((handle, wait));

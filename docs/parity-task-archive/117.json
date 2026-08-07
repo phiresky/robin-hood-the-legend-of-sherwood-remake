@@ -1,0 +1,9 @@
+{
+  "id": "117",
+  "subject": "Honor building capacity during gate-route authorization",
+  "description": "DONE. Nescafe Profile_002 Continue replay-008 consumed two extra RuntimeBuildingExitWait draws at frame 310 because Soldier 125 routed through full building sector 162 via doors 40/39. Original RHFastFindGrid calls RHDoor::IsActorAutorized for both seed gates and expanded neighbors, and RHDoor checks RHSectorBuilding::IsAuthorized on every direct NPC building entry regardless of the posture-test flag. Rust find_path_gates instead hardcoded building capacity true. Gate routing now receives exact live building authorization, evaluates it only for direct Building/BuildingTrap entry, and uses it in both search phases. Immutable AI routing carries a canonical SectorNumber-to-authorization snapshot alongside entity views and panics on a missing building entry instead of fabricating capacity. A focused test covers seed and neighbor rejection plus the available-building control. The representative clears the frame-310 RNG pair and advances to an independent frame-465 frontier; schema-14 Cyrdach Profile_156 and Nescafe Profile_001 replay-009 controls match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task117_building_capacity"
+}

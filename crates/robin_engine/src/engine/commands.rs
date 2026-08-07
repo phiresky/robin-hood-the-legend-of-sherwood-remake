@@ -2482,6 +2482,7 @@ impl EngineInner {
                 u16::from(target_sector),
                 Some(&actor_auth),
                 false,
+                &|sector| self.building_sector_is_authorized(sector),
                 &|sector| {
                     level
                         .sectors
@@ -3015,6 +3016,7 @@ impl EngineInner {
                 ts.into(),
                 Some(&pc_auth),
                 false,
+                &|sector| self.building_sector_is_authorized(sector),
                 &|sector| {
                     level
                         .sectors

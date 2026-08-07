@@ -1412,6 +1412,7 @@ impl EngineInner {
                         goal_sector.get(),
                         Some(&auth),
                         false,
+                        &|sector| self.building_sector_is_authorized(sector),
                         &|sector| {
                             level
                                 .sectors

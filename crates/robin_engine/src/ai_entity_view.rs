@@ -349,9 +349,51 @@ impl AiEntityView {
 /// via an [`Arc`] so building a new `AiContext` is O(1).
 pub type AiEntityViewMap = HashMap<u32, AiEntityView>;
 
-/// `Arc`-wrapped [`AiEntityViewMap`].  Cloning is a single atomic
-/// increment so every `think()` dispatch can embed its own reference.
-pub type SharedAiEntityViews = Arc<AiEntityViewMap>;
+/// Per-tick AI-readable world snapshot. Building authorization lives beside
+/// the entity map because both must be captured from the same canonical engine
+/// boundary before immutable AI handlers run.
+#[derive(Debug, Clone, Default)]
+pub struct AiEntityViews {
+    pub entities: AiEntityViewMap,
+    pub building_authorizations: HashMap<crate::sector::SectorNumber, bool>,
+}
+
+impl std::ops::Deref for AiEntityViews {
+    type Target = AiEntityViewMap;
+
+    fn deref(&self) -> &Self::Target {
+        &self.entities
+    }
+}
+
+impl std::ops::DerefMut for AiEntityViews {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.entities
+    }
+}
+
+impl AiEntityViews {
+    pub fn building_is_authorized(&self, sector: crate::sector::SectorNumber) -> bool {
+        *self
+            .building_authorizations
+            .get(&sector)
+            .unwrap_or_else(|| panic!("AI gate route references missing building sector {sector}"))
+    }
+}
+
+/// `Arc`-wrapped [`AiEntityViews`]. Cloning is a single atomic increment so
+/// every `think()` dispatch can embed its own reference.
+pub type SharedAiEntityViews = Arc<AiEntityViews>;
+
+/// Test/helper constructor for snapshots that do not exercise building-gate
+/// routing. Production snapshots are built by `EngineInner` and always carry
+/// the exact building authorization map.
+pub fn shared_entity_views(entities: AiEntityViewMap) -> SharedAiEntityViews {
+    Arc::new(AiEntityViews {
+        entities,
+        building_authorizations: HashMap::new(),
+    })
+}
 
 /// Build an [`AiEntityView`] from a generic [`Entity`] reference.
 ///

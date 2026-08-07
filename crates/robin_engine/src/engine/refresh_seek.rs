@@ -699,6 +699,7 @@ impl crate::engine::EngineInner {
                     u16::from(target_sector),
                     owner_auth.as_ref(),
                     false,
+                    &|sector| self.building_sector_is_authorized(sector),
                     &|sector| {
                         level
                             .sectors
@@ -854,6 +855,7 @@ impl crate::engine::EngineInner {
             u16::from(goal_sector),
             owner_auth.as_ref(),
             flags.contains(MoveFlags::MAP),
+            &|sector| self.building_sector_is_authorized(sector),
             &|sector| {
                 level
                     .sectors

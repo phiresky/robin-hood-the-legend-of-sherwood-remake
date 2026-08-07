@@ -6198,8 +6198,6 @@ mod tests {
 
     #[test]
     fn reached_beggar_launches_one_ordered_turn_then_response_sequence() {
-        use std::sync::Arc;
-
         use crate::element::{Command, EntityId, Posture};
         use crate::entity_id::SoldierId;
         use crate::sequence::{Field, FieldValue};
@@ -6234,7 +6232,7 @@ mod tests {
                     y: 100.0,
                     ..Position::default()
                 },
-                entity_views: Arc::new(views),
+                entity_views: crate::ai_entity_view::shared_entity_views(views),
                 ..AiContext::default()
             };
 
@@ -6435,7 +6433,7 @@ mod tests {
         let mut views = crate::ai_entity_view::AiEntityViewMap::new();
         views.insert(17, pc_view(crate::element::Posture::Tied));
         let ctx = AiContext {
-            entity_views: std::sync::Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
 

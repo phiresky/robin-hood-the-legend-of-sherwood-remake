@@ -1835,6 +1835,7 @@ impl FriendlyAi {
                             u16::from(goal_sec),
                             Some(&auth),
                             false,
+                            &|sector| ctx.entity_views.building_is_authorized(sector),
                             &|sector| {
                                 let grid = grid.unwrap_or_else(|| {
                                     panic!(
@@ -2679,7 +2680,7 @@ mod tests {
         );
         let ctx = AiContext {
             camp: Camp::Royalists,
-            entity_views: std::sync::Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
 
@@ -3073,7 +3074,7 @@ mod tests {
             // Large enough so the alerted soldier is "detected 360°"
             sq_standard_view_radius: 1_000_000.0,
             sq_self_view_radius: 1_000_000.0,
-            entity_views: std::sync::Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
 
@@ -3127,7 +3128,7 @@ mod tests {
             camp: Camp::Royalists,
             sq_standard_view_radius: 1.0, // too small for short-circuit
             sq_self_view_radius: 1.0,
-            entity_views: std::sync::Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
 
@@ -3172,7 +3173,7 @@ mod tests {
             camp: Camp::Royalists,
             sq_standard_view_radius: 1.0,
             sq_self_view_radius: 1.0,
-            entity_views: std::sync::Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
 
@@ -3230,7 +3231,7 @@ mod tests {
                 level: 0,
             },
             camp: Camp::Royalists,
-            entity_views: std::sync::Arc::new(views),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
 
