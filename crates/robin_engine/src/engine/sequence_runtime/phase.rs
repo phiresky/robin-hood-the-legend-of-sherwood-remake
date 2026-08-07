@@ -142,7 +142,7 @@ impl EngineInner {
         owner: EntityId,
         sequence_id: crate::sequence::SequenceId,
         element_index: usize,
-    ) {
+    ) -> OwnerActionBarrier {
         let Some((
             command,
             stored_destination,
@@ -187,7 +187,7 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_impossible(sequence_id, element_index);
-            return;
+            return OwnerActionBarrier::Skip;
         };
 
         let is_anonymous_archer_pc = self.get_entity(owner).is_some_and(|entity| {
@@ -214,7 +214,7 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_impossible(sequence_id, element_index);
-            return;
+            return OwnerActionBarrier::Skip;
         }
 
         // Actor::Instruct disables anti-collision as soon as a MAP movement
@@ -250,7 +250,7 @@ impl EngineInner {
                             .sequence_manager
                             .element_terminated(sequence_id, element_index);
                         self.start_post_seek_sequence(owner, None);
-                        return;
+                        return OwnerActionBarrier::Skip;
                     }
                     // Translate(SEEK) initializes these actor fields before
                     // entering RefreshSeek. RefreshSeek can deliberately
@@ -298,7 +298,7 @@ impl EngineInner {
                                 .sequence_manager
                                 .element_terminated(sequence_id, element_index);
                         }
-                        return;
+                        return OwnerActionBarrier::Reach;
                     }
                     let target_position = self
                         .get_entity(target)
@@ -336,7 +336,7 @@ impl EngineInner {
                         flags,
                         seek_distance,
                     ) {
-                        return;
+                        return OwnerActionBarrier::Skip;
                     }
                     let Some(resolved) =
                         self.resolve_entity_seek(sim, assets, owner, target, flags, seek_distance)
@@ -344,7 +344,7 @@ impl EngineInner {
                         self.orders
                             .sequence_manager
                             .element_impossible(sequence_id, element_index);
-                        return;
+                        return OwnerActionBarrier::Skip;
                     };
                     if let Some(crate::sequence::SequenceElementData::Movement {
                         destination,
@@ -404,7 +404,7 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_terminated(sequence_id, element_index);
-            return;
+            return OwnerActionBarrier::Skip;
         }
 
         // Original `Translate(SEEK) -> RefreshSeek` does not flatten the
@@ -434,7 +434,7 @@ impl EngineInner {
                 tolerance,
             )
         {
-            return;
+            return OwnerActionBarrier::Skip;
         }
 
         if is_seek {
@@ -444,7 +444,7 @@ impl EngineInner {
                 .get_element(sequence_id, element_index)
                 .map(|element| element.data.clone())
             else {
-                return;
+                return OwnerActionBarrier::Skip;
             };
             if let crate::sequence::SequenceElementData::Movement { flags, .. } =
                 &mut replacement_data
@@ -463,7 +463,7 @@ impl EngineInner {
             );
             replacement.data = replacement_data;
             self.relaunch_seek_replacement(owner, sequence_id, element_index, replacement);
-            return;
+            return OwnerActionBarrier::Skip;
         }
 
         self.dispatch_prepared_move_instruction(
@@ -474,7 +474,7 @@ impl EngineInner {
             element_index,
             destination,
             action,
-        );
+        )
     }
 
     /// Launch and dispatch sequence elements after the ported base entity and

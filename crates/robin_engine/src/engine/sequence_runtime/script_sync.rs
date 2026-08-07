@@ -183,8 +183,7 @@ impl EngineInner {
                         owner,
                         sequence_id,
                         element_index,
-                    )?;
-                    OwnerActionBarrier::Reach
+                    )?
                 } else if command == Command::Seek {
                     // `SetState(TERMINATED)` calls Ready() and then
                     // StartPostponedSequenceElement() on the same C++ stack.
@@ -198,8 +197,7 @@ impl EngineInner {
                         owner,
                         sequence_id,
                         element_index,
-                    );
-                    OwnerActionBarrier::Reach
+                    )
                 } else if command == Command::QuitSwordfight {
                     // A GoTo issued from a sword action state is one
                     // Original sequence: QuitSwordfight followed by Move.
@@ -207,8 +205,7 @@ impl EngineInner {
                     // the first element synchronously, just like the normal
                     // hourglass dispatcher; the movement remains behind the
                     // lowering animation until this element completes.
-                    self.dispatch_quit_swordfight(sim, assets, owner, sequence_id, element_index);
-                    OwnerActionBarrier::Reach
+                    self.dispatch_quit_swordfight(sim, assets, owner, sequence_id, element_index)
                 } else if matches!(
                     command,
                     Command::EnterSwordfight | Command::PrepareSwordfight
@@ -247,8 +244,7 @@ impl EngineInner {
                         sequence_manager: &mut self.orders.sequence_manager,
                         next_order_id: &mut self.orders.next_order_id,
                     }
-                    .dispatch(owner, command, sequence_id, element_index);
-                    OwnerActionBarrier::Reach
+                    .dispatch(owner, command, sequence_id, element_index)
                 } else if command == Command::Provoke {
                     // A sword-movement TERMINATED callback registers this
                     // Wait-priority successor before DoNextOrder. Original
@@ -292,17 +288,16 @@ impl EngineInner {
                 ) {
                     match command {
                         Command::ParrySword => {
-                            self.dispatch_parry_sword(owner, false, sequence_id, element_index);
+                            self.dispatch_parry_sword(owner, false, sequence_id, element_index)
                         }
                         Command::ParrySwordLow => {
-                            self.dispatch_parry_sword(owner, true, sequence_id, element_index);
+                            self.dispatch_parry_sword(owner, true, sequence_id, element_index)
                         }
                         Command::StopParrySword => {
-                            self.dispatch_stop_parry(owner, sequence_id, element_index);
+                            self.dispatch_stop_parry(owner, sequence_id, element_index)
                         }
                         _ => unreachable!(),
                     }
-                    OwnerActionBarrier::Reach
                 } else if matches!(
                     command,
                     Command::LookLeft | Command::LookRight | Command::LeanOut
@@ -360,8 +355,7 @@ impl EngineInner {
                     // Instruct/Translate callback before the attacker's
                     // condolence stack returns. Use the same damage
                     // translator as the ordinary manager Hourglass path.
-                    self.dispatch_receive_damage(sim, assets, owner, sequence_id, element_index);
-                    OwnerActionBarrier::Reach
+                    self.dispatch_receive_damage(sim, assets, owner, sequence_id, element_index)
                 } else {
                     return Err(format!(
                         "unsupported synchronous owner command {command:?} at {sequence_id:?}/{element_index}"
@@ -511,7 +505,7 @@ impl EngineInner {
         owner: EntityId,
         sequence_id: crate::sequence::SequenceId,
         element_index: usize,
-    ) -> Result<(), crate::engine::script::ScriptDriverError> {
+    ) -> Result<OwnerActionBarrier, crate::engine::script::ScriptDriverError> {
         let (destination, move_action) = self
             .orders
             .sequence_manager
@@ -532,7 +526,7 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_impossible(sequence_id, element_index);
-            return Ok(());
+            return Ok(OwnerActionBarrier::Skip);
         }
         let is_anonymous_archer_pc = self.get_entity(owner).is_some_and(|entity| {
             entity.is_pc()
@@ -547,7 +541,7 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_impossible(sequence_id, element_index);
-            return Ok(());
+            return Ok(OwnerActionBarrier::Skip);
         }
 
         // Keep the synchronous native entry point on the same Instruct
@@ -570,10 +564,10 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_terminated(sequence_id, element_index);
-            return Ok(());
+            return Ok(OwnerActionBarrier::Skip);
         }
 
-        self.dispatch_prepared_move_instruction(
+        Ok(self.dispatch_prepared_move_instruction(
             sim,
             assets,
             owner,
@@ -581,8 +575,7 @@ impl EngineInner {
             element_index,
             destination,
             move_action,
-        );
-        Ok(())
+        ))
     }
 
     fn dispatch_script_immediate_engine(

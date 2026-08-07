@@ -366,14 +366,14 @@ impl EngineInner {
     /// Dispatch a QuitSwordfight command.
     ///
     /// Transitions the entity out of sword-fighting action state.
-    pub(crate) fn dispatch_quit_swordfight(
+    pub(in crate::engine) fn dispatch_quit_swordfight(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) {
+    ) -> OwnerActionBarrier {
         let queue_lower = self
             .world
             .entities
@@ -425,34 +425,36 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_in_progress(seq_id, elem_idx);
+            OwnerActionBarrier::Reach
         } else {
             self.orders
                 .sequence_manager
                 .element_terminated(seq_id, elem_idx);
+            OwnerActionBarrier::Skip
         }
     }
 
     // ─── Parry ──────────────────────────────────────────────────────
 
     /// Dispatch a ParrySword command.
-    pub(crate) fn dispatch_parry_sword(
+    pub(in crate::engine) fn dispatch_parry_sword(
         &mut self,
         owner: EntityId,
         low: bool,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) {
+    ) -> OwnerActionBarrier {
         let Some(entity) = self.world.entities.get(owner) else {
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
-            return;
+            return OwnerActionBarrier::Skip;
         };
         let Some(actor) = entity.actor_data() else {
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
-            return;
+            return OwnerActionBarrier::Skip;
         };
 
         if !matches!(
@@ -466,7 +468,7 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
-            return;
+            return OwnerActionBarrier::Skip;
         }
 
         if matches!(
@@ -491,7 +493,7 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .end_instruct_callback(owner, seq_id, elem_idx);
-            return;
+            return OwnerActionBarrier::Skip;
         }
 
         let transition = if low {
@@ -520,26 +522,27 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .element_in_progress(seq_id, elem_idx);
+        OwnerActionBarrier::Reach
     }
 
     /// Dispatch a StopParrySword command.
-    pub(crate) fn dispatch_stop_parry(
+    pub(in crate::engine) fn dispatch_stop_parry(
         &mut self,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) {
+    ) -> OwnerActionBarrier {
         let Some(entity) = self.world.entities.get(owner) else {
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
-            return;
+            return OwnerActionBarrier::Skip;
         };
         let Some(actor) = entity.actor_data() else {
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
-            return;
+            return OwnerActionBarrier::Skip;
         };
         if !matches!(
             actor.action_state,
@@ -557,7 +560,7 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .end_instruct_callback(owner, seq_id, elem_idx);
-            return;
+            return OwnerActionBarrier::Skip;
         }
 
         let id = self.orders.allocate_order_id();
@@ -574,6 +577,7 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .element_in_progress(seq_id, elem_idx);
+        OwnerActionBarrier::Reach
     }
 }
 
@@ -959,18 +963,18 @@ impl EngineInner {
     /// Reads damage data from the sequence element, applies it to the
     /// victim, and handles death/KO transitions.  Handles
     /// `ReceiveSwordDamage`, `ReceiveDamage`, `ReceiveHitDamage`, etc.
-    pub(crate) fn dispatch_receive_damage(
+    pub(in crate::engine) fn dispatch_receive_damage(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) {
+    ) -> OwnerActionBarrier {
         // Read damage data from the sequence element
         let elem = match self.orders.sequence_manager.get_element(seq_id, elem_idx) {
             Some(e) => e,
-            None => return,
+            None => return OwnerActionBarrier::Skip,
         };
         let command = elem.command;
 
@@ -1013,7 +1017,10 @@ impl EngineInner {
                 self.orders
                     .sequence_manager
                     .element_terminated(seq_id, elem_idx);
-                return;
+                // This termination is Rust's stand-in for Actor::Instruct's
+                // accepted empty-order epilogue, not a source Translate
+                // SetState branch. Preserve the preceding IN_PROGRESS edge.
+                return OwnerActionBarrier::Reach;
             }
         };
 
@@ -1044,7 +1051,7 @@ impl EngineInner {
                     self.orders
                         .sequence_manager
                         .element_terminated(seq_id, elem_idx);
-                    return;
+                    return OwnerActionBarrier::Skip;
                 }
                 #[cfg(test)]
                 let test_life_before = self
@@ -1099,7 +1106,7 @@ impl EngineInner {
                     self.orders
                         .sequence_manager
                         .element_terminated(seq_id, elem_idx);
-                    return;
+                    return OwnerActionBarrier::Skip;
                 }
                 self.apply_piercing_damage(
                     sim,
@@ -1144,6 +1151,19 @@ impl EngineInner {
                 }
             }
             Command::ReceiveHitDamage => {
+                if self
+                    .get_entity(victim_id)
+                    .is_some_and(|victim| victim.element_data().posture == Posture::Lying)
+                {
+                    // Human::Translate(RECEIVE_HIT_DAMAGE) calls SetState
+                    // directly when the victim is already lying. That
+                    // changes mpSequenceElement and bypasses Instruct's
+                    // accepted motion/order epilogue.
+                    self.orders
+                        .sequence_manager
+                        .element_terminated(seq_id, elem_idx);
+                    return OwnerActionBarrier::Skip;
+                }
                 self.apply_hit_damage(
                     sim,
                     assets,
@@ -1182,11 +1202,12 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_in_progress(seq_id, elem_idx);
-            return;
+            return OwnerActionBarrier::Reach;
         }
         self.orders
             .sequence_manager
             .element_terminated(seq_id, elem_idx);
+        OwnerActionBarrier::Reach
     }
 }
 

@@ -114,13 +114,14 @@ impl EngineInner {
         elem_idx: usize,
         dest: crate::coordinates::MapPoint,
         move_action: crate::order::OrderType,
-    ) {
+    ) -> OwnerActionBarrier {
         match self.try_dispatch_move_path(sim, assets, owner, seq_id, elem_idx, dest, move_action) {
-            MovePathOutcome::Success | MovePathOutcome::Pending => {}
+            MovePathOutcome::Success | MovePathOutcome::Pending => OwnerActionBarrier::Reach,
             MovePathOutcome::ActorGone | MovePathOutcome::Refused => {
                 self.orders
                     .sequence_manager
                     .element_impossible(seq_id, elem_idx);
+                OwnerActionBarrier::Skip
             }
             MovePathOutcome::Failed => {
                 // `RHPathFinder::AddPathRequest` calls Stop + Wait when it
@@ -128,6 +129,7 @@ impl EngineInner {
                 // request to either path queue. `try_dispatch_move_path`
                 // already performed those owner effects; there is no failed
                 // A* request to retain or time out here.
+                OwnerActionBarrier::Skip
             }
         }
     }
@@ -410,7 +412,7 @@ impl SmalltalkCommandContext<'_> {
         command: Command,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) {
+    ) -> OwnerActionBarrier {
         let antagonist = self
             .sequence_manager
             .get_element(seq_id, elem_idx)
@@ -469,7 +471,7 @@ impl SmalltalkCommandContext<'_> {
             });
         if blocked {
             self.sequence_manager.element_terminated(seq_id, elem_idx);
-            return;
+            return OwnerActionBarrier::Skip;
         }
 
         let mut order = crate::order::Order::new(
@@ -486,6 +488,7 @@ impl SmalltalkCommandContext<'_> {
         order.antagonist = Some(antagonist);
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
         self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        OwnerActionBarrier::Reach
     }
 }
 

@@ -487,6 +487,252 @@ fn synchronous_terminal_enter_swordfight_skips_instruct_epilogue() {
 }
 
 #[test]
+fn synchronous_redundant_parry_skips_instruct_epilogue() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+    use crate::sprite::MotionState;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    {
+        let actor = engine
+            .get_entity_mut(soldier)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap();
+        actor.action_state = ActionState::ParryingSword;
+        actor.continuation.motion_state = MotionState::Terminated;
+    }
+
+    let mut parry = SequenceElement::new(1, Command::ParrySword, Some(soldier));
+    parry.priority = SequencePriority::Wait;
+    parry.posture_after_transition = Posture::Upright;
+    let sequence = engine.launch_element(parry);
+    engine
+        .drain_script_synchronous_actions(&sim, &LevelAssets::default(), &mut Vec::new())
+        .expect("synchronous redundant ParrySword should dispatch");
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        MotionState::Terminated
+    );
+}
+
+#[test]
+fn synchronous_redundant_stop_parry_skips_instruct_epilogue() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+    use crate::sprite::MotionState;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    {
+        let actor = engine
+            .get_entity_mut(soldier)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap();
+        actor.action_state = ActionState::WaitingSword;
+        actor.continuation.motion_state = MotionState::Terminated;
+    }
+
+    let mut stop = SequenceElement::new(1, Command::StopParrySword, Some(soldier));
+    stop.priority = SequencePriority::Wait;
+    stop.posture_after_transition = Posture::Upright;
+    let sequence = engine.launch_element(stop);
+    engine
+        .drain_script_synchronous_actions(&sim, &LevelAssets::default(), &mut Vec::new())
+        .expect("synchronous redundant StopParrySword should dispatch");
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        MotionState::Terminated
+    );
+}
+
+#[test]
+fn synchronous_redundant_quit_swordfight_skips_instruct_epilogue() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+    use crate::sprite::MotionState;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_pc(Posture::Upright));
+    {
+        let actor = engine
+            .get_entity_mut(soldier)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap();
+        actor.action_state = ActionState::Waiting;
+        actor.continuation.motion_state = MotionState::Terminated;
+    }
+
+    let mut quit = SequenceElement::new(1, Command::QuitSwordfight, Some(soldier));
+    quit.priority = SequencePriority::Wait;
+    quit.posture_after_transition = Posture::Upright;
+    let sequence = engine.launch_element(quit);
+    engine
+        .drain_script_synchronous_actions(&sim, &LevelAssets::default(), &mut Vec::new())
+        .expect("synchronous redundant QuitSwordfight should dispatch");
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        MotionState::Terminated
+    );
+}
+
+#[test]
+fn synchronous_self_seek_skips_instruct_epilogue() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceElementData, SequencePriority, SequenceState};
+    use crate::sprite::MotionState;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    engine
+        .get_entity_mut(soldier)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .continuation
+        .motion_state = MotionState::Terminated;
+
+    let mut seek =
+        SequenceElement::new_movement(1, Command::Seek, Some(soldier), OrderType::WalkingUpright);
+    seek.priority = SequencePriority::Wait;
+    seek.posture_after_transition = Posture::Upright;
+    if let SequenceElementData::Movement { element, .. } = &mut seek.data {
+        *element = Some(soldier);
+    }
+    let sequence = engine.launch_element(seek);
+    engine
+        .drain_script_synchronous_actions(&sim, &LevelAssets::default(), &mut Vec::new())
+        .expect("synchronous self Seek should dispatch");
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        MotionState::Terminated
+    );
+}
+
+#[test]
+fn synchronous_inactive_sword_damage_skips_instruct_epilogue() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::{SequenceElement, SequenceElementData, SequencePriority, SequenceState};
+    use crate::sprite::MotionState;
+    use crate::weapons::SwordStrike;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    {
+        let victim_entity = engine.get_entity_mut(victim).unwrap();
+        victim_entity.element_data_mut().active = false;
+        victim_entity
+            .actor_data_mut()
+            .unwrap()
+            .continuation
+            .motion_state = MotionState::Terminated;
+    }
+
+    let mut damage = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+    damage.data = SequenceElementData::new_sword_damage(attacker, SwordStrike::E, 0);
+    damage.priority = SequencePriority::Wait;
+    damage.posture_after_transition = Posture::Upright;
+    let sequence = engine.launch_element(damage);
+    engine
+        .drain_script_synchronous_actions(&sim, &LevelAssets::default(), &mut Vec::new())
+        .expect("synchronous inactive ReceiveSwordDamage should dispatch");
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        engine
+            .get_entity(victim)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        MotionState::Terminated
+    );
+}
+
+#[test]
 fn entity_phase_completion_resumes_postponed_work_in_same_manager_drain() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
