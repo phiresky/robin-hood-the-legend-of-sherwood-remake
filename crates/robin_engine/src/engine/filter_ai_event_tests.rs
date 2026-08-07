@@ -4786,6 +4786,42 @@ fn later_waking_up_done_defers_already_visited_actor_recovery_animation() {
 }
 
 #[test]
+fn waking_up_done_does_not_force_awake_a_script_locked_npc() {
+    let (mut engine, assets, _rescuer, target) = waking_up_creation_order_engine(true);
+    engine
+        .get_entity_mut(target)
+        .and_then(Entity::ai_controller_mut)
+        .expect("wake target has AI")
+        .script_locked = true;
+
+    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+
+    let target_entity = engine
+        .world
+        .entities
+        .get(target)
+        .expect("script-locked wake target remains installed");
+    assert!(
+        target_entity
+            .human_data()
+            .expect("wake target is human")
+            .unconscious,
+        "Original SetConcussionOfTheBrain clamps a script-locked NPC at the wake threshold"
+    );
+    assert!(
+        !target_entity
+            .ai_controller()
+            .expect("wake target retains AI")
+            .outbox
+            .detection
+            .stimuli
+            .iter()
+            .any(|stimulus| stimulus.stimulus_type == crate::ai::StimulusType::EventFitAgain),
+        "a target that did not wake must not receive EVENT_FITAGAIN"
+    );
+}
+
+#[test]
 #[should_panic(expected = "WakingUp requires antagonist at legacy slot")]
 fn actor_animation_missing_required_antagonist_fails_with_slot_context() {
     let (mut engine, assets, rescuer, _target) = waking_up_creation_order_engine(true);

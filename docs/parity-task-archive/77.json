@@ -1,0 +1,8 @@
+{
+  "id": "77",
+  "subject": "Honor failed non-forced wake transitions",
+  "description": "DONE. The schema-14 linux2 Profile_002 Savegame_008 replay-006 control panicked at frame 26602 because WAKING_UP DONE asserted that clearing an NPC's concussion must always queue EVENT_FITAGAIN. Original RHANIMATION_WAKING_UP calls SetConcussionOfTheBrain(0, NULL) without force; SetConcussionOfTheBrain deliberately clamps tied, carried, or script-locked NPCs at the wake threshold, leaving them unconscious and sending no FITAGAIN, then WAKING_UP still calls Wait unconditionally. Rust now dispatches the synchronous wake event and redetection fan-out only when apply_concussion reports WokeUp, while retaining the unconditional actor_wait. A focused script-locked regression verifies the target remains unconscious and receives no FITAGAIN; all four WAKING_UP DONE tests pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

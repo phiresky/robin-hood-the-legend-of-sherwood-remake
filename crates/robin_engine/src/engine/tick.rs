@@ -6056,13 +6056,14 @@ impl EngineInner {
                 if let Some(target_entity) = self.get_entity_mut(target) {
                     target_entity.set_posture(crate::element::Posture::Lying);
                 }
-                self.apply_concussion(sim, assets, target, 0, false);
+                let wake_outcome = self.apply_concussion(sim, assets, target, 0, false);
                 // SetConcussionOfTheBrain synchronously sends FITAGAIN from
                 // the WakingUp DONE stack. This AI consequence is immediate
                 // even when the target's creation-ordered actor slot has
                 // already passed; only its next animation Execute is delayed.
                 self.drain_pending_concussion_side_effects(sim, assets);
-                if !target_is_pc {
+                if !target_is_pc && matches!(wake_outcome, crate::combat::ConcussionOutcome::WokeUp)
+                {
                     assert!(
                         self.dispatch_pending_fit_again_for_npc(sim, target, assets),
                         "WakingUp DONE for NPC {target:?} cleared concussion without queueing the required EVENT_FITAGAIN"
