@@ -4598,7 +4598,7 @@ mod tests {
     }
 
     #[test]
-    fn preparing_swordfight_orders_done_enter_then_promotes_reciprocal() {
+    fn preparing_swordfight_orders_done_enter_then_queues_reciprocal() {
         use crate::ai::{AiState, LogLineType, StimulusType, Substate};
         use crate::profiles::{CharacterProfile, HtHWeaponProfile, ProfileManager, SoldierProfile};
 
@@ -4656,7 +4656,10 @@ mod tests {
             .element_in_progress(selected_id, 0);
 
         let mut profiles = ProfileManager::new();
-        profiles.hth_weapons.push(HtHWeaponProfile::default());
+        profiles.hth_weapons.push(HtHWeaponProfile {
+            distance: [30, 50, 60, 70],
+            ..HtHWeaponProfile::default()
+        });
         profiles.characters.push(CharacterProfile {
             hth_weapon_id: 1,
             ..CharacterProfile::default()
@@ -4671,14 +4674,17 @@ mod tests {
             ..LevelAssets::new()
         };
 
-        let _ = engine.enter_swordfight(sim, &assets, initiator, opponent, false);
+        assert!(engine.enter_swordfight(sim, &assets, initiator, opponent, false));
 
         assert!(
-            !engine
+            engine
                 .orders
                 .sequence_manager
-                .element_is_about_to_be_launched(opponent, Command::EnterSwordfight),
-            "the reciprocal enter must leave the manager FIFO before EnterSwordFight returns"
+                .element_is_about_to_be_launched_or_postponed_by_current(
+                    opponent,
+                    Command::EnterSwordfight,
+                ),
+            "non-Wait reciprocal enter remains on the manager FIFO after EnterSwordFight returns"
         );
         let ai = engine
             .get_entity(opponent)

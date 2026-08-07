@@ -1269,11 +1269,14 @@ pub(super) fn calculate_opponent_nearest_to_rene(
     };
 
     let mut nearest: HumanHandle = 0;
-    let mut min_dist = f32::MAX;
+    let mut min_dist = u16::MAX;
 
     for &opp_handle in &maurice.opponent_handles {
         if let Some(opp) = all_fighters.iter().find(|f| f.handle == opp_handle) {
-            let dist = max_norm(pos_diff(rene_pos, &opp.position));
+            // Original subtracts raw map-space RHpositions and stores the 2D
+            // MaxNorm in a UWORD before the strict comparison. Fractional
+            // ties therefore retain Maurice's first opponent.
+            let dist = max_norm(pos_diff(rene_pos, &opp.position)) as u16;
             if dist < min_dist {
                 min_dist = dist;
                 nearest = opp_handle;
@@ -1560,6 +1563,39 @@ mod required_combat_input_tests {
                 50,
             ),
             -7
+        );
+    }
+
+    #[test]
+    fn nearest_opponent_keeps_first_fractional_uword_tie() {
+        let maurice = FighterSnapshot {
+            handle: 10,
+            opponent_handles: vec![20, 30],
+            ..FighterSnapshot::default()
+        };
+        let first = FighterSnapshot {
+            handle: 20,
+            position: Position {
+                x: 10.9,
+                ..Position::default()
+            },
+            ..FighterSnapshot::default()
+        };
+        let fractionally_nearer = FighterSnapshot {
+            handle: 30,
+            position: Position {
+                x: 10.1,
+                ..Position::default()
+            },
+            ..FighterSnapshot::default()
+        };
+        assert_eq!(
+            calculate_opponent_nearest_to_rene(
+                &[maurice, first, fractionally_nearer],
+                10,
+                &Position::default(),
+            ),
+            20,
         );
     }
 }

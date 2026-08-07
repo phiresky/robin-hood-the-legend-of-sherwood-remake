@@ -973,7 +973,6 @@ impl EngineInner {
             .map(|h| !h.opponents.is_empty())
             .unwrap_or(false);
 
-        let mut reciprocal_enter_sequence = None;
         if !opponent_is_swordfighting {
             // Launch an EnterSwordfight sequence element on the
             // opponent so they raise their sword.  (The stop +
@@ -994,13 +993,7 @@ impl EngineInner {
                 crate::sequence::FieldValue::Integer(0),
             );
             seq.append_element(elem);
-            let sequence_id = self.launch_sequence(seq);
-            // Only a soldier's PrepareToEnterSwordFight pumps a synchronous
-            // Think(EVENT_ENTER_SWORDFIGHT). PC reciprocal enters retain the
-            // ordinary manager-FIFO timing.
-            if matches!(self.world.entities.get(opponent), Some(Entity::Soldier(_))) {
-                reciprocal_enter_sequence = Some(sequence_id);
-            }
+            self.launch_sequence(seq);
         } else if !already_opponent {
             // Part 1: walk the opponent's existing opponent list.
             // If any of their opponents have >1 opponents themselves,
@@ -1188,35 +1181,6 @@ impl EngineInner {
         // The opponent's `prepare_to_enter_swordfight` think fires
         // at the top of this function; no second dispatch needed
         // here.
-
-        if let Some(sequence_id) = reciprocal_enter_sequence {
-            // `LaunchSequenceElement` registers the reciprocal enter while
-            // the initiating EnterSwordFight call is still active. Once the
-            // relationship has been installed, Original reaches that exact
-            // owner's Instruct/Translate boundary before unrelated manager
-            // FIFO work can take over the actor. Promote only the element we
-            // just launched; older postponed work keeps its queue position.
-            let action = self
-                .orders
-                .sequence_manager
-                .take_deferred_owner_action(opponent, sequence_id, 0)
-                .unwrap_or_else(|detail| {
-                    panic!(
-                        "reciprocal EnterSwordfight for owner {} failed: {detail}",
-                        opponent.index()
-                    )
-                });
-            if let Some(action) = action {
-                self.dispatch_script_synchronous_action(sim, assets, action, &mut Vec::new())
-                    .unwrap_or_else(|error| {
-                        panic!(
-                            "reciprocal EnterSwordfight for owner {} failed to dispatch: {error:?}",
-                            opponent.index()
-                        )
-                    });
-                self.dispatch_condolations_for_owner_boundary(sim, opponent, assets);
-            }
-        }
 
         true
     }
