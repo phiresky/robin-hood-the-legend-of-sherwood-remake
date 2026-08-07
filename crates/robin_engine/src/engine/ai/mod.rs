@@ -51,6 +51,62 @@ pub(super) fn npc_hourglass_frame_phase(frame: u32, register_number: u32) -> u8 
 /// Number of arrows given to Merry Man archers in forest levels.
 const MERRY_MAN_ARROWS: u16 = 3;
 
+fn sleeping_enemy_candidates_from_fighter_registry(
+    fighters: &[crate::ai_enemy::FighterSnapshot],
+) -> Vec<crate::ai::SleepingEnemyInfo> {
+    fighters
+        .iter()
+        .filter(|fighter| !fighter.is_friendly && fighter.is_unconscious && !fighter.is_carried)
+        .map(|fighter| crate::ai::SleepingEnemyInfo {
+            handle: fighter.handle,
+            position: fighter.position,
+            is_pc: fighter.is_pc,
+            is_robin: fighter.is_robin,
+            is_vip: fighter.is_vip,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod sleeping_enemy_candidate_tests {
+    use super::*;
+
+    #[test]
+    fn live_registry_keeps_only_unconscious_non_carried_enemies_in_order() {
+        let fighter =
+            |handle, is_friendly, is_unconscious, is_carried| crate::ai_enemy::FighterSnapshot {
+                handle,
+                is_friendly,
+                is_unconscious,
+                is_carried,
+                is_pc: true,
+                is_robin: handle == 14,
+                is_vip: handle == 14,
+                ..Default::default()
+            };
+        let registry = vec![
+            fighter(11, false, false, false),
+            fighter(12, false, true, true),
+            fighter(13, true, true, false),
+            fighter(14, false, true, false),
+            fighter(15, false, true, false),
+        ];
+
+        let candidates = sleeping_enemy_candidates_from_fighter_registry(&registry);
+
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.handle)
+                .collect::<Vec<_>>(),
+            vec![14, 15]
+        );
+        assert!(candidates[0].is_pc);
+        assert!(candidates[0].is_robin);
+        assert!(candidates[0].is_vip);
+    }
+}
+
 /// Snapshot of a potential detectable human at level-load time.
 ///
 /// Used by [`EngineInner::init_one_ai`] to filter which other humans each
@@ -1761,6 +1817,14 @@ impl EngineInner {
         tick.nearby_fighters =
             self.build_nearby_fighters_for(npc_id, assets, &scratch.ai_sight_obstacles);
         tick.fighter_registry = self.build_fighter_snapshots_for(npc_id, assets, None);
+        // KillNearbySleepingEnemies walks the live opposing-camp fighter
+        // registry synchronously at the BattleDecisions boundary. Populate
+        // this from the same live registry for every Think, including timer
+        // events that do not own a RefreshDetection VIEW/OUTOFVIEW aggregate.
+        // Restricting this field to the detection aggregate leaves the final
+        // fallback blind whenever no optical stimulus was queued.
+        tick.nearby_sleeping_enemies =
+            sleeping_enemy_candidates_from_fighter_registry(&tick.fighter_registry);
         tick.reconsider_swordfight_enemies = tick
             .fighter_registry
             .iter()

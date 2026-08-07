@@ -1,0 +1,8 @@
+{
+  "id": "82",
+  "subject": "Populate live sleeping-enemy candidates for timer BattleDecisions",
+  "description": "Representative Savegame_SuN1Sh1nE/Profile_004/Savegame_034/replay-014 diverged at frame 1036 when Soldier 130 returned to its route and consumed an extra MacroRand. Original remained Attacking/ApproachingSleepingEnemy and selected the unconscious PC. Original KillNearbySleepingEnemies synchronously walks the opposing fighter registry at the BattleDecisions boundary. Rust only populated nearby_sleeping_enemies in the RefreshDetection aggregate; because the guarded unconscious PC produced no VIEW/OUTOFVIEW stimulus, the normal-timer Think used the generic live builder with an empty candidate list. Populate nearby_sleeping_enemies from that builder's creation-ordered live fighter_registry, retaining unconscious, non-carried enemies. The representative now clears the RNG/state frontier and advances to an unrelated PC motion-state mismatch at frame 1438. Schema-14 controls Cyrdach Profile_156/Savegame_001/replay-009 and Nescafe Profile_001/Savegame_001/replay-009 both match every recorded frame.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
