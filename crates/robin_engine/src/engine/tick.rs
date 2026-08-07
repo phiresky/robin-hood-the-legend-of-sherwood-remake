@@ -1105,9 +1105,38 @@ fn project_post_completion_motion(
     }
 }
 
+/// `RHSequenceElementMovement::StopMovement` rewrites its first `RHOrder` in
+/// place and calls `NewID()`.  That identity change is not `DoNextOrder`: the
+/// motion result already returned by `Execute` remains authoritative.
+fn is_start_stop_movement_rewrite(
+    entry_order: crate::order::OrderType,
+    live_order: crate::order::OrderType,
+    execute_motion: crate::sprite::MotionState,
+) -> bool {
+    use crate::order::OrderType;
+
+    execute_motion == crate::sprite::MotionState::Start
+        && matches!(
+            (entry_order, live_order),
+            (
+                OrderType::WalkingUpright,
+                OrderType::TransitionWalkingUprightWaitingUpright
+            ) | (
+                OrderType::RunningUpright,
+                OrderType::TransitionRunningUprightWaitingUpright
+            ) | (
+                OrderType::WalkingCrouched,
+                OrderType::TransitionWalkingCrouchedWaitingCrouched
+            )
+        )
+}
+
 #[cfg(test)]
 mod specialized_execute_motion_tests {
-    use super::{project_post_completion_motion, specialized_execute_motion};
+    use super::{
+        is_start_stop_movement_rewrite, project_post_completion_motion, specialized_execute_motion,
+    };
+    use crate::order::OrderType;
     use crate::sprite::MotionState;
 
     #[test]
@@ -1140,6 +1169,35 @@ mod specialized_execute_motion_tests {
             project_post_completion_motion(MotionState::Done, true, true, true),
             MotionState::Aborted
         );
+    }
+
+    #[test]
+    fn stop_movement_new_id_is_not_a_successor_order_advance() {
+        assert!(is_start_stop_movement_rewrite(
+            OrderType::WalkingUpright,
+            OrderType::TransitionWalkingUprightWaitingUpright,
+            MotionState::Start,
+        ));
+        assert!(!is_start_stop_movement_rewrite(
+            OrderType::RunningUpright,
+            OrderType::TransitionRunningUprightWaitingUpright,
+            MotionState::Done,
+        ));
+        assert!(!is_start_stop_movement_rewrite(
+            OrderType::WalkingCrouched,
+            OrderType::TransitionWalkingCrouchedWaitingCrouched,
+            MotionState::InProgress,
+        ));
+        assert!(!is_start_stop_movement_rewrite(
+            OrderType::WalkingUpright,
+            OrderType::TransitionWalkingUprightWaitingUpright,
+            MotionState::Terminated,
+        ));
+        assert!(!is_start_stop_movement_rewrite(
+            OrderType::WalkingUpright,
+            OrderType::WalkingUpright,
+            MotionState::Start,
+        ));
     }
 }
 
@@ -3466,6 +3524,11 @@ impl EngineInner {
                             .sequence_manager
                             .current_order_for_actor(entity_id)
                             .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_id));
+                        let selected_order_type = self
+                            .orders
+                            .sequence_manager
+                            .current_order_for_actor(entity_id)
+                            .map(|(_, _, order)| order.order_type);
                         // Actor::Hourglass refreshes mpOrder from the selected
                         // element immediately before Execute. Preserve that
                         // pointer publication independently of manager selection:
@@ -3859,8 +3922,30 @@ impl EngineInner {
                                         element.state == crate::sequence::SequenceState::Impossible
                                     })
                             });
+                        let selected_order_rewritten_by_stop = specialized_execute_motion
+                            .zip(selected_order_type)
+                            .is_some_and(|(motion, entry_order_type)| {
+                                selected_order.is_some_and(
+                                    |(entry_seq, entry_idx, entry_order_id)| {
+                                        self.orders
+                                            .sequence_manager
+                                            .current_order_for_actor(entity_id)
+                                            .is_some_and(|(live_seq, live_idx, live_order)| {
+                                                live_seq == entry_seq
+                                                    && live_idx == entry_idx
+                                                    && live_order.order_id != entry_order_id
+                                                    && is_start_stop_movement_rewrite(
+                                                        entry_order_type,
+                                                        live_order.order_type,
+                                                        motion,
+                                                    )
+                                            })
+                                    },
+                                )
+                            });
                         let selected_specialized_order_advanced = specialized_execute_motion
                             .is_some_and(|motion| motion != crate::sprite::MotionState::Aborted)
+                            && !selected_order_rewritten_by_stop
                             && selected_order.is_some_and(|(entry_seq, entry_idx, entry_order)| {
                                 selected_element_retired
                                     || !self
@@ -7092,6 +7177,77 @@ mod bow_command_body_parity_tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(pending_ids[0], parry_sequence);
+    }
+
+    #[test]
+    fn owner_local_stop_movement_new_id_preserves_execute_start() {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let owner = engine.add_entity(make_aiming_pc(ActionState::Moving));
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        movement.priority = crate::sequence::SequencePriority::Normal;
+        let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+        let entry_order_id = engine.orders.allocate_order_id();
+        engine.orders.sequence_manager.push_order_on(
+            sequence_id,
+            0,
+            crate::order::Order::new(OrderType::WalkingUpright, 20.0, 0.0, entry_order_id),
+        );
+
+        engine.tick_actor_animation_action_change_slots_with_hooks(
+            &crate::sim_rng::test_context(),
+            &assets,
+            |_, _| {},
+            |_, _| {},
+            |engine, execute_owner, selected_movement, _, _, _, _| {
+                assert_eq!(execute_owner, owner);
+                assert!(selected_movement.is_some());
+                engine
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .unwrap()
+                    .element_data_mut()
+                    .sprite
+                    .last_motion_state = Some(crate::sprite::MotionState::Start);
+                // A LINE_SCRIPT EnterZone callback can invoke StopActor here,
+                // after Execute has produced START but before Actor::Hourglass
+                // performs its completion projection.
+                engine.stop_owner(owner, crate::sequence::SequencePriority::Script);
+            },
+            |_, _, _| {},
+        );
+
+        let actor = engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap();
+        assert_eq!(
+            actor.continuation.motion_state,
+            crate::sprite::MotionState::Start
+        );
+        let (_, _, rewritten) = engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(owner)
+            .expect("stopped walking order remains selected as its transition");
+        assert_eq!(
+            rewritten.order_type,
+            OrderType::TransitionWalkingUprightWaitingUpright
+        );
+        assert_ne!(rewritten.order_id, entry_order_id);
     }
 
     #[test]
