@@ -37,6 +37,55 @@ fn scrolling_table_generation() {
 }
 
 #[test]
+fn terminal_building_move_preserves_prior_actor_done_edge() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::position_interface::SectorHandle;
+    use crate::sequence::{SequenceElement, SequenceElementData, SequenceState};
+    use crate::sprite::MotionState;
+
+    let mut engine = EngineInner::new();
+    install_test_building_sector(&mut engine, 42);
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    {
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity.element_data_mut().set_sector(SectorHandle::new(42));
+        entity.actor_data_mut().unwrap().continuation.motion_state = MotionState::Done;
+    }
+
+    let mut movement =
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+    let SequenceElementData::Movement { destination, .. } = &mut movement.data else {
+        unreachable!("new_movement must produce movement data")
+    };
+    *destination = crate::coordinates::MapPoint::new(100.0, 200.0);
+    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut HostDisplayState::default(),
+        &LevelAssets::default(),
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(movement_sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated
+    );
+    let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+    assert_eq!(actor.installed_order, None);
+    assert_eq!(
+        actor.continuation.motion_state,
+        MotionState::Done,
+        "Translate-time pointer loss returns before Actor::Instruct stamps InProgress"
+    );
+}
+
+#[test]
 fn zoom_state_machine() {
     let display = HostDisplayState::default();
     let mut engine = EngineInner::new();

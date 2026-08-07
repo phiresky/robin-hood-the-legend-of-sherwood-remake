@@ -1,0 +1,9 @@
+{
+  "id": "110",
+  "subject": "Preserve actor motion edge when Move translation loses selection",
+  "description": "SuN1Sh1nE Profile_004 Savegame_002 replay-001 diverged at frame 36373 for Civilian 82: Original retained motion Done after its idle transition completed, while Rust reported InProgress. A later manager-dispatched Move interrupted the Wait and terminated synchronously in the building-interior Translate branch. Original Actor::Instruct observes that mpSequenceElement changed during Translate and returns before its accepted-element InProgress assignment, preserving the earlier Done edge. Rust's manager Move/Seek arm ignored dispatch_ordered_move_seek_instruct's OwnerActionBarrier::Skip, recorded the owner as accepted, and overwrote the edge in the phase epilogue. The arm now honors Skip like the other pointer-changing translators. A focused building-Move regression covers the terminal element, null installed order, and preserved Done state. The representative and both task-36 schema-14 replay-009 controls match every recorded frame through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task64_vip_idle_rng"
+}

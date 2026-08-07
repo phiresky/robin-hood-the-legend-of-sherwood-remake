@@ -831,9 +831,12 @@ impl EngineInner {
                         // has no position-validity check during instruction.
                         match cmd {
                             Command::Move | Command::Seek => {
-                                self.dispatch_ordered_move_seek_instruct(
+                                let barrier = self.dispatch_ordered_move_seek_instruct(
                                     sim, assets, owner, seq_id, elem_idx,
                                 );
+                                if barrier == OwnerActionBarrier::Skip {
+                                    break 'action;
+                                }
                             }
                             Command::ShootBow | Command::ShootBowOnce => {
                                 let shoot_once = cmd == Command::ShootBowOnce;
