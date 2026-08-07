@@ -952,7 +952,7 @@ impl EngineInner {
 /// Build a `ConcussionContext` with PC in-coma lookup.  The PC
 /// override of `SetConcussionOfTheBrain` forces the value to
 /// `CONCUSSION_MAX` whenever the PC is in a coma; the coma flag lives
-/// on `campaign.characters[list_index].status.in_coma` rather than the
+/// on the PC's serialized campaign description/status rather than the
 /// entity, so callers that care about the coma override must pass
 /// `campaign`.
 pub(crate) fn concussion_ctx_full(
@@ -964,10 +964,34 @@ pub(crate) fn concussion_ctx_full(
     let human = entity.human_data();
     let posture = entity.element_data().posture;
     let is_in_coma = match entity {
-        Entity::Pc(pc) => campaign
-            .and_then(|c| c.characters.get(pc.pc.list_index as usize))
-            .map(|p| p.status.in_coma)
-            .unwrap_or(false),
+        Entity::Pc(pc) => match campaign {
+            // Pure/helper contexts can intentionally omit campaign state. A
+            // live engine always supplies it.
+            None => false,
+            Some(campaign) => {
+                // `mubListIndex` is independent actor/UI storage. Original
+                // resolves this through the serialized `mpDescription`
+                // pointer; `campaign_description_index` is that stable
+                // identity. Profiles are not unique, so neither the UI index
+                // nor a profile search is an admissible substitute here.
+                let raw_index = pc.pc.campaign_description_index.expect(
+                    "live PC concussion context is missing its campaign description identity",
+                );
+                let description = campaign.characters.get(raw_index as usize).unwrap_or_else(|| {
+                    panic!(
+                        "live PC concussion context campaign description index {raw_index} is outside character table of length {}",
+                        campaign.characters.len()
+                    )
+                });
+                assert_eq!(
+                    description.character_profile_idx,
+                    Some(pc.pc.profile_index),
+                    "live PC concussion context campaign description {raw_index} does not match entity profile {}",
+                    pc.pc.profile_index
+                );
+                description.status.in_coma
+            }
+        },
         _ => false,
     };
     ConcussionContext {
@@ -5209,5 +5233,60 @@ mod tests {
              the PC profile's `wake_up`, not the soldier fallback constant \
              ({SOLDIER_CONCUSSION_HEALING_SPEED})"
         );
+    }
+
+    #[test]
+    fn concussion_context_uses_campaign_description_identity_not_ui_list_index() {
+        let mut engine = make_engine();
+        engine.mission_domain.campaign.characters = vec![
+            crate::campaign::PcDescription {
+                character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
+                status: crate::pc_status::PcStatus {
+                    in_coma: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            crate::campaign::PcDescription {
+                character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
+                status: crate::pc_status::PcStatus {
+                    in_coma: false,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ];
+
+        let mut pc = make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            None,
+        );
+        let pc_data = pc.pc_data_mut().unwrap();
+        pc_data.list_index = 0;
+        pc_data.campaign_description_index = Some(1);
+
+        let ctx = concussion_ctx_full(
+            &pc,
+            false,
+            Some(&engine.mission_domain.campaign),
+            engine.control.sim_config.difficulty,
+        );
+        assert!(
+            !ctx.is_in_coma,
+            "the UI list index must not borrow another same-profile PC's coma status"
+        );
+
+        engine.mission_domain.campaign.characters[1].status.in_coma = true;
+        let ctx = concussion_ctx_full(
+            &pc,
+            false,
+            Some(&engine.mission_domain.campaign),
+            engine.control.sim_config.difficulty,
+        );
+        assert!(ctx.is_in_coma);
     }
 }

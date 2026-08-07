@@ -1,0 +1,9 @@
+{
+  "id": "114",
+  "subject": "Resolve PC coma state through serialized campaign identity",
+  "description": "SuN1Sh1nE Profile_004 Savegame_017 replay-007 diverged at frame 1063 when Original PC 173 (mapped to Rust PC 172) survived a 10-damage, zero-concussion arrow hit with ExtractingArrowSword while Rust forced concussion to 300, marked the PC unconscious, quit the swordfight, and moved Soldier 111 out of AttackingWaiting. The PC's serialized campaign description index was 9, but concussion_ctx_full looked up in_coma through PcData::list_index 0 and borrowed a different same-profile character's coma flag. Original RHElementActorPC::IsInComa reads mpStatus, whose serialized mpDescription pointer is represented by campaign_description_index; mubListIndex is independent actor/UI storage. The coma lookup now uses that stable identity and fails loudly when live campaign-backed PC identity is missing, out of range, or profile-inconsistent. Focused coverage distinguishes a comatose UI-list entry from the conscious serialized description. The representative and both task-36 schema-14 replay-009 controls match every recorded frame through EOF on the shared debug parity runner.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task114_unconscious_frontier"
+}
