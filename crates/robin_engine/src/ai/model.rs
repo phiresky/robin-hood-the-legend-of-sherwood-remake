@@ -1571,6 +1571,11 @@ pub enum CrossNpcAction {
         use_formation: bool,
         failure: AlertSoldiersFailureContinuation,
     },
+    /// Resume a tower guard's `BattleDecisions` only after every direct
+    /// `CALL_TOWER_GUARD_ALERT`/`CALL_TOWER_GUARD_CALLS_ME` has returned.
+    /// Those recipients can change alert status synchronously, which the
+    /// guard's immediately following `SeekArea` friend scan must observe.
+    ResumeTowerGuardBattleDecisions { caller: NpcHandle },
     /// Push `actor` onto `target`'s `synchronizing_actors` list. Used by
     /// `EventSeesCharlyStandardProcedure` when the reuniting soldier
     /// still needs to wait at the sync waypoint for its macro friend.

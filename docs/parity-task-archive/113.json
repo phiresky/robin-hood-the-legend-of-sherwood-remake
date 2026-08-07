@@ -1,0 +1,9 @@
+{
+  "id": "113",
+  "subject": "Resume tower-guard battle planning after alert recipients",
+  "description": "DONE. Nescafe Profile_001 Restart replay-008 diverged during Original frame 297 because tower guard 106 entered SeekArea after selecting its next battle decision. Original TowerGuardCallAlert directly calls Think(CALL_TOWER_GUARD_ALERT) on every recipient, then returns to BattleDecisions; those calls raise eleven nearby soldiers above green before SeekArea computes its 1.2-per-friend point multiplier. Rust queued the calls but ran BattleDecisions inside the still-borrowed handler, so the friend snapshot remained green and the guard consumed only 15 seek-point selection pairs rather than roughly 112. A typed ResumeTowerGuardBattleDecisions cross-NPC continuation now follows the recipient batch and rebuilds the guard's live context/tick before planning. Profile_001 and Profile_003 clear the RNG frontier and advance to the same independent frame-307 Soldier225 attentive-mode state mismatch. Profile_002 clears the seek-point count and exposes its pre-existing schema-12 RuntimeBuildingExitWait pair. Both task-36 schema-14 replay-009 controls remain exact through EOF, and a focused handler regression proves battle planning stays suspended until the continuation.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task113_seek_cluster"
+}

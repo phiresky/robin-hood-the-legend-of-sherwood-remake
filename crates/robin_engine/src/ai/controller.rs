@@ -1116,6 +1116,7 @@ impl AiController {
                     | CrossNpcAction::ReportBackToOfficer { .. }
                     | CrossNpcAction::ConsiderReport { .. }
                     | CrossNpcAction::FinalizeAlertSoldiers { .. }
+                    | CrossNpcAction::ResumeTowerGuardBattleDecisions { .. }
                     | CrossNpcAction::BroadcastLookThere { .. }
                     | CrossNpcAction::ResumeAfterLookThere { .. }
                     | CrossNpcAction::InstructGatherPosition { .. }
@@ -1147,6 +1148,7 @@ impl AiController {
                         | CrossNpcAction::ReportBackToOfficer { .. }
                         | CrossNpcAction::ConsiderReport { .. }
                         | CrossNpcAction::FinalizeAlertSoldiers { .. }
+                        | CrossNpcAction::ResumeTowerGuardBattleDecisions { .. }
                         | CrossNpcAction::BroadcastLookThere { .. }
                         | CrossNpcAction::ResumeAfterLookThere { .. }
                         | CrossNpcAction::InstructGatherPosition { .. }

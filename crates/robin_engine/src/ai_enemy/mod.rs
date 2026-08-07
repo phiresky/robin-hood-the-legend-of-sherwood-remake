@@ -5454,6 +5454,35 @@ mod tests {
     }
 
     #[test]
+    fn tower_guard_defers_battle_decisions_until_alert_calls_return() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.tower_guard = true;
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingTowerGuardAlert;
+        ai.base.seek_position = test_position(120.0, 80.0);
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventDone),
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert!(matches!(
+            ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
+            [CrossNpcAction::ResumeTowerGuardBattleDecisions { caller: 1 }]
+        ));
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingTowerGuardAlert,
+            "BattleDecisions must not run before the synchronous recipient batch"
+        );
+    }
+
+    #[test]
     fn officer_detection_uses_officer_facing() {
         let officer = CampSoldierInfo {
             handle: 2,

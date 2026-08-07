@@ -9581,6 +9581,11 @@ impl EngineInner {
                         "AlertSoldiers finalization for caller {caller} escaped its owner boundary"
                     )
                 }
+                crate::ai::CrossNpcAction::ResumeTowerGuardBattleDecisions { caller } => {
+                    panic!(
+                        "tower-guard battle continuation for caller {caller} escaped its owner boundary"
+                    )
+                }
                 crate::ai::CrossNpcAction::ResumeAfterLookThere { caller, .. } => {
                     panic!(
                         "HeyFolksLookThere resume for caller {caller} escaped its owner boundary"
@@ -10489,6 +10494,10 @@ impl EngineInner {
                         failure,
                         assets,
                     ),
+                    crate::ai::CrossNpcAction::ResumeTowerGuardBattleDecisions { caller } => self
+                        .process_synchronous_tower_guard_battle_decisions(
+                            sim, source_id, caller, assets,
+                        ),
                     crate::ai::CrossNpcAction::SetPhalanxThemList {
                         target,
                         them,
@@ -10714,6 +10723,63 @@ impl EngineInner {
             );
         }
         self.drain_direct_ai_owner_boundary(sim, target_id, assets);
+    }
+
+    /// Resume the statement immediately following Original
+    /// `TowerGuardCallAlert`. The alert routine directly enters every
+    /// recipient's Think before returning, so rebuilding the caller context
+    /// here is necessary: `BattleDecisions` can synchronously enter SeekArea,
+    /// whose nearby-friend multiplier reads the recipients' new alert status.
+    fn process_synchronous_tower_guard_battle_decisions(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        source_id: crate::element::EntityId,
+        caller: u32,
+        assets: &LevelAssets,
+    ) {
+        assert_eq!(
+            source_id.index(),
+            caller,
+            "tower-guard battle continuation caller must be its owner"
+        );
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let building_sector = self
+            .world
+            .entities
+            .get(source_id)
+            .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+            .unwrap_or_else(|| panic!("tower-guard caller {caller} disappeared"));
+        let ctx = {
+            let entity = self
+                .world
+                .entities
+                .get(source_id)
+                .unwrap_or_else(|| panic!("tower-guard caller {caller} disappeared"));
+            build_ai_context_from_entity(
+                entity,
+                self.control.frame_counter,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.hiking_paths,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            )
+        };
+        let tick = self.build_npc_tick_data(sim, source_id, &scratch, assets);
+        let global = &mut self.ai.global;
+        let grid = &self.world.fast_grid;
+        self.world
+            .entities
+            .get_mut(source_id)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| panic!("tower-guard caller {caller} lost its EnemyAi"))
+            .battle_decisions(sim, global, &ctx, &tick, Some(grid));
+        self.drain_direct_ai_owner_boundary_without_forecast(sim, source_id, assets);
     }
 
     fn process_synchronous_consider_report(

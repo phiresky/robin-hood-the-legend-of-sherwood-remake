@@ -4891,12 +4891,15 @@ impl EnemyAi {
                 if stimulus_type == StimulusType::EventDone {
                     self.tower_guard_call_alert(self.base.seek_position, ctx, tick);
                     // TowerGuardCallAlert is synchronous in the reference;
-                    // once every recipient has handled the cry, the guard
-                    // immediately chooses its next battle decision.  Observe
-                    // is only one possible decision and must not be forced
-                    // here (an archer may, for example, lower and reload its
-                    // bow instead).
-                    self.battle_decisions(sim, global, ctx, tick, grid);
+                    // suspend this tail until every recipient has handled the
+                    // cry. Their Think calls can change alert status, and the
+                    // guard's next BattleDecisions may enter SeekArea and scan
+                    // those live recipient states immediately.
+                    self.base.outbox.reentrant.cross_npc_actions.push(
+                        CrossNpcAction::ResumeTowerGuardBattleDecisions {
+                            caller: self.base.me,
+                        },
+                    );
                 }
             }
 
