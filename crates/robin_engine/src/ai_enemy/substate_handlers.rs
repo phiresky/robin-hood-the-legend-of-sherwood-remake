@@ -1877,12 +1877,20 @@ impl EnemyAi {
             Substate::SeekingHeardsteps => {
                 match stimulus_type {
                     StimulusType::EventReachPoint | StimulusType::EventTimer => {
-                        // Arrived at noise source — look around
-                        self.set_state(AiState::Seeking, Substate::SeekingJustWatching);
-                        self.base
-                            .face_position_3d_with_ctx(self.base.seek_position, ctx);
-                        self.base
-                            .launch_timer(parameters_ai::AI_FIRST_LOOK_TIME as u32, ctx.frame);
+                        // Search exactly at the noise source. Original uses
+                        // the actor's live position, not the remembered noise
+                        // position, and creates one personal seek point with
+                        // random look directions before walking to it.
+                        self.seek_area(
+                            sim,
+                            ctx.position,
+                            0,
+                            SeekFlags::LOCATION_FIRST | SeekFlags::WALKING,
+                            UNDEFINED_DIRECTION,
+                            global,
+                            ctx,
+                            tick,
+                        );
                     }
                     _ => {}
                 }
@@ -6451,6 +6459,69 @@ mod tests {
         assert!(ai.seek_flags.is_empty());
         assert!(ai.personal_seek_point_2.is_some());
         assert_ne!(ai.base.current_substate, Substate::SeekingCombatAlert);
+    }
+
+    #[test]
+    fn heardsteps_arrival_starts_zero_radius_walking_seek() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(138);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingHeardsteps;
+        ai.base.seek_position = Position {
+            x: 900.0,
+            y: 700.0,
+            ..Position::default()
+        };
+        let here = Position {
+            x: 1630.6875,
+            y: 1630.921875,
+            ..Position::default()
+        };
+        let ctx = AiContext {
+            frame: 1257,
+            position: here,
+            camp: crate::element::Camp::Lacklandists,
+            self_animation: crate::order::OrderType::TransitionWalkingUprightWaitingUpright,
+            ..AiContext::default()
+        };
+        let mut global = AiGlobalState::default();
+
+        let (_, draws) = crate::sim_rng::with_draw_trace(|| {
+            ai.think_expected_event(
+                &sim,
+                &Stimulus::new(StimulusType::EventReachPoint),
+                &mut global,
+                &ctx,
+                &AiPerTickData::stub(),
+                None,
+            );
+        });
+
+        assert_eq!(
+            draws,
+            vec![
+                crate::sim_rng::RngSite::SeekPointDirectionPattern,
+                crate::sim_rng::RngSite::SeekPointAcceptance,
+            ]
+        );
+        assert_eq!(ai.seek_center, here);
+        assert_eq!(
+            ai.seek_flags,
+            SeekFlags::LOCATION_FIRST | SeekFlags::WALKING
+        );
+        assert_eq!(ai.base.current_substate, Substate::SeekingSeekpoint);
+        assert_eq!(ai.actual_seek_point, Some(1111));
+        assert_eq!(ai.base.seek_position, here);
+        assert!(
+            ai.personal_seek_point_1
+                .as_ref()
+                .is_some_and(|point| point.locked)
+        );
+        // The old shortcut authored a Face/Turn order here. SeekArea owns the
+        // post-arrival lifecycle instead; at this pure-AI boundary it has no
+        // live actor order (the zero-distance completion is settled by the
+        // enclosing Think lifecycle).
+        assert!(ai.base.outbox.actor.orders.is_empty());
     }
 
     #[test]
