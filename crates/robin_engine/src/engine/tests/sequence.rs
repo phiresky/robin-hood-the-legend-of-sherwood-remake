@@ -1,5 +1,16 @@
 use super::*;
 
+fn assets_with_test_pc_profile() -> LevelAssets {
+    let mut profiles = crate::profiles::ProfileManager::new();
+    profiles
+        .characters
+        .push(crate::profiles::CharacterProfile::default());
+    LevelAssets {
+        profile_manager: std::sync::Arc::new(profiles),
+        ..LevelAssets::new()
+    }
+}
+
 pub(super) fn bind_test_action_point(
     engine: &mut EngineInner,
     id: EntityId,
@@ -800,7 +811,7 @@ fn synchronous_redundant_quit_swordfight_skips_instruct_epilogue() {
     quit.posture_after_transition = Posture::Upright;
     let sequence = engine.launch_element(quit);
     engine
-        .drain_script_synchronous_actions(&sim, &LevelAssets::default(), &mut Vec::new())
+        .drain_script_synchronous_actions(&sim, &assets_with_test_pc_profile(), &mut Vec::new())
         .expect("synchronous redundant QuitSwordfight should dispatch");
 
     assert_eq!(
@@ -851,7 +862,7 @@ fn manager_redundant_quit_swordfight_skips_instruct_epilogue() {
     engine.hourglass_phase_sequences(
         &crate::sim_rng::test_context(),
         &mut display,
-        &LevelAssets::default(),
+        &assets_with_test_pc_profile(),
     );
 
     assert_eq!(

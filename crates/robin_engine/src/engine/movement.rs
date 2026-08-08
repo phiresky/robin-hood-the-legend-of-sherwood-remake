@@ -11465,6 +11465,17 @@ mod orphaned_sword_movement_tests {
     };
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
+    fn assets_with_test_pc_profile() -> LevelAssets {
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles
+            .characters
+            .push(crate::profiles::CharacterProfile::default());
+        LevelAssets {
+            profile_manager: std::sync::Arc::new(profiles),
+            ..LevelAssets::new()
+        }
+    }
+
     fn install_sword_movement(
         force: bool,
     ) -> (
@@ -11558,7 +11569,7 @@ mod orphaned_sword_movement_tests {
     fn nonforced_sword_movement_without_opponents_aborts_before_motion_and_quits_once() {
         let (mut engine, owner, movement_sequence, order_id, start) = install_sword_movement(false);
         let sim = crate::sim_rng::test_context();
-        let assets = LevelAssets::new();
+        let assets = assets_with_test_pc_profile();
 
         engine.tick_entity_movement(&sim, &assets);
 

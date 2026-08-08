@@ -22,6 +22,17 @@ pub(super) fn attach_test_campaign_identities(engine: &mut EngineInner) {
     }
 }
 
+fn assets_with_test_pc_profile() -> LevelAssets {
+    let mut profiles = crate::profiles::ProfileManager::new();
+    profiles
+        .characters
+        .push(crate::profiles::CharacterProfile::default());
+    LevelAssets {
+        profile_manager: std::sync::Arc::new(profiles),
+        ..LevelAssets::new()
+    }
+}
+
 #[test]
 fn scrolling_table_generation() {
     let bg = BackgroundTransform::default();
@@ -5328,7 +5339,7 @@ fn post_initialize_waits_for_post_refresh_stage() {
 #[test]
 fn lethal_swordfight_cleanup_only_unlinks_the_survivor() {
     let sim = crate::sim_rng::test_context();
-    let assets = LevelAssets::new();
+    let assets = assets_with_test_pc_profile();
     let mut engine = EngineInner::new();
     let survivor = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
     let victim = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
@@ -5372,7 +5383,7 @@ fn explicit_quit_dispatch_unlinks_but_defers_state_change_to_lowering_start() {
     use crate::sequence::SequenceElement;
 
     let sim = crate::sim_rng::test_context();
-    let assets = LevelAssets::new();
+    let assets = assets_with_test_pc_profile();
     let mut engine = EngineInner::new();
     let owner = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
     let opponent = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
