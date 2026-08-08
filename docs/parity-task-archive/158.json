@@ -1,0 +1,9 @@
+{
+  "id": "158",
+  "subject": "Preserve ReconsiderEnemyApproach movement before SetState callbacks",
+  "description": "Nescafe Profile_001 Savegame_001 replay-013 first diverged after frame 777 because Original Soldier 180 queued a RunningUpright GoNear path from (1773.79248046875,2523.631103515625) toward (1731.49560546875,2379.879638671875), tolerance 50, before entering AttackingRunningToEnemy, while Rust changed state first and attentive-mode transition installation discarded the later movement. Original RHArtificialMalignity::ReconsiderEnemyApproach issues GoNear/GoTo, checks mbAlreadyOnPoint, and only then calls SetState in each of its four charge/run/walk approach branches. Rust now uses the low-level movement primitive first in all four branches, preserves its effects in the ordered pre-callback prefix, handles already-near swordfight engagement before any intermediate approach state, and then performs the explicit state change. Focused ordering and already-near regressions pass along with the existing reconsider-approach tests. On the combined current runner the representative matches every recorded frame through exact EOF; both schema-14 task-36 replay-009 controls also remain exact through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task116-attentive-frontier"
+}
