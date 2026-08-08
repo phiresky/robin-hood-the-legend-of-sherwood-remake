@@ -1088,13 +1088,13 @@ fn specialized_execute_motion(
 fn project_post_completion_motion(
     current: crate::sprite::MotionState,
     selected_element_impossible: bool,
-    live_successor_exists: bool,
+    installed_successor_exists: bool,
     selected_specialized_order_advanced: bool,
 ) -> crate::sprite::MotionState {
     use crate::sprite::MotionState;
     if selected_element_impossible {
         MotionState::Aborted
-    } else if live_successor_exists
+    } else if installed_successor_exists
         && (current == MotionState::Terminated || selected_specialized_order_advanced)
     {
         MotionState::InProgress
@@ -1176,6 +1176,14 @@ mod specialized_execute_motion_tests {
         assert_eq!(
             project_post_completion_motion(MotionState::Done, true, true, true),
             MotionState::Aborted
+        );
+    }
+
+    #[test]
+    fn manager_resident_wait_without_an_installed_order_does_not_mask_completion() {
+        assert_eq!(
+            project_post_completion_motion(MotionState::Done, false, false, true),
+            MotionState::Terminated
         );
     }
 
@@ -3990,19 +3998,24 @@ impl EngineInner {
                         // that same retired entry order for a successor, while
                         // still accepting a distinct order installed by a
                         // synchronous condolence-card callback.
-                        let live_successor_exists = self
-                            .orders
-                            .sequence_manager
-                            .current_order_for_actor(entity_id)
-                            .is_some_and(|(live_seq, live_idx, live_order)| {
-                                !selected_order.is_some_and(
-                                    |(entry_seq, entry_idx, entry_order)| {
-                                        selected_element_retired
-                                            && live_seq == entry_seq
-                                            && live_idx == entry_idx
-                                            && live_order.order_id == entry_order
-                                    },
-                                )
+                        // DoNextOrder changes the retained Execute result to
+                        // IN_PROGRESS only when Proceed returns a non-null
+                        // mpOrder. Manager residency is not sufficient: queue
+                        // exhaustion can terminate the selected element while
+                        // leaving a fallback Wait discoverable in the manager,
+                        // yet the actor's mpOrder remains null until its next
+                        // Hourglass entry. `installed_order` is the explicit
+                        // mirror updated by DoNextOrder and accepted Instruct.
+                        let installed_successor_exists = self
+                            .world
+                            .entities
+                            .get(entity_id)
+                            .and_then(Entity::actor_data)
+                            .and_then(|actor| actor.installed_order)
+                            .is_some_and(|installed| {
+                                !selected_order.is_some_and(|(_, _, entry_order)| {
+                                    selected_element_retired && installed.order_id == entry_order
+                                })
                             });
                         if let Some(actor) = self
                             .world
@@ -4026,7 +4039,7 @@ impl EngineInner {
                             actor.continuation.motion_state = project_post_completion_motion(
                                 actor.continuation.motion_state,
                                 selected_element_impossible,
-                                live_successor_exists,
+                                installed_successor_exists,
                                 selected_specialized_order_advanced,
                             );
                             tracing::trace!(
@@ -4037,7 +4050,7 @@ impl EngineInner {
                                 specialized_motion = ?specialized_execute_motion,
                                 element_retired = selected_element_retired,
                                 specialized_advanced = selected_specialized_order_advanced,
-                                live_successor = live_successor_exists,
+                                installed_successor = installed_successor_exists,
                                 motion_state = ?actor.continuation.motion_state,
                                 "actor motion-state latch",
                             );

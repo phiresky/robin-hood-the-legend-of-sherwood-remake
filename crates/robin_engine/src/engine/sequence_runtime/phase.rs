@@ -1112,7 +1112,12 @@ impl EngineInner {
                                 }
                             }
                             Command::QuitSwordfight => {
-                                self.dispatch_quit_swordfight(sim, assets, owner, seq_id, elem_idx);
+                                if self
+                                    .dispatch_quit_swordfight(sim, assets, owner, seq_id, elem_idx)
+                                    == OwnerActionBarrier::Skip
+                                {
+                                    break 'action;
+                                }
                             }
 
                             // ── Parry commands ──────────────────────

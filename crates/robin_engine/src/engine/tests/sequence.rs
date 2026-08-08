@@ -825,6 +825,54 @@ fn synchronous_redundant_quit_swordfight_skips_instruct_epilogue() {
 }
 
 #[test]
+fn manager_redundant_quit_swordfight_skips_instruct_epilogue() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::sequence::{SequenceElement, SequenceState};
+    use crate::sprite::MotionState;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    {
+        let actor = engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap();
+        actor.action_state = ActionState::Waiting;
+        actor.continuation.motion_state = MotionState::Terminated;
+    }
+
+    let sequence = engine.launch_element(SequenceElement::new(
+        1,
+        Command::QuitSwordfight,
+        Some(owner),
+    ));
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .expect("redundant quit remains inspectable")
+            .state,
+        SequenceState::Terminated
+    );
+    let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+    assert_eq!(actor.installed_order, None);
+    assert_eq!(
+        actor.continuation.motion_state,
+        MotionState::Terminated,
+        "redundant QuitSwordfight returns before Actor::Instruct's motion epilogue"
+    );
+}
+
+#[test]
 fn synchronous_self_seek_skips_instruct_epilogue() {
     use crate::element::{Command, Posture};
     use crate::order::OrderType;
