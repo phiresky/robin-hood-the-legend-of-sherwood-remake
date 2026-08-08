@@ -778,14 +778,6 @@ impl<'a> ShieldCommandContext<'a> {
                 }
                 return None;
             }
-            Some(s) if s.is_sword() || s.is_bow() => {
-                // Defensive gate (must be Waiting / Alerted / holding
-                // shield): the transition machine should already have
-                // rejected this, but terminate cleanly if it slips
-                // through.
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
-                return None;
-            }
             None => {
                 self.sequence_manager.element_impossible(seq_id, elem_idx);
                 return None;

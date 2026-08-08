@@ -3050,6 +3050,60 @@ mod sequence_phase_context_tests {
     }
 
     #[test]
+    fn raise_shield_from_sword_state_preserves_lowering_transition() {
+        use crate::element::ActionState;
+        use crate::order::{Order, OrderType};
+        use crate::sequence::{SequenceElement, SequenceState};
+
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(shield_pc(ActionState::WaitingSword));
+        let seq_id = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, Command::RaiseShield, Some(owner)));
+
+        let lowering = Order::new(
+            OrderType::TransitionLoweringSword,
+            0.0,
+            0.0,
+            engine.orders.allocate_order_id(),
+        );
+        engine
+            .orders
+            .sequence_manager
+            .push_order_on(seq_id, 0, lowering);
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, 0)
+            .expect("raise-shield element exists")
+            .initialize_transition_orders();
+
+        let follow_up = crate::engine::melee::ShieldCommandContext::new(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            &mut engine.orders.next_order_id,
+        )
+        .dispatch(owner, Command::RaiseShield, seq_id, 0);
+
+        assert!(follow_up.is_none());
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .expect("raise-shield element remains live");
+        assert_eq!(element.state, SequenceState::InProgress);
+        assert_eq!(
+            element
+                .orders
+                .iter()
+                .map(|order| order.order_type)
+                .collect::<Vec<_>>(),
+            vec![OrderType::TransitionLoweringSword, OrderType::RaisingShield]
+        );
+    }
+
+    #[test]
     fn shield_refresh_seek_is_registered_before_the_action_splice() {
         use crate::element::ActionState;
         use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElement};

@@ -1,0 +1,9 @@
+{
+  "id": "152",
+  "subject": "Allow RaiseShield translation to consume its sword-exit prefix",
+  "description": "Schema-14 Cyrdach Profile_156 Savegame_001 replay-001 diverged after frame 1458 when Soldier185's AttackingObserve timer selected arrow protection. Original StopAll followed by RaiseShield and published animation 53, while Rust terminated the RaiseShield element and retained Wait animation 283. Original RHElementActorHuman::MakeActionTransition translates QuitSwordfight and appends the lowering-sword prefix, then RHElementActorHuman::Translate(RAISE_SHIELD) unconditionally appends RaisingShield unless the actor already holds a shield. Rust generated the same TransitionLoweringSword prefix but its shield dispatcher had an invented live sword/bow rejection, terminating the element and stranding that prefix. The rejection is removed; HoldingShield/MovingShield refresh behavior and missing-owner failure remain unchanged. A focused regression verifies that WaitingSword preserves [TransitionLoweringSword, RaisingShield] and leaves RaiseShield InProgress. The focused regression, the existing shield-context regression, and all 20 engine::transitions tests pass; cargo fmt and the optimized parity build are clean. The representative and both task-36 schema-14 replay-009 controls, Cyrdach Profile_156 Savegame_001 and Nescafe Profile_001 Savegame_001, match every recorded frame through exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task152-raise-shield-frontier"
+}
