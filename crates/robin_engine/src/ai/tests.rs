@@ -790,6 +790,31 @@ fn goto_already_on_point_observes_synchronous_pending_halt_multiplicity() {
 }
 
 #[test]
+fn trailing_stop_all_closes_prior_goto_before_queuing_halt() {
+    let ctx = goto_short_circuit_ctx(crate::order::OrderType::WaitingUprightBored);
+    let mut ai = AiController::new(1);
+
+    ai.go_to(
+        Position {
+            x: ctx.position.x + 100.0,
+            ..ctx.position
+        },
+        GotoFlags::RUN,
+        &ctx,
+    );
+    ai.stop_all();
+
+    assert_eq!(ai.outbox.reentrant.owner_work.len(), 1);
+    let AiOwnerWork::ActorEffects(prefix) = &ai.outbox.reentrant.owner_work[0] else {
+        panic!("GoTo prefix must precede the trailing StopAll");
+    };
+    assert_eq!(prefix.orders.len(), 1);
+    assert!(!prefix.halt);
+    assert!(ai.outbox.actor.orders.is_empty());
+    assert!(ai.outbox.actor.halt);
+}
+
+#[test]
 fn run_to_map_exit_queues_running_map_movement() {
     let mut ai = AiController::new(1);
     let destination = Position {

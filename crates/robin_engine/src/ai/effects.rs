@@ -109,6 +109,15 @@ pub struct AiReentrantOutbox {
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub enum AiOwnerWork {
     StateChange(AiStateChangeNotification),
+    /// Actor calls completed before a later synchronous owner statement.
+    ///
+    /// Most actor effects can share the post-Think outbox because their
+    /// drain order is fixed.  A trailing `StopAll`, however, must see a
+    /// `GoTo` issued earlier in the same Think: Original launches the move
+    /// immediately and then stops that newly launched sequence.  Keeping
+    /// both in one actor outbox would apply the halt-first drain policy and
+    /// incorrectly launch the older move afterward.
+    ActorEffects(AiActorOutbox),
     /// Synchronous `NearbyCiviliansPanic()` engine callback.  It shares the
     /// owner FIFO because callers can speak or change state immediately
     /// before/after it and those operations are observably ordered.

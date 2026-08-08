@@ -2803,6 +2803,19 @@ impl AiController {
         if in_charly_look {
             self.set_checkpoint_charly(0);
         }
+        // Actor calls preceding StopAll are synchronous in Original.  Close
+        // that prefix before queuing Halt so a same-handler `GoTo();
+        // StopAll();` launches its sequence first and the halt cancels it.
+        // The normal actor drain intentionally applies Halt before sibling
+        // orders, which is correct only for work authored after StopAll.
+        if self.outbox.actor.has_boundary_work() {
+            self.outbox
+                .reentrant
+                .owner_work
+                .push(AiOwnerWork::ActorEffects(std::mem::take(
+                    &mut self.outbox.actor,
+                )));
+        }
         self.outbox.actor.queue_halt();
         // Skip BreakMacro when we're in a CheckFor look or being
         // instructed by an officer — these substates need the
@@ -2956,6 +2969,7 @@ impl AiController {
                         .actor_effects_before_callback
                         .as_ref()
                         .map_or(0, count),
+                    AiOwnerWork::ActorEffects(effects) => count(effects),
                     _ => 0,
                 })
                 .sum::<u16>()

@@ -12720,7 +12720,7 @@ impl EngineInner {
         // the equivalent delayed-path implementation in patrol coordination.
     }
 
-    fn drain_direct_ai_owner_boundary_mode(
+    pub(super) fn drain_direct_ai_owner_boundary_mode(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,

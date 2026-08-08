@@ -3058,6 +3058,60 @@ impl EngineInner {
 
             let notification = match work {
                 crate::ai::AiOwnerWork::StateChange(notification) => notification,
+                crate::ai::AiOwnerWork::ActorEffects(prefix) => {
+                    // This prefix was authored before the next synchronous
+                    // owner statement (currently StopAll).  Detach its later
+                    // tail, settle it through the ordinary actor fixed point,
+                    // then restore the tail.  In particular, a GoTo prefix
+                    // must launch before the following Halt can select and
+                    // cancel its new sequence.
+                    let (later_work, later_actor_effects) = {
+                        let ai = self
+                            .world
+                            .entities
+                            .get_mut(owner)
+                            .and_then(Entity::ai_controller_mut)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "actor-effect owner {} vanished before settlement",
+                                    owner.index()
+                                )
+                            });
+                        (
+                            std::mem::take(&mut ai.outbox.reentrant.owner_work),
+                            std::mem::replace(&mut ai.outbox.actor, prefix),
+                        )
+                    };
+                    self.drain_direct_ai_owner_boundary_mode(
+                        sim,
+                        owner,
+                        assets,
+                        owner_local_no_forecast,
+                        defer_turn_instruction,
+                    );
+                    let ai = self
+                        .world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::ai_controller_mut)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "actor-effect owner {} vanished after settlement",
+                                owner.index()
+                            )
+                        });
+                    debug_assert!(
+                        !ai.outbox.actor.has_boundary_work(),
+                        "owner-local actor prefix left undrained effects"
+                    );
+                    debug_assert!(
+                        ai.outbox.reentrant.owner_work.is_empty(),
+                        "owner-local actor prefix left undrained owner work"
+                    );
+                    ai.outbox.actor = later_actor_effects;
+                    ai.outbox.reentrant.owner_work = later_work;
+                    continue;
+                }
                 crate::ai::AiOwnerWork::NearbyCiviliansPanic => {
                     tracing::trace!(
                         target: "parity_nearby_panic",
