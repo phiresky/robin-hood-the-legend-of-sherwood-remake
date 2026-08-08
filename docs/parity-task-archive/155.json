@@ -1,0 +1,9 @@
+{
+  "id": "155",
+  "subject": "Preserve GoTo before a trailing synchronous StopAll",
+  "description": "Schema-14 Savegame_linux2 Profile_002 Savegame_003 replay-010 first diverged at frame 15133 when Soldier140 started a retained plain-running Move after lowering its sword, while Original fell back to Wait. At frame 15123 ReconsiderSwordfightObservation takes Original's deliberate defensive-predecision fallthrough: it issues GoTo(step-back, GOTO_RUN), then the later no-observe-move arm calls StopAll and enters AttackingObserve. Original launches the QuitSwordfight-plus-Move sequence synchronously, so the trailing StopAll preserves the stronger active Quit but recursively interrupts its following Todo Move. Rust had batched the order and halt in one actor outbox whose halt-first drain stopped the older sequence and then launched the new Move. StopAll now closes preceding actor work into an ordered owner FIFO barrier, which fully settles the GoTo before the trailing Halt. The regression verifies that the movement prefix precedes the halt; all 77 ai::tests pass and cargo fmt is clean. Combined parity validation clears the frame-15133 command/animation boundary and advances to an independent RNG overconsumption at frame 15171; both task-36 schema-14 replay-009 controls remain exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task115_ladder_exit_direction"
+}
