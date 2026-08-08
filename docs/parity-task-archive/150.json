@@ -1,0 +1,9 @@
+{
+  "id": "150",
+  "subject": "Retire the already-cleared SuN actor-motion frontier",
+  "description": "The frozen full-sweep actor.motion_state representative, SuN1Sh1nE Profile_004 Savegame_028 replay-012, historically diverged after Original frame 1572 with Original Terminated versus frozen e806655f8 Rust InProgress after a final QuitSwordfight lowering order. Source review narrowed the old suspect to post-completion projection treating a manager-resident Wait as an installed successor even though ActorData installed_order was null. Before changing production code, the representative was rerun on the combined task-146/task-149 parity runner. It now matches every recorded frame through exact EOF, so the historical frontier is no longer live and no workaround is warranted. Task 150 is completed as already cleared; a future current full-universe sweep will determine whether any related motion cluster remains.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task114-unconscious-frontier"
+}
