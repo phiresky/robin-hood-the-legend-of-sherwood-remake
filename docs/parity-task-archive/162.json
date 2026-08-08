@@ -1,0 +1,9 @@
+{
+  "id": "162",
+  "subject": "Use literal 3D SquareDistance for BattleDecisions ally comparison",
+  "description": "Schema-14 Savegame_linux2 Profile_002 Savegame_001 replay-001 advanced past task 153 and first diverged after frame 2147 when Soldier137 entered AttackingApproachToObserve in Rust while Original installed EnterSwordfight against PC252. Both sides entered BattleDecisions with the same persistent enemy, RNG, and nearby fighters. Original counted two nearer friends and fought; Rust counted four and observed. RHArtificialIntelligence::SquareDistance uses the actors' literal SBGeoPoint3D positions, stretches world Y, includes Z, and BattleDecisions truncates that FLOAT to ULONG before comparing each friend's raw RHposition map norm. Rust instead computed the reference distance from projected map positions. At the exact frontier, Original's 3D threshold was 829 while Rust's projected threshold was about 1865. Soldiers104 and142 were both passing door100 directly, so Position() committed them to point_in (1712,1994), whose squared distance to PC252 was about 1815: outside Original's threshold but inside Rust's. The reference threshold now uses owner and target detection_position_world, includes Z, stretches world Y, and truncates to u32; the friend comparison retains the source-authored committed door-side raw map norm. A focused regression encodes the elevated owner/target geometry, both door friends, the resulting nearer-friend count of two, and Fight outcome. The focused regression and related proud-decision tests pass, cargo fmt and the optimized parity build are clean. The representative clears frame 2147 and advances to an independent frame-2150 visibility-query-only frontier; both task-36 schema-14 replay-009 controls match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task152-raise-shield-frontier"
+}

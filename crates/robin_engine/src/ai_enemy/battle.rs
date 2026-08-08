@@ -43,6 +43,29 @@ fn enough_nearer_friends_to_observe(
         >= visible_enemies + visible_enemies * (0.045_f32 * f32::from(courage))
 }
 
+/// Original `SquareDistance(primary_target)` compares the actors' literal
+/// 3D sprite positions, stretches world Y, includes Z, and then truncates the
+/// `FLOAT` result to `ULONG` before BattleDecisions compares friend distances.
+fn battle_owner_target_square_distance(
+    owner: crate::coordinates::WorldPoint3D,
+    target: crate::coordinates::WorldPoint3D,
+) -> u32 {
+    let dx = target.x - owner.x;
+    let dy = (target.y - owner.y) * INVERSE_ASPECT_RATIO;
+    let dz = target.z - owner.z;
+    (dx * dx + dy * dy + dz * dz) as u32
+}
+
+fn battle_friend_is_nearer(
+    friend: Position,
+    target: Position,
+    owner_target_square_distance: u32,
+) -> bool {
+    let dx = friend.x - target.x;
+    let dy = friend.y - target.y;
+    dx * dx + dy * dy < owner_target_square_distance as f32
+}
+
 /// Mirror `IncrementPrimaryTargetMultiplicity`: every nearby friend in the
 /// broad swordfight family adds another `UNOCCUPIED_PREFERRED` penalty.
 fn increment_battle_target_multiplicity(
@@ -697,16 +720,24 @@ impl EnemyAi {
         if let Some(target) = ctx.entity_view(self.base.primary_target) {
             // Original deliberately mixes two position APIs here.  The
             // reference distance is `SquareDistance(primary_target)`, which
-            // compares the actors' literal positions with the isometric Y
-            // stretch.  Each friend is then compared through
+            // compares the actors' literal 3D sprite positions with the
+            // isometric Y stretch, includes Z, and truncates to ULONG. Each
+            // friend is then compared through
             // `Position(friend) - Position(primary_target)`: those calls
-            // forecast movement/door destinations and use the raw map norm.
-            // Using the current camp-snapshot positions for both sides loses
-            // allies whose active movement already ends beside the target.
-            let my_dx = ctx.position.x - target.position.x;
-            let my_dy = (ctx.position.y - target.position.y)
-                * crate::position_interface::INVERSE_ASPECT_RATIO;
-            let my_target_sq = my_dx * my_dx + my_dy * my_dy;
+            // apply the committed door-side override and use the raw map
+            // norm. Projecting the literal positions to map space before the
+            // reference comparison can substantially enlarge the threshold
+            // when the actors stand at different elevations.
+            let owner = ctx.entity_view(self.base.me).unwrap_or_else(|| {
+                panic!(
+                    "BattleDecisions owner {} is absent from its live entity view",
+                    self.base.me
+                )
+            });
+            let my_target_sq = battle_owner_target_square_distance(
+                owner.detection_position_world,
+                target.detection_position_world,
+            );
             for friend in &tick.camp_soldiers {
                 if !self.base.list_us.contains(&friend.handle) {
                     continue;
@@ -730,9 +761,7 @@ impl EnemyAi {
                     })
                     .position;
                 let target_position = target.position;
-                let dx = friend_position.x - target_position.x;
-                let dy = friend_position.y - target_position.y;
-                if dx * dx + dy * dy < my_target_sq {
+                if battle_friend_is_nearer(friend_position, target_position, my_target_sq) {
                     friends_nearer_to_enemy = friends_nearer_to_enemy.saturating_add(1);
                 }
             }
@@ -3393,6 +3422,58 @@ mod tests {
     }
 
     #[test]
+    fn elevated_owner_distance_does_not_count_two_door_friends_as_nearer() {
+        // linux2/Profile_002/Savegame_001/replay-001, immediately before
+        // frame 2147. Soldier 137 and PC 252 are separated vertically, so
+        // Original's literal 3D SquareDistance is much smaller than the
+        // distance obtained after projecting both actors to map space.
+        let owner_world = crate::coordinates::WorldPoint3D::new(1720.6782, 2002.2788, 17.413866);
+        let target_world = crate::coordinates::WorldPoint3D::new(1741.3412, 2000.2783, 37.16403);
+        let owner_target_sq = battle_owner_target_square_distance(owner_world, target_world);
+        assert_eq!(owner_target_sq, 829);
+
+        let target = Position {
+            x: 1741.3412,
+            y: 1963.1143,
+            ..Position::default()
+        };
+        // Soldiers 104 and 142 are both passing door 100 directly. AI
+        // Position() commits both to point_in=(1712, 1994), whose raw map
+        // distance is outside the correct 829 threshold but inside the old
+        // projected-map threshold (~1865).
+        let door_point_in = Position {
+            x: 1712.0,
+            y: 1994.0,
+            ..Position::default()
+        };
+        assert!(!battle_friend_is_nearer(
+            door_point_in,
+            target,
+            owner_target_sq
+        ));
+
+        let ordinary_nearer_friend = Position {
+            x: 1722.0557,
+            y: 1983.415,
+            ..Position::default()
+        };
+        let mut nearer_friends = 1_u16; // Soldier 139 is already swordfighting.
+        for friend in [ordinary_nearer_friend, door_point_in, door_point_in] {
+            if battle_friend_is_nearer(friend, target, owner_target_sq) {
+                nearer_friends += 1;
+            }
+        }
+        assert_eq!(nearer_friends, 2);
+
+        let decision = if enough_nearer_friends_to_observe(nearer_friends, 1, 40) {
+            Decision::Observe
+        } else {
+            Decision::Fight
+        };
+        assert_eq!(decision, Decision::Fight);
+    }
+
+    #[test]
     fn observe_move_precedes_state_change_callback() {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(91);
@@ -3472,6 +3553,11 @@ mod tests {
         target_view.forecasted_destination =
             crate::ai::PreparedForecastDestination::fixed(target_position, 0);
         let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        let mut owner_view = pc_view();
+        owner_view.is_pc = false;
+        owner_view.kind = crate::ai_entity_view::EntityKind::Soldier;
+        owner_view.camp = crate::element::Camp::Lacklandists;
+        views.insert(91, owner_view);
         views.insert(198, target_view);
         let ctx = AiContext {
             camp: crate::element::Camp::Lacklandists,
