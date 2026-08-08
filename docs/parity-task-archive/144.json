@@ -1,0 +1,9 @@
+{
+  "id": "144",
+  "subject": "Retire the cleared SuN frame-327 anti-collision frontier",
+  "description": "The frozen SuN1Sh1nE Profile_004 Savegame_028 replay-012 historically appeared to differ at frame 327 by one ULP in Soldier 201's map Y. Direct current-Original probes showed the blocked-count breakthrough enters with position bits (44c3aed0,449b22e8), movement (c09df505,bf4be405), and records the exact landing (44c310db,449b096b). Current Rust gathers disturbing Soldier 202, then the matching active level repulsive line (Original line 286, Rust line 466) from (1472,1237) to (1565,1245), computes the same deviation path, and no longer diverges at frame 327. The current representative instead remains exact until the independent frame-1572 terminal-motion frontier fixed as task 150. No anti-collision workaround was added; temporary diagnostics and private Original build artifacts were removed, while concise evidence remains in .codex-tmp/task144-rust-gather-evidence.txt.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task116-attentive-frontier"
+}
