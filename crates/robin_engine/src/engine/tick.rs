@@ -8355,8 +8355,6 @@ mod drop_ammo_merge_tests {
             posture: Posture::Upright,
             ..ElementData::default()
         };
-        element.set_position_map(crate::coordinates::MapPoint { x: 100.0, y: 100.0 });
-        element.set_direction_instantly(0);
         let mut pc_conversion =
             vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
         pc_conversion[crate::order::OrderType::DroppingAle as usize] = 0;
@@ -8374,6 +8372,11 @@ mod drop_ammo_merge_tests {
             }]),
             std::sync::Arc::new(pc_conversion),
         );
+        // Sprite::new owns a fresh PositionInterface, so place the fixture
+        // after installing its authored DropAle script. Otherwise the shared
+        // DropAmmo tests silently run from the sprite default at (0, 0).
+        element.set_position_map(crate::coordinates::MapPoint { x: 100.0, y: 100.0 });
+        element.set_direction_instantly(0);
         // Seed a non-empty move box so try_get_drop_position's
         // is_somewhere check passes.  The exact dims don't matter on
         // an empty grid.
