@@ -28,6 +28,31 @@ use crate::coordinates::MapPoint;
 use crate::element::{Camp, Entity, Posture};
 use crate::order::OrderType;
 
+fn patrol_path_view_fields(
+    base: &crate::ai::AiController,
+) -> (u8, u8, bool, Option<crate::ai::PathId>) {
+    if let Some(path) = base.patrol_path.as_ref() {
+        (
+            path.current_waypoint_index,
+            path.last_waypoint_index,
+            path.forward,
+            Some(path.hiking_path_index),
+        )
+    } else {
+        // `RHPath::Init(alert_path_id)` immediately leaves a usable path
+        // object behind. Rust temporarily detaches that object when a state
+        // transition has no access to level assets, but other NPCs must still
+        // observe its authored ID and iterator status synchronously.
+        let path = &base.detached_patrol_path_status;
+        (
+            path.current_waypoint_index,
+            path.last_waypoint_index,
+            path.forward,
+            path.hiking_path_index,
+        )
+    }
+}
+
 /// Snapshot of a single entity's AI-facing state at the top of the
 /// current tick.
 #[derive(
@@ -790,18 +815,7 @@ pub fn entity_view_from_entity(
             .ai_brain
             .base()
             .map(|b| {
-                let (cur, last, fwd, idx) = b
-                    .patrol_path
-                    .as_ref()
-                    .map(|p| {
-                        (
-                            p.current_waypoint_index,
-                            p.last_waypoint_index,
-                            p.forward,
-                            Some(p.hiking_path_index),
-                        )
-                    })
-                    .unwrap_or((0, 0, true, None));
+                let (cur, last, fwd, idx) = patrol_path_view_fields(b);
                 (b.macro_in_progress, cur, last, fwd, idx)
             })
             .unwrap_or((false, 0, 0, true, None)),
@@ -810,18 +824,7 @@ pub fn entity_view_from_entity(
             .ai_brain
             .base()
             .map(|b| {
-                let (cur, last, fwd, idx) = b
-                    .patrol_path
-                    .as_ref()
-                    .map(|p| {
-                        (
-                            p.current_waypoint_index,
-                            p.last_waypoint_index,
-                            p.forward,
-                            Some(p.hiking_path_index),
-                        )
-                    })
-                    .unwrap_or((0, 0, true, None));
+                let (cur, last, fwd, idx) = patrol_path_view_fields(b);
                 (b.macro_in_progress, cur, last, fwd, idx)
             })
             .unwrap_or((false, 0, 0, true, None)),
@@ -890,5 +893,28 @@ pub fn entity_view_from_entity(
         report_seek_position,
         report_seen_bodies,
         report_charly,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detached_alert_path_remains_visible_to_other_ai() {
+        let mut base = crate::ai::AiController::new(17);
+        base.has_patrol_path = true;
+        base.detached_patrol_path_status = crate::ai::DetachedPatrolPathStatus {
+            hiking_path_index: crate::ai::PathId::new(33),
+            current_waypoint_index: 4,
+            last_waypoint_index: 3,
+            forward: false,
+            history: Vec::new(),
+        };
+
+        assert_eq!(
+            patrol_path_view_fields(&base),
+            (4, 3, false, crate::ai::PathId::new(33))
+        );
     }
 }

@@ -505,6 +505,100 @@ fn ai_controller_defaults() {
 }
 
 #[test]
+fn friend_check_scans_a_detached_alert_path_without_consuming_the_following_wait() {
+    use crate::ai::macro_patrol::{DetachedPatrolPathStatus, MacroOpcode, PathId};
+    use crate::ai_entity_view::{AiEntityViewMap, entity_view_from_entity, shared_entity_views};
+    use crate::element::{ActorSoldier, AiBrain, ElementData, ElementKind, Entity};
+    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+
+    let path_id = PathId::new(0).expect("path zero is valid");
+    let paths = vec![RawHikingPath {
+        waypoints: vec![RawWaypoint {
+            x: 10,
+            y: 0,
+            sector: 0,
+            level: 0,
+            command: WaypointCommand::None,
+        }],
+    }];
+
+    let mut target = Entity::Soldier(ActorSoldier {
+        element: ElementData {
+            kind: ElementKind::ActorSoldier,
+            posture: crate::element::Posture::Upright,
+            ..Default::default()
+        },
+        actor: Default::default(),
+        human: Default::default(),
+        npc: Default::default(),
+        soldier: Default::default(),
+    });
+    let Entity::Soldier(target_soldier) = &mut target else {
+        unreachable!()
+    };
+    target_soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+    let target_ai = target_soldier
+        .npc
+        .ai_brain
+        .base_mut()
+        .expect("target has AI");
+    target_ai.has_patrol_path = true;
+    target_ai.path_id = Some(path_id);
+    target_ai.detached_patrol_path_status = DetachedPatrolPathStatus {
+        hiking_path_index: Some(path_id),
+        current_waypoint_index: 0,
+        last_waypoint_index: 0,
+        forward: true,
+        history: Vec::new(),
+    };
+    assert!(target_ai.patrol_path.is_none());
+
+    let target_view = entity_view_from_entity(
+        &target,
+        22,
+        false,
+        None,
+        None,
+        crate::order::OrderType::WaitingUprightBored,
+    );
+    assert_eq!(target_view.patrol_hiking_path_index, Some(path_id));
+
+    let mut views = AiEntityViewMap::new();
+    views.insert(2, target_view);
+    let ctx = AiContext {
+        position: Position::default(),
+        posture: crate::element::Posture::Upright,
+        sq_self_view_radius: 1000.0 * 1000.0,
+        entity_views: shared_entity_views(views),
+        hiking_paths: std::sync::Arc::new(paths),
+        all_soldier_handles: std::sync::Arc::new(vec![1, 2]),
+        self_is_soldier: true,
+        ..AiContext::default()
+    };
+
+    let mut ai = AiController::new(1);
+    ai.current_state = AiState::Default;
+    ai.current_substate = Substate::DefaultInMacro;
+    ai.macro_in_progress = true;
+    ai.macro_command = vec![0; 20];
+    ai.macro_command[17] = MacroOpcode::Wait as u8;
+    ai.macro_command[18..20].copy_from_slice(&75_u16.to_le_bytes());
+    ai.macro_command_offset = 17;
+    ai.number_of_remaining_macro_bytes = 3;
+
+    ai.initialize_friend_check(&crate::sim_rng::test_context(), 1, 225, u16::MAX, &ctx);
+
+    assert_eq!(
+        ai.current_substate,
+        Substate::DefaultLookingSidewardsForCharly
+    );
+    assert_eq!(ai.checkpoint_charly, 2);
+    assert_eq!(ai.macro_command_offset, 17);
+    assert_eq!(ai.number_of_remaining_macro_bytes, 3);
+    assert!(!ai.macro_timer_is_running);
+}
+
+#[test]
 fn consider_report_preserves_pc_body_kind_in_detectable_effect() {
     let pc = crate::element::Entity::Pc(crate::element::ActorPc {
         element: crate::element::ElementData {
