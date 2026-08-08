@@ -1208,6 +1208,20 @@ impl EngineInner {
             }
         }
 
+        // Some translation bodies terminate themselves synchronously while
+        // the accepted element is still selected (notably an amulet coma
+        // save entering TranslateSwordDamage's Lying arm).  Their condolence
+        // card has already captured that selected identity; do not apply the
+        // different accepted-empty-order lifecycle a second time.
+        if self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .is_some_and(|element| element.state == crate::sequence::SequenceState::Terminated)
+        {
+            return OwnerActionBarrier::Skip;
+        }
+
         // DoNextOrder boot: if the damage handler pushed any orders
         // (the sword-damage path pushes simpleHit / standup /
         // BeingStunnedSword), let the element keep running so

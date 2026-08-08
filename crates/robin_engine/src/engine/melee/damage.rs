@@ -540,6 +540,20 @@ impl EngineInner {
             false
         };
 
+        // A VIP PC saved by an amulet becomes unconscious and Lying inside
+        // GetWounded.  Original then enters TranslateSwordDamage's Lying arm
+        // and terminates the damage element immediately, while it is still
+        // the actor's selected translation element.  That synchronous
+        // condolence clears PositionGoalMap and makes Actor::Instruct return
+        // before overwriting the MotionState produced by this frame's
+        // Execute.  Do not route this case through the ordinary accepted-
+        // empty-order tail, which deliberately releases the translation
+        // selection and publishes MotionState::InProgress first.
+        if coma_saved && !pushed {
+            let (dseq, didx) = damage_element;
+            self.orders.sequence_manager.element_terminated(dseq, didx);
+        }
+
         // Award XP if the victim died
         let victim_died = self
             .get_entity(victim_id)

@@ -1146,7 +1146,12 @@ impl EngineInner {
                             | Command::ReceiveHitDamage
                             | Command::ReceiveMobileDamage
                             | Command::ReceiveNet => {
-                                self.dispatch_receive_damage(sim, assets, owner, seq_id, elem_idx);
+                                if self
+                                    .dispatch_receive_damage(sim, assets, owner, seq_id, elem_idx)
+                                    == OwnerActionBarrier::Skip
+                                {
+                                    break 'action;
+                                }
                             }
 
                             // ── Shoulder-fall sub-sequence ──────────
