@@ -1,0 +1,9 @@
+{
+  "id": "148",
+  "subject": "Clear the interrupted movement goal before RaiseShield",
+  "description": "The completed-sweep position_goal_map representative, schema-14 Nescafe Profile_001 Savegame_001 replay-006, historically first diverged after frame 1569 for Soldier 179: Original cleared the movement goal to (0, 0), while Rust retained (1369, 2277). The frozen e806655f8 runner reproduces that exact x/y frontier. A current targeted dump shows Soldier 179 at frame 1568 executing MoveOk with goal (1369, 2277), then at frame 1569 executing RaiseShield (command 106, AttackingProtectingWithShield substate 183) with goal (0, 0), matching Original. This was already fixed source-faithfully by ac00ab0c9 and archived as task 111: removing the obsolete preserve_goal_for_raise_shield restoration allows the synchronous Halt and selected outgoing movement's condolence cleanup to clear the cached goal before the non-directional RaiseShield sequence takes ownership. That ordering follows Original's RHArtificialIntelligence::StopAll -> RHElementActorNPC::Halt -> RHElementActor::Stop path and selected-movement condolence cleanup. A jq check of the targeted current dump confirms the frame transition and cleared goal, and the current optimized parity runner matches every recorded frame through exact EOF. Task 148 is therefore completed/superseded by ac00ab0c9 and task 111 with no standalone production change or rebuild required.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task114-unconscious-frontier"
+}
