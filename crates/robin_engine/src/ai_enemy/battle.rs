@@ -2482,9 +2482,7 @@ impl EnemyAi {
         if !b_below_run_distance {
             if b_charge {
                 // GoNear(target, sword_range, RUN | CHARGE).
-                self.go_near(
-                    AiState::Attacking,
-                    Substate::AttackingChargingEnemy,
+                self.base.go_near(
                     pos_prim_target,
                     standard_sword_range as i32,
                     GotoFlags::RUN | GotoFlags::CHARGE,
@@ -2495,12 +2493,11 @@ impl EnemyAi {
                     self.begin_swordfight(ctx, tick);
                     return;
                 }
+                self.set_state(AiState::Attacking, Substate::AttackingChargingEnemy);
                 self.base.launch_timer(10, ctx.frame);
             } else {
                 // GoNear(target, run_distance, RUN | DONT_STOP).
-                self.go_near(
-                    AiState::Attacking,
-                    Substate::AttackingRunningToEnemy,
+                self.base.go_near(
                     pos_prim_target,
                     run_distance as i32,
                     GotoFlags::RUN | GotoFlags::DONT_STOP,
@@ -2511,6 +2508,7 @@ impl EnemyAi {
                     self.begin_swordfight(ctx, tick);
                     return;
                 }
+                self.set_state(AiState::Attacking, Substate::AttackingRunningToEnemy);
                 self.base.launch_timer(10, ctx.frame);
             }
         } else {
@@ -2522,9 +2520,7 @@ impl EnemyAi {
             if target_is_running {
                 if my_line_jump.is_none() {
                     // GoNear(target, sword_range, RUN | DONT_STOP).
-                    self.go_near(
-                        self.base.current_state,
-                        self.base.current_substate,
+                    self.base.go_near(
                         pos_prim_target,
                         standard_sword_range as i32,
                         GotoFlags::RUN | GotoFlags::DONT_STOP,
@@ -2545,9 +2541,7 @@ impl EnemyAi {
             } else {
                 if my_line_jump.is_none() {
                     // GoNear(target, sword_range, 0) — walk.
-                    self.go_near(
-                        self.base.current_state,
-                        self.base.current_substate,
+                    self.base.go_near(
                         pos_prim_target,
                         standard_sword_range as i32,
                         GotoFlags::empty(),
@@ -2555,13 +2549,7 @@ impl EnemyAi {
                     );
                 } else {
                     // GoTo(target) — walk on jump line.
-                    self.go_to(
-                        self.base.current_state,
-                        self.base.current_substate,
-                        pos_prim_target,
-                        GotoFlags::empty(),
-                        ctx,
-                    );
+                    self.base.go_to(pos_prim_target, GotoFlags::empty(), ctx);
                 }
                 if self.base.already_on_point {
                     self.base.already_on_point = false;
@@ -3287,6 +3275,113 @@ mod tests {
         });
         assert_eq!(engage, Some(EnterSwordfightRequest::Engage(91)));
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
+    }
+
+    #[test]
+    fn reconsider_approach_move_precedes_state_change_callback() {
+        let mut ai = EnemyAi::new(180);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingTooProudToAttackApproach;
+        ai.base.primary_target = 198;
+        ai.sword_range = 50;
+
+        let target_position = Position {
+            x: 1731.4956,
+            y: 2379.8796,
+            ..Position::default()
+        };
+        let ctx = AiContext {
+            position: Position {
+                x: 1773.7925,
+                y: 2523.631,
+                ..Position::default()
+            },
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.primary_target_snapshot_handle = 198;
+        tick.primary_target_position = Some(target_position);
+
+        ai.reconsider_enemy_approach(true, 0.0, &ctx, &tick, None);
+
+        assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
+        let transition = ai
+            .base
+            .outbox
+            .reentrant
+            .owner_work
+            .iter()
+            .find_map(|work| match work {
+                crate::ai::AiOwnerWork::StateChange(notification)
+                    if notification.incoming_substate == Substate::AttackingRunningToEnemy =>
+                {
+                    Some(notification)
+                }
+                _ => None,
+            })
+            .expect("running approach must queue its state-change callback");
+        let prefix = transition
+            .actor_effects_before_callback
+            .as_ref()
+            .expect("GoNear must be visible before the state-change callback");
+        assert_eq!(prefix.orders.len(), 1);
+        assert_eq!(
+            prefix.orders[0].order_type,
+            crate::order::OrderType::RunningUpright
+        );
+        assert_eq!(prefix.orders[0].tolerance, 50.0);
+        assert!(ai.base.outbox.actor.orders.is_empty());
+        assert_eq!(
+            ai.base
+                .outbox
+                .actor
+                .set_attentive_mode
+                .map(|effect| effect.target),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn reconsider_approach_already_near_engages_before_approach_state_change() {
+        let mut ai = EnemyAi::new(180);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingReactiontime;
+        ai.base.primary_target = 198;
+        ai.base.think_recursion_depth = 1;
+        ai.sword_range = 150;
+        ai.sword_is_charge_weapon = true;
+
+        let target_position = Position {
+            x: 100.0,
+            ..Position::default()
+        };
+        let ctx = AiContext::default();
+        let mut tick = AiPerTickData::stub();
+        tick.primary_target_snapshot_handle = 198;
+        tick.primary_target_position = Some(target_position);
+        // Preserve the charge branch past Original's intentionally broad
+        // "walking circus pyramid" command comparison.
+        tick.primary_target_animation = Some(crate::order::OrderType::WalkingCarryingOnShoulders);
+
+        ai.reconsider_enemy_approach(false, 0.0, &ctx, &tick, None);
+
+        assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
+        assert!(!ai.base.already_on_point);
+        assert!(ai.base.outbox.actor.orders.is_empty());
+        assert!(
+            !ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .any(|work| matches!(
+                    work,
+                    crate::ai::AiOwnerWork::StateChange(notification)
+                        if notification.incoming_substate
+                            == Substate::AttackingChargingEnemy
+                )),
+            "the already-near branch must engage before SetState(ChargingEnemy)"
+        );
     }
 
     #[test]
