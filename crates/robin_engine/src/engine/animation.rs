@@ -5266,12 +5266,6 @@ impl EngineInner {
                         }
                         if entity.is_pc() && motion_state == MotionState::Done {
                             match anim_type {
-                                OrderType::DroppingAle | OrderType::DroppingAleCrouched => {
-                                    completion_outcomes
-                                        .execute_sides
-                                        .drop_ale_done
-                                        .push(entity_id);
-                                }
                                 OrderType::TransitionWaitingUprightSimulatingBeggar => {
                                     completion_outcomes
                                         .execute_sides

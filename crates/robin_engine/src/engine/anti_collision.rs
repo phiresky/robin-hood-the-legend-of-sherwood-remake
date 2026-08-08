@@ -67,8 +67,8 @@ pub struct ActorSnapshot {
     pub repulsive_lines: Vec<crate::repulsive::RepulsiveLine>,
 }
 
-/// Build a snapshot array indexed by entity slot.  Slots without an
-/// entity (or without actor data) are filled with `None`.
+/// Build a snapshot array indexed by entity slot. Slots without an actor or
+/// object are filled with `None`.
 ///
 /// `profile_manager` is used to look up per-entity sword / rider
 /// overrides so the right force parameters end up on each snapshot.
@@ -77,10 +77,12 @@ pub fn snapshot_all(
     profile_manager: &ProfileManager,
 ) -> EntitySlots<Option<ActorSnapshot>> {
     let mut snapshots = EntitySlots::filled(entities.len(), None);
-    for (entity_id, entity) in entities.actors() {
-        let snapshot_id = entity_id.into();
+    for (snapshot_id, entity) in entities.occupied() {
+        if entity.actor_data().is_none() && !entity.is_object() {
+            continue;
+        }
         let elem = entity.element_data();
-        let is_actor = true;
+        let is_actor = entity.is_actor();
         let actor = entity.actor_data();
         // RHsprite::PerformMotion copies pOrderCurrent->pAntagonist into
         // PositionInterface::mpTargetElement whenever a motion order starts.
@@ -90,7 +92,7 @@ pub fn snapshot_all(
         // ignore that target for the entire path instead of only on the final
         // approach order.
         let target_element = entity.position_iface().target_element();
-        snapshots[entity_id] = Some(ActorSnapshot {
+        snapshots[snapshot_id] = Some(ActorSnapshot {
             id: snapshot_id,
             active: elem.active,
             is_actor,
@@ -1127,6 +1129,57 @@ mod tests {
             snapshots[PcId(0)].clone().expect("mover snapshot"),
             snapshots[SoldierId(1)].clone().expect("corpse snapshot"),
         )
+    }
+
+    #[test]
+    fn snapshot_all_includes_dropped_ale_as_a_repulsive_object() {
+        use crate::element::{ElementBonus, ElementData, ObjectData};
+        use crate::element_kinds::ObjectType;
+        use crate::entity_id::BonusId;
+
+        let mut element = ElementData {
+            active: true,
+            kind: ElementKind::ObjectOther,
+            ..Default::default()
+        };
+        element.set_position_map(map_pt(557.0, 1184.0));
+        element.set_sector(crate::position_interface::SectorHandle::new(0));
+        let entities = Entities::from_legacy_slots(vec![Some(Entity::Bonus(ElementBonus {
+            element,
+            object: ObjectData {
+                object_type: ObjectType::Ale,
+                ..Default::default()
+            },
+        }))]);
+
+        let snapshots = snapshot_all(&entities, &ProfileManager::new());
+        let ale = snapshots[BonusId(0)]
+            .as_ref()
+            .expect("dropped ale snapshot");
+        assert!(!ale.is_actor);
+        assert_eq!(ale.position_map, map_pt(557.0, 1184.0));
+        assert_eq!(
+            ale.repulsive_point,
+            Some(RepulsivePoint::new(map_pt(557.0, 1184.0), 5.0, 10.0))
+        );
+
+        let mut mover = mk_snapshot(1, 545.0, 1184.0);
+        mover.sector = crate::position_interface::SectorHandle::new(0);
+        let movement = apply_anti_collision_step(
+            &mover,
+            snapshots.as_slice(),
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            1.0,
+            0.0,
+            1.0,
+            true,
+        );
+        assert_ne!(movement, (1.0, 0.0));
     }
 
     fn mk_snapshot(id: u32, x: f32, y: f32) -> ActorSnapshot {

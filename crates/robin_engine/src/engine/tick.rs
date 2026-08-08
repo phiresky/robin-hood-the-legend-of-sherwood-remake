@@ -4684,6 +4684,20 @@ impl EngineInner {
                 }
             }
             crate::sprite::MotionState::Done => {
+                // RHElementActorPC::Execute creates a dropped ale bottle at
+                // the DROPPING_ALE action point. Stage this on the retained
+                // Actor::Hourglass result rather than inside the generic
+                // animation dispatcher: DONE is written back through this
+                // lifecycle seam after derived Execute callbacks, and save-
+                // loaded orders can otherwise lose the earlier transient
+                // side-outcome while still marking the order done.
+                if matches!(
+                    execute_result.order_type,
+                    crate::order::OrderType::DroppingAle
+                        | crate::order::OrderType::DroppingAleCrouched
+                ) {
+                    outcomes.execute_sides.drop_ale_done.push(owner);
+                }
                 let order_id = entry_order_id.unwrap_or_else(|| {
                     panic!(
                         "actor {owner:?} returned Done without an entry-latched order for {:?}/{}",
@@ -8270,7 +8284,6 @@ mod drop_ammo_merge_tests {
     use super::*;
     use crate::campaign::{Campaign, PcDescription};
     use crate::element::{ActorPc, ElementData, ElementKind, EntityId, Posture};
-    use crate::engine::animation::{AnimCompletionOutcomes, ExecuteSideOutcomes};
     use crate::profiles::{Action, CharacterProfileIdx};
     use crate::sequence::{Field, FieldValue, SequenceElement};
 
@@ -8339,10 +8352,23 @@ mod drop_ammo_merge_tests {
         };
         element.set_position_map(crate::coordinates::MapPoint { x: 100.0, y: 100.0 });
         element.set_direction_instantly(0);
-        element.sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
-            hotspot: crate::coordinates::SpriteLocalPoint::new(8.0, 4.0),
-            ..Default::default()
-        }]);
+        let mut pc_conversion =
+            vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        pc_conversion[crate::order::OrderType::DroppingAle as usize] = 0;
+        element.sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+                action_id: crate::order::OrderType::DroppingAle as u16,
+                action_done: 1,
+                hotspot: crate::coordinates::SpriteLocalPoint::new(8.0, 4.0),
+                frame_ids: vec![1, 2, 3],
+                delays: vec![0, 0, 0],
+                distances: vec![0, 0, 0],
+                offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+                sound_ids: vec![0, 0, 0],
+                ..Default::default()
+            }]),
+            std::sync::Arc::new(pc_conversion),
+        );
         // Seed a non-empty move box so try_get_drop_position's
         // is_somewhere check passes.  The exact dims don't matter on
         // an empty grid.
@@ -8422,18 +8448,19 @@ mod drop_ammo_merge_tests {
             "translation must not consume ale before the action point"
         );
 
-        // The fixture intentionally has a placeholder sprite, so inject the
-        // animation's DONE outcome rather than inventing profile frames.
-        engine.process_anim_completion_outcomes(
-            &crate::sim_rng::test_context(),
-            AnimCompletionOutcomes {
-                execute_sides: ExecuteSideOutcomes {
-                    drop_ale_done: vec![pc_id],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            &assets,
+        // Drive the real owner envelope across the sprite's authored DONE
+        // frame. This is the lifecycle that the schema-14 Save028 replay
+        // exercises; directly injecting ExecuteSideOutcomes would miss a
+        // dropped callback between generic Execute and Actor::Hourglass.
+        for _ in 0..4 {
+            engine.perform_hourglass(&mut display, &assets, &mut dev);
+        }
+        assert_eq!(
+            engine.mission_domain.campaign.characters[0]
+                .status
+                .get_ammo(Action::Ale),
+            0,
+            "DropAle DONE must consume one ale at the action point"
         );
         let ale_id = engine
             .world
