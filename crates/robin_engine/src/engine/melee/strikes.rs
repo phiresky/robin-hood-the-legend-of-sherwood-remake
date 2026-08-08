@@ -853,40 +853,17 @@ impl EngineInner {
             if is_sweep {
                 // Sweep strike: collect victims but apply damage per-frame
                 // as the arc passes their position.  MOTION_DONE phase —
-                // no AI warn tolerance.
-                let victims = self.execute_multi_target_strike(
+                // no AI warn tolerance. Original seeds this list solely by
+                // scanning actors through the strike-kind geometry; the
+                // interaction antagonist is not recovered when that scan
+                // rejects it (for example, a lateral target outside the
+                // strike arc).
+                let all_victims = self.execute_multi_target_strike(
                     assets,
                     hit.attacker_id,
                     hit.strike,
                     hit.attacker_profile_idx,
                 );
-                let mut all_victims = victims;
-                if !all_victims.contains(&hit.victim_id) {
-                    let obstacles = crate::sight_obstacle::ObstacleList {
-                        static_obstacles: assets.static_sight_obstacles.as_slice(),
-                        dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-                        static_active: &self.world.static_sight_obstacle_active,
-                    };
-                    let distance =
-                        entity_distance(&self.world.entities, hit.attacker_id, hit.victim_id);
-                    let in_range = hit
-                        .attacker_profile_idx
-                        .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
-                        .map(|p| combat::is_strike_in_range(p, hit.strike, distance))
-                        .unwrap_or(false);
-                    if in_range
-                        && is_possible_sword_strike_victim_id(
-                            &self.world.entities,
-                            hit.attacker_id,
-                            hit.victim_id,
-                            &assets.profile_manager,
-                            &self.world.fast_grid,
-                            obstacles,
-                        )
-                    {
-                        all_victims.push(hit.victim_id);
-                    }
-                }
                 self.initialize_sweep(
                     assets,
                     hit.attacker_id,

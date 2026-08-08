@@ -3560,6 +3560,87 @@ mod tests {
     }
 
     #[test]
+    fn lateral_done_keeps_actor_scan_order_and_does_not_recover_out_of_arc_antagonist() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        // Facing south (sector 8), thrust D covers sectors 4..=9. Keep the
+        // valid victims on either side of the out-of-arc antagonist in actor
+        // creation order so the assertion also guards the collector FIFO.
+        let first_in_arc = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 20.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let antagonist = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: -20.0,
+                y: 120.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let second_in_arc = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 120.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .element_data_mut()
+            .set_direction_instantly(8);
+
+        let mut assets = assets_with_nonstraight_profile(
+            SwordStrike::D,
+            crate::profiles::WeaponThrustKind::Lateral,
+        );
+        let thrust = &mut std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0]
+            .thrusts[SwordStrike::D as usize];
+        thrust.initial_angle = 90;
+        thrust.final_angle = 22;
+        thrust.rotation_angle = 45;
+
+        assert_eq!(
+            crate::position_interface::vector_to_sector_0_to_15(-20.0, 20.0),
+            10,
+            "the interaction antagonist must be outside thrust D's actor-scan arc"
+        );
+        let selected =
+            install_test_melee_order(&mut engine, attacker, antagonist, SwordStrike::D, false);
+
+        assert_eq!(
+            engine.tick_nonstraight_melee_for(sim, &assets, attacker, selected),
+            strikes::SweepTickPhase::Initialized
+        );
+        let pending = &engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .sweep_state
+            .as_ref()
+            .expect("the in-arc actors initialize the lateral sweep")
+            .pending_victims;
+        assert_eq!(pending, &[first_in_arc, second_in_arc]);
+        assert!(!pending.contains(&antagonist));
+    }
+
+    #[test]
     fn lateral_seed_uses_ground_direction_instead_of_map_direction() {
         let mut engine = make_engine();
         // Both actors have the same ground Y, so the victim is due west
