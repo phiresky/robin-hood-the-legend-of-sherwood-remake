@@ -1,0 +1,9 @@
+{
+  "id": "163",
+  "subject": "Do not requeue the beggar currently under examination",
+  "description": "Schema-14 Savegame_linux2 Profile_002 Savegame_003 replay-013 first diverged at frame 14509 when Soldier181 completed the second identification phase for civilian beggar59. Original EVENT_SEES_BEGGAR explicitly excludes mpBeggarToExamine before appending the target and its position to the pending-control lists. Rust had requeued beggar59 at frame 14404 while already approaching that same beggar, so SeekNextPoint popped it again instead of choosing a seek point and omitted Original's seek-interest draw. Soldier184 then consumed that raw value for its bored animation, causing the accompanying animation mismatch. The event handler now ignores the current beggar before applying the queue, saved-position, emoticon, or global detectable-deletion effects. A focused regression verifies the duplicate event is a complete no-op and cargo fmt is clean. The representative clears frame 14509 and advances to an independent PC sword-strike frontier at frame 14874; both task-36 schema-14 replay-009 controls match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task115_ladder_exit_direction"
+}
