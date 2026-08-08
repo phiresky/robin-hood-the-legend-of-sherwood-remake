@@ -174,17 +174,32 @@ impl EngineInner {
             }
         } else {
             // Removing a corpse.
-            let neighbours = self.find_intersecting_corpses(
-                corpse,
-                corpse_sector,
-                corpse_layer,
-                corpse_pos,
-                /* candidate_small_flag */ true,
-                logically_lying,
-            );
+            // Original walks marrayActors live here. A recursive `bAdded`
+            // call can change the small-radius flag of an actor that the
+            // outer walk has not reached yet, and the later actor must be
+            // tested against that new flag. Snapshot only the stable actor
+            // identities so recursive mutation is borrow-safe, then perform
+            // every predicate check against live state.
+            let mut human_ids: Vec<EntityId> = self
+                .world
+                .entities
+                .humans()
+                .map(|(id, _)| id.into())
+                .collect();
+            human_ids.sort_by_key(|&id| self.world.original_creation_order(id));
 
-            for id in neighbours {
-                self.update_intersecting_corpses_with_snapshot(id, true, logically_lying);
+            for id in human_ids {
+                if self.is_intersecting_corpse_candidate(
+                    id,
+                    corpse,
+                    corpse_sector,
+                    corpse_layer,
+                    corpse_pos,
+                    /* candidate_small_flag */ true,
+                    logically_lying,
+                ) {
+                    self.update_intersecting_corpses_with_snapshot(id, true, logically_lying);
+                }
             }
 
             if let Some(entity) = self.get_entity_mut(corpse) {
@@ -211,37 +226,56 @@ impl EngineInner {
         logically_lying: Option<&HashSet<EntityId>>,
     ) -> Vec<EntityId> {
         let mut out = Vec::new();
-        for (id, actor) in self.world.entities.humans() {
-            if id == corpse {
-                continue;
-            }
-            let Some(human) = actor.human_data() else {
-                continue;
-            };
-            if human.small_repulsive_radius != candidate_small_flag {
-                continue;
-            }
-            let ed = actor.element_data();
+        for (id, _) in self.world.entities.humans() {
             let candidate_id = EntityId::from(id);
-            let is_logically_lying = logically_lying
-                .map(|lying| lying.contains(&candidate_id))
-                .unwrap_or_else(|| ed.posture.is_lying());
-            if !is_logically_lying {
-                continue;
-            }
-            if ed.layer() != corpse_layer {
-                continue;
-            }
-            if ed.sector() != corpse_sector {
-                continue;
-            }
-            let dx = ed.position_map().x - corpse_pos.x;
-            let dy = ed.position_map().y - corpse_pos.y;
-            if dx * dx + dy * dy < INTERSECT_SQ_DIST {
+            if self.is_intersecting_corpse_candidate(
+                candidate_id,
+                corpse,
+                corpse_sector,
+                corpse_layer,
+                corpse_pos,
+                candidate_small_flag,
+                logically_lying,
+            ) {
                 out.push(candidate_id);
             }
         }
         out
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn is_intersecting_corpse_candidate(
+        &self,
+        candidate: EntityId,
+        corpse: EntityId,
+        corpse_sector: Option<crate::position_interface::SectorHandle>,
+        corpse_layer: u16,
+        corpse_pos: MapPoint,
+        candidate_small_flag: bool,
+        logically_lying: Option<&HashSet<EntityId>>,
+    ) -> bool {
+        if candidate == corpse {
+            return false;
+        }
+        let Some(actor) = self.get_entity(candidate) else {
+            return false;
+        };
+        let Some(human) = actor.human_data() else {
+            return false;
+        };
+        if human.small_repulsive_radius != candidate_small_flag {
+            return false;
+        }
+        let ed = actor.element_data();
+        let is_logically_lying = logically_lying
+            .map(|lying| lying.contains(&candidate))
+            .unwrap_or_else(|| ed.posture.is_lying());
+        if !is_logically_lying || ed.layer() != corpse_layer || ed.sector() != corpse_sector {
+            return false;
+        }
+        let dx = ed.position_map().x - corpse_pos.x;
+        let dy = ed.position_map().y - corpse_pos.y;
+        dx * dx + dy * dy < INTERSECT_SQ_DIST
     }
 
     /// If `corpse` isn't already flagged
@@ -571,6 +605,56 @@ mod tests {
                 .human_data()
                 .unwrap()
                 .small_repulsive_radius
+        );
+    }
+
+    /// The Original removal walk tests actors against their current flag,
+    /// not a neighbour list captured before recursion. Re-evaluating `a`
+    /// makes `c` small, so the still-running outer walk must subsequently
+    /// visit `c`, re-evaluate it, and restore its large radius.
+    #[test]
+    fn removing_corpse_rechecks_later_actor_after_recursive_mutation() {
+        let mut engine = EngineInner::new();
+        let mut a = civilian_at(1616.4663, 1607.3628, Posture::Tied, 1);
+        a.human.small_repulsive_radius = true;
+        let mut removed = civilian_at(1599.2805, 1602.0388, Posture::Tied, 1);
+        removed.human.small_repulsive_radius = true;
+        let mut later = civilian_at(1602.0326, 1623.9482, Posture::Tied, 1);
+        later.human.small_repulsive_radius = false;
+        let a = engine.add_entity(Entity::Civilian(a));
+        let removed = engine.add_entity(Entity::Civilian(removed));
+        let later = engine.add_entity(Entity::Civilian(later));
+
+        engine
+            .get_entity_mut(removed)
+            .unwrap()
+            .set_posture(Posture::Upright);
+        engine.update_intersecting_corpses(removed, false);
+
+        assert!(
+            engine
+                .get_entity(a)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .small_repulsive_radius
+        );
+        assert!(
+            !engine
+                .get_entity(removed)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .small_repulsive_radius
+        );
+        assert!(
+            !engine
+                .get_entity(later)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .small_repulsive_radius,
+            "the live outer walk must revisit a later actor changed by recursion"
         );
     }
 

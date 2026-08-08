@@ -1,0 +1,9 @@
+{
+  "id": "151",
+  "subject": "Preserve live corpse-radius mutations during removal scans",
+  "description": "Schema-14 Savegame_linux2 Profile_002 Savegame_003 replay-010 appeared to fail in sound-manager FIFO ordering at frame 15016 when Soldier141 emitted an extra SeesBody remark ahead of Soldier186's CombatInsult. The first divergence was actually Soldier131's movement at frame 14693: Original avoided tied Soldier140 with the full corpse radius, while Rust used the small radius and walked straight. Soldier139 had stood up at frame 14651. Original UpdateIntersectingCorpses(false) scans marrayActors live: recursively re-evaluating Soldier138 changes later Soldier140 from large to small, then the still-running outer scan reaches Soldier140, re-evaluates it, and restores its large radius. Rust snapshotted only the initially matching neighbours, so it never revisited Soldier140 after the recursive mutation. The removal path now snapshots only complete creation-ordered human identities and checks every flag, posture, layer, sector, and distance against live state immediately before recursion. A three-corpse regression reproduces the false-to-true mutation of the later actor and verifies the live outer scan clears it. All eight corpse-intersection tests pass, cargo fmt and the parity-profile build are clean. The representative clears frames 14693 and 15016 and advances to an independent Soldier140 command/animation frontier at frame 15133; both task-36 schema-14 replay-009 controls remain exact through EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task151-sound-frontier"
+}
