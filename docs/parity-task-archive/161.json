@@ -1,0 +1,9 @@
+{
+  "id": "161",
+  "subject": "Retire stale S105 watchdog ReturnToDuty capture",
+  "description": "Completed as current-Original-inconsistent with no production fix. Schema-14 linux3 Profile_001 Savegame_045 replay-011 records Soldier105 leaving DefaultGotoPost at frame 44566 through ReturnToDutyCommonStuff and consuming RNG offset 1125118, while Rust remains in the authored Special wait. A direct ptrace probe of the current Original binary with the exact RHSG fixture, RNG seed 1, and random-input seed 11 established creation-order 136's register phase, serialized watchdog state, and duty calls without modifying simulation code: the AI enters its f44465 phase-192 slot with stuck_counter 0, f44529 phase-0 slot with 1, f44561 phase-32 sample with 2, and f44577 phase-48 sample still with 2. Its non-null last destination remains (1640,715), level 0, flags 32. This exactly matches Rust: the f44465 and f44529 slots increment to 1 and 2, and the next watchdog slot capable of changing the counter is f44593. Breakpoints on both RHArtificialMalignity::ReturnToDuty and cross-translation-unit RHArtificialIntelligence::ReturnToDutyCommonStuff observed no Soldier105 call through f44577. Therefore the archived frame-44566 duty transition/RNG draw cannot arise from the current source, cadence, pending-NULL predicate, or serialized state; the control requires recapture and must not drive a Rust workaround. Temporary Original diagnostics and probe artifacts were removed, and tracked production files remain unchanged.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task116-attentive-frontier"
+}
