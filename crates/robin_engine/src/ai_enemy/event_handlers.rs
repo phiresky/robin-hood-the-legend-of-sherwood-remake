@@ -916,6 +916,7 @@ impl EnemyAi {
                 // identification (approach → identify1 → identify2).
                 if let StimulusInfo::Human(beggar) = stimulus.info
                     && self.base.current_substate.is_seek_area()
+                    && beggar != self.beggar_to_examine
                 {
                     tracing::debug!(
                         beggar,
@@ -3250,6 +3251,38 @@ mod tests {
                 crate::entity_id::CivilianId(17)
             )]
         );
+    }
+
+    #[test]
+    fn event_sees_current_beggar_does_not_queue_it_again() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingSeekpointApproachingBeggar;
+        ai.beggar_to_examine = 17;
+
+        let mut beggar_view = object_view(ObjectType::None);
+        beggar_view.kind = EntityKind::Civilian;
+        beggar_view.is_beggar = true;
+        let mut views = AiEntityViewMap::new();
+        views.insert(17, beggar_view);
+        let ctx = AiContext {
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.think_unexpected_event(
+            &sim_context,
+            &Stimulus::with_human(StimulusType::EventSeesBeggar, 17),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert!(ai.beggars_to_control.is_empty());
+        assert!(ai.positions_of_beggars_to_control.is_empty());
+        assert!(ai.base.outbox.actor.delete_beggar_for_all_npc.is_empty());
     }
 
     #[test]
