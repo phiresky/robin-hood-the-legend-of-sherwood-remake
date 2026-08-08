@@ -43,14 +43,62 @@ fn enough_nearer_friends_to_observe(
         >= visible_enemies + visible_enemies * (0.045_f32 * f32::from(courage))
 }
 
-/// BattleDecisions treats a swordfight-family target as occupied. Multiple
-/// nearby friends pursuing that same target do not stack the 100-point
-/// `UNOCCUPIED_PREFERRED` penalty at this decision-local seam.
-fn mark_battle_target_occupied(
+/// Mirror `IncrementPrimaryTargetMultiplicity`: every nearby friend in the
+/// broad swordfight family adds another `UNOCCUPIED_PREFERRED` penalty.
+fn increment_battle_target_multiplicity(
     multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
     target: HumanHandle,
 ) {
-    multiplicity.insert(target, 1);
+    let count = multiplicity.entry(target).or_insert(0);
+    // Original stores this counter in a UWORD.
+    *count = u32::from((*count as u16).wrapping_add(1));
+}
+
+/// Preserve the shared counter for a target appended after BattleDecisions'
+/// reset pass. Original resets multiplicity only for the enemies already in
+/// `mlistThem`; a nearby friend's previously unseen target retains its live
+/// global value when it is inserted later in the same decision.
+fn seed_appended_battle_target_multiplicity(
+    multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
+    target: HumanHandle,
+    global_multiplicity: &[(HumanHandle, u32)],
+) {
+    multiplicity.entry(target).or_insert_with(|| {
+        global_multiplicity
+            .iter()
+            .find_map(|&(handle, count)| (handle == target).then_some(count))
+            .unwrap_or(0)
+    });
+}
+
+/// Mirror ProposeShotTarget's use of the actors' shared multiplicity scratch:
+/// clear all current enemies, then count only friends actively using a bow.
+/// A failed shot proposal can immediately fall through to another battle
+/// decision, so that later selector must observe this rebuilt state.
+fn rebuild_battle_target_multiplicity_for_shot(
+    multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
+    enemies: &[HumanHandle],
+    bow_targets: impl IntoIterator<Item = HumanHandle>,
+) {
+    multiplicity.clear();
+    for &enemy in enemies {
+        multiplicity.insert(enemy, 0);
+    }
+    for target in bow_targets {
+        increment_battle_target_multiplicity(multiplicity, target);
+    }
+}
+
+/// Return the live `GetPrimaryTarget()` claim used by BattleDecisions' friend
+/// scan. This is deliberately independent of both the friend's swordfight
+/// opponent list and any earlier `AttackEnemy` target recorded during the
+/// same owner pass: later AI work can retarget `mpPrimaryTarget` while the
+/// melee opponent remains unchanged.
+fn battle_friend_primary_target(
+    state: AiState,
+    primary_target: HumanHandle,
+) -> Option<HumanHandle> {
+    (state == AiState::Attacking && primary_target != 0).then_some(primary_target)
 }
 
 #[track_caller]
@@ -622,18 +670,15 @@ impl EnemyAi {
 
         // BattleDecisions owns a fresh, local multiplicity calculation in
         // the original. It first resets every enemy currently in mlistThem,
-        // then marks targets claimed by nearby swordfighting-family friends
-        // as occupied and finally ensures every enemy already in a swordfight
-        // has at least one claimant. The decision-local value is occupancy,
-        // not a stacking count when multiple friends pursue the same target.
-        // The engine-wide snapshot is deliberately not
+        // then increments targets claimed by every nearby swordfighting-family
+        // friend and finally ensures every enemy already in a swordfight has
+        // at least one claimant. The engine-wide snapshot is deliberately not
         // equivalent: it still contains claims from actors outside this
         // decision's rebuilt us/them lists.
         let mut decision_target_multiplicity = std::collections::BTreeMap::new();
         for &enemy in &self.list_them {
             decision_target_multiplicity.insert(enemy, 0_u32);
         }
-
         // Original chooses the primary target from the persistent personal
         // Them list before walking nearby friends and appending the enemies
         // they are attacking. Those appended entries broaden later tactical
@@ -668,21 +713,11 @@ impl EnemyAi {
                 if !self.base.list_us.contains(&friend.handle) {
                     continue;
                 }
-                let same_frame_target =
-                    global
-                        .same_frame_target_claims
-                        .iter()
-                        .rev()
-                        .find_map(|&(attacker, target)| {
-                            (attacker == friend.handle && target != 0).then_some(target)
-                        });
-                if friend.ai_state != AiState::Attacking && same_frame_target.is_none() {
+                let Some(_friend_target) =
+                    battle_friend_primary_target(friend.ai_state, friend.primary_target)
+                else {
                     continue;
-                }
-                let friend_target = same_frame_target.unwrap_or(friend.primary_target);
-                if friend_target == 0 {
-                    continue;
-                }
+                };
                 if super::util::is_any_swordfight_substate(friend.ai_substate as u32) {
                     friends_nearer_to_enemy = friends_nearer_to_enemy.saturating_add(1);
                     continue;
@@ -722,19 +757,14 @@ impl EnemyAi {
                 if cs.handle == me || !self.base.list_us.contains(&cs.handle) {
                     continue;
                 }
-                // The snapshot predates earlier actors' live owner slots.
-                // Overlay a claim recorded by AttackEnemy in this same
-                // creation-ordered pass, but only after the friend passed
-                // the Original's nearby/IsDetecting360Degrees gate above.
-                let same_frame_target =
-                    global
-                        .same_frame_target_claims
-                        .iter()
-                        .rev()
-                        .find_map(|&(attacker, target)| {
-                            (attacker == cs.handle && target != 0).then_some(target)
-                        });
-                let target = same_frame_target.unwrap_or_else(|| cs.primary_target);
+                // The owner-local world view samples earlier soldiers' live
+                // AI controllers. Use that strict `GetPrimaryTarget()` value;
+                // an earlier AttackEnemy claim can already be stale after a
+                // later BattleDecisions retarget in the same owner envelope.
+                let Some(target) = battle_friend_primary_target(cs.ai_state, cs.primary_target)
+                else {
+                    continue;
+                };
                 tracing::trace!(
                     frame = ctx.frame,
                     me,
@@ -742,19 +772,24 @@ impl EnemyAi {
                     friend_state = ?cs.ai_state,
                     friend_substate = ?cs.ai_substate,
                     snapshot_target = cs.primary_target,
-                    same_frame_target,
                     target,
                     already_listed = self.list_them.contains(&target),
                     "BattleDecisions friend-seen Them injection candidate"
                 );
-                if cs.ai_state != AiState::Attacking && same_frame_target.is_none() {
-                    continue;
-                }
                 if target == 0 || target == me {
                     continue;
                 }
+                // The initial Them entries were reset to zero above. A
+                // target introduced only by this friend was not part of
+                // Original's reset loop, so retain its shared counter before
+                // applying this decision's possible increment.
+                seed_appended_battle_target_multiplicity(
+                    &mut decision_target_multiplicity,
+                    target,
+                    &tick.primary_target_multiplicity,
+                );
                 if super::util::is_any_swordfight_substate(cs.ai_substate as u32) {
-                    mark_battle_target_occupied(&mut decision_target_multiplicity, target);
+                    increment_battle_target_multiplicity(&mut decision_target_multiplicity, target);
                 }
                 // The Them list rejects duplicates on insertion, so a target
                 // an earlier entry or friend already contributed is dropped
@@ -1196,7 +1231,7 @@ impl EnemyAi {
             decision,
             old_substate,
             cover_shield_bearer,
-            &decision_target_multiplicity,
+            &mut decision_target_multiplicity,
             global,
             ctx,
             tick,
@@ -1220,7 +1255,7 @@ impl EnemyAi {
         mut decision: Decision,
         old_substate: Substate,
         cover_shield_bearer: HumanHandle,
-        target_multiplicity: &std::collections::BTreeMap<HumanHandle, u32>,
+        target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
         global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
@@ -1389,6 +1424,40 @@ impl EnemyAi {
                     }
                     // Pick best shot target.
                     let target = self.propose_shot_target(sim, ctx, tick);
+                    // ProposeShotTarget uses the actors' shared multiplicity
+                    // scratch field: it resets every current Them entry, then
+                    // rebuilds claims from nearby friends in bow substates.
+                    // Preserve that side effect for a failed-shot fallback to
+                    // Observe/Fight, which immediately reuses the field in
+                    // GetNewPrimaryTarget.
+                    let bow_targets: Vec<_> = self
+                        .base
+                        .list_us
+                        .iter()
+                        .copied()
+                        .filter(|&friend_handle| friend_handle != self.base.me)
+                        .filter_map(|friend_handle| {
+                            let friend = self.find_fighter(friend_handle, tick).unwrap_or_else(|| {
+                                panic!(
+                                    "friend {friend_handle} in list_us is absent from fighter snapshot"
+                                )
+                            });
+                            (friend.is_soldier
+                                && matches!(
+                                    friend.current_substate,
+                                    x if x == Substate::AttackingBowShooting as u32
+                                        || x == Substate::AttackingBowLoading as u32
+                                        || x == Substate::AttackingBowAiming as u32
+                                )
+                                && friend.primary_target != 0)
+                                .then_some(friend.primary_target)
+                        })
+                        .collect();
+                    rebuild_battle_target_multiplicity_for_shot(
+                        target_multiplicity,
+                        &self.list_them,
+                        bow_targets,
+                    );
                     if target != 0 {
                         self.base.primary_target = target;
                         self.base.outbox.actor.set_focus(target);
@@ -3247,7 +3316,7 @@ mod tests {
             Decision::Observe,
             Substate::AttackingReactiontimeRunning,
             0,
-            &std::collections::BTreeMap::from([(198, 0)]),
+            &mut std::collections::BTreeMap::from([(198, 0)]),
             &mut AiGlobalState::default(),
             &ctx,
             &tick,
@@ -3449,7 +3518,7 @@ mod tests {
             Decision::CoverBehindShieldBearer,
             Substate::AttackingReactiontimeRunning,
             73,
-            &std::collections::BTreeMap::new(),
+            &mut std::collections::BTreeMap::new(),
             &mut AiGlobalState::default(),
             &ctx,
             &tick,
@@ -3475,11 +3544,76 @@ mod tests {
     }
 }
 #[test]
-fn battle_target_occupancy_does_not_stack_duplicate_friend_claims() {
+fn battle_target_multiplicity_stacks_duplicate_friend_claims_as_uword() {
     let mut multiplicity = std::collections::BTreeMap::from([(174, 0)]);
 
-    mark_battle_target_occupied(&mut multiplicity, 174);
-    mark_battle_target_occupied(&mut multiplicity, 174);
+    increment_battle_target_multiplicity(&mut multiplicity, 174);
+    increment_battle_target_multiplicity(&mut multiplicity, 174);
 
-    assert_eq!(multiplicity[&174], 1);
+    assert_eq!(multiplicity[&174], 2);
+
+    multiplicity.insert(174, u32::from(u16::MAX));
+    increment_battle_target_multiplicity(&mut multiplicity, 174);
+
+    assert_eq!(multiplicity[&174], 0);
+}
+
+#[test]
+fn appended_battle_target_retains_global_multiplicity_after_personal_reset() {
+    // BattleDecisions resets only the target already in its personal Them
+    // list. A target appended by a nearby friend keeps the shared counter.
+    let mut decision = std::collections::BTreeMap::from([(343, 0)]);
+    let global = [(343, 4), (345, 1)];
+
+    seed_appended_battle_target_multiplicity(&mut decision, 343, &global);
+    seed_appended_battle_target_multiplicity(&mut decision, 345, &global);
+
+    assert_eq!(decision[&343], 0, "personal target stays reset");
+    assert_eq!(decision[&345], 1, "appended target retains shared count");
+
+    increment_battle_target_multiplicity(&mut decision, 345);
+    assert_eq!(decision[&345], 2, "a live friend claim still stacks");
+}
+
+#[test]
+fn failed_shot_proposal_resets_melee_multiplicity_before_observe_fallback() {
+    // Task #134: two swordfighters claimed target 174 during
+    // BattleDecisions, but the archer's ProposeShotTarget reset the shared
+    // counters before returning no shot. The ensuing Observe selector must
+    // therefore see zero melee claims (plus only any live bow claims).
+    let mut decision = std::collections::BTreeMap::from([(172, 1), (171, 0), (174, 2)]);
+
+    rebuild_battle_target_multiplicity_for_shot(&mut decision, &[172, 171, 174], []);
+
+    assert_eq!(
+        decision,
+        std::collections::BTreeMap::from([(171, 0), (172, 0), (174, 0)])
+    );
+
+    rebuild_battle_target_multiplicity_for_shot(&mut decision, &[172, 171, 174], [171, 171]);
+    assert_eq!(decision[&171], 2, "bow claims are rebuilt after the reset");
+    assert_eq!(decision[&174], 0, "stale melee claims remain cleared");
+}
+
+#[test]
+fn battle_friend_claim_uses_primary_target_not_swordfight_opponent() {
+    // Task #61/#134 control: both friends still had PC174 in their melee
+    // opponent lists, while their live AI primary target had retargeted to
+    // PC173. An earlier same-frame AttackEnemy(174) observation must not
+    // overwrite the later GetPrimaryTarget() value used by BattleDecisions.
+    let swordfight_opponent = 174;
+    let stale_attack_enemy_claim = swordfight_opponent;
+    let live_primary_target = 173;
+    let mut multiplicity =
+        std::collections::BTreeMap::from([(live_primary_target, 0), (swordfight_opponent, 0)]);
+
+    for _ in 0..2 {
+        let target = battle_friend_primary_target(AiState::Attacking, live_primary_target)
+            .expect("attacking friend has a live primary target");
+        assert_ne!(target, stale_attack_enemy_claim);
+        increment_battle_target_multiplicity(&mut multiplicity, target);
+    }
+
+    assert_eq!(multiplicity[&live_primary_target], 2);
+    assert_eq!(multiplicity[&swordfight_opponent], 0);
 }
