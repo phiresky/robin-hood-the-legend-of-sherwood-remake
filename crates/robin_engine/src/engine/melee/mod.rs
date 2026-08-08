@@ -1711,13 +1711,14 @@ fn can_enter_swordfight_with(
         return false;
     }
 
-    // Building sector check.  Matches `IsInsideBuilding` semantics —
-    // sector flag OR door-transit, so an actor mid-door-pass also
-    // counts as inside a building.
+    // CanEnterSwordfightWith asks the current sector directly whether it is
+    // a building. Door transit is not part of this predicate: while crossing
+    // an ordinary door, an actor may retain the outside sector and is still a
+    // valid opponent for the thrust-A principal-opponent refresh.
     let sector_a = entity_a.element_data().sector();
     let sector_b = entity_b.element_data().sector();
-    let inside_a = is_in_building_sector(sector_a, fast_grid) || entity_a.is_in_door_transit();
-    let inside_b = is_in_building_sector(sector_b, fast_grid) || entity_b.is_in_door_transit();
+    let inside_a = is_in_building_sector(sector_a, fast_grid);
+    let inside_b = is_in_building_sector(sector_b, fast_grid);
     if inside_a || inside_b {
         tracing::info!(?a, ?b, ?sector_a, ?sector_b, "can_enter: building sector");
         return false;
@@ -2761,6 +2762,88 @@ mod tests {
             profile_manager: std::sync::Arc::new(profile_manager),
             ..LevelAssets::default()
         }
+    }
+
+    #[test]
+    fn thrust_a_accepts_an_existing_opponent_during_ordinary_door_transit() {
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D::default(),
+            crate::position_interface::SectorHandle::new(42),
+        ));
+        let target = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 20.0,
+                ..WorldPoint3D::default()
+            },
+            crate::position_interface::SectorHandle::new(43),
+        ));
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents
+            .push(target);
+        {
+            let target_entity = engine.get_entity_mut(target).unwrap();
+            target_entity
+                .human_data_mut()
+                .unwrap()
+                .opponents
+                .push(attacker);
+            let target_actor = target_entity.actor_data_mut().unwrap();
+            target_actor.active_door_pass = Some(crate::element::ActiveDoorPass {
+                door_index: crate::gate::DoorIndex(7),
+                direct: true,
+                position_direct: true,
+                steps: std::collections::VecDeque::new(),
+                triggers_fired: 0,
+                current_action: OrderType::WalkingWithSword,
+                current_reverse: false,
+                saved_action_state: None,
+            });
+            target_entity
+                .position_iface_mut()
+                .set_door_for_test(crate::position_interface::DoorHandle(7));
+        }
+        assert!(engine.get_entity(target).unwrap().is_in_door_transit());
+
+        let assets = assets_with_sword_profile(1, 50);
+        assert!(can_enter_swordfight_with(
+            &engine.world.entities,
+            attacker,
+            target,
+            &assets.profile_manager,
+            &engine.world.fast_grid,
+        ));
+
+        let strike = crate::sequence::SequenceElement::new_interaction(
+            1,
+            Command::SwordstrikeThrustA,
+            Some(attacker),
+            Some(target),
+        );
+        let sequence = engine.launch_element(strike);
+        engine.dispatch_sword_strike(
+            &crate::sim_rng::test_context(),
+            &assets,
+            attacker,
+            target,
+            SwordStrike::A,
+            sequence,
+            0,
+        );
+
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap();
+        assert_eq!(element.state, crate::sequence::SequenceState::InProgress);
+        let order = element.current_order().unwrap();
+        assert_eq!(order.order_type, OrderType::StrikingStraightSword);
+        assert_eq!(order.antagonist, Some(target));
     }
 
     fn make_enemy_strike_pair(
