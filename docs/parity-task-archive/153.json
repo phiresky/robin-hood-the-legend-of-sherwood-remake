@@ -1,0 +1,9 @@
+{
+  "id": "153",
+  "subject": "Clear selected PC action before swordfight temporary disable",
+  "description": "The frozen actor.animation representative, schema-14 Savegame_linux2 Profile_002 Savegame_001 replay-001, first diverged after frame 1765 when selecting PC252 stopped Robin's running movement: Original remained RunningUpright while Rust installed TransitionRunningUprightWaitingUpright. The visible edge came from a latent action-state mismatch. Robin armed Purse at frame 994 and entered swordfight at frame 1011. Original RHElementActorHuman::EnterSwordFight synchronously forwards MSG_SELECT_ACTION(NO_ACTION) before DisableAllActionsTemp; RHEngine::SelectAction accepts the targeted message only for a selected PC, so DisableAllActionsTemp saves NoAction. Rust omitted the message and saved Purse, then resurrected it when the final opponent was removed at frame 1736. EnterSwordFight now sends the selected-PC action message before disabling, while preserving the Original no-op for an unselected initiator. Selected and unselected enter/quit regressions cover the ordering. Combined optimized validation clears the old frame-1765 frontier and advances to an independent frame-2147 difference; schema-14 Cyrdach Profile_156 and Nescafe Profile_001 replay-009 remain exact through EOF. Fixed by commit bd27a909c.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task116-attentive-frontier"
+}

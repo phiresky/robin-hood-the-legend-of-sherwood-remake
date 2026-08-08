@@ -1,0 +1,9 @@
+{
+  "id": "156",
+  "subject": "Restore only authored temporarily disabled PC actions",
+  "description": "Source audit of the adjacent EnableAllActionsTemp path found two independent mismatches. Original clears every temporary-disable bit but restores msavedAction only when the corresponding newly re-enabled, permanently enabled profile slot satisfies GetAction(slot) == msavedAction. It then forwards MSG_SELECT_ACTION with the PC as target, so restoration occurs only if that PC is selected and runs the normal full-selection action side effects. Rust treated any re-enabled slot as a match and directly assigned current_action, restoring actions absent from the character profile and incorrectly restoring an unselected PC. PcData now returns a restore candidate only for an exact authored slot; EngineInner resolves the required live character profile and forwards it through selected-PC action handling. Focused regressions cover matching-slot restoration and selection fanout/preview invalidation, a nonmatching saved action, selected swordfight exit, and the unselected no-op. This was a source-proven focused mismatch with no dedicated replay frontier; no replay-specific workaround was added. Fixed by commit 6b0a4dc0d.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task116-attentive-frontier"
+}
