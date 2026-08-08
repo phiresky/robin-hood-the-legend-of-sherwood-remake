@@ -1,0 +1,9 @@
+{
+  "id": "170",
+  "subject": "Do not treat ordinary door transit as a building swordfight",
+  "description": "Schema-14 linux2 Profile_002 Savegame_003 replay-013 advanced through task 163 and diverged after frame 14874 because PC101's selected thrust-A was marked Impossible, leaving a later smalltalk strike active. Soldier178 was a reciprocal opponent in an active direct door pass, but its actual sector was ordinary sector 0. Rust had widened can_enter_swordfight_with's building test with is_in_door_transit, while Original RHElementActorHuman::CanEnterSwordfightWith checks only each actor's current sector IsBuilding plus the wall/ladder lift restriction. Removing the invented door-transit terms lets the authored thrust enter while preserving every other IsInsideBuilding use. A focused reciprocal-opponent regression gives the target an ActiveDoorPass and live door pointer in an ordinary sector, then verifies thrust-A reaches InProgress with the correct antagonist. The combined release runner clears frame 14874 and advances to an independent frame-15126 RNG frontier; both task-36 controls remain exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task170-swordstrike-f14874"
+}

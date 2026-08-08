@@ -1,0 +1,9 @@
+{
+  "id": "165",
+  "subject": "Retain DropAle DONE and include live objects in anti-collision",
+  "description": "Schema-14 SuN1Sh1nE Profile_004 Savegame_028 replay-004 first diverged after frame 1543 because a PC walking near the ale bottle dropped at frame 1196 was not deflected. Rust originally lost the DropAle side outcome between generic animation execution and Actor::Hourglass completion, so the bottle was absent. Moving the enqueue to the retained owner completion seam creates the bottle once on DONE and removes the earlier duplicate-prone enqueue. The first fix exposed a broader anti-collision omission: Rust snapshot_all iterated only actors even though its gather code and typed repulsive-point builder already implemented Original's object branch. Original UpdatePositionAntiCollision scans every engine element in stable order and admits active, same-layer, same-sector objects in the future box. Rust now snapshots occupied actors and objects in slot order, flags actors dynamically, and therefore includes dropped Ale/Purse and other authored object repulsion while retaining the existing object-specific filters. Focused tests drive a real DroppingAle sprite through DONE, verify ammo consumption and bottle creation, and prove the representative Ale radius-5/action-10 point deflects live movement. The combined release runner clears frame 1543 and advances to an independent frame-1738 direction frontier; both task-36 controls remain exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task152-raise-shield-frontier"
+}
