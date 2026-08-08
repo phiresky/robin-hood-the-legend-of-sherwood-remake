@@ -4376,6 +4376,96 @@ mod tests {
         );
     }
 
+    #[test]
+    fn arrow_damage_amulet_coma_uses_post_damage_lying_translation() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let sprite_script = crate::sprite_script::SpriteScript {
+            action_id: crate::order::OrderType::WaitingUpright as u16,
+            action_done: 0,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1],
+            delays: vec![1],
+            distances: vec![0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .element_data_mut()
+            .sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![sprite_script]),
+            std::sync::Arc::new(vec![0]),
+        );
+        let mut assets = assets_with_sword_profile(200, 30);
+        std::sync::Arc::make_mut(&mut assets.profile_manager).characters[0].vip = true;
+        engine.mission_domain.campaign.values[crate::campaign::CampaignValue::Amulets] = 1;
+
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            victim_entity.pc_data_mut().unwrap().life_points = 10;
+            victim_entity
+                .position_iface_mut()
+                .set_map_goal(crate::coordinates::MapPoint::new(25.0, 100.0));
+            victim_entity
+                .actor_data_mut()
+                .unwrap()
+                .continuation
+                .motion_state = crate::sprite::MotionState::Start;
+        }
+
+        let mut damage = crate::sequence::SequenceElement::new_damage(
+            1,
+            Command::ReceiveArrowDamage,
+            Some(victim),
+            Some(attacker),
+            10,
+            0,
+        );
+        engine.resolve_element_priority(&mut damage);
+        engine.orders.sequence_manager.launch_element(damage);
+
+        let mut display = crate::engine::HostDisplayState::default();
+        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        assert!(engine.mission_domain.campaign.characters[0].status.in_coma);
+        assert_eq!(victim_entity.element_data().posture, Posture::Lying);
+        assert_eq!(
+            victim_entity.position_iface().map_goal(),
+            crate::coordinates::MapPoint::ZERO,
+            "post-damage Lying translation must terminate and clear the movement goal"
+        );
+        assert_eq!(
+            victim_entity
+                .actor_data()
+                .unwrap()
+                .continuation
+                .motion_state,
+            crate::sprite::MotionState::Start,
+            "terminal arrow translation must preserve the pre-damage motion state"
+        );
+    }
+
     /// `SwordstrikeThrustA` promotes both principal opponents before
     /// the strike, so clicking a secondary opponent during a
     /// swordfight switches the primary target.

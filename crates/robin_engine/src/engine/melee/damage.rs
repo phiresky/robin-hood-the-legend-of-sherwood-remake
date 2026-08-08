@@ -1071,10 +1071,10 @@ impl EngineInner {
             return;
         }
 
-        // Capture the translation posture before applying damage.  Unlike
-        // generic damage, Original's ReceiveArrowDamage / ReceiveStoneDamage
-        // dispatch calls ReceivePiercingDamage first and only then runs the
-        // posture switch in TranslateArrowDamage / TranslateDamage.
+        // Preserve the incoming posture only for the ladder/wall reaction.
+        // Original applies ReceivePiercingDamage before translating the hit,
+        // so every other TranslateArrowDamage / TranslateDamage arm switches
+        // on the posture produced by the damage (notably amulet coma -> Lying).
         let pre_posture = self
             .get_entity(victim_id)
             .map(|e| e.element_data().posture)
@@ -1112,6 +1112,10 @@ impl EngineInner {
             life_points_before,
             raw_life_points_after,
         );
+        let translation_posture = self
+            .get_entity(victim_id)
+            .map(|e| e.element_data().posture)
+            .unwrap_or_default();
         // Raw attempted damage — overkill hits show the same number
         // as a non-overkill hit would.  `add_damage_number` no-ops on 0.
         self.add_damage_number(victim_id, damage);
@@ -1124,14 +1128,14 @@ impl EngineInner {
             return;
         }
 
-        // Already-lying arm: `Lying/UnderNet/Flying/Carried/
+        // Lying arm: `Lying/UnderNet/Flying/Carried/
         // OnShoulders/Tied` falls through to `Dead/DeadBack`, which
         // terminates the element when not a dying rider — i.e. for
         // everything except a sleeping rider dying.  This stops arrow
-        // / stone damage that lands on an already-on-the-ground
-        // victim from pushing a fresh dying order onto the damage
-        // element.
-        if pre_posture.is_lying() {
+        // / stone damage once the victim is on the ground (including
+        // a posture change made by ReceivePiercingDamage) from pushing
+        // a fresh dying order onto the damage element.
+        if translation_posture.is_lying() {
             let post_dead = self
                 .get_entity(victim_id)
                 .map(|e| get_life_points(e) <= 0)
@@ -1153,7 +1157,7 @@ impl EngineInner {
         // Shoulder-posture victims route through
         // `translate_shoulder_damage`.
         if matches!(
-            pre_posture,
+            translation_posture,
             Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
         ) {
             self.translate_shoulder_damage(sim, assets, victim_id, damage_element);
@@ -1163,7 +1167,7 @@ impl EngineInner {
 
         // CarryingCorpse arm — forces an instant corpse drop and
         // falls through to the default damage path.
-        if pre_posture == Posture::CarryingCorpse {
+        if translation_posture == Posture::CarryingCorpse {
             self.force_drop_carried_corpse_instant(victim_id);
         }
 
