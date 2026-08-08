@@ -1,0 +1,9 @@
+{
+  "id": "164",
+  "subject": "Short-circuit swordfight evaluation on incompatible elevations",
+  "description": "Schema-14 Savegame_linux2 Profile_002 Savegame_029 replay-014 first diverged after frame 4442 because Rust emitted two visibility queries while Original emitted one. The extra Rust query came from Soldier63's EvaluateSwordfight LOS check against PC169. Their elevations differed by 50.289 units, exceeding MAX_ELEVATION_SWORDFIGHT=40, and their sectors differed. Original RHElementActorHuman::EvaluateSwordfight handles that elevation condition as an immediate reciprocal DeleteOpponent/EvaluateOpponents teardown and return before its later distance and opaque-visibility block. Rust calculated elevation_prune but continued through the independent distance/LOS calculation before combining both predicates, so it emitted an impossible extra query even though the eventual relationship teardown already agreed. The elevation arm now performs the existing reciprocal removal, both relative-fighting-ability recomputations, and both opponent evaluations before returning without a visibility query. Focused coverage captures the visibility stream and verifies no query, empty reciprocal opponent lists, recomputed abilities, and QuitSwordfight elements for both fighters. cargo fmt is clean and the focused test passes. On the optimized parity runner built 2026-08-08, the representative clears frame 4442 and advances to an independent PC169 ParrySword-versus-ReceiveSwordDamage frontier after frame 4692; both task-36 schema-14 replay-009 controls match every recorded frame through exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task115_ladder_exit_direction"
+}
