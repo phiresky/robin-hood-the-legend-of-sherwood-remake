@@ -1,0 +1,9 @@
+{
+  "id": "157",
+  "subject": "Restore heard-steps area seeking after reaching the reaction point",
+  "description": "Schema-14 Savegame_linux2 Profile_002 Savegame_002 replay-015 first diverged at frame 1256 when Soldier138 reached its heard-steps reaction point. Original RHArtificialMalignity::ThinkExpectedEvent handles EVENT_REACHPOINT and EVENT_TIMER in SUBSTATE_SEEKING_HEARDSTEPS_REACTIONTIME by calling SeekArea(Position(mpMe), 0, SEEK_LOCATION_FIRST | SEEK_WALKING). Rust had invented a shortcut to SeekingJustWatching with a Face and timer. The branch now invokes the normal area-seek state machine at the actor's current position with the source flags, consuming the source-local SeekPointDirectionPattern and SeekPointAcceptance draws and selecting the authored seek point. A focused regression verifies the draw sequence, center, flags, substate, and selected point; all 15 substate-handler tests pass and cargo fmt is clean. Combined parity validation reaches exact EOF for the representative and both task-36 schema-14 replay-009 controls.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task115_ladder_exit_direction"
+}
