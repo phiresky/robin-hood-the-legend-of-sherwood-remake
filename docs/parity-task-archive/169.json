@@ -1,0 +1,9 @@
+{
+  "id": "169",
+  "subject": "Use ground positions for smalltalk back-hit classification",
+  "description": "Schema-14 linux2 Profile_002 Savegame_029 replay-014 advanced through task 164 and diverged after frame 4692 when Soldier113's StrikingRightSmalltalk reached DONE. Original computes the antagonist-relative vector from both actors' GetPositionGround coordinates, then dots it with the antagonist's isometric direction vector. Rust used projected position_map coordinates; with unequal elevations that changed relative Y enough to flip the half-plane test, incorrectly queue ReceiveSwordDamage for PC169, interrupt its ParrySword, and consume protection RNG. The smalltalk DONE gate now uses each entity's stored ground_position while retaining the aspect-scaled direction vector. A focused unequal-elevation regression constructs map-space and ground-space dots with opposite signs and proves no damage card is queued. The focused test, cargo fmt, and diff check pass. The representative and both task-36 schema-14 replay-009 controls match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task169-parry-damage-f4692"
+}
