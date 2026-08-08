@@ -1,0 +1,9 @@
+{
+  "id": "147",
+  "subject": "Preserve the phalanx visibility query before dead/unconscious rejection",
+  "description": "The completed-sweep visibility_queries.length representative, schema-14 Cyrdach Profile_156 Savegame_001 replay-011, historically first diverged after frame 1121 with Original=5 and Rust=4. The frozen e806655f8 runner reproduces that frontier: Original's fifth query duplicates the fourth query from [758.6776733398438, 2687.139404296875, 45.0] to PC 252 at [744.8360595703125, 2477.652587890625, 45.0], while frozen Rust stops after four detection.rs queries. The current runner records the same fifth query, result=false, from ai_enemy/combat_positions.rs:176 and matches all five Original queries. This was already fixed source-faithfully by daeacac810: append_phalanx_member_enemies evaluates phalanx_member_detects_180 before rejecting a dead or unconscious target. Original RHArtificialMalignity::PhalanxReinitializeThemList in original-code/RHartificialmalignity.cpp likewise calls mpMe->IsDetecting180Degrees(pEnemy) before testing !pEnemy->IsDead() && !pEnemy->IsUnconscious(). A focused jq comparison confirms current Original and Rust query counts are both 5 at frame 1121, and the current optimized parity runner matches every recorded frame through exact EOF. Task 147 is therefore completed/superseded by daeacac810 with no standalone production change or rebuild required.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task114-unconscious-frontier"
+}
