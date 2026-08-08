@@ -6112,8 +6112,13 @@ impl EngineInner {
                 let target = self
                     .get_entity(target_id)
                     .unwrap_or_else(|| panic!("smalltalk antagonist {target_id:?} disappeared"));
-                let attacker_pos = attacker.element_data().position_map();
-                let target_pos = target.element_data().position_map();
+                // Original builds this relative vector from
+                // `GetPositionGround()`, i.e. the stored world X/Y pair.
+                // Projected map Y differs by elevation, and using it here can
+                // flip the back-hit half-plane test when the fighters stand
+                // at different heights.
+                let attacker_pos = attacker.ground_position();
+                let target_pos = target.ground_position();
                 // RHElement::GetDirectionVector returns a vector in the
                 // isometric map plane.  Smalltalk's "striking in the back"
                 // dot product therefore needs the aspect-scaled Y component;

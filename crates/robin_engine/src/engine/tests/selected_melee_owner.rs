@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::coordinates::WorldPoint3D;
 use crate::element::{Command, Posture};
 use crate::order::{Order, OrderType};
 use crate::sequence::SequenceElement;
@@ -467,6 +468,65 @@ fn smalltalk_done_uses_isometric_facing_for_back_hit_gate() {
                 element.command == Command::ReceiveSwordDamage && element.owner == Some(victim)
             }),
         "smalltalk back-hit must use the Original isometric facing vector"
+    );
+}
+
+#[test]
+fn smalltalk_done_uses_ground_positions_for_back_hit_gate() {
+    let mut engine = EngineInner::new();
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_entity(make_test_pc(Posture::Upright));
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .element_data_mut()
+        .set_position(WorldPoint3D::new(0.0, 0.0, 0.0));
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .set_position(WorldPoint3D::new(1.0, 0.0, 10.0));
+    {
+        let victim = engine.get_entity_mut(victim).unwrap();
+        victim.element_data_mut().set_direction_instantly(13);
+        victim.actor_data_mut().unwrap().action_state = crate::element::ActionState::WaitingSword;
+    }
+
+    let [dx, dy] = crate::position_interface::sector_to_vector_iso(13);
+    let attacker_entity = engine.get_entity(attacker).unwrap();
+    let victim_entity = engine.get_entity(victim).unwrap();
+    let attacker_map = attacker_entity.element_data().position_map();
+    let victim_map = victim_entity.element_data().position_map();
+    let attacker_ground = attacker_entity.ground_position();
+    let victim_ground = victim_entity.ground_position();
+    assert!(
+        dx * (victim_map.x - attacker_map.x) + dy * (victim_map.y - attacker_map.y) > 0.0,
+        "the projected-map test must classify this setup as a back hit"
+    );
+    assert!(
+        dx * (victim_ground.x - attacker_ground.x) + dy * (victim_ground.y - attacker_ground.y)
+            < 0.0,
+        "Original's ground-position test must classify this setup as a miss"
+    );
+
+    bind_animation(&mut engine, attacker, OrderType::StrikingRightSmalltalk);
+    install_selected_smalltalk(&mut engine, attacker, victim);
+
+    let assets = straight_warning_assets(0, 1);
+    for _ in 0..4 {
+        run_owner_walk(&mut engine, &assets);
+    }
+
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| {
+                element.command == Command::ReceiveSwordDamage && element.owner == Some(victim)
+            }),
+        "smalltalk back-hit must use Original GetPositionGround coordinates"
     );
 }
 
