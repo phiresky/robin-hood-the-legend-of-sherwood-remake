@@ -1,0 +1,9 @@
+{
+  "id": "160",
+  "subject": "Retire the frozen SuN1Sh1nE visibility-query representative",
+  "description": "Completed as already fixed. In the resweep-db67cc978 classification, schema-14 Savegame_SuN1Sh1nE/Profile_004/ExQuickSave/replay-010-session-0001 represented the visibility_queries.length cluster and first diverged after frame 36672: Original recorded 21 queries while frozen Rust recorded 20, shifting the subsequent query sequence. On the newest pre-combined-validation runner, target/parity/examples/original_parity_replay dated 2026-08-08 17:50, the same fullgame_linux control matches every recorded frame through exact EOF at frame 36960 under --scan-all. No production change or rebuild was required. A concurrent sample of the leading schema-14 RuntimeBuildingExitWait representative, linux3 Profile_001 Savegame_045 replay-011, also clears its historical building-exit frontier but advances to an unrelated frame-44565 RNG mismatch tracked separately as task 161.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task116-attentive-frontier"
+}
