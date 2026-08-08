@@ -1,0 +1,9 @@
+{
+  "id": "159",
+  "subject": "Expose detached alert paths to synchronous AI observers",
+  "description": "Schema-14 Savegame_Cyrdach Profile_156 Savegame_001 replay-014 first diverged at frame 1167 when Soldier162 reached a macro waypoint and executed CHECK_4 against Soldier153. Original had switched Soldier153 to alert path 33 with RHPath::Init, so InitializeFriendCheck scanned that live path, entered DefaultLookingSidewardsForCharly, and the same-frame EVENT_SEES_CHARLY advanced to DefaultDetectedCharly while preserving the macro cursor at 17 with three bytes remaining. Rust's state transition temporarily represented the alert path in detached_patrol_path_status while patrol_path was None. AiEntityView exported has_patrol_path=true but discarded the detached ID and iterator status, so InitializeFriendCheck found no path to scan, resumed the macro, consumed its trailing WAIT 75, and armed the wrong macro timer. AI views now fall back to detached_patrol_path_status for the hiking-path ID, current and last waypoint indices, and traversal direction whenever no live PatrolPath is materialized. Focused tests cover the view snapshot and the CHECK_4 cursor/timer boundary; cargo fmt is clean. The representative and both task-36 schema-14 replay-009 controls match exact EOF with the combined release runner.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task115_ladder_exit_direction"
+}
