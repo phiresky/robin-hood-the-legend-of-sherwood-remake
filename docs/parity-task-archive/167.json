@@ -1,0 +1,9 @@
+{
+  "id": "167",
+  "subject": "Preserve the tower-alert complete-registry prefix bug",
+  "description": "The current-Original probe following task 161 exposed a separate tower-alert candidate mismatch: Rust admitted Soldier108 as a fallback runner while Original did not. Original first builds its hearing count with the tower guard excluded, then incorrectly applies that count to a prefix of the complete camp registry, including the tower guard itself. Rust's shared camp_soldiers view globally excluded the owner, shifting the prefix and admitting one later soldier. The tower fallback now reconstructs the complete stable-slot registry only at that call site while retaining owner exclusion for normal eligibility and hearing. TowerGuardCallAlert also stores every stretched 3D squared distance in ULONG before comparison; Rust now mirrors that truncation. Focused tests cover the owner-induced prefix shift, last-qualifying prefix order, and fractional distances that truncate to the same ULONG. All three tests pass, cargo fmt and diff checks are clean, and the task-36 schema-14 replay-009 controls remain exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task116-attentive-frontier"
+}

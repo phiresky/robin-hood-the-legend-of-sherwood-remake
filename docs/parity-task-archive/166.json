@@ -1,0 +1,9 @@
+{
+  "id": "166",
+  "subject": "Do not recover an out-of-arc lateral-strike antagonist",
+  "description": "Schema-14 linux2 Profile_002 Savegame_003 replay-010 advanced through task 155 and diverged after frame 15171 with seven extra combat RNG draws. PC252's lateral SwordStrike D scan correctly omitted Soldier181 because he occupied sector 10 while the authored sweep admitted sectors 4 through 9. Rust then applied an invented fallback that appended the interaction antagonist whenever generic range and victim checks passed, without rechecking the lateral arc. Original ExecuteLateralSwordStrike has no principal/antagonist recovery append. Removing that fallback preserves the actor-scan victim order and leaves push-strike handling unchanged. A focused regression covers two in-arc victims around an out-of-arc antagonist in creation order. The focused test passes, cargo fmt and diff checks are clean, and the combined release runner matches the representative and both task-36 schema-14 replay-009 controls through exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task115-ladder-exit-direction"
+}
