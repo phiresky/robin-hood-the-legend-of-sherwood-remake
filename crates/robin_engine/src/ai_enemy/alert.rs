@@ -28,18 +28,47 @@ fn attack_point_direction(ctx: &AiContext, target: Position) -> u16 {
     vec_to_sector(dx, dy)
 }
 
+/// Original stores the stretched squared norm in an `ULONG` before every
+/// comparison in `TowerGuardCallAlert`. Preserve that truncation here: two
+/// fractional distances in the same integer bucket compare equal.
+fn tower_guard_square_distance(a: WorldPoint3D, b: WorldPoint3D) -> u32 {
+    let dx = a.x - b.x;
+    let dy = (a.y - b.y) * INVERSE_ASPECT_RATIO;
+    let dz = a.z - b.z;
+    (dx * dx + dy * dy + dz * dz) as u32
+}
+
+/// `camp_soldiers` intentionally excludes the evaluating NPC for its normal
+/// consumers. The fallback bug in Original's `TowerGuardCallAlert`, however,
+/// dereferences the complete camp registry (including the tower guard) for its
+/// first-N scan. Entity handles follow that registry's stable slot order, so
+/// insert the owner back at its handle position before reproducing the bug.
+fn tower_guard_complete_registry(
+    camp_registry_without_owner: impl IntoIterator<Item = (NpcHandle, WorldPoint3D)>,
+    owner: (NpcHandle, WorldPoint3D),
+) -> Vec<(NpcHandle, WorldPoint3D)> {
+    let mut registry: Vec<_> = camp_registry_without_owner.into_iter().collect();
+    let owner_index = registry.partition_point(|(handle, _)| *handle < owner.0);
+    assert!(
+        registry
+            .get(owner_index)
+            .is_none_or(|entry| entry.0 != owner.0),
+        "tower-guard owner {} is already present in the self-excluding camp registry",
+        owner.0
+    );
+    registry.insert(owner_index, owner);
+    registry
+}
+
 fn tower_guard_runner_from_registry_prefix(
     camp_registry: impl IntoIterator<Item = (NpcHandle, WorldPoint3D)>,
     hearing_simple_soldier_count: usize,
     officer_position: WorldPoint3D,
-    officer_distance_from_tower_squared: f32,
+    officer_distance_from_tower_squared: u32,
 ) -> Option<NpcHandle> {
     let mut runner = None;
     for (handle, position) in camp_registry.into_iter().take(hearing_simple_soldier_count) {
-        let dx = position.x - officer_position.x;
-        let dy = (position.y - officer_position.y) * INVERSE_ASPECT_RATIO;
-        let dz = position.z - officer_position.z;
-        let square_distance = dx * dx + dy * dy + dz * dz;
+        let square_distance = tower_guard_square_distance(position, officer_position);
         if square_distance < officer_distance_from_tower_squared {
             runner = Some(handle);
         }
@@ -1355,9 +1384,14 @@ impl EnemyAi {
         //      runner (nearest far officer, picked by distance).
         let mut in_range_soldiers: Vec<crate::ai::NpcHandle> = Vec::new();
         let mut simple_soldiers_who_hear_me = 0usize;
-        let mut nearest_officer: Option<(crate::ai::NpcHandle, f32)> = None;
-        let mut nearest_far_officer: Option<(crate::ai::NpcHandle, f32, WorldPoint3D)> = None;
-        let sqr_radius = combat::SQR_TOWER_GUARD_ALERT_RADIUS as f32;
+        let mut nearest_officer: Option<(crate::ai::NpcHandle, u32)> = None;
+        let mut nearest_far_officer: Option<(crate::ai::NpcHandle, u32, WorldPoint3D)> = None;
+        let sqr_radius = combat::SQR_TOWER_GUARD_ALERT_RADIUS as u32;
+        let tower_position = WorldPoint3D {
+            x: my_pos.x,
+            y: my_pos.y + ctx.elevation,
+            z: ctx.elevation,
+        };
 
         // GetSoldier(camp, i) walks the camp registry in stable order.  Do
         // not iterate the entity-view HashMap here: delivery is synchronous,
@@ -1383,11 +1417,7 @@ impl EnemyAi {
             // full three-dimensional one, so the height gap between a tower
             // guard and the ground below counts toward the alert radius: drop
             // the Z term and the cry reaches soldiers standing too far below.
-            let dx = view.position.x - my_pos.x;
-            let dz = view.elevation - ctx.elevation;
-            let dy = ((view.position.y + view.elevation) - (my_pos.y + ctx.elevation))
-                * INVERSE_ASPECT_RATIO;
-            let sq_dist = dx * dx + dy * dy + dz * dz;
+            let sq_dist = tower_guard_square_distance(soldier.position_world, tower_position);
 
             if sq_dist < sqr_radius {
                 // This soldier hears the cry. Rank
@@ -1410,10 +1440,7 @@ impl EnemyAi {
                     _ => {}
                 }
             } else if soldier.rank == ProfileRank::Officer
-                && sq_dist
-                    < nearest_far_officer
-                        .map(|(_, d, _)| d)
-                        .unwrap_or(f32::INFINITY)
+                && sq_dist < nearest_far_officer.map(|(_, d, _)| d).unwrap_or(u32::MAX)
             {
                 // Only consider RANK_OFFICER for the
                 // far-officer fallback.  AiEntityView carries `rank`
@@ -1466,10 +1493,14 @@ impl EnemyAi {
         let Some((_, officer_distance, officer_pos)) = nearest_far_officer else {
             return;
         };
-        let runner = tower_guard_runner_from_registry_prefix(
+        let complete_registry = tower_guard_complete_registry(
             tick.camp_soldiers
                 .iter()
                 .map(|soldier| (soldier.handle, soldier.position_world)),
+            (self.base.me, tower_position),
+        );
+        let runner = tower_guard_runner_from_registry_prefix(
+            complete_registry,
             simple_soldiers_who_hear_me,
             officer_pos,
             officer_distance,
@@ -1640,9 +1671,44 @@ mod tests {
         ];
 
         assert_eq!(
-            tower_guard_runner_from_registry_prefix(registry, 3, position(0.0), 100.0),
+            tower_guard_runner_from_registry_prefix(registry, 3, position(0.0), 100),
             Some(12),
             "Original ignores the closest actor outside the first N registry entries and keeps the last qualifying prefix actor"
+        );
+    }
+
+    #[test]
+    fn tower_guard_runner_prefix_restores_owner_at_registry_position() {
+        let position = |x| WorldPoint3D { x, y: 0.0, z: 0.0 };
+        let registry_without_owner = [
+            (105, position(20.0)),
+            (108, position(5.0)),
+            (109, position(4.0)),
+        ];
+        let complete = tower_guard_complete_registry(registry_without_owner, (106, position(10.0)));
+
+        assert_eq!(
+            tower_guard_runner_from_registry_prefix(complete, 2, position(0.0), 100),
+            None,
+            "the tower guard occupies its Original registry slot, so the later Rust-only runner must remain outside the first-N prefix"
+        );
+    }
+
+    #[test]
+    fn tower_guard_runner_truncates_squared_distances_before_comparing() {
+        let position = |x| WorldPoint3D { x, y: 0.0, z: 0.0 };
+        let officer_distance = tower_guard_square_distance(position(0.0), position(10.04));
+
+        assert_eq!(officer_distance, 100);
+        assert_eq!(
+            tower_guard_runner_from_registry_prefix(
+                [(7, position(10.02))],
+                1,
+                position(0.0),
+                officer_distance,
+            ),
+            None,
+            "100.4004 and 100.8016 both truncate to ULONG 100, so strict less-than must reject the candidate"
         );
     }
 }
