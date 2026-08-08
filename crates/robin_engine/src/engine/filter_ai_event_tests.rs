@@ -5763,11 +5763,13 @@ fn script_native_state_effects_stabilize_before_adjacent_instruction() {
     // The orderless actor reports the no-animation sentinel, so ReturnToDuty's
     // GoTo takes the already-at-post gate (REACHPOINT) before the map-bounds
     // check can fail; the resulting already-facing turn completes immediately
-    // and Think(EVENT_DONE) is the final synchronous callback.
+    // and Think(EVENT_DONE) synchronously reaches the virtual enemy SetState
+    // tail. Original notifies FilterAIEvent(AISTATE_DEFAULT + 100) after that
+    // final state change, so the state callback is the last visible marker.
     assert_eq!(
         &npc_custom_values(&engine, default)[0..3],
-        &[5, 5, 1],
-        "Think(EVENT_DONE) closes the synchronous ReturnToDuty recursion and Default commits"
+        &[101, 101, 1],
+        "Think(EVENT_DONE) closes ReturnToDuty and the final Default state callback commits"
     );
 }
 
