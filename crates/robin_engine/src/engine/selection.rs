@@ -289,14 +289,13 @@ impl EngineInner {
         }
     }
 
-    /// Bulk-flip `disabled_actions_temp` on a specific PC or every
-    /// selected PC. `target_pc = None` fans out over the selection;
-    /// `Some(id)` targets a single PC.
+    /// Temporarily disable every action on a specific PC or every selected
+    /// PC. `target_pc = None` fans out over the selection; `Some(id)` targets
+    /// a single PC.
     pub(crate) fn apply_disable_all_actions_temp(
         &mut self,
         seat: usize,
         target_pc: Option<EntityId>,
-        disable: bool,
     ) {
         let targets: Vec<EntityId> = match target_pc {
             None => self.players.seats[seat].selection.clone(),
@@ -306,15 +305,65 @@ impl EngineInner {
             let Some(Entity::Pc(pc)) = self.get_entity_mut(id) else {
                 continue;
             };
-            if disable {
-                pc.pc.disable_all_actions_temp();
-            } else {
-                // Guarded on `!swordfighting && playable`; on the way out,
-                // restores `current_action` from `saved_action` if the saved
-                // slot has been re-enabled.
-                let is_swordfighting = !pc.human.opponents.is_empty();
-                pc.pc.enable_all_actions_temp(is_swordfighting);
-            }
+            pc.pc.disable_all_actions_temp();
+        }
+    }
+
+    /// Re-enable temporary actions on a specific PC or every selected PC.
+    pub(crate) fn apply_enable_all_actions_temp(
+        &mut self,
+        assets: &LevelAssets,
+        seat: usize,
+        target_pc: Option<EntityId>,
+    ) {
+        let targets: Vec<EntityId> = match target_pc {
+            None => self.players.seats[seat].selection.clone(),
+            Some(id) => vec![id],
+        };
+        for id in targets {
+            self.enable_pc_actions_temp(assets, seat, id);
+        }
+    }
+
+    /// Re-enable one PC's temporary action mask and synchronously forward a
+    /// saved authored action through Original's selected-PC action path.
+    pub(crate) fn enable_pc_actions_temp(
+        &mut self,
+        assets: &LevelAssets,
+        seat: usize,
+        pc_id: EntityId,
+    ) {
+        let (profile_idx, is_swordfighting, playable) = match self.get_entity(pc_id) {
+            Some(Entity::Pc(pc)) => (
+                pc.pc.profile_index,
+                !pc.human.opponents.is_empty(),
+                pc.pc.playable,
+            ),
+            _ => return,
+        };
+        if is_swordfighting || !playable {
+            return;
+        }
+        let actions = assets
+            .profile_manager
+            .get_character(profile_idx)
+            .unwrap_or_else(|| {
+                panic!("PC {pc_id:?} requires missing character profile {profile_idx:?}")
+            })
+            .actions;
+        let restore_action = self
+            .get_entity_mut(pc_id)
+            .and_then(Entity::pc_data_mut)
+            .and_then(|pc| pc.enable_all_actions_temp(is_swordfighting, &actions));
+
+        // `EnableAllActionsTemp` forwards MSG_SELECT_ACTION with this PC as
+        // the message target. `RHEngine::SelectAction` accepts that target
+        // only when it is selected, then applies the action to the complete
+        // selection (including unselect/preview side effects).
+        if let Some(action) = restore_action
+            && self.players.seats[seat].selection.contains(&pc_id)
+        {
+            self.set_pc_action_from_message(assets, seat, pc_id, action);
         }
     }
 

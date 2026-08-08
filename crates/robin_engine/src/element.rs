@@ -1478,39 +1478,37 @@ impl PcData {
 
     /// Gated on `!is_swordfighting && playable`. Inside the guard each
     /// temp-disabled slot is conditionally cleared, and if any cleared
-    /// slot's action matches `saved_action` (and the permanent mask is
-    /// also clear), `current_action` is restored from `saved_action`.
+    /// slot's authored action matches `saved_action` (and the permanent mask
+    /// is also clear), the saved action is returned for the engine to forward
+    /// through `MSG_SELECT_ACTION` semantics.
     /// The widget messaging side-effect is omitted — the HUD reads
     /// state directly.
     ///
     /// `is_swordfighting` is provided by the caller because the
     /// authoritative check (`HumanData::opponents.is_empty()`) lives on
     /// the human layer and we don't take the whole `Entity` here.
-    pub fn enable_all_actions_temp(&mut self, is_swordfighting: bool) {
+    pub fn enable_all_actions_temp(
+        &mut self,
+        is_swordfighting: bool,
+        actions: &[Action; crate::profiles::NUMBER_OF_PC_ACTIONS],
+    ) -> Option<Action> {
         if is_swordfighting || !self.playable {
-            return;
+            return None;
         }
-        let mut restore_index: Option<usize> = None;
+        let mut restore_action = None;
         for (idx, slot) in self.disabled_actions_temp.iter_mut().enumerate() {
             if *slot {
                 *slot = false;
                 let permanent_disabled = self.disabled_actions.get(idx).copied().unwrap_or(false);
                 if !permanent_disabled
-                    && self.saved_action != Action::default()
-                    && restore_index.is_none()
+                    && actions.get(idx).copied() == Some(self.saved_action)
+                    && restore_action.is_none()
                 {
-                    // Resolve the index of the slot whose action
-                    // matches `saved_action`; the post-loop step
-                    // restores `current_action` from it.
-                    restore_index = Some(idx);
+                    restore_action = Some(self.saved_action);
                 }
             }
         }
-        if restore_index.is_some() {
-            // Restore the saved action directly; the HUD re-derives
-            // the highlighted slot each frame.
-            self.current_action = self.saved_action;
-        }
+        restore_action
     }
 }
 

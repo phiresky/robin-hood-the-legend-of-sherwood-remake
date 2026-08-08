@@ -2515,6 +2515,18 @@ mod tests {
         })
     }
 
+    fn action_test_assets(actions: [crate::profiles::Action; 3]) -> LevelAssets {
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles.characters.push(crate::profiles::CharacterProfile {
+            actions,
+            ..Default::default()
+        });
+        LevelAssets {
+            profile_manager: std::sync::Arc::new(profiles),
+            ..LevelAssets::new()
+        }
+    }
+
     fn make_civilian(pos: WorldPoint3D) -> Entity {
         let mut element = ElementData {
             kind: ElementKind::ActorCivilian,
@@ -4956,6 +4968,7 @@ mod tests {
         use crate::profiles::Action;
 
         let sim = crate::sim_rng::test_context();
+        let assets = action_test_assets([Action::Bow, Action::Apple, Action::Purse]);
         let mut engine = make_engine();
         let pc = engine.add_entity(make_pc(
             WorldPoint3D {
@@ -4981,7 +4994,7 @@ mod tests {
             pc_data.disabled_actions_temp = vec![false; 3];
         }
 
-        assert!(engine.enter_swordfight(&sim, &LevelAssets::default(), pc, opponent, false,));
+        assert!(engine.enter_swordfight(&sim, &assets, pc, opponent, false,));
         {
             let pc_data = engine.get_entity(pc).unwrap().pc_data().unwrap();
             assert_eq!(pc_data.current_action, Action::NoAction);
@@ -4989,17 +5002,18 @@ mod tests {
             assert_eq!(pc_data.disabled_actions_temp, vec![true; 3]);
         }
 
-        engine.quit_swordfight(&sim, &LevelAssets::default(), pc);
+        engine.quit_swordfight(&sim, &assets, pc);
         let pc_data = engine.get_entity(pc).unwrap().pc_data().unwrap();
         assert_eq!(pc_data.current_action, Action::NoAction);
         assert_eq!(pc_data.disabled_actions_temp, vec![false; 3]);
     }
 
     #[test]
-    fn unselected_pc_entering_swordfight_restores_armed_action_on_quit() {
+    fn unselected_pc_entering_swordfight_does_not_receive_saved_action_message() {
         use crate::profiles::Action;
 
         let sim = crate::sim_rng::test_context();
+        let assets = action_test_assets([Action::Bow, Action::Apple, Action::Purse]);
         let mut engine = make_engine();
         let pc = engine.add_entity(make_pc(
             WorldPoint3D {
@@ -5024,7 +5038,7 @@ mod tests {
             pc_data.disabled_actions_temp = vec![false; 3];
         }
 
-        assert!(engine.enter_swordfight(&sim, &LevelAssets::default(), pc, opponent, false,));
+        assert!(engine.enter_swordfight(&sim, &assets, pc, opponent, false,));
         {
             let pc_data = engine.get_entity(pc).unwrap().pc_data().unwrap();
             assert_eq!(pc_data.current_action, Action::NoAction);
@@ -5032,10 +5046,87 @@ mod tests {
             assert_eq!(pc_data.disabled_actions_temp, vec![true; 3]);
         }
 
-        engine.quit_swordfight(&sim, &LevelAssets::default(), pc);
+        engine.quit_swordfight(&sim, &assets, pc);
+        let pc_data = engine.get_entity(pc).unwrap().pc_data().unwrap();
+        assert_eq!(pc_data.current_action, Action::NoAction);
+        assert_eq!(pc_data.disabled_actions_temp, vec![false; 3]);
+    }
+
+    #[test]
+    fn enabling_temp_actions_restores_matching_slot_through_selected_action_path() {
+        use crate::profiles::Action;
+
+        let assets = action_test_assets([Action::Bow, Action::Apple, Action::Purse]);
+        let mut engine = make_engine();
+        let pc = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+        let companion = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+        engine.players.seats[0].selection = vec![pc, companion];
+        {
+            let pc_data = engine.get_entity_mut(pc).unwrap().pc_data_mut().unwrap();
+            pc_data.current_action = Action::NoAction;
+            pc_data.saved_action = Action::Purse;
+            pc_data.disabled_actions = vec![false; 3];
+            pc_data.disabled_actions_temp = vec![true; 3];
+        }
+        engine
+            .get_entity_mut(companion)
+            .unwrap()
+            .pc_data_mut()
+            .unwrap()
+            .current_action = Action::Bow;
+
+        engine.enable_pc_actions_temp(&assets, 0, pc);
+
         let pc_data = engine.get_entity(pc).unwrap().pc_data().unwrap();
         assert_eq!(pc_data.current_action, Action::Purse);
         assert_eq!(pc_data.disabled_actions_temp, vec![false; 3]);
+        assert_eq!(
+            engine
+                .get_entity(companion)
+                .unwrap()
+                .pc_data()
+                .unwrap()
+                .current_action,
+            Action::Purse,
+            "MSG_SELECT_ACTION applies the restored action to the full selection"
+        );
+        assert_eq!(engine.players.seats[0].selected_action, Action::Purse);
+        assert!(
+            engine
+                .feedback
+                .pending_side_effects
+                .invalidate_trajectory_preview
+        );
+    }
+
+    #[test]
+    fn enabling_temp_actions_does_not_restore_action_absent_from_profile_slots() {
+        use crate::profiles::Action;
+
+        let assets = action_test_assets([Action::Bow, Action::Apple, Action::Purse]);
+        let mut engine = make_engine();
+        let pc = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+        engine.players.seats[0].selection.push(pc);
+        {
+            let pc_data = engine.get_entity_mut(pc).unwrap().pc_data_mut().unwrap();
+            pc_data.current_action = Action::NoAction;
+            pc_data.saved_action = Action::Stone;
+            pc_data.disabled_actions = vec![false; 3];
+            pc_data.disabled_actions_temp = vec![true; 3];
+        }
+
+        engine.enable_pc_actions_temp(&assets, 0, pc);
+
+        let pc_data = engine.get_entity(pc).unwrap().pc_data().unwrap();
+        assert_eq!(pc_data.current_action, Action::NoAction);
+        assert_eq!(pc_data.disabled_actions_temp, vec![false; 3]);
+        assert_eq!(engine.players.seats[0].selected_action, Action::NoAction);
+        assert!(
+            !engine
+                .feedback
+                .pending_side_effects
+                .invalidate_trajectory_preview
+        );
     }
 
     #[test]

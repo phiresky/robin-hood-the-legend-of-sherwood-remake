@@ -122,11 +122,16 @@ impl EngineInner {
             return true;
         }
 
-        if let Some(entity) = self.world.entities.get_mut(entity_id)
-            && let Some(pc) = entity.pc_data_mut()
-        {
-            pc.melee_target = None;
-            pc.enable_all_actions_temp(false);
+        if matches!(self.world.entities.get(entity_id), Some(Entity::Pc(_))) {
+            if let Some(pc) = self
+                .world
+                .entities
+                .get_mut(entity_id)
+                .and_then(Entity::pc_data_mut)
+            {
+                pc.melee_target = None;
+            }
+            self.enable_pc_actions_temp(assets, 0, entity_id);
         } else if matches!(self.world.entities.get(entity_id), Some(Entity::Soldier(_))) {
             self.dispatch_synchronous_ai_think_preserving_detection_fifo(
                 sim,
@@ -385,10 +390,8 @@ impl EngineInner {
             // stimulus to the `Command::QuitSwordfight` dispatcher left the
             // soldier in its pre-quit substate while the falling-edge
             // OUTOFVIEW arrived, which changed how that event was routed.
-            if let Some(entity) = self.world.entities.get_mut(entity_id)
-                && let Some(pc) = entity.pc_data_mut()
-            {
-                pc.enable_all_actions_temp(false);
+            if matches!(self.world.entities.get(entity_id), Some(Entity::Pc(_))) {
+                self.enable_pc_actions_temp(assets, 0, entity_id);
             } else if matches!(self.world.entities.get(entity_id), Some(Entity::Soldier(_))) {
                 self.dispatch_synchronous_ai_think_preserving_detection_fifo(
                     sim,
@@ -1249,20 +1252,18 @@ impl EngineInner {
                 .map(|h| h.opponents.len())
                 .unwrap_or(0);
             if opp_count == 0 {
-                if let Some(entity) = self.world.entities.get_mut(*opp_id) {
-                    // Re-enable PC actions and clear melee target
-                    // for orphaned PCs.  `opp_count == 0` means
-                    // this PC's opponents list is empty, so
-                    // `is_swordfighting() == false`.
-                    // `enable_all_actions_temp` honours the
-                    // playable guard and restores `current_action`
-                    // from `saved_action` so the PC re-picks the
-                    // action it had before entering the
-                    // swordfight.
-                    if let Some(pc) = entity.pc_data_mut() {
+                let opponent_is_pc =
+                    matches!(self.world.entities.get(*opp_id), Some(Entity::Pc(_)));
+                if opponent_is_pc {
+                    if let Some(pc) = self
+                        .world
+                        .entities
+                        .get_mut(*opp_id)
+                        .and_then(Entity::pc_data_mut)
+                    {
                         pc.melee_target = None;
-                        pc.enable_all_actions_temp(false);
                     }
+                    self.enable_pc_actions_temp(assets, 0, *opp_id);
                 }
                 // When the opponent list becomes empty and the entity
                 // is a soldier, pump EventQuitSwordfight through
@@ -1307,6 +1308,7 @@ impl EngineInner {
         // Always clear the entity's own opponent list. Relationship
         // cleanup deliberately leaves its current action and sequence
         // untouched.
+        let mut enable_self_actions = false;
         if let Some(entity) = self.world.entities.get_mut(entity_id) {
             if let Some(human) = entity.human_data_mut() {
                 human.opponents.clear();
@@ -1314,13 +1316,11 @@ impl EngineInner {
             }
             if !entity_is_dead && let Some(pc) = entity.pc_data_mut() {
                 pc.melee_target = None;
-                // `human.opponents` was cleared just above so
-                // `is_swordfighting() == false`;
-                // `enable_all_actions_temp` restores
-                // `current_action` from `saved_action` if the
-                // saved slot is still permitted.
-                pc.enable_all_actions_temp(false);
+                enable_self_actions = true;
             }
+        }
+        if enable_self_actions {
+            self.enable_pc_actions_temp(assets, 0, entity_id);
         }
 
         // When a non-dead soldier voluntarily quits a swordfight,

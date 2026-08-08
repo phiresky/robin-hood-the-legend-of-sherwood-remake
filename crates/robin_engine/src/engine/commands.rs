@@ -2656,7 +2656,7 @@ impl EngineInner {
             // recording; playback rebuilds it from the semantic
             // `ScrollRead` step and current engine state.
             if self.is_pc_climbing_or_in_building(actor) {
-                self.apply_disable_all_actions_temp(0, Some(actor), true);
+                self.apply_disable_all_actions_temp(0, Some(actor));
             }
             self.stop_recording_macro();
             return;

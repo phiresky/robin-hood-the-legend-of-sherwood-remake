@@ -2625,10 +2625,10 @@ impl EngineInner {
                     MessageType::Pc(crate::messenger::PcMessage::DisableAllActionsTemp, pc) => {
                         // Tick messenger drain: ambient single-seat
                         // semantics; LOCAL seat for now.
-                        self.apply_disable_all_actions_temp(0, pc, true);
+                        self.apply_disable_all_actions_temp(0, pc);
                     }
                     MessageType::Pc(crate::messenger::PcMessage::EnableAllActionsTemp, pc) => {
-                        self.apply_disable_all_actions_temp(0, pc, false);
+                        self.apply_enable_all_actions_temp(assets, 0, pc);
                     }
                     // Other messages are consumed by downstream systems
                     // (UI layer, mission flow). Re-enqueue so those
