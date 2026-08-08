@@ -3274,7 +3274,7 @@ impl EngineInner {
                         })),
                         pc_pos,
                         resolved_jump_dest,
-                        false,
+                        true,
                         jump_underlying_sector.map(|(sector, _)| u16::from(sector)),
                     )
                     .and_then(crate::jump_line::JumpLineIndex::new);

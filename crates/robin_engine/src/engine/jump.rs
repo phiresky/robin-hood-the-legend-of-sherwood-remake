@@ -2287,6 +2287,36 @@ mod tests {
     }
 
     #[test]
+    fn nearest_jumpable_preview_skips_posture_gate_but_execution_applies_it() {
+        let (grid, doors) = make_jumpable_fixture(true);
+        let upright = pc_auth(true, Posture::Upright);
+        let args = (
+            &grid,
+            doors.as_slice(),
+            0,
+            0,
+            &upright,
+            MapPoint::new(32.0, 0.0),
+            MapPoint::new(32.0, 64.0),
+        );
+
+        assert_eq!(
+            get_nearest_jumpable_jump_line(
+                args.0, args.1, args.2, args.3, args.4, args.5, args.6, false, None,
+            ),
+            Some(0),
+            "cursor preview ignores the helper posture gate"
+        );
+        assert_eq!(
+            get_nearest_jumpable_jump_line(
+                args.0, args.1, args.2, args.3, args.4, args.5, args.6, true, None,
+            ),
+            None,
+            "movement execution applies the helper posture gate"
+        );
+    }
+
+    #[test]
     fn nearest_jumpable_rejects_unrelated_clicked_jump_sector() {
         let (grid, doors) = make_jumpable_fixture(false);
         let pc = pc_auth(true, Posture::Upright);

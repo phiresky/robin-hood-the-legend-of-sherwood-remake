@@ -1,0 +1,9 @@
+{
+  "id": "154",
+  "subject": "Apply jump-helper posture eligibility during movement execution",
+  "description": "Schema-14 Savegame_linux2 Profile_002 Savegame_015 replay-010 was exact through frame 15412, then Pc174 began its jump-line approach facing direction 13 toward (1142,1458) instead of Original direction 2. The move was direct: no pathfinder request occurred, and PostProcessPathToLine correctly projected onto the source line Rust had selected. Original RHEngine::PerformMove calls RHSectorJump::IsJumpable without its fourth argument, thereby using the source default bTestPosture=true for actual movement execution. Rust reused the cursor-preview policy and passed false, admitting a helper-required line that an upright PC cannot execute and selecting the wrong source-line geometry. Group-move execution now passes true; cursor and preview callers remain false. A focused regression verifies that the same helper-required line is previewable for an upright PC but rejected for execution. All four nearest-jump-line tests pass, cargo fmt and the combined optimized parity build are clean. The representative, linux2 Profile_002 Savegame_002 replay-015, Nescafe Profile_001 Savegame_001 replay-013, and both task-36 controls match exact EOF. The Task153 representative advances to an independent frame-2147 EnterSwordfight frontier, while the Task155 representative advances beyond frame 15133 to an independent frame-15171 combat RNG frontier.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task152-raise-shield-frontier"
+}
