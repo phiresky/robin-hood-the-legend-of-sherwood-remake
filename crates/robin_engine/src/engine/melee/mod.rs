@@ -4952,6 +4952,93 @@ mod tests {
     }
 
     #[test]
+    fn selected_pc_entering_swordfight_does_not_restore_armed_action_on_quit() {
+        use crate::profiles::Action;
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let pc = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let opponent = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        engine.players.seats[0].selection.push(pc);
+        {
+            let pc_data = engine.get_entity_mut(pc).unwrap().pc_data_mut().unwrap();
+            pc_data.current_action = Action::Purse;
+            pc_data.disabled_actions = vec![false; 3];
+            pc_data.disabled_actions_temp = vec![false; 3];
+        }
+
+        assert!(engine.enter_swordfight(&sim, &LevelAssets::default(), pc, opponent, false,));
+        {
+            let pc_data = engine.get_entity(pc).unwrap().pc_data().unwrap();
+            assert_eq!(pc_data.current_action, Action::NoAction);
+            assert_eq!(pc_data.saved_action, Action::NoAction);
+            assert_eq!(pc_data.disabled_actions_temp, vec![true; 3]);
+        }
+
+        engine.quit_swordfight(&sim, &LevelAssets::default(), pc);
+        let pc_data = engine.get_entity(pc).unwrap().pc_data().unwrap();
+        assert_eq!(pc_data.current_action, Action::NoAction);
+        assert_eq!(pc_data.disabled_actions_temp, vec![false; 3]);
+    }
+
+    #[test]
+    fn unselected_pc_entering_swordfight_restores_armed_action_on_quit() {
+        use crate::profiles::Action;
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let pc = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let opponent = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        {
+            let pc_data = engine.get_entity_mut(pc).unwrap().pc_data_mut().unwrap();
+            pc_data.current_action = Action::Purse;
+            pc_data.disabled_actions = vec![false; 3];
+            pc_data.disabled_actions_temp = vec![false; 3];
+        }
+
+        assert!(engine.enter_swordfight(&sim, &LevelAssets::default(), pc, opponent, false,));
+        {
+            let pc_data = engine.get_entity(pc).unwrap().pc_data().unwrap();
+            assert_eq!(pc_data.current_action, Action::NoAction);
+            assert_eq!(pc_data.saved_action, Action::Purse);
+            assert_eq!(pc_data.disabled_actions_temp, vec![true; 3]);
+        }
+
+        engine.quit_swordfight(&sim, &LevelAssets::default(), pc);
+        let pc_data = engine.get_entity(pc).unwrap().pc_data().unwrap();
+        assert_eq!(pc_data.current_action, Action::Purse);
+        assert_eq!(pc_data.disabled_actions_temp, vec![false; 3]);
+    }
+
+    #[test]
     fn preparing_swordfight_orders_done_enter_then_queues_reciprocal() {
         use crate::ai::{AiState, LogLineType, StimulusType, Substate};
         use crate::profiles::{CharacterProfile, HtHWeaponProfile, ProfileManager, SoldierProfile};

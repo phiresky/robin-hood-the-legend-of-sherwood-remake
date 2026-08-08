@@ -1164,6 +1164,26 @@ impl EngineInner {
         // `EnterSwordFight` mutates the relationship and initiator PC UI.
         // The ENTER_SWORDFIGHT element that called us owns its pose
         // transition; the reciprocal element does the same for the opponent.
+        // Original first forwards `MSG_SELECT_ACTION(NO_ACTION)`. The engine's
+        // SelectAction handler only accepts that message when this PC is
+        // selected, and DisableAllActionsTemp then saves the resulting action.
+        // Preserve that ordering so a selected PC does not resurrect the
+        // previously armed action when the fight ends.
+        let initiator_is_selected = self.players.seats[0].selection.contains(&initiator);
+        if initiator_is_selected
+            && self
+                .world
+                .entities
+                .get(initiator)
+                .is_some_and(Entity::is_pc)
+        {
+            self.set_pc_action_from_message(
+                assets,
+                0,
+                initiator,
+                crate::profiles::Action::NoAction,
+            );
+        }
         if let Some(pc) = self
             .world
             .entities
