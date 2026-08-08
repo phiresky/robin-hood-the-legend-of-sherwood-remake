@@ -603,12 +603,21 @@ impl<'a> PassDoorLaunchContext<'a> {
                     *flags,
                     *direction,
                     *action,
+                    element.posture_after_transition,
+                    element.action_state_after_transition,
                     element.legacy_v48.is_some(),
                 )),
                 _ => None,
             });
-        let (gate_id, flags, saved_direction, authored_action, restored_from_v48) =
-            movement.unwrap_or_else(|| {
+        let (
+            gate_id,
+            flags,
+            saved_direction,
+            authored_action,
+            posture_after_transition,
+            action_state_after_transition,
+            restored_from_v48,
+        ) = movement.unwrap_or_else(|| {
             panic!(
                 "PassDoor sequence element {seq_id:?}/{elem_idx} for {entity_id:?} is not movement data"
             )
@@ -689,7 +698,15 @@ impl<'a> PassDoorLaunchContext<'a> {
             return PassDoorLaunchBarrier::SkipSplice;
         }
 
-        let mut built = self.build_door_pass(entity_id, door_index, direct, flags, authored_action);
+        let mut built = self.build_door_pass(
+            entity_id,
+            door_index,
+            direct,
+            flags,
+            authored_action,
+            posture_after_transition,
+            action_state_after_transition,
+        );
         // A live PassDoor writes its traversal direction onto the movement
         // element before the actor crosses the gate. That field survives a
         // v48 save, while the actor sector may already be the destination
@@ -803,6 +820,8 @@ impl PassDoorLaunchContext<'_> {
         direct: bool,
         flags: crate::sequence::MoveFlags,
         authored_action: OrderType,
+        posture_after_transition: Posture,
+        action_state_after_transition: crate::element::ActionState,
     ) -> BuiltDoorPass {
         // Snapshot canonical door geometry and type.
         let (door_type, pt_mid, pt_in, pt_out, sector_in, door_sector_out) = {
@@ -826,14 +845,7 @@ impl PassDoorLaunchContext<'_> {
             .unwrap_or_else(|| panic!("PassDoor build references missing owner {entity_id:?}"));
         let is_pc = entity.is_pc();
         let is_soldier = entity.is_soldier();
-        let posture = entity.element_data().posture;
-        let action_state = Some(
-            entity
-                .actor_data()
-                .unwrap_or_else(|| panic!("PassDoor owner {entity_id:?} is not an actor"))
-                .action_state,
-        );
-        let is_carrying = posture == Posture::CarryingOnShoulders;
+        let is_carrying = posture_after_transition == Posture::CarryingOnShoulders;
 
         // Soldier attentive state: the soldier AI's persistent attentive
         // flag (set/cleared by enter/leave-attentive transitions), not a
@@ -841,34 +853,25 @@ impl PassDoorLaunchContext<'_> {
         // soldiers use the alerted ladder climb transition animations.
         let is_attentive = is_soldier && entity.enemy_ai().is_some_and(|enemy| enemy.attentive);
 
-        // Choose base movement animation. Original
-        // `DetermineMovementAnimation` starts from the movement element's
-        // authored action; FAST is an independent path flag and does not
-        // imply that an AI-authored `RunningUpright` PassDoor should walk.
+        // Choose base movement animation. Original Human/PC
+        // `DetermineMovementAnimation` switches on the posture/action state
+        // stamped onto the movement element by Actor::Instruct, not the live
+        // actor state. It starts from the authored action; FAST remains an
+        // independent path flag and does not imply that an AI-authored
+        // `RunningUpright` PassDoor should walk.
         // Door-pass uses the `WalkingWith*` / `RunningWith*` variants so
         // the stairs translator routes them through the sword/shield
         // branch instead of the plain walk/run branch.
         let is_fast = flags.contains(crate::sequence::MoveFlags::FAST);
         let mut action = if is_carrying {
             OrderType::WalkingCarryingOnShoulders
-        } else if matches!(
-            action_state,
-            Some(crate::element::ActionState::WaitingSword)
-                | Some(crate::element::ActionState::MovingSword)
-                | Some(crate::element::ActionState::ParryingSword)
-                | Some(crate::element::ActionState::ParryingSwordLow)
-                | Some(crate::element::ActionState::Menacing)
-        ) {
+        } else if action_state_after_transition.is_sword() {
             if is_fast {
                 OrderType::RunningWithSword
             } else {
                 OrderType::WalkingWithSword
             }
-        } else if matches!(
-            action_state,
-            Some(crate::element::ActionState::HoldingShield)
-                | Some(crate::element::ActionState::MovingShield)
-        ) {
+        } else if is_pc && action_state_after_transition.is_shield() {
             // No running-with-shield variant — shield posture is
             // always a walk regardless of the fast flag.
             OrderType::WalkingWithShield
@@ -915,7 +918,7 @@ impl PassDoorLaunchContext<'_> {
             action = super::movement::determine_lift_movement_animation_for(
                 entity,
                 self.fast_grid,
-                entity.element_data().posture,
+                posture_after_transition,
                 action,
                 destination,
             );
@@ -1948,6 +1951,38 @@ mod tests {
         doors: &[crate::gate::Door],
         owner: EntityId,
     ) -> (PassDoorLaunchBarrier, crate::sequence::SequenceId) {
+        let (posture_after_transition, action_state_after_transition) = engine
+            .world
+            .entities
+            .get(owner)
+            .map(|entity| {
+                (
+                    entity.element_data().posture,
+                    entity.actor_data().unwrap().action_state,
+                )
+            })
+            .unwrap();
+        dispatch_pass_with_transition_state(
+            engine,
+            doors,
+            owner,
+            OrderType::WalkingUpright,
+            crate::sequence::MoveFlags::empty(),
+            posture_after_transition,
+            action_state_after_transition,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_pass_with_transition_state(
+        engine: &mut EngineInner,
+        doors: &[crate::gate::Door],
+        owner: EntityId,
+        authored_action: OrderType,
+        flags: crate::sequence::MoveFlags,
+        posture_after_transition: Posture,
+        action_state_after_transition: crate::element::ActionState,
+    ) -> (PassDoorLaunchBarrier, crate::sequence::SequenceId) {
         for sector_number in doors
             .iter()
             .flat_map(|door| [door.sector_out, door.sector_in])
@@ -1987,12 +2022,20 @@ mod tests {
             1,
             crate::element::Command::PassDoor,
             Some(owner),
-            OrderType::WalkingUpright,
+            authored_action,
         );
-        let SequenceElementData::Movement { gate_id, .. } = &mut element.data else {
+        element.posture_after_transition = posture_after_transition;
+        element.action_state_after_transition = action_state_after_transition;
+        let SequenceElementData::Movement {
+            gate_id,
+            flags: element_flags,
+            ..
+        } = &mut element.data
+        else {
             unreachable!()
         };
         *gate_id = Some(crate::gate::DoorIndex(0));
+        *element_flags = flags;
         let seq_id = engine.orders.sequence_manager.launch_element(element);
         let barrier = PassDoorLaunchContext::new(
             doors,
@@ -2214,6 +2257,54 @@ mod tests {
             });
             assert_eq!(translated_exit, Some(expected_exit));
         }
+    }
+
+    #[test]
+    fn direct_pc_pass_uses_stamped_moving_fast_sword_state() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_pc(7));
+        assert_eq!(
+            engine
+                .world
+                .entities
+                .get(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .action_state,
+            crate::element::ActionState::Waiting,
+            "the live state deliberately differs from the transition stamp"
+        );
+        let door = crate::gate::Door {
+            door_type: DoorType::Building,
+            ..default_door()
+        };
+
+        let (barrier, seq_id) = dispatch_pass_with_transition_state(
+            &mut engine,
+            &[door],
+            owner,
+            OrderType::RunningUpright,
+            crate::sequence::MoveFlags::FAST,
+            Posture::Upright,
+            crate::element::ActionState::MovingFastSword,
+        );
+
+        assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap();
+        let SequenceElementData::Movement { action, .. } = &element.data else {
+            unreachable!()
+        };
+        assert_eq!(*action, OrderType::RunningWithSword);
+        assert_eq!(
+            element.current_order().map(|order| order.order_type),
+            Some(OrderType::RunningWithSword),
+            "the first direct-door rail must retain the stamped fast sword movement"
+        );
     }
 
     #[test]
