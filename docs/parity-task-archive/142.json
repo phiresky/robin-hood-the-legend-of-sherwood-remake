@@ -1,0 +1,9 @@
+{
+  "id": "142",
+  "subject": "Retire stale nicouzouf frame-712 SeekPointSelection evidence",
+  "description": "The archived nicouzouf Profile_001 Savegame_065 replay-001 reported a Soldier 54 anti-collision divergence at frame 712 and initially appeared to implicate the swordfighter repulsive-point override. Repeated current-Original captures used the identical 192959-byte save (SHA-256 26ce133475e4914d8339c4d6906169dae02ef2ad6882802ccbd55a78d17c54b6), random-input seed 9001, libc RNG seed 1, and command stream. The current Original and archived capture remain bit-exact through frame 485, then first disagree at frame 486 on Soldier 54 despite having no command at that frame. The archive records movement (-4.4724731445, 2.2354125977), increment (-0.4348705709, 0.9004929066), and position (641.48046875, 471.98306274), while the fresh current Original records movement (-4.2122192383, 2.6939086914), increment (-0.4395414889, 0.8982222676), and position (641.74072266, 472.44155884). The resulting trajectories no longer share the alleged frame-712 state, so that later family is not reproducible against the current Original source and must not motivate a Rust workaround. The current debug Rust parity runner matched every recorded frame in the fresh 685-frame current-Original trace through exact EOF. Temporary Original instrumentation and the private diagnostic build/sysroot were removed; the pre-existing original-code/RHelement.cpp tracing change was preserved. The archived corpus trace should be retired and recaptured before it is included in a future full-universe sweep.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task116-attentive-frontier"
+}
