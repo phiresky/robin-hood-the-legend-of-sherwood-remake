@@ -693,6 +693,19 @@ impl EngineInner {
 
         let elevation_prune = (self_pos.z - principal_pos.z).abs() > MAX_ELEVATION_SWORDFIGHT
             && self_sector != principal_sector;
+        // Original EvaluateSwordfight tears down the relationship and returns
+        // immediately when the fighters are on incompatible elevations.  In
+        // particular, it never reaches the later visibility query.
+        if elevation_prune {
+            Self::remove_opponent(&mut self.world.entities, entity_id, first_principal);
+            Self::remove_opponent(&mut self.world.entities, first_principal, entity_id);
+            self.recompute_relative_fighting_ability(entity_id, assets);
+            self.recompute_relative_fighting_ability(first_principal, assets);
+            self.evaluate_opponents(sim, assets, entity_id);
+            self.evaluate_opponents(sim, assets, first_principal);
+            return;
+        }
+
         let dx = self_pos.x - principal_pos.x;
         let dy = self_pos.y - principal_pos.y;
         let dz = self_pos.z - principal_pos.z;
@@ -724,7 +737,7 @@ impl EngineInner {
                 crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
             );
         }
-        if elevation_prune || range_or_los_prune {
+        if range_or_los_prune {
             Self::remove_opponent(&mut self.world.entities, entity_id, first_principal);
             Self::remove_opponent(&mut self.world.entities, first_principal, entity_id);
             self.recompute_relative_fighting_ability(entity_id, assets);

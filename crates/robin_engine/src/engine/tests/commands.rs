@@ -844,6 +844,83 @@ fn swordfight_los_ignores_crossing_motion_line() {
 }
 
 #[test]
+fn swordfight_elevation_prune_skips_visibility_and_tears_down_both_fighters() {
+    use crate::coordinates::WorldPoint3D;
+    use crate::element::{ActorPc, Command, ElementData, ElementKind, Entity, Posture};
+    use crate::element_kinds::ActionState;
+
+    let mut engine = EngineInner::new();
+    let assets = swordfight_test_assets();
+    let make_fighter = |position, sector| {
+        let mut element = ElementData {
+            kind: ElementKind::ActorPc,
+            posture: Posture::Upright,
+            ..Default::default()
+        };
+        element.set_position(position);
+        element.set_sector(crate::position_interface::SectorHandle::new(sector));
+        Entity::Pc(ActorPc {
+            element,
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        })
+    };
+    let owner = engine.add_entity(make_fighter(
+        WorldPoint3D {
+            x: 100.0,
+            y: 100.0,
+            z: 50.0,
+        },
+        1,
+    ));
+    let opponent = engine.add_entity(make_fighter(
+        WorldPoint3D {
+            x: 110.0,
+            y: 100.0,
+            z: 0.0,
+        },
+        2,
+    ));
+    for (fighter, other) in [(owner, opponent), (opponent, owner)] {
+        let entity = engine.get_entity_mut(fighter).expect("fighter exists");
+        entity
+            .actor_data_mut()
+            .expect("fighter is an actor")
+            .action_state = ActionState::WaitingSword;
+        let human = entity.human_data_mut().expect("fighter is human");
+        human.opponents.push(other);
+        human.relative_fighting_ability = 77;
+    }
+
+    crate::sight_obstacle::begin_parity_visibility_capture();
+    engine.tick_waiting_sword_execute_for(&crate::sim_rng::test_context(), &assets, owner);
+    let visibility_queries = crate::sight_obstacle::take_parity_visibility_capture();
+
+    assert!(
+        visibility_queries.is_empty(),
+        "elevation rejection must return before the LOS query"
+    );
+    for fighter in [owner, opponent] {
+        let human = engine
+            .get_entity(fighter)
+            .and_then(Entity::human_data)
+            .expect("fighter remains human");
+        assert!(human.opponents.is_empty());
+        assert_eq!(human.relative_fighting_ability, 50);
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(fighter, |command| {
+                    command == Command::QuitSwordfight
+                }),
+            "both fighters must evaluate their empty opponent lists"
+        );
+    }
+}
+
+#[test]
 fn smalltalk_strike_does_not_transfer_initiative_immediately() {
     use crate::coordinates::WorldPoint3D;
     use crate::element::{ActorSoldier, Command, ElementData, ElementKind, Entity, Posture};
