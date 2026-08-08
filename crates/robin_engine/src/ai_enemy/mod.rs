@@ -500,7 +500,12 @@ impl EnemyAi {
 
     /// High-pride soldiers stand back when lower-pride allies are
     /// already engaging the same target.
-    pub fn is_too_proud_to_attack(&mut self, ctx: &AiContext, tick: &AiPerTickData) -> bool {
+    pub fn is_too_proud_to_attack(
+        &mut self,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+        target_multiplicity: Option<&std::collections::BTreeMap<HumanHandle, u32>>,
+    ) -> bool {
         if self.soldier_profile_pride == 0 {
             return false;
         }
@@ -511,10 +516,11 @@ impl EnemyAi {
         // Refresh primary target with the unoccupied-strongly-preferred
         // mode and write it back so downstream BattleDecisions arms
         // see the refreshed value.
-        let new_target = self.get_new_primary_target(
+        let new_target = self.get_new_primary_target_with_mult_override(
             PrimaryTargetFlags::UNOCCUPIED_STRONGLY_PREFERRED,
             ctx,
             tick,
+            target_multiplicity,
         );
         self.base.primary_target = new_target;
         if new_target == 0 {
@@ -4169,12 +4175,10 @@ impl EnemyAi {
 
     /// Variant of [`Self::get_new_primary_target`] that lets the caller
     /// substitute a locally-rebuilt `primary_target_multiplicity` map
-    /// for the global engine snapshot. ReconsiderSwordfightObservation
+    /// for the owner-ordered shared scratch. ReconsiderSwordfightObservation
     /// clears multiplicity on its rebuilt `list_them` and re-bumps from
     /// swordfighting allies in `list_us` before calling
-    /// `get_new_primary_target(UNOCCUPIED_STRONGLY_PREFERRED)` — the
-    /// global tick map is broader (every alerted enemy soldier counts),
-    /// so a local override is needed to mirror the scoring exactly.
+    /// `get_new_primary_target(UNOCCUPIED_STRONGLY_PREFERRED)`.
     pub fn get_new_primary_target_with_mult_override(
         &mut self,
         flags: PrimaryTargetFlags,
@@ -6013,7 +6017,67 @@ mod tests {
             },
         ];
 
-        assert!(ai.is_too_proud_to_attack(&ctx, &tick));
+        assert!(ai.is_too_proud_to_attack(&ctx, &tick, None));
         assert_eq!(ai.base.primary_target, 107);
+    }
+
+    #[test]
+    fn too_proud_reselection_observes_live_battle_decision_multiplicity() {
+        // Task 146 / Task 61 frame 471: BattleDecisions resets its personal
+        // Them-list, adds the nearby friends' claims, and only then calls
+        // IsTooProudToAttack. Its strongly-unoccupied re-pick must read those
+        // within-call mutations, not the owner-start tick snapshot.
+        let me_position = test_position(0.0, 0.0);
+        let nearer_position = test_position(300.0, 0.0);
+        let unoccupied_position = test_position(350.0, 0.0);
+
+        let mut ai = EnemyAi::new(114);
+        ai.soldier_profile_pride = 1;
+        ai.base.current_substate = Substate::AttackingObserve;
+        ai.list_them = vec![171, 174];
+
+        let mut nearer_view = soldier_view(nearer_position);
+        nearer_view.is_pc = true;
+        nearer_view.kind = EntityKind::Pc;
+        let mut unoccupied_view = soldier_view(unoccupied_position);
+        unoccupied_view.is_pc = true;
+        unoccupied_view.kind = EntityKind::Pc;
+        let mut views = AiEntityViewMap::new();
+        views.insert(171, nearer_view);
+        views.insert(174, unoccupied_view);
+        let ctx = AiContext {
+            position: me_position,
+            camp: Camp::Lacklandists,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        let mut tick = AiPerTickData::stub();
+        tick.primary_target_multiplicity = vec![(171, 0), (174, 1)];
+        tick.fighter_registry = vec![
+            FighterSnapshot {
+                handle: 114,
+                position: me_position,
+                sword_range_maximal: 50,
+                ..FighterSnapshot::default()
+            },
+            FighterSnapshot {
+                handle: 171,
+                position: nearer_position,
+                is_pc: true,
+                ..FighterSnapshot::default()
+            },
+            FighterSnapshot {
+                handle: 174,
+                position: unoccupied_position,
+                is_pc: true,
+                ..FighterSnapshot::default()
+            },
+        ];
+
+        let live_decision_multiplicity = std::collections::BTreeMap::from([(171, 1), (174, 0)]);
+        let _ = ai.is_too_proud_to_attack(&ctx, &tick, Some(&live_decision_multiplicity));
+
+        assert_eq!(ai.base.primary_target, 174);
     }
 }

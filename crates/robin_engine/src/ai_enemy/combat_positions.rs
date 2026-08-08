@@ -2616,7 +2616,7 @@ impl EnemyAi {
             && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::CombatReposition, 0..3) == 0;
 
         if do_reposition {
-            let new_combat_position = self.propose_good_combat_position(ctx, tick, grid);
+            let new_combat_position = self.propose_good_combat_position(global, ctx, tick, grid);
             self.base.seek_position = new_combat_position.attacker_position;
             self.my_line_jump = new_combat_position.line_jump;
 
@@ -2823,11 +2823,9 @@ impl EnemyAi {
             return;
         }
 
-        // (2) Rebuild list_them with the three filters and reset
-        //     multiplicity. Multiplicity is tracked locally in
-        //     `local_mult` since the global engine snapshot
-        //     `primary_target_multiplicity` is not radius-filtered; the
-        //     reference's count is restricted to fighters within
+        // (2) Rebuild list_them with the three filters and reset both the
+        //     selector-local view and Original's owner-ordered shared UWORD
+        //     scratch. The reference's count is restricted to fighters within
         //     `MAX_SWORDFIGHT_CONSIDERATION_RADIUS`.
         self.list_them.clear();
         let max_radius = parameters_ai::MAX_SWORDFIGHT_CONSIDERATION_RADIUS as f32;
@@ -2847,6 +2845,9 @@ impl EnemyAi {
             }
             self.list_them.push(f.handle);
             local_mult.insert(f.handle, 0);
+            global
+                .primary_target_multiplicity_scratch
+                .insert(f.handle, 0);
         }
         // (3) Rebuild list_us (self first), bump
         //     multiplicity for same-camp soldiers actively in any swordfight
@@ -2868,7 +2869,13 @@ impl EnemyAi {
                 && f.primary_target != 0
                 && is_any_swordfight_substate(f.current_substate)
             {
-                *local_mult.entry(f.primary_target).or_insert(0) += 1;
+                let local = local_mult.entry(f.primary_target).or_insert(0);
+                *local = u32::from((*local as u16).wrapping_add(1));
+                let shared = global
+                    .primary_target_multiplicity_scratch
+                    .entry(f.primary_target)
+                    .or_insert(0);
+                *shared = u32::from((*shared as u16).wrapping_add(1));
             }
         }
 
@@ -3168,6 +3175,7 @@ impl EnemyAi {
 
     pub fn propose_good_combat_position(
         &mut self,
+        global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
@@ -3217,6 +3225,9 @@ impl EnemyAi {
         // Build the enemies' positions list.
         let mut enemies_positions: Vec<CombatPosition> = Vec::new();
         for handle in &self.list_them {
+            global
+                .primary_target_multiplicity_scratch
+                .insert(*handle, 0);
             let Some(f) = self.find_fighter(*handle, tick) else {
                 continue;
             };
@@ -3278,6 +3289,11 @@ impl EnemyAi {
                 cp.target = opp.handle;
                 cp.target_position = opp.position;
                 cp.target_direction = opp.direction;
+                let count = global
+                    .primary_target_multiplicity_scratch
+                    .entry(opp.handle)
+                    .or_insert(0);
+                *count = u32::from((*count as u16).wrapping_add(1));
             }
             friends_positions.push(cp);
         }

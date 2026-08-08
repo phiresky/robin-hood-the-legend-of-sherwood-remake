@@ -1137,6 +1137,17 @@ pub struct AiGlobalState {
     /// up — letting later soldiers in the same frame see earlier
     /// `AttackEnemy` decisions.
     pub same_frame_target_claims: Vec<(HumanHandle, HumanHandle)>,
+
+    /// Owner-ordered mirror of `RHElementActorHuman::muwPrimaryTargetMultiplicity`.
+    /// Original AI routines reset and increment these UWORD counters directly
+    /// on target humans, so later owners in the same actor pass observe the
+    /// exact serial mutation history. Original explicitly does not serialize
+    /// this scratch field; a loaded session bootstraps from its live actors,
+    /// then preserves owner-ordered mutations.
+    #[serde(skip)]
+    pub primary_target_multiplicity_scratch: std::collections::BTreeMap<HumanHandle, u32>,
+    #[serde(skip)]
+    pub primary_target_multiplicity_initialized: bool,
 }
 
 impl Default for AiGlobalState {
@@ -1171,6 +1182,8 @@ impl Default for AiGlobalState {
             door_rally_points: Vec::new(),
             all_soldier_handles: std::sync::Arc::new(Vec::new()),
             same_frame_target_claims: Vec::new(),
+            primary_target_multiplicity_scratch: std::collections::BTreeMap::new(),
+            primary_target_multiplicity_initialized: false,
         }
     }
 }

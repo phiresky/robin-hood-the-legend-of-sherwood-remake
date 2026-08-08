@@ -378,7 +378,10 @@ fn object_detection_world_position(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct AiWorldView {
     pub(super) pcs: Vec<PcSnapshot>,
-    pub(super) primary_target_multiplicity: std::collections::BTreeMap<EntityId, u32>,
+    /// Current live swordfight occupancy used only by RefreshDetection's
+    /// optical best-visible-target aggregate. Tactical target selectors use
+    /// the owner-ordered shared UWORD scratch instead.
+    pub(super) detection_target_multiplicity: std::collections::BTreeMap<EntityId, u32>,
     pub(super) npc_jump_lines: std::collections::HashMap<EntityId, Option<u32>>,
     pub(super) soldiers: Vec<SoldierSnapshot>,
     pub(super) unconscious_soldiers: Vec<(EntityId, Camp, bool)>,
@@ -421,13 +424,13 @@ impl EngineInner {
         )>,
     ) -> AiWorldView {
         let pcs = self.tick_enemy_ai_build_pc_snapshots(assets, owner_boundary);
-        let primary_target_multiplicity = self.tick_enemy_ai_build_primary_target_multiplicity();
+        let detection_target_multiplicity = self.tick_enemy_ai_build_primary_target_multiplicity();
         let npc_jump_lines = self.tick_enemy_ai_build_jump_lines(assets);
         let soldiers = self.tick_enemy_ai_build_soldier_snapshots(assets, owner_boundary);
         let unconscious_soldiers = self.tick_enemy_ai_build_unconscious_soldiers();
         AiWorldView {
             pcs,
-            primary_target_multiplicity,
+            detection_target_multiplicity,
             npc_jump_lines,
             soldiers,
             unconscious_soldiers,
@@ -613,35 +616,25 @@ impl EngineInner {
         pc_snapshots
     }
 
-    /// P2b — count, per PC, how many enemy soldiers in a swordfight
-    /// substate already have it as `primary_target`.  Used later by
-    /// primary-target selection to penalize "ganging up" — soldiers
-    /// prefer un-occupied targets (`PRIMARY_TARGET_UNOCCUPIED_PREFERED`).
-    ///
-    /// Only soldiers actively engaged in a swordfight count toward
-    /// another target's occupancy — gated by the any-swordfight-substate
-    /// check.  Counting every alerted soldier (e.g. ones still seeking,
-    /// running to the alert, or shooting bows) inflates the penalty
-    /// and makes `get_new_primary_target` consumers without a local
-    /// override pick the wrong targets.
-    ///
-    /// `BTreeMap` (not `HashMap`) so the iteration order in the per-NPC
-    /// loop is deterministic for replay hashing.
+    /// Bootstrap Original's nonserialized human multiplicity scratch after a
+    /// load. The target process keeps its existing actor objects while loading
+    /// a save, so their live swordfight claims provide the initial counters;
+    /// subsequent AI owners mutate the shared map serially instead of deriving
+    /// it again.
     pub(super) fn tick_enemy_ai_build_primary_target_multiplicity(
         &self,
     ) -> std::collections::BTreeMap<EntityId, u32> {
-        let mut primary_target_multiplicity: std::collections::BTreeMap<EntityId, u32> =
-            std::collections::BTreeMap::new();
-        for (_, s) in self.world.entities.soldiers() {
-            if let Some(ai) = s.npc.ai_brain.base()
+        let mut primary_target_multiplicity = std::collections::BTreeMap::new();
+        for (_, soldier) in self.world.entities.soldiers() {
+            if let Some(ai) = soldier.npc.ai_brain.base()
                 && ai.primary_target != 0
                 && ai.current_substate.is_any_swordfight()
-                // `primary_target` is a raw element slot whose occupant is
-                // any human — a soldier fighting another soldier stores that
-                // soldier here — so resolve the slot instead of assuming a PC.
                 && let Some(target_id) = self.world.entities.id_at_legacy_slot(ai.primary_target)
             {
-                *primary_target_multiplicity.entry(target_id).or_insert(0) += 1;
+                let count = primary_target_multiplicity
+                    .entry(target_id)
+                    .or_insert(0_u32);
+                *count = u32::from((*count as u16).wrapping_add(1));
             }
         }
         primary_target_multiplicity

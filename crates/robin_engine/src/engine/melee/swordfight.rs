@@ -1368,15 +1368,17 @@ impl EngineInner {
                 .unwrap_or(70.0);
 
             if dist > uber_range && dist > opp_uber {
-                Self::remove_opponent(&mut self.world.entities, entity_id, opp_id);
-                Self::remove_opponent(&mut self.world.entities, opp_id, entity_id);
-                // Recompute the cached relative-fighting-ability on
-                // both surviving sides so the next strike / parade
-                // roll uses fresh ratios.  (When their list is now
-                // empty, `evaluate_opponents` below routes through
-                // `quit_swordfight` and resets state anyway.)
-                self.recompute_relative_fighting_ability(opp_id, assets);
-                self.recompute_relative_fighting_ability(entity_id, assets);
+                // Original `QuitSwordfightWithFarOpponents` deliberately
+                // edits the owner's list directly, so its cached relative
+                // fighting ability is retained.  The reciprocal removal does
+                // go through `DeleteOpponent`, including its strength,
+                // initiative, and final-opponent quit side effects.
+                assert!(Self::remove_opponent(
+                    &mut self.world.entities,
+                    entity_id,
+                    opp_id
+                ));
+                assert!(self.delete_opponent(sim, assets, opp_id, entity_id));
                 removed.push(opp_id);
             }
         }

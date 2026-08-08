@@ -2064,6 +2064,13 @@ impl EngineInner {
         });
         tick.primary_target_in_lift = primary_target_lift.is_some();
         tick.primary_target_lift_entry = primary_target_lift.flatten();
+        tick.primary_target_multiplicity = self
+            .ai
+            .global
+            .primary_target_multiplicity_scratch
+            .iter()
+            .map(|(&target, &count)| (target, count))
+            .collect();
 
         if let Some(enemy_ai) = soldier.npc.ai_brain.enemy() {
             let my_company = enemy_ai.company_number;
@@ -2129,16 +2136,6 @@ impl EngineInner {
                     if crate::ai_enemy::is_any_swordfight_substate(friend.current_substate) {
                         tick.friends_nearer_to_enemy =
                             tick.friends_nearer_to_enemy.saturating_add(1);
-                        if let Some((_, mult)) = tick
-                            .primary_target_multiplicity
-                            .iter_mut()
-                            .find(|(h, _)| *h == friend.primary_target)
-                        {
-                            *mult = mult.saturating_add(1);
-                        } else {
-                            tick.primary_target_multiplicity
-                                .push((friend.primary_target, 1));
-                        }
                     } else if let Some(self_sq) = self_to_target_sq {
                         let Some(target_pos) = tick.primary_target_position else {
                             continue;
@@ -2175,15 +2172,6 @@ impl EngineInner {
                 }
                 if target == primary_target_handle {
                     tick.friends_nearer_to_enemy = tick.friends_nearer_to_enemy.saturating_add(1);
-                }
-                if let Some((_, mult)) = tick
-                    .primary_target_multiplicity
-                    .iter_mut()
-                    .find(|(h, _)| *h == target)
-                {
-                    *mult = mult.saturating_add(1);
-                } else {
-                    tick.primary_target_multiplicity.push((target, 1));
                 }
             }
         }
@@ -5885,6 +5873,14 @@ impl EngineInner {
         _assets: &LevelAssets,
     ) -> PreparedNpcOwnerPass {
         self.ai.global.same_frame_target_claims.clear();
+        if !self.ai.global.primary_target_multiplicity_initialized {
+            let initial = self.tick_enemy_ai_build_primary_target_multiplicity();
+            self.ai.global.primary_target_multiplicity_scratch = initial
+                .into_iter()
+                .map(|(target, count)| (target.index(), count))
+                .collect();
+            self.ai.global.primary_target_multiplicity_initialized = true;
+        }
         PreparedNpcOwnerPass
     }
 
@@ -5961,6 +5957,14 @@ impl EngineInner {
             return;
         }
         self.ai.global.same_frame_target_claims.clear();
+        if !self.ai.global.primary_target_multiplicity_initialized {
+            let initial = self.tick_enemy_ai_build_primary_target_multiplicity();
+            self.ai.global.primary_target_multiplicity_scratch = initial
+                .into_iter()
+                .map(|(target, count)| (target.index(), count))
+                .collect();
+            self.ai.global.primary_target_multiplicity_initialized = true;
+        }
 
         // ── 1. Build one immutable per-tick AI world view. ────────
         // Snapshot construction does not dispatch behavior. The phase calls

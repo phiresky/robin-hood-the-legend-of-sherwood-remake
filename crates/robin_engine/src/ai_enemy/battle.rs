@@ -61,14 +61,11 @@ fn increment_battle_target_multiplicity(
 fn seed_appended_battle_target_multiplicity(
     multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
     target: HumanHandle,
-    global_multiplicity: &[(HumanHandle, u32)],
+    shared_multiplicity: &std::collections::BTreeMap<HumanHandle, u32>,
 ) {
-    multiplicity.entry(target).or_insert_with(|| {
-        global_multiplicity
-            .iter()
-            .find_map(|&(handle, count)| (handle == target).then_some(count))
-            .unwrap_or(0)
-    });
+    multiplicity
+        .entry(target)
+        .or_insert_with(|| shared_multiplicity.get(&target).copied().unwrap_or(0));
 }
 
 /// Mirror ProposeShotTarget's use of the actors' shared multiplicity scratch:
@@ -678,6 +675,7 @@ impl EnemyAi {
         let mut decision_target_multiplicity = std::collections::BTreeMap::new();
         for &enemy in &self.list_them {
             decision_target_multiplicity.insert(enemy, 0_u32);
+            global.primary_target_multiplicity_scratch.insert(enemy, 0);
         }
         // Original chooses the primary target from the persistent personal
         // Them list before walking nearby friends and appending the enemies
@@ -786,10 +784,14 @@ impl EnemyAi {
                 seed_appended_battle_target_multiplicity(
                     &mut decision_target_multiplicity,
                     target,
-                    &tick.primary_target_multiplicity,
+                    &global.primary_target_multiplicity_scratch,
                 );
                 if super::util::is_any_swordfight_substate(cs.ai_substate as u32) {
                     increment_battle_target_multiplicity(&mut decision_target_multiplicity, target);
+                    increment_battle_target_multiplicity(
+                        &mut global.primary_target_multiplicity_scratch,
+                        target,
+                    );
                 }
                 // The Them list rejects duplicates on insertion, so a target
                 // an earlier entry or friend already contributed is dropped
@@ -856,6 +858,7 @@ impl EnemyAi {
                             && decision_target_multiplicity.get(&h).copied().unwrap_or(0) == 0
                         {
                             decision_target_multiplicity.insert(h, 1);
+                            global.primary_target_multiplicity_scratch.insert(h, 1);
                         }
                         is_friend || !view.is_able_to_fight
                     }
@@ -1138,7 +1141,9 @@ impl EnemyAi {
                 {
                     // Company 100 → last reserve.
                     decision = Decision::LastReserve;
-                } else if soldiers_with_lower_pride && self.is_too_proud_to_attack(ctx, tick) {
+                } else if soldiers_with_lower_pride
+                    && self.is_too_proud_to_attack(ctx, tick, Some(&decision_target_multiplicity))
+                {
                     // Too proud to fight alongside commoners.
                     decision = Decision::TooProudToAttack;
                 } else if ctx.camp == crate::element::Camp::Lacklandists
@@ -1456,8 +1461,14 @@ impl EnemyAi {
                     rebuild_battle_target_multiplicity_for_shot(
                         target_multiplicity,
                         &self.list_them,
-                        bow_targets,
+                        bow_targets.iter().copied(),
                     );
+                    for target in self.list_them.iter().chain(bow_targets.iter()) {
+                        let count = target_multiplicity.get(target).copied().unwrap_or(0);
+                        global
+                            .primary_target_multiplicity_scratch
+                            .insert(*target, count);
+                    }
                     if target != 0 {
                         self.base.primary_target = target;
                         self.base.outbox.actor.set_focus(target);
@@ -3563,7 +3574,7 @@ fn appended_battle_target_retains_global_multiplicity_after_personal_reset() {
     // BattleDecisions resets only the target already in its personal Them
     // list. A target appended by a nearby friend keeps the shared counter.
     let mut decision = std::collections::BTreeMap::from([(343, 0)]);
-    let global = [(343, 4), (345, 1)];
+    let global = std::collections::BTreeMap::from([(343, 4), (345, 1)]);
 
     seed_appended_battle_target_multiplicity(&mut decision, 343, &global);
     seed_appended_battle_target_multiplicity(&mut decision, 345, &global);
@@ -3573,6 +3584,23 @@ fn appended_battle_target_retains_global_multiplicity_after_personal_reset() {
 
     increment_battle_target_multiplicity(&mut decision, 345);
     assert_eq!(decision[&345], 2, "a live friend claim still stacks");
+}
+
+#[test]
+fn appended_battle_target_observes_an_earlier_owners_serial_reset() {
+    // Task #146: S131 resets PC101's shared UWORD before S178 appends that
+    // target in a later owner slot. Re-deriving occupancy from live fighter
+    // states would resurrect the stale claim and count it twice.
+    let mut shared = std::collections::BTreeMap::from([(101, 1)]);
+    shared.insert(101, 0);
+
+    let mut later_decision = std::collections::BTreeMap::from([(100, 0)]);
+    seed_appended_battle_target_multiplicity(&mut later_decision, 101, &shared);
+    increment_battle_target_multiplicity(&mut later_decision, 101);
+    increment_battle_target_multiplicity(&mut shared, 101);
+
+    assert_eq!(later_decision[&101], 1);
+    assert_eq!(shared[&101], 1, "later owners retain the serial mutation");
 }
 
 #[test]

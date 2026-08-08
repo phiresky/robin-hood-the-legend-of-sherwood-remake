@@ -1575,6 +1575,85 @@ fn enter_swordfight_clears_pending_bow_shot_list() {
     );
 }
 
+#[test]
+fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
+    use crate::coordinates::{MapPoint, WorldPoint3D};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+
+    let owner = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let near = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let mut far_entity = make_test_pc(crate::element::Posture::Upright);
+    far_entity
+        .element_data_mut()
+        .set_position(WorldPoint3D::new(1_000.0, 0.0, 0.0));
+    far_entity
+        .element_data_mut()
+        .set_position_map(MapPoint::new(1_000.0, 0.0));
+    let far = engine.add_entity(far_entity);
+    let mut far_partner_entity = make_test_soldier(crate::element::Posture::Upright);
+    far_partner_entity
+        .element_data_mut()
+        .set_position(WorldPoint3D::new(1_000.0, 0.0, 0.0));
+    far_partner_entity
+        .element_data_mut()
+        .set_position_map(MapPoint::new(1_000.0, 0.0));
+    let far_partner = engine.add_entity(far_partner_entity);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    {
+        let human = engine
+            .get_entity_mut(owner)
+            .and_then(Entity::human_data_mut)
+            .unwrap();
+        human.opponents = vec![near, far];
+        human.relative_fighting_ability = 17;
+    }
+    engine
+        .get_entity_mut(near)
+        .and_then(Entity::human_data_mut)
+        .unwrap()
+        .opponents = vec![owner];
+    {
+        let human = engine
+            .get_entity_mut(far)
+            .and_then(Entity::human_data_mut)
+            .unwrap();
+        human.opponents = vec![owner, far_partner];
+        human.smalltalk_initiative = false;
+        human.received_smalltalk_initiative = false;
+    }
+    {
+        let human = engine
+            .get_entity_mut(far_partner)
+            .and_then(Entity::human_data_mut)
+            .unwrap();
+        human.opponents = vec![far];
+        human.smalltalk_initiative = true;
+    }
+
+    engine.quit_swordfight_with_far_opponents(&sim, &assets, owner);
+
+    let owner_human = engine.get_entity(owner).unwrap().human_data().unwrap();
+    assert_eq!(owner_human.opponents, vec![near]);
+    assert_eq!(owner_human.relative_fighting_ability, 17);
+
+    let far_human = engine.get_entity(far).unwrap().human_data().unwrap();
+    assert_eq!(far_human.opponents, vec![far_partner]);
+    assert!(far_human.smalltalk_initiative);
+    assert!(far_human.received_smalltalk_initiative);
+    assert!(
+        !engine
+            .get_entity(far_partner)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .smalltalk_initiative
+    );
+}
+
 pub(super) fn make_test_ai_soldier(camp: crate::element::Camp) -> Entity {
     let mut entity = make_test_soldier(crate::element::Posture::Upright);
     let Entity::Soldier(soldier) = &mut entity else {

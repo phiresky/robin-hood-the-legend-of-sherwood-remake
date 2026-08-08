@@ -1,0 +1,9 @@
+{
+  "id": "149",
+  "subject": "Use DeleteOpponent side effects only on the reciprocal far-opponent removal",
+  "description": "Schema-14 Cyrdach Profile_156 Savegame_001 replay-001 reached a frame-1073 RNG under-consumption after QuitSwordfightWithFarOpponents removed a distant opponent. Original directly deletes the far opponent from the initiating owner's list, deliberately retaining that owner's cached relative fighting ability, then calls DeleteOpponent on the reciprocal side. Rust used the same raw removal on both sides and recomputed both cached strengths, skipping the reciprocal DeleteOpponent initiative and final-opponent side effects that lead to the missing draw. The far-opponent loop now asserts the owner's direct removal, preserves its cached strength, and routes only the reciprocal removal through delete_opponent. Focused integration coverage retains an owner with one nearby opponent, removes a second distant opponent, verifies the owner's cached strength is unchanged, and verifies reciprocal smalltalk initiative transfer. cargo test -p robin_engine far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete passes 1/1, cargo fmt is clean, and the combined parity-profile build succeeds. The representative clears the frame-1073 RNG frontier and advances to an independent Soldier185 RaiseShield-versus-Wait command frontier at frame 1458; both task-36 schema-14 replay-009 controls remain exact through EOF on the same runner.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task114-unconscious-frontier"
+}

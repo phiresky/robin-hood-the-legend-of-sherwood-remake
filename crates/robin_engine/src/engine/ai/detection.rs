@@ -1662,7 +1662,9 @@ impl EngineInner {
         let pc_snapshots = world.pcs.as_slice();
         let soldier_snapshots = world.soldiers.as_slice();
         let unconscious_soldiers = world.unconscious_soldiers.as_slice();
-        let primary_target_multiplicity = &world.primary_target_multiplicity;
+        let primary_target_multiplicity =
+            self.ai.global.primary_target_multiplicity_scratch.clone();
+        let detection_target_multiplicity = &world.detection_target_multiplicity;
         let npc_jump_lines = &world.npc_jump_lines;
 
         // -- Read NPC state in a scoped borrow --
@@ -2165,7 +2167,7 @@ impl EngineInner {
                     let dy = target.position.y - eye.y;
                     let dist_sq = dx * dx + dy * dy;
                     let dist = dist_sq.sqrt() as u32;
-                    let mult = primary_target_multiplicity
+                    let mult = detection_target_multiplicity
                         .get(&target_id)
                         .copied()
                         .unwrap_or(0);
@@ -2518,10 +2520,8 @@ impl EngineInner {
 
                 // Primary target multiplicity
                 tick_data.primary_target_multiplicity.clear();
-                for (&eid, &mult) in primary_target_multiplicity {
-                    tick_data
-                        .primary_target_multiplicity
-                        .push((eid.index(), mult));
+                for (&target, &mult) in &primary_target_multiplicity {
+                    tick_data.primary_target_multiplicity.push((target, mult));
                 }
                 for &(attacker, target) in &self.ai.global.same_frame_target_claims {
                     if attacker == enemy_ai.base.me || target == 0 {
@@ -2539,15 +2539,6 @@ impl EngineInner {
                     if target == enemy_ai.base.primary_target {
                         tick_data.friends_nearer_to_enemy =
                             tick_data.friends_nearer_to_enemy.saturating_add(1);
-                    }
-                    if let Some((_, mult)) = tick_data
-                        .primary_target_multiplicity
-                        .iter_mut()
-                        .find(|(h, _)| *h == target)
-                    {
-                        *mult = mult.saturating_add(1);
-                    } else {
-                        tick_data.primary_target_multiplicity.push((target, 1));
                     }
                 }
 
