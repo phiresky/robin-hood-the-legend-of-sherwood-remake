@@ -1,0 +1,9 @@
+{
+  "id": "186",
+  "subject": "Project completed move-to-wait transitions into AI GoTo",
+  "description": "AI context construction now records when the installed movement-to-wait transition's resolved concrete sprite action has reached or passed its authored action-done boundary. GoTo's already-on-point path uses that narrow projection, matching Original Actor::Hourglass retirement before timer-driven BattleDecisions without treating unfinished or mismatched sprite actions as idle. linux2 Profile_002 Savegame_017 replay-013 clears frame 1440 and matches exact EOF on the combined release runner. Both task-36 schema-14 replay-009 controls match exact EOF on that runner; focused tests, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task181-dead-damage"
+}
