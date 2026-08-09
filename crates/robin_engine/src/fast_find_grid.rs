@@ -1768,6 +1768,36 @@ impl FastFindGrid {
         exact_obstacle_index: Option<crate::position_interface::ObstacleHandle>,
         sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) -> ProjectileLandingResolution {
+        self.resolve_projectile_landing_impl(
+            landing_map,
+            exact_obstacle_index,
+            sight_obstacles,
+            true,
+        )
+    }
+
+    /// Resolve a trajectory impact whose authoritative obstacle pointer was
+    /// null. Original treats that as bare ground and searches only layer 0;
+    /// it does not substitute an overlapping projection-area obstacle.
+    pub fn resolve_projectile_ground_landing(
+        &self,
+        landing_map: MapPoint,
+    ) -> ProjectileLandingResolution {
+        self.resolve_projectile_landing_impl(
+            landing_map,
+            None,
+            crate::sight_obstacle::ObstacleList::empty(),
+            false,
+        )
+    }
+
+    fn resolve_projectile_landing_impl(
+        &self,
+        landing_map: MapPoint,
+        exact_obstacle_index: Option<crate::position_interface::ObstacleHandle>,
+        sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
+        allow_projection_fallback: bool,
+    ) -> ProjectileLandingResolution {
         use crate::sector::SectorType;
 
         let mut obstacle_index = None;
@@ -1813,8 +1843,10 @@ impl FastFindGrid {
                     .into_iter()
                     .map(move |obstacle| (u32::from(raw), obstacle)),
             )
-        } else {
+        } else if allow_projection_fallback {
             Box::new(sight_obstacles.iter_indexed())
+        } else {
+            Box::new(std::iter::empty())
         };
 
         for (idx, obstacle) in projection_iter.by_ref() {
@@ -4275,6 +4307,37 @@ mod tests {
         assert_eq!(resolution.layer, 0);
         assert_eq!(resolution.sector, None);
         assert!(resolution.blocked_by_motion_obstacle);
+    }
+
+    #[test]
+    fn projectile_ground_landing_does_not_adopt_overlapping_projection_membership() {
+        use crate::sector::SectorType;
+
+        let mut grid = make_empty_grid(3);
+        grid.add_sector(
+            square_sector(
+                MapPoint::new(0.0, 0.0),
+                MapPoint::new(128.0, 128.0),
+                SectorType::MOTION | SectorType::AREA,
+                2,
+                22,
+            ),
+            2,
+        );
+        let projection =
+            square_projection_obstacle(MapPoint::new(0.0, 0.0), MapPoint::new(128.0, 128.0), 2, 22);
+
+        let legacy_unknown = grid.resolve_projectile_landing(
+            MapPoint::new(64.0, 64.0),
+            crate::sight_obstacle::ObstacleList::from_slice_all_active(&[projection]),
+        );
+        assert_eq!(legacy_unknown.layer, 2);
+        assert_eq!(legacy_unknown.sector.map(u16::from), Some(22));
+
+        let exact_ground = grid.resolve_projectile_ground_landing(MapPoint::new(64.0, 64.0));
+        assert_eq!(exact_ground.layer, 0);
+        assert_eq!(exact_ground.sector, None);
+        assert_eq!(exact_ground.obstacle_index, None);
     }
 
     #[test]

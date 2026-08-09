@@ -585,8 +585,8 @@ impl EngineInner {
                 sight_obstacles: obstacle_list,
                 water_zones: Some(&assets.water_zones),
             };
-            let (trajectory, terminal_obstacle) =
-                bow_shot::compute_trajectory_ballistic_with_terminal_obstacle(
+            let (trajectory, terminal_obstacle, terminal_impact) =
+                bow_shot::compute_trajectory_ballistic_with_terminal_impact(
                     bow_point,
                     velocity,
                     mass,
@@ -605,14 +605,21 @@ impl EngineInner {
             // membership before the projectile's explicit pre-add
             // Hourglass. It is therefore observable throughout flight, not
             // only after the projectile lands.
-            let initial_landing_resolution = trajectory_end.map(|end| {
-                self.world
-                    .fast_grid
-                    .resolve_projectile_landing_with_obstacle(
-                        end.to_map(),
-                        terminal_obstacle,
-                        obstacle_list,
-                    )
+            let initial_landing_resolution = terminal_impact.then(|| {
+                let end = trajectory_end.expect("terminal impact has no trajectory endpoint");
+                if let Some(obstacle) = terminal_obstacle {
+                    self.world
+                        .fast_grid
+                        .resolve_projectile_landing_with_obstacle(
+                            end.to_map(),
+                            Some(obstacle),
+                            obstacle_list,
+                        )
+                } else {
+                    self.world
+                        .fast_grid
+                        .resolve_projectile_ground_landing(end.to_map())
+                }
             });
             tracing::debug!(
                 shooter = ?result.shooter,

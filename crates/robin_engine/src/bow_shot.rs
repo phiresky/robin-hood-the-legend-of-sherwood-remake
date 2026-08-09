@@ -671,6 +671,31 @@ pub fn compute_trajectory_ballistic_with_terminal_obstacle(
     Vec<TrajectoryPoint>,
     Option<crate::position_interface::ObstacleHandle>,
 ) {
+    let (trajectory, terminal_obstacle, _) = compute_trajectory_ballistic_impl(
+        start,
+        initial_velocity,
+        mass,
+        flat_shot,
+        obstacle_check,
+        None,
+    );
+    (trajectory, terminal_obstacle)
+}
+
+/// Companion used by projectile membership initialization, where an exact
+/// bare-ground impact must remain distinguishable from a trajectory that
+/// simply exhausted its integration without hitting anything.
+pub fn compute_trajectory_ballistic_with_terminal_impact(
+    start: WorldPoint3D,
+    initial_velocity: WorldVec3D,
+    mass: f32,
+    flat_shot: bool,
+    obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
+) -> (
+    Vec<TrajectoryPoint>,
+    Option<crate::position_interface::ObstacleHandle>,
+    bool,
+) {
     compute_trajectory_ballistic_impl(
         start,
         initial_velocity,
@@ -926,6 +951,7 @@ fn compute_trajectory_ballistic_impl(
 ) -> (
     Vec<TrajectoryPoint>,
     Option<crate::position_interface::ObstacleHandle>,
+    bool,
 ) {
     /// Top-impact termination speed threshold (`||v|| < 5`).
     /// Only applies when the previous iteration hit an obstacle's top
@@ -937,6 +963,7 @@ fn compute_trajectory_ballistic_impl(
     let fg = GRAVITY * mass;
     let mut trajectory = Vec::new();
     let mut terminal_obstacle = None;
+    let mut terminal_impact = false;
     let mut velocity = initial_velocity;
     let mut position = start;
 
@@ -1124,6 +1151,7 @@ fn compute_trajectory_ballistic_impl(
                 .obstacle_index
                 .and_then(|index| u16::try_from(index).ok())
                 .and_then(crate::position_interface::ObstacleHandle::new);
+            terminal_impact = true;
             break;
         }
 
@@ -1181,7 +1209,7 @@ fn compute_trajectory_ballistic_impl(
         }
     }
 
-    (trajectory, terminal_obstacle)
+    (trajectory, terminal_obstacle, terminal_impact)
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -3162,13 +3190,14 @@ pub(crate) fn make_arrow_falling_down(
     // stops at the wall or floor it is thrown into instead of sailing through
     // it. Segment clipping also shortens the first waypoint's frame count,
     // which is directly observable as this tick's movement increment.
-    let (trajectory, terminal_obstacle) = compute_trajectory_ballistic_with_terminal_obstacle(
-        proj.element.position(),
-        velocity,
-        MASS_ARROW_HIGH,
-        false,
-        obstacle_check,
-    );
+    let (trajectory, terminal_obstacle, terminal_impact) =
+        compute_trajectory_ballistic_with_terminal_impact(
+            proj.element.position(),
+            velocity,
+            MASS_ARROW_HIGH,
+            false,
+            obstacle_check,
+        );
     proj.projectile.trajectory = trajectory;
     proj.projectile.trajectory_frame_count = 0;
     proj.projectile.launch_segment_start = None;
@@ -3183,16 +3212,23 @@ pub(crate) fn make_arrow_falling_down(
         let plane = terminal_obstacle_plane(terminal_obstacle, check.sight_obstacles);
         bind_trajectory_obstacle(&mut proj.element, terminal_obstacle, plane);
     }
-    if let Some(check) = obstacle_check
+    if terminal_impact
+        && let Some(check) = obstacle_check
         && let Some(end) = proj.projectile.trajectory.last().map(|tp| tp.position)
     {
-        let resolution = check
-            .fast_find_grid
-            .resolve_projectile_landing_with_obstacle(
-                end.to_map(),
-                terminal_obstacle,
-                check.sight_obstacles,
-            );
+        let resolution = if let Some(obstacle) = terminal_obstacle {
+            check
+                .fast_find_grid
+                .resolve_projectile_landing_with_obstacle(
+                    end.to_map(),
+                    Some(obstacle),
+                    check.sight_obstacles,
+                )
+        } else {
+            check
+                .fast_find_grid
+                .resolve_projectile_ground_landing(end.to_map())
+        };
         proj.element.set_sector(resolution.sector);
         if resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle {
             proj.element.set_layer(resolution.layer);
@@ -6807,6 +6843,40 @@ mod tests {
 
         assert!(!trajectory.is_empty());
         assert_eq!(terminal_obstacle.map(u16::from), Some(0));
+    }
+
+    #[test]
+    fn arrow_trajectory_reports_exact_ground_impact_without_an_obstacle() {
+        let mut grid = crate::fast_find_grid::FastFindGrid::default();
+        {
+            let mut level = (*grid.level).clone();
+            level.map_bbox =
+                crate::coordinates::MapBBox::from_coords(-10_000.0, -10_000.0, 10_000.0, 10_000.0);
+            grid.level = std::sync::Arc::new(level);
+        }
+        let check = TrajectoryObstacleCheck {
+            fast_find_grid: &grid,
+            layer: 0,
+            sight_obstacles: crate::sight_obstacle::ObstacleList::empty(),
+            water_zones: None,
+        };
+
+        let (trajectory, terminal_obstacle, terminal_impact) =
+            compute_trajectory_ballistic_with_terminal_impact(
+                WorldPoint3D::new(0.0, 0.0, 25.0),
+                WorldVec3D {
+                    x: 10.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                MASS_ARROW_HIGH,
+                false,
+                Some(&check),
+            );
+
+        assert!(terminal_impact);
+        assert_eq!(terminal_obstacle, None);
+        assert_eq!(trajectory.last().unwrap().position.z, 0.0);
     }
 
     /// A projectile that passes close to a target on the ground (not
