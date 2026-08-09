@@ -3066,6 +3066,11 @@ mod tests {
         enemy_view.detection_position_world =
             crate::coordinates::WorldPoint3D::new(609.0, 2449.001, 150.001);
         let mut views = AiEntityViewMap::new();
+        let mut owner_view = object_view(ObjectType::None);
+        owner_view.kind = EntityKind::Soldier;
+        owner_view.detection_position_world =
+            crate::coordinates::WorldPoint3D::new(575.6, 2465.001, 105.001);
+        views.insert(1, owner_view);
         views.insert(12, enemy_view);
         let ctx = AiContext {
             position: Position {
