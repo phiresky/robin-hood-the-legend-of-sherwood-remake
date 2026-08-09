@@ -1,0 +1,9 @@
+{
+  "id": "196",
+  "subject": "Materialize zero increment when UpdateRoll rejects a goal",
+  "description": "When UpdateRoll rejects a new slope, Rust now sets the map goal to the current position and materializes the resulting zero map increment. This matches Original SetPositionGoalMap followed by lazy GetIncrementMap computation instead of exposing stale raw increment storage. linux2 Profile_002 Savegame_032 replay-002 clears frame 17471 and advances to a frame-17473 Rolling retirement snap frontier. Both task-36 controls match exact EOF; focused rolling tests, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task183-posture"
+}

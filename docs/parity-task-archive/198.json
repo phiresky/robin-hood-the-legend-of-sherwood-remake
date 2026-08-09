@@ -1,0 +1,9 @@
+{
+  "id": "198",
+  "subject": "Preserve null primary targets from phalanx neighbours",
+  "description": "AttackingRunningToPhalanx EventDone now distinguishes an absent/non-soldier combat neighbour from an existing soldier neighbour whose primary target is null. Matching Original, the latter preserves null and enters BattleDecisions rather than resurrecting a new target; left-before-right lookup and strict missing-neighbour invariants are retained. linux2 Profile_002 Savegame_035 replay-015 clears frame 38768 and advances to an independent frame-38798 RNG frontier. Both task-36 controls match exact EOF; focused tests, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task181-dead-damage"
+}
