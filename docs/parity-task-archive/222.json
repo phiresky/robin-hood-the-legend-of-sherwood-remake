@@ -1,0 +1,9 @@
+{
+  "id": "222",
+  "subject": "Preserve postponed sword movement during explicit quit dispatch",
+  "description": "dispatch_quit_swordfight no longer rewrites an independently cross-postponed sword movement. Original Translate(QUIT_SWORDFIGHT) only queues lowering; EvaluateOpponents rewrites movement only when the live mpSequenceElement itself is that movement. Rust's invented dispatch-time rewrite changed a postponed RunningWithSword token to RunningUpright while ReceiveSwordDamage was current, later selecting the wrong lift/stairs transition. linux3 Profile_002 Savegame_000 replay-003 clears PC126's frame-905 animation frontier and matches exact EOF; both task-36 controls and the focused lifecycle regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task222-pc126-animation"
+}
