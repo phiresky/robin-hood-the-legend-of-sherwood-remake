@@ -1,0 +1,9 @@
+{
+  "id": "197",
+  "subject": "Match synchronous AlertOfficer route and world-distance selection",
+  "description": "AlertOfficer now ranks candidates with Original's truncated stretched 3D MaxNormDistance, including elevation in world Y, instead of raw map Y. The successful LookForHelp arm closes AlertOfficer's GoNear actor prefix and resumes its Cassos/Panic remark only after synchronous route construction, preserving building-exit wait draw ordering. This selects officer47 and the authored building route in the Derby control. linux2 Profile_002 Savegame_034 replay-001 clears frame 34827 and matches exact EOF. Both task-36 controls match exact EOF; focused RNG/distance tests, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task179-true-seam"
+}
