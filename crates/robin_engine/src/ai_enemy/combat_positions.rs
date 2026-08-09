@@ -45,6 +45,27 @@ fn is_facing_swordfight_target(
     matches!(facing_delta, 15 | 0 | 1)
 }
 
+fn swordfight_facing_target_position<'a>(
+    primary: &'a FighterSnapshot,
+    tick: &'a AiPerTickData,
+) -> &'a Position {
+    // ReconsiderSwordfight uses GetPositionGround() for this guard, not the
+    // AI Position() helper used by the fighter snapshots. The distinction is
+    // observable while the opponent passes a door: Position() forecasts the
+    // committed gate side, whereas GetPositionGround() remains at the live
+    // actor position until movement advances it.
+    // The target can change synchronously after this tick snapshot was built
+    // (notably when the principal opponent is refreshed above). Never pair a
+    // replacement target with the preceding target's literal position.
+    if tick.primary_target_snapshot_handle == primary.handle {
+        tick.primary_target_live_position
+            .as_ref()
+            .unwrap_or(&primary.position)
+    } else {
+        &primary.position
+    }
+}
+
 #[track_caller]
 fn phalanx_member_detects_360(
     member: &PhalanxMemberThemList,
@@ -2521,7 +2542,7 @@ impl EnemyAi {
             &ctx.position,
             ctx.elevation,
             ctx.direction,
-            &primary.position,
+            swordfight_facing_target_position(&primary, tick),
             primary.elevation,
         ) {
             // Need to turn first; the engine will rotate us, then call back.
@@ -3741,6 +3762,59 @@ mod tests {
         assert!(
             trace.is_empty(),
             "the facing return must precede combat RNG"
+        );
+    }
+
+    #[test]
+    fn swordfight_facing_guard_uses_live_position_during_door_pass() {
+        // Schema-14 Nescafe Profile_003/Savegame_001 replay-012 frame 1448:
+        // Position(PC252) forecasts the far side of door 95, but Original's
+        // facing guard reads GetPositionGround() and still sees the live PC.
+        let soldier = position(1355.0133, 2248.718);
+        let live_pc = position(1307.6046, 2248.1819);
+        let forecast_pc = position(1304.0, 2276.0);
+        let elevation = 45.0;
+        let primary = FighterSnapshot {
+            handle: 252,
+            position: forecast_pc,
+            elevation,
+            ..FighterSnapshot::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.primary_target_snapshot_handle = 252;
+        tick.primary_target_live_position = Some(live_pc);
+
+        assert!(!is_facing_swordfight_target(
+            &soldier,
+            elevation,
+            12,
+            &primary.position,
+            primary.elevation,
+        ));
+        assert!(is_facing_swordfight_target(
+            &soldier,
+            elevation,
+            12,
+            swordfight_facing_target_position(&primary, &tick),
+            primary.elevation,
+        ));
+    }
+
+    #[test]
+    fn swordfight_facing_guard_rejects_stale_live_position_after_target_refresh() {
+        let refreshed_primary = FighterSnapshot {
+            handle: 131,
+            position: position(1400.0, 2100.0),
+            ..FighterSnapshot::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.primary_target_snapshot_handle = 252;
+        tick.primary_target_live_position = Some(position(1307.6046, 2248.1819));
+
+        assert_eq!(
+            swordfight_facing_target_position(&refreshed_primary, &tick),
+            &refreshed_primary.position,
+            "a refreshed principal opponent must not inherit the old target's live geometry"
         );
     }
 
