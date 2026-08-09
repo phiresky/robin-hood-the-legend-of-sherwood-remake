@@ -24,6 +24,17 @@ fn rolling_terminal_snap_point(
     position.map_goal()
 }
 
+/// `RHElementActorHuman::Execute(RHANIMATION_ROLLING)` lands only when the
+/// motion reports `TERMINATED`; `DONE` remains in the rolling posture until the
+/// following owner slot turns that result into termination.
+fn rolling_terminal_posture(motion: MotionState, is_dead: bool) -> Option<crate::element::Posture> {
+    (motion == MotionState::Terminated).then_some(if is_dead {
+        crate::element::Posture::Dead
+    } else {
+        crate::element::Posture::Lying
+    })
+}
+
 impl EngineInner {
     /// `RHElementActorHuman::Execute(RHANIMATION_ROLLING)`.
     pub(super) fn tick_rolling_owner(
@@ -240,6 +251,26 @@ impl EngineInner {
         }
         self.check_for_non_elevation_line_crossing(sim, assets, owner, old_pos, new_pos, layer);
 
+        // Original commits the landing posture before Actor::Hourglass pops
+        // the rolling order and resumes its postponed successor. That successor
+        // must therefore generate its posture transition from Lying (normally a
+        // StandingUp order), not from the stale pre-roll Upright posture.
+        let landing_posture = {
+            let entity = self
+                .world
+                .entities
+                .get(owner)
+                .expect("Rolling owner disappeared before landing");
+            rolling_terminal_posture(effective_motion, entity.is_dead())
+        };
+        if let Some(posture) = landing_posture {
+            self.world
+                .entities
+                .get_mut(owner)
+                .expect("Rolling owner disappeared during landing")
+                .set_posture(posture);
+        }
+
         let mut outcomes = AnimCompletionOutcomes::default();
         if motion == MotionState::Start {
             outcomes.non_interruptable_lifts.push((seq_id, elem_idx));
@@ -313,5 +344,22 @@ mod tests {
 
         assert_ne!(position.map_goal(), authored_order_destination);
         assert_eq!(rolling_terminal_snap_point(&position), stopped_here);
+    }
+
+    #[test]
+    fn rolling_lands_only_on_terminated_and_uses_life_state() {
+        assert_eq!(
+            rolling_terminal_posture(MotionState::Done, false),
+            None,
+            "Done is observed before Actor::Hourglass converts it to termination"
+        );
+        assert_eq!(
+            rolling_terminal_posture(MotionState::Terminated, false),
+            Some(crate::element::Posture::Lying)
+        );
+        assert_eq!(
+            rolling_terminal_posture(MotionState::Terminated, true),
+            Some(crate::element::Posture::Dead)
+        );
     }
 }
