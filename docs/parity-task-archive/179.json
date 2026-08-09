@@ -1,8 +1,8 @@
 {
   "id": "179",
   "subject": "Apply corpse-drop effects from the terminal carry transition",
-  "description": "The terminal TransitionCarryingCorpseWaitingUpright order now emits its own DropCorpse side effect even when Rust's active-ability latch already identifies the following command, such as Whistle. Original executes the selected transition arm itself; consulting only the newer ability kind left the carrier and corpse attached after the transition. A focused transition-prefix-to-whistle regression verifies DropDone precedes termination/next-order handling. linux2 Profile_002 Savegame_012 replay-013 clears frame 41992 and advances to an independent frame-42183 DefaultPostLook RNG frontier. Both task-36 schema-14 replay-009 controls match exact EOF; focused test, cargo fmt, and diff checks pass.",
-  "status": "completed",
+  "description": "REOPENED after invalid validation. The archived implementation attempted to emit DropDone from tick_ability when TransitionCarryingCorpseWaitingUpright terminated under a following Whistle ability. Its focused model passed, but the representative was run with --scan-all: the real frame-42182 PC243 CarryingCorpse / Soldier136 Carried mismatch persisted and was merely reported later as a frame-42183 RNG failure. The selected-order condition never fired in the real replay. Commit b258a868f exactly reverted the unverified production and test hunks. Continue from the actual transition-completion seam using an ordinary fail-fast parity run; do not claim the later DefaultPostLook RNG boundary until frame 42182 is exact. Task-36 controls were unaffected.",
+  "status": "open",
   "blocks": [],
   "blockedBy": [],
   "owner": "task176-animation-cluster3"
