@@ -966,6 +966,55 @@ fn grounded_arrow_exposes_terminal_active_frame_then_refresh_retires_its_slot() 
 }
 
 #[test]
+fn disappearing_arrow_human_hit_still_exposes_terminal_active_frame() {
+    use crate::element::{
+        Animation, ElementData, ElementKind, ElementProjectile, ObjectData, ObjectType,
+        ProjectileData,
+    };
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let arrow = engine.add_entity(Entity::Projectile(ElementProjectile {
+        element: ElementData {
+            kind: ElementKind::ObjectProjectile,
+            active: true,
+            ..Default::default()
+        },
+        object: ObjectData {
+            object_type: ObjectType::Arrow,
+            animation: Animation::ObjectFlying,
+            ..Default::default()
+        },
+        projectile: ProjectileData {
+            disappear: true,
+            flying: false,
+            ..Default::default()
+        },
+    }));
+
+    // HitHuman returns true immediately, before Projectile::Hourglass can
+    // inspect the trajectory's unrelated future `mbDisappear` landing.
+    engine.deactivate_projectile_tombstone(arrow, false);
+    let Entity::Projectile(projectile) = engine.get_entity(arrow).unwrap() else {
+        unreachable!()
+    };
+    assert!(
+        projectile.element.active,
+        "a future hole landing must not retire an arrow on its human-hit frame"
+    );
+
+    engine.control.arrow_refresh_pending = true;
+    engine.apply_pending_arrow_refresh(&sim);
+    let Entity::Projectile(projectile) = engine.get_entity(arrow).unwrap() else {
+        unreachable!()
+    };
+    assert!(
+        !projectile.element.active,
+        "the stationary arrow is retired by the following Refresh"
+    );
+}
+
+#[test]
 fn successful_projectile_human_hit_rewind_settles_and_deletes_trajectory() {
     use crate::element::{
         ElementData, ElementKind, ElementProjectile, ObjectData, ObjectType, ProjectileData,

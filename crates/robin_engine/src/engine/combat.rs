@@ -2254,7 +2254,7 @@ impl EngineInner {
                     self.launch_element(seq_elem);
                 }
                 if result.despawn {
-                    self.deactivate_projectile_tombstone(result.arrow);
+                    self.deactivate_projectile_tombstone(result.arrow, false);
                 }
                 continue;
             }
@@ -2292,7 +2292,7 @@ impl EngineInner {
                         });
                 }
                 if result.despawn {
-                    self.deactivate_projectile_tombstone(result.arrow);
+                    self.deactivate_projectile_tombstone(result.arrow, false);
                 }
                 continue;
             }
@@ -2479,12 +2479,16 @@ impl EngineInner {
             }
 
             if result.despawn {
-                self.deactivate_projectile_tombstone(result.arrow);
+                self.deactivate_projectile_tombstone(result.arrow, result.hit_target.is_none());
             }
         }
     }
 
-    fn deactivate_projectile_tombstone(&mut self, projectile_id: EntityId) {
+    pub(super) fn deactivate_projectile_tombstone(
+        &mut self,
+        projectile_id: EntityId,
+        disappearance_reached: bool,
+    ) {
         let entity = self
             .get_entity_mut(projectile_id)
             .unwrap_or_else(|| panic!("despawning projectile {projectile_id:?} vanished"));
@@ -2494,11 +2498,14 @@ impl EngineInner {
         );
         if let Entity::Projectile(projectile) = entity
             && projectile.object.object_type == crate::element::ObjectType::Arrow
-            && !projectile.projectile.disappear
+            && (!projectile.projectile.disappear || !disappearance_reached)
         {
-            // A normal arrow impact/exhaustion ends flight but remains active
-            // until RHElementArrow::Refresh has observed its later stationary
-            // frame. Hole/water disappearance is immediate.
+            // Successful HitHuman/HitTarget returns from Projectile::Hourglass
+            // before its later `mbDisappear` branch. Thus even an arrow whose
+            // remaining trajectory would have fallen into a hole exposes one
+            // stopped, active snapshot and is retired by Arrow::Refresh.
+            // Only actually reaching the hole/water trajectory endpoint makes
+            // disappearance immediate.
             projectile.projectile.flying = false;
             return;
         }
