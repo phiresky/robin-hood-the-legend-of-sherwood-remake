@@ -1,0 +1,9 @@
+{
+  "id": "174",
+  "subject": "Restore phalanx night view-radius visibility queries",
+  "description": "Phalanx 180-degree enemy detection now invokes Original's ComputeViewRadius boundary before the final target LOS. At night or in fog this restores the ordered light-sector barycentre queries and the per-viewer/per-surface effective-radius memo instead of jumping directly to the target ray. A focused regression asserts the three barycentre rays followed by the target LOS. The linux2 Profile_002 Savegame_030 replay-005 representative clears its frame-6153 visibility frontier and advances to an independent frame-6314 projectile topology mismatch. Both task-36 schema-14 replay-009 controls match exact EOF; focused phalanx tests, cargo fmt, and the release parity build pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task174-visibility-cluster"
+}
