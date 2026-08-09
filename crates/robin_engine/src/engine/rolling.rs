@@ -15,6 +15,15 @@ fn rolling_initial_direction(position: MapPoint, goal: MapPoint) -> i16 {
     vector_to_sector_0_to_15(goal.x - position.x, goal.y - position.y)
 }
 
+/// Original's ordinary `PerformMotion` arrival snap uses the position
+/// interface's live goal, not the order's authored destination. `UpdateRoll`
+/// can stop a roll by replacing only that live goal with the current point.
+fn rolling_terminal_snap_point(
+    position: &crate::position_interface::PositionInterface,
+) -> MapPoint {
+    position.map_goal()
+}
+
 impl EngineInner {
     /// `RHElementActorHuman::Execute(RHANIMATION_ROLLING)`.
     pub(super) fn tick_rolling_owner(
@@ -212,7 +221,8 @@ impl EngineInner {
                 if !entity.position_iface().is_deviated()
                     && entity.position_iface().get_tolerance() == 0.0
                 {
-                    entity.element_data_mut().set_position_map(goal);
+                    let live_goal = rolling_terminal_snap_point(entity.position_iface());
+                    entity.element_data_mut().set_position_map(live_goal);
                 }
                 effective_motion = MotionState::Terminated;
                 entity.element_data_mut().sprite.last_motion_state = Some(effective_motion);
@@ -288,5 +298,20 @@ mod tests {
         );
 
         assert!(order.compute_direction);
+    }
+
+    #[test]
+    fn stopped_rolling_snaps_to_rewritten_live_goal_not_order_destination() {
+        let authored_order_destination = MapPoint::new(1213.184_1, 1172.210_4);
+        let stopped_here = MapPoint::new(1208.699_5, 1156.473_4);
+        let mut position = crate::position_interface::PositionInterface::new();
+        position.set_map_position(stopped_here);
+        position.set_map_goal(authored_order_destination);
+
+        // UpdateRoll's rejected-slope arm changes only PositionGoalMap.
+        position.set_map_goal(stopped_here);
+
+        assert_ne!(position.map_goal(), authored_order_destination);
+        assert_eq!(rolling_terminal_snap_point(&position), stopped_here);
     }
 }
