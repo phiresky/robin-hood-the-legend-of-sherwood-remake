@@ -5661,6 +5661,71 @@ fn explicit_quit_dispatch_unlinks_but_defers_state_change_to_lowering_start() {
 }
 
 #[test]
+fn explicit_quit_dispatch_preserves_cross_postponed_sword_movement_action() {
+    use crate::element::{ActionState, Command};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceElementData, SequenceState};
+
+    let sim = crate::sim_rng::test_context();
+    let assets = assets_with_test_pc_profile();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .action_state = ActionState::WaitingSword;
+
+    let movement = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new_movement(
+            1,
+            Command::Move,
+            Some(owner),
+            OrderType::RunningWithSword,
+        ));
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(movement, 0)
+        .unwrap()
+        .state = SequenceState::Postponed;
+
+    let quit = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(
+            1,
+            Command::QuitSwordfight,
+            Some(owner),
+        ));
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(quit, 0)
+        .unwrap()
+        .cross_postponed = Some((movement, 0));
+
+    engine.dispatch_quit_swordfight(&sim, &assets, owner, quit, 0);
+
+    let movement = engine
+        .orders
+        .sequence_manager
+        .get_element(movement, 0)
+        .expect("cross-postponed movement must remain registered");
+    let SequenceElementData::Movement { action, .. } = &movement.data else {
+        panic!("cross-postponed movement changed data kind")
+    };
+    assert_eq!(
+        *action,
+        OrderType::RunningWithSword,
+        "Translate(QUIT_SWORDFIGHT) must not apply EvaluateOpponents' live-movement rewrite"
+    );
+}
+
+#[test]
 fn lethal_sword_damage_hands_the_corpse_hold_to_wait() {
     use crate::element::{ActionState, Command, Posture};
     use crate::order::OrderType;

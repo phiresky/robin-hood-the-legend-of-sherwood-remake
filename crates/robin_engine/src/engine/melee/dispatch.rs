@@ -381,31 +381,6 @@ impl EngineInner {
             .and_then(Entity::actor_data)
             .is_some_and(|actor| actor.action_state.is_sword());
 
-        // A higher-priority explicit quit can postpone an independently
-        // selected sword movement. Original mutates that surviving movement's
-        // logical action before it is translated again after lowering; leaving
-        // it as `*_WITH_SWORD` would make the resumed Execute immediately quit
-        // a second time because the relationship is now empty.
-        let postponed = self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .unwrap_or_else(|| {
-                panic!(
-                    "dispatch_quit_swordfight: missing element ({seq_id:?}, {elem_idx}) \
-                     for {owner:?}"
-                )
-            })
-            .cross_postponed;
-        if let Some((postponed_sequence, postponed_index)) = postponed {
-            self.rewrite_sword_movement_for_fight_exit(
-                postponed_sequence,
-                postponed_index,
-                owner,
-                false,
-            );
-        }
-
         // The explicit command owns the visible transition. Relationship
         // cleanup itself must not lower the sword, and action state stays
         // sword-ready until the transition order actually starts.
