@@ -10529,7 +10529,12 @@ impl EngineInner {
         // Dispatching a completion also re-enters Think, whose entry gate
         // clears all three latches before the nested handler runs, so a single
         // boundary surfaces at most one event even when several were set.
+        let reconsider_tail_pending = ai.outbox.reentrant.reconsider_approach_completion_pending;
+        let retain_couldnt_reachpoint =
+            ai.completion_latch_inside_think && ai.couldnt_reachpoint && reconsider_tail_pending;
         let event = if !ai.completion_latch_inside_think {
+            None
+        } else if retain_couldnt_reachpoint {
             None
         } else if ai.couldnt_reachpoint {
             Some(crate::ai::StimulusType::EventCouldntReachPoint)
@@ -10540,7 +10545,9 @@ impl EngineInner {
         } else {
             None
         };
-        ai.couldnt_reachpoint = false;
+        if !retain_couldnt_reachpoint {
+            ai.couldnt_reachpoint = false;
+        }
         ai.already_on_point = false;
         ai.already_turned = false;
         if let Some(event) = event {

@@ -2610,28 +2610,60 @@ impl EnemyAi {
             }
         }
 
-        // Couldn't-reachpoint avenger-on-roof fallback.
-        // The engine tick pre-computes the blocking-gate wait positions
-        // per target into `tick.avenger_on_roof_wait_positions`; the
-        // friend-swap loop above may have replaced the snapshot target,
-        // so resolve through the live primary-target handle.
-        if self.base.couldnt_reachpoint
-            && let Some(wait_pos) = tick.avenger_wait_position_for(self.base.primary_target)
-        {
-            self.base.couldnt_reachpoint = false;
-            self.go_near(
-                AiState::Attacking,
-                Substate::AttackingRunToAvengerOnRoof,
-                wait_pos,
-                50,
-                GotoFlags::RUN,
+        // Original path construction is synchronous, so the
+        // `mbCouldntReachpoint` test immediately below GoNear observes this
+        // attempt's result. Rust settles the queued route after releasing the
+        // AI borrow. Resume that exact statement only after the engine has
+        // constructed the route; do not turn its failure into an independent
+        // unexpected event first.
+        let avenger_wait_position = tick.avenger_wait_position_for(self.base.primary_target);
+        if self.base.couldnt_reachpoint {
+            self.resume_reconsider_enemy_approach_after_go_near(
+                working_target_pos,
+                avenger_wait_position,
                 ctx,
             );
-            // No timer here: the guard waits for the reach-point event at
-            // the gate, and the seek position tracks the unreachable
-            // avenger rather than the wait spot.
-            self.base.seek_position = working_target_pos;
+        } else {
+            self.base
+                .outbox
+                .reentrant
+                .reconsider_approach_completion_pending = true;
+            self.base.outbox.reentrant.owner_work.push(
+                crate::ai::AiOwnerWork::ResumeReconsiderEnemyApproachAfterGoNear {
+                    target: self.base.primary_target,
+                    target_position: working_target_pos,
+                },
+            );
         }
+    }
+
+    pub(crate) fn resume_reconsider_enemy_approach_after_go_near(
+        &mut self,
+        target_position: Position,
+        avenger_wait_position: Option<Position>,
+        ctx: &AiContext,
+    ) {
+        if !self.base.couldnt_reachpoint {
+            return;
+        }
+        let Some(wait_pos) = avenger_wait_position else {
+            // Original returns without clearing mbCouldntReachpoint when the
+            // reverse gate walk cannot find a blocking gate.
+            return;
+        };
+
+        self.base.couldnt_reachpoint = false;
+        self.go_near(
+            AiState::Attacking,
+            Substate::AttackingRunToAvengerOnRoof,
+            wait_pos,
+            50,
+            GotoFlags::RUN,
+            ctx,
+        );
+        // The wait position is only the reachable staging point. Original
+        // keeps the actual avenger position for the later face/wait behavior.
+        self.base.seek_position = target_position;
     }
 
     /// Compute the approach point on `line_idx` closest to the victim.
@@ -3332,6 +3364,7 @@ mod tests {
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingTooProudToAttackApproach;
         ai.base.primary_target = 198;
+        ai.base.think_recursion_depth = 1;
         ai.sword_range = 50;
 
         let target_position = Position {
@@ -3388,6 +3421,61 @@ mod tests {
                 .map(|effect| effect.target),
             Some(true)
         );
+        assert!(
+            ai.base
+                .outbox
+                .reentrant
+                .reconsider_approach_completion_pending
+        );
+        assert!(ai.base.outbox.reentrant.owner_work.iter().any(|work| {
+            matches!(
+                work,
+                crate::ai::AiOwnerWork::ResumeReconsiderEnemyApproachAfterGoNear {
+                    target: 198,
+                    target_position: queued_target,
+                } if *queued_target == target_position
+            )
+        }));
+    }
+
+    #[test]
+    fn failed_reconsider_approach_resumes_with_avenger_roof_wait() {
+        let mut ai = EnemyAi::new(205);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunningToEnemy;
+        ai.base.primary_target = 298;
+        ai.base.couldnt_reachpoint = true;
+        let target_position = Position {
+            x: 264.0,
+            y: 1358.0,
+            ..Position::default()
+        };
+        let wait_position = Position {
+            x: 250.0,
+            y: 1200.0,
+            sector: crate::position_interface::SectorHandle::new(64),
+            level: 1,
+        };
+
+        ai.resume_reconsider_enemy_approach_after_go_near(
+            target_position,
+            Some(wait_position),
+            &AiContext::default(),
+        );
+
+        assert!(!ai.base.couldnt_reachpoint);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingRunToAvengerOnRoof
+        );
+        assert_eq!(ai.base.seek_position, target_position);
+        assert_eq!(ai.base.outbox.actor.orders.len(), 1);
+        let order = &ai.base.outbox.actor.orders[0];
+        assert_eq!(order.target_x, wait_position.x);
+        assert_eq!(order.target_y, wait_position.y);
+        assert_eq!(order.target_sector, wait_position.sector);
+        assert_eq!(order.target_layer, Some(wait_position.level));
+        assert_eq!(order.tolerance, 50.0);
     }
 
     #[test]
