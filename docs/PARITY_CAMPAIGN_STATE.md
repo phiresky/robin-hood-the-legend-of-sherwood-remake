@@ -204,6 +204,7 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #172 completed: low-level `GoTo` now honors replayed `GOTO_NEAR` flags with Original's same-layer squared-distance early exit and stored stop tolerance. linux2 Profile_002 Savegame_003 replay-013 and both task-36 controls match exact EOF.
 - #173 completed: non-soldier forced sword movement with no live opponent now selects `WalkingSword` directly instead of encoding a fake self-facing target that can become a tiny strafe vector. linux2 Profile_002 Savegame_008 replay-014 and both task-36 controls match exact EOF.
 - #175 completed: archery friendly-fire checks now use Original's determinant/dot `SBGeoVector2D::Angle`, including PI for a coincident zero vector instead of Rust's `atan2(0,0)=0`. linux2 Profile_002 Savegame_010 replay-003 and both task-36 controls match exact EOF.
+- #168 completed: `ReconsiderSwordfight` now evaluates its facing guard from Original's ground positions rather than elevation-projected map positions. linux2 Profile_002 Savegame_001 replay-001 and both task-36 controls match exact EOF.
 
 Standing clusters not yet tasked: actor.animation 133 (top cluster, resweep-db67cc978 classification), direction_goal 76, position_goal_map.x 72, motion_state 70, MoveOk→MoveWaiting 57, BoredAnimationChoice 56, AiRandomValueRectangle 55, path_events.length 54, RuntimeBuildingExitWait 51, visibility_queries.length 45 (+43 ai.list_them etc.). Full breakdown: `output/parity-audits/resweep-db67cc978/classification.json`.
 

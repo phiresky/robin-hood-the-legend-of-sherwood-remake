@@ -1,0 +1,9 @@
+{
+  "id": "168",
+  "subject": "Use ground positions for the swordfight facing guard",
+  "description": "Schema-14 linux2 Profile_002 Savegame_001 replay-001 advanced through task 162/164 and diverged around frame 2155 when Soldier137's EnterSwordfight completion called ReconsiderSwordfight. Original returned before combat RNG because its facing guard compares GetPositionGround coordinates: the S137-to-PC252 vector mapped to sector 4 while S137 faced sector 1, a modular delta of 13. Rust subtracted projected map positions; the elevation difference changed the vector to sector 1/delta 0, so Rust incorrectly consumed DrunkCombatFreeze, CombatReposition, and SwordStrikeSelection draws. The guard now reconstructs ground/world Y as map Y plus elevation for both fighters before applying the existing aspect-scaled sector and modular delta. A focused unequal-elevation regression proves the projected and ground sectors differ and the early return consumes no combat RNG. cargo fmt and diff checks pass. The representative and both task-36 schema-14 replay-009 controls match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task168-visibility-f2150"
+}
