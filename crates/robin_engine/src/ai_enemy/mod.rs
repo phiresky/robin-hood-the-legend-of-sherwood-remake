@@ -4087,6 +4087,17 @@ impl EnemyAi {
         let outgoing_substate = self.base.current_substate;
         self.base.return_to_duty_common_stuff(sim, flags, ctx);
 
+        // `ReturnToDutyCommonStuff` reaches its destination state through the
+        // virtual `SetState` call in Original.  The shared Rust base assigns
+        // that state directly, so restore the Enemy override's synchronous
+        // leaving-Menacing relationship cleanup.  In particular, the
+        // reciprocal PC guard must be cleared before a later NPC owner slot
+        // runs RefreshDetection; an unobserved guarded PC is rejected before
+        // the otherwise-authoritative visibility query.
+        if outgoing_state == AiState::Menacing && self.base.current_state != AiState::Menacing {
+            self.set_guarded_pc(None);
+        }
+
         // `ReturnToDutyCommonStuff` calls the virtual Enemy `SetState` in
         // C++. The shared Rust base performs the state assignment directly.
         // Restore the Enemy override's attentive-mode tail: every Default
@@ -5435,6 +5446,29 @@ mod tests {
         ai.resume_return_to_duty_after_patrol_init(sim, DutyFlags::empty(), &ctx);
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.current_task_priority, task_priority::NONE);
+    }
+
+    #[test]
+    fn return_to_duty_virtual_state_tail_clears_guarded_pc() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        let guarded = PcId(17);
+        ai.base.current_state = AiState::Menacing;
+        ai.base.current_substate = Substate::MenacingPcInComa;
+        ai.guarded_pc = Some(guarded);
+
+        ai.resume_return_to_duty_after_patrol_init(&sim, DutyFlags::empty(), &AiContext::default());
+
+        assert_eq!(ai.base.current_state, AiState::Default);
+        assert_eq!(ai.guarded_pc, None);
+        assert_eq!(
+            ai.base.outbox.actor.set_guarded_pc,
+            Some(GuardedPcEffect {
+                old: Some(guarded),
+                new: None,
+            }),
+            "the owner-boundary drain must clear the PC's reciprocal guard before later NPCs scan"
+        );
     }
 
     #[test]
