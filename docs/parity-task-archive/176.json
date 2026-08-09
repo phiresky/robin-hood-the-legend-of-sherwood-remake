@@ -1,0 +1,9 @@
+{
+  "id": "176",
+  "subject": "Preserve co-located opponent zero vectors in sword movement",
+  "description": "FaceOpponent now passes a live combat target's literal ground-space displacement into legacy angle selection, including the zero vector produced by co-located fighters. Rust previously replaced very small target vectors with the actor's heading and selected a strafe animation; Original passes zero to SBGeoVector2D::Angle, whose determinant/dot branch returns PI and selects WalkingBackwardsSword. An end-to-end regression exercises the target-collection boundary. linux2 Profile_002 Savegame_010 replay-014 and both task-36 schema-14 replay-009 controls match exact EOF. The focused test, cargo fmt, diff check, and release parity build pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task176-animation-cluster3"
+}
