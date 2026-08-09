@@ -846,12 +846,12 @@ impl SightObstacle {
         false
     }
 
-    /// Find the earliest parametric `t` along a 3D ray where this obstacle
-    /// blocks it.  Returns `None` if the obstacle doesn't block the ray.
-    ///
-    /// `t` is in `0.0..=1.0` where 0 = origin and 1 = destination.
-    /// Uses the 2D intersection point on obstacle edges to derive `t`.
-    pub fn blocking_ray_3d_ratio(&self, origin: [f32; 3], destination: [f32; 3]) -> Option<f32> {
+    /// Find the earliest impact along a 3D ray where this obstacle blocks it.
+    fn blocking_ray_3d_impact(
+        &self,
+        origin: [f32; 3],
+        destination: [f32; 3],
+    ) -> Option<ObstacleRayImpact> {
         let ray_seg = segment(pt(origin[0], origin[1]), pt(destination[0], destination[1]));
 
         if self.box_ground.trivially_rejects_segment(ray_seg) {
@@ -883,7 +883,7 @@ impl SightObstacle {
         let dy = destination[1] - origin[1];
         let ray_len_sq = dx * dx + dy * dy;
 
-        let mut min_t: Option<f32> = None;
+        let mut earliest: Option<ObstacleRayImpact> = None;
 
         let pts = &self.obstacle_points;
         if pts.is_empty() {
@@ -923,7 +923,17 @@ impl SightObstacle {
                     let ipy = ip.y - origin[1];
                     let t = (ipx * dx + ipy * dy) / ray_len_sq;
                     let t = t.clamp(0.0, 1.0);
-                    min_t = Some(min_t.map_or(t, |prev: f32| prev.min(t)));
+                    let impact = ObstacleRayImpact {
+                        t,
+                        point: crate::coordinates::WorldPoint3D {
+                            x: ip.x,
+                            y: ip.y,
+                            z: ray_z,
+                        },
+                    };
+                    if earliest.is_none_or(|previous| t < previous.t) {
+                        earliest = Some(impact);
+                    }
                 }
             }
 
@@ -944,7 +954,23 @@ impl SightObstacle {
                     && geo2d::polygon_contains_point(self.polygon.as_geo(), ip)
                 {
                     let t = t_plane.clamp(0.0, 1.0);
-                    min_t = Some(min_t.map_or(t, |prev: f32| prev.min(t)));
+                    let impact = ObstacleRayImpact {
+                        t,
+                        point: crate::coordinates::WorldPoint3D {
+                            x: ix,
+                            y: iy,
+                            // Original stores the impact by evaluating the
+                            // obstacle plane at the 2D intersection; see
+                            // `RHFastFindGrid::IsReachableImpact` in
+                            // original-code/RHfastfindgrid.cpp:6546-6561. It
+                            // does not reconstruct Z parametrically from the
+                            // ray.
+                            z: self.compute_top_z(ix, iy),
+                        },
+                    };
+                    if earliest.is_none_or(|previous| t < previous.t) {
+                        earliest = Some(impact);
+                    }
                 }
             }
         }
@@ -972,14 +998,39 @@ impl SightObstacle {
                         && geo2d::polygon_contains_point(self.polygon.as_geo(), ip)
                     {
                         let t = t_plane.clamp(0.0, 1.0);
-                        min_t = Some(min_t.map_or(t, |prev: f32| prev.min(t)));
+                        let impact = ObstacleRayImpact {
+                            t,
+                            point: crate::coordinates::WorldPoint3D {
+                                x: ix,
+                                y: iy,
+                                z: self.compute_bottom_z(ix, iy),
+                            },
+                        };
+                        if earliest.is_none_or(|previous| t < previous.t) {
+                            earliest = Some(impact);
+                        }
                     }
                 }
             }
         }
 
-        min_t
+        earliest
     }
+
+    /// Find the earliest parametric `t` along a 3D ray where this obstacle
+    /// blocks it.  Returns `None` if the obstacle doesn't block the ray.
+    ///
+    /// `t` is in `0.0..=1.0` where 0 = origin and 1 = destination.
+    pub fn blocking_ray_3d_ratio(&self, origin: [f32; 3], destination: [f32; 3]) -> Option<f32> {
+        self.blocking_ray_3d_impact(origin, destination)
+            .map(|impact| impact.t)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ObstacleRayImpact {
+    t: f32,
+    point: crate::coordinates::WorldPoint3D,
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1166,6 +1217,7 @@ pub fn is_reachable_impact_3d(
     // Walk active, type-matching obstacles and find the nearest impact.
     let mut best_t: f32 = f32::INFINITY;
     let mut best_obstacle: Option<u32> = None;
+    let mut best_obstacle_impact = None;
     let mut ground_impact = None;
 
     for (idx, obs) in obstacles.iter_indexed().map(|(i, o)| (i as usize, o)) {
@@ -1175,11 +1227,12 @@ pub fn is_reachable_impact_3d(
         if !obs.is_of_type(type_filter) || obs.is_shield() {
             continue;
         }
-        if let Some(t) = obs.blocking_ray_3d_ratio(origin_arr, dest_arr)
-            && t < best_t
+        if let Some(impact) = obs.blocking_ray_3d_impact(origin_arr, dest_arr)
+            && impact.t < best_t
         {
-            best_t = t;
+            best_t = impact.t;
             best_obstacle = Some(idx as u32);
+            best_obstacle_impact = Some(impact.point);
         }
     }
 
@@ -1192,6 +1245,7 @@ pub fn is_reachable_impact_3d(
             if (0.0..=1.0).contains(&t_ground) && t_ground < best_t {
                 best_t = t_ground;
                 best_obstacle = None;
+                best_obstacle_impact = None;
                 // RHFastFindGrid::IsReachableImpact does not obtain the
                 // ground point from the parametric 3D ratio. It builds the
                 // dominant-axis z equation in FLOAT, solves z=0, then uses
@@ -1225,11 +1279,9 @@ pub fn is_reachable_impact_3d(
     }
 
     if best_t.is_finite() {
-        let impact = ground_impact.unwrap_or_else(|| WorldPoint3D {
-            x: origin.x + best_t * (destination.x - origin.x),
-            y: origin.y + best_t * (destination.y - origin.y),
-            z: origin.z + best_t * (destination.z - origin.z),
-        });
+        let impact = ground_impact
+            .or(best_obstacle_impact)
+            .unwrap_or_else(|| panic!("finite projectile impact has no resolved point"));
         Some(ImpactResult3D {
             impact,
             obstacle_index: best_obstacle,
@@ -1876,6 +1928,56 @@ mod tests {
         assert!((result.impact.x - 0.0).abs() < 1e-3);
         assert!((result.impact.y - 5.0).abs() < 1e-3);
         assert!((result.impact.z - 1.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn projectile_top_plane_impact_keeps_original_plane_evaluated_z() {
+        // Derby obstacle 12 and Projectile177's terminal launch segment from
+        // schema-14 linux2 Profile_002 Savegame_034 replay-009. Original
+        // computes X/Y from the plane-crossing ratio, then evaluates the
+        // obstacle plane again for Z. Parametrically rebuilding all three
+        // coordinates puts Z four ULPs lower and later changes movement_map.
+        let points = [
+            [1053.8281, 1973.2054, 150.001],
+            [1040.9312, 2080.138, 0.001],
+            [1001.7031, 2078.5815, 0.001],
+            [1014.6001, 1971.6489, 150.001],
+        ];
+        let mut obstacle = SightObstacle::new_default(12);
+        obstacle.obstacle_points = points
+            .into_iter()
+            .map(|point| ObstaclePoint {
+                x: point[0],
+                y: point[1],
+                z_top: point[2],
+                z_bottom: 0.0,
+            })
+            .collect();
+        obstacle.top_plane_points = [points[1], points[2], points[0]];
+        obstacle.bottom_plane_points = [
+            [points[1][0], points[1][1], 0.0],
+            [points[2][0], points[2][1], 0.0],
+            [points[0][0], points[0][1], 0.0],
+        ];
+        obstacle.rebuild_geometry();
+
+        let origin = WorldPoint3D::new(1032.0369873046875, 1994.0145263671875, 144.74258422851562);
+        let destination = WorldPoint3D::new(1060.244384765625, 1990.617431640625, 77.18310546875);
+        let result = is_reachable_impact_3d(
+            origin,
+            destination,
+            SIGHTOBSTACLE_SOLID,
+            ObstacleList::from_slice_all_active(std::slice::from_ref(&obstacle)),
+            None,
+        )
+        .expect("descending projectile should strike the obstacle top");
+
+        assert_eq!(result.obstacle_index, Some(0));
+        assert_eq!(result.impact.z.to_bits(), 0x42f3_c100);
+        let parametric_z = origin.z
+            + ((result.impact.x - origin.x) / (destination.x - origin.x))
+                * (destination.z - origin.z);
+        assert_ne!(parametric_z.to_bits(), result.impact.z.to_bits());
     }
 
     #[test]

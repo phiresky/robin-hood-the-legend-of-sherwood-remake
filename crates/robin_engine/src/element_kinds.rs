@@ -347,9 +347,48 @@ pub const CRAWLING_OFFSETS_Y: [f32; 16] = [
 /// isometric ground plane.
 #[inline]
 pub fn direction_vector_16(sector: i16) -> (f32, f32) {
-    let s = sector.rem_euclid(16) as f32;
-    let angle = s * std::f32::consts::TAU / 16.0;
-    (angle.sin(), -angle.cos())
+    // Original `SBGeoVector2D::SetSector0to15` indexes two literal tables.
+    // Computing sin/cos from an f32 angle is not equivalent: rounding the
+    // angle first changes several entries by multiple ULPs, which then leaks
+    // into trajectory and movement arithmetic.
+    const X: [f32; 16] = [
+        0.0,
+        0.382_683_432_365_09,
+        0.707_106_781_186_54,
+        0.923_879_532_511_28,
+        1.0,
+        0.923_879_532_511_28,
+        0.707_106_781_186_54,
+        0.382_683_432_365_09,
+        0.0,
+        -0.382_683_432_365_09,
+        -0.707_106_781_186_54,
+        -0.923_879_532_511_28,
+        -1.0,
+        -0.923_879_532_511_28,
+        -0.707_106_781_186_54,
+        -0.382_683_432_365_09,
+    ];
+    const Y: [f32; 16] = [
+        -1.0,
+        -0.923_879_532_511_28,
+        -0.707_106_781_186_54,
+        -0.382_683_432_365_09,
+        0.0,
+        0.382_683_432_365_09,
+        0.707_106_781_186_54,
+        0.923_879_532_511_28,
+        1.0,
+        0.923_879_532_511_28,
+        0.707_106_781_186_54,
+        0.382_683_432_365_09,
+        0.0,
+        -0.382_683_432_365_09,
+        -0.707_106_781_186_54,
+        -0.923_879_532_511_28,
+    ];
+    let index = sector.rem_euclid(16) as usize;
+    (X[index], Y[index])
 }
 
 /// Phase of the Listen hero ability.
@@ -1663,7 +1702,63 @@ bitflags! {
 
 #[cfg(test)]
 mod tests {
-    use super::{ActionState, Command, GameMaterial};
+    use super::{ActionState, Command, GameMaterial, direction_vector_16};
+
+    #[test]
+    fn direction_vectors_match_original_literal_table_bit_exactly() {
+        let expected_x = [
+            0x0000_0000,
+            0x3ec3_ef15,
+            0x3f35_04f3,
+            0x3f6c_835e,
+            0x3f80_0000,
+            0x3f6c_835e,
+            0x3f35_04f3,
+            0x3ec3_ef15,
+            0x0000_0000,
+            0xbec3_ef15,
+            0xbf35_04f3,
+            0xbf6c_835e,
+            0xbf80_0000,
+            0xbf6c_835e,
+            0xbf35_04f3,
+            0xbec3_ef15,
+        ];
+        let expected_y = [
+            0xbf80_0000,
+            0xbf6c_835e,
+            0xbf35_04f3,
+            0xbec3_ef15,
+            0x0000_0000,
+            0x3ec3_ef15,
+            0x3f35_04f3,
+            0x3f6c_835e,
+            0x3f80_0000,
+            0x3f6c_835e,
+            0x3f35_04f3,
+            0x3ec3_ef15,
+            0x0000_0000,
+            0xbec3_ef15,
+            0xbf35_04f3,
+            0xbf6c_835e,
+        ];
+
+        for sector in 0..16 {
+            let (x, y) = direction_vector_16(sector);
+            assert_eq!(
+                x.to_bits(),
+                expected_x[sector as usize],
+                "sector {sector} x"
+            );
+            assert_eq!(
+                y.to_bits(),
+                expected_y[sector as usize],
+                "sector {sector} y"
+            );
+        }
+        assert_eq!(direction_vector_16(-5), direction_vector_16(11));
+        assert_eq!(direction_vector_16(27), direction_vector_16(11));
+    }
 
     #[test]
     fn game_material_raw_conversion_is_exact_and_non_clamping() {
