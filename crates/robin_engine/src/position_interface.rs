@@ -1189,6 +1189,19 @@ impl PositionInterface {
     pub fn set_direction(&mut self, d: Direction) {
         self.direction_goal = d;
     }
+
+    /// Preserve a stable deviation turn across an in-place movement
+    /// transition. The next `TurnAntiVibration` call may rotate immediately.
+    pub fn prime_deviated_turn_for_current_goal(&mut self) {
+        let diff = (i32::from(self.direction_goal.as_u8()) - i32::from(self.direction.as_u8()))
+            .rem_euclid(16);
+        self.direction_count = match diff {
+            0 => 0,
+            1..=7 => 2,
+            _ => -2,
+        };
+    }
+
     /// Turn one step toward the goal direction.  Returns `true` if still turning.
     pub fn turn(&mut self) -> bool {
         if self.deviated {
@@ -2357,6 +2370,20 @@ mod tests {
 
         assert!(pi.turn_anti_vibration());
         assert_eq!(pi.direction, d(1)); // now it turns
+    }
+
+    #[test]
+    fn in_place_transition_preserves_stable_deviation_turn() {
+        let mut pi = PositionInterface::new();
+        pi.direction = d(12);
+        pi.direction_goal = d(10);
+        pi.deviated = true;
+        pi.direction_count = 0;
+
+        pi.prime_deviated_turn_for_current_goal();
+
+        assert!(pi.turn());
+        assert_eq!(pi.direction, d(11));
     }
 
     #[test]
