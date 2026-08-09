@@ -10986,9 +10986,11 @@ impl EngineInner {
                 // CROUCHED inbound actions to WalkingUpright or
                 // RunningUpright per `is_fast`.  WALKING_STAIRS always
                 // normalises to WALKING_UPRIGHT regardless of speed.
-                // The PC sword-variant guard is already handled by
-                // the upstream sword-variant block + sprite-fallback
-                // above.
+                // A PC can resume a movement whose authored action still
+                // carries a sword token after QuitSwordfight lowered the
+                // weapon. Original's base DetermineMovementAnimation treats
+                // that combination as an ordinary upright walk/run; NPCs
+                // retain the token.
                 let owner_sector = self
                     .world
                     .entities
@@ -11017,6 +11019,8 @@ impl EngineInner {
                         | OrderType::RiderCharging => move_action,
                         // Stairs always → walking upright.
                         OrderType::WalkingStairs => OrderType::WalkingUpright,
+                        OrderType::WalkingWithSword if owner_is_pc => OrderType::WalkingUpright,
+                        OrderType::RunningWithSword if owner_is_pc => OrderType::RunningUpright,
                         // Climbing / carry-on-shoulders → walk/run upright.
                         OrderType::ClimbingWallUp
                         | OrderType::ClimbingWallDown
@@ -11030,8 +11034,7 @@ impl EngineInner {
                         // Crouched → walk/run upright.
                         OrderType::WalkingCrouched => walk_or_run,
                         // Default arm: leave `move_action` as-is for
-                        // any non-listed type (sword/shield variants
-                        // are already covered by the upstream blocks).
+                        // any non-listed type.
                         other => other,
                     };
                 }
@@ -12035,8 +12038,12 @@ mod orphaned_sword_movement_tests {
             },
         }));
 
-        let mut movement =
-            SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::Move,
+            Some(owner),
+            OrderType::WalkingWithSword,
+        );
         movement.priority = SequencePriority::Normal;
         movement.posture_after_transition = Posture::Upright;
         movement.action_state_after_transition = ActionState::Waiting;
@@ -12060,7 +12067,7 @@ mod orphaned_sword_movement_tests {
                 sequence,
                 0,
                 destination,
-                OrderType::WalkingUpright,
+                OrderType::WalkingWithSword,
             ),
             MovePathOutcome::Success
         ));
