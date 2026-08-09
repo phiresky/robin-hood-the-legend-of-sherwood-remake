@@ -246,6 +246,10 @@ pub struct CampSoldierInfo {
     /// Used by `CanCallThisSoldier` to reject a soldier already in a
     /// conversation with someone other than the calling officer.
     pub antagonist: NpcHandle,
+    /// Body currently selected by this soldier's AI. The instructed-soldier
+    /// conversation reads this from the officer before delivering
+    /// `CALL_YOURTALK_2`.
+    pub detected_body: HumanHandle,
     /// Whether this soldier has the duty soldier-profile flag set.
     /// Combined with `is_tower_guard` and `company_number == 100` it drives
     /// `Q_SHALL_I_STAY_ON_MY_POST` / `IsAllowedToLeaveHisPost`.

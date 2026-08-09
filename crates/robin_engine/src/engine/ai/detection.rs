@@ -2605,6 +2605,7 @@ impl EngineInner {
                             alert_soldiers_point: ss.alert_soldiers_point,
                             patrol_chief: ss.patrol_chief,
                             antagonist: ss.antagonist,
+                            detected_body: ss.detected_body,
                             duty_flag: ss.duty_flag,
                             is_tower_guard: ss.is_tower_guard,
                             company_number: ss.company_number,

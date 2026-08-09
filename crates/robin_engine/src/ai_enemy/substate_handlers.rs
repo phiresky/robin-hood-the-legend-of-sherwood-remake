@@ -2897,6 +2897,20 @@ impl EnemyAi {
                     }
                     StimulusType::EventMyTalk2 => {
                         // I said "Sir, yes, Sir!"
+                        // Original captures the officer's selected body before
+                        // delivering CALL_YOURTALK_2, which can advance the
+                        // officer's conversation state.
+                        let officer = tick
+                            .camp_soldiers
+                            .iter()
+                            .find(|cs| cs.handle == self.base.antagonist)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "instructed soldier {} requires missing officer antagonist {}",
+                                    self.base.me, self.base.antagonist
+                                )
+                            });
+                        let body_handle = officer.detected_body;
                         self.base.outbox.reentrant.cross_npc_actions.push(
                             CrossNpcAction::SendStimulus {
                                 // Direct antagonist Think; no sender fallback
@@ -2910,7 +2924,7 @@ impl EnemyAi {
                         );
                         // Add the body to our detection list so we don't
                         // re-react when detecting it later.
-                        if let StimulusInfo::Human(body_handle) = stimulus.info {
+                        if body_handle != 0 {
                             self.base.outbox.actor.add_detectables.push((
                                 ctx.entity_id(body_handle).unwrap_or_else(|| {
                                     panic!(
@@ -2922,19 +2936,8 @@ impl EnemyAi {
                         }
                         self.current_task_priority = task_priority::SEEKING;
                         // Read alert_soldiers_point from officer
-                        if let Some(officer) = tick
-                            .camp_soldiers
-                            .iter()
-                            .find(|cs| cs.handle == self.base.antagonist)
-                        {
-                            self.base.alert_soldiers_point = officer.alert_soldiers_point;
-                        }
-                        self.officers_position = tick
-                            .camp_soldiers
-                            .iter()
-                            .find(|cs| cs.handle == self.base.antagonist)
-                            .map(|cs| cs.position)
-                            .unwrap_or(self.officers_position);
+                        self.base.alert_soldiers_point = officer.alert_soldiers_point;
+                        self.officers_position = officer.position;
                         self.seek_area(
                             sim,
                             self.base.alert_soldiers_point,
@@ -6420,6 +6423,7 @@ mod tests {
             alert_soldiers_point: Position::default(),
             patrol_chief: None,
             antagonist: 1,
+            detected_body: 0,
             duty_flag: false,
             is_tower_guard: false,
             company_number: 0,
@@ -6774,6 +6778,7 @@ mod tests {
             alert_soldiers_point: Position::default(),
             patrol_chief: None,
             antagonist: 0,
+            detected_body: 0,
             duty_flag: false,
             is_tower_guard: false,
             company_number: 0,
@@ -6876,6 +6881,121 @@ mod tests {
             None,
             crate::order::OrderType::NonanimationEnd,
         )
+    }
+
+    #[test]
+    fn instructed_soldier_adds_officers_selected_body_after_speech() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(89);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingSoldierGetInstructedByOfficer;
+        ai.base.antagonist = 91;
+
+        let alert_point = Position {
+            x: 2100.0,
+            y: 1600.0,
+            ..Position::default()
+        };
+        let officer_position = Position {
+            x: 2050.0,
+            y: 1550.0,
+            ..Position::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.camp_soldiers.push(crate::ai_enemy::CampSoldierInfo {
+            handle: 91,
+            active: true,
+            position: officer_position,
+            position_world: crate::coordinates::WorldPoint3D::ZERO,
+            direction: 0,
+            rank: ProfileRank::Officer,
+            ai_state: AiState::Seeking,
+            ai_substate: Substate::SeekingOfficerWaitForInstructedSoldier,
+            is_able_to_fight: true,
+            is_dead: false,
+            primary_target: 0,
+            pride: 0,
+            is_able_to_help: true,
+            script_locked: false,
+            ai_lock_frozen: false,
+            layer: 0,
+            report_type: ReportType::Nothing,
+            report_seek_position: Position::default(),
+            report_seen_bodies: Vec::new(),
+            report_charly: 0,
+            alert_soldiers_point: alert_point,
+            patrol_chief: None,
+            antagonist: 89,
+            detected_body: 97,
+            duty_flag: false,
+            is_tower_guard: false,
+            company_number: 0,
+            in_building: false,
+            forecast_destination: None,
+            detectable_bodies: Vec::new(),
+            seek_position: Position::default(),
+            current_task_priority: 0,
+            minimal_task_priority: 0,
+            view_direction: [1.0, 0.0],
+            view_radius: 400,
+            real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
+            eye_blind: false,
+        });
+
+        let mut body = pc_view(crate::element::Posture::Tied);
+        body.kind = crate::ai_entity_view::EntityKind::Soldier;
+        body.is_pc = false;
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(97, body);
+        let ctx = AiContext {
+            camp: crate::element::Camp::Lacklandists,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        // Speech completion carries no body payload. Original reads the
+        // officer's selected body directly before sending CALL_YOURTALK_2.
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventMyTalk2),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert!(matches!(
+            ai.base.outbox.reentrant.cross_npc_actions.first(),
+            Some(CrossNpcAction::SendStimulus {
+                target: 91,
+                stimulus_type: StimulusType::CallYourTalk2,
+                info: StimulusInfo::None,
+                ..
+            })
+        ));
+        let mut added_detectables = ai.base.outbox.actor.add_detectables.clone();
+        for work in &ai.base.outbox.reentrant.owner_work {
+            match work {
+                AiOwnerWork::ActorEffects(effects) => {
+                    added_detectables.extend(effects.add_detectables.iter().copied());
+                }
+                AiOwnerWork::StateChange(change) => {
+                    if let Some(effects) = &change.actor_effects_before_callback {
+                        added_detectables.extend(effects.add_detectables.iter().copied());
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(
+            added_detectables,
+            vec![(
+                crate::element::EntityId::Soldier(crate::entity_id::SoldierId(97)),
+                crate::element::DetectableType::Body,
+            )]
+        );
+        assert_eq!(ai.base.alert_soldiers_point, alert_point);
+        assert_eq!(ai.officers_position, officer_position);
     }
 
     #[test]

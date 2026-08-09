@@ -245,6 +245,8 @@ pub(super) struct SoldierSnapshot {
     pub(super) patrol_chief: Option<EntityId>,
     /// Soldier's current antagonist handle.
     pub(super) antagonist: u32,
+    /// Body currently selected by the soldier's AI brain.
+    pub(super) detected_body: u32,
     /// Soldier profile duty flag — part of the
     /// "shall I stay on my post" decision.
     pub(super) duty_flag: bool,
@@ -732,6 +734,7 @@ impl EngineInner {
             let is_tower_guard = enemy_ai.tower_guard;
             let patrol_chief = enemy_ai.base.patrol_chief;
             let antagonist = enemy_ai.base.antagonist;
+            let detected_body = enemy_ai.base.detected_body;
             let ai_seek_position = enemy_ai.base.seek_position;
             let current_task_priority = enemy_ai.current_task_priority;
             let minimal_task_priority = enemy_ai.minimal_task_priority;
@@ -919,6 +922,7 @@ impl EngineInner {
                 ground_z: s.element.position().z,
                 patrol_chief,
                 antagonist,
+                detected_body,
                 duty_flag: soldier_profile.duty,
                 in_building,
                 forecast_destination,

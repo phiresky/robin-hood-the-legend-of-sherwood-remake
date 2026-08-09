@@ -5573,6 +5573,7 @@ mod tests {
             alert_soldiers_point: Position::default(),
             patrol_chief: None,
             antagonist: 0,
+            detected_body: 0,
             duty_flag: false,
             is_tower_guard: false,
             company_number: 0,

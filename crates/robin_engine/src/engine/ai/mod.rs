@@ -2448,6 +2448,7 @@ impl EngineInner {
                 alert_soldiers_point: enemy_ai.base.alert_soldiers_point,
                 patrol_chief: enemy_ai.base.patrol_chief,
                 antagonist: enemy_ai.base.antagonist,
+                detected_body: enemy_ai.base.detected_body,
                 duty_flag: enemy_ai.soldier_profile_duty,
                 is_tower_guard: enemy_ai.tower_guard,
                 company_number: enemy_ai.company_number,
