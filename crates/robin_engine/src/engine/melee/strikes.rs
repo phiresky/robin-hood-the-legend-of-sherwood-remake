@@ -8,6 +8,16 @@ use crate::element::{ActionState, Command, Entity, EntityId, Posture};
 use crate::profiles::WeaponThrustKind;
 use crate::weapons::SwordStrike;
 
+/// Materialize the zero map increment produced by Original's lazy
+/// `GetIncrementMap` after `UpdateRoll` stops at the actor's current point.
+fn stop_roll_at_current_position(
+    position: &mut crate::position_interface::PositionInterface,
+    here: crate::coordinates::MapPoint,
+) {
+    position.set_map_goal(here);
+    position.compute_increment_map();
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SweepTickPhase {
     Dormant,
@@ -1987,7 +1997,7 @@ impl EngineInner {
             entity.position_iface_mut().set_map_goal(dest);
         } else if let Some(entity) = self.world.entities.get_mut(entity_id) {
             let here = entity.element_data().position_map();
-            entity.position_iface_mut().set_map_goal(here);
+            stop_roll_at_current_position(entity.position_iface_mut(), here);
         }
     }
 
@@ -2807,12 +2817,25 @@ impl EngineInner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coordinates::{MapPoint, WorldPoint3D};
+    use crate::coordinates::{MapPoint, MapVec, WorldPoint3D};
     use crate::element::{
         ActorData, ActorSoldier, Camp, ElementData, ElementKind, HumanData, NpcData, SoldierData,
     };
     use crate::position_interface::SectorHandle;
     use crate::sequence::SequenceElement;
+
+    #[test]
+    fn stopped_rolling_materializes_zero_map_increment() {
+        let here = MapPoint::new(1208.699_5, 1156.473_4);
+        let mut position = crate::position_interface::PositionInterface::new();
+        position.set_map_position(here);
+        position.set_map_increment(MapVec::new(0.274_060_93, 0.961_712_3));
+
+        stop_roll_at_current_position(&mut position, here);
+
+        assert_eq!(position.map_goal(), here);
+        assert_eq!(position.get_increment_map(), MapVec::ZERO);
+    }
 
     fn falling_pushed_soldier(dead: bool) -> Entity {
         let mut element = ElementData {
