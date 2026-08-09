@@ -1,0 +1,9 @@
+{
+  "id": "175",
+  "subject": "Match legacy zero-vector angles in archery friendly-fire checks",
+  "description": "The current linux2 Profile_002 Savegame_010 replay-003 representative advanced past its stale animation frontier and diverged after frame 35207 when Soldier124 fell back to bow observation instead of selecting PC243 as a shot target. All target/range/profile inputs matched. A coincident ally Soldier125 remained in the live us-list. Original SBGeoVector2D::Angle handles determinant zero explicitly and returns PI when the dot product is non-positive, including the zero vector. Rust used atan2(0,0), returned zero, and falsely aligned the coincident ally with PC243, rejecting the shot as friendly fire. Archery target/friend angles now use the exact legacy determinant/dot branch, including its signed nonzero cases. Focused tests cover the coincident angle and friendly-fire admission. cargo fmt is clean. The representative and both task-36 schema-14 replay-009 controls match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task175-animation-cluster2"
+}
