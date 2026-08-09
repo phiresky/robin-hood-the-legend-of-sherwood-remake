@@ -1,0 +1,9 @@
+{
+  "id": "190",
+  "subject": "Preserve disabled anti-collision after down-jump landing",
+  "description": "Anti-collision restoration now occurs when the authored landing step retires, and only for up, long, and sword-long jumps. A down-jump landing and its trailing crouching-up transition deliberately leave anti-collision disabled, matching the commented-out Original SetAntiCollisionOn block. Rust previously restored it at whole-sequence completion and later deflected PC252 around PC99. linux2 Profile_002 Savegame_003 replay-012 clears frame 15186 and matches exact EOF. Both task-36 schema-14 replay-009 controls match exact EOF; focused tests, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task181-dead-damage"
+}

@@ -1,0 +1,9 @@
+{
+  "id": "195",
+  "subject": "Snap completed pushed flights after their order retires",
+  "description": "The falling-order start hold now applies only while a combat flight still has frames remaining. A zero-frame pushed flight can therefore execute Original's terminal snap and clear after its falling order retires, preserving the exact tiny near-goal-to-goal movement residue. Four stale synthetic flight fixtures were repaired to install real falling orders. linux2 Profile_002 Savegame_034 replay-001 clears frame 34823 and advances to an independent frame-34827 RNG under-consumption frontier. Both task-36 controls match exact EOF; focused tests, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task179-true-seam"
+}

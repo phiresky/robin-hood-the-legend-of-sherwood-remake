@@ -1,0 +1,9 @@
+{
+  "id": "194",
+  "subject": "Execute Rolling through Original's owner-local motion path",
+  "description": "Rolling now has an owner-local executor that performs initialization before sprite row selection, runs PerformMotion with WALK anti-collision at the actor's creation-order slot, and retargets the live order/map goal across elevation crossings instead of using a synthetic ActiveFlight. Translated roll orders retain compute-direction, and FindRollPoint uses the actor's live primary move box like Original GetMoveBox. linux2 Profile_002 Savegame_032 replay-002 clears frame 17463 and advances to a frame-17471 terminal increment residue; Savegame_035 replay-015 clears its frame-38677 Rolling frontier and advances to an independent frame-38768 AI lifecycle seam. Both task-36 controls match exact EOF; focused tests, cargo fmt, cargo check, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task183-posture"
+}
