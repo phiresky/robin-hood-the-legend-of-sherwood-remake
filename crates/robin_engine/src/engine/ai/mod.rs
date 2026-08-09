@@ -353,6 +353,43 @@ fn patrol_member_admitted(
     detected && ai_state == crate::ai::AiState::Default && (is_civilian || is_able_to_fight)
 }
 
+/// Original `InitializePatrol` uses AI `Position(actor)` for sorting and
+/// formation, but its admission ray calls the actor overload of
+/// `IsDetecting360Degrees`. That overload builds both endpoints from the
+/// actors' literal stored 3-D positions. In particular, a door-passing member
+/// must not substitute the committed gate-side AI position here.
+#[allow(clippy::too_many_arguments)]
+fn patrol_member_visible_from_raw_world(
+    chief_world: crate::coordinates::WorldPoint3D,
+    chief_is_rider: bool,
+    chief_view_radius: u16,
+    chief_in_building: bool,
+    member_world: crate::coordinates::WorldPoint3D,
+    member_posture: crate::element::Posture,
+    member_is_rider: bool,
+    member_direction: i16,
+    member_in_building: bool,
+    obstacles: crate::sight_obstacle::ObstacleList<'_>,
+) -> bool {
+    let mut chief_eye = chief_world;
+    chief_eye.z +=
+        crate::stealth::eye_z_for_posture(crate::element::Posture::Upright, chief_is_rider);
+    let member_detection = crate::stealth::detection_point_world(
+        member_world,
+        member_posture,
+        member_direction,
+        member_is_rider,
+    );
+    crate::ai_enemy::soldier_detects_detection_point_360(
+        chief_eye,
+        chief_view_radius,
+        chief_in_building,
+        member_detection,
+        member_in_building,
+        obstacles,
+    )
+}
+
 /// Preserve `RefreshPatrol`'s missed-member `&&` evaluation order.
 ///
 /// Original calls `IsDetecting360Degrees` before `IsAbleToHelp` and the AI
@@ -420,6 +457,48 @@ mod parity_tests {
         );
         assert!(!admitted);
         assert_eq!(calls.get(), 1, "inactive actors return before LOS");
+    }
+
+    #[test]
+    fn patrol_visibility_uses_literal_world_position_during_door_pass() {
+        let chief_world = crate::coordinates::WorldPoint3D::new(1033.5859, 2061.8677, 25.10078);
+        let member_world = crate::coordinates::WorldPoint3D::new(1021.8682, 2079.0342, 0.4859238);
+
+        crate::sight_obstacle::begin_parity_visibility_capture();
+        assert!(patrol_member_visible_from_raw_world(
+            chief_world,
+            false,
+            400,
+            false,
+            member_world,
+            crate::element::Posture::Upright,
+            false,
+            1,
+            false,
+            crate::sight_obstacle::ObstacleList::empty(),
+        ));
+        let queries = crate::sight_obstacle::take_parity_visibility_capture();
+        assert_eq!(queries.len(), 1);
+        let mut expected_origin = chief_world;
+        expected_origin.z += 45.0;
+        let mut expected_destination = member_world;
+        expected_destination.z += 45.0;
+        assert_eq!(
+            queries[0].origin,
+            [expected_origin.x, expected_origin.y, expected_origin.z]
+        );
+        assert_eq!(
+            queries[0].destination,
+            [
+                expected_destination.x,
+                expected_destination.y,
+                expected_destination.z,
+            ]
+        );
+        assert_ne!(
+            queries[0].destination[1], 2060.4858,
+            "the patrol visibility ray must not use the door's gate-side AI position"
+        );
     }
 
     #[test]
@@ -8810,6 +8889,7 @@ impl EngineInner {
         #[derive(Clone, Copy)]
         struct NpcSnap {
             position: Position,
+            detection_position_world: crate::coordinates::WorldPoint3D,
             direction: u16,
             ground_z: f32,
             posture: crate::element::Posture,
@@ -8840,7 +8920,7 @@ impl EngineInner {
             // sequence command is PassDoor reports the committed gate side,
             // not its interpolating sprite position. The owner-slot view also
             // preserves creation-order map positions for ordinary actors.
-            let position = scratch
+            let view = scratch
                 .ai_entity_views
                 .get(&npc_id.index())
                 .unwrap_or_else(|| {
@@ -8849,8 +8929,9 @@ impl EngineInner {
                         owner.index(),
                         npc_id.index()
                     )
-                })
-                .position;
+                });
+            let position = view.position;
+            let detection_position_world = view.detection_position_world;
             let dir = entity.element_data().direction();
             let npc = entity.npc_data().unwrap_or_else(|| {
                 panic!(
@@ -8903,6 +8984,7 @@ impl EngineInner {
                         sector: position.sector,
                         level: position.level,
                     },
+                    detection_position_world,
                     direction: dir as u16,
                     ground_z: entity.element_data().position().z,
                     posture: entity.element_data().posture,
@@ -8998,14 +9080,12 @@ impl EngineInner {
                         let admit = patrol_member_admitted(
                             chief_snap.is_active && snap.is_active,
                             || {
-                                crate::ai_enemy::soldier_detects_target_360(
-                                    chief_snap.position,
-                                    chief_snap.ground_z,
+                                patrol_member_visible_from_raw_world(
+                                    chief_snap.detection_position_world,
                                     chief_snap.is_rider,
                                     chief_snap.real_view_radius,
                                     chief_snap.in_building,
-                                    snap.position,
-                                    snap.ground_z,
+                                    snap.detection_position_world,
                                     snap.posture,
                                     snap.is_rider,
                                     snap.direction as i16,
@@ -12668,6 +12748,7 @@ impl EngineInner {
         #[derive(Clone, Copy)]
         struct PatrolSnap {
             position: crate::ai::Position,
+            detection_position_world: crate::coordinates::WorldPoint3D,
             direction: u16,
             ground_z: f32,
             posture: crate::element::Posture,
@@ -12716,6 +12797,7 @@ impl EngineInner {
             });
             PatrolSnap {
                 position: view.position,
+                detection_position_world: view.detection_position_world,
                 direction: entity.element_data().direction() as u16,
                 ground_z: entity.element_data().position().z,
                 posture: entity.element_data().posture,
@@ -12768,14 +12850,12 @@ impl EngineInner {
             let admit = patrol_member_admitted(
                 chief_snap.is_active && snap.is_active,
                 || {
-                    crate::ai_enemy::soldier_detects_target_360(
-                        chief_snap.position,
-                        chief_snap.ground_z,
+                    patrol_member_visible_from_raw_world(
+                        chief_snap.detection_position_world,
                         chief_snap.is_rider,
                         chief_real_view_radius,
                         chief_snap.in_building,
-                        snap.position,
-                        snap.ground_z,
+                        snap.detection_position_world,
                         snap.posture,
                         snap.is_rider,
                         snap.direction as i16,
