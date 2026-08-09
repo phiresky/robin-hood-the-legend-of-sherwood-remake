@@ -697,18 +697,9 @@ impl EngineInner {
                     if let Some(pc) = entity.pc_data_mut() {
                         pc.carried = None;
                     }
-                    // The reference does NOT mutate the carrier's
-                    // posture at translate time — the
-                    // FallingBackUpright execute handler is the one
-                    // that flips it.  We flip eagerly because
-                    // `queue_damage_anim` + the sprite-completion
-                    // callback in `animation.rs` expect the posture
-                    // to reflect the post-fall state.  Nothing reads
-                    // the posture between this translate call and
-                    // the subsequent execute pass, so the
-                    // one-tick-earlier flip is behaviourally
-                    // equivalent.
-                    entity.set_posture(Posture::Upright);
+                    // Translation leaves the shoulder posture intact. The
+                    // FallingBackUpright execute handler applies the landing
+                    // posture only when this actor reaches its next slot.
                 }
                 _ => {}
             }

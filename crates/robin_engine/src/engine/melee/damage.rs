@@ -783,6 +783,7 @@ impl EngineInner {
                 sim,
                 assets,
                 victim_id,
+                life_points_before,
                 attacker_id,
                 result.is_empty(),
                 damage_element,
@@ -994,7 +995,16 @@ impl EngineInner {
             Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
         ) {
             self.translate_shoulder_damage(sim, assets, victim_id, damage_element);
-            self.handle_post_damage(sim, assets, victim_id, None, false, damage_element, None);
+            self.handle_post_damage(
+                sim,
+                assets,
+                victim_id,
+                life_points_before,
+                None,
+                false,
+                damage_element,
+                None,
+            );
             return;
         }
 
@@ -1044,7 +1054,16 @@ impl EngineInner {
             self.try_queue_roll(assets, victim_id, damage_element);
         }
 
-        self.handle_post_damage(sim, assets, victim_id, None, false, damage_element, None);
+        self.handle_post_damage(
+            sim,
+            assets,
+            victim_id,
+            life_points_before,
+            None,
+            false,
+            damage_element,
+            None,
+        );
     }
 
     /// Apply piercing damage (arrows, stones).
@@ -1161,7 +1180,16 @@ impl EngineInner {
             Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
         ) {
             self.translate_shoulder_damage(sim, assets, victim_id, damage_element);
-            self.handle_post_damage(sim, assets, victim_id, None, false, damage_element, None);
+            self.handle_post_damage(
+                sim,
+                assets,
+                victim_id,
+                life_points_before,
+                None,
+                false,
+                damage_element,
+                None,
+            );
             return;
         }
 
@@ -1216,7 +1244,16 @@ impl EngineInner {
             self.try_queue_roll(assets, victim_id, damage_element);
         }
 
-        self.handle_post_damage(sim, assets, victim_id, None, false, damage_element, None);
+        self.handle_post_damage(
+            sim,
+            assets,
+            victim_id,
+            life_points_before,
+            None,
+            false,
+            damage_element,
+            None,
+        );
     }
 
     /// Apply hit damage (fist/club, concussion only).
@@ -1737,12 +1774,16 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
+        life_points_before: i16,
         attacker_id: Option<EntityId>,
         no_damage: bool,
         damage_element: (crate::sequence::SequenceId, usize),
         dying_anim_override: Option<crate::order::OrderType>,
     ) {
-        if no_damage {
+        // Human::SetLifePoints begins with `if (IsDead()) return;`, so damage
+        // delivered to an already-dead actor may still perform its authored
+        // protection rolls but cannot invoke the virtual Kill cascade again.
+        if no_damage || life_points_before <= 0 {
             return;
         }
 

@@ -4376,6 +4376,61 @@ mod tests {
     }
 
     #[test]
+    fn helping_climb_shoulder_damage_keeps_posture_until_fall_executes() {
+        let sim = crate::sim_rng::SimulationContext::with_seed(0x183);
+        let mut engine = make_engine();
+        let victim = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        engine
+            .get_entity_mut(victim)
+            .expect("test victim must exist")
+            .set_posture(Posture::HelpingToClimb);
+
+        let mut sequence = crate::sequence::Sequence::new();
+        sequence.append_element(crate::sequence::SequenceElement::new(
+            1,
+            Command::ReceiveSwordDamage,
+            Some(victim),
+        ));
+        let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+
+        let assets = action_test_assets([crate::profiles::Action::NoAction; 3]);
+        engine.translate_shoulder_damage(&sim, &assets, victim, (sequence_id, 0));
+
+        assert_eq!(
+            engine
+                .get_entity(victim)
+                .expect("test victim must remain live")
+                .element_data()
+                .posture,
+            Posture::HelpingToClimb,
+            "TranslateShoulderDamage only queues FallingBackUpright; its Execute START changes posture on the actor's next slot"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, 0)
+                .expect("damage element must remain registered")
+                .orders
+                .back()
+                .expect("shoulder damage must queue a fall order")
+                .order_type,
+            OrderType::FallingBackUpright
+        );
+    }
+
+    #[test]
     fn parried_damage_still_learns_attackers_live_strike() {
         let sim = crate::sim_rng::test_context();
         let mut engine = make_engine();
@@ -4457,6 +4512,47 @@ mod tests {
             ai.known_enemy_strike_2, None,
             "a low-skill guard forgets its previous strike when the parried live strike is learned"
         );
+    }
+
+    #[test]
+    fn damage_to_already_dead_pc_does_not_repeat_virtual_kill() {
+        let sim = crate::sim_rng::SimulationContext::with_seed(0x181);
+        let mut engine = make_engine();
+        let victim = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let Entity::Pc(pc) = engine.get_entity_mut(victim).unwrap() else {
+            unreachable!()
+        };
+        pc.pc.life_points = 0;
+        pc.pc.trumpet_enabled = false;
+
+        let seed_before = sim.seed();
+        engine.handle_post_damage(
+            &sim,
+            &LevelAssets::new(),
+            victim,
+            0,
+            None,
+            false,
+            (crate::sequence::SequenceId(999), 0),
+            None,
+        );
+
+        assert_eq!(
+            sim.seed(),
+            seed_before,
+            "SetLifePoints returns before the repeated Kill cascade can select a replacement peasant"
+        );
+        let Entity::Pc(pc) = engine.get_entity(victim).unwrap() else {
+            unreachable!()
+        };
+        assert!(!pc.pc.trumpet_enabled);
     }
 
     #[test]
