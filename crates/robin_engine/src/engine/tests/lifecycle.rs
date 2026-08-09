@@ -1230,6 +1230,150 @@ fn latent_active_shot_does_not_block_higher_selected_nonbow_order() {
 }
 
 #[test]
+fn carried_corpse_transition_drops_before_following_whistle_order() {
+    use crate::element::{Command, Posture};
+    use crate::movement::AbilityKind;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let mut engine = EngineInner::new();
+    // The body owns an earlier legacy creation slot, as in the replay. Its
+    // outdoor delayed landing therefore cannot commit until the next frame.
+    let carried = engine.add_entity(make_test_soldier(Posture::Carried));
+    let carrier = engine.add_entity(make_test_pc(Posture::CarryingCorpse));
+    {
+        let entity = engine.get_entity_mut(carrier).unwrap();
+        let pc = entity.pc_data_mut().unwrap();
+        pc.carried = Some(carried);
+        pc.set_live_carried_posture(Posture::Lying);
+    }
+    {
+        let entity = engine.get_entity_mut(carried).unwrap();
+        entity.human_data_mut().unwrap().carrier = Some(carrier);
+        entity.actor_data_mut().unwrap().execution_frozen = true;
+    }
+
+    let dropped = OrderType::BeingDroppedPeasantC;
+    let dropped_script = SpriteScript {
+        action_id: dropped as u16,
+        action_done: 0,
+        average_speed: 0.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 0,
+        frame_ids: vec![1],
+        delays: vec![0],
+        distances: vec![0],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+        sound_ids: vec![0],
+    };
+    let mut dropped_conversion = vec![UNMAPPED; NONANIMATION_END];
+    dropped_conversion[dropped as usize] = 0;
+    let dropped_sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![dropped_script; 16]),
+        std::sync::Arc::new(dropped_conversion),
+    );
+    engine
+        .get_entity_mut(carried)
+        .unwrap()
+        .element_data_mut()
+        .sprite = dropped_sprite;
+
+    let transition = OrderType::TransitionCarryingCorpseWaitingUpright;
+    let script = SpriteScript {
+        action_id: transition as u16,
+        action_done: 0,
+        average_speed: 0.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 0,
+        frame_ids: vec![1],
+        delays: vec![0],
+        distances: vec![0],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+        sound_ids: vec![0],
+    };
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[transition as usize] = 0;
+    let sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(conversion),
+    );
+    engine
+        .get_entity_mut(carrier)
+        .unwrap()
+        .element_data_mut()
+        .sprite = sprite;
+    engine
+        .get_entity_mut(carrier)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(13);
+
+    let transition_id = engine.orders.allocate_order_id();
+    let transition_order = Order::new(transition, 0.0, 0.0, transition_id);
+    let whistle_id = engine.orders.allocate_order_id();
+    let whistle_order = Order::new(OrderType::Whistling, 0.0, 0.0, whistle_id);
+    let mut element = SequenceElement::new(1, Command::WhistleCmd, Some(carrier));
+    element.orders.push_back(transition_order);
+    element.orders.push_back(whistle_order);
+    let sequence = engine.orders.sequence_manager.launch_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+    {
+        let actor = engine
+            .get_entity_mut(carrier)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap();
+        actor.active_ability.kind = Some(AbilityKind::Whistle);
+        actor.active_ability.sequence_id = Some(sequence);
+        actor.active_ability.element_index = 0;
+        actor.active_ability.order_id = Some(whistle_id);
+    }
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::new();
+    for _ in 0..8 {
+        engine.tick_actor_animation_action_change_slots(&sim, &assets);
+        if engine.get_entity(carrier).unwrap().posture() == Posture::Upright {
+            break;
+        }
+    }
+
+    let carrier_entity = engine.get_entity(carrier).unwrap();
+    assert_eq!(carrier_entity.posture(), Posture::Upright);
+    assert_eq!(carrier_entity.pc_data().unwrap().carried, None);
+    let carried_entity = engine.get_entity(carried).unwrap();
+    assert_eq!(carried_entity.posture(), Posture::Lying);
+    assert_eq!(carried_entity.human_data().unwrap().carrier, None);
+    assert!(!carried_entity.actor_data().unwrap().execution_frozen);
+    assert!(
+        carried_entity.element_data().position_map_delayed,
+        "outdoor DropCorpse must queue its landing after the body's earlier creation slot"
+    );
+    assert_eq!(carried_entity.sprite().last_action, dropped);
+    assert_eq!(
+        carried_entity.sprite().frame_count,
+        carrier_entity.sprite().frame_count,
+        "the terminal SynchronizeAnim must run before DropCorpse unlinks the pair"
+    );
+    assert_eq!(carried_entity.element_data().direction(), 9);
+    assert_eq!(
+        i16::from(carried_entity.position_iface().get_direction_goal()),
+        13
+    );
+    let (_, _, selected) = engine
+        .orders
+        .sequence_manager
+        .current_order_for_actor(carrier)
+        .expect("following Whistle order must remain selected");
+    assert_eq!(selected.order_type, OrderType::Whistling);
+    assert_ne!(selected.order_id, transition_id);
+}
+
+#[test]
 fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};

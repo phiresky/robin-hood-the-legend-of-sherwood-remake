@@ -3153,6 +3153,122 @@ impl EngineInner {
 
     // ─── Hero ability tick ──────────────────────────────────────
 
+    /// Apply the terminal side effects of
+    /// `TRANSITION_CARRYING_CORPSE_WAITING_UPRIGHT`.
+    ///
+    /// Original runs `DropCorpse(12, sector_is_building)` inside the selected
+    /// Execute arm, before returning `TERMINATED` to Actor::Hourglass. Keep
+    /// this separate from order advancement so transition prefixes for a
+    /// following command (for example Whistle) still sever the pair at the
+    /// transition's own terminal edge.
+    pub(super) fn apply_completed_corpse_drop(
+        &mut self,
+        carrier_id: EntityId,
+        target_id: EntityId,
+        drop_posture: crate::element::Posture,
+        carrier_pos: crate::coordinates::MapPoint,
+        carrier_direction: u16,
+    ) {
+        if let Some(carrier) = self.get_entity_mut(carrier_id) {
+            if let Some(pc) = carrier.pc_data_mut() {
+                pc.carried = None;
+            }
+            carrier.set_posture(crate::element::Posture::Upright);
+            if let Some(actor) = carrier.actor_data_mut() {
+                actor.action_state = crate::element::ActionState::Waiting;
+            }
+        }
+
+        let (carrier_sector, carrier_layer, drop_box_origin) = self
+            .get_entity(carrier_id)
+            .map(|e| {
+                (
+                    e.element_data().sector(),
+                    e.element_data().layer(),
+                    e.cxx_current_point_map().unwrap_or_else(|| {
+                        panic!("corpse-drop carrier {carrier_id:?} has no current action point")
+                    }),
+                )
+            })
+            .unwrap_or_else(|| panic!("corpse-drop carrier {carrier_id:?} disappeared"));
+        let in_building = carrier_sector
+            .and_then(|s| {
+                self.grid_sector_by_number(crate::sector::SectorNumber::new(i16::from(s)))
+            })
+            .map(|gs| gs.sector_type.is_building())
+            .unwrap_or(false);
+
+        let drop_pos = if in_building {
+            carrier_pos
+        } else {
+            let target_box = self
+                .get_entity(target_id)
+                .map(|e| e.position_iface())
+                .map(|pi| *pi.get_move_box())
+                .filter(|b| b.is_somewhere());
+            match target_box {
+                Some(b) => {
+                    // Original translates the corpse box by
+                    // GetCurrentPointMap (the live animation hotspot), then
+                    // searches toward the carrier's map origin.
+                    let mut bbox = b.translated(drop_box_origin);
+                    if self.world.fast_grid.find_authorized_position_toward(
+                        &mut bbox,
+                        carrier_pos,
+                        carrier_layer,
+                    ) {
+                        bbox.center()
+                    } else {
+                        carrier_pos
+                    }
+                }
+                None => carrier_pos,
+            }
+        };
+
+        if let Some(target) = self.get_entity_mut(target_id) {
+            target.set_posture(drop_posture);
+            if in_building {
+                target.element_data_mut().set_position_map(drop_pos);
+            } else {
+                target.element_data_mut().set_position_map_delayed(drop_pos);
+            }
+            target
+                .element_data_mut()
+                .set_direction_instantly(((carrier_direction.wrapping_add(12)) & 15) as i16);
+            target
+                .element_data_mut()
+                .set_direction_goal(carrier_direction as i16);
+            if let Some(human) = target.human_data_mut() {
+                human.carrier = None;
+            }
+            if let Some(actor) = target.actor_data_mut() {
+                actor.execution_frozen = false;
+                actor.action_state = crate::element::ActionState::Waiting;
+            }
+            let sprite = &mut target.element_data_mut().sprite;
+            sprite.display_order_ref = None;
+            sprite.behind_display_order_ref = false;
+        }
+        self.actor_wait(target_id);
+
+        if in_building && let Some(target) = self.get_entity_mut(target_id) {
+            let is_dead = target.is_dead();
+            let is_unconscious = target.human_data().is_some_and(|h| h.unconscious);
+            if is_dead || is_unconscious {
+                crate::engine::door_pass::start_hulk_on(target, 1.0);
+                let elem = target.element_data_mut();
+                elem.hidden_in_building = false;
+                elem.active = true;
+            }
+        }
+        tracing::debug!(
+            carrier = ?carrier_id,
+            target = ?target_id,
+            "Drop: put down body"
+        );
+    }
+
     /// Drive one actor's ability and apply its completion effects inline at
     /// that actor's creation-order position.
     #[allow(unused_variables)] // Done results retain owner identity; Terminated consumes it.
@@ -3614,127 +3730,12 @@ impl EngineInner {
                     seq_id,
                     elem_idx,
                 } => {
-                    // Clear PcData.carried and restore target posture.
-                    // Force the carrier back to UPRIGHT + WAITING
-                    // synchronously.  In the normal path the transition
-                    // animation already lands the carrier in Upright
-                    // before this fires, but a future non-transition
-                    // instant-drop path would otherwise leave the
-                    // carrier in CarryingCorpse — apply defensively.
-                    if let Some(carrier) = self.get_entity_mut(carrier_id) {
-                        if let Some(pc) = carrier.pc_data_mut() {
-                            pc.carried = None;
-                        }
-                        carrier.set_posture(crate::element::Posture::Upright);
-                        if let Some(actor) = carrier.actor_data_mut() {
-                            actor.action_state = crate::element::ActionState::Waiting;
-                        }
-                    }
-
-                    // Resolve the carrier's sector/layer. Both the drop
-                    // position logic and the post-drop hulk flash need
-                    // the sector's building flag (drives the
-                    // instant-drop shortcut and the visibility flash).
-                    let (carrier_sector, carrier_layer) = self
-                        .get_entity(carrier_id)
-                        .map(|e| (e.element_data().sector(), e.element_data().layer()))
-                        .unwrap_or((None, 0));
-                    let in_building = carrier_sector
-                        .and_then(|s| {
-                            self.grid_sector_by_number(crate::sector::SectorNumber::new(i16::from(
-                                s,
-                            )))
-                        })
-                        .map(|gs| gs.sector_type.is_building())
-                        .unwrap_or(false);
-
-                    // Choose the drop position.  In instant-drop mode
-                    // the corpse drops under the carrier's feet;
-                    // otherwise the target's move box is translated to
-                    // the carrier's position and nudged off any motion
-                    // lines with `find_authorized_position_toward`,
-                    // using the resulting box centre. Falls back to
-                    // `carrier_pos` when no authorised spot is found
-                    // or the target has no move-box geometry.
-                    let drop_pos = if in_building {
-                        carrier_pos
-                    } else {
-                        let target_box = self
-                            .get_entity(target_id)
-                            .map(|e| e.position_iface())
-                            .map(|pi| *pi.get_move_box())
-                            .filter(|b| b.is_somewhere());
-                        match target_box {
-                            Some(b) => {
-                                let mut bbox = b.translated(carrier_pos);
-                                if self.world.fast_grid.find_authorized_position_toward(
-                                    &mut bbox,
-                                    carrier_pos,
-                                    carrier_layer,
-                                ) {
-                                    bbox.center()
-                                } else {
-                                    carrier_pos
-                                }
-                            }
-                            None => carrier_pos,
-                        }
-                    };
-
-                    if let Some(target) = self.get_entity_mut(target_id) {
-                        target.set_posture(drop_posture);
-                        target.element_data_mut().set_position_map(drop_pos);
-                        // direction = (carrier_dir + 12) & 15
-                        // (12/16 * 360° = 270° offset from carrier facing).
-                        target.element_data_mut().set_direction_instantly(
-                            ((carrier_direction.wrapping_add(12)) & 15) as i16,
-                        );
-                        // Clearing the carrier link sets the direction
-                        // *goal* to the carrier's direction, overwriting
-                        // the +12 offset's goal (the immediate facing
-                        // keeps the +12 offset; the goal slowly turns
-                        // toward the carrier).
-                        target
-                            .element_data_mut()
-                            .set_direction_goal(carrier_direction as i16);
-                        // Unfreeze execution and clear the carrier
-                        // back-reference.
-                        if let Some(human) = target.human_data_mut() {
-                            human.carrier = None;
-                        }
-                        if let Some(actor) = target.actor_data_mut() {
-                            actor.execution_frozen = false;
-                            actor.action_state = crate::element::ActionState::Waiting;
-                        }
-                        // Stop tracking the carrier's display_order now
-                        // that they're separate sprites again.
-                        let sprite = &mut target.element_data_mut().sprite;
-                        sprite.display_order_ref = None;
-                        sprite.behind_display_order_ref = false;
-                    }
-                    // Launch a low-priority Wait on the target so its
-                    // AI re-enters an idle state instead of staying in
-                    // whatever command it was running when it was picked
-                    // up.
-                    self.actor_wait(target_id);
-                    // Post-drop hulk flash: when the carrier is inside a
-                    // building and the dropped body is dead or
-                    // unconscious, start the hulk effect on the body and
-                    // unhide it so it stays visible through walls.
-                    if in_building && let Some(target) = self.get_entity_mut(target_id) {
-                        let is_dead = target.is_dead();
-                        let is_unconscious = target.human_data().is_some_and(|h| h.unconscious);
-                        if is_dead || is_unconscious {
-                            crate::engine::door_pass::start_hulk_on(target, 1.0);
-                            let elem = target.element_data_mut();
-                            elem.hidden_in_building = false;
-                            elem.active = true;
-                        }
-                    }
-                    tracing::debug!(
-                        carrier = ?carrier_id,
-                        target = ?target_id,
-                        "Drop: put down body"
+                    self.apply_completed_corpse_drop(
+                        carrier_id,
+                        target_id,
+                        drop_posture,
+                        carrier_pos,
+                        carrier_direction,
                     );
                 }
                 AbilityTickResult::TieDone {

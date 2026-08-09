@@ -5680,6 +5680,60 @@ impl EngineInner {
             );
         }
 
+        // RHElementActorPC::Execute calls DropCorpse from inside the terminal
+        // transition arm, before returning TERMINATED to Actor::Hourglass and
+        // therefore before DoNextOrder exposes a following command.
+        for carrier_id in outcomes.corpse_drop_done {
+            let selected_order = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(carrier_id)
+                .map(|(_, _, order)| order.order_type)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "corpse-drop transition owner {carrier_id:?} lost its selected terminal order"
+                    )
+                });
+            assert_eq!(
+                selected_order,
+                crate::order::OrderType::TransitionCarryingCorpseWaitingUpright,
+                "corpse-drop side effect must run before DoNextOrder exposes a successor"
+            );
+            crate::abilities::sync_terminal_corpse_drop_animation(
+                &mut self.world.entities,
+                &assets.profile_manager,
+                carrier_id,
+            );
+            let (target_id, drop_posture, carrier_pos, carrier_direction) = {
+                let carrier = self.get_entity(carrier_id).unwrap_or_else(|| {
+                    panic!("corpse-drop transition owner {carrier_id:?} disappeared")
+                });
+                let pc = carrier.pc_data().unwrap_or_else(|| {
+                    panic!("corpse-drop transition owner {carrier_id:?} is not a PC")
+                });
+                let target_id = pc.carried.unwrap_or_else(|| {
+                    panic!("corpse-drop transition owner {carrier_id:?} has no carried body")
+                });
+                let direction =
+                    u16::try_from(carrier.element_data().direction()).unwrap_or_else(|_| {
+                        panic!("corpse-drop transition owner {carrier_id:?} has invalid direction")
+                    });
+                (
+                    target_id,
+                    pc.live_carried_posture(),
+                    carrier.element_data().position_map(),
+                    direction,
+                )
+            };
+            self.apply_completed_corpse_drop(
+                carrier_id,
+                target_id,
+                drop_posture,
+                carrier_pos,
+                carrier_direction,
+            );
+        }
+
         for (seq_id, elem_idx) in outcomes.seq_advance {
             // `do_next_order` semantics: pop the just-completed
             // order; advance to the next if one exists, otherwise

@@ -3828,6 +3828,10 @@ pub(super) struct AnimCompletionOutcomes {
     /// the actor holds the last frame as a separate in-progress
     /// element.
     pub play_anim_frozen: Vec<(EntityId, u16, OrderType)>,
+    /// PCs whose carried-corpse exit transition reached TERMINATED. Original
+    /// calls `DropCorpse` inside that exact Execute arm, before Actor::Hourglass
+    /// advances to the following order.
+    pub corpse_drop_done: Vec<EntityId>,
     /// Soldier-style side effects that touch other entities —
     /// accumulated from `apply_soldier_execute_side_effects`.
     pub execute_sides: ExecuteSideOutcomes,
@@ -5318,6 +5322,12 @@ impl EngineInner {
                     // TRANSITION_SITTING / BEGGAR_SHOWING_FACE) — it
                     // applies to both soldier and civilian NPCs.
                     if let Some(motion_state) = motion {
+                        if entity.is_pc()
+                            && anim_type == OrderType::TransitionCarryingCorpseWaitingUpright
+                            && motion_state == MotionState::Terminated
+                        {
+                            completion_outcomes.corpse_drop_done.push(entity_id);
+                        }
                         let special_remark_now = special_speech_id
                             .zip(special_sprite_before_perform)
                             .is_some_and(|(speech_id, before_perform)| {

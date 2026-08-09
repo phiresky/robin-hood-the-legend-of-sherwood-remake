@@ -2990,6 +2990,59 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
     }
 }
 
+/// Synchronize the carried body's final drop frame from the carrier before
+/// `DropCorpse` severs their link.
+///
+/// The ordinary end-of-frame carry pass cannot provide this edge: Original's
+/// PC Execute arm calls `SynchronizeAnim` and then `DropCorpse` in one stack,
+/// while Rust drains the terminal side effect before that later global pass.
+pub(crate) fn sync_terminal_corpse_drop_animation(
+    entities: &mut Entities,
+    profiles: &crate::profiles::ProfileManager,
+    carrier_id: EntityId,
+) {
+    let (target_id, profile_index, carrier_dir, carrier_frame, carrier_frame_count) = {
+        let carrier = entities
+            .get(carrier_id)
+            .unwrap_or_else(|| panic!("terminal corpse-drop carrier {carrier_id:?} disappeared"));
+        let pc = carrier
+            .pc_data()
+            .unwrap_or_else(|| panic!("terminal corpse-drop carrier {carrier_id:?} is not a PC"));
+        let target_id = pc.carried.unwrap_or_else(|| {
+            panic!("terminal corpse-drop carrier {carrier_id:?} has no carried body")
+        });
+        let sprite = &carrier.element_data().sprite;
+        (
+            target_id,
+            pc.profile_index,
+            carrier.element_data().direction(),
+            sprite.current_frame,
+            sprite.frame_count,
+        )
+    };
+    let little_john_style = profiles
+        .get_character(profile_index)
+        .map(|profile| {
+            profile
+                .contextual_actions
+                .iter()
+                .any(|&action| action == crate::profiles::Action::LittleJohnCarry)
+        })
+        .unwrap_or(false);
+    let animation = if little_john_style {
+        OrderType::BeingDroppedLittleJohn
+    } else {
+        OrderType::BeingDroppedPeasantC
+    };
+    let carried_direction = (carrier_dir.wrapping_sub(4) & 15) as u16;
+    let target = entities.get_mut(target_id).unwrap_or_else(|| {
+        panic!("terminal corpse-drop carrier {carrier_id:?} lost body {target_id:?}")
+    });
+    let sprite = &mut target.element_data_mut().sprite;
+    sprite.force_sprite_row(animation, carried_direction);
+    sprite.synchronize_anim(carrier_frame, carrier_frame_count);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
