@@ -1,0 +1,9 @@
+{
+  "id": "217",
+  "subject": "Restore the instructed soldier's body detectable",
+  "description": "Camp soldier snapshots now include each enemy AI's live detected_body. During EVENT_MYTALK_2 the instructed soldier reads the required officer snapshot before sending CALL_YOURTALK_2, then appends that body through the existing detectable drain with Original's default flags. Rust previously expected the speech stimulus itself to carry the body even though the event correctly carries None. linux3 Profile_003 Savegame_010 replay-003 clears Soldier89's frame-19740 detectable-list frontier and matches exact EOF; both task-36 controls, the focused regression, and the full 2812-test external suite pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "external-agent"
+}
