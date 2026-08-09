@@ -7,6 +7,29 @@ use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 use super::util::{det2, dot2, pos_diff, sector_to_vector, square_norm, vec_to_sector_ar};
 use super::{EnemyAi, archer};
 
+/// `SBGeoVector2D::Angle` from the Original geometry library.
+///
+/// This is deliberately not `det.atan2(dot)`: the Original handles a zero
+/// determinant first and returns PI when the dot product is non-positive.
+/// Consequently, the angle from a nonzero facing vector to a coincident point
+/// is PI, not the zero returned by Rust's `atan2(0, 0)`.
+fn legacy_vector_angle(from: (f32, f32), to: (f32, f32)) -> f32 {
+    let dot = dot2(from, to);
+    let det = det2(from, to);
+    if det == 0.0 {
+        if dot > 0.0 { 0.0 } else { std::f32::consts::PI }
+    } else {
+        let angle = (det / dot).atan();
+        if dot >= 0.0 {
+            angle
+        } else if det > 0.0 {
+            angle + std::f32::consts::PI
+        } else {
+            angle - std::f32::consts::PI
+        }
+    }
+}
+
 impl EnemyAi {
     // -----------------------------------------------------------------------
     // Archery
@@ -79,9 +102,7 @@ impl EnemyAi {
             let dy = (f.position.y - my_pos.y) * INVERSE_ASPECT_RATIO;
             let to_friend = (dx, dy);
             let sq_dist = square_norm(to_friend);
-            // Angle from nose direction to friend direction: atan2(cross, dot).
-            // Matches the reference's vector angle implementation.
-            let angle = det2(nose, to_friend).atan2(dot2(nose, to_friend));
+            let angle = legacy_vector_angle(nose, to_friend);
             friends.push(FriendInfo {
                 sq_distance: sq_dist,
                 angle,
@@ -168,7 +189,7 @@ impl EnemyAi {
             }
 
             // Check all friends for friendly fire.
-            let angle_to_enemy = det2(nose, (dx, dy)).atan2(dot2(nose, (dx, dy)));
+            let angle_to_enemy = legacy_vector_angle(nose, (dx, dy));
             let friend_in_the_way = friends.iter().any(|fri| {
                 // Friend must be closer than enemy.
                 if fri.sq_distance > sq_distance {
@@ -298,5 +319,27 @@ impl EnemyAi {
 
         let cd = critical_distance as f32;
         sq_norm < cd * cd
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ai_enemy::archer;
+
+    use super::legacy_vector_angle;
+
+    #[test]
+    fn legacy_angle_treats_a_coincident_point_as_opposite() {
+        assert_eq!(
+            legacy_vector_angle((1.0, 0.0), (0.0, 0.0)),
+            std::f32::consts::PI
+        );
+    }
+
+    #[test]
+    fn coincident_friend_does_not_block_a_near_forward_archery_target() {
+        let friend_angle = legacy_vector_angle((1.0, 0.0), (0.0, 0.0));
+        let target_angle = legacy_vector_angle((1.0, 0.0), (100.0, -3.0));
+        assert!((target_angle - friend_angle).abs() >= archer::MIN_TARGET_FRIEND_ANGLE);
     }
 }
