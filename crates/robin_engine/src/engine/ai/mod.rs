@@ -368,6 +368,27 @@ fn missed_patrol_member_reacquired(
     detected && is_able_to_help && ai_state == crate::ai::AiState::Default
 }
 
+/// Geometry read by patrol admission/reacquisition's direct
+/// `ComputeDetectionPoint` call. This deliberately does not use AI
+/// `Position(actor)`, whose door-pass override is reserved for formation and
+/// path decisions.
+fn patrol_direct_detection_geometry(
+    map: crate::coordinates::MapPoint,
+    world: crate::coordinates::WorldPoint3D,
+    sector: Option<crate::position_interface::SectorHandle>,
+    level: u16,
+) -> (crate::ai::Position, f32) {
+    (
+        crate::ai::Position {
+            x: map.x,
+            y: map.y,
+            sector,
+            level,
+        },
+        world.z,
+    )
+}
+
 /// Original `NearbyCiviliansPanic` asks every active outdoor civilian whether
 /// it detects the source. Dead and unconscious civilians are not rejected
 /// before `IsDetecting360Degrees`, so they can still emit its LOS query.
@@ -452,6 +473,31 @@ mod parity_tests {
         );
         assert!(!reacquired);
         assert_eq!(calls.get(), 1, "inactive actors return before LOS");
+    }
+
+    #[test]
+    fn patrol_direct_detection_keeps_door_endpoint_out_of_los_geometry() {
+        let ai_gate_position = crate::ai::Position {
+            x: 362.0,
+            y: 1535.0,
+            sector: crate::position_interface::SectorHandle::new(21),
+            level: 2,
+        };
+        let boundary_map = crate::coordinates::MapPoint::new(370.8787, 1543.8787);
+        let boundary_world = crate::coordinates::WorldPoint3D::new(370.8787, 1693.8796, 150.001);
+
+        let (direct_position, direct_ground_z) = patrol_direct_detection_geometry(
+            boundary_map,
+            boundary_world,
+            ai_gate_position.sector,
+            ai_gate_position.level,
+        );
+
+        assert_eq!(direct_position.x, boundary_map.x);
+        assert_eq!(direct_position.y, boundary_map.y);
+        assert_eq!(direct_ground_z, boundary_world.z);
+        assert_ne!(direct_position.x, ai_gate_position.x);
+        assert_ne!(direct_position.y, ai_gate_position.y);
     }
 
     #[test]
@@ -1643,31 +1689,32 @@ impl EngineInner {
     ) -> SimScratch {
         let mut views = build_entity_views_without_forecast(self);
         for (target, _) in self.world.entities.occupied() {
+            let boundary = self.boundary_position(
+                target,
+                owner,
+                positions_before_movement,
+                owner_actor_complete,
+            );
             // The initial view builder already applies
             // `RHArtificialIntelligence::Position(actor)`'s committed
             // gate-side override. Creation-slot projection is for live map
-            // positions and must not replace that AI-specific value. Periodic
-            // visibility uses `position_at_owner_boundary` directly and
-            // therefore continues to see the actor's actual interpolated
-            // position, as in the Original detection code.
+            // positions and must not replace that AI-specific value.
+            // Direct geometry is different: ComputeDetectionPoint starts from
+            // literal GetPosition even during a door pass, so always stamp its
+            // map/world pair with the owner-boundary values.
             let passing_door = self
                 .world
                 .entities
                 .get(target)
                 .and_then(Entity::actor_data)
                 .is_some_and(|actor| actor.active_door_pass.is_some());
-            if passing_door {
-                continue;
-            }
-            let position = self.position_at_owner_boundary(
-                target,
-                owner,
-                positions_before_movement,
-                owner_actor_complete,
-            );
             if let Some(view) = views.get_mut(&target.index()) {
-                view.position.x = position.x;
-                view.position.y = position.y;
+                view.detection_position = boundary.map;
+                view.detection_position_world = boundary.world;
+                if !passing_door {
+                    view.position.x = boundary.map.x;
+                    view.position.y = boundary.map.y;
+                }
             }
         }
         SimScratch {
@@ -8810,8 +8857,10 @@ impl EngineInner {
         #[derive(Clone, Copy)]
         struct NpcSnap {
             position: Position,
+            direct_detection_position: Position,
             direction: u16,
             ground_z: f32,
+            direct_detection_ground_z: f32,
             posture: crate::element::Posture,
             is_rider: bool,
             in_building: bool,
@@ -8851,6 +8900,23 @@ impl EngineInner {
                     )
                 })
                 .position;
+            let view = scratch
+                .ai_entity_views
+                .get(&npc_id.index())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "patrol owner {} is missing direct geometry for NPC {}",
+                        owner.index(),
+                        npc_id.index()
+                    )
+                });
+            let (direct_detection_position, direct_detection_ground_z) =
+                patrol_direct_detection_geometry(
+                    view.detection_position,
+                    view.detection_position_world,
+                    position.sector,
+                    position.level,
+                );
             let dir = entity.element_data().direction();
             let npc = entity.npc_data().unwrap_or_else(|| {
                 panic!(
@@ -8903,8 +8969,10 @@ impl EngineInner {
                         sector: position.sector,
                         level: position.level,
                     },
+                    direct_detection_position,
                     direction: dir as u16,
                     ground_z: entity.element_data().position().z,
+                    direct_detection_ground_z,
                     posture: entity.element_data().posture,
                     is_rider: entity.soldier_data().is_some_and(|soldier| soldier.rider),
                     in_building: self.entity_data_in_building_sector(entity.element_data()),
@@ -8999,13 +9067,13 @@ impl EngineInner {
                             chief_snap.is_active && snap.is_active,
                             || {
                                 crate::ai_enemy::soldier_detects_target_360(
-                                    chief_snap.position,
-                                    chief_snap.ground_z,
+                                    chief_snap.direct_detection_position,
+                                    chief_snap.direct_detection_ground_z,
                                     chief_snap.is_rider,
                                     chief_snap.real_view_radius,
                                     chief_snap.in_building,
-                                    snap.position,
-                                    snap.ground_z,
+                                    snap.direct_detection_position,
+                                    snap.direct_detection_ground_z,
                                     snap.posture,
                                     snap.is_rider,
                                     snap.direction as i16,
@@ -9174,13 +9242,13 @@ impl EngineInner {
                         chief_s.is_active && member_s.is_active,
                         || {
                             crate::ai_enemy::soldier_detects_target_360(
-                                chief_s.position,
-                                chief_s.ground_z,
+                                chief_s.direct_detection_position,
+                                chief_s.direct_detection_ground_z,
                                 chief_s.is_rider,
                                 chief_s.real_view_radius,
                                 chief_s.in_building,
-                                member_s.position,
-                                member_s.ground_z,
+                                member_s.direct_detection_position,
+                                member_s.direct_detection_ground_z,
                                 member_s.posture,
                                 member_s.is_rider,
                                 member_s.direction as i16,
@@ -12668,8 +12736,10 @@ impl EngineInner {
         #[derive(Clone, Copy)]
         struct PatrolSnap {
             position: crate::ai::Position,
+            direct_detection_position: crate::ai::Position,
             direction: u16,
             ground_z: f32,
+            direct_detection_ground_z: f32,
             posture: crate::element::Posture,
             is_rider: bool,
             in_building: bool,
@@ -12716,8 +12786,16 @@ impl EngineInner {
             });
             PatrolSnap {
                 position: view.position,
+                direct_detection_position: patrol_direct_detection_geometry(
+                    view.detection_position,
+                    view.detection_position_world,
+                    view.position.sector,
+                    view.position.level,
+                )
+                .0,
                 direction: entity.element_data().direction() as u16,
                 ground_z: entity.element_data().position().z,
+                direct_detection_ground_z: view.detection_position_world.z,
                 posture: entity.element_data().posture,
                 is_rider: entity.soldier_data().is_some_and(|soldier| soldier.rider),
                 in_building: self.entity_data_in_building_sector(entity.element_data()),
@@ -12769,13 +12847,13 @@ impl EngineInner {
                 chief_snap.is_active && snap.is_active,
                 || {
                     crate::ai_enemy::soldier_detects_target_360(
-                        chief_snap.position,
-                        chief_snap.ground_z,
+                        chief_snap.direct_detection_position,
+                        chief_snap.direct_detection_ground_z,
                         chief_snap.is_rider,
                         chief_real_view_radius,
                         chief_snap.in_building,
-                        snap.position,
-                        snap.ground_z,
+                        snap.direct_detection_position,
+                        snap.direct_detection_ground_z,
                         snap.posture,
                         snap.is_rider,
                         snap.direction as i16,
