@@ -6,6 +6,42 @@ use crate::campaign::{Campaign, CampaignValue};
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::{MissionLocation, MissionProfile};
 
+#[inline]
+fn battle_look_for_help_success_remark(
+    sim: &crate::sim_rng::SimulationContext,
+) -> crate::ai::Remark {
+    if crate::sim_rng::bool(sim, crate::sim_rng::RngSite::BattlePanicRemark) {
+        crate::ai::Remark::Cassos
+    } else {
+        crate::ai::Remark::Panic
+    }
+}
+
+#[cfg(test)]
+mod battle_look_for_help_rng_order_tests {
+    use super::battle_look_for_help_success_remark;
+    use crate::sim_rng::{RngSite, with_draw_trace};
+
+    #[test]
+    fn courage_precedes_building_exit_wait_and_success_remark() {
+        let sim = crate::sim_rng::test_context();
+        let (_, sites) = with_draw_trace(|| {
+            let _ = crate::sim_rng::u16(&sim, RngSite::BattleCourage, 0..100);
+            let _ = crate::engine::movement::building_exit_wait_frames(&sim);
+            let _ = battle_look_for_help_success_remark(&sim);
+        });
+        assert_eq!(
+            sites,
+            vec![
+                RngSite::BattleCourage,
+                RngSite::RuntimeBuildingExitWait,
+                RngSite::RuntimeBuildingExitWait,
+                RngSite::BattlePanicRemark,
+            ]
+        );
+    }
+}
+
 #[cfg(test)]
 std::thread_local! {
     static ACTIVE_DRIVER_SNAPSHOT_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -3110,6 +3146,26 @@ impl EngineInner {
                     );
                     ai.outbox.actor = later_actor_effects;
                     ai.outbox.reentrant.owner_work = later_work;
+                    continue;
+                }
+                crate::ai::AiOwnerWork::BattleLookForHelpSuccessRemark => {
+                    // Original resumes DECISION_LOOK_4_HELP only after
+                    // AlertOfficer's synchronous GoNear has returned. The
+                    // ActorEffects item immediately before this continuation
+                    // constructs that route (and consumes any random
+                    // building-exit wait) before this final remark draw.
+                    let remark = battle_look_for_help_success_remark(sim);
+                    self.world
+                        .entities
+                        .get_mut(owner)
+                        .and_then(Entity::ai_controller_mut)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "look-for-help owner {} vanished before success remark",
+                                owner.index()
+                            )
+                        })
+                        .say(remark);
                     continue;
                 }
                 crate::ai::AiOwnerWork::NearbyCiviliansPanic => {

@@ -118,6 +118,11 @@ pub enum AiOwnerWork {
     /// both in one actor outbox would apply the halt-first drain policy and
     /// incorrectly launch the older move afterward.
     ActorEffects(AiActorOutbox),
+    /// Continue the successful `DECISION_LOOK_4_HELP` arm after
+    /// `AlertOfficer`'s synchronous `GoNear` has constructed its route.
+    /// Original consumes any building-exit wait draws inside GoNear before
+    /// drawing the Cassos/Panic remark that follows the call.
+    BattleLookForHelpSuccessRemark,
     /// Synchronous `NearbyCiviliansPanic()` engine callback.  It shares the
     /// owner FIFO because callers can speak or change state immediately
     /// before/after it and those operations are observably ordered.

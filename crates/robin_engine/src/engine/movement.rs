@@ -1153,6 +1153,12 @@ pub(crate) enum GoalShape {
     },
 }
 
+#[inline]
+pub(crate) fn building_exit_wait_frames(sim: &crate::sim_rng::SimulationContext) -> u32 {
+    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::RuntimeBuildingExitWait, 0..16)
+        + crate::sim_rng::u32(sim, crate::sim_rng::RngSite::RuntimeBuildingExitWait, 0..16)
+}
+
 /// Timeout queue entry for a Move/Seek element whose pathfind failed.
 /// When the pathfinder returns no path, the request is stamped with the
 /// current universal frame counter and pushed onto this list.  After
@@ -3938,9 +3944,8 @@ impl EngineInner {
             .map(|e| e.actor_auth_info().has_lockpick)
             .unwrap_or(false);
 
-        // Resolve sector → is_building via the fast grid.  Returns
-        // false for unknown sectors (treat motion areas as
-        // non-building).
+        // Resolve sector → is_building via the fast grid. Returns false for
+        // unknown sectors (ordinary motion areas are not buildings).
         let is_building_sector = |this: &Self, sector: u16| -> bool {
             this.grid_sector_by_number(crate::sector::SectorNumber::new(sector as i16))
                 .map(|gs| gs.sector_type.is_building())
@@ -4078,15 +4083,7 @@ impl EngineInner {
                 // Original: `RHSequence::AppendMoveToSequence` in
                 // `original-code/RHsequence.cpp:484` sums two `rand() & 15`
                 // draws for this building-exit wait.
-                let r: u32 = crate::sim_rng::u32(
-                    sim,
-                    crate::sim_rng::RngSite::RuntimeBuildingExitWait,
-                    0..16,
-                ) + crate::sim_rng::u32(
-                    sim,
-                    crate::sim_rng::RngSite::RuntimeBuildingExitWait,
-                    0..16,
-                );
+                let r = building_exit_wait_frames(sim);
                 let mut w = SequenceElement::new_generic(level, wait_command, Some(entity_id));
                 w.set_property(Field::Timer, FieldValue::Integer(r));
                 seq.append_element(w);
@@ -4513,15 +4510,7 @@ impl EngineInner {
                         // `original-code/RHsequence.cpp:905`. The
                         // direction stuffed on the element is the
                         // door's `point_out - point_in` sector-index.
-                        let r: u32 = crate::sim_rng::u32(
-                            sim,
-                            crate::sim_rng::RngSite::RuntimeBuildingExitWait,
-                            0..16,
-                        ) + crate::sim_rng::u32(
-                            sim,
-                            crate::sim_rng::RngSite::RuntimeBuildingExitWait,
-                            0..16,
-                        );
+                        let r = building_exit_wait_frames(sim);
                         let mut wait = SequenceElement::new_generic(
                             level,
                             Command::WaitTimer,

@@ -10,7 +10,7 @@ use crate::coordinates::{MapPoint, WorldPoint3D};
 use crate::parameters_ai;
 use crate::position_interface::INVERSE_ASPECT_RATIO;
 
-use super::util::vec_to_sector;
+use super::util::{ai_max_norm_distance, vec_to_sector};
 use super::{CampSoldierInfo, EnemyAi, ProfileRank, SeekFlags, combat, task_priority};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +36,24 @@ fn tower_guard_square_distance(a: WorldPoint3D, b: WorldPoint3D) -> u32 {
     let dy = (a.y - b.y) * INVERSE_ASPECT_RATIO;
     let dz = a.z - b.z;
     (dx * dx + dy * dy + dz * dz) as u32
+}
+
+fn alert_officer_distance(
+    officer: &Position,
+    officer_elevation: f32,
+    officer_layer: u16,
+    officer_in_building: bool,
+    owner: &Position,
+    owner_elevation: f32,
+    owner_layer: u16,
+) -> u32 {
+    let mut distance =
+        ai_max_norm_distance(officer, officer_elevation, owner, owner_elevation) as u32;
+    if officer_in_building && officer_layer != owner_layer {
+        distance += (parameters_ai::LAYER_CHANGE_PENALTY
+            * (owner_layer as f32 - officer_layer as f32).abs()) as u32;
+    }
+    distance
 }
 
 /// `camp_soldiers` intentionally excludes the evaluating NPC for its normal
@@ -1029,7 +1047,7 @@ impl EnemyAi {
         }
 
         if nearest_officer.is_none() {
-            let mut max_distance = combat::MAX_ALERT_OFFICER_RADIUS as f32;
+            let mut max_distance = combat::MAX_ALERT_OFFICER_RADIUS as u32;
 
             for cs in &tick.camp_soldiers {
                 match cs.rank {
@@ -1043,22 +1061,20 @@ impl EnemyAi {
                             continue;
                         }
 
-                        // MaxNorm distance
-                        let dx = (cs.position.x - my_pos.x).abs();
-                        // Original MaxNormDistance stretches world Y before
-                        // taking the max norm.  Using raw map Y makes the
-                        // alert radius much too tall in the isometric view.
-                        let dy = (cs.position.y - my_pos.y).abs()
-                            * crate::position_interface::INVERSE_ASPECT_RATIO;
-                        let mut distance = dx.max(dy);
-
-                        // Layer change penalty (only fires
-                        // when the candidate officer is currently inside a
-                        // building — `pSoldier->GetBuilding() != NULL`).
-                        if cs.in_building && cs.layer != my_layer {
-                            distance += parameters_ai::LAYER_CHANGE_PENALTY
-                                * (my_layer as f32 - cs.layer as f32).abs();
-                        }
+                        // Original stores `MaxNormDistance` in an ULONG:
+                        // compare the stretched 3D world-space Chebyshev
+                        // distance after truncation. In particular, world Y
+                        // is map Y plus elevation; comparing raw map Y can
+                        // select a different officer across level layers.
+                        let distance = alert_officer_distance(
+                            &cs.position,
+                            cs.position_world.z,
+                            cs.layer,
+                            cs.in_building,
+                            &my_pos,
+                            ctx.elevation,
+                            my_layer,
+                        );
 
                         if distance < max_distance {
                             max_distance = distance;
@@ -1658,6 +1674,41 @@ mod tests {
             attack_point_direction(&ctx, target),
             vec_to_sector(100.0, 100.0)
         );
+    }
+
+    #[test]
+    fn alert_officer_distance_uses_world_y_before_isometric_stretch() {
+        let owner = Position {
+            x: 1173.4828,
+            y: 1187.3944,
+            sector: None,
+            level: 2,
+        };
+        let officer_47 = Position {
+            x: 802.99005,
+            y: 1669.0012,
+            sector: None,
+            level: 0,
+        };
+        let officer_66 = Position {
+            x: 363.0,
+            y: 1118.0,
+            sector: None,
+            level: 0,
+        };
+
+        let distance_47 = alert_officer_distance(&officer_47, 0.0, 0, false, &owner, 110.001, 2);
+        let distance_66 = alert_officer_distance(&officer_66, 0.0, 0, false, &owner, 110.001, 2);
+
+        assert!(distance_47 < distance_66);
+        // Raw map-Y incorrectly reverses this ordering for the Derby control.
+        let raw_map_distance_47 = (officer_47.x - owner.x)
+            .abs()
+            .max((officer_47.y - owner.y).abs() * INVERSE_ASPECT_RATIO);
+        let raw_map_distance_66 = (officer_66.x - owner.x)
+            .abs()
+            .max((officer_66.y - owner.y).abs() * INVERSE_ASPECT_RATIO);
+        assert!(raw_map_distance_47 > raw_map_distance_66);
     }
 
     #[test]

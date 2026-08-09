@@ -1593,13 +1593,22 @@ impl EnemyAi {
                         decision = Decision::Cassos;
                         continue;
                     } else {
-                        // Random Cassos/Panic remark.
-                        // Original: `(rand() & 1) ? CASSOS : PANIC`.
-                        if crate::sim_rng::bool(sim, crate::sim_rng::RngSite::BattlePanicRemark) {
-                            self.base.say(Remark::Cassos);
-                        } else {
-                            self.base.say(Remark::Panic);
-                        }
+                        // AlertOfficer calls GoNear synchronously. Its route
+                        // construction can consume the paired random building
+                        // exit wait before control returns here to draw the
+                        // Cassos/Panic remark. Close the GoNear actor prefix
+                        // and resume this statement at the owner boundary so
+                        // Rust preserves that call-stack ordering.
+                        self.base.outbox.reentrant.owner_work.push(
+                            crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
+                                &mut self.base.outbox.actor,
+                            )),
+                        );
+                        self.base
+                            .outbox
+                            .reentrant
+                            .owner_work
+                            .push(crate::ai::AiOwnerWork::BattleLookForHelpSuccessRemark);
                     }
                 }
 
