@@ -1300,12 +1300,14 @@ impl EngineInner {
         {
             actor.action_state = ActionState::WaitingSword;
         }
+        if jump_landing_restores_anti_collision(finished.step.anim) {
+            entity.position_iface_mut().set_anti_collision_on(true);
+        }
         if jump_completion.is_some() {
             if let Some(actor) = entity.actor_data_mut() {
                 actor.active_jump = None;
                 actor.jump_z_offset = 0.0;
             }
-            entity.position_iface_mut().set_anti_collision_on(true);
         }
 
         // For the three jump landing transitions: re-broadcast
@@ -1418,6 +1420,22 @@ impl EngineInner {
             "jump landing",
         );
     }
+}
+
+/// Whether retiring a jump landing restores normal anti-collision.
+///
+/// The original down-jump landing arm deliberately leaves its
+/// `SetAntiCollisionOn()` call disabled, and the following crouching-up
+/// transition does not restore it either. The other landing arms restore
+/// anti-collision immediately when they terminate, before any trailing posture
+/// transition in the same sequence.
+fn jump_landing_restores_anti_collision(landing_anim: OrderType) -> bool {
+    matches!(
+        landing_anim,
+        OrderType::TransitionJumpingUpWaitingCrouched
+            | OrderType::TransitionJumpingLongWaitingUpright
+            | OrderType::TransitionJumpingLongSwordWaitingSword
+    )
 }
 
 /// Initialize per-step state and install the animation on the actor.
@@ -2044,6 +2062,25 @@ mod tests {
         assert_eq!(jump_airborne_speed(OrderType::JumpingLongSword), 8.0);
         assert_eq!(jump_airborne_speed(OrderType::JumpingUp), 15.0);
         assert_eq!(jump_airborne_speed(OrderType::JumpingDown), 20.0);
+    }
+
+    #[test]
+    fn down_jump_landing_preserves_disabled_anti_collision() {
+        assert!(!jump_landing_restores_anti_collision(
+            OrderType::TransitionJumpingDownWaitingCrouched
+        ));
+        assert!(!jump_landing_restores_anti_collision(
+            OrderType::TransitionCrouchingUp
+        ));
+        assert!(jump_landing_restores_anti_collision(
+            OrderType::TransitionJumpingUpWaitingCrouched
+        ));
+        assert!(jump_landing_restores_anti_collision(
+            OrderType::TransitionJumpingLongWaitingUpright
+        ));
+        assert!(jump_landing_restores_anti_collision(
+            OrderType::TransitionJumpingLongSwordWaitingSword
+        ));
     }
 
     #[test]
