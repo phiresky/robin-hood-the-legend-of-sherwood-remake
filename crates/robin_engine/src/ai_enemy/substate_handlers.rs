@@ -2605,8 +2605,6 @@ impl EnemyAi {
                                             tick,
                                         );
                                     }
-                                } else {
-                                    self.base.launch_timer(30, ctx.frame);
                                 }
                             }
                         } else {
@@ -2633,8 +2631,6 @@ impl EnemyAi {
                                         tick,
                                     );
                                 }
-                            } else {
-                                self.base.launch_timer(30, ctx.frame);
                             }
                         }
                     }
@@ -6242,6 +6238,82 @@ impl EnemyAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn officer_wait_missed_soldier_does_not_relaunch_timer() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingOfficerWaitForInstructedSoldier;
+        ai.base.antagonist = 2;
+        ai.missed_soldier_timer = 11;
+
+        let mut tick = AiPerTickData::stub();
+        tick.camp_soldiers.push(crate::ai_enemy::CampSoldierInfo {
+            handle: 2,
+            active: true,
+            position: Position::default(),
+            position_world: crate::coordinates::WorldPoint3D::ZERO,
+            direction: 0,
+            rank: ProfileRank::Soldier,
+            ai_state: AiState::Seeking,
+            ai_substate: Substate::SeekingSeekpoint,
+            is_able_to_fight: true,
+            is_dead: false,
+            primary_target: 0,
+            pride: 0,
+            is_able_to_help: true,
+            script_locked: false,
+            ai_lock_frozen: false,
+            layer: 0,
+            report_type: ReportType::Nothing,
+            report_seek_position: Position::default(),
+            report_seen_bodies: Vec::new(),
+            report_charly: 0,
+            alert_soldiers_point: Position::default(),
+            patrol_chief: None,
+            antagonist: 1,
+            duty_flag: false,
+            is_tower_guard: false,
+            company_number: 0,
+            in_building: false,
+            forecast_destination: None,
+            detectable_bodies: Vec::new(),
+            seek_position: Position::default(),
+            current_task_priority: 0,
+            minimal_task_priority: 0,
+            view_direction: [1.0, 0.0],
+            view_radius: 300,
+            real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
+            eye_blind: false,
+        });
+
+        let mut self_view = pc_view(crate::element::Posture::Upright);
+        self_view.is_able_to_fight = true;
+        let mut missed_view = pc_view(crate::element::Posture::Upright);
+        missed_view.is_able_to_fight = false;
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(1, self_view);
+        views.insert(2, missed_view);
+        let ctx = AiContext {
+            frame: 34_522,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(ai.missed_soldier_timer, 12);
+        assert!(!ai.base.timer_is_running);
+        assert_eq!(ai.base.when_does_timer_ring, 0);
+    }
 
     #[test]
     fn goto_post_arrival_runs_enemy_attentive_tail_after_turn_request() {
