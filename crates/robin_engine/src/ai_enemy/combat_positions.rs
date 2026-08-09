@@ -26,6 +26,25 @@ fn original_uword_norm(delta: (f32, f32)) -> u16 {
     (delta.0 * delta.0 + delta.1 * delta.1).sqrt() as u16
 }
 
+fn is_facing_swordfight_target(
+    me_position: &Position,
+    me_elevation: f32,
+    me_direction: u16,
+    target_position: &Position,
+    target_elevation: f32,
+) -> bool {
+    // Original compares `GetPositionGround()` values here. `Position`
+    // stores projected map Y, so reconstruct ground/world Y by adding
+    // elevation before applying `GetSector0to15(ASPECT_RATIO)`.
+    let to_target = (
+        target_position.x - me_position.x,
+        (target_position.y + target_elevation) - (me_position.y + me_elevation),
+    );
+    let target_sector = vec_to_sector(to_target.0, to_target.1);
+    let facing_delta = (me_direction as i32 + 16 - target_sector as i32).rem_euclid(16);
+    matches!(facing_delta, 15 | 0 | 1)
+}
+
 #[track_caller]
 fn phalanx_member_detects_360(
     member: &PhalanxMemberThemList,
@@ -2467,10 +2486,13 @@ impl EnemyAi {
         };
 
         // Are we facing the primary opponent?
-        let to_target = pos_diff(&primary.position, &ctx.position);
-        let target_sector = vec_to_sector(to_target.0, to_target.1);
-        let facing_delta = (ctx.direction as i32 + 16 - target_sector as i32).rem_euclid(16);
-        if !matches!(facing_delta, 15 | 0 | 1) {
+        if !is_facing_swordfight_target(
+            &ctx.position,
+            ctx.elevation,
+            ctx.direction,
+            &primary.position,
+            primary.elevation,
+        ) {
             // Need to turn first; the engine will rotate us, then call back.
             return;
         }
@@ -3558,6 +3580,46 @@ mod tests {
         assert_eq!(original_uword_norm((90.7, 0.0)), 90);
         assert_eq!(original_uword_norm((91.0, 0.0)), 91);
         assert!(original_uword_norm((90.7, 0.0)) <= 90);
+    }
+
+    #[test]
+    fn swordfight_facing_guard_uses_ground_positions_before_rng() {
+        // Schema-14 task 168 frame 2155: projected map positions misleadingly
+        // put PC252 in Soldier137's facing sector because their elevations
+        // differ. Original GetPositionGround() puts the PC to the east, so
+        // ReconsiderSwordfight returns before its combat RNG gates.
+        let soldier = position(1720.6782, 1984.8649);
+        let pc = position(1749.6063, 1954.4141);
+        let soldier_elevation = 17.4139;
+        let pc_elevation = 45.0639;
+
+        let projected_sector = vec_to_sector(pc.x - soldier.x, pc.y - soldier.y);
+        assert_eq!(projected_sector, 1);
+        assert_eq!((1_i32 + 16 - projected_sector as i32) % 16, 0);
+        let ground_sector = vec_to_sector(
+            pc.x - soldier.x,
+            (pc.y + pc_elevation) - (soldier.y + soldier_elevation),
+        );
+        assert_eq!(ground_sector, 4);
+        assert_eq!((1_i32 + 16 - ground_sector as i32) % 16, 13);
+        assert!(!is_facing_swordfight_target(
+            &soldier,
+            soldier_elevation,
+            1,
+            &pc,
+            pc_elevation,
+        ));
+
+        let sim = SimulationContext::with_seed(0);
+        let (_, trace) = with_draw_trace(|| {
+            if is_facing_swordfight_target(&soldier, soldier_elevation, 1, &pc, pc_elevation) {
+                let _ = drunk_combat_freezes(&sim, 0);
+            }
+        });
+        assert!(
+            trace.is_empty(),
+            "the facing return must precede combat RNG"
+        );
     }
 
     #[test]
