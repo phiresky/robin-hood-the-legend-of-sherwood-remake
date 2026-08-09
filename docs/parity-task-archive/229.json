@@ -1,0 +1,9 @@
+{
+  "id": "229",
+  "subject": "Preserve full projectile trajectory origin",
+  "description": "Arrow, apple, and stone spawns now retain the shooter's full Position sector and layer with the trajectory origin, and impact stimuli pass that saved Position unchanged instead of fabricating the victim layer and no sector. This matches Original's mposStartOfTrajectory boundary. linux3 Profile_001 Savegame_024 replay-009 clears Soldier52's frame-8578 direction mismatch and advances to an independent frame-9768 macro-state frontier; both task-36 controls and the focused regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task229-projectile-origin"
+}

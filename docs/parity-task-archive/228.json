@@ -1,0 +1,9 @@
+{
+  "id": "228",
+  "subject": "Preserve semantic seek center across route points",
+  "description": "Ordinary SeekNextPoint no longer overwrites the semantic noise/search center with the selected route point; the authored beggar special case remains unchanged. This matches Original's separation between the current route destination and the retained search origin. Nescafe Profile_002 Savegame_001 replay-010 matches exact EOF; both task-36 controls and the focused regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task228-seek-center"
+}

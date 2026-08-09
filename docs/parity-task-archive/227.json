@@ -1,0 +1,9 @@
+{
+  "id": "227",
+  "subject": "Preserve PC pinch abort over terminal movement pop",
+  "description": "A PC pinch abort now cancels the matching terminal order-pop queued by nested PerformMotion before marking the entry-latched element Impossible. This mirrors RHElementActorPC::Execute overriding the nested motion result with RHMOTION_ABORTED, so the later TERMINATED DoNextOrder arm cannot overwrite the abort. linux3 Profile_001 Savegame_022 replay-012 matches exact EOF; both task-36 controls and the focused regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task227-pinch-abort"
+}
