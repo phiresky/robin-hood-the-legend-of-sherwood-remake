@@ -377,6 +377,71 @@ mod tests {
     }
 
     #[test]
+    fn perform_flight_toggles_anti_collision_and_clears_deviation_before_stand_up_turn() {
+        let mut pc = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        });
+        let position = pc.position_iface_mut();
+        position.set_direction_instantly(crate::position_interface::Direction::from_raw(1));
+        position.set_direction(crate::position_interface::Direction::from_raw(0));
+        let mut serialized = position.v48_serialized_state();
+        serialized.anti_collision_on = true;
+        serialized.deviated = true;
+        serialized.direction_count = 0;
+        position.restore_v48_serialized_state(serialized);
+
+        apply_falling_start_side_effect(
+            &mut pc,
+            OrderType::FallingPushedWithSword,
+            MotionState::Start,
+        );
+        assert!(!pc.position_iface().is_anti_collision_on());
+        assert!(!pc.position_iface().is_deviated());
+
+        apply_falling_completion_side_effect(
+            &mut pc,
+            OrderType::FallingPushedWithSword,
+            MotionState::Terminated,
+        );
+        assert!(pc.position_iface().is_anti_collision_on());
+
+        apply_standing_up_sword_post_perform_facing(&mut pc, Some(0));
+        assert_eq!(pc.element_data().direction(), 0);
+    }
+
+    #[test]
+    fn perform_flight_order_set_excludes_action_and_ladder_falls() {
+        for anim in [
+            OrderType::FallingHitUpright,
+            OrderType::FallingHitWithBow,
+            OrderType::FallingHitWithSword,
+            OrderType::FallingHitCrouched,
+            OrderType::FallingPushedUpright,
+            OrderType::FallingPushedWithBow,
+            OrderType::FallingPushedWithSword,
+            OrderType::FallingPushedCrouched,
+        ] {
+            assert!(uses_perform_flight(anim), "{anim:?}");
+        }
+        for anim in [
+            OrderType::FallingHitHarderUpright,
+            OrderType::FallingHitHarderWithBow,
+            OrderType::FallingHitHarderWithSword,
+            OrderType::FallingHitHarderCrouched,
+            OrderType::FallingLadderWall,
+            OrderType::Rolling,
+        ] {
+            assert!(!uses_perform_flight(anim), "{anim:?}");
+        }
+    }
+
+    #[test]
     fn standing_up_sword_turns_toward_existing_goal_outside_swordfight() {
         let mut pc = Entity::Pc(ActorPc {
             element: ElementData {
@@ -3114,6 +3179,26 @@ fn fall_state_trigger_matches(anim_type: OrderType, motion: MotionState) -> bool
     }
 }
 
+/// Orders dispatched through `RHSprite::PerformFlight` rather than plain
+/// `PerformAction` or `PerformMotion`.
+///
+/// The four harder-hit variants deliberately do not belong here: Original's
+/// `ExecuteFallingHit(..., true)` uses `PerformAction`. `FallingLadderWall`
+/// also uses `PerformAction` plus its own wait-time movement loop.
+fn uses_perform_flight(anim_type: OrderType) -> bool {
+    matches!(
+        anim_type,
+        OrderType::FallingHitUpright
+            | OrderType::FallingHitWithBow
+            | OrderType::FallingHitWithSword
+            | OrderType::FallingHitCrouched
+            | OrderType::FallingPushedUpright
+            | OrderType::FallingPushedWithBow
+            | OrderType::FallingPushedWithSword
+            | OrderType::FallingPushedCrouched
+    )
+}
+
 /// Non-hard `FALLING_HIT_*` / `FALLING_PUSHED_*` on motion Start.
 ///
 /// legacy implementation `ExecuteFallingHit` enters `(Flying, Moving)`; legacy implementation
@@ -3152,6 +3237,12 @@ fn apply_falling_start_side_effect(entity: &mut Entity, anim_type: OrderType, mo
     let Some(action_state) = action_state else {
         return;
     };
+    if uses_perform_flight(anim_type) {
+        // RHSprite::PerformFlight disables anti-collision on START. Besides
+        // suppressing collision checks this synchronously clears the stale
+        // deviation latch used by TurnAntiVibration.
+        entity.position_iface_mut().set_anti_collision_on(false);
+    }
     entity.set_posture(Posture::Flying);
     if let Some(actor) = entity.actor_data_mut() {
         actor.action_state = action_state;
@@ -3172,6 +3263,11 @@ fn apply_falling_completion_side_effect(
     }
     if !fall_state_trigger_matches(anim_type, motion) {
         return;
+    }
+    if motion == MotionState::Terminated && uses_perform_flight(anim_type) {
+        // RHSprite::PerformFlight restores anti-collision before the wrapper
+        // applies its landing posture/action state.
+        entity.position_iface_mut().set_anti_collision_on(true);
     }
     let is_dead = entity.is_dead();
     let is_unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
