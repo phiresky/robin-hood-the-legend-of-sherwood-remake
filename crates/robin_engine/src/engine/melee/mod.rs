@@ -4511,6 +4511,208 @@ mod tests {
     }
 
     #[test]
+    fn push_damage_virtual_say_ouch_is_silent_for_pc() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let assets = assets_with_nonstraight_profile(
+            SwordStrike::H,
+            crate::profiles::WeaponThrustKind::TrueCircle,
+        );
+        let damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        let sequence_id = engine.orders.sequence_manager.launch_element(damage);
+
+        assert!(engine.apply_push_effect(
+            &sim,
+            &assets,
+            victim,
+            attacker,
+            &PushStrikeInfo { repulsion: 100 },
+            combat::SwordDamageResult::NO_DAMAGE_PARRIED,
+            (sequence_id, 0),
+        ));
+        assert!(
+            engine.feedback.sound_sim.pending_exclamations.is_empty(),
+            "PC inherits RHElementActorHuman::SayOuch's no-op on TranslatePushDamage"
+        );
+    }
+
+    #[test]
+    fn pc_hurt_speech_uses_applied_life_loss_not_attempted_damage() {
+        let mut engine = make_engine();
+        let victim = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+        let assets = action_test_assets([crate::profiles::Action::NoAction; 3]);
+
+        // The protected task-188 control attempts more than twenty points of
+        // damage, but only 18 LP are ultimately stored (82 -> 64).
+        let attempted_damage = 25;
+        assert!(attempted_damage > 20);
+        engine.pc_life_points_speech(&assets, victim, 82, 64);
+        assert!(
+            engine.feedback.sound_sim.pending_exclamations.is_empty(),
+            "RHElementActorPC::SetLifePoints compares the applied LP delta"
+        );
+
+        engine.pc_life_points_speech(&assets, victim, 82, 61);
+        assert_eq!(
+            engine
+                .feedback
+                .sound_sim
+                .pending_exclamations
+                .iter()
+                .map(|pending| pending.exclamation_id)
+                .collect::<Vec<_>>(),
+            vec![HERO_HURT]
+        );
+    }
+
+    #[test]
+    fn push_strike_does_not_inform_soldier_of_good_strike() {
+        use crate::ai::{AiState, LogLineType, StimulusType, Substate};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        {
+            let Entity::Soldier(soldier) = engine.get_entity_mut(attacker).unwrap() else {
+                unreachable!()
+            };
+            let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
+            ai.base.me = attacker.index();
+            ai.base.current_state = AiState::Attacking;
+            ai.base.current_substate = Substate::AttackingSwordfightSpecialStrike;
+            ai.hth_weapon_id = 1;
+        }
+        let assets = assets_with_nonstraight_profile(
+            SwordStrike::H,
+            crate::profiles::WeaponThrustKind::TrueCircle,
+        );
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data =
+            crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::H, 1);
+        let sequence_id = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+
+        engine.apply_sword_damage(
+            &sim,
+            &assets,
+            victim,
+            Some(attacker),
+            Some(SwordStrike::H),
+            Some(1),
+            (sequence_id, 0),
+        );
+
+        let ai = engine
+            .get_entity(attacker)
+            .unwrap()
+            .ai_controller()
+            .unwrap();
+        assert!(
+            !ai.ai_log.iter().any(|entry| {
+                entry.line_type == LogLineType::Event
+                    && entry.info == StimulusType::EventGoodStrike as u16
+            }),
+            "Original skips TranslateSwordDamage, and therefore EVENT_GOOD_STRIKE, for push strikes"
+        );
+        assert_eq!(
+            ai.current_substate,
+            Substate::AttackingSwordfightSpecialStrike
+        );
+    }
+
+    #[test]
+    fn ordinary_cutting_strike_still_informs_soldier_of_good_strike() {
+        use crate::ai::{AiState, LogLineType, StimulusType, Substate};
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_soldier(WorldPoint3D::default(), None));
+        let victim = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::default()
+            },
+            None,
+        ));
+        {
+            let Entity::Soldier(soldier) = engine.get_entity_mut(attacker).unwrap() else {
+                unreachable!()
+            };
+            let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
+            ai.base.me = attacker.index();
+            ai.base.current_state = AiState::Attacking;
+            ai.base.current_substate = Substate::AttackingSwordfightSpecialStrike;
+            ai.hth_weapon_id = 1;
+        }
+        let assets = assets_with_sword_profile(1, 50);
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data =
+            crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+        let sequence_id = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+
+        engine.apply_sword_damage(
+            &sim,
+            &assets,
+            victim,
+            Some(attacker),
+            Some(SwordStrike::A),
+            Some(1),
+            (sequence_id, 0),
+        );
+
+        let ai = engine
+            .get_entity(attacker)
+            .unwrap()
+            .ai_controller()
+            .unwrap();
+        assert!(ai.ai_log.iter().any(|entry| {
+            entry.line_type == LogLineType::Event
+                && entry.info == StimulusType::EventGoodStrike as u16
+        }));
+    }
+
+    #[test]
     fn parried_true_circle_still_queues_push_fall() {
         let sim = crate::sim_rng::test_context();
         let mut engine = make_engine();

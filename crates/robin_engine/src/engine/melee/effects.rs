@@ -609,19 +609,15 @@ impl EngineInner {
         victim_id: EntityId,
         damage_element: (crate::sequence::SequenceId, usize),
     ) {
-        // Say the hurt expression.  In the reference, the PC
-        // shoulder-damage override short-circuits before the
-        // base-class hit-damage path that calls SayOuch, so PC
-        // shoulder hits skip HERO_HURT; NPCs reach SayOuch via their
-        // own hit-damage path.  Our unified damage path routes NPCs
-        // on a PC's shoulders through this helper, so keeping the
-        // call here covers the NPC-victim case at the cost of a
-        // minor PC-side over-trigger when an already-ouched PC on
-        // shoulders gets hit again.  The callers
-        // (`apply_generic_damage`, `apply_piercing_damage`, etc.)
-        // skip their own `say_ouch` when routing here to avoid the
-        // double-trigger compounding further.
-        self.say_ouch(sim, assets, victim_id, None);
+        // Shoulder translation calls virtual SayOuch. NPCs override it;
+        // PCs inherit RHElementActorHuman's no-op and receive any hurt/death
+        // speech from their SetLifePoints override at damage-apply time.
+        if matches!(
+            self.get_entity(victim_id),
+            Some(Entity::Soldier(_) | Entity::Civilian(_))
+        ) {
+            self.say_ouch(sim, assets, victim_id, None);
+        }
 
         // Read posture + carrier/carried relationships.
         let (posture, carrier_id, carried_id) = {
@@ -802,9 +798,14 @@ impl EngineInner {
             return true;
         }
 
-        // SayOuch.  Push visuals follow an already-resolved damage
-        // apply; pass `None` so HERO_HURT still fires as before.
-        self.say_ouch(sim, assets, victim_id, None);
+        // TranslatePushDamage calls the virtual SayOuch. NPCs override it,
+        // while PCs inherit RHElementActorHuman's inline no-op.
+        if matches!(
+            self.get_entity(victim_id),
+            Some(Entity::Soldier(_) | Entity::Civilian(_))
+        ) {
+            self.say_ouch(sim, assets, victim_id, None);
+        }
 
         // Shoulder-posture victims route through
         // `translate_shoulder_damage` before falling through to the

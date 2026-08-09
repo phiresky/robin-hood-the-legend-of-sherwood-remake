@@ -395,6 +395,12 @@ impl EngineInner {
             .get_entity(victim_id)
             .map(get_life_points)
             .unwrap_or(raw_life_points_after);
+        // PC hurt/death speech belongs to the virtual SetLifePoints call
+        // inside ReceiveSwordDamage. It uses the applied LP delta, before
+        // TranslateSwordDamage later invokes the (PC no-op) SayOuch.
+        if !coma_saved {
+            self.pc_life_points_speech(assets, victim_id, life_points_before, life_points_after);
+        }
         // Use the attempted damage (not the clamped lp delta) so
         // overkill hits display the same number as a non-overkill hit
         // would have shown.
@@ -565,11 +571,17 @@ impl EngineInner {
             self.award_sword_kill_xp(assets, atk_id, victim_id);
         }
 
-        // SayOuch on the victim (unless parried or push already said it).
+        // TranslateSwordDamage calls virtual SayOuch on the victim (unless
+        // parried or push already said it). PCs inherit the human no-op;
+        // their SetLifePoints speech edge was handled above.
         if !coma_saved
             && !pushed
             && !result.is_empty()
             && !result.contains(combat::SwordDamageResult::NO_DAMAGE_PARRIED)
+            && matches!(
+                self.get_entity(victim_id),
+                Some(Entity::Soldier(_) | Entity::Civilian(_))
+            )
         {
             self.say_ouch(sim, assets, victim_id, Some(cutting_inflicted));
         }
@@ -718,8 +730,9 @@ impl EngineInner {
             }
         }
 
-        // Dispatch combat stimulus to attacker's AI: EventLethalStrike
-        // if victim died, EventGoodStrike if damage was dealt.
+        // TranslateSwordDamage dispatches combat stimuli to a soldier
+        // attacker's AI: EventLethalStrike if the victim died, or
+        // EventGoodStrike for a surviving victim that took cutting damage.
         //
         // The damage translation runs this inline, so the stimulus is
         // dispatched synchronously — the good-strike handler must still
@@ -727,15 +740,35 @@ impl EngineInner {
         // ordinary NPC-phase queue can suppress the associated combat
         // remark.
         //
-        // TODO: both informs sit after the posture switch in the original
-        // translation, which returns early for a victim that is already on
-        // the ground (or on a ladder / wall), and the good-strike inform
-        // additionally requires cutting damage and a soldier attacker.
-        // Adding those gates did not move the remaining speech-FIFO
-        // repros, so they are recorded rather than applied unvalidated.
-        if !result.is_empty()
+        // Push strikes never enter TranslateSwordDamage. Its posture switch
+        // also returns before these informs for grounded non-riders and for
+        // ladder/wall victims.
+        let informer_reachable = self.get_entity(victim_id).is_some_and(|victim| {
+            let posture = victim.element_data().posture;
+            let is_dead_rider =
+                matches!(victim, Entity::Soldier(s) if s.soldier.rider) && victim_died;
+            matches!(
+                posture,
+                Posture::Upright
+                    | Posture::Spy
+                    | Posture::LeaningOut
+                    | Posture::Leisure
+                    | Posture::Siesta
+                    | Posture::CarryingCorpse
+                    | Posture::HelpingToClimb
+                    | Posture::CarryingOnShoulders
+                    | Posture::AnonymousArcher
+                    | Posture::Sitting
+                    | Posture::Crouched
+                    | Posture::Tree
+                    | Posture::SimulatingBeggar
+            ) || is_dead_rider
+        });
+        let soldier_attacker =
+            attacker_id.is_some_and(|id| matches!(self.get_entity(id), Some(Entity::Soldier(_))));
+        if !pushed
             && !result.contains(combat::SwordDamageResult::NO_DAMAGE_PARRIED)
-            && let Some(atk_id) = attacker_id
+            && informer_reachable
         {
             if victim_died {
                 // Dead people can't fight: the victim leaves the swordfight
@@ -746,12 +779,18 @@ impl EngineInner {
                 self.quit_swordfight(sim, assets, victim_id);
             }
             let stimulus_type = if victim_died {
-                crate::ai::StimulusType::EventLethalStrike
+                Some(crate::ai::StimulusType::EventLethalStrike)
+            } else if result.contains(combat::SwordDamageResult::CUTTING_DAMAGE) {
+                Some(crate::ai::StimulusType::EventGoodStrike)
             } else {
-                crate::ai::StimulusType::EventGoodStrike
+                None
             };
-            self.dispatch_ai_stimulus(atk_id, crate::ai::Stimulus::new(stimulus_type));
-            self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, atk_id, assets, None, None);
+            if soldier_attacker
+                && let (Some(atk_id), Some(stimulus_type)) = (attacker_id, stimulus_type)
+            {
+                self.dispatch_ai_stimulus(atk_id, crate::ai::Stimulus::new(stimulus_type));
+                self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, atk_id, assets, None, None);
+            }
         }
 
         // Death push-vs-drop selector: a non-rider killed by a strike

@@ -8,6 +8,32 @@ use crate::element::{Command, Entity, EntityId};
 impl EngineInner {
     // ─── Speech / sound effects ─────────────────────────────────────
 
+    /// Reproduce `RHElementActorPC::SetLifePoints`' speech edge.
+    ///
+    /// This is separate from virtual `SayOuch`: PCs inherit the human
+    /// no-op for that callback. The PC life-point setter compares the value
+    /// that was actually stored, so protection, clamps, and the amulet's
+    /// five-HP floor must be reflected before deciding whether to speak.
+    pub(super) fn pc_life_points_speech(
+        &mut self,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        life_points_before: i16,
+        life_points_after: i16,
+    ) {
+        let Some(Entity::Pc(pc)) = self.get_entity(entity_id) else {
+            return;
+        };
+        let in_coma = self
+            .pc_description_for_pc_data(&pc.pc)
+            .is_some_and(|description| description.status.in_coma);
+        if life_points_after == 0 && !in_coma {
+            self.hero_speaking(assets, entity_id, HERO_DIE);
+        } else if life_points_after < life_points_before - 20 {
+            self.hero_speaking(assets, entity_id, HERO_HURT);
+        }
+    }
+
     /// Play the "ouch" expression for an entity (PC or NPC).
     ///
     /// For PCs, the life-point edge triggers (`HERO_DIE` when life == 0
