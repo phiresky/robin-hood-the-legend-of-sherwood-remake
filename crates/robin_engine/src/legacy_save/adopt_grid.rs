@@ -631,6 +631,27 @@ impl LegacyFastFindGridAdoptionPlan {
             door.authorised_pc_direct = planned.authorised_pc_direct;
             door.authorised_pc_indirect = planned.authorised_pc_indirect;
         }
+        // DoorSeekInfo is built from the proto door table before save
+        // adoption. Its authorization bit includes the live active/lock
+        // fields, so restoring those fields above must refresh the derived
+        // cache as well. Original FindDoorEnemyCouldBeBehind reads the live
+        // RHDoor on every query; retaining the proto-time bit could let a
+        // soldier seek through a door that the loaded save has locked.
+        for door_info in &mut engine.ai.global.door_seek_infos {
+            let door = engine
+                .script_domains
+                .interactables
+                .doors
+                .get(usize::from(door_info.door_index))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "AI door-seek cache references missing canonical door {}",
+                        door_info.door_index
+                    )
+                });
+            door_info.npc_villain_authorized_direct =
+                crate::ai::cache_npc_villain_authorized_direct(door);
+        }
         for planned in self.script_zones {
             engine.script_domains.zones.scripts[planned.index].occupant_indices = planned.occupants;
             if let Some(heap) = planned.vm_heap {
@@ -1254,12 +1275,30 @@ mod tests {
         engine.script_domains.interactables.patches.push(patch);
         let mut door = crate::gate::Door {
             gate_type: GateType::Door,
+            active: true,
+            door_type: crate::gate::DoorType::Building,
             locked_pc: false,
             locked_pc_after_patch: true,
             ..crate::gate::Door::default()
         };
         door.locked_npc_villain_after_patch = true;
         engine.script_domains.interactables.doors.push(door);
+        engine
+            .ai
+            .global
+            .door_seek_infos
+            .push(crate::ai::DoorSeekInfo {
+                door_index: crate::gate::DoorIndex(0),
+                door_type: crate::gate::DoorType::Building,
+                point_out: crate::coordinates::MapPoint::ZERO,
+                position_in: Position::default(),
+                sector_out: 0,
+                sector_in: 0,
+                layer_out: 0,
+                // Proto-time state was unlocked. The serialized state below
+                // locks this door for NPC villains.
+                npc_villain_authorized_direct: true,
+            });
         engine
             .script_domains
             .zones
@@ -1286,7 +1325,7 @@ mod tests {
             doors: vec![PlannedDoor {
                 door_index: 0,
                 locked_pc: false,
-                locked_npc_villain: false,
+                locked_npc_villain: true,
                 locked_npc_civilian: true,
                 unlockable: true,
                 special_authorisation_pc: true,
@@ -1342,12 +1381,16 @@ mod tests {
 
         let door = &engine.script_domains.interactables.doors[0];
         assert!(!door.locked_pc);
-        assert!(!door.locked_npc_villain);
+        assert!(door.locked_npc_villain);
         assert!(door.locked_npc_civilian);
         assert!(door.unlockable);
         assert!(door.special_authorisation_pc);
         assert_eq!(door.authorised_pc_direct, 3);
         assert_eq!(door.authorised_pc_indirect, 4);
+        assert!(
+            !engine.ai.global.door_seek_infos[0].npc_villain_authorized_direct,
+            "save adoption must refresh proto-time door authorization caches"
+        );
         // Patch application swapped the retained future half before the
         // independently serialized current half was restored.
         assert!(!door.locked_pc_after_patch);
