@@ -1,0 +1,9 @@
+{
+  "id": "184",
+  "subject": "Use Original's stretched 3D distance for moving-fast EventView",
+  "description": "The moving-fast EVENT_VIEW GoNear continuation now derives Distance/3 from Original's stretched 3D world-position norm, including elevation, instead of raw map X/Y. The exact replay geometry yields the recorded tolerance 94 rather than Rust's 107. A focused trace-geometry regression covers the conversion. linux2 Profile_002 Savegame_017 replay-013 clears frame 598 and advances to an independent frame-1440 AI/turn frontier. Both task-36 schema-14 replay-009 controls match exact EOF on the same combined runner; focused test, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task181-dead-damage"
+}
