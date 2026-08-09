@@ -920,33 +920,34 @@ impl EnemyAi {
                 // identification (approach → identify1 → identify2).
                 if let StimulusInfo::Human(beggar) = stimulus.info
                     && self.base.current_substate.is_seek_area()
-                    && beggar != self.beggar_to_examine
                 {
-                    tracing::debug!(
-                        beggar,
-                        substate = ?self.base.current_substate,
-                        "EventSeesBeggar: queued beggar for identification"
-                    );
-                    // Queue beggar for control during seek_next_point(sim, ).
-                    // Stores the beggar's actual position via the
-                    // antagonist's position. We read it from the
-                    // `ctx.antagonist` snapshot populated by the engine
-                    // when it dispatched this stimulus.
-                    self.beggars_to_control.push(beggar);
-                    let beggar_pos = ctx
-                        .antagonist
-                        .as_ref()
-                        .map(|a| a.position)
-                        .unwrap_or(self.base.seek_position);
-                    self.positions_of_beggars_to_control.push(beggar_pos);
-                    self.base
-                        .set_transient_emoticon(EmoticonType::QuestionMark, 20, 0);
+                    if beggar != self.beggar_to_examine {
+                        tracing::debug!(
+                            beggar,
+                            substate = ?self.base.current_substate,
+                            "EventSeesBeggar: queued beggar for identification"
+                        );
+                        // Queue beggar for control during seek_next_point(sim, ).
+                        // Stores the beggar's actual position via the
+                        // antagonist's position. We read it from the
+                        // `ctx.antagonist` snapshot populated by the engine
+                        // when it dispatched this stimulus.
+                        self.beggars_to_control.push(beggar);
+                        let beggar_pos = ctx
+                            .antagonist
+                            .as_ref()
+                            .map(|a| a.position)
+                            .unwrap_or(self.base.seek_position);
+                        self.positions_of_beggars_to_control.push(beggar_pos);
+                        self.base
+                            .set_transient_emoticon(EmoticonType::QuestionMark, 20, 0);
+                    }
+
                     // DeleteDetectableForAllNPC(beggar, DETECTABLE_BEGGAR)
-                    // so every other seek-area soldier's BEGGAR list loses
-                    // this PC, guaranteeing a single soldier handles the
-                    // identification. Queue it through the engine drain
-                    // (`engine/ai.rs` process pending orders) since we
-                    // can't touch other entities from here.
+                    // is outside Original's `beggar != mpBeggarToExamine`
+                    // queueing guard. A repeated view while approaching the
+                    // claimed beggar must therefore still scrub every NPC's
+                    // BEGGAR list synchronously through the engine drain.
                     self.base.outbox.actor.delete_beggar_for_all_npc.push(
                         ctx.entity_id(beggar).unwrap_or_else(|| {
                             panic!("EventSeesBeggar target {beggar} has no typed live entity view")
@@ -3437,7 +3438,7 @@ mod tests {
     }
 
     #[test]
-    fn event_sees_current_beggar_does_not_queue_it_again() {
+    fn event_sees_current_beggar_does_not_requeue_but_still_requests_global_scrub() {
         let sim_context = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(1);
         ai.base.current_state = AiState::Seeking;
@@ -3465,7 +3466,12 @@ mod tests {
 
         assert!(ai.beggars_to_control.is_empty());
         assert!(ai.positions_of_beggars_to_control.is_empty());
-        assert!(ai.base.outbox.actor.delete_beggar_for_all_npc.is_empty());
+        assert_eq!(
+            ai.base.outbox.actor.delete_beggar_for_all_npc,
+            vec![crate::element::EntityId::Civilian(
+                crate::entity_id::CivilianId(17)
+            )]
+        );
     }
 
     #[test]
