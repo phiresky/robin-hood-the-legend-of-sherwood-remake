@@ -3800,6 +3800,9 @@ impl EngineInner {
                                 || beggar_selection.is_some()
                             {
                                 (Vec::new(), Default::default(), None)
+                            } else if selected_order_type == Some(crate::order::OrderType::Rolling)
+                            {
+                                self.tick_rolling_owner(sim, assets, entity_id)
                             } else {
                                 self.tick_actor_animation_for(sim, assets, entity_id)
                             };

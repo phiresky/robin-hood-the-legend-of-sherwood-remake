@@ -37,6 +37,7 @@ mod purse;
 mod refresh_seek;
 mod reinforcement;
 mod rollback_safe;
+mod rolling;
 mod script;
 mod scroll_reveal;
 mod seat;

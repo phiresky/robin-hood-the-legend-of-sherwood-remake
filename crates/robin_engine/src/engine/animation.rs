@@ -3018,52 +3018,6 @@ fn apply_being_dead_start_side_effect(
     }
 }
 
-/// `ROLLING` on motion Start.
-/// Reads `actor.pending_roll` (set by `try_queue_roll`) and installs an
-/// `active_flight` toward the destination — equivalent to a walk-style
-/// motion to the destination point.  The Rolling order itself doesn't
-/// carry the destination through `Order`'s flight fields, so
-/// `pending_roll` is the side channel — cleared once the flight is set
-/// up so a second Rolling start can't reuse stale data.
-fn apply_rolling_start_side_effect(
-    entity: &mut Entity,
-    anim_type: OrderType,
-    motion: MotionState,
-    next_order_id: &mut u32,
-) {
-    if anim_type != OrderType::Rolling || !matches!(motion, MotionState::Start) {
-        return;
-    }
-    let dest = match entity.actor_data_mut().and_then(|a| a.pending_roll.take()) {
-        Some(d) => d,
-        None => return,
-    };
-    let cur_pos = entity.element_data().position_map();
-    let dx = dest.x - cur_pos.x;
-    let dy = dest.y - cur_pos.y;
-    let facing = crate::position_interface::vector_to_sector_0_to_15(dx, dy);
-    entity.element_data_mut().set_direction_instantly(facing);
-    let rolling_ticks = entity
-        .element_data()
-        .sprite
-        .total_ticks_for_anim(OrderType::Rolling);
-    let frames = if rolling_ticks > 1 { rolling_ticks } else { 8 };
-    let _ = next_order_id; // reserved for future use (per-tick id tracking)
-    if let Some(actor) = entity.actor_data_mut() {
-        actor.active_flight = Some(crate::element::ActiveFlight {
-            increment_x: dx / frames as f32,
-            increment_y: dy / frames as f32,
-            goal_x: dest.x,
-            goal_y: dest.y,
-            frames_remaining: frames,
-            // The rolling dispatch does not apply a domino-knockdown
-            // effect to other actors.
-            antagonist: None,
-            ..Default::default()
-        });
-    }
-}
-
 /// Pick the landing `(posture, optional action_state)` for a fall
 /// animation that just hit its terminal motion event.  Timing differs
 /// by family — see the `fall_motion_for_completion` helper for which
@@ -5526,12 +5480,6 @@ impl EngineInner {
                         apply_falling_completion_side_effect(entity, anim_type, motion_state);
                         apply_dying_start_side_effect(entity, anim_type, motion_state);
                         apply_being_dead_start_side_effect(entity, anim_type, motion_state);
-                        apply_rolling_start_side_effect(
-                            entity,
-                            anim_type,
-                            motion_state,
-                            &mut self.orders.next_order_id,
-                        );
                         apply_combat_injury_side_effect(
                             entity,
                             anim_type,

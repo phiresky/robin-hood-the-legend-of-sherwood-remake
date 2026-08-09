@@ -102,6 +102,17 @@ fn translated_push_posture(
     }
 }
 
+/// Original `GetMoveBox(posture)` currently ignores its posture argument and
+/// returns the actor's live primary movement box. `FindRollPoint` translates
+/// that exact local box to the proposed destination before asking the grid to
+/// adjust it to an authorized position.
+fn roll_destination_box(
+    move_box: crate::coordinates::MoveBox,
+    destination: crate::coordinates::MapPoint,
+) -> crate::coordinates::MapBBox {
+    move_box.translated(destination)
+}
+
 impl EngineInner {
     /// Original `GetPossibleVictimsOfSwordStrike(..., true)` collector used by
     /// the MotionState::Start warning pass. This is intentionally separate
@@ -1247,12 +1258,6 @@ impl EngineInner {
         normal: [f32; 3],
         check_increment: bool,
     ) -> Option<crate::coordinates::MapPoint> {
-        // Use the lying-posture move-box, not the actor's *current*
-        // move-box: at call time (post-fall or mid-roll) the posture
-        // is typically not yet Lying, so the live box has the wrong
-        // shape for picking a roll landing.
-        const BOX_LYING_X: f32 = 10.0;
-        const BOX_LYING_Y: f32 = 5.0;
         let entity = self.get_entity(entity_id)?;
         // Only humans can roll; gate on actor presence (drops the
         // pre-existing actor check while keeping the same coverage).
@@ -1293,14 +1298,15 @@ impl EngineInner {
         let dest_x = pos.x + push_map.x;
         let dest_y = pos.y + push_map.y;
 
-        // Build a lying-posture box at the roll destination and call
-        // `find_authorized_position_straight`, which **mutates the
-        // box** by iteratively pushing it off intersecting motion
-        // lines (two 50-iter passes).  The roll endpoint is the
-        // *adjusted* box centre, not `pos + direction`.
-        let mut dest_box = crate::coordinates::MapBBox::from_corners(
-            crate::coordinates::MapPoint::new(dest_x - BOX_LYING_X, dest_y - BOX_LYING_Y),
-            crate::coordinates::MapPoint::new(dest_x + BOX_LYING_X, dest_y + BOX_LYING_Y),
+        // Translate the actor's live primary move box to the roll destination.
+        // Original `GetMoveBox(RHPOSTURE_LYING)` currently returns `mboxMove`
+        // unconditionally; its alternate-posture implementation is commented
+        // out. `find_authorized_position_straight` mutates this box by pushing
+        // it off intersecting motion lines, and the adjusted center becomes
+        // the roll endpoint.
+        let mut dest_box = roll_destination_box(
+            *entity.position_iface().get_move_box(),
+            crate::coordinates::MapPoint::new(dest_x, dest_y),
         );
         let pt_start = pos;
         if !self
@@ -1330,30 +1336,15 @@ impl EngineInner {
             None => return,
         };
 
-        // Append a Rolling order onto the active sequence element
-        // with `point_destination_2d = dest`.  Also set `pending_roll`
-        // on the actor — `apply_rolling_start_side_effect` reads it
-        // on MotionState::Start to install `active_flight` toward the
-        // destination (Order doesn't carry the dest separately from
-        // `active_flight`'s per-frame increments).
-        if let Some(entity) = self.world.entities.get_mut(entity_id)
-            && let Some(actor) = entity.actor_data_mut()
-        {
-            actor.pending_roll = Some(dest);
-            tracing::debug!(
-                entity = ?entity_id,
-                ?dest,
-                "Rolling queued after fall on slope"
-            );
-        }
+        // Append a Rolling order with the authoritative map destination.
+        // Its Execute arm drives ordinary PerformMotion directly.
         let (dseq, didx) = damage_element;
-        let mut roll_order = crate::order::Order::new(
+        let roll_order = crate::order::Order::new(
             OrderType::Rolling,
             dest.x,
             dest.y,
             self.orders.allocate_order_id(),
         );
-        roll_order.compute_direction = false;
         self.orders
             .sequence_manager
             .push_order_on(dseq, didx, roll_order);
@@ -1538,7 +1529,19 @@ impl EngineInner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coordinates::MapPoint;
+    use crate::coordinates::{MapPoint, MoveBox};
+
+    #[test]
+    fn rolling_destination_uses_live_primary_move_box() {
+        let live = MoveBox::from_coords(-6.0, -4.0, 6.0, 4.0);
+        let translated = roll_destination_box(live, MapPoint::new(250.0, 1180.0));
+
+        assert_eq!(translated.x_min(), 244.0);
+        assert_eq!(translated.y_min(), 1176.0);
+        assert_eq!(translated.x_max(), 256.0);
+        assert_eq!(translated.y_max(), 1184.0);
+        assert_eq!(translated.center(), MapPoint::new(250.0, 1180.0));
+    }
 
     #[test]
     fn push_flight_vector_matches_all_original_supported_thrust_kinds() {

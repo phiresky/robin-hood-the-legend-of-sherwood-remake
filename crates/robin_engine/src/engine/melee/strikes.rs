@@ -1556,7 +1556,8 @@ impl EngineInner {
                 .sequence_manager
                 .current_order_for_actor(entity_id)
                 .is_some_and(|(_, _, order)| is_falling_flight_order(order.order_type));
-            let waiting_for_fall_start = flight.antagonist.is_some()
+            let waiting_for_fall_start = flight.frames_remaining != 0
+                && flight.antagonist.is_some()
                 && !flight.ladder_fall
                 && (!falling_order_live || entity.element_data().posture != Posture::Flying);
             if waiting_for_fall_start {
@@ -1921,12 +1922,10 @@ impl EngineInner {
     /// roll-direction derivation needs to re-run against the new
     /// slope.
     ///
-    /// If the new obstacle isn't steep enough to roll, or the
-    /// recomputed roll direction opposes the entity's current
-    /// movement increment, we snap the active flight to the current
-    /// position.  Otherwise we update the flight target to the new
-    /// destination, re-sizing the per-frame increment over the
-    /// remaining frames.
+    /// If the new obstacle isn't steep enough to roll, or the recomputed roll
+    /// direction opposes the current increment, the map goal becomes the
+    /// current position. Otherwise Original rewrites the live order, calls
+    /// `NewID`, and publishes the new map goal.
     ///
     /// Early-outs if the entity is not currently in a Rolling combat
     /// animation.
@@ -1961,66 +1960,7 @@ impl EngineInner {
         let normal = self.get_roll_normal(assets, entity_id);
         let new_dest = normal.and_then(|n| self.find_roll_point(entity_id, n, true));
 
-        if let Some(entity) = self.world.entities.get_mut(entity_id) {
-            let pos = entity.element_data().position_map();
-            // Compute the new facing up front — we may need to update
-            // the entity's direction before re-borrowing actor data.
-            let new_facing = match new_dest {
-                Some(dest) => {
-                    let dx = dest.x - pos.x;
-                    let dy = dest.y - pos.y;
-                    if dx.abs() > 0.01 || dy.abs() > 0.01 {
-                        Some(crate::position_interface::vector_to_sector_0_to_15(dx, dy))
-                    } else {
-                        None
-                    }
-                }
-                None => None,
-            };
-
-            let actor = match entity.actor_data_mut() {
-                Some(a) => a,
-                None => return,
-            };
-            let flight = match actor.active_flight.as_mut() {
-                Some(f) => f,
-                None => return,
-            };
-
-            match new_dest {
-                Some(dest) => {
-                    // Retarget the flight to the new roll point.
-                    let frames = flight.frames_remaining.max(1);
-                    flight.goal_x = dest.x;
-                    flight.goal_y = dest.y;
-                    flight.increment_x = (dest.x - pos.x) / frames as f32;
-                    flight.increment_y = (dest.y - pos.y) / frames as f32;
-                }
-                None => {
-                    // Halt the flight at the current position: the
-                    // next push-flight tick will snap and clear it.
-                    flight.goal_x = pos.x;
-                    flight.goal_y = pos.y;
-                    flight.increment_x = 0.0;
-                    flight.increment_y = 0.0;
-                    flight.frames_remaining = 1;
-                }
-            }
-
-            // The rolling animation calls `turn()` every frame to
-            // rotate the entity's facing toward its current movement
-            // direction.  When this helper redirects the flight, we
-            // also rotate the sprite so the rolling animation faces
-            // the new slope direction.
-            if let Some(facing) = new_facing {
-                entity.element_data_mut().set_direction_instantly(facing);
-            }
-        }
-
         if let Some(dest) = new_dest {
-            // UpdateRoll changes the live mpOrder destination and calls
-            // NewID. Retargeting only active_flight leaves both the sequence
-            // order and the explicit mpOrder mirror stale.
             let fresh_id = self.orders.allocate_order_id();
             let current = self
                 .orders
@@ -2040,6 +1980,14 @@ impl EngineInner {
                 order_id: fresh_id,
                 order_type: OrderType::Rolling,
             });
+
+            let entity = self.world.entities[entity_id]
+                .as_mut()
+                .expect("rolling actor disappeared before goal publication");
+            entity.position_iface_mut().set_map_goal(dest);
+        } else if let Some(entity) = self.world.entities.get_mut(entity_id) {
+            let here = entity.element_data().position_map();
+            entity.position_iface_mut().set_map_goal(here);
         }
     }
 
@@ -2864,6 +2812,7 @@ mod tests {
         ActorData, ActorSoldier, Camp, ElementData, ElementKind, HumanData, NpcData, SoldierData,
     };
     use crate::position_interface::SectorHandle;
+    use crate::sequence::SequenceElement;
 
     fn falling_pushed_soldier(dead: bool) -> Entity {
         let mut element = ElementData {
@@ -2906,12 +2855,34 @@ mod tests {
         })
     }
 
+    fn install_falling_pushed_order(engine: &mut EngineInner, victim: EntityId) {
+        let damage =
+            SequenceElement::new_damage(1, Command::ReceiveSwordDamage, Some(victim), None, 20, 0);
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        let order_id =
+            engine.push_new_order(sequence, 0, OrderType::FallingPushedUpright, 0.0, 0.0);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .installed_order = Some(crate::element::InstalledActorOrder {
+            order_id,
+            order_type: OrderType::FallingPushedUpright,
+        });
+    }
+
     #[test]
     fn fatal_push_goal_preserves_flying_pose_until_animation_terminates() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         let mut engine = EngineInner::new();
         let victim_id = engine.add_entity(falling_pushed_soldier(true));
+        install_falling_pushed_order(&mut engine, victim_id);
 
         engine.tick_push_flights(sim, &LevelAssets::default());
 
@@ -2952,12 +2923,51 @@ mod tests {
     }
 
     #[test]
+    fn completed_combat_flight_snaps_after_its_falling_order_retires() {
+        let sim = crate::sim_rng::test_context();
+        let near_goal = MapPoint::new(1142.2267, 1230.4998);
+        let exact_goal = MapPoint::new(1142.2262, 1230.5006);
+        let mut entity = falling_pushed_soldier(false);
+        entity.set_posture(Posture::Lying);
+        entity.element_data_mut().set_position_map(near_goal);
+        entity.position_iface_mut().new_move();
+        let flight = entity
+            .actor_data_mut()
+            .unwrap()
+            .active_flight
+            .as_mut()
+            .unwrap();
+        flight.frames_remaining = 0;
+        flight.increment_x = 0.0;
+        flight.increment_y = 0.0;
+        flight.goal_x = exact_goal.x;
+        flight.goal_y = exact_goal.y;
+        flight.goal_z = 0.0;
+
+        let mut engine = EngineInner::new();
+        let victim_id = engine.add_entity(entity);
+
+        // Actor::Hourglass has already retired the falling order and changed
+        // posture. The later terminal PerformFlight reconciliation must not
+        // mistake this completed flight for one that has yet to start.
+        engine.tick_push_flight_terminal_landings(&sim, &LevelAssets::default());
+
+        let victim = engine.get_entity(victim_id).unwrap();
+        assert_eq!(victim.element_data().position_map(), exact_goal);
+        assert_eq!(victim.position_iface().old_map_position(), near_goal);
+        assert!(victim.position_iface().is_moving_map());
+        assert!(victim.actor_data().unwrap().active_flight.is_none());
+    }
+
+    #[test]
     fn owner_scoped_push_flight_advances_only_the_selected_creation_slot() {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::default();
         let mut engine = EngineInner::new();
         let earlier = engine.add_entity(falling_pushed_soldier(false));
         let later = engine.add_entity(falling_pushed_soldier(false));
+        install_falling_pushed_order(&mut engine, earlier);
+        install_falling_pushed_order(&mut engine, later);
 
         engine.tick_push_flight_for_owner(&sim, &assets, earlier);
 
@@ -3056,6 +3066,7 @@ mod tests {
             .goal_x = 14.0;
         let mut engine = EngineInner::new();
         let victim_id = engine.add_entity(entity);
+        install_falling_pushed_order(&mut engine, victim_id);
 
         engine.tick_push_flights(&sim, &LevelAssets::default());
 
@@ -3083,6 +3094,7 @@ mod tests {
         entity.human_data_mut().unwrap().unconscious = true;
         let mut engine = EngineInner::new();
         let victim_id = engine.add_entity(entity);
+        install_falling_pushed_order(&mut engine, victim_id);
 
         engine.tick_push_flights(sim, &LevelAssets::default());
 
