@@ -1934,18 +1934,23 @@ impl EnemyAi {
                     self.base.me
                 )
             });
-            let enemy_elevation = ctx
+            let enemy_view = ctx
                 .entity_view(enemy)
-                .map(|view| view.elevation)
                 .unwrap_or_else(|| panic!("EVENT_VIEW target {enemy} requires a live entity view"));
+            let enemy_live_position = Position {
+                x: enemy_view.detection_position.x,
+                y: enemy_view.detection_position.y,
+                sector: enemy_view.position.sector,
+                level: enemy_view.position.level,
+            };
             // `Distance(pEnemy)` subtracts the actors' literal 3D
             // `GetPosition()` points, stretches world Y by
             // INVERSE_ASPECT_RATIO, then takes the Euclidean norm. The
             // positions carried here are map-space, so recover world Y with
             // each actor's elevation before dividing by three.
             let distance = ai_square_distance(
-                &enemy_pos,
-                enemy_elevation,
+                &enemy_live_position,
+                enemy_view.detection_position_world.z,
                 &owner_live_position,
                 ctx.elevation,
             )
@@ -1977,17 +1982,33 @@ impl EnemyAi {
         // reaction-time window closes.
 
         // Three-branch dispatch based on distance and below-flag.
-        // Original `MaxNormDistance(pEnemy)` subtracts the actors' full
-        // world-space positions, stretches world Y, and retains elevation as
-        // the third max-norm component.  `enemy_pos` and `ctx.position` are
-        // map-space snapshots, where elevation has already been projected out
-        // of Y, so using their raw Y delta double-counts vertical separation.
-        let enemy_elevation = ctx
+        // `MaxNormDistance(pEnemy)` deliberately bypasses AI `Position()` and
+        // subtracts the actors' literal `GetPosition()` values. During a door
+        // pass, `enemy_pos` and `ctx.position` are instead forecast onto the
+        // destination gate side. Keep those forecast positions for the report,
+        // alert, focus, and Face calls above/below, but use the raw element
+        // positions for this gate exactly as the Original does.
+        let enemy_view = ctx
             .entity_view(enemy)
-            .map(|view| view.elevation)
-            .unwrap_or(ctx.elevation);
-        let max_norm_dist =
-            ai_max_norm_distance(&enemy_pos, enemy_elevation, &ctx.position, ctx.elevation);
+            .unwrap_or_else(|| panic!("EVENT_VIEW target {enemy} requires a live entity view"));
+        let enemy_live_position = Position {
+            x: enemy_view.detection_position.x,
+            y: enemy_view.detection_position.y,
+            sector: enemy_view.position.sector,
+            level: enemy_view.position.level,
+        };
+        let owner_live_position = tick.owner_live_position.unwrap_or_else(|| {
+            panic!(
+                "EVENT_VIEW for {} requires the owner's literal live position",
+                self.base.me
+            )
+        });
+        let max_norm_dist = ai_max_norm_distance(
+            &enemy_live_position,
+            enemy_view.detection_position_world.z,
+            &owner_live_position,
+            ctx.elevation,
+        );
         if max_norm_dist < 50.0 {
             // Enemy very near — skip the turn and dispatch BattleDecisions
             // immediately. `IAmInTrouble` is called only on this branch
@@ -2855,6 +2876,9 @@ mod tests {
             sector: None,
             level: 0,
         };
+        enemy_view.detection_position = crate::coordinates::MapPoint::new(100.0, 0.0);
+        enemy_view.detection_position_world =
+            crate::coordinates::WorldPoint3D::new(100.0, 0.0, 0.0);
         let mut views = AiEntityViewMap::new();
         views.insert(12, enemy_view);
         let ctx = AiContext {
@@ -2864,6 +2888,7 @@ mod tests {
         };
 
         let mut tick = AiPerTickData::stub();
+        tick.owner_live_position = Some(ctx.position);
         tick.enemy_detectable_positions.push((
             12,
             Position {
@@ -2904,6 +2929,10 @@ mod tests {
         enemy_view.kind = EntityKind::Pc;
         enemy_view.is_pc = true;
         enemy_view.position = enemy_position;
+        enemy_view.detection_position =
+            crate::coordinates::MapPoint::new(enemy_position.x, enemy_position.y);
+        enemy_view.detection_position_world =
+            crate::coordinates::WorldPoint3D::new(enemy_position.x, enemy_position.y, 0.0);
         let mut views = AiEntityViewMap::new();
         views.insert(342, enemy_view);
         let ctx = AiContext {
@@ -2969,6 +2998,13 @@ mod tests {
         enemy_view.is_pc = true;
         enemy_view.position = enemy_position;
         enemy_view.elevation = 36.001007;
+        enemy_view.detection_position =
+            crate::coordinates::MapPoint::new(enemy_position.x, enemy_position.y);
+        enemy_view.detection_position_world = crate::coordinates::WorldPoint3D::new(
+            enemy_position.x,
+            enemy_position.y + 36.001007,
+            36.001007,
+        );
         let mut views = AiEntityViewMap::new();
         views.insert(132, enemy_view);
         let ctx = AiContext {
@@ -3026,6 +3062,9 @@ mod tests {
             level: 2,
         };
         enemy_view.elevation = 150.001;
+        enemy_view.detection_position = crate::coordinates::MapPoint::new(609.0, 2299.0);
+        enemy_view.detection_position_world =
+            crate::coordinates::WorldPoint3D::new(609.0, 2449.001, 150.001);
         let mut views = AiEntityViewMap::new();
         views.insert(12, enemy_view);
         let ctx = AiContext {
@@ -3041,6 +3080,7 @@ mod tests {
         };
 
         let mut tick = AiPerTickData::stub();
+        tick.owner_live_position = Some(ctx.position);
         tick.enemy_detectable_positions.push((
             12,
             Position {
@@ -3067,6 +3107,74 @@ mod tests {
             ai.base.current_substate,
             Substate::AttackingReactiontimeTurning
         );
+    }
+
+    #[test]
+    fn event_view_near_gate_uses_literal_target_position_during_door_pass() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(112);
+
+        let mut enemy_view = object_view(ObjectType::None);
+        enemy_view.kind = EntityKind::Pc;
+        enemy_view.is_pc = true;
+        // AI Position(enemy): the destination side of the active door pass,
+        // close enough to take the immediate-battle branch if used here.
+        enemy_view.position = Position {
+            x: 663.75,
+            y: 1421.5,
+            sector: None,
+            level: 2,
+        };
+        // GetPosition(enemy): the still-interpolating body position read by
+        // MaxNormDistance, more than 50 units from the observing soldier.
+        enemy_view.detection_position = crate::coordinates::MapPoint::new(560.9536, 1422.7441);
+        enemy_view.detection_position_world =
+            crate::coordinates::WorldPoint3D::new(560.9536, 1552.7451, 130.001);
+        enemy_view.elevation = 130.001;
+        let mut views = AiEntityViewMap::new();
+        views.insert(170, enemy_view);
+        let ctx = AiContext {
+            position: Position {
+                x: 657.0,
+                y: 1400.0,
+                sector: None,
+                level: 3,
+            },
+            elevation: 143.06665,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.owner_live_position = Some(Position {
+            x: 654.72314,
+            y: 1403.2888,
+            sector: None,
+            level: 3,
+        });
+        tick.enemy_detectable_positions.push((
+            170,
+            Position {
+                x: 663.75,
+                y: 1421.5,
+                sector: None,
+                level: 2,
+            },
+        ));
+
+        ai.event_view_standard_procedure(
+            &sim,
+            170,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingReactiontimeTurning
+        );
+        assert!(ai.base.list_us.is_empty());
     }
 
     #[test]

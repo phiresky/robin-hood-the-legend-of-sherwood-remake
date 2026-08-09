@@ -322,7 +322,7 @@ fn attacking_reactiontime_enemy_near_enabled(
 
 fn enemy_is_in_react_immediately_zone(
     origin: MapPoint,
-    target: crate::ai::Position,
+    target: MapPoint,
     posture: crate::element::Posture,
 ) -> bool {
     posture.triggers_enemy_near()
@@ -333,7 +333,7 @@ fn enemy_is_in_react_immediately_zone(
 fn enemies_near_from_them_list(
     origin: MapPoint,
     list_them: &[u32],
-    mut target_snapshot: impl FnMut(u32) -> Option<(crate::ai::Position, crate::element::Posture)>,
+    mut target_snapshot: impl FnMut(u32) -> Option<(MapPoint, crate::element::Posture)>,
 ) -> Vec<u32> {
     list_them
         .iter()
@@ -510,7 +510,12 @@ impl EngineInner {
                     "EnemyNear: list_them target has no live AI entity view"
                 );
             }
-            target_view.map(|view| (view.position, view.posture))
+            // `AttackingReactiontimeEnemyNearTest` reads the element's
+            // literal `GetPositionMap()`.  `view.position` is AI
+            // `Position(target)`, which forecasts a passing actor onto the
+            // destination side of its door and can put it inside the 50x30
+            // reaction box several frames too early.
+            target_view.map(|view| (view.detection_position, view.posture))
         });
 
         for target_handle in nearby_targets {
@@ -4697,52 +4702,56 @@ mod tests {
         ] {
             assert!(enemy_is_in_react_immediately_zone(
                 origin,
-                Position {
-                    x: 150.0,
-                    y: 170.0,
-                    ..Position::default()
-                },
+                MapPoint::new(150.0, 170.0),
                 posture
             ));
         }
 
         assert!(!enemy_is_in_react_immediately_zone(
             origin,
-            Position {
-                x: 150.1,
-                y: 200.0,
-                ..Position::default()
-            },
+            MapPoint::new(150.1, 200.0),
             Posture::Upright
         ));
         assert!(!enemy_is_in_react_immediately_zone(
             origin,
-            Position {
-                x: 100.0,
-                y: 230.1,
-                ..Position::default()
-            },
+            MapPoint::new(100.0, 230.1),
             Posture::Upright
         ));
         assert!(!enemy_is_in_react_immediately_zone(
             origin,
-            Position {
-                x: 100.0,
-                y: 200.0,
-                ..Position::default()
-            },
+            MapPoint::new(100.0, 200.0),
             Posture::Spy
+        ));
+    }
+
+    #[test]
+    fn enemy_near_sender_uses_literal_target_map_position_during_door_pass() {
+        // schema-14 linux2/Profile_002/Savegame_034 replay-011, frame 35224:
+        // Soldier 112 has reached the inside of door 9 while PC 170 is still
+        // crossing it. AI `Position(PC 170)` forecasts the far-side door
+        // point into the immediate-reaction box, but the Original explicitly
+        // reads `GetPositionMap()` and keeps turning until the body itself is
+        // within 50x30.
+        let owner = MapPoint::new(635.0, 1414.0);
+        let forecast_target = MapPoint::new(588.0, 1422.0);
+        let literal_target = MapPoint::new(569.884_03, 1423.860_4);
+
+        assert!(enemy_is_in_react_immediately_zone(
+            owner,
+            forecast_target,
+            Posture::Upright
+        ));
+        assert!(!enemy_is_in_react_immediately_zone(
+            owner,
+            literal_target,
+            Posture::Upright
         ));
     }
 
     #[test]
     fn enemy_near_sender_only_scans_list_them_and_preserves_order() {
         let origin = MapPoint::new(100.0, 200.0);
-        let nearby = |x| Position {
-            x,
-            y: 200.0,
-            ..Position::default()
-        };
+        let nearby = |x| MapPoint::new(x, 200.0);
         let list_them = [3, 5, 1, 4];
 
         let selected = enemies_near_from_them_list(origin, &list_them, |handle| match handle {
