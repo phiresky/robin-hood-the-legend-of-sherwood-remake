@@ -1,0 +1,9 @@
+{
+  "id": "177",
+  "subject": "Stop relaunching the officer's missed-soldier timer",
+  "description": "SeekingOfficerWaitForInstructedSoldier now matches Original's missed-target branch: it increments the missed-soldier counter but does not relaunch the timer. Rust's invented 30-frame relaunch created a repeating chain of officer detection calls and five extra night/fog visibility rays at frame 34552. A focused regression verifies the miss counter increments while the timer remains stopped. linux2 Profile_002 Savegame_034 replay-001 clears frame 34552 and advances to an independent frame-34733 PC posture frontier. Both task-36 schema-14 replay-009 controls match exact EOF on the same combined runner; focused test, cargo fmt, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task177-visibility-cluster2"
+}
