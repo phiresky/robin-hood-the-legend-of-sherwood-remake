@@ -872,10 +872,19 @@ impl PassDoorLaunchContext<'_> {
         } else if is_carrying {
             OrderType::WalkingCarryingOnShoulders
         } else if action_state_after_transition.is_sword() {
-            if is_fast {
-                OrderType::RunningWithSword
-            } else {
-                OrderType::WalkingWithSword
+            // Human::DetermineMovementAnimation derives sword speed from
+            // the authored movement action, not RHMOVE_FAST. PassDoor
+            // elements deliberately carry empty flags, so consulting FAST
+            // here downgraded an authored run at each door boundary.
+            match authored_action {
+                OrderType::WalkingWithSword | OrderType::RunningWithSword => authored_action,
+                OrderType::WalkingUpright | OrderType::WalkingWithCorpse => {
+                    OrderType::WalkingWithSword
+                }
+                OrderType::RunningUpright => OrderType::RunningWithSword,
+                other => panic!(
+                    "DetermineMovementAnimation received unsupported sword PassDoor action {other:?} for {entity_id:?}"
+                ),
             }
         } else if is_pc && action_state_after_transition.is_shield() {
             // No running-with-shield variant — shield posture is
@@ -2310,6 +2319,43 @@ mod tests {
             element.current_order().map(|order| order.order_type),
             Some(OrderType::RunningWithSword),
             "the first direct-door rail must retain the stamped fast sword movement"
+        );
+    }
+
+    #[test]
+    fn direct_pc_pass_preserves_authored_run_without_fast_flag_in_sword_state() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_pc(7));
+        let door = crate::gate::Door {
+            door_type: DoorType::Building,
+            ..default_door()
+        };
+
+        let (barrier, seq_id) = dispatch_pass_with_transition_state(
+            &mut engine,
+            &[door],
+            owner,
+            OrderType::RunningUpright,
+            crate::sequence::MoveFlags::empty(),
+            Posture::Upright,
+            crate::element::ActionState::MovingSword,
+        );
+
+        assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap();
+        let SequenceElementData::Movement { action, flags, .. } = &element.data else {
+            unreachable!()
+        };
+        assert!(flags.is_empty());
+        assert_eq!(*action, OrderType::RunningWithSword);
+        assert_eq!(
+            element.current_order().map(|order| order.order_type),
+            Some(OrderType::RunningWithSword),
+            "PassDoor must derive sword speed from its authored run, not its empty flags"
         );
     }
 
