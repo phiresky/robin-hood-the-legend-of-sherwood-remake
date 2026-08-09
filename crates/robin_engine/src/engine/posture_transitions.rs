@@ -147,26 +147,41 @@ impl EngineInner {
     }
 
     /// A make_* rewrite retargets the selected order's action in place and
-    /// leaves its identity alone, so the sprite keeps treating the order as
-    /// the one it is already playing: the next motion tick reports
-    /// IN_PROGRESS rather than a fresh START, and the row change alone drives
-    /// the frame reset. Only the lazily materialized door-pass mirror has to
-    /// be pointed at the new action.
+    /// leaves its identity alone. Original's `mpOrder` points at that same
+    /// mutated object, so `GetAnimation()` observes the new action
+    /// immediately even though the sprite does not execute it until its next
+    /// actor slot. Keep Rust's detached installed-order copy and the lazy
+    /// door-pass mirror pointed at that rewritten action without publishing a
+    /// newly inserted, not-yet-installed order.
     fn synchronize_rewritten_selected_order(
         &mut self,
         entity: EntityId,
         action_before: Option<OrderType>,
     ) {
-        let Some(action_after) = self.selected_order_action(entity) else {
+        let Some(selected_after) = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(entity)
+            .map(|(_, _, order)| crate::element::InstalledActorOrder {
+                order_id: order.order_id,
+                order_type: order.order_type,
+            })
+        else {
             return;
         };
-        if action_before == Some(action_after) {
+        if action_before == Some(selected_after.order_type) {
             return;
         }
-        if let Some(actor) = self.get_entity_mut(entity).and_then(|e| e.actor_data_mut())
-            && let Some(pass) = actor.active_door_pass.as_mut()
-        {
-            pass.current_action = action_after;
+        if let Some(actor) = self.get_entity_mut(entity).and_then(|e| e.actor_data_mut()) {
+            if actor
+                .installed_order
+                .is_some_and(|installed| installed.order_id == selected_after.order_id)
+            {
+                actor.installed_order = Some(selected_after);
+            }
+            if let Some(pass) = actor.active_door_pass.as_mut() {
+                pass.current_action = selected_after.order_type;
+            }
         }
     }
 
@@ -1246,4 +1261,135 @@ fn decide_transitions(
         animation_start_action_state,
         animation_end,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::element::{
+        ActiveDoorPass, ActorData, ActorPc, ElementData, ElementKind, Entity, HumanData,
+        InstalledActorOrder, PcData,
+    };
+    use crate::order::Order;
+    use crate::sequence::SequenceElement;
+
+    fn selected_running_pc() -> (EngineInner, EntityId, SequenceId, std::num::NonZeroU32) {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        }));
+        let order_id = engine.orders.allocate_order_id();
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(owner),
+            OrderType::RunningUpright,
+        );
+        movement
+            .orders
+            .push_back(Order::new(OrderType::RunningUpright, 10.0, 20.0, order_id));
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        (engine, owner, sequence, order_id)
+    }
+
+    #[test]
+    fn in_place_make_rewrite_updates_matching_installed_order_and_door_mirror() {
+        let (mut engine, owner, sequence, order_id) = selected_running_pc();
+        {
+            let actor = engine
+                .get_entity_mut(owner)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap();
+            actor.installed_order = Some(InstalledActorOrder {
+                order_id,
+                order_type: OrderType::RunningUpright,
+            });
+            actor.active_door_pass = Some(ActiveDoorPass {
+                door_index: crate::gate::DoorIndex(0),
+                direct: false,
+                position_direct: false,
+                steps: Default::default(),
+                triggers_fired: 1,
+                current_action: OrderType::RunningUpright,
+                current_reverse: false,
+                saved_action_state: None,
+            });
+        }
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(sequence, 0)
+            .expect("selected movement order")
+            .orders
+            .front_mut()
+            .expect("movement has an order")
+            .order_type = OrderType::TransitionRunningUprightWalkingCrouched;
+
+        engine.synchronize_rewritten_selected_order(owner, Some(OrderType::RunningUpright));
+
+        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        assert_eq!(
+            actor.installed_order,
+            Some(InstalledActorOrder {
+                order_id,
+                order_type: OrderType::TransitionRunningUprightWalkingCrouched,
+            })
+        );
+        assert_eq!(
+            actor.active_door_pass.as_ref().unwrap().current_action,
+            OrderType::TransitionRunningUprightWalkingCrouched
+        );
+    }
+
+    #[test]
+    fn make_rewrite_does_not_install_a_different_selected_order_identity() {
+        let (mut engine, owner, sequence, _) = selected_running_pc();
+        let detached_id = engine.orders.allocate_order_id();
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .installed_order = Some(InstalledActorOrder {
+            order_id: detached_id,
+            order_type: OrderType::RunningUpright,
+        });
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(sequence, 0)
+            .expect("selected movement order")
+            .orders
+            .front_mut()
+            .expect("movement has an order")
+            .order_type = OrderType::TransitionRunningUprightWalkingCrouched;
+
+        engine.synchronize_rewritten_selected_order(owner, Some(OrderType::RunningUpright));
+
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .installed_order,
+            Some(InstalledActorOrder {
+                order_id: detached_id,
+                order_type: OrderType::RunningUpright,
+            })
+        );
+    }
 }
