@@ -7534,7 +7534,7 @@ impl EngineInner {
                 // not advance anti-vibration turning on a terminal tolerance
                 // sample whose post-seek sequence is taking over.
                 let _ = sprite.position_iface.turn();
-                sprite.perform_motion(
+                let result = sprite.perform_motion(
                     sim,
                     motion_order,
                     sprite_motion_order_for_nonanimation(anim),
@@ -7543,7 +7543,23 @@ impl EngineInner {
                     false,
                     motion_method,
                     dest_already_at_pos,
-                )
+                );
+                // A generated stop transition can begin exactly where an
+                // anti-collision deviation ended. The shipped Linux game
+                // retains the stable deviation request across that
+                // zero-distance START tick, so its following Execute rotates
+                // immediately. The available C++ source does not expose the
+                // latch update responsible for this save-observable detail.
+                // TODO: identify whether the shipping build performs this in
+                // movement interruption or in transition initialization.
+                if execute_order_initialising
+                    && is_transition_anim
+                    && sprite.position_iface.is_deviated()
+                    && sprite.position_iface.map_position() == goal
+                {
+                    sprite.position_iface.prime_deviated_turn_for_current_goal();
+                }
+                result
             };
             if tolerance_arrival {
                 // This PerformSeek branch returns before calling any Sprite
