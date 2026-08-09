@@ -233,7 +233,13 @@ impl FriendlyAi {
         self.base.panic_center_y = center.y;
         self.base.lasting_panic_runs = runs;
         self.base.directed_panic = true;
-        self.set_state(AiState::Fleeing, Substate::FleeingPanic);
+        // Original stages SetState only after its door search and only when
+        // `bNewPanic` remains true. Preserve the eager fallback staging used
+        // by new Rust requests, but do not let a repeated panic re-enter the
+        // civilian state setter and lower an existing red alert to yellow.
+        if !was_already_fleeing {
+            self.set_state(AiState::Fleeing, Substate::FleeingPanic);
+        }
         self.base.outbox.actor.begin_panic = Some(PanicRequest {
             center: Some(center),
             runs,
@@ -272,7 +278,9 @@ impl FriendlyAi {
         );
         self.base.lasting_panic_runs = runs;
         self.base.directed_panic = false;
-        self.set_state(AiState::Fleeing, Substate::FleeingPanic);
+        if !was_already_fleeing {
+            self.set_state(AiState::Fleeing, Substate::FleeingPanic);
+        }
         self.base.outbox.actor.begin_panic = Some(PanicRequest {
             center: None,
             runs,
@@ -2506,6 +2514,43 @@ mod tests {
         assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
         assert_eq!(ai.base.panic_center_x, 50.0);
         assert_eq!(ai.base.panic_center_y, 75.0);
+    }
+
+    #[test]
+    fn repeated_event_panic_preserves_red_alert_until_the_panic_drain() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = FriendlyAi::new(1);
+        ai.set_state(AiState::Fleeing, Substate::FleeingPanic);
+        ai.base.set_alert_status(AlertLevel::Red);
+        ai.base.outbox.reentrant.owner_work.clear();
+
+        let panic_center = Position {
+            x: 50.0,
+            y: 75.0,
+            sector: None,
+            level: 0,
+        };
+        ai.think_alerting_event(
+            &sim,
+            &Stimulus::with_position(StimulusType::EventPanic, panic_center),
+            &AiContext::default(),
+            None,
+            None,
+        );
+
+        assert_eq!(ai.base.current_state, AiState::Fleeing);
+        assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
+        assert_eq!(ai.base.current_music_alert_status, AlertLevel::Red);
+        assert_eq!(ai.base.view_alert_status, AlertLevel::Red);
+        assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+        let request = ai
+            .base
+            .outbox
+            .actor
+            .begin_panic
+            .expect("repeated EVENT_PANIC must still reach the synchronous panic drain");
+        assert_eq!(request.center, Some(panic_center));
+        assert!(!request.is_new_panic);
     }
 
     #[test]
