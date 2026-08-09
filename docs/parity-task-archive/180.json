@@ -1,0 +1,9 @@
+{
+  "id": "180",
+  "subject": "Preserve the terminal active frame after projectile human hits",
+  "description": "Projectile retirement now distinguishes actually reaching a disappearing terrain endpoint from an earlier successful human, FX, or shield hit. Original HitHuman returns before the later mbDisappear branch, leaving the stopped arrow active until Arrow::Refresh; Rust incorrectly deactivated immediately whenever the arrow's unused future trajectory crossed a hole. A focused lifecycle regression covers this terminal active frame while preserving immediate real hole/water disappearance. linux2 Profile_002 Savegame_030 replay-005 and both task-36 schema-14 replay-009 controls match exact EOF. Focused tests, cargo fmt, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task174-visibility-cluster"
+}
