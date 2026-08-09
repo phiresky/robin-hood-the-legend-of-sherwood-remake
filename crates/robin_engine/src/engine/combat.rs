@@ -667,7 +667,21 @@ impl EngineInner {
                 .rev()
                 .take(2)
                 .any(|tp| assets.water_zones.landing_is_in_hole(tp.position.to_map()));
-            let arrow = bow_shot::spawn_arrow(bow_shot::SpawnArrowParams {
+            let (trajectory_origin_sector, trajectory_origin_layer) = self
+                .get_entity(result.shooter)
+                .map(|shooter| {
+                    (
+                        shooter.element_data().sector(),
+                        shooter.element_data().layer(),
+                    )
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "arrow shooter {} disappeared before trajectory-origin capture",
+                        result.shooter.index()
+                    )
+                });
+            let mut arrow = bow_shot::spawn_arrow(bow_shot::SpawnArrowParams {
                 shooter: result.shooter,
                 bow_point,
                 trajectory_origin: crate::coordinates::MapPoint {
@@ -682,6 +696,11 @@ impl EngineInner {
                 lands_in_hole,
                 initial_velocity: velocity,
             });
+            set_projectile_trajectory_origin_membership(
+                &mut arrow,
+                trajectory_origin_sector,
+                trajectory_origin_layer,
+            );
             let arrow_id = self.add_entity(arrow);
             if let Some(resolution) = initial_landing_resolution {
                 let entity = self
@@ -1839,12 +1858,43 @@ fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::coordinates::M
     }
 }
 
+fn projectile_trajectory_origin_position(entity: &Entity) -> Option<crate::ai::Position> {
+    let Entity::Projectile(projectile) = entity else {
+        return None;
+    };
+    Some(crate::ai::Position {
+        x: projectile.projectile.start_of_trajectory_x,
+        y: projectile.projectile.start_of_trajectory_y,
+        sector: projectile
+            .projectile
+            .trajectory_origin_sector
+            .and_then(crate::position_interface::SectorHandle::new),
+        level: projectile.projectile.trajectory_origin_layer,
+    })
+}
+
+fn set_projectile_trajectory_origin_membership(
+    entity: &mut Entity,
+    sector: Option<crate::position_interface::SectorHandle>,
+    layer: u16,
+) {
+    let Entity::Projectile(projectile) = entity else {
+        panic!("trajectory-origin membership requires a projectile entity")
+    };
+    projectile.projectile.trajectory_origin_sector = sector.map(|sector| sector.get());
+    projectile.projectile.trajectory_origin_layer = layer;
+}
+
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
-    use super::{soldier_piercing_protection, soldier_shield_dimensions};
+    use super::{
+        projectile_trajectory_origin_position, set_projectile_trajectory_origin_membership,
+        soldier_piercing_protection, soldier_shield_dimensions,
+    };
     use crate::element::{
-        ActionState, ActorData, ActorPc, ElementData, ElementKind, Entity, HumanData, Posture,
+        ActionState, ActorData, ActorPc, ElementData, ElementKind, ElementProjectile, Entity,
+        HumanData, ObjectData, Posture, ProjectileData,
     };
     use crate::engine::{EngineInner, LevelAssets};
     use crate::order::OrderType;
@@ -1867,6 +1917,31 @@ mod tests {
             human: HumanData::default(),
             pc: Default::default(),
         })
+    }
+
+    #[test]
+    fn projectile_trajectory_origin_retains_shooter_sector_and_layer() {
+        let mut entity = Entity::Projectile(ElementProjectile {
+            element: ElementData::default(),
+            object: ObjectData::default(),
+            projectile: ProjectileData {
+                start_of_trajectory_x: 572.0,
+                start_of_trajectory_y: 2360.0,
+                ..ProjectileData::default()
+            },
+        });
+        set_projectile_trajectory_origin_membership(
+            &mut entity,
+            crate::position_interface::SectorHandle::new(17),
+            1,
+        );
+
+        let origin =
+            projectile_trajectory_origin_position(&entity).expect("projectile has an origin");
+        assert_eq!(origin.x, 572.0);
+        assert_eq!(origin.y, 2360.0);
+        assert_eq!(origin.sector.map(|sector| sector.get()), Some(17));
+        assert_eq!(origin.level, 1);
     }
 
     fn blocked_shoulder_pair() -> (
@@ -2435,7 +2510,7 @@ impl EngineInner {
                         if victim_is_npc {
                             let trajectory_origin = self
                                 .get_entity(result.arrow)
-                                .and_then(projectile_trajectory_origin);
+                                .and_then(projectile_trajectory_origin_position);
                             if let Some(origin) = trajectory_origin {
                                 self.dispatch_event_get_arrow(sim, assets, victim, origin);
                             } else {
@@ -2828,21 +2903,8 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim: EntityId,
-        origin: crate::coordinates::MapPoint,
+        origin: crate::ai::Position,
     ) {
-        let Some(layer) = self.get_entity(victim).map(|e| e.element_data().layer()) else {
-            tracing::warn!(
-                ?victim,
-                "dispatch_event_get_arrow: victim missing for layer lookup"
-            );
-            return;
-        };
-        let pos = crate::ai::Position {
-            x: origin.x,
-            y: origin.y,
-            sector: None,
-            level: layer,
-        };
         // RHElementArrow::HitHuman calls the NPC's Think directly after
         // LaunchSequenceElement and before returning to the projectile
         // Hourglass.  Merely appending this to the deferred detection FIFO
@@ -2853,7 +2915,7 @@ impl EngineInner {
             sim,
             victim,
             assets,
-            crate::ai::Stimulus::with_position(crate::ai::StimulusType::EventGetArrow, pos),
+            crate::ai::Stimulus::with_position(crate::ai::StimulusType::EventGetArrow, origin),
         );
     }
 
