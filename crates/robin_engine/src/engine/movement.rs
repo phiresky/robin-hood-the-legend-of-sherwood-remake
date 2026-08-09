@@ -195,6 +195,20 @@ mod group_move_authorization_tests {
     }
 
     #[test]
+    fn concrete_door_walk_replaces_a_retired_transition_mirror() {
+        let mut mirrored = OrderType::TransitionWalkingUprightRunningUpright;
+        synchronize_selected_door_pass_walk_action(&mut mirrored, OrderType::RunningUpright);
+        assert_eq!(mirrored, OrderType::RunningUpright);
+
+        synchronize_selected_door_pass_walk_action(&mut mirrored, OrderType::PassingDoor);
+        assert_eq!(
+            mirrored,
+            OrderType::RunningUpright,
+            "a non-animation action point must leave the last sprite action intact"
+        );
+    }
+
+    #[test]
     fn recursively_reached_climb_keeps_transition_facing() {
         assert!(!initialising_climb_uses_lift_direction(
             OrderType::ClimbingLadderUp,
@@ -364,6 +378,24 @@ fn order_uses_distance_motion(order: OrderType) -> bool {
             | OrderType::ClimbingLadderUpFast
             | OrderType::ClimbingLadderDownFast
     )
+}
+
+/// Keep the split door-pass walk mirror aligned with the concrete order that
+/// has reached the actor slot.
+///
+/// Original stores the translated door route and posture-transition copies in
+/// one order list. Once a transition retires, the following walk/run order is
+/// immediately authoritative. Rust keeps the untranslated tail in
+/// `ActiveDoorPass`; without this rebind a transition written into
+/// `current_action` by MakeFast/MakeSlow can continue supplying the sprite row
+/// while the concrete successor is already executing.
+fn synchronize_selected_door_pass_walk_action(
+    current_action: &mut OrderType,
+    selected_action: OrderType,
+) {
+    if order_uses_distance_motion(selected_action) {
+        *current_action = selected_action;
+    }
 }
 
 /// Movement Execute arms which call `Turn()` immediately before entering
@@ -6693,6 +6725,18 @@ impl EngineInner {
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .is_some_and(|element| element.legacy_v48.is_some());
+
+                // A materialized walk/run successor can sit behind a
+                // MakeFast/MakeSlow transition in the sequence-manager queue.
+                // When it becomes current, Original's single order list makes
+                // that concrete action authoritative; retire the split
+                // door-pass transition mirror at the same owner boundary.
+                if let Some(pass) = actor.active_door_pass.as_mut() {
+                    synchronize_selected_door_pass_walk_action(
+                        &mut pass.current_action,
+                        order_action,
+                    );
+                }
 
                 // Selecting a door-pass Walk successor is not the same as
                 // executing it.  Restore the movement state only when that
