@@ -710,7 +710,6 @@ impl EnemyAi {
             goto_flags,
             ctx,
         );
-        self.base.seek_position = seek_pos;
     }
 
     // -----------------------------------------------------------------------
@@ -1197,5 +1196,48 @@ impl EnemyAi {
         self.other_bodies_to_examine.remove(0);
         self.run_to_examine_body(body, ctx, tick, None);
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seek_next_point_preserves_the_search_center() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(118);
+        let search_center = Position {
+            x: 1397.772_9,
+            y: 1864.478_5,
+            sector: None,
+            level: 0,
+        };
+        let route_point = Position {
+            x: 1236.0,
+            y: 1589.0,
+            sector: None,
+            level: 8,
+        };
+        ai.base.seek_position = search_center;
+        ai.my_seek_points.push(1111);
+        ai.personal_seek_point_1 = Some(SeekPoint {
+            position: route_point,
+            frame_when_full_interest: 0,
+            directions: vec![4, 10, 15],
+            last_calculated_interest: 100,
+            locked: false,
+            id: 1111,
+        });
+
+        ai.seek_next_point(
+            &sim,
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+        );
+
+        assert_eq!(ai.base.last_goto_destination, route_point);
+        assert_eq!(ai.base.seek_position, search_center);
     }
 }
