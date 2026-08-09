@@ -23,6 +23,33 @@ fn body_examination_target_disappeared(
 }
 
 impl EnemyAi {
+    /// Resolve the primary target inherited after reaching a phalanx slot.
+    ///
+    /// Original tests the left combat-neighbour pointer first, then the right,
+    /// and copies that soldier's target verbatim. A present neighbour whose
+    /// target is null therefore returns `Some(0)`; only the absence of both
+    /// soldier neighbours authorizes `GetNewPrimaryTarget`.
+    pub(super) fn phalanx_neighbour_primary_target(
+        &self,
+        tick: &AiPerTickData,
+    ) -> Option<HumanHandle> {
+        for neighbour in [self.left_combat_neighbour, self.right_combat_neighbour] {
+            if neighbour == 0 {
+                continue;
+            }
+            let fighter = self.find_fighter(neighbour, tick).unwrap_or_else(|| {
+                panic!(
+                    "combat neighbour {neighbour} missing from complete fighter registry for {}",
+                    self.base.me
+                )
+            });
+            if fighter.is_soldier {
+                return Some(fighter.primary_target);
+            }
+        }
+        None
+    }
+
     // One dispatcher preserves the numeric Substate machine while the
     // implementations are owned by coherent state families. See
     // original-code/RHartificialmalignity.cpp:ThinkExpectedEvent.
@@ -5323,33 +5350,15 @@ impl EnemyAi {
                     }
                     StimulusType::EventDone => {
                         // Turning done — get primary target from neighbours
-                        let target = if self.left_combat_neighbour != 0 {
-                            self.find_fighter(self.left_combat_neighbour, tick)
-                                .and_then(|f| {
-                                    if f.is_soldier {
-                                        let pt = f.primary_target;
-                                        if pt != 0 { Some(pt) } else { None }
-                                    } else {
-                                        None
-                                    }
-                                })
-                        } else if self.right_combat_neighbour != 0 {
-                            self.find_fighter(self.right_combat_neighbour, tick)
-                                .and_then(|f| {
-                                    if f.is_soldier {
-                                        let pt = f.primary_target;
-                                        if pt != 0 { Some(pt) } else { None }
-                                    } else {
-                                        None
-                                    }
-                                })
-                        } else {
-                            None
-                        };
-
-                        let target = target.unwrap_or_else(|| {
-                            self.get_new_primary_target(PrimaryTargetFlags::empty(), ctx, tick)
-                        });
+                        let target =
+                            self.phalanx_neighbour_primary_target(tick)
+                                .unwrap_or_else(|| {
+                                    self.get_new_primary_target(
+                                        PrimaryTargetFlags::empty(),
+                                        ctx,
+                                        tick,
+                                    )
+                                });
 
                         if target != 0 {
                             self.base.primary_target = target;

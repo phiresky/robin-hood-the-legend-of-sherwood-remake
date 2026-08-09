@@ -5947,6 +5947,51 @@ mod tests {
     }
 
     #[test]
+    fn running_to_phalanx_preserves_existing_neighbours_null_primary_target() {
+        let mut ai = EnemyAi::new(78);
+        ai.right_combat_neighbour = 70;
+        ai.list_them = vec![170];
+
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 70,
+            is_soldier: true,
+            primary_target: 0,
+            ..FighterSnapshot::default()
+        });
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 170,
+            is_pc: true,
+            is_able_to_fight: true,
+            ..FighterSnapshot::default()
+        });
+
+        assert_eq!(ai.phalanx_neighbour_primary_target(&tick), Some(0));
+    }
+
+    #[test]
+    fn running_to_phalanx_uses_right_soldier_after_non_soldier_left_neighbour() {
+        let mut ai = EnemyAi::new(78);
+        ai.left_combat_neighbour = 169;
+        ai.right_combat_neighbour = 70;
+
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 169,
+            is_pc: true,
+            ..FighterSnapshot::default()
+        });
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 70,
+            is_soldier: true,
+            primary_target: 170,
+            ..FighterSnapshot::default()
+        });
+
+        assert_eq!(ai.phalanx_neighbour_primary_target(&tick), Some(170));
+    }
+
+    #[test]
     fn get_new_primary_target_uses_live_positions_when_timer_snapshot_is_incomplete() {
         let mut ai = EnemyAi::new(1);
         ai.list_them = vec![198, 199];
