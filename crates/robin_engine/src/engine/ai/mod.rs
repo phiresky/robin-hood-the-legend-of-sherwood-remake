@@ -375,6 +375,19 @@ fn nearby_panic_civilian_reaches_visibility(active: bool, in_building: bool) -> 
     active && !in_building
 }
 
+/// Whether the installed actor order owns the sprite's exact completion
+/// boundary. A newly installed order can temporarily coexist with the prior
+/// sprite action and must not inherit that action's terminal frame/counter.
+fn installed_animation_has_reached_action_done(
+    concrete_animation: crate::order::OrderType,
+    sprite: &crate::sprite::Sprite,
+) -> bool {
+    sprite.last_action == concrete_animation
+        && (sprite.current_frame > sprite.action_done_frame
+            || (sprite.current_frame == sprite.action_done_frame
+                && sprite.frame_count >= sprite.action_done_counter))
+}
+
 #[cfg(test)]
 mod parity_tests {
     use super::*;
@@ -464,6 +477,55 @@ mod parity_tests {
         ));
         assert!(!nearby_panic_civilian_reaches_visibility(false, false));
         assert!(!nearby_panic_civilian_reaches_visibility(true, true));
+    }
+
+    #[test]
+    fn action_done_projection_requires_sprite_to_match_installed_animation() {
+        use crate::element::ActionState;
+        use crate::order::OrderType as OT;
+
+        let sprite = crate::sprite::Sprite {
+            last_action: OT::TransitionRunningAlertedWaitingAlerted,
+            current_frame: 5,
+            frame_count: 1,
+            action_done_frame: 5,
+            action_done_counter: 1,
+            ..Default::default()
+        };
+        let resolved = super::super::animation::soldier_movement_animation(
+            OT::TransitionRunningUprightWaitingUpright,
+            true,
+            ActionState::Waiting,
+        );
+        assert!(installed_animation_has_reached_action_done(
+            resolved, &sprite,
+        ));
+
+        let past_done = crate::sprite::Sprite {
+            current_frame: 6,
+            ..sprite.clone()
+        };
+        assert!(installed_animation_has_reached_action_done(
+            resolved, &past_done,
+        ));
+
+        let before_done = crate::sprite::Sprite {
+            current_frame: 4,
+            ..sprite.clone()
+        };
+        assert!(!installed_animation_has_reached_action_done(
+            resolved,
+            &before_done,
+        ));
+        let unrelated_prior = super::super::animation::soldier_movement_animation(
+            OT::TransitionWalkingUprightWaitingUpright,
+            true,
+            ActionState::Waiting,
+        );
+        assert!(
+            !installed_animation_has_reached_action_done(unrelated_prior, &sprite),
+            "a newly installed transition must not inherit the prior sprite's terminal frame"
+        );
     }
 
     fn lift_grid(lift_type: crate::sector::LiftType) -> crate::fast_find_grid::FastFindGrid {
@@ -872,6 +934,23 @@ pub(super) fn build_ai_context_from_entity(
         .and_then(|actor| actor.installed_order)
         .map(|order| order.order_type)
         .unwrap_or(crate::order::OrderType::NonanimationEnd);
+    let self_action_state = actor.map(|a| a.action_state).unwrap_or_default();
+    let concrete_self_animation = match entity {
+        Entity::Soldier(soldier) => super::animation::soldier_movement_animation(
+            self_animation,
+            soldier
+                .npc
+                .ai_brain
+                .enemy()
+                .is_some_and(|enemy| enemy.attentive),
+            self_action_state,
+        ),
+        _ => self_animation,
+    };
+    let self_animation_reached_action_done = installed_animation_has_reached_action_done(
+        concrete_self_animation,
+        &entity.element_data().sprite,
+    );
     tracing::trace!(
         target: "robin_engine::ai::goto",
         me = elem.index_in_elements_list,
@@ -996,7 +1075,7 @@ pub(super) fn build_ai_context_from_entity(
         self_is_child,
         self_is_soldier,
         self_is_rider,
-        self_action_state: actor.map(|a| a.action_state).unwrap_or_default(),
+        self_action_state,
         self_rank,
         self_pride,
         self_life_points: entity.human_life_points(),
@@ -1006,6 +1085,7 @@ pub(super) fn build_ai_context_from_entity(
         self_detectable_missed_friend_count,
         self_seen_enemy_handles,
         self_forced_attentive,
+        self_animation_reached_action_done,
         self_animation,
         antagonist: None,
         entity_views: entity_views.clone(),

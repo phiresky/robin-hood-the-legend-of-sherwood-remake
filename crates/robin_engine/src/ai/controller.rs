@@ -3053,6 +3053,14 @@ impl AiController {
         // into a `Think(EVENT_REACHPOINT)` re-entry. Deferred Halt effects are
         // projected through Original StopMovement by the helper above.
         let idle_for_goto_short_circuit = self.pending_halt_exposes_goto_idle(ctx)
+            || (ctx.self_animation_reached_action_done
+                && matches!(
+                    ctx.self_animation,
+                    crate::order::OrderType::TransitionWalkingUprightWaitingUpright
+                        | crate::order::OrderType::TransitionRunningUprightWaitingUpright
+                        | crate::order::OrderType::TransitionWalkingAlertedWaitingAlerted
+                        | crate::order::OrderType::TransitionRunningAlertedWaitingAlerted
+                ))
             || matches!(
                 ctx.self_animation,
                 crate::order::OrderType::WaitingUpright

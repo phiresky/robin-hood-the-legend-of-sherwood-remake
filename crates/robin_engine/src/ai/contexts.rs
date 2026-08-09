@@ -211,6 +211,14 @@ pub struct AiContext {
     /// already playing.
     pub self_animation: crate::order::OrderType,
 
+    /// `true` when the sprite backing `self_animation` has reached or passed
+    /// its authored action-done frame/counter. The Original actor hourglass
+    /// retires a completed move-to-wait transition before later NPC timer
+    /// callbacks inspect `GetAnimation`; Rust's split phase keeps the order
+    /// installed until the sequence drain, so GoTo uses this bit to project
+    /// that narrow completion boundary.
+    pub self_animation_reached_action_done: bool,
+
     /// Resolved info about the stimulus's antagonist entity — the
     /// "other" human the stimulus is about (the observed PC for an
     /// `EventView`, the body for `EventSeesBody`, etc.).  The engine

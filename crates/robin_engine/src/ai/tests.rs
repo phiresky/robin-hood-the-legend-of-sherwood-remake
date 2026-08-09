@@ -940,6 +940,30 @@ fn goto_already_on_point_observes_synchronous_pending_halt_multiplicity() {
 }
 
 #[test]
+fn goto_already_on_point_projects_completed_move_to_wait_transition() {
+    // Original Actor::Hourglass retires the terminal transition and installs
+    // its idle Wait before the later timer-driven BattleDecisions call. The
+    // Rust phase split still exposes the authored transition to AiContext.
+    let mut ctx =
+        goto_short_circuit_ctx(crate::order::OrderType::TransitionRunningUprightWaitingUpright);
+    ctx.self_animation_reached_action_done = true;
+    let mut ai = AiController::new(93);
+    ai.think_recursion_depth = 1;
+
+    ai.go_to(ctx.position, GotoFlags::RUN, &ctx);
+
+    assert!(ai.already_on_point);
+    assert!(ai.take_pending_orders().is_empty());
+
+    ctx.self_animation_reached_action_done = false;
+    let mut unfinished_ai = AiController::new(93);
+    unfinished_ai.think_recursion_depth = 1;
+    unfinished_ai.go_to(ctx.position, GotoFlags::RUN, &ctx);
+    assert!(!unfinished_ai.already_on_point);
+    assert_eq!(unfinished_ai.take_pending_orders().len(), 1);
+}
+
+#[test]
 fn trailing_stop_all_closes_prior_goto_before_queuing_halt() {
     let ctx = goto_short_circuit_ctx(crate::order::OrderType::WaitingUprightBored);
     let mut ai = AiController::new(1);
