@@ -1,0 +1,9 @@
+{
+  "id": "202",
+  "subject": "Preserve crouched movement through stairs door passes",
+  "description": "Door-pass construction now gives the stamped post-transition Crouched posture precedence before authored action normalization, matching Original DetermineMovementAnimation. Direct LiftHigh/Stairs passes therefore retain WalkingCrouched at the root, midpoint, current pass action, and inside successor instead of being normalized to WalkingUpright. linux3 Profile_001 Savegame_010 replay-011 clears frame 32908 and advances to an independent frame-33298 AI/path frontier. Both task-36 controls match exact EOF; focused tests, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task183-posture"
+}
