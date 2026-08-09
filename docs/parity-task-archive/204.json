@@ -1,0 +1,9 @@
+{
+  "id": "204",
+  "subject": "Use the live target position for swordfight facing",
+  "description": "ReconsiderSwordfight now evaluates its facing guard from the primary opponent's literal live GetPositionGround geometry, matching Original, instead of the AI Position() fighter snapshot that forecasts a door-pass target to the committed gate side. In schema-14 Nescafe Profile_003 Savegame_001 replay-012 at Original frame 1448, Soldier130's ParrySmalltalkRight condolence correctly fired EventDone, but the forecast of PC252 through door 95 made Rust return after the first visibility query; Original faced the live PC, continued its swordfight reconsideration, consumed the remaining combat draws, and entered substate 173 with MoveOk. The live-position snapshot is accepted only when its recorded target handle still matches the refreshed primary opponent, preventing a synchronous target replacement from inheriting stale geometry. The Nescafe representative and both task-36 controls match exact EOF; focused live-door and target-mismatch tests, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task181-dead-damage"
+}

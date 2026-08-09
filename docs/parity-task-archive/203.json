@@ -1,0 +1,9 @@
+{
+  "id": "203",
+  "subject": "Apply reciprocal combat-neighbour updates synchronously",
+  "description": "Schema-14 linux2 Profile_002 Savegame_034 replay-009 diverged during Original frame 34182 / Rust frame 34183 because Rust inserted a PhalanxAdvance draw before the two matching bored-animation draws. Soldier53 had just joined the formation with left_combat_neighbour=52, but Rust deferred the reciprocal UpdateLeftCombatNeighbour mutation until the global cross-NPC batch: Soldier53 saw its eager local link while Soldier52 still had right_combat_neighbour=0. Soldier58 therefore walked the truncated [58,52] chain, considered every member positioned, and reached rand()%3. Original RHElementActorSoldier::UpdateLeftCombatNeighbour updates both sides immediately, so its live chain was [58,52,53]; Soldier53 was still AttackingRunningToPhalanx and ReconsiderPhalanx returned before the random call. Full UpdateLeftCombatNeighbour and UpdateRightCombatNeighbour actions now participate in the existing per-Think synchronous drain and share the exact same four-step reciprocal mutation helpers as the deferred fallback. Focused controller coverage verifies both updates are selected in source order. cargo fmt and diff checks pass, the focused test passes, and the debug parity runner clears frame 34182 and advances to an independent Soldier53/Soldier58 phalanx-movement frontier after frame 34293.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task179-true-seam"
+}

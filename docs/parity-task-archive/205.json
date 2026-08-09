@@ -1,0 +1,9 @@
+{
+  "id": "205",
+  "subject": "Preserve entity Seek semantics for cross-gate swordfights",
+  "description": "Ordinary cross-gate swordfights now remain real entity Seeks through Translate and RefreshSeek, matching Original's actor-owned post-seek EnterSwordfight chain. This preserves TIME_SEEK_REFRESH=25 and propagates the soldier victim through every generated gate-approach movement instead of launching EnterSwordfight independently or reducing the route to a point move with a null antagonist. Generic group-arrival speech and posture recovery are not appended to the interaction. linux3 Profile_001 Savegame_010 replay-011 clears frame 33298 and advances to an independent frame-33469 actor.animation frontier. Both task-36 controls match exact EOF; focused tests, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task183-posture"
+}
