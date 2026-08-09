@@ -1,0 +1,9 @@
+{
+  "id": "199",
+  "subject": "Snap Rolling arrival to the live position goal",
+  "description": "Rolling arrival now snaps to PositionInterface's live map goal, matching Original SetPositionMap(GetPositionGoalMap), rather than the stale destination captured from the authored order. This preserves an UpdateRoll rejection that rewrote only the live goal to the current position. linux2 Profile_002 Savegame_032 replay-002 clears frame 17473 and advances to an independent frame-17627 swordfight/path frontier. Both task-36 controls match exact EOF; focused rolling tests, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task183-posture"
+}
