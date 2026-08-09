@@ -1,0 +1,9 @@
+{
+  "id": "236",
+  "subject": "Face live patrol chief on arrival",
+  "description": "DefaultGotoChief EventReachPoint now faces the live patrol-chief entity instead of a cached 2D position. This preserves Original's entity-overload elevation delta: at frame 34866 it selects sector 5 rather than short-circuiting on current sector 6, leaving the Turn postponed behind LeaveAttentive. linux2 Profile_002 Savegame_034 replay-009 matches exact EOF; both task-36 controls and the focused geometry regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task236-turn-lifecycle"
+}

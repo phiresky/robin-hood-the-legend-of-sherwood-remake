@@ -1,0 +1,9 @@
+{
+  "id": "240",
+  "subject": "Preserve special counterstrike across halt",
+  "description": "Reactive counterstrikes now use Original's full StopAll/Halt barrier after entering SpecialStrike. The interrupted smalltalk-parry condolence is tagged from Halt and cannot reset the new substate before the counterstrike runs. SuN1Sh1nE Profile_004 Savegame_032 replay-007 clears frame 536 and advances to an independent frame-760 direction frontier; both task-36 controls and the focused regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task240-ai-substate"
+}
