@@ -365,6 +365,10 @@ impl EngineInner {
                 continue;
             };
             let layer = shooter_entity.element_data().layer();
+            let trajectory_origin_sector = shooter_entity
+                .element_data()
+                .sector()
+                .map(crate::position_interface::SectorHandle::get);
             let shooter_is_pc = shooter_entity.kind().is_pc();
 
             let Some(target_entity) = self.get_entity(result.target) else {
@@ -667,7 +671,7 @@ impl EngineInner {
                 .rev()
                 .take(2)
                 .any(|tp| assets.water_zones.landing_is_in_hole(tp.position.to_map()));
-            let arrow = bow_shot::spawn_arrow(bow_shot::SpawnArrowParams {
+            let mut arrow = bow_shot::spawn_arrow(bow_shot::SpawnArrowParams {
                 shooter: result.shooter,
                 bow_point,
                 trajectory_origin: crate::coordinates::MapPoint {
@@ -682,6 +686,11 @@ impl EngineInner {
                 lands_in_hole,
                 initial_velocity: velocity,
             });
+            let Entity::Projectile(arrow_projectile) = &mut arrow else {
+                panic!("spawn_arrow returned a non-projectile entity");
+            };
+            arrow_projectile.projectile.trajectory_origin_sector = trajectory_origin_sector;
+            arrow_projectile.projectile.trajectory_origin_layer = layer;
             let arrow_id = self.add_entity(arrow);
             if let Some(resolution) = initial_landing_resolution {
                 let entity = self
@@ -1240,6 +1249,12 @@ impl EngineInner {
     ) {
         let target_id = target.expect("apple/stone throw selected without its required target");
         let (throw_pos, layer) = self.projectile_throw_origin(actor_id, "on_throw_projectile_done");
+        let trajectory_origin_sector = self
+            .get_entity(actor_id)
+            .unwrap_or_else(|| panic!("projectile thrower {actor_id:?} disappeared before Done"))
+            .element_data()
+            .sector()
+            .map(crate::position_interface::SectorHandle::get);
         // Lead the victim's forecasted motion only when it's an NPC
         // (Soldier/Civilian); FX targets and fellow-PC victims fall
         // through to the centre branch with no movement lead.
@@ -1275,7 +1290,7 @@ impl EngineInner {
             sight_obstacles: self.sight_obstacles(assets),
             water_zones: Some(&assets.water_zones),
         };
-        let projectile = match object_type {
+        let mut projectile = match object_type {
             crate::element::ObjectType::Apple => crate::bow_shot::spawn_apple(
                 actor_id,
                 throw_pos,
@@ -1296,6 +1311,11 @@ impl EngineInner {
             ),
             _ => return,
         };
+        let Entity::Projectile(projectile_data) = &mut projectile else {
+            panic!("apple/stone spawn returned a non-projectile entity");
+        };
+        projectile_data.projectile.trajectory_origin_sector = trajectory_origin_sector;
+        projectile_data.projectile.trajectory_origin_layer = layer;
         let proj_id = self.add_entity(projectile);
         // Hydrate the accessory sprite (apple/stone) on demand.
         self.attach_accessory_sprite(assets, proj_id);
@@ -1829,11 +1849,16 @@ fn soldier_shield_dimensions(
         .map(|w| (w.shield_width, w.shield_height))
 }
 
-fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::coordinates::MapPoint> {
+fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::ai::Position> {
     match entity {
-        Entity::Projectile(p) => Some(crate::coordinates::MapPoint {
+        Entity::Projectile(p) => Some(crate::ai::Position {
             x: p.projectile.start_of_trajectory_x,
             y: p.projectile.start_of_trajectory_y,
+            sector: p
+                .projectile
+                .trajectory_origin_sector
+                .and_then(crate::position_interface::SectorHandle::new),
+            level: p.projectile.trajectory_origin_layer,
         }),
         _ => None,
     }
@@ -1842,9 +1867,12 @@ fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::coordinates::M
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
-    use super::{soldier_piercing_protection, soldier_shield_dimensions};
+    use super::{
+        projectile_trajectory_origin, soldier_piercing_protection, soldier_shield_dimensions,
+    };
     use crate::element::{
-        ActionState, ActorData, ActorPc, ElementData, ElementKind, Entity, HumanData, Posture,
+        ActionState, ActorData, ActorPc, ElementData, ElementKind, ElementProjectile, Entity,
+        HumanData, ObjectData, Posture, ProjectileData,
     };
     use crate::engine::{EngineInner, LevelAssets};
     use crate::order::OrderType;
@@ -1867,6 +1895,44 @@ mod tests {
             human: HumanData::default(),
             pc: Default::default(),
         })
+    }
+
+    #[test]
+    fn task229_projectile_ai_origin_preserves_saved_sector_and_layer() {
+        let projectile = Entity::Projectile(ElementProjectile {
+            element: ElementData {
+                kind: ElementKind::ObjectProjectile,
+                ..Default::default()
+            },
+            object: ObjectData::default(),
+            projectile: ProjectileData {
+                start_of_trajectory_x: 572.0,
+                start_of_trajectory_y: 2360.0,
+                trajectory_origin_sector: Some(17),
+                trajectory_origin_layer: 11,
+                ..Default::default()
+            },
+        });
+
+        let origin = projectile_trajectory_origin(&projectile).unwrap();
+        assert_eq!(origin.x, 572.0);
+        assert_eq!(origin.y, 2360.0);
+        assert_eq!(origin.sector.map(|sector| sector.get()), Some(17));
+        assert_eq!(origin.level, 11);
+
+        // The task-229 boundary lies on opposite sides of a direction-sector
+        // threshold depending on whether Face(Position) retains sector 17's
+        // projection elevation. Dropping the sector changes the authored turn.
+        let dx = 572.0 - 785.243_35;
+        let dy = 2360.0 - 2192.851_6;
+        assert_eq!(
+            crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
+            10
+        );
+        assert_eq!(
+            crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy + 105.001_01),
+            9
+        );
     }
 
     fn blocked_shoulder_pair() -> (
@@ -2800,23 +2866,10 @@ impl EngineInner {
 
     /// Dispatch an EventApple stimulus at the origin of the thrown
     /// projectile.  Used by both apple and stone impacts on NPCs.
-    fn dispatch_event_apple(&mut self, victim: EntityId, origin: crate::coordinates::MapPoint) {
-        let Some(layer) = self.get_entity(victim).map(|e| e.element_data().layer()) else {
-            tracing::warn!(
-                ?victim,
-                "dispatch_event_apple: victim missing for layer lookup"
-            );
-            return;
-        };
-        let pos = crate::ai::Position {
-            x: origin.x,
-            y: origin.y,
-            sector: None,
-            level: layer,
-        };
+    fn dispatch_event_apple(&mut self, victim: EntityId, origin: crate::ai::Position) {
         self.dispatch_ai_stimulus(
             victim,
-            crate::ai::Stimulus::with_position(crate::ai::StimulusType::EventApple, pos),
+            crate::ai::Stimulus::with_position(crate::ai::StimulusType::EventApple, origin),
         );
     }
 
@@ -2828,21 +2881,8 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim: EntityId,
-        origin: crate::coordinates::MapPoint,
+        origin: crate::ai::Position,
     ) {
-        let Some(layer) = self.get_entity(victim).map(|e| e.element_data().layer()) else {
-            tracing::warn!(
-                ?victim,
-                "dispatch_event_get_arrow: victim missing for layer lookup"
-            );
-            return;
-        };
-        let pos = crate::ai::Position {
-            x: origin.x,
-            y: origin.y,
-            sector: None,
-            level: layer,
-        };
         // RHElementArrow::HitHuman calls the NPC's Think directly after
         // LaunchSequenceElement and before returning to the projectile
         // Hourglass.  Merely appending this to the deferred detection FIFO
@@ -2853,7 +2893,7 @@ impl EngineInner {
             sim,
             victim,
             assets,
-            crate::ai::Stimulus::with_position(crate::ai::StimulusType::EventGetArrow, pos),
+            crate::ai::Stimulus::with_position(crate::ai::StimulusType::EventGetArrow, origin),
         );
     }
 
