@@ -1,0 +1,9 @@
+{
+  "id": "216",
+  "subject": "Validate actor-owned post-seek hits at terminal arrival",
+  "description": "A copied terminal stop transition can lose its movement-element target while PerformSeek's actor-owned seek_target and post-seek Hit remain live. The early final point-transition path now recognizes that exact actor-owned interaction, applies Original's strict raw-map SquareNorm <=1600 Hit validity, preserves HITTING's ground-facing side effect, and aborts an out-of-range Hit without exposing a spurious HitCmd frame. Genuine point seeks remain unchanged. Nescafe Profile_001 Savegame_001 replay-003 matches exact EOF; Profile_003 Savegame_001 replay-008 clears frame 353 and advances to an independent frame-1427 AI frontier. Both task-36 controls and focused >40/exact-40 lifecycle tests pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task181-dead-damage"
+}

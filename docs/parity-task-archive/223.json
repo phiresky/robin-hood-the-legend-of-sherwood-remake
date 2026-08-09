@@ -1,0 +1,9 @@
+{
+  "id": "223",
+  "subject": "Notify only NPC AI about received hits",
+  "description": "RECEIVE_HIT_DAMAGE now sends EVENT_GOTHIT only for a conscious NPC, matching Original's explicit IsNPC gate after concussion work. PCs retain shared human damage/translation behavior but are not dispatched to a nonexistent AI controller. SuN1Sh1nE Profile_004 Savegame_032 replay-007 clears the frame-333 Little John panic and advances to an independent frame-370 sound FIFO frontier; both task-36 controls and focused conscious-PC/conscious-NPC/unconscious-NPC coverage pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task223-missing-controller"
+}

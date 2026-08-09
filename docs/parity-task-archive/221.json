@@ -1,0 +1,9 @@
+{
+  "id": "221",
+  "subject": "Refresh cached door authorization after save adoption",
+  "description": "Schema adoption now refreshes every DoorSeekInfo NPC-villain direct-authorization bit from the restored canonical door, panicking on an invalid cache index. Rust previously retained proto-time authorization after loading Door21 as NPC-villain locked, so FindDoorEnemyCouldBeBehind moved Soldier81's seek center through the locked building and selected gate12 instead of Original's live-authorized gate54 route. linux2 Profile_002 Savegame_034 replay-009 clears frame 34820 and advances to independent visibility geometry at frame 34860; both task-36 controls and the stale-cache adoption regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task221-soldier81-move"
+}
