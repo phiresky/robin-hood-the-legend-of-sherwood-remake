@@ -1105,6 +1105,24 @@ fn project_post_completion_motion(
     }
 }
 
+fn specialized_order_advanced_after_execute(
+    execute_motion: Option<crate::sprite::MotionState>,
+    selected_order_rewritten_by_stop: bool,
+    selected_element_retired: bool,
+    selected_element_interrupted: bool,
+    selected_entry_order_still_current: bool,
+) -> bool {
+    execute_motion.is_some_and(|motion| motion != crate::sprite::MotionState::Aborted)
+        && !selected_order_rewritten_by_stop
+        // Original Actor::Hourglass latches Execute's return before
+        // CheckForLineCrossing. A synchronous line callback may interrupt and
+        // replace the selected sequence, but the later motion-state switch
+        // still reads that already-held nonterminal result; interruption is
+        // not Execute-owned DoNextOrder advancement.
+        && !selected_element_interrupted
+        && (selected_element_retired || !selected_entry_order_still_current)
+}
+
 /// `RHSequenceElementMovement::StopMovement` rewrites its first `RHOrder` in
 /// place and calls `NewID()`.  That identity change is not `DoNextOrder`: the
 /// motion result already returned by `Execute` remains authoritative.
@@ -1143,6 +1161,7 @@ fn is_start_stop_movement_rewrite(
 mod specialized_execute_motion_tests {
     use super::{
         is_start_stop_movement_rewrite, project_post_completion_motion, specialized_execute_motion,
+        specialized_order_advanced_after_execute,
     };
     use crate::order::OrderType;
     use crate::sprite::MotionState;
@@ -1185,6 +1204,37 @@ mod specialized_execute_motion_tests {
             project_post_completion_motion(MotionState::Done, false, false, true),
             MotionState::Terminated
         );
+    }
+
+    #[test]
+    fn synchronous_line_crossing_interruption_preserves_nonterminal_execute_result() {
+        assert!(!specialized_order_advanced_after_execute(
+            Some(MotionState::InProgress),
+            false,
+            true,
+            true,
+            false,
+        ));
+        assert_eq!(
+            project_post_completion_motion(MotionState::InProgress, false, false, false),
+            MotionState::InProgress,
+            "the line callback cannot turn the preceding Execute result into Terminated"
+        );
+
+        assert!(specialized_order_advanced_after_execute(
+            Some(MotionState::Terminated),
+            false,
+            true,
+            false,
+            false,
+        ));
+        assert!(specialized_order_advanced_after_execute(
+            Some(MotionState::Done),
+            false,
+            false,
+            false,
+            false,
+        ));
     }
 
     #[test]
@@ -3935,20 +3985,24 @@ impl EngineInner {
                                 "actor {entity_id:?} completion at legacy slot {slot} failed to drain synchronous sequence work: {error:?}"
                             )
                         });
-                        let selected_element_retired =
-                            selected_order.is_some_and(|(entry_seq, entry_idx, _)| {
+                        let selected_element_state =
+                            selected_order.and_then(|(entry_seq, entry_idx, _)| {
                                 self.orders
                                     .sequence_manager
                                     .get_element(entry_seq, entry_idx)
-                                    .is_none_or(|element| {
-                                        !matches!(
-                                            element.state,
-                                            crate::sequence::SequenceState::Todo
-                                                | crate::sequence::SequenceState::InProgress
-                                                | crate::sequence::SequenceState::Postponed
-                                        )
-                                    })
+                                    .map(|element| element.state)
                             });
+                        let selected_element_retired = selected_order.is_some()
+                            && selected_element_state.is_none_or(|state| {
+                                !matches!(
+                                    state,
+                                    crate::sequence::SequenceState::Todo
+                                        | crate::sequence::SequenceState::InProgress
+                                        | crate::sequence::SequenceState::Postponed
+                                )
+                            });
+                        let selected_element_interrupted = selected_element_state
+                            == Some(crate::sequence::SequenceState::Interrupted);
                         let selected_element_impossible =
                             selected_order.is_some_and(|(entry_seq, entry_idx, _)| {
                                 self.orders
@@ -3981,21 +4035,25 @@ impl EngineInner {
                                     },
                                 )
                             });
-                        let selected_specialized_order_advanced = specialized_execute_motion
-                            .is_some_and(|motion| motion != crate::sprite::MotionState::Aborted)
-                            && !selected_order_rewritten_by_stop
-                            && selected_order.is_some_and(|(entry_seq, entry_idx, entry_order)| {
-                                selected_element_retired
-                                    || !self
-                                        .orders
-                                        .sequence_manager
-                                        .current_order_for_actor(entity_id)
-                                        .is_some_and(|(live_seq, live_idx, live_order)| {
-                                            live_seq == entry_seq
-                                                && live_idx == entry_idx
-                                                && live_order.order_id == entry_order
-                                        })
+                        let selected_entry_order_still_current =
+                            selected_order.is_some_and(|(entry_seq, entry_idx, entry_order)| {
+                                self.orders
+                                    .sequence_manager
+                                    .current_order_for_actor(entity_id)
+                                    .is_some_and(|(live_seq, live_idx, live_order)| {
+                                        live_seq == entry_seq
+                                            && live_idx == entry_idx
+                                            && live_order.order_id == entry_order
+                                    })
                             });
+                        let selected_specialized_order_advanced =
+                            specialized_order_advanced_after_execute(
+                                specialized_execute_motion,
+                                selected_order_rewritten_by_stop,
+                                selected_element_retired,
+                                selected_element_interrupted,
+                                selected_entry_order_still_current,
+                            );
                         // Terminal sequence elements retain their allocated
                         // orders for diagnostics/save parity. Do not mistake
                         // that same retired entry order for a successor, while
@@ -4052,6 +4110,7 @@ impl EngineInner {
                                 entry_order = ?selected_order,
                                 specialized_motion = ?specialized_execute_motion,
                                 element_retired = selected_element_retired,
+                                element_interrupted = selected_element_interrupted,
                                 specialized_advanced = selected_specialized_order_advanced,
                                 installed_successor = installed_successor_exists,
                                 motion_state = ?actor.continuation.motion_state,
