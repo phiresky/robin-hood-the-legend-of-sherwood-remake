@@ -704,7 +704,7 @@ mod tests {
         ("ReinforcementJitter", 2),
         ("RescuePcFirstName", 1),
         ("RescuePcSurname", 1),
-        ("RuntimeBuildingExitWait", 4),
+        ("RuntimeBuildingExitWait", 2),
         // Two mutually exclusive branches of the one script `Rand(max)`
         // native: the diagnostic-carrying call and the plain one. Exactly one
         // of them draws per dispatch.
