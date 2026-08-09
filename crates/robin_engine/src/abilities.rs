@@ -2046,17 +2046,6 @@ pub fn tick_ability(
     }
 
     let ability = actor.active_ability.clone();
-    // Posture-transition orders are queued ahead of an ability's canonical
-    // order, while the Rust-only latch already identifies that eventual
-    // ability.  Keep the selected order separately: Original executes the
-    // transition arm itself and therefore applies its terminal side effects
-    // even when (for example) Whistle is the driving command.
-    let selected_order_type = ability.sequence_id.and_then(|seq_id| {
-        sequence_manager
-            .get_element(seq_id, ability.element_index)
-            .and_then(|element| element.current_order())
-            .map(|order| order.order_type)
-    });
     let listen_phase = actor.listen_phase;
     let receive_purse_phase = actor.receive_purse_phase;
     let kind = ability.kind.unwrap(); // safe: is_active() checked
@@ -2400,28 +2389,6 @@ pub fn tick_ability(
     }
     if motion == SpriteMotionState::Terminated {
         let actor_pos = entity.element_data().position_map();
-        if kind != AbilityKind::Drop
-            && selected_order_type == Some(OrderType::TransitionCarryingCorpseWaitingUpright)
-        {
-            let actor_direction =
-                u16::try_from(entity.element_data().direction()).unwrap_or_else(|_| {
-                    panic!("corpse-drop transition owner {entity_id:?} has invalid direction")
-                });
-            let pc = entity.pc_data().unwrap_or_else(|| {
-                panic!("corpse-drop transition owner {entity_id:?} requires PC state")
-            });
-            results.push(AbilityTickResult::DropDone {
-                carrier_id: entity_id,
-                target_id: pc.carried.unwrap_or_else(|| {
-                    panic!("corpse-drop transition owner {entity_id:?} lost its carried actor")
-                }),
-                drop_posture: pc.live_carried_posture(),
-                carrier_pos: actor_pos,
-                carrier_direction: actor_direction,
-                seq_id,
-                elem_idx,
-            });
-        }
         match kind {
             AbilityKind::Drop => {
                 let actor_direction = u16::try_from(entity.element_data().direction())
@@ -3133,112 +3100,6 @@ mod tests {
         assert_eq!(restored.element_index, 0);
         assert_eq!(restored.order_id, Some(eating_id));
         assert!(!restored.done_effect_applied);
-    }
-
-    #[test]
-    fn carried_posture_prefix_drops_body_before_following_whistle_order() {
-        let mut entities = Entities::new();
-        for _ in 0..2 {
-            entities.push(Some(Entity::Pc(ActorPc {
-                element: ElementData {
-                    kind: ElementKind::ActorPc,
-                    ..Default::default()
-                },
-                actor: Default::default(),
-                human: HumanData::default(),
-                pc: PcData::default(),
-            })));
-        }
-        let carrier = entities.id_at_legacy_slot(0).unwrap();
-        let carried = entities.id_at_legacy_slot(1).unwrap();
-        {
-            let carrier = entities.get_mut(carrier).unwrap();
-            carrier.set_posture(Posture::CarryingCorpse);
-            let pc = carrier.pc_data_mut().unwrap();
-            pc.carried = Some(carried);
-            pc.set_live_carried_posture(Posture::Lying);
-
-            let action = OrderType::Whistling;
-            let script = crate::sprite_script::SpriteScript {
-                action_id: action as u16,
-                action_done: 0,
-                average_speed: 0.0,
-                hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
-                sum_distance: 0,
-                frame_ids: vec![1],
-                delays: vec![0],
-                distances: vec![0],
-                offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
-                sound_ids: vec![0],
-            };
-            let mut conversion =
-                vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
-            conversion[action as usize] = 0;
-            carrier.element_data_mut().sprite = crate::sprite::Sprite::new(
-                std::sync::Arc::new(vec![script; 16]),
-                std::sync::Arc::new(conversion),
-            );
-            carrier.element_data_mut().set_direction_instantly(4);
-        }
-
-        let mut manager = SequenceManager::new();
-        let seq_id = launch_ability_element(&mut manager, Command::WhistleCmd, carrier);
-        let transition_id = std::num::NonZeroU32::new(1).unwrap();
-        manager.push_order_on(
-            seq_id,
-            0,
-            Order::new(
-                OrderType::TransitionCarryingCorpseWaitingUpright,
-                0.0,
-                0.0,
-                transition_id,
-            ),
-        );
-        manager
-            .get_element_mut(seq_id, 0)
-            .unwrap()
-            .num_transition_orders = 1;
-        let mut next_id = 2;
-        assert_eq!(
-            begin_whistle(
-                &mut entities,
-                &mut manager,
-                carrier,
-                seq_id,
-                0,
-                &mut next_id,
-            ),
-            BeginResult::Started
-        );
-
-        let sim = crate::sim_rng::test_context();
-        let terminal_results = (0..4)
-            .find_map(|_| {
-                let results = tick_ability(&sim, &mut entities, &manager, carrier, false);
-                results
-                    .iter()
-                    .any(|result| matches!(result, AbilityTickResult::Terminated { .. }))
-                    .then_some(results)
-            })
-            .expect("one-frame Whistling animation must terminate");
-
-        assert!(matches!(
-            terminal_results.as_slice(),
-            [
-                AbilityTickResult::DropDone {
-                    carrier_id,
-                    target_id,
-                    drop_posture: Posture::Lying,
-                    carrier_direction: 4,
-                    ..
-                },
-                AbilityTickResult::Terminated {
-                    actor_id,
-                    kind: AbilityKind::Whistle,
-                    ..
-                }
-            ] if *carrier_id == carrier && *target_id == carried && *actor_id == carrier
-        ));
     }
 
     #[test]
