@@ -2149,9 +2149,6 @@ impl EnemyAi {
                         return false;
                     }
 
-                    self.base
-                        .face_position_3d_with_ctx(self.base.seek_position, ctx);
-
                     // If the body is tied or unconscious, say
                     // AwakensSleeper, transition to
                     // `SeekingBodyAwakeningSleeper`, and launch
@@ -6990,6 +6987,58 @@ mod tests {
                 crate::element::DetectableType::Body,
             )]
         );
+    }
+
+    #[test]
+    fn seeking_body_reach_does_not_turn_toward_a_nearby_dead_body() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(61);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingBody;
+        ai.base.detected_body = 170;
+        ai.base.seek_position = Position {
+            x: 120.0,
+            y: 100.0,
+            ..Position::default()
+        };
+
+        let mut owner = pc_view(crate::element::Posture::Upright);
+        owner.detection_position_world = crate::coordinates::WorldPoint3D::new(100.0, 250.0, 150.0);
+        let mut body = pc_view(crate::element::Posture::Dead);
+        body.is_able_to_fight = false;
+        body.is_dead = true;
+        body.detection_position_world = crate::coordinates::WorldPoint3D::new(120.0, 250.0, 150.0);
+
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(61, owner);
+        views.insert(170, body);
+        let ctx = AiContext {
+            direction: 9,
+            position: Position {
+                x: 100.0,
+                y: 100.0,
+                ..Position::default()
+            },
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventReachPoint),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingBodyLookingDeadBody
+        );
+        assert!(ai.already_seen_bodies.contains(&170));
+        assert!(ai.base.outbox.actor.launch_commands.is_empty());
+        assert!(ai.base.outbox.actor.launch_sequences.is_empty());
     }
 
     #[test]
