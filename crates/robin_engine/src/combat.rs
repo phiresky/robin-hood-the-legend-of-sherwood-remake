@@ -501,13 +501,21 @@ pub fn receive_sword_damage(
                     // cutting damage for the caller's translation and
                     // sound decisions.
                     if !concussion_ctx.scroll_attached {
-                        get_wounded(
-                            life_points,
-                            cutting,
-                            concussion_ctx.is_invulnerable,
-                            params.max_life_points,
-                            concussion_ctx.is_sherwood_pc,
-                        );
+                        // RHElementActorPC::GetWounded ignores a lethal hit
+                        // when the PC is already in an amulet coma. It still
+                        // applies sublethal damage, and ReceiveSwordDamage
+                        // still reports the cutting effect in either case.
+                        let lethal_hit_in_coma = concussion_ctx.is_in_coma
+                            && i32::from(cutting) >= i32::from(*life_points);
+                        if !lethal_hit_in_coma {
+                            get_wounded(
+                                life_points,
+                                cutting,
+                                concussion_ctx.is_invulnerable,
+                                params.max_life_points,
+                                concussion_ctx.is_sherwood_pc,
+                            );
+                        }
                         cutting_inflicted = cutting;
                     }
                     result |= SwordDamageResult::CUTTING_DAMAGE;
@@ -1930,6 +1938,63 @@ mod tests {
         // No defender profile → full damage flags set.
         assert!(result.contains(SwordDamageResult::CUTTING_DAMAGE));
         assert!(result.contains(SwordDamageResult::STUNNING_DAMAGE));
+    }
+
+    #[test]
+    fn sword_damage_preserves_already_comatose_pc_at_lethal_boundary() {
+        let sim_context = crate::sim_rng::test_context();
+        let mut human = make_human();
+        let mut life_points = 5;
+        let mut profile = make_hth_profile();
+        profile.protection_by_localization = [0; 5];
+        profile.thrusts[SwordStrike::A as usize].cutting = 25;
+        profile.thrusts[SwordStrike::A as usize].stunning = 0;
+        let defender = SwordDefenderContext {
+            action_state: ActionState::Waiting,
+            direction: 0,
+            elevation: 0.0,
+        };
+        let attacker = SwordAttackerContext {
+            direction: 8,
+            direction_to_attacker: 0,
+            elevation: 0.0,
+            fighting_ability: 50,
+            is_rank_soldier: false,
+        };
+        let ctx = ConcussionContext {
+            is_in_coma: true,
+            ..default_ctx()
+        };
+        let mut apply = |profile: &HtHWeaponProfile| {
+            let (result, cutting) = receive_sword_damage(
+                &sim_context,
+                &mut human,
+                &mut life_points,
+                &SwordDamageParams {
+                    defender: &defender,
+                    defender_profile: Some(profile),
+                    attacker_profile: profile,
+                    strike: SwordStrike::A,
+                    attacker: &attacker,
+                    concussion_ctx: &ctx,
+                    max_life_points: 100,
+                },
+            );
+            (result, cutting, life_points)
+        };
+
+        let (lethal_result, lethal_cutting, life_after_lethal) = apply(&profile);
+        profile.thrusts[SwordStrike::A as usize].cutting = 4;
+        let (_, sublethal_cutting, life_after_sublethal) = apply(&profile);
+
+        assert_eq!(lethal_cutting, 25);
+        assert!(lethal_result.contains(SwordDamageResult::CUTTING_DAMAGE));
+        assert_eq!(life_after_lethal, 5);
+        assert_eq!(sublethal_cutting, 4);
+        assert_eq!(
+            life_after_sublethal, 1,
+            "sublethal coma damage still applies"
+        );
     }
 
     // ── Protection direction lookup ────────────────────────────────
