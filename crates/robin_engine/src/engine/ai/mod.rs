@@ -10719,6 +10719,44 @@ impl EngineInner {
                         old_right,
                         new_right,
                     } => self.apply_update_right_combat_neighbour(target, old_right, new_right),
+                    crate::ai::CrossNpcAction::SetLeftCombatNeighbour { target, neighbour } => {
+                        let target_id = EntityId::Soldier(SoldierId(target));
+                        let enemy_ai = self
+                            .world
+                            .entities
+                            .get_mut(target_id)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "synchronous left-neighbour setter target {target} is missing"
+                                )
+                            })
+                            .enemy_ai_mut()
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "synchronous left-neighbour setter target {target} has no EnemyAi"
+                                )
+                            });
+                        enemy_ai.left_combat_neighbour = neighbour;
+                    }
+                    crate::ai::CrossNpcAction::SetRightCombatNeighbour { target, neighbour } => {
+                        let target_id = EntityId::Soldier(SoldierId(target));
+                        let enemy_ai = self
+                            .world
+                            .entities
+                            .get_mut(target_id)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "synchronous right-neighbour setter target {target} is missing"
+                                )
+                            })
+                            .enemy_ai_mut()
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "synchronous right-neighbour setter target {target} has no EnemyAi"
+                                )
+                            });
+                        enemy_ai.right_combat_neighbour = neighbour;
+                    }
                     crate::ai::CrossNpcAction::SendStimulus { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
                         self.process_synchronous_stimuli_for(
