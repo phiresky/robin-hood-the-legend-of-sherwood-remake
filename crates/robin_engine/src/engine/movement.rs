@@ -5961,11 +5961,13 @@ impl EngineInner {
             // forced sword movement can still be represented only by the
             // movement element's FORCE_SWORD_MOVEMENT flag at this point.
             //
-            // The non-soldier, non-swordfighting branch leaves facing
-            // untouched. We mirror this by storing the entity's own
-            // position as a sentinel so the main loop's combat-face block
-            // becomes a no-op (`fdx*fdx + fdy*fdy > 0.01` fails) while
-            // still suppressing the movement-direction facing fallback.
+            // The non-soldier, non-swordfighting branch returns
+            // `WALKING_SWORD` immediately, without constructing a facing
+            // vector. Keep that distinct as `None`: using the actor's own
+            // position as a sentinel is not equivalent because Position and
+            // PositionGround can differ while cached projection state is
+            // refreshed, turning a nominally-zero vector into a small real
+            // angle and selecting a strafe row.
             let is_swordfighting = entity
                 .human_data()
                 .map(|human| !human.opponents.is_empty())
@@ -5996,14 +5998,6 @@ impl EngineInner {
                 && let Some(opp) = self.world.entities.get(opp_id)
             {
                 let position = opp.element_data().position();
-                combat_face_targets[actor_id] =
-                    Some(crate::coordinates::MapPoint::new(position.x, position.y));
-                combat_face_targets_are_ground[actor_id] = true;
-            } else {
-                // Sentinel: face self → no rotation, no movement-direction
-                // fallback (the "return WALKING_SWORD without changing
-                // facing" branch).
-                let position = entity.element_data().position();
                 combat_face_targets[actor_id] =
                     Some(crate::coordinates::MapPoint::new(position.x, position.y));
                 combat_face_targets_are_ground[actor_id] = true;
@@ -11496,7 +11490,7 @@ mod orphaned_sword_movement_tests {
         };
         element.set_position_map(start);
 
-        let script = SpriteScript {
+        let walking_script = SpriteScript {
             action_id: OrderType::WalkingSword as u16,
             action_done: 0,
             average_speed: 10.0,
@@ -11508,10 +11502,32 @@ mod orphaned_sword_movement_tests {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
             sound_ids: vec![0],
         };
+        let directional_script = |action: OrderType| SpriteScript {
+            action_id: action as u16,
+            action_done: 0,
+            average_speed: 17.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 17,
+            frame_ids: vec![1],
+            delays: vec![0],
+            distances: vec![17],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        let mut scripts = vec![walking_script; 16];
+        scripts.extend(vec![
+            directional_script(OrderType::WalkingBackwardsSword);
+            16
+        ]);
+        scripts.extend(vec![directional_script(OrderType::StrafingRightSword); 16]);
+        scripts.extend(vec![directional_script(OrderType::StrafingLeftSword); 16]);
         let mut conversion = vec![UNMAPPED; NONANIMATION_END];
         conversion[OrderType::WalkingSword as usize] = 0;
+        conversion[OrderType::WalkingBackwardsSword as usize] = 16;
+        conversion[OrderType::StrafingRightSword as usize] = 32;
+        conversion[OrderType::StrafingLeftSword as usize] = 48;
         element.sprite = crate::sprite::Sprite::new(
-            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(scripts),
             std::sync::Arc::new(conversion),
         );
         element.sprite.position_iface.set_anti_collision_on(false);
@@ -11663,6 +11679,16 @@ mod orphaned_sword_movement_tests {
         assert_eq!(
             owner_entity.element_data().sprite.last_processed_order_id,
             order_id.get()
+        );
+        assert_eq!(
+            owner_entity.element_data().sprite.last_action,
+            OrderType::WalkingSword,
+            "a non-soldier without opponents takes FaceOpponent's explicit WalkingSword fallback, not a directional row computed from a self-position sentinel"
+        );
+        assert_eq!(
+            owner_entity.element_data().position_map(),
+            MapPoint::new(start.x + 6.0, start.y),
+            "the WalkingSword frame distance must be used instead of an accidental backward/strafe distance"
         );
         assert_eq!(
             engine
