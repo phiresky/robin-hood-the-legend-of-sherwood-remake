@@ -1,0 +1,9 @@
+{
+  "id": "181",
+  "subject": "Do not repeat virtual Kill for damage to an already-dead actor",
+  "description": "Post-damage handling now preserves Original Human::SetLifePoints' immediate IsDead return. Authored protection and concussion work still occurs before the life-point setter, but a hit whose victim was already at or below zero life cannot repeat the virtual Kill cascade and select another campaign reinforcement peasant. A focused regression verifies the repeated cascade and RNG remain absent. linux2 Profile_002 Savegame_017 replay-013 clears frame 587 and advances to an independent frame-598 path-tolerance frontier. Both task-36 schema-14 replay-009 controls match exact EOF; focused test, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task181-dead-damage"
+}

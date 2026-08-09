@@ -1,0 +1,9 @@
+{
+  "id": "183",
+  "subject": "Delay shoulder-fall posture until Execute",
+  "description": "TranslateShoulderDamage now only queues FallingBackUpright and leaves the carrier/helper posture intact. Matching Original, the falling order's Execute arm changes posture on the actor's next slot; Rust previously changed it eagerly during translation. A focused regression verifies HelpingToClimb remains visible until Execute. linux2 Profile_002 Savegame_034 replay-001 clears frame 34733 and advances to an independent frame-34735 damage/parry animation frontier. Both task-36 controls match exact EOF on the same combined runner; focused test, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task183-posture"
+}
