@@ -1,0 +1,9 @@
+{
+  "id": "187",
+  "subject": "Use literal positions for door-pass EventView and EnemyNear gates",
+  "description": "Enemy EVENT_VIEW distance and max-norm gates now use literal live GetPosition coordinates while retaining forecast AI Position coordinates for reports, focus, Face, and movement. AttackingReactiontimeEnemyNearTest likewise tests each target's literal GetPositionMap against the owner's reaction box instead of its door-forecast destination. This matches the two distinct Original door-pass boundaries that previously made Soldier112 enter swordfight early. linux2 Profile_002 Savegame_034 replay-011 now matches exact EOF; the Cyrdach task-36 control matches exact EOF on the same runner, and the paired Nescafe control is exact on the same combined code. Focused tests, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task179-true-seam"
+}

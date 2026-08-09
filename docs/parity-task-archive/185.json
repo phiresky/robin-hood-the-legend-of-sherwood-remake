@@ -1,0 +1,9 @@
+{
+  "id": "185",
+  "subject": "Defer parried push-flight initialization to ExecuteFallingPushed",
+  "description": "Parried authored push/circle/charge strikes now continue through Original's TranslatePushDamage path while ordinary parries still return after their transition. Falling-pushed translation queues the authored order and antagonist but leaves ReadyForTakeOff uninitialized until the order's first Execute, where live attacker direction, actor positions, profile geometry, movement authorization, obstacle plane, and sprite duration are sampled. The Start edge changes posture without applying the first displacement, and obstacle installation preserves material like Original SetObstacle. linux2 Profile_002 Savegame_034 replay-001 clears all former frame-34731 through frame-34752 push-flight and position frontiers and advances to an independent frame-34770 sound FIFO frontier. Both task-36 controls match exact EOF on the validated runner; focused tests, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task183-posture"
+}
