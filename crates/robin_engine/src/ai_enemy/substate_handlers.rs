@@ -9,9 +9,18 @@ use crate::parameters_ai;
 
 use super::util::{pos_diff, resolve_seek_point_id, vec_to_sector};
 use super::{
-    EnemyAi, PrimaryTargetFlags, ProfileRank, SeekFlags, UNDEFINED_DIRECTION, archer, combat,
-    task_priority,
+    AlertSoldiersFailureContinuation, EnemyAi, PrimaryTargetFlags, ProfileRank, SeekFlags,
+    UNDEFINED_DIRECTION, archer, combat, task_priority,
 };
+
+fn body_examination_target_disappeared(
+    owner: crate::coordinates::WorldPoint3D,
+    body: crate::coordinates::WorldPoint3D,
+) -> bool {
+    let delta = body - owner;
+    delta.x.abs().max(delta.y.abs()).max(delta.z.abs())
+        > (2 * parameters_ai::AI_STOP_BEFORE_BODY_STEPS) as f32
+}
 
 impl EnemyAi {
     // One dispatcher preserves the numeric Substate machine while the
@@ -2036,6 +2045,83 @@ impl EnemyAi {
                         self.base.launch_timer(10, ctx.frame);
                     }
                 } else if stimulus_type == StimulusType::EventReachPoint {
+                    let body_handle = self.base.detected_body;
+                    let view = ctx.entity_view(body_handle).unwrap_or_else(|| {
+                        panic!("SeekingBody target {body_handle} has no typed live entity view")
+                    });
+                    let owner_world = ctx
+                        .entity_view(self.base.me)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "SeekingBody owner {} has no typed live entity view",
+                                self.base.me
+                            )
+                        })
+                        .detection_position_world;
+
+                    self.base.set_emoticon(EmoticonType::XMark);
+                    if body_examination_target_disappeared(
+                        owner_world,
+                        view.detection_position_world,
+                    ) {
+                        // `GoNear` can report REACHPOINT at its authored
+                        // tolerance even though the body's live element
+                        // position is no longer near the actor. Original
+                        // rejects that stale arrival before classifying the
+                        // body as dead/tied and starts a local body search.
+                        if !self.examine_other_bodies(ctx, tick) {
+                            if view.is_unconscious || view.is_dead {
+                                self.base.outbox.actor.add_detectables.push((
+                                    ctx.entity_id(body_handle).unwrap_or_else(|| {
+                                        panic!(
+                                            "SeekingBody target {body_handle} has no typed entity id"
+                                        )
+                                    }),
+                                    crate::element::DetectableType::Body,
+                                ));
+                            }
+                            self.base.set_emoticon(EmoticonType::QuestionMark);
+                            let seek_flags = SeekFlags::LOCATION_FIRST | self.seek_flags;
+                            match self.get_rank() {
+                                ProfileRank::Soldier | ProfileRank::Knight | ProfileRank::None => {
+                                    self.seek_area(
+                                        sim,
+                                        ctx.position,
+                                        parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
+                                        seek_flags,
+                                        UNDEFINED_DIRECTION,
+                                        global,
+                                        ctx,
+                                        tick,
+                                    );
+                                }
+                                ProfileRank::Officer => {
+                                    if !self.alert_soldiers(
+                                        ctx.position,
+                                        0,
+                                        global,
+                                        grid,
+                                        ctx,
+                                        tick,
+                                        AlertSoldiersFailureContinuation::SeekMissingInstructedSoldier,
+                                    ) {
+                                        self.seek_area(
+                                            sim,
+                                            ctx.position,
+                                            parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
+                                            seek_flags,
+                                            UNDEFINED_DIRECTION,
+                                            global,
+                                            ctx,
+                                            tick,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        return false;
+                    }
+
                     self.base
                         .face_position_3d_with_ctx(self.base.seek_position, ctx);
 
@@ -2045,16 +2131,23 @@ impl EnemyAi {
                     // `WakeUp` with the body as antagonist.  The
                     // entity-view map lets us check posture / substate
                     // without a second borrow on the entity store.
-                    let body_handle = self.base.detected_body;
-                    let view = ctx.entity_view(body_handle);
-                    let is_tied = view
-                        .map(|v| v.posture == crate::element::Posture::Tied)
-                        .unwrap_or(false);
-                    let is_unconscious = view
-                        .map(|v| v.ai_substate == Substate::SleepingUnconscious)
-                        .unwrap_or(false);
+                    let is_tied = view.posture == crate::element::Posture::Tied;
+                    let is_unconscious = view.ai_substate == Substate::SleepingUnconscious;
 
-                    if body_handle != 0 && (is_tied || is_unconscious) {
+                    if ctx.self_is_rider || view.is_dead {
+                        // Dead-body / rider-confirms-dead branch: remember
+                        // this body so a later officer "examine here" call
+                        // can short-circuit (see the `CallYourTalk1` arm).
+                        if body_handle != 0 && !self.already_seen_bodies.contains(&body_handle) {
+                            self.already_seen_bodies.push(body_handle);
+                        }
+                        self.set_state(AiState::Seeking, Substate::SeekingBodyLookingDeadBody);
+                        self.base.set_emoticon(EmoticonType::XMark);
+                        self.base.launch_timer(
+                            parameters_ai::AI_WATCH_DEADBODY_AGAIN_TIME as u32,
+                            ctx.frame,
+                        );
+                    } else if body_handle != 0 && (is_tied || is_unconscious) {
                         use crate::element::Command;
                         use crate::sequence::{Sequence, SequenceElement};
                         self.base.say(Remark::AwakensSleeperr);
@@ -2077,18 +2170,11 @@ impl EnemyAi {
                         self.base.launch_timer(50, ctx.frame);
                         self.base.clear_emoticon();
                     } else {
-                        // Dead-body / rider-confirms-dead branch: remember
-                        // this body so a later officer "examine here" call
-                        // can short-circuit (see the `CallYourTalk1` arm).
-                        if body_handle != 0 && !self.already_seen_bodies.contains(&body_handle) {
-                            self.already_seen_bodies.push(body_handle);
-                        }
-                        self.set_state(AiState::Seeking, Substate::SeekingBodyLookingDeadBody);
-                        self.base.set_emoticon(EmoticonType::XMark);
-                        self.base.launch_timer(
-                            parameters_ai::AI_WATCH_DEADBODY_AGAIN_TIME as u32,
-                            ctx.frame,
-                        );
+                        // The body recovered before we arrived. Original
+                        // abandons the examination immediately even when the
+                        // timer's preceding IsDetecting check could not see
+                        // the now-conscious actor.
+                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                     }
                 }
             }
@@ -5061,14 +5147,12 @@ impl EnemyAi {
                 match stimulus_type {
                     StimulusType::EventReachPoint => {
                         // Arrived behind shield bearer — turn to face target.
-                        let target_pos = self
-                            .find_fighter(self.base.primary_target, tick)
-                            .map(|f| f.position);
-                        if let Some(tp) = target_pos {
-                            let dx = tp.x - ctx.position.x;
-                            let dy = tp.y - ctx.position.y;
-                            let dir = vec_to_sector(dx, dy);
-                            self.base.face_direction(dir, ctx);
+                        if self.base.primary_target != 0 {
+                            // Original: `Face(mpPrimaryTarget)`. The element
+                            // overload forwards both `Position(target)` and
+                            // the target's truncated elevation; dropping the
+                            // latter can select an adjacent sector.
+                            self.base.face_entity(self.base.primary_target, ctx);
                         }
                     }
                     StimulusType::EventDone => {
@@ -6240,6 +6324,63 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bow_running_behind_shield_faces_target_with_its_elevation() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(74);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingBowRunningBehindShieldBearer;
+        ai.base.primary_target = 170;
+
+        let mut target = pc_view(crate::element::Posture::Upright);
+        target.position = Position {
+            x: 265.357_67,
+            y: 1023.334_5,
+            ..Position::default()
+        };
+        target.elevation = 151.123_84;
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(170, target);
+        let ctx = AiContext {
+            position: Position {
+                x: 436.932_5,
+                y: 1227.554,
+                ..Position::default()
+            },
+            elevation: 45.0,
+            direction: 3,
+            self_action_state: crate::element::ActionState::Moving,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        // A flat map-space face selects sector 15 at this boundary. The
+        // Original element overload adds `(SWORD)151.12384 - 45 == 106`
+        // to dy and therefore authors sector 14.
+        assert_eq!(
+            crate::position_interface::vector_to_sector_0_to_15_iso(
+                265.357_67 - 436.932_5,
+                1023.334_5 - 1227.554
+            ),
+            15
+        );
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventReachPoint),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        let [turn] = ai.base.outbox.actor.orders.as_slice() else {
+            panic!("shield-bearer arrival must author exactly one turn");
+        };
+        assert_eq!(turn.order_type, crate::order::OrderType::Turning);
+        assert_eq!(turn.explicit_direction, Some(14));
+    }
+
+    #[test]
     fn officer_wait_missed_soldier_does_not_relaunch_timer() {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(1);
@@ -6771,6 +6912,125 @@ mod tests {
                 antagonist: Some(crate::element::EntityId::Pc(crate::entity_id::PcId(17)))
             }
         ));
+    }
+
+    #[test]
+    fn seeking_body_reach_rejects_a_body_outside_the_live_sixty_unit_gate() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(61);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingBody;
+        ai.base.detected_body = 170;
+
+        let mut owner = pc_view(crate::element::Posture::Upright);
+        owner.detection_position_world =
+            crate::coordinates::WorldPoint3D::new(413.38, 1850.28, 150.0);
+        let mut body = pc_view(crate::element::Posture::Dead);
+        body.is_able_to_fight = false;
+        body.is_dead = true;
+        body.detection_position_world = crate::coordinates::WorldPoint3D::new(737.20, 1869.22, 0.0);
+
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(61, owner);
+        views.insert(170, body);
+        let ctx = AiContext {
+            position: Position {
+                x: 413.38,
+                y: 1700.28,
+                ..Position::default()
+            },
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventReachPoint),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_ne!(
+            ai.base.current_substate,
+            Substate::SeekingBodyLookingDeadBody
+        );
+        let mut added_detectables = ai.base.outbox.actor.add_detectables.clone();
+        for work in &ai.base.outbox.reentrant.owner_work {
+            match work {
+                AiOwnerWork::ActorEffects(effects) => {
+                    added_detectables.extend(effects.add_detectables.iter().copied());
+                }
+                AiOwnerWork::StateChange(change) => {
+                    if let Some(effects) = &change.actor_effects_before_callback {
+                        added_detectables.extend(effects.add_detectables.iter().copied());
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(
+            added_detectables,
+            vec![(
+                crate::element::EntityId::Pc(crate::entity_id::PcId(170)),
+                crate::element::DetectableType::Body,
+            )]
+        );
+    }
+
+    #[test]
+    fn seeking_body_reach_returns_to_duty_when_the_nearby_body_recovered() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(61);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingBody;
+        ai.base.detected_body = 63;
+
+        let mut owner = pc_view(crate::element::Posture::Upright);
+        owner.detection_position_world =
+            crate::coordinates::WorldPoint3D::new(413.38, 1850.2786, 150.001);
+        let mut recovered_body = pc_view(crate::element::Posture::Upright);
+        recovered_body.is_dead = false;
+        recovered_body.is_unconscious = false;
+        recovered_body.detection_position_world =
+            crate::coordinates::WorldPoint3D::new(410.0648, 1850.421, 150.001);
+
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(61, owner);
+        views.insert(63, recovered_body);
+        let ctx = AiContext {
+            position: Position {
+                x: 413.38,
+                y: 1700.2776,
+                ..Position::default()
+            },
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventReachPoint),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_ne!(
+            ai.base.current_substate,
+            Substate::SeekingBodyLookingDeadBody
+        );
+        assert!(ai.already_seen_bodies.is_empty());
+        assert!(
+            ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .any(|work| matches!(work, AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }))
+        );
     }
 
     #[test]
