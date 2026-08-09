@@ -3363,7 +3363,7 @@ fn get_killed_at_bottom_kills_lying_victim_immediately() {
 }
 
 #[test]
-fn get_killed_at_bottom_uses_vip_pc_amulet_coma_save() {
+fn get_killed_at_bottom_uses_vip_pc_amulet_coma_save_and_preserves_existing_coma() {
     use crate::campaign::CampaignValue;
     use crate::element::{Command, Posture};
     use crate::sequence::SequenceElement;
@@ -3408,6 +3408,20 @@ fn get_killed_at_bottom_uses_vip_pc_amulet_coma_save() {
         engine.mission_domain.campaign.values[CampaignValue::Amulets],
         0
     );
+
+    // A second execution models another guard completing STRIKING_DOWN_SWORD
+    // against the already-comatose PC. Original PC::GetWounded does nothing
+    // when lethal damage arrives while bInComa is set.
+    let elem =
+        SequenceElement::new_interaction(1, Command::GetKilledAtBottom, Some(victim), Some(killer));
+    engine.launch_element(elem);
+    engine.ensure_wait_element(victim);
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+    let entity = engine.get_entity(victim).expect("victim still present");
+    assert!(!entity.is_dead());
+    assert_eq!(entity.human_life_points(), 5);
+    assert_eq!(entity.element_data().posture, Posture::Lying);
 }
 
 /// When the `TransitionWaitingUprightSitting` animation completes,
