@@ -2707,6 +2707,30 @@ mod tests {
     }
 
     #[test]
+    fn pc_hit_translation_inherits_silent_human_say_ouch() {
+        let mut engine = make_engine();
+        let victim = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+        let damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveHitDamage, Some(victim));
+        let sequence_id = engine.launch_element(damage);
+
+        engine.apply_hit_damage(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::default(),
+            victim,
+            None,
+            1,
+            false,
+            (sequence_id, 0),
+        );
+
+        assert!(
+            engine.feedback.sound_sim.pending_exclamations.is_empty(),
+            "PC inherits RHElementActorHuman::SayOuch's no-op on TranslateHitDamage"
+        );
+    }
+
+    #[test]
     fn conscious_hit_applies_ai_eye_status_synchronously() {
         let mut engine = make_engine();
         let null_slot = engine.add_entity(make_soldier(WorldPoint3D::default(), None));

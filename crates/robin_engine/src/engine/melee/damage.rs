@@ -1472,24 +1472,31 @@ impl EngineInner {
             return;
         }
 
-        // Original `RHElementActorHuman::TranslateHitDamage` calls
+        // Original `RHElementActorHuman::TranslateHitDamage` calls virtual
         // `SayOuch()` synchronously before it appends the FALLING_HIT order.
+        // PCs inherit Human's empty implementation; only NPCs override it.
         // This is particularly important when the hit interrupts speech
         // queued earlier in the same engine frame: SPEECH_EMERGENCY removes
         // that pending exclamation before Sound::Hourglass resolves the
         // replacement.  The already-down/flying postures terminate the
         // damage element without entering this default arm and stay silent.
-        if !matches!(
-            victim_posture,
-            Posture::Lying
-                | Posture::StuckUnderNet
-                | Posture::Flying
-                | Posture::Carried
-                | Posture::OnShoulders
-                | Posture::Tied
-                | Posture::Dead
-                | Posture::DeadBack
-        ) {
+        let victim_is_npc = matches!(
+            self.get_entity(victim_id),
+            Some(Entity::Soldier(_) | Entity::Civilian(_))
+        );
+        if victim_is_npc
+            && !matches!(
+                victim_posture,
+                Posture::Lying
+                    | Posture::StuckUnderNet
+                    | Posture::Flying
+                    | Posture::Carried
+                    | Posture::OnShoulders
+                    | Posture::Tied
+                    | Posture::Dead
+                    | Posture::DeadBack
+            )
+        {
             self.say_ouch(sim, assets, victim_id, None);
         }
 
