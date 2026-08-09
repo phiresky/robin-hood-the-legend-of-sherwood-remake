@@ -7056,12 +7056,12 @@ impl EngineInner {
                         };
                         let fdx = opp_pos.x - face_origin.x;
                         let fdy = opp_pos.y - face_origin.y;
-                        if fdx * fdx + fdy * fdy > 0.01 {
-                            (fdx, fdy)
-                        } else {
-                            let heading = (elem.direction() as f32) * std::f32::consts::PI / 8.0;
-                            (heading.cos(), heading.sin())
-                        }
+                        // Preserve FaceOpponent's literal vector, including
+                        // the zero vector produced by co-located fighters.
+                        // SBGeoVector2D::Angle resolves dot == det == 0 to PI,
+                        // selecting the backwards-sword animation. Replacing
+                        // it with the current heading selects a strafe row.
+                        (fdx, fdy)
                     } else {
                         let heading = (elem.direction() as f32) * std::f32::consts::PI / 8.0;
                         (heading.cos(), heading.sin())
@@ -11709,6 +11709,52 @@ mod orphaned_sword_movement_tests {
                     element.owner != Some(owner) || element.command != Command::QuitSwordfight
                 }),
             "forced movement must not launch QuitSwordfight"
+        );
+    }
+
+    #[test]
+    fn sword_movement_with_colocated_opponent_preserves_zero_facing_vector() {
+        let (mut engine, owner, _movement_sequence, _order_id, start) =
+            install_sword_movement(true);
+
+        let mut opponent_element = ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        };
+        opponent_element.set_position_map(start);
+        let opponent = engine.add_entity(Entity::Pc(ActorPc {
+            element: opponent_element,
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData {
+                life_points: 50,
+                ..PcData::default()
+            },
+        }));
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents
+            .push(opponent);
+
+        engine.tick_entity_movement(
+            &crate::sim_rng::test_context(),
+            &assets_with_test_pc_profile(),
+        );
+
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .element_data()
+                .sprite
+                .last_action,
+            OrderType::WalkingBackwardsSword,
+            "FaceOpponent passes a co-located opponent's literal zero vector to Angle, which resolves to PI"
         );
     }
 
