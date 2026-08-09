@@ -699,7 +699,11 @@ impl EnemyAi {
                                     ProfileRank::Officer,
                                     "soldier CALL_ALERT caller must be an officer"
                                 );
-                                self.base.stop_all();
+                                // Original's soldier-from-officer CALL_ALERT arm calls
+                                // `mpMe->Halt()` directly, not AI `StopAll()`. Halt
+                                // interrupts actor work but leaves an in-flight waypoint
+                                // macro and its macro timer intact.
+                                self.base.outbox.actor.queue_halt();
                                 self.current_task_priority = self.new_task_priority;
                                 self.gather_position_instructed = false;
                                 self.base.friends_are_alerted = true;
@@ -3540,6 +3544,67 @@ mod tests {
         assert_eq!(ai.base.primary_target, 12);
         assert_eq!(ai.base.outbox.actor.enter_swordfight, None);
         assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
+    }
+
+    #[test]
+    fn officer_call_alert_halts_actor_without_breaking_running_macro() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(44);
+        ai.soldier_profile_rank = ProfileRank::Soldier;
+        ai.base.current_state = AiState::Default;
+        ai.base.current_substate = Substate::DefaultInMacro;
+        ai.base.macro_in_progress = true;
+        ai.base.macro_timer_is_running = true;
+        ai.base.when_does_macro_timer_ring = 10_054;
+        ai.current_task_priority = task_priority::ALERT;
+        ai.new_task_priority = task_priority::ALERT;
+
+        let mut officer = object_view(ObjectType::None);
+        officer.kind = EntityKind::Soldier;
+        officer.rank = ProfileRank::Officer;
+        officer.position = Position {
+            x: 100.0,
+            y: 20.0,
+            sector: None,
+            level: 0,
+        };
+        let mut views = AiEntityViewMap::new();
+        views.insert(91, officer);
+        let ctx = AiContext {
+            frame: 9_768,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        let accepted = ai.think_unexpected_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::CallAlert, 91),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert!(accepted);
+        let halted_before_state_change = ai.base.outbox.reentrant.owner_work.iter().any(|work| {
+            matches!(
+                work,
+                crate::ai::AiOwnerWork::StateChange(notification)
+                    if notification
+                        .actor_effects_before_callback
+                        .as_ref()
+                        .is_some_and(|effects| effects.halt)
+            )
+        });
+        assert!(halted_before_state_change);
+        assert!(ai.base.macro_in_progress);
+        assert!(ai.base.macro_timer_is_running);
+        assert_eq!(ai.base.when_does_macro_timer_ring, 10_054);
+        assert_eq!(ai.base.current_state, AiState::Seeking);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingGroupCalledByOfficer
+        );
     }
 
     #[test]
