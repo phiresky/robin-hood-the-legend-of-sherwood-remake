@@ -1026,6 +1026,14 @@ fn movement_execute_visible_motion(
     motion
 }
 
+fn cancel_aborted_order_pop(
+    order_pops: &mut Vec<(crate::sequence::SequenceId, usize)>,
+    seq_id: crate::sequence::SequenceId,
+    elem_idx: usize,
+) {
+    order_pops.retain(|&(queued_seq, queued_idx)| queued_seq != seq_id || queued_idx != elem_idx);
+}
+
 /// Original `mulWaitTime--` uses an unsigned 32-bit counter. A stationary
 /// entity seek deliberately wraps zero to `UINT_MAX`; the signed refresh gate
 /// then continues to regard the wrapped values as elapsed.
@@ -9524,6 +9532,13 @@ impl EngineInner {
                     Some((selected.seq_id, selected.elem_idx))
                 });
                 if let Some((seq_id, elem_idx)) = pinch_abort {
+                    // RHElementActorPC::Execute overrides the nested Human
+                    // PerformMotion result with RHMOTION_ABORTED here.  The
+                    // base Actor::Hourglass therefore marks the entry-latched
+                    // element Impossible and does not run its TERMINATED
+                    // DoNextOrder arm, even when PerformMotion had already
+                    // reached the short step-back destination.
+                    cancel_aborted_order_pop(&mut order_pops, seq_id, elem_idx);
                     self.orders
                         .sequence_manager
                         .element_impossible(seq_id, elem_idx);
@@ -11853,6 +11868,42 @@ mod orphaned_sword_movement_tests {
         assert_eq!(
             engine.actor_order_type(owner),
             Some(OrderType::TransitionLoweringSword)
+        );
+    }
+
+    #[test]
+    fn pc_pinch_abort_cancels_terminal_pop_before_impossible() {
+        let (mut engine, _owner, movement_sequence, _order_id, _start) =
+            install_sword_movement(false);
+        let unrelated = crate::sequence::SequenceId(movement_sequence.0 + 1);
+        let mut order_pops = vec![(movement_sequence, 0), (unrelated, 0)];
+
+        cancel_aborted_order_pop(&mut order_pops, movement_sequence, 0);
+        assert_eq!(order_pops, vec![(unrelated, 0)]);
+
+        engine
+            .orders
+            .sequence_manager
+            .element_impossible(movement_sequence, 0);
+        for (seq_id, elem_idx) in order_pops {
+            if engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .is_some()
+            {
+                engine.do_next_order(seq_id, elem_idx);
+            }
+        }
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(movement_sequence, 0)
+                .unwrap()
+                .state,
+            SequenceState::Impossible,
+            "the PC Execute ABORTED result must not be overwritten by the nested motion's queued TERMINATED pop"
         );
     }
 
