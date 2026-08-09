@@ -1,0 +1,9 @@
+{
+  "id": "193",
+  "subject": "Use elevation-aware entity facing behind shield bearers",
+  "description": "AttackingBowRunningBehindShieldBearer EventReachPoint now calls the existing entity-facing path for its primary target, matching Original Face(mpPrimaryTarget), rather than manually deriving a flat 2D direction. This restores AI Position(target), target elevation with SWORD truncation, and the authored Turn direction. linux2 Profile_002 Savegame_035 replay-015 clears frame 38574 and advances to the separately tracked Rolling execution family at frame 38677. Both task-36 schema-14 replay-009 controls match exact EOF; focused tests, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task183-posture"
+}

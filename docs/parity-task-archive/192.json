@@ -1,0 +1,9 @@
+{
+  "id": "192",
+  "subject": "Restore SeekingBody recovered-target return-to-duty branches",
+  "description": "SeekingBody EventReachPoint now mirrors Original's complete target switch: a literal 3D max-norm gate handles disappeared distant bodies, riders/dead targets enter LookingDeadBody, tied or unconscious targets enter WakeUp, and a nearby recovered live target returns the soldier to duty. Rust had collapsed every non-tied nearby target into dead-body examination. linux3 Profile_001 Savegame_024 replay-008 clears frame 9629 and matches exact EOF. Both task-36 schema-14 replay-009 controls match exact EOF; focused tests, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task179-true-seam"
+}

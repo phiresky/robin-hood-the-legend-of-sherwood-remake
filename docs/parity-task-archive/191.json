@@ -1,0 +1,9 @@
+{
+  "id": "191",
+  "subject": "Advance pushed flights on their Start execution",
+  "description": "Combat pushed-flight ticking no longer suppresses displacement solely because the falling order is on its initial Execute. Matching Original RHSprite::PerformFlight, the Start call performs the action, applies the first UpdatePosition increment, and decrements the remaining flight count; the guards still require the falling order to be live and posture Flying. linux2 Profile_002 Savegame_034 replay-001 clears frame 34806 and advances to a small frame-34823 terminal movement residue. Both task-36 schema-14 replay-009 controls match exact EOF; focused tests, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task183-posture"
+}
