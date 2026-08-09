@@ -1,0 +1,9 @@
+{
+  "id": "178",
+  "subject": "Separate bare-ground projectile impacts from unknown obstacles",
+  "description": "Projectile trajectory results now distinguish an exact terminal impact with a null obstacle pointer from an integration that merely exhausts without impact. Matching Original, exact bare-ground hits search only layer-zero motion sectors and never adopt an overlapping upper-layer projection; exact obstacle hits retain their obstacle-scoped resolution. Two focused regressions cover the terminal-impact identity and ground-only membership. linux2 Profile_002 Savegame_030 replay-005 clears frame 6314 and advances to an independent frame-6316 projectile-active frontier. Both task-36 schema-14 replay-009 controls match exact EOF; focused tests, cargo fmt, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task174-visibility-cluster"
+}
