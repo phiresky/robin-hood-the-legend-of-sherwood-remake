@@ -1752,31 +1752,32 @@ impl EngineInner {
     ) -> SimScratch {
         let mut views = build_entity_views_without_forecast(self);
         for (target, _) in self.world.entities.occupied() {
+            let boundary = self.boundary_position(
+                target,
+                owner,
+                positions_before_movement,
+                owner_actor_complete,
+            );
             // The initial view builder already applies
             // `RHArtificialIntelligence::Position(actor)`'s committed
             // gate-side override. Creation-slot projection is for live map
-            // positions and must not replace that AI-specific value. Periodic
-            // visibility uses `position_at_owner_boundary` directly and
-            // therefore continues to see the actor's actual interpolated
-            // position, as in the Original detection code.
+            // positions and must not replace that AI-specific value.
+            // Direct geometry is different: ComputeDetectionPoint starts from
+            // literal GetPosition even during a door pass, so always stamp its
+            // map/world pair with the owner-boundary values.
             let passing_door = self
                 .world
                 .entities
                 .get(target)
                 .and_then(Entity::actor_data)
                 .is_some_and(|actor| actor.active_door_pass.is_some());
-            if passing_door {
-                continue;
-            }
-            let position = self.position_at_owner_boundary(
-                target,
-                owner,
-                positions_before_movement,
-                owner_actor_complete,
-            );
             if let Some(view) = views.get_mut(&target.index()) {
-                view.position.x = position.x;
-                view.position.y = position.y;
+                view.detection_position = boundary.map;
+                view.detection_position_world = boundary.world;
+                if !passing_door {
+                    view.position.x = boundary.map.x;
+                    view.position.y = boundary.map.y;
+                }
             }
         }
         SimScratch {
