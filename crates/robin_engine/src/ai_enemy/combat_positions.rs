@@ -26,6 +26,31 @@ fn original_uword_norm(delta: (f32, f32)) -> u16 {
     (delta.0 * delta.0 + delta.1 * delta.1).sqrt() as u16
 }
 
+/// The forward and rightward steps used by Original's `ReconsiderPhalanx`.
+///
+/// Both operations are aspect-aware `SBGeoVector2D` operations. In
+/// particular, `GetNormal(true, ASPECT_RATIO)` is not a plain screen-space
+/// clockwise rotation: it rotates in stretched world space, then projects
+/// the result back to map space.
+fn phalanx_advance_vectors(to_target: (f32, f32)) -> ((f32, f32), (f32, f32)) {
+    let forward = iso_normalize(to_target, ASPECT_RATIO);
+    let forward_step = (
+        forward.0 * archer::PHALANX_FORWARD_STEP as f32,
+        forward.1 * archer::PHALANX_FORWARD_STEP as f32,
+    );
+
+    let right = iso_normalize(
+        get_normal_iso(forward_step, true, ASPECT_RATIO),
+        ASPECT_RATIO,
+    );
+    let right_step = (
+        right.0 * archer::DISTANCE_SHIELD_BEARER_SHIELD_BEARER as f32,
+        right.1 * archer::DISTANCE_SHIELD_BEARER_SHIELD_BEARER as f32,
+    );
+
+    (forward_step, right_step)
+}
+
 fn is_facing_swordfight_target(
     me_position: &Position,
     me_elevation: f32,
@@ -1829,24 +1854,10 @@ impl EnemyAi {
             {
                 let half = phalanx_size / 2;
 
-                // Compute forward vector
-                let mut forward = pos_diff(&primary_pos, &phalanx_center);
-                let fwd_len = max_norm(forward);
-                if fwd_len > 0.001 {
-                    forward.0 /= fwd_len;
-                    forward.1 /= fwd_len;
-                }
-                let step = archer::PHALANX_FORWARD_STEP as f32;
-                let fwd_step = (forward.0 * step, forward.1 * step);
-
-                // Compute rightward vector. Scale by
-                // DISTANCE_SHIELD_BEARER_SHIELD_BEARER directly with no
-                // extra aspect-ratio factor on the Y component (after
-                // the preceding Normalize(ASPECT_RATIO)); the stray
-                // `* ASPECT_RATIO` that used to be on `right.1` squared
-                // the aspect ratio and was a port bug.
-                let right = get_normal_right(forward);
-                let right_scaled = (right.0 * distance_sb, right.1 * distance_sb);
+                // Original normalizes both the forward vector and its
+                // `GetNormal(true, ASPECT_RATIO)` result in isometric space.
+                let (fwd_step, right_scaled) =
+                    phalanx_advance_vectors(pos_diff(&primary_pos, &phalanx_center));
 
                 let new_center = Position {
                     x: phalanx_center.x + fwd_step.0,
@@ -3474,6 +3485,30 @@ mod tests {
             sector: None,
             level: 0,
         }
+    }
+
+    #[test]
+    fn phalanx_advance_uses_original_aspect_aware_normalization() {
+        // Schema-14 Savegame_034/replay-009, frame 34182. Soldier 52 is
+        // the center of the three-man phalanx and PC 167 is its target.
+        // These are the literal results of SBGeoVector2D::Normalize and
+        // GetNormal(true, ASPECT_RATIO) in Original.
+        let center = position(720.15155, 2198.4492);
+        let target = position(967.95605, 2068.5835);
+        let (forward, right) = phalanx_advance_vectors(pos_diff(&target, &center));
+
+        assert!((forward.0 - 51.67761).abs() < 0.0001);
+        assert!((forward.1 - -27.082436).abs() < 0.0001);
+        assert!((right.0 - 16.863138).abs() < 0.0001);
+        assert!((right.1 - 10.586092).abs() < 0.0001);
+
+        let new_center = (center.x + forward.0, center.y + forward.1);
+        let left_slot = (new_center.0 - right.0, new_center.1 - right.1);
+        let right_slot = (new_center.0 + right.0, new_center.1 + right.1);
+        assert!((left_slot.0 - 754.966).abs() < 0.001);
+        assert!((left_slot.1 - 2160.7808).abs() < 0.001);
+        assert!((right_slot.0 - 788.6923).abs() < 0.001);
+        assert!((right_slot.1 - 2181.953).abs() < 0.001);
     }
 
     fn enemy(handle: HumanHandle, x: f32) -> PhalanxEnemySnapshot {
