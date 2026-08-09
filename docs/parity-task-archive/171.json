@@ -1,0 +1,9 @@
+{
+  "id": "171",
+  "subject": "Refresh StandingUpSword facing after sprite playback",
+  "description": "Schema-14 SuN1Sh1nE Profile_004 Savegame_028 replay-004 advanced through task 165 and diverged after frame 1738 when PC297 retained direction/goal 11 instead of slow-turning to current 10 toward goal 3. Original's generic human/PC StandingUpSword Execute arm first performs the sprite, then, while swordfighting, refreshes its goal from the live principal opponent's ground-space direction, then calls Turn unconditionally. Rust had StandingUpSword in a generic pre-PerformAction turn set and never refreshed its stale goal when a reciprocal opponent appeared between actor slots. StandingUpSword now performs its human/PC facing work after sprite playback, recomputes the principal direction iff swordfighting, and retains unconditional Turn; the distinct Soldier override remains sprite-only. Focused tests cover a principal appearing between ticks, unconditional nonfight turning, and soldier exclusion. cargo fmt and diff checks pass. The representative and both task-36 schema-14 replay-009 controls match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task171-dropale-direction-f1738"
+}
