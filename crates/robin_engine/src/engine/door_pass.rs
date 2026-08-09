@@ -863,7 +863,13 @@ impl PassDoorLaunchContext<'_> {
         // the stairs translator routes them through the sword/shield
         // branch instead of the plain walk/run branch.
         let is_fast = flags.contains(crate::sequence::MoveFlags::FAST);
-        let mut action = if is_carrying {
+        let mut action = if posture_after_transition == Posture::Crouched {
+            // Original's base DetermineMovementAnimation switches on the
+            // movement element's post-transition posture before adapting its
+            // authored action. A crouched PassDoor therefore remains
+            // WalkingCrouched, including across a stairs lift.
+            OrderType::WalkingCrouched
+        } else if is_carrying {
             OrderType::WalkingCarryingOnShoulders
         } else if action_state_after_transition.is_sword() {
             if is_fast {
@@ -2305,6 +2311,65 @@ mod tests {
             Some(OrderType::RunningWithSword),
             "the first direct-door rail must retain the stamped fast sword movement"
         );
+    }
+
+    #[test]
+    fn direct_stairs_pass_preserves_stamped_crouched_posture() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_pc(7));
+        install_lift_sector(&mut engine, LiftType::Stairs);
+        let door = crate::gate::Door {
+            door_type: DoorType::LiftHigh,
+            sector_in: crate::sector::SectorNumber::new(42),
+            ..default_door()
+        };
+
+        let (barrier, seq_id) = dispatch_pass_with_transition_state(
+            &mut engine,
+            &[door],
+            owner,
+            OrderType::WalkingCrouched,
+            crate::sequence::MoveFlags::empty(),
+            Posture::Crouched,
+            crate::element::ActionState::Moving,
+        );
+
+        assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap();
+        let SequenceElementData::Movement { action, .. } = &element.data else {
+            unreachable!()
+        };
+        assert_eq!(*action, OrderType::WalkingCrouched);
+        assert_eq!(
+            element.current_order().map(|order| order.order_type),
+            Some(OrderType::WalkingCrouched),
+            "the walk to the stairs midpoint must retain the stamped crouched posture"
+        );
+
+        let pass = engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_door_pass
+            .as_ref()
+            .unwrap();
+        assert_eq!(pass.current_action, OrderType::WalkingCrouched);
+        assert!(pass.steps.iter().any(|step| {
+            matches!(
+                step,
+                DoorPassStep::Walk {
+                    action: OrderType::WalkingCrouched,
+                    ..
+                }
+            )
+        }));
     }
 
     #[test]
