@@ -1,0 +1,9 @@
+{
+  "id": "173",
+  "subject": "Select WalkingSword directly when FaceOpponent has no opponent",
+  "description": "The current linux2 Profile_002 Savegame_008 replay-014 representative advanced far beyond the stale sweep frontier and diverged after frame 26282. PC241 retained a forced sword movement after its opponent list became empty. Original Human::FaceOpponent has an explicit non-soldier, non-swordfighting branch that immediately returns WALKING_SWORD without computing a facing vector. Rust encoded that branch as a self-position target sentinel; a tiny difference between Position and PositionGround made the nominally zero vector nonzero, selected StrafingLeftSword, committed its nonzero cadence distance, reached the goal, and launched a trailing Select one frame early. Removing the sentinel lets the existing no-target combat branch choose WalkingSword directly. A focused profile gives WalkingSword/backward/both strafe rows distinct distances and verifies the exact WalkingSword row and slowed displacement. cargo fmt and diff checks pass. The representative and both task-36 schema-14 replay-009 controls match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task173-animation-cluster"
+}
