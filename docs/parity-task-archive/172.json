@@ -1,0 +1,9 @@
+{
+  "id": "172",
+  "subject": "Honor stored GOTO_NEAR semantics in GoTo retries",
+  "description": "Schema-14 linux2 Profile_002 Savegame_003 replay-013 advanced through task 170 and diverged around frame 15126 because Soldier178 remained AttackingMovingAroundOldEnemy and missed Original's four-draw combat-decision tail. Its periodic stuck recovery replayed the stored destination with GOTO_NEAR|GOTO_SWORD and a 65-unit stop distance. Original's low-level GoTo always interprets GOTO_NEAR: on the same layer it uses SquareNorm against the stored tolerance, so Soldier178 synchronously reached the point, re-entered swordfight, and rebuilt list_us. Rust's AiController::go_to ignored NEAR, launched a zero-tolerance walk, and stayed in the movement substate. The low-level primitive now applies the same-layer squared-distance NEAR early exit independently of the idle-animation shortcut and propagates the stored distance to the movement order when outside the radius. Focused tests cover both the in-radius deferred completion and outside-radius tolerance. cargo fmt and diff checks pass. The representative and both task-36 schema-14 replay-009 controls match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task172-rng-f15126"
+}
