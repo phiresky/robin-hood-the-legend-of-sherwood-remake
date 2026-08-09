@@ -6734,7 +6734,15 @@ mod tests {
         );
         assert_eq!(ai.base.current_substate, Substate::SeekingSeekpoint);
         assert_eq!(ai.actual_seek_point, Some(1111));
-        assert_eq!(ai.base.seek_position, here);
+        assert_eq!(
+            ai.base.seek_position,
+            Position {
+                x: 900.0,
+                y: 700.0,
+                ..Position::default()
+            },
+            "selecting a route point must preserve the semantic heard-steps position"
+        );
         assert!(
             ai.personal_seek_point_1
                 .as_ref()
