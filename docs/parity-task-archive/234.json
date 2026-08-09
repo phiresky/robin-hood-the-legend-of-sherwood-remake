@@ -1,0 +1,9 @@
+{
+  "id": "234",
+  "subject": "Use literal positions when refreshing patrols",
+  "description": "RefreshPatrol missed-member reacquisition now uses literal stored 3D actor positions for its visibility ray, matching Original's actor overload of IsDetecting360Degrees rather than gate-side AI Position. linux2 Profile_002 Savegame_034 replay-009 clears frame 34864 and advances to an independent frame-34886 turn lifecycle frontier; both task-36 controls and the focused regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task234-patrol-successor"
+}

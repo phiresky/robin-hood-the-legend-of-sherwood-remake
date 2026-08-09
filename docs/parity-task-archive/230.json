@@ -1,0 +1,9 @@
+{
+  "id": "230",
+  "subject": "Apply difficulty to reactive counterstrikes",
+  "description": "ConsiderToBeginParade now calls the shared difficulty-adjusted soldier fighting-ability boundary used by Original's virtual GetFightingAbility instead of reading raw profile fighting. On Hard, Soldier54's raw 40 becomes 80, so draw 65 admits counterstrike A rather than Parade. SuN1Sh1nE Profile_004 Savegame_024 replay-013 clears frame 139 and advances to independent frame-169 visibility geometry; both task-36 controls and the focused regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task230-ai-substate"
+}
