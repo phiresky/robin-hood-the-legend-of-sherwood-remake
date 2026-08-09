@@ -1,0 +1,9 @@
+{
+  "id": "179",
+  "subject": "Apply corpse-drop effects from the terminal carry transition",
+  "description": "The terminal TransitionCarryingCorpseWaitingUpright order now emits its own DropCorpse side effect even when Rust's active-ability latch already identifies the following command, such as Whistle. Original executes the selected transition arm itself; consulting only the newer ability kind left the carrier and corpse attached after the transition. A focused transition-prefix-to-whistle regression verifies DropDone precedes termination/next-order handling. linux2 Profile_002 Savegame_012 replay-013 clears frame 41992 and advances to an independent frame-42183 DefaultPostLook RNG frontier. Both task-36 schema-14 replay-009 controls match exact EOF; focused test, cargo fmt, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task176-animation-cluster3"
+}
