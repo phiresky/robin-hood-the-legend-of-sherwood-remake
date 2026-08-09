@@ -1217,7 +1217,30 @@ impl FriendlyAi {
                     }
                     let q = self.base.stimulus_queue.remove(0);
                     if q.stimulus_type != StimulusType::EventAfterScriptGoOn {
-                        self.think(sim, &q, global, ctx, tick, grid, doors);
+                        // `Think(stimulus)` receives the queued stimulus's live
+                        // human pointer in the Original. Rust carries that
+                        // target-specific view separately on `AiContext`, so
+                        // the outer EVENT_AFTER_SCRIPT_GO_ON context cannot be
+                        // reused unchanged for a retained EVENT_VIEW.
+                        let mut nested_ctx = ctx.clone();
+                        if let StimulusInfo::Human(handle) = q.info {
+                            let view = nested_ctx.entity_view(handle).unwrap_or_else(|| {
+                                panic!(
+                                    "retained {:?} for civilian {} references missing human {}",
+                                    q.stimulus_type, self.base.me, handle
+                                )
+                            });
+                            nested_ctx.antagonist = Some(crate::ai::AntagonistInfo {
+                                position: view.position,
+                                camp: view.camp,
+                                is_swordfighting: view.is_swordfighting,
+                                is_pc: view.is_pc,
+                                is_robin: view.is_robin,
+                                is_vip: view.is_vip,
+                                in_building: view.in_building,
+                            });
+                        }
+                        self.think(sim, &q, global, &nested_ctx, tick, grid, doors);
                     }
                 }
 
@@ -2536,6 +2559,59 @@ mod tests {
         assert_eq!(ai.base.current_state, AiState::Default);
         // Walks back to post first.
         assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
+    }
+
+    #[test]
+    fn after_script_queue_rebuilds_retained_view_antagonist() {
+        use crate::ai_entity_view::{AiEntityViewMap, EntityKind, shared_entity_views};
+        use crate::element::Camp;
+
+        let sim = crate::sim_rng::test_context();
+        let mut global = AiGlobalState::default();
+        let mut ai = FriendlyAi::new(1);
+        let target = 42;
+        let target_pos = Position {
+            x: 150.0,
+            y: 250.0,
+            sector: None,
+            level: 0,
+        };
+        let mut target_view = make_soldier_view(target_pos, Camp::Lacklandists, AiState::Attacking);
+        target_view.kind = EntityKind::Pc;
+        target_view.is_pc = true;
+        target_view.is_swordfighting = true;
+        let mut views = AiEntityViewMap::new();
+        views.insert(target, target_view);
+        let ctx = AiContext {
+            camp: Camp::Royalists,
+            entity_views: shared_entity_views(views),
+            // The outer EVENT_AFTER_SCRIPT_GO_ON has no antagonist.
+            antagonist: None,
+            ..AiContext::default()
+        };
+
+        ai.base
+            .stimulus_queue
+            .push(Stimulus::with_human(StimulusType::EventView, target));
+        ai.think_unexpected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventAfterScriptGoOn),
+            &mut global,
+            &ctx,
+            &FriendlyPerTickData::without_patrol_chief(),
+            None,
+            None,
+        );
+
+        assert_eq!(ai.base.current_state, AiState::Fleeing);
+        assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
+        let request = ai
+            .base
+            .outbox
+            .actor
+            .begin_panic
+            .expect("retained swordfighter view must launch panic");
+        assert_eq!(request.center, Some(target_pos));
     }
 
     #[test]
