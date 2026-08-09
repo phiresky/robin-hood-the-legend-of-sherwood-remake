@@ -3291,11 +3291,30 @@ mod tests {
             ai.known_enemy_strike_1 = Some(SwordStrike::A);
         }
 
+        // The replay victim is still performing a selected smalltalk parry
+        // when the reactive counterstrike replaces it. StopAll must mark the
+        // interrupted element's condolence as coming from Halt; otherwise its
+        // later EventDone immediately leaves the new SpecialStrike substate.
+        let old_parry =
+            engine
+                .orders
+                .sequence_manager
+                .launch_element(crate::sequence::SequenceElement::new(
+                    1,
+                    Command::ParrySmalltalkLeft,
+                    Some(victim),
+                ));
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(old_parry, 0);
+
         // 65 rejects raw fighting 40 and produces a parade, but Hard's
         // Lacklandist modifier raises it to 80, allowing the counterstrike.
         engine.control.rng = SimulationRng::with_original_replay(vec![65]);
         engine.with_simulation_context(|engine, sim| {
             engine.consider_to_begin_parade(sim, &assets, victim, attacker, SwordStrike::A);
+            engine.dispatch_condolations(sim, &assets);
         });
 
         let ai = engine

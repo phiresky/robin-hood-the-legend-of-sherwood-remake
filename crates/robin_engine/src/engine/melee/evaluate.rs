@@ -2204,9 +2204,11 @@ impl EngineInner {
                 {
                     ai.base.set_emoticon(crate::ai::EmoticonType::XMark);
                     ai.begin_special_strike();
+                    ai.base.stop_all();
                 }
                 self.drain_ai_owner_work_for(sim, assets, victim_id);
-                self.stop_owner(victim_id, crate::sequence::SequencePriority::Preference);
+                self.apply_pending_ai_halt(victim_id);
+                self.dispatch_condolations_for_owner_boundary(sim, victim_id, assets);
 
                 // Launch counter-strike sequence
                 let counter_cmd = counter_strike.to_command();
