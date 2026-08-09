@@ -1,0 +1,9 @@
+{
+  "id": "218",
+  "subject": "Rebuild retained civilian stimulus context",
+  "description": "FriendlyAi's recursive EVENT_AFTER_SCRIPT_GO_ON queue drain now rebuilds target-specific AntagonistInfo for each retained human stimulus. Rust previously reused the outer antagonist-free context, so Civilian37 ignored a retained EventView of a swordfighting PC and resumed patrol instead of entering FleeingPanic. linux3 Profile_001 Savegame_008 replay-015 and both task-36 controls match exact EOF; focused coverage and formatting pass. The historical Bored/AiRandom label was heterogeneous and two sampled siblings were already exact.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task218-bored-rng"
+}

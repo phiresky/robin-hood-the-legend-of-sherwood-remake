@@ -1,0 +1,9 @@
+{
+  "id": "219",
+  "subject": "Restore PerformFlight anti-collision lifecycle",
+  "description": "The eight non-hard FallingHit and FallingPushed orders now model Original RHSprite::PerformFlight's anti-collision lifecycle: START disables anti-collision and synchronously clears deviation, while TERMINATED restores it. Hard-hit, ladder-wall, rolling, jump, and ordinary movement paths remain excluded. SuN1Sh1nE Profile_004 Savegame_038 replay-005 clears PC342's frame-290 direction frontier and matches exact EOF; both task-36 controls and focused lifecycle/order-set tests pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task219-live-movement"
+}

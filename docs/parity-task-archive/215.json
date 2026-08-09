@@ -1,0 +1,9 @@
+{
+  "id": "215",
+  "subject": "Preserve Original projectile intersection arithmetic",
+  "description": "The 16-direction helper now uses Original's literal float tables instead of trigonometry over an f32-rounded angle, and solid-obstacle projectile impacts retain the obstacle-plane-evaluated Z rather than reconstructing Z parametrically from the ray ratio. On Derby's Projectile177 seam the corrected impact is 0x42f3c100 instead of 0x42f3c0fc. linux2 Profile_002 Savegame_034 replay-009 clears frame 34689 and advances to an independent Soldier81 movement frontier at frame 34820; both task-36 controls remain exact EOF and both exact-bit regressions pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task179-true-seam"
+}

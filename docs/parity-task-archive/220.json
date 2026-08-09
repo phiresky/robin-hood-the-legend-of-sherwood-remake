@@ -1,0 +1,9 @@
+{
+  "id": "220",
+  "subject": "Clear reciprocal guarded-PC state on return to duty",
+  "description": "Enemy return-to-duty continuation now restores the leaving-Menacing tail of Original's virtual SetState and synchronously clears guarded_pc plus the reciprocal PC guard. Rust's shared base state assignment bypassed that override, so later Soldier67 rejected PC134 before performing Original's blocked LOS query. linux2 Profile_002 Savegame_018 replay-003 clears frame 8883 and matches exact EOF; both task-36 controls and the focused reciprocal-clear regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task220-visibility"
+}
