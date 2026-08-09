@@ -1,0 +1,9 @@
+{
+  "id": "232",
+  "subject": "Normalize resumed PC sword movement animation",
+  "description": "A resumed PC movement whose authored token still says WalkingWithSword or RunningWithSword after QuitSwordfight lowered the weapon now normalizes through Original's base waiting-state movement animation to the upright walk/run variant. NPC behavior remains unchanged. The representative Nescafe Profile_002 Savegame_016 replay-006 matches exact EOF, the focused regression passes, and this source family covers 48 of 50 frozen actor.animation failures; both task-36 controls remain exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task232-actor-animation"
+}

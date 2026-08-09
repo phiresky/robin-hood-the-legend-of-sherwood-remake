@@ -1,0 +1,9 @@
+{
+  "id": "233",
+  "subject": "Preserve running macro on officer alert",
+  "description": "The soldier-from-officer CALL_ALERT arm now queues actor Halt directly instead of calling AI StopAll, matching Original's mpMe->Halt boundary and preserving an active waypoint macro and its timer. linux3 Profile_001 Savegame_024 replay-009 clears the frame-9768 macro-state frontier and matches exact EOF; both task-36 controls and the focused regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task233-macro-state"
+}

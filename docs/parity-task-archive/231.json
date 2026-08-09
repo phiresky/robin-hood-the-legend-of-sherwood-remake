@@ -1,0 +1,9 @@
+{
+  "id": "231",
+  "subject": "Use literal positions for patrol visibility",
+  "description": "InitializePatrol now retains gate-side AI Position for sorting and formation but builds its admission visibility ray from each actor's literal stored 3D position, matching Original's actor overload of IsDetecting360Degrees and ComputeDetectionPoint. linux2 Profile_002 Savegame_034 replay-009 clears the frame-34860 endpoints and advances to an independent frame-34864 visibility frontier; both task-36 controls and the focused regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task231-visibility-geometry"
+}
