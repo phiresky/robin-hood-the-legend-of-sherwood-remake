@@ -1546,23 +1546,19 @@ impl EngineInner {
 
             // `ReadyForTakeOff` is initialized by ExecuteFallingPushed /
             // ExecuteFallingHit, not by Translate*Damage. Rust stores the
-            // computed flight eagerly, so hold it until after the queued
-            // falling order's first Execute. PerformFlight reports Start and
-            // changes posture to Flying on that call without displacement;
-            // the first increment belongs to the following Execute.
+            // computed flight eagerly, so hold it until the queued falling
+            // order is live and its Execute has changed posture to Flying.
+            // `RHSprite::PerformFlight` calls `UpdatePosition` even when
+            // `PerformAction` reports Start, so that first Execute owns the
+            // first displacement too.
             let falling_order_live = self
                 .orders
                 .sequence_manager
                 .current_order_for_actor(entity_id)
                 .is_some_and(|(_, _, order)| is_falling_flight_order(order.order_type));
-            let falling_order_initialising = entity
-                .actor_data()
-                .is_some_and(|actor| actor.execute_order_initialising);
             let waiting_for_fall_start = flight.antagonist.is_some()
                 && !flight.ladder_fall
-                && (!falling_order_live
-                    || entity.element_data().posture != Posture::Flying
-                    || falling_order_initialising);
+                && (!falling_order_live || entity.element_data().posture != Posture::Flying);
             if waiting_for_fall_start {
                 continue;
             }

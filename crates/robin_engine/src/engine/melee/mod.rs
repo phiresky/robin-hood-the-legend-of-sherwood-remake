@@ -4927,8 +4927,20 @@ mod tests {
         );
         assert_eq!(
             victim_after_fall_start.element_data().position_map(),
-            victim_position_before,
-            "PerformFlight Start changes posture but applies no displacement"
+            crate::coordinates::MapPoint::new(
+                victim_position_before.x + accepted_increment,
+                victim_position_before.y
+            ),
+            "PerformFlight applies its first increment on the Start Execute"
+        );
+        assert_eq!(
+            victim_after_fall_start
+                .actor_data()
+                .unwrap()
+                .active_flight
+                .unwrap()
+                .frames_remaining,
+            7
         );
 
         engine
@@ -4945,10 +4957,10 @@ mod tests {
                 .element_data()
                 .position_map(),
             crate::coordinates::MapPoint::new(
-                victim_position_before.x + accepted_increment,
+                victim_position_before.x + 2.0 * accepted_increment,
                 victim_position_before.y
             ),
-            "the first push-flight increment belongs to the next Execute"
+            "the following Execute applies the second push-flight increment"
         );
         assert!(
             !engine
