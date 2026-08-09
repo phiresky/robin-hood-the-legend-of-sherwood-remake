@@ -1124,6 +1124,8 @@ impl AiController {
                     | CrossNpcAction::SetPhalanxThemList { .. }
                     | CrossNpcAction::UpdateLeftCombatNeighbour { .. }
                     | CrossNpcAction::UpdateRightCombatNeighbour { .. }
+                    | CrossNpcAction::SetLeftCombatNeighbour { .. }
+                    | CrossNpcAction::SetRightCombatNeighbour { .. }
                     | CrossNpcAction::Say { .. }
             ) {
                 synchronous.push(action);
@@ -1156,6 +1158,8 @@ impl AiController {
                         | CrossNpcAction::InstructGatherPosition { .. }
                         | CrossNpcAction::UpdateLeftCombatNeighbour { .. }
                         | CrossNpcAction::UpdateRightCombatNeighbour { .. }
+                        | CrossNpcAction::SetLeftCombatNeighbour { .. }
+                        | CrossNpcAction::SetRightCombatNeighbour { .. }
                         | CrossNpcAction::Say { .. }
                 )
             })
@@ -4896,6 +4900,39 @@ mod tests {
                     target: 17,
                     old_right: 0,
                     new_right: 29,
+                }
+            ]
+        ));
+        assert!(ai.outbox.reentrant.cross_npc_actions.is_empty());
+    }
+
+    #[test]
+    fn direct_combat_neighbour_setters_are_drained_synchronously() {
+        let mut ai = AiController::new(17);
+        ai.outbox.reentrant.cross_npc_actions.extend([
+            CrossNpcAction::SetLeftCombatNeighbour {
+                target: 23,
+                neighbour: 0,
+            },
+            CrossNpcAction::SetRightCombatNeighbour {
+                target: 29,
+                neighbour: 0,
+            },
+        ]);
+
+        assert!(ai.has_pending_synchronous_cross_npc_actions());
+        let actions = ai.take_pending_synchronous_cross_npc_actions();
+
+        assert!(matches!(
+            actions.as_slice(),
+            [
+                CrossNpcAction::SetLeftCombatNeighbour {
+                    target: 23,
+                    neighbour: 0,
+                },
+                CrossNpcAction::SetRightCombatNeighbour {
+                    target: 29,
+                    neighbour: 0,
                 }
             ]
         ));
