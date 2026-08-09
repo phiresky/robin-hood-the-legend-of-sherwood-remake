@@ -122,8 +122,6 @@ fn pc_beggar_execute_calls_turn(anim: OrderType) -> bool {
 /// * `TransitionRaisingSword` — the human (and, through its fall-through, the
 ///   PC) arm turns unconditionally, while the soldier override turns only when
 ///   the order carries an antagonist.
-/// * `StandingUpSword` — the human arm re-aims at the principal opponent and
-///   turns; the soldier override replays the sprite without turning.
 /// * `ExtractingArrowSword` — turns only while actually swordfighting.
 ///
 /// Everything else in the turning set rotates unconditionally in every
@@ -134,7 +132,6 @@ fn turn_arm_condition_holds(entity: &Entity, anim: OrderType, has_antagonist: bo
         .is_some_and(|human| !human.opponents.is_empty());
     match anim {
         OrderType::TransitionRaisingSword => !entity.is_soldier() || has_antagonist,
-        OrderType::StandingUpSword => !entity.is_soldier(),
         OrderType::ExtractingArrowSword => is_swordfighting,
         _ => true,
     }
@@ -161,6 +158,24 @@ fn actor_action_row(
     } else {
         direction_after_turn
     }
+}
+
+/// Complete the human `STANDING_UP_SWORD` arm after sprite playback.
+///
+/// Original refreshes the goal from the live principal opponent only while
+/// swordfighting, but calls `Turn()` unconditionally. Soldiers override this
+/// arm and only replay the sprite, so they must not enter this helper.
+fn apply_standing_up_sword_post_perform_facing(
+    entity: &mut Entity,
+    principal_direction: Option<i16>,
+) {
+    if entity.is_soldier() {
+        return;
+    }
+    if let Some(direction) = principal_direction {
+        entity.element_data_mut().set_direction_goal(direction);
+    }
+    let _ = entity.position_iface_mut().turn();
 }
 
 #[cfg(test)]
@@ -324,6 +339,61 @@ mod tests {
             soldier.actor_data().unwrap().action_state,
             ActionState::WaitingSword
         );
+    }
+
+    #[test]
+    fn standing_up_sword_refreshes_new_principal_after_sprite_and_turns() {
+        let mut pc = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        });
+        pc.element_data_mut().set_direction_instantly(11);
+
+        // No swordfight on the preceding tick: the stale goal is retained,
+        // but Original still calls Turn().
+        apply_standing_up_sword_post_perform_facing(&mut pc, None);
+        assert_eq!(pc.element_data().direction(), 11);
+        assert_eq!(i16::from(pc.position_iface().get_direction_goal()), 11);
+
+        // A reciprocal EnterSwordfight later in that Hourglass makes the
+        // principal visible on the next tick. StandingUpSword must refresh
+        // the goal then take exactly one slow-turn step toward it.
+        apply_standing_up_sword_post_perform_facing(&mut pc, Some(3));
+        assert_eq!(i16::from(pc.position_iface().get_direction_goal()), 3);
+        assert_eq!(pc.element_data().direction(), 10);
+
+        // The soldier Execute override only replays the sprite.
+        let mut soldier = weak_soldier_at_action_done(0);
+        soldier.element_data_mut().kind = ElementKind::ActorSoldier;
+        soldier.element_data_mut().set_direction_instantly(11);
+        apply_standing_up_sword_post_perform_facing(&mut soldier, Some(3));
+        assert_eq!(i16::from(soldier.position_iface().get_direction_goal()), 11);
+        assert_eq!(soldier.element_data().direction(), 11);
+    }
+
+    #[test]
+    fn standing_up_sword_turns_toward_existing_goal_outside_swordfight() {
+        let mut pc = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        });
+        pc.element_data_mut().set_direction_instantly(11);
+        pc.element_data_mut().set_direction_goal(3);
+
+        apply_standing_up_sword_post_perform_facing(&mut pc, None);
+
+        assert_eq!(i16::from(pc.position_iface().get_direction_goal()), 3);
+        assert_eq!(pc.element_data().direction(), 10);
     }
 
     #[test]
@@ -3942,6 +4012,7 @@ impl EngineInner {
             door_pass_crenel_transition_dir,
             validated_antagonist,
             waiting_sword_direction_goal,
+            standing_up_sword_direction_goal,
             extracting_arrow_sword_direction_goal,
             pc_taking_direction_goal,
             pc_target_direction_goal,
@@ -4218,6 +4289,35 @@ impl EngineInner {
                 }
             });
 
+            // Unlike the other combat-facing arms above, Original's human
+            // STANDING_UP_SWORD arm plays the sprite first and only then
+            // refreshes the goal and turns. Compute the live principal here,
+            // but defer both mutations until after PerformAction. The soldier
+            // override has no corresponding facing or Turn step.
+            let standing_up_sword_direction = if anim_type == OrderType::StandingUpSword
+                && !entity.is_soldier()
+                && is_swordfighting
+            {
+                let opponent_id = entity
+                    .human_data()
+                    .and_then(|human| human.opponents.first().copied())
+                    .expect("swordfighting stand-up actor has no principal opponent");
+                let opponent = self.world.entities.get(opponent_id).unwrap_or_else(|| {
+                    panic!(
+                        "actor {entity_id:?} standing-up opponent {opponent_id:?} is missing at legacy slot {}",
+                        entity_id.index()
+                    )
+                });
+                let from = entity.element_data().position();
+                let to = opponent.element_data().position();
+                Some(crate::position_interface::vector_to_sector_0_to_15_iso(
+                    to.x - from.x,
+                    to.y - from.y,
+                ))
+            } else {
+                None
+            };
+
             // RHElementActorHuman::Execute(EXTRACTING_ARROW_SWORD) only
             // refreshes the goal on the order's initialization tick, then
             // calls Turn() on every tick while the actor remains in a
@@ -4314,6 +4414,7 @@ impl EngineInner {
                 door_direction,
                 validated_antagonist,
                 waiting_sword_direction,
+                standing_up_sword_direction,
                 extracting_arrow_sword_direction,
                 taking_direction,
                 target_direction,
@@ -4856,7 +4957,6 @@ impl EngineInner {
                                 | OrderType::ParryingLowLeftSmalltalk
                                 | OrderType::ParryingLowRightSmalltalk
                                 | OrderType::StrikingDownSword
-                                | OrderType::StandingUpSword
                                 | OrderType::ExtractingArrowSword
                                 | OrderType::FallingLadderWall
                                 | OrderType::RaisingShield
@@ -5170,6 +5270,17 @@ impl EngineInner {
                         }
                     };
                     let motion = motion.map(|mut motion_state| {
+                        if anim_type == OrderType::StandingUpSword {
+                            // RHElementActorHuman::Execute performs the
+                            // stand-up sprite first, then re-aims at the live
+                            // principal opponent (when swordfighting), then
+                            // turns. Its soldier override performs none of
+                            // this post-sprite facing work.
+                            apply_standing_up_sword_post_perform_facing(
+                                entity,
+                                standing_up_sword_direction_goal,
+                            );
+                        }
                         if !weak_sword_held {
                             apply_weak_sword_tiredness_after_perform(
                                 entity,
