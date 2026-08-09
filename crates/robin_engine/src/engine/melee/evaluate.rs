@@ -1817,7 +1817,8 @@ impl EngineInner {
             mut victim_boredom,
             principal_opponent,
         ) = {
-            let Some(Entity::Soldier(s)) = self.world.entities.get(victim_id) else {
+            let Some(victim_entity @ Entity::Soldier(s)) = self.world.entities.get(victim_id)
+            else {
                 return;
             };
             let ai = match &s.npc.ai_brain {
@@ -1825,11 +1826,21 @@ impl EngineInner {
                 _ => return,
             };
             let spi = s.soldier.soldier_profile_index;
-            let sp = assets.profile_manager.get_soldier(spi);
-            let fa = sp.map(|p| p.fighting).unwrap_or(50);
-            let is_rank = sp
-                .map(|p| p.rank == crate::profiles::ProfileRank::Soldier)
-                .unwrap_or(true);
+            let sp = assets.profile_manager.get_soldier(spi).unwrap_or_else(|| {
+                panic!(
+                    "ConsiderToBeginParade victim {victim_id:?} references missing soldier profile {spi}"
+                )
+            });
+            // ProposeGoodSwordStrike calls the virtual GetFightingAbility.
+            // RHElementActorSoldier overrides it to apply the active
+            // difficulty modifier for Lacklandists, including this reactive
+            // counter-strike path.
+            let fa = fighting_ability_from_profile(
+                victim_entity,
+                &assets.profile_manager,
+                sim.config().difficulty,
+            );
+            let is_rank = sp.rank == crate::profiles::ProfileRank::Soldier;
             let ba = ai.base.blood_alcohol;
             let camp = s.soldier.cached_camp;
             let pos = s.element.position_map();

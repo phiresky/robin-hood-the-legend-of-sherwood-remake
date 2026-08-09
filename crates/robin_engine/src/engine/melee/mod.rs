@@ -3231,6 +3231,66 @@ mod tests {
         );
     }
 
+    #[test]
+    fn reactive_counterstrike_uses_difficulty_modified_soldier_fighting_ability() {
+        let mut engine = make_engine();
+        engine.control.sim_config.difficulty = crate::player_profile::DifficultyLevel::Hard;
+        let (victim, attacker) = make_enemy_strike_pair(&mut engine, false);
+        for actor in [victim, attacker] {
+            let sprite = &mut engine
+                .get_entity_mut(actor)
+                .unwrap()
+                .element_data_mut()
+                .sprite;
+            sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+                action_done: 0,
+                frame_ids: vec![0],
+                delays: vec![1],
+                distances: vec![0],
+                offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+                sound_ids: vec![0],
+                ..Default::default()
+            }]);
+            sprite.conversion =
+                std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]);
+        }
+        let mut assets = assets_with_sword_profile(7, 30);
+        std::sync::Arc::get_mut(&mut assets.profile_manager)
+            .unwrap()
+            .soldiers[0]
+            .fighting = 40;
+        {
+            let ai = engine
+                .get_entity_mut(victim)
+                .and_then(Entity::enemy_ai_mut)
+                .unwrap();
+            ai.known_enemy_strike_1 = Some(SwordStrike::A);
+        }
+
+        // 65 rejects raw fighting 40 and produces a parade, but Hard's
+        // Lacklandist modifier raises it to 80, allowing the counterstrike.
+        engine.control.rng = SimulationRng::with_original_replay(vec![65]);
+        engine.with_simulation_context(|engine, sim| {
+            engine.consider_to_begin_parade(sim, &assets, victim, attacker, SwordStrike::A);
+        });
+
+        let ai = engine
+            .get_entity(victim)
+            .and_then(Entity::enemy_ai)
+            .unwrap();
+        assert!(ai.pending_special_strike);
+        assert_eq!(
+            ai.base.current_substate,
+            crate::ai::Substate::AttackingSwordfightSpecialStrike
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(victim, Command::is_swordstrike)
+        );
+    }
+
     fn assets_with_nonstraight_profile(
         strike: SwordStrike,
         kind: crate::profiles::WeaponThrustKind,
