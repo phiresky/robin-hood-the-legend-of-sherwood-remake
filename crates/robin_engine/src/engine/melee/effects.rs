@@ -842,256 +842,9 @@ impl EngineInner {
             return true;
         }
 
-        // Gather positions and attacker direction.
-        let (
-            attacker_pos,
-            attacker_dir,
-            victim_pos,
-            victim_z,
-            victim_layer,
-            victim_sector,
-            victim_is_rider,
-            victim_move_box,
-        ) = {
-            let apos = self
-                .get_entity(attacker_id)
-                .map(|e| e.element_data().position_map())
-                .unwrap_or_default();
-            let adir = self
-                .get_entity(attacker_id)
-                .map(|e| e.element_data().direction())
-                .unwrap_or(0);
-            let vpos = self
-                .get_entity(victim_id)
-                .map(|e| e.element_data().position_map())
-                .unwrap_or_default();
-            let vz = self
-                .get_entity(victim_id)
-                .map(|e| e.position_iface().get_elevation())
-                .unwrap_or(0.0);
-            let vlayer = self
-                .get_entity(victim_id)
-                .map(|e| e.element_data().layer())
-                .unwrap_or(0);
-            let vsector = self
-                .get_entity(victim_id)
-                .and_then(|e| e.element_data().sector());
-            let vis_rider = self
-                .get_entity(victim_id)
-                .map(|e| matches!(e, Entity::Soldier(s) if s.soldier.rider))
-                .unwrap_or(false);
-            let vmbox = self
-                .get_entity(victim_id)
-                .map(|e| e.position_iface())
-                .map(|p| *p.get_move_box())
-                .unwrap_or_else(|| {
-                    crate::coordinates::MoveBox::from_corners(
-                        crate::coordinates::MapVec::new(-5.0, -5.0),
-                        crate::coordinates::MapVec::new(5.0, 5.0),
-                    )
-                });
-            (apos, adir, vpos, vz, vlayer, vsector, vis_rider, vmbox)
-        };
-
-        // Compute flight vector based on strike type.
-        let attacker_dir_vec = sector_to_vector_iso(attacker_dir as u16, ASPECT_RATIO);
-        let (mut flight_x, mut flight_y) = if push.strike == SwordStrike::Charge {
-            // Charge uses attacker direction × charge repulsion.
-            (
-                attacker_dir_vec.0 * push.repulsion as f32,
-                attacker_dir_vec.1 * push.repulsion as f32,
-            )
-        } else {
-            push_flight_vector(
-                push.kind,
-                attacker_dir_vec,
-                attacker_pos,
-                victim_pos,
-                push.max_distance,
-            )
-        };
-
-        // Set victim facing opposite to flight direction.
-        if flight_x.abs() > 0.01 || flight_y.abs() > 0.01 {
-            let flight_sector =
-                crate::position_interface::vector_to_sector_0_to_15(flight_x, flight_y);
-            let facing = (flight_sector + 8) % 16;
-            if let Some(entity) = self.world.entities.get_mut(victim_id) {
-                entity.element_data_mut().set_direction_instantly(facing);
-            }
-        }
-
-        // "Horses cannot fly!"
-        if victim_is_rider {
-            flight_x = 0.0;
-            flight_y = 0.0;
-        }
-
-        // Validate destination with `is_straight_movement_authorized`
-        // using a nested-gate fallback: try 100%; on fail try 50%,
-        // then if 50% reaches additionally try 75% (pick whichever);
-        // if 50% blocked drop to 25%; final fallback is the minimal
-        // goal (no displacement, bOK = false).  Then verify the
-        // chosen point is inside the minimal-goal sector's polygon
-        // and revert to minimal goal on failure.
-        let (goal_x, goal_y) = {
-            let pt_start = victim_pos;
-            let try_pt = |frac: f32| {
-                crate::coordinates::MapPoint::new(
-                    victim_pos.x + flight_x * frac,
-                    victim_pos.y + flight_y * frac,
-                )
-            };
-            let authorized = |pt_try: crate::coordinates::MapPoint| {
-                self.world.fast_grid.is_straight_movement_authorized(
-                    pt_start,
-                    pt_try,
-                    victim_layer,
-                    &victim_move_box,
-                )
-            };
-
-            let mut chosen: Option<crate::coordinates::MapPoint> = None;
-            // 100%
-            let pt_full = try_pt(1.0);
-            if authorized(pt_full) {
-                chosen = Some(pt_full);
-            } else {
-                // 50% gate
-                let pt_half = try_pt(0.5);
-                if authorized(pt_half) {
-                    // 50% reaches: try 75% on top, else stay at 50%.
-                    let pt_three_quarter = try_pt(0.75);
-                    if authorized(pt_three_quarter) {
-                        chosen = Some(pt_three_quarter);
-                    } else {
-                        chosen = Some(pt_half);
-                    }
-                } else {
-                    // 50% blocked: drop to 25% (no upward retry to 75%).
-                    let pt_quarter = try_pt(0.25);
-                    if authorized(pt_quarter) {
-                        chosen = Some(pt_quarter);
-                    }
-                    // else fall through to minimal goal (bOK = false).
-                }
-            }
-
-            // If the chosen goal isn't inside the minimal-goal
-            // sector's polygon, revert to the minimal goal.
-            if let Some(pt) = chosen {
-                let inside_polygon = victim_sector
-                    .and_then(|s| {
-                        self.world
-                            .fast_grid
-                            .level
-                            .sector_number_map
-                            .get(&crate::sector::SectorNumber::new(u16::from(s) as i16))
-                            .copied()
-                    })
-                    .and_then(|idx| self.world.fast_grid.level.sectors.get(idx))
-                    .map(|gs| gs.contains_point(pt))
-                    // Without a known sector, trust the
-                    // `is_straight_movement_authorized` result.
-                    .unwrap_or(true);
-                if inside_polygon {
-                    (pt.x, pt.y)
-                } else {
-                    (victim_pos.x, victim_pos.y)
-                }
-            } else {
-                (victim_pos.x, victim_pos.y)
-            }
-        };
-
-        // Compute flight tick count from the falling-pushed sprite.
-        // `total_ticks_for_anim` returns the sum of per-frame delays
-        // so the per-frame increment is paced to match how long the
-        // sprite actually plays.
-        let flight_frames = {
-            let victim = self.get_entity(victim_id);
-            let posture = victim.map(|e| e.element_data().posture).unwrap_or_default();
-            let action = victim
-                .and_then(|e| e.actor_data())
-                .map(|a| a.action_state)
-                .unwrap_or_default();
-            let anims = select_push_damage_animations(posture, action);
-            let falling_anim = anims.map(|a| a.falling);
-            let from_sprite = falling_anim
-                .and_then(|anim| {
-                    victim.map(|entity| {
-                        let sprite = entity.sprite();
-                        let concrete_anim = crate::engine::animation::sprite_anim_for_order(
-                            sprite,
-                            anim,
-                            entity.is_pc(),
-                        );
-                        sprite.ready_for_takeoff_ticks_for_anim(concrete_anim)
-                    })
-                })
-                .unwrap_or(0);
-            if from_sprite > 1 { from_sprite } else { 8u16 }
-        };
-
-        // Resolve the goal's projection-area obstacle (if any) and
-        // derive `goal_z`.  When no projection area covers the
-        // chosen flight goal the destination sits on flat ground
-        // (z = 0).  We use the victim's current sector here — push
-        // flights are intra-sector by default (the goal sector is
-        // copied from the minimal-goal sector at validation time).
-        let (goal_obstacle, goal_z) = match victim_sector {
-            Some(sh) => match self.get_projection_area_index(
-                assets,
-                sh.get(),
-                victim_layer,
-                crate::coordinates::MapPoint::new(goal_x, goal_y),
-            ) {
-                Some(obs_idx) => {
-                    let z = self
-                        .sight_obstacles(assets)
-                        .get(obs_idx as usize)
-                        .map(|obs| obs.compute_top_z_from_projection(goal_x, goal_y))
-                        .unwrap_or(0.0);
-                    (crate::position_interface::ObstacleHandle::new(obs_idx), z)
-                }
-                None => (None, 0.0),
-            },
-            None => (None, 0.0),
-        };
-
-        // Set up ActiveFlight on the victim.
-        let total_dx = goal_x - victim_pos.x;
-        let total_dy = goal_y - victim_pos.y;
-        let total_dz = goal_z - victim_z;
-        if flight_frames > 0
-            && (total_dx.abs() > 0.01 || total_dy.abs() > 0.01 || total_dz.abs() > 0.01)
-        {
-            let inc_x = total_dx / flight_frames as f32;
-            let inc_y = total_dy / flight_frames as f32;
-            let inc_z = total_dz / flight_frames as f32;
-            if let Some(entity) = self.world.entities.get_mut(victim_id)
-                && let Some(actor) = entity.actor_data_mut()
-            {
-                actor.active_flight = Some(crate::element::ActiveFlight {
-                    geometry: crate::element::FlightGeometry::World3d,
-                    increment_x: inc_x,
-                    increment_y: inc_y,
-                    goal_x,
-                    goal_y,
-                    frames_remaining: flight_frames,
-                    // The push-flight tick unconditionally invokes
-                    // `apply_domino_effect` with the attacker each
-                    // frame.
-                    antagonist: Some(attacker_id),
-                    increment_z: inc_z,
-                    goal_z,
-                    goal_layer: victim_layer,
-                    goal_sector: victim_sector,
-                    obstacle: goal_obstacle,
-                    ladder_fall: false,
-                });
-            }
-        }
+        let victim_is_rider = self
+            .get_entity(victim_id)
+            .is_some_and(|entity| matches!(entity, Entity::Soldier(s) if s.soldier.rider));
 
         // Read victim state for animation selection
         let (posture, action_state, is_dead, is_unconscious, concussion) = {
@@ -1124,6 +877,12 @@ impl EngineInner {
             // damage element so `do_next_order` plays them in
             // sequence.
             self.queue_damage_anim(victim_id, damage_element, anims.falling);
+            self.orders
+                .sequence_manager
+                .get_element_mut(damage_element.0, damage_element.1)
+                .and_then(|element| element.orders.back_mut())
+                .expect("queued falling-pushed order vanished")
+                .antagonist = Some(attacker_id);
             if !is_dead
                 && !is_unconscious
                 && damage_result.contains(combat::SwordDamageResult::STUNNING_DAMAGE)
@@ -1228,6 +987,194 @@ impl EngineInner {
             );
             true // still handled by push path
         }
+    }
+
+    /// Initialize `ReadyForTakeOff` for an authored falling-pushed order.
+    /// Translation deliberately leaves no `active_flight`: the original
+    /// samples the attacker's live direction and both actors' live positions
+    /// under `ExecuteFallingPushed::IsInitialisation()`.
+    pub(crate) fn initialize_push_flight(
+        &mut self,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+        damage_element: (crate::sequence::SequenceId, usize),
+        falling_anim: OrderType,
+    ) {
+        let (attacker_id, strike, profile_idx) = self
+            .orders
+            .sequence_manager
+            .get_element(damage_element.0, damage_element.1)
+            .and_then(|element| match &element.data {
+                crate::sequence::SequenceElementData::Damage {
+                    origin: Some(origin),
+                    sword_strike: Some(strike),
+                    sword_profile_idx: Some(profile_idx),
+                    ..
+                } => Some((*origin, *strike, *profile_idx)),
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                panic!("falling-pushed actor {victim_id:?} lacks sword-damage inputs")
+            });
+        let profile = assets
+            .profile_manager
+            .get_hth_weapon(profile_idx)
+            .unwrap_or_else(|| panic!("missing push weapon profile {profile_idx}"));
+        let thrust = &profile.thrusts[strike as usize];
+
+        let (attacker_pos, attacker_dir) = self
+            .get_entity(attacker_id)
+            .map(|entity| {
+                (
+                    entity.element_data().position_map(),
+                    entity.element_data().direction(),
+                )
+            })
+            .unwrap_or_else(|| panic!("falling-pushed attacker {attacker_id:?} is missing"));
+        let (victim_pos, victim_z, layer, sector, move_box, rider, frames) = {
+            let victim = self
+                .get_entity(victim_id)
+                .unwrap_or_else(|| panic!("falling-pushed victim {victim_id:?} is missing"));
+            let concrete_anim = crate::engine::animation::sprite_anim_for_order(
+                victim.sprite(),
+                falling_anim,
+                victim.is_pc(),
+            );
+            (
+                victim.element_data().position_map(),
+                victim.position_iface().get_elevation(),
+                victim.element_data().layer(),
+                victim.element_data().sector(),
+                // Retail GetMoveBox(RHPOSTURE_LYING) currently returns the
+                // primary move box (the posture switch is commented out).
+                *victim.position_iface().get_move_box(),
+                matches!(victim, Entity::Soldier(soldier) if soldier.soldier.rider),
+                victim
+                    .sprite()
+                    .ready_for_takeoff_ticks_for_anim(concrete_anim)
+                    .max(1),
+            )
+        };
+
+        let direction = sector_to_vector_iso(attacker_dir as u16, ASPECT_RATIO);
+        let (mut flight_x, mut flight_y) = if strike == SwordStrike::Charge {
+            (
+                direction.0 * thrust.repulsion as f32,
+                direction.1 * thrust.repulsion as f32,
+            )
+        } else {
+            push_flight_vector(
+                thrust.kind,
+                direction,
+                attacker_pos,
+                victim_pos,
+                thrust.maximal_distance as f32,
+            )
+        };
+        if flight_x.abs() > 0.01 || flight_y.abs() > 0.01 {
+            let facing =
+                (crate::position_interface::vector_to_sector_0_to_15(flight_x, flight_y) + 8) % 16;
+            self.get_entity_mut(victim_id)
+                .expect("falling-pushed victim vanished")
+                .element_data_mut()
+                .set_direction_instantly(facing);
+        }
+        if rider {
+            flight_x = 0.0;
+            flight_y = 0.0;
+        }
+
+        let candidate = |fraction: f32| {
+            crate::coordinates::MapPoint::new(
+                victim_pos.x + flight_x * fraction,
+                victim_pos.y + flight_y * fraction,
+            )
+        };
+        let authorized = |point| {
+            self.world
+                .fast_grid
+                .is_straight_movement_authorized(victim_pos, point, layer, &move_box)
+        };
+        let chosen = if authorized(candidate(1.0)) {
+            Some(candidate(1.0))
+        } else if authorized(candidate(0.5)) {
+            Some(if authorized(candidate(0.75)) {
+                candidate(0.75)
+            } else {
+                candidate(0.5)
+            })
+        } else if authorized(candidate(0.25)) {
+            Some(candidate(0.25))
+        } else {
+            None
+        };
+        let goal = chosen
+            .filter(|point| {
+                sector
+                    .and_then(|sector| {
+                        self.world
+                            .fast_grid
+                            .level
+                            .sector_number_map
+                            .get(&crate::sector::SectorNumber::new(sector.get() as i16))
+                            .copied()
+                    })
+                    .and_then(|index| self.world.fast_grid.level.sectors.get(index))
+                    .is_none_or(|sector| sector.contains_point(*point))
+            })
+            .unwrap_or(victim_pos);
+        let (obstacle, goal_z) = sector
+            .and_then(|sector| self.get_projection_area_index(assets, sector.get(), layer, goal))
+            .map(|index| {
+                let obstacle = crate::position_interface::ObstacleHandle::new(index);
+                let z = self
+                    .sight_obstacles(assets)
+                    .get(index as usize)
+                    .unwrap_or_else(|| panic!("push goal obstacle {index} is missing"))
+                    .compute_top_z_from_projection(goal.x, goal.y);
+                (obstacle, z)
+            })
+            .map_or((None, 0.0), |(obstacle, z)| (obstacle, z));
+
+        // RHSprite::ReadyForTakeOff calls RHPositionInterface::SetObstacle,
+        // not SetObstacleAndMaterial: install the goal plane immediately but
+        // preserve the actor's current footstep material during the flight.
+        let plane = obstacle.map(|handle| {
+            let source = self
+                .sight_obstacles(assets)
+                .get(handle.get() as usize)
+                .unwrap_or_else(|| panic!("push goal obstacle {} is missing", handle.get()));
+            crate::position_interface::PlaneZCoeffs::from_plane_points(&source.top_plane_points)
+        });
+        self.get_entity_mut(victim_id)
+            .expect("falling-pushed victim vanished")
+            .position_iface_mut()
+            .set_obstacle(obstacle, plane);
+        let dx = goal.x - victim_pos.x;
+        let dy = goal.y - victim_pos.y;
+        let dz = goal_z - victim_z;
+        let actor = self
+            .get_entity_mut(victim_id)
+            .expect("falling-pushed victim vanished")
+            .actor_data_mut()
+            .expect("falling-pushed victim lost actor data");
+        actor.active_flight = (dx.abs() > 0.01 || dy.abs() > 0.01 || dz.abs() > 0.01).then_some(
+            crate::element::ActiveFlight {
+                geometry: crate::element::FlightGeometry::World3d,
+                increment_x: dx / frames as f32,
+                increment_y: dy / frames as f32,
+                goal_x: goal.x,
+                goal_y: goal.y,
+                frames_remaining: frames,
+                antagonist: Some(attacker_id),
+                increment_z: dz / frames as f32,
+                goal_z,
+                goal_layer: layer,
+                goal_sector: sector,
+                obstacle,
+                ladder_fall: false,
+            },
+        );
     }
 
     // ─── Rolling on slopes ──────────────────────────────────────────

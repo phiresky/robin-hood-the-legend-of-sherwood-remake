@@ -481,11 +481,8 @@ impl EngineInner {
                         position: victim_pos,
                     });
 
-                // Parry early-return: when the defender wasn't
-                // already in a parry state, push the parry-to-waiting
-                // transition anim onto the damage element; then return
-                // immediately, skipping push/XP/SayOuch/hero-speech/
-                // provoke/AI-stim and the regular hit-reaction.
+                // When the defender wasn't already in a parry state, push the
+                // parry-to-waiting transition onto the damage element.
                 if defender_action != ActionState::ParryingSword
                     && defender_action != ActionState::ParryingSwordLow
                 {
@@ -498,7 +495,15 @@ impl EngineInner {
                         0.0,
                     );
                 }
-                return;
+
+                // Original tests push-strike kind before handling the
+                // NO_DAMAGE_PARRIED result. PushAside, circle, and charge
+                // strikes therefore still run TranslatePushDamage (including
+                // its fall/flight and SayOuch) when parried. Only an ordinary
+                // parried strike returns here with the transition above.
+                if !combat::strike_has_push_effect(&attacker_profile, strike) {
+                    return;
+                }
             } else {
                 self.feedback
                     .pending_side_effects
@@ -520,9 +525,6 @@ impl EngineInner {
             if let Some(attacker) = attacker_id {
                 let push_info = PushStrikeInfo {
                     repulsion: thrust.repulsion,
-                    kind: thrust.kind,
-                    strike,
-                    max_distance: thrust.maximal_distance as f32,
                 };
                 self.apply_push_effect(
                     sim,

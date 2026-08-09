@@ -47,7 +47,6 @@ use super::*;
 use crate::combat::{self, ConcussionContext, ConcussionOutcome};
 use crate::element::{ActionState, Entity, EntityId, EyeStatus, Posture};
 use crate::entities::Entities;
-use crate::profiles::WeaponThrustKind;
 use crate::weapons::SwordStrike;
 #[cfg(test)]
 use crate::{element::Command, sequence::SequenceElementData};
@@ -160,9 +159,6 @@ const DOMINO_DAMAGE: u16 = 3;
 /// Bundled info about a push-type strike, passed to `apply_push_effect`.
 struct PushStrikeInfo {
     repulsion: u16,
-    kind: WeaponThrustKind,
-    strike: SwordStrike,
-    max_distance: f32,
 }
 
 /// Tiredness threshold above which the SWORDSTRIKE_TIRED animation plays.
@@ -4511,6 +4507,255 @@ mod tests {
         assert_eq!(
             ai.known_enemy_strike_2, None,
             "a low-skill guard forgets its previous strike when the parried live strike is learned"
+        );
+    }
+
+    #[test]
+    fn parried_true_circle_still_queues_push_fall() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let assets = assets_with_nonstraight_profile(
+            SwordStrike::H,
+            crate::profiles::WeaponThrustKind::TrueCircle,
+        );
+
+        let mut damage_sequence = crate::sequence::Sequence::new();
+        let mut damage_element =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage_element.data =
+            crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::H, 1);
+        damage_sequence.append_element(damage_element);
+        let damage_sequence_id = engine
+            .orders
+            .sequence_manager
+            .launch_sequence(damage_sequence);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(damage_sequence_id, 0);
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .action_state = ActionState::ParryingSword;
+        let victim_position_before = engine
+            .get_entity(victim)
+            .unwrap()
+            .element_data()
+            .position_map();
+        let victim_moving_before = engine
+            .get_entity(victim)
+            .unwrap()
+            .position_iface()
+            .is_moving_map();
+
+        engine.apply_sword_damage(
+            &sim,
+            &assets,
+            victim,
+            Some(attacker),
+            Some(SwordStrike::H),
+            Some(1),
+            (damage_sequence_id, 0),
+        );
+
+        let damage = engine
+            .orders
+            .sequence_manager
+            .get_element(damage_sequence_id, 0)
+            .expect("parried push damage must retain its sequence element");
+        assert_eq!(
+            damage
+                .orders
+                .back()
+                .expect("Original TranslatePushDamage queues a fall even when the hit is parried")
+                .order_type,
+            OrderType::FallingPushedWithSword
+        );
+        let victim_after_translation = engine.get_entity(victim).unwrap();
+        assert_eq!(
+            victim_after_translation.element_data().position_map(),
+            victim_position_before,
+            "TranslatePushDamage only queues the falling order; ExecuteFallingPushed owns movement"
+        );
+        assert_eq!(
+            victim_after_translation.position_iface().is_moving_map(),
+            victim_moving_before,
+            "translation must not introduce movement before the falling order executes"
+        );
+
+        // Model the replay boundary: the damage element has authored a push
+        // fall, but the victim's still-selected order is its postponed parry.
+        // ReadyForTakeOff must not initialize until FallingPushedWithSword
+        // becomes current and reports Start.
+        engine
+            .orders
+            .sequence_manager
+            .postpone_element(damage_sequence_id, 0);
+        let mut parry_sequence = crate::sequence::Sequence::new();
+        let mut parry_element =
+            crate::sequence::SequenceElement::new(1, Command::ParrySword, Some(victim));
+        parry_element.orders.push_back(crate::order::Order::new(
+            OrderType::ParryingSword,
+            0.0,
+            0.0,
+            engine.orders.allocate_order_id(),
+        ));
+        parry_sequence.append_element(parry_element);
+        let parry_sequence_id = engine
+            .orders
+            .sequence_manager
+            .launch_sequence(parry_sequence);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(parry_sequence_id, 0);
+        assert!(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_flight
+                .is_none(),
+            "TranslatePushDamage must not run ReadyForTakeOff eagerly"
+        );
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .current_order_for_actor(victim)
+                .map(|(_, _, order)| order.order_type),
+            Some(OrderType::ParryingSword)
+        );
+        engine.tick_push_flights(&sim, &assets);
+        assert_eq!(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .element_data()
+                .position_map(),
+            victim_position_before,
+            "prepared push flight must wait behind the still-selected parry order"
+        );
+
+        engine
+            .orders
+            .sequence_manager
+            .element_terminated(parry_sequence_id, 0);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(damage_sequence_id, 0);
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            victim_entity.set_posture(Posture::Flying);
+            victim_entity
+                .actor_data_mut()
+                .unwrap()
+                .execute_order_initialising = true;
+        }
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .current_order_for_actor(victim)
+                .map(|(_, _, order)| order.order_type),
+            Some(OrderType::FallingPushedWithSword)
+        );
+        let material_before_takeoff = engine.get_entity(victim).unwrap().element_data().material();
+        engine.initialize_push_flight(
+            &assets,
+            victim,
+            (damage_sequence_id, 0),
+            OrderType::FallingPushedWithSword,
+        );
+        assert_eq!(
+            engine.get_entity(victim).unwrap().element_data().material(),
+            material_before_takeoff,
+            "ReadyForTakeOff installs only the goal obstacle/plane, not its material"
+        );
+        assert!(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_flight
+                .is_none(),
+            "a fully rejected ReadyForTakeOff retains zero displacement"
+        );
+        let accepted_increment = 1.0;
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_flight = Some(ActiveFlight {
+            increment_x: accepted_increment,
+            goal_x: victim_position_before.x + 8.0,
+            goal_y: victim_position_before.y,
+            frames_remaining: 8,
+            antagonist: Some(attacker),
+            ..Default::default()
+        });
+        engine.tick_push_flights(&sim, &assets);
+        let victim_after_fall_start = engine.get_entity(victim).unwrap();
+        assert_eq!(
+            victim_after_fall_start.element_data().posture,
+            Posture::Flying
+        );
+        assert_eq!(
+            victim_after_fall_start.element_data().position_map(),
+            victim_position_before,
+            "PerformFlight Start changes posture but applies no displacement"
+        );
+
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .execute_order_initialising = false;
+        engine.tick_push_flights(&sim, &assets);
+        assert_eq!(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .element_data()
+                .position_map(),
+            crate::coordinates::MapPoint::new(
+                victim_position_before.x + accepted_increment,
+                victim_position_before.y
+            ),
+            "the first push-flight increment belongs to the next Execute"
+        );
+        assert!(
+            !engine
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(attacker, |command| {
+                    command == Command::Provoke
+                }),
+            "parried push strikes still skip the later provoke branch"
         );
     }
 

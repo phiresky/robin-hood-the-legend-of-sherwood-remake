@@ -4455,6 +4455,37 @@ impl EngineInner {
             self.initialize_hit_flight(assets, entity_id, antagonist, anim);
         }
 
+        // TranslatePushDamage likewise only authors the falling order.
+        // ExecuteFallingPushed initializes ReadyForTakeOff from live strike
+        // geometry immediately before its first PerformFlight call.
+        let initial_push_flight = self
+            .world
+            .entities
+            .get(entity_id)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| actor.execute_order_initialising)
+            .then(|| {
+                self.orders
+                    .sequence_manager
+                    .current_order_for_actor(entity_id)
+                    .map(|(sequence_id, element_index, order)| {
+                        (sequence_id, element_index, order.order_type)
+                    })
+            })
+            .flatten()
+            .filter(|(_, _, anim)| {
+                matches!(
+                    anim,
+                    OrderType::FallingPushedUpright
+                        | OrderType::FallingPushedWithBow
+                        | OrderType::FallingPushedWithSword
+                        | OrderType::FallingPushedCrouched
+                )
+            });
+        if let Some((sequence_id, element_index, anim)) = initial_push_flight {
+            self.initialize_push_flight(assets, entity_id, (sequence_id, element_index), anim);
+        }
+
         // RHElementActorHuman's eight dying/falling arms run
         // FindPlaceToDie under IsInitialisation() immediately before
         // PerformAction. Do this before borrowing the actor for the generic
