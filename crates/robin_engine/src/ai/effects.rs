@@ -103,6 +103,12 @@ pub struct AiReentrantOutbox {
     /// them in one queue preserves statement order at the owner return barrier
     /// instead of rebuilding a frame-global speech batch.
     pub owner_work: Vec<AiOwnerWork>,
+    /// `ReconsiderEnemyApproach` has issued its synchronous `GoNear`, but its
+    /// post-call couldn't-reachpoint tail has not run yet. Path construction
+    /// is engine-owned in Rust, so completion delivery must retain the failure
+    /// latch for the typed owner continuation instead of translating it into
+    /// an independent `EVENT_COULDNT_REACHPOINT`.
+    pub reconsider_approach_completion_pending: bool,
     pub waypoint_script_reach_point: Option<(PathId, u8)>,
 }
 
@@ -149,6 +155,12 @@ pub enum AiOwnerWork {
     /// Continue `CMD_PATROL_START` after its inline `InitializePatrol` call.
     ResumeMacroAfterPatrolInit {
         owner_boundary_positions: Vec<(u32, Position)>,
+    },
+    /// Continue `ReconsiderEnemyApproach` after its synchronous movement
+    /// construction has either succeeded or set `mbCouldntReachpoint`.
+    ResumeReconsiderEnemyApproachAfterGoNear {
+        target: HumanHandle,
+        target_position: Position,
     },
     Speech(AiSpeechAttempt),
     RestoreDetectableObjects {
