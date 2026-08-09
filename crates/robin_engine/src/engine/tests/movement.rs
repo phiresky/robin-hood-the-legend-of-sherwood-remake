@@ -1279,6 +1279,10 @@ fn rider_charge_real_hit_lands_once_only_and_uses_post_turn_flight_direction() {
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
     let origin = MapPoint::new(100.0, 100.0);
+    // Put the victim before the rider in creation order. On the frame after
+    // damage translation, its FallingHit Execute must sample the rider's
+    // post-hit direction before the rider takes another charge Turn step.
+    let victim = add_charge_victim(&mut engine, rider_charge_point(origin, 0, 0.0, 30.0));
     let (rider, _, _) = install_rider_charge_fixture(
         &mut engine,
         &mut assets,
@@ -1287,7 +1291,6 @@ fn rider_charge_real_hit_lands_once_only_and_uses_post_turn_flight_direction() {
     );
     // Frame zero's polygon is the one-sided width segment at the pre-Turn
     // origin. The fixture's eastward goal turns the live rider from 0 to 1.
-    let victim = add_charge_victim(&mut engine, rider_charge_point(origin, 0, 0.0, 30.0));
     clear_test_sword_damage_observations();
 
     tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets);
@@ -1314,8 +1317,8 @@ fn rider_charge_real_hit_lands_once_only_and_uses_post_turn_flight_direction() {
     let expected_facing =
         (crate::position_interface::vector_to_sector_0_to_15(flight_x, flight_y) + 8) & 15;
     assert_eq!(
-        hit.victim_direction_after, expected_facing,
-        "prepare_hit_fall/push faces the victim opposite live rider direction 1"
+        hit.victim_direction_after, 0,
+        "TranslateHitDamage only authors the fall order; ReadyForTakeOff is deferred to Execute"
     );
     assert!(
         engine
@@ -1331,7 +1334,19 @@ fn rider_charge_real_hit_lands_once_only_and_uses_post_turn_flight_direction() {
     );
 
     clear_test_sword_damage_observations();
-    tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets);
+    // The first frame's manager drain only translates ReceiveSwordDamage and
+    // installs FallingHit. ReadyForTakeOff belongs to that order's next
+    // source-authored owner Execute slot, not the movement-only fixture path.
+    tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
+    assert_eq!(
+        engine
+            .get_entity(victim)
+            .unwrap()
+            .element_data()
+            .direction(),
+        expected_facing,
+        "the fall order's first Execute faces the victim opposite live rider direction 1"
+    );
     assert!(
         take_test_sword_damage_observations().is_empty(),
         "victim is hit once"

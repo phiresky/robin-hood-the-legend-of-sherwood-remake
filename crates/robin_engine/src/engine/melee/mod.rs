@@ -2550,7 +2550,7 @@ mod tests {
         })
     }
 
-    /// Set up an active push-flight on `flyer` so the per-frame
+    /// Set up a live falling-hit Execute flight on `flyer` so the per-frame
     /// `tick_push_flights` sweep fires `apply_domino_effect`.
     fn give_flight(
         engine: &mut EngineInner,
@@ -2565,9 +2565,41 @@ mod tests {
             .unwrap()
             .element_data()
             .position_map();
-        if let Some(entity) = engine.world.entities.get_mut(flyer)
-            && let Some(actor) = entity.actor_data_mut()
-        {
+
+        // Original owns combat flight from the live falling order's Execute
+        // arm. Mirror that lifecycle instead of manufacturing an orphaned
+        // `active_flight`, which production correctly holds until the order is
+        // current and its START edge has changed posture to Flying.
+        let damage = crate::sequence::SequenceElement::new_damage(
+            1,
+            Command::ReceiveHitDamage,
+            Some(flyer),
+            Some(antagonist),
+            1,
+            0,
+        );
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        let order_id = engine.push_new_order(
+            sequence,
+            0,
+            crate::order::OrderType::FallingHitUpright,
+            0.0,
+            0.0,
+        );
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+
+        if let Some(entity) = engine.world.entities.get_mut(flyer) {
+            entity.set_posture(Posture::Flying);
+            let actor = entity
+                .actor_data_mut()
+                .expect("combat flight owner must be an actor");
+            actor.installed_order = Some(crate::element::InstalledActorOrder {
+                order_id,
+                order_type: crate::order::OrderType::FallingHitUpright,
+            });
             actor.active_flight = Some(ActiveFlight {
                 increment_x: inc_x,
                 increment_y: inc_y,

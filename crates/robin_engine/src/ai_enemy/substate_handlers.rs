@@ -6884,6 +6884,10 @@ mod tests {
         ai.base.detected_body = 17;
 
         let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        let mut owner = pc_view(crate::element::Posture::Upright);
+        owner.kind = crate::ai_entity_view::EntityKind::Soldier;
+        owner.is_pc = false;
+        views.insert(1, owner);
         views.insert(17, pc_view(crate::element::Posture::Tied));
         let ctx = AiContext {
             entity_views: crate::ai_entity_view::shared_entity_views(views),
