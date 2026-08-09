@@ -88,6 +88,51 @@ use crate::combat::{self, SwordAttackerContext, SwordDamageParams, SwordDefender
 use crate::element::{ActionState, Camp, Entity, EntityId, EyeStatus, Posture};
 use crate::weapons::SwordStrike;
 
+/// Original's RECEIVE_HIT_DAMAGE sends EVENT_GOTHIT only through the NPC
+/// override. PCs share the human concussion and translation work but have no
+/// AI controller to notify.
+fn conscious_hit_notifies_ai(victim: &Entity) -> bool {
+    victim.is_npc() && victim.human_data().is_some_and(|human| !human.unconscious)
+}
+
+#[cfg(test)]
+mod conscious_hit_notification_tests {
+    use super::*;
+    use crate::element::{
+        ActorData, ActorPc, ActorSoldier, ElementData, ElementKind, HumanData, NpcData, PcData,
+        SoldierData,
+    };
+
+    #[test]
+    fn conscious_hit_notifies_npc_but_not_pc() {
+        let pc = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        });
+        assert!(!conscious_hit_notifies_ai(&pc));
+
+        let mut soldier = Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            soldier: SoldierData::default(),
+        });
+        assert!(conscious_hit_notifies_ai(&soldier));
+
+        soldier.human_data_mut().unwrap().unconscious = true;
+        assert!(!conscious_hit_notifies_ai(&soldier));
+    }
+}
+
 impl EngineInner {
     /// Nudge the victim to the nearest authorised position so the
     /// corpse doesn't overlap props or other actors.  Invoked at
@@ -1383,11 +1428,10 @@ impl EngineInner {
             // while unconscious).
             self.quit_swordfight(sim, assets, victim_id);
         } else {
-            let still_conscious = self
+            let conscious_npc = self
                 .get_entity(victim_id)
-                .and_then(Entity::human_data)
-                .is_some_and(|human| !human.unconscious);
-            if still_conscious {
+                .is_some_and(conscious_hit_notifies_ai);
+            if conscious_npc {
                 // Original always notifies a conscious NPC of the hit. It
                 // attaches the hitter only when the origin is a human;
                 // missing and non-human origins use the context-free event.
