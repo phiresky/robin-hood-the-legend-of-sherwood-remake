@@ -10886,6 +10886,13 @@ impl EngineInner {
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
+        // This is a direct recursive `BreakPhalanx` call rather than a typed
+        // Think dispatch, but its `PhalanxReinitializeThemList` performs live
+        // `IsDetecting180Degrees` checks. Those checks share the Original's
+        // surface-owned `ComputeViewRadius` memo with later RefreshDetection
+        // in the same frame, so bracket the direct AI call with the same
+        // cache handoff as the Think wrapper.
+        ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
         let tick_data = self.build_npc_tick_data(sim, target_id, &scratch, assets);
         {
             let ai_global = &mut self.ai.global;
@@ -10905,6 +10912,7 @@ impl EngineInner {
                 refresh_them_list,
             );
         }
+        ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
         self.drain_direct_ai_owner_boundary(sim, target_id, assets);
     }
 

@@ -3657,6 +3657,10 @@ mod tests {
             ]
         );
         assert!(queries.iter().all(|query| query.result));
+        let cached_radius = ctx.compute_view_radius_cached(member.entity, None, || {
+            panic!("the phalanx member's ground radius should remain cached for its caller")
+        });
+        assert!(cached_radius > 0.0);
     }
 
     #[test]
