@@ -1,0 +1,9 @@
+{
+  "id": "212",
+  "subject": "Use 3D distance for BattleDecisions reserve selection",
+  "description": "BattleDecisions reserve selection now measures Original's literal 3D positions, including stretched world Y, Z, and ULONG truncation, instead of projected map X/Y. The schema-14 linux3 Profile_003 Savegame_010 replay-003 representative clears Soldier144's frame-19649 substate frontier and advances to an independent Soldier89 detectable-list frontier at frame 19740. The focused fixture includes the required live owner view; both task-36 controls match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "root"
+}

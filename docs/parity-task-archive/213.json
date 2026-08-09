@@ -1,0 +1,9 @@
+{
+  "id": "213",
+  "subject": "Restore the selected door-pass walk action after speed transition",
+  "description": "When a selected door-pass speed transition retires into a concrete distance-motion order, ActiveDoorPass now rebinds its mirrored current action to that installed successor. Original has one order list; Rust's stale transition mirror previously overrode the final 1.6 movement units with the wrong sprite row. Nescafe Profile_001 Savegame_001 replay-003 clears frame 1090 and advances to the independent Wait-to-HitCmd handoff at frame 1636; focused coverage passes.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "root"
+}

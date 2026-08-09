@@ -1,0 +1,9 @@
+{
+  "id": "211",
+  "subject": "Preserve facing when SeekingBody reaches its target",
+  "description": "SeekingBody EVENT_REACHPOINT no longer performs an invented Face operation. Original evaluates the reached-body branches without changing the actor's facing, so the Rust port now preserves the live direction. Nescafe Profile_003 Restart replay-014 and both task-36 schema-14 replay-009 controls match exact EOF; focused coverage and formatting pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "root"
+}

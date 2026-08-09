@@ -1,0 +1,9 @@
+{
+  "id": "214",
+  "subject": "Preserve an already-comatose PC at the lethal damage boundary",
+  "description": "PC sword damage now follows RHElementActorPC::GetWounded: an otherwise lethal hit is ignored while the PC is already in an amulet coma, while sublethal damage still applies and protection RNG plus cutting-result semantics remain intact. SuN1Sh1nE Profile_004 ExQuickSave replay-009 clears frame 35951 and matches exact EOF. The focused lethal/sublethal regression, formatting, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task183-posture"
+}

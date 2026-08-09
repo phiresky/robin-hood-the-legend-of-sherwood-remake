@@ -1,0 +1,9 @@
+{
+  "id": "210",
+  "subject": "Apply reciprocal combat-neighbour setters synchronously",
+  "description": "Direct SetLeftCombatNeighbour and SetRightCombatNeighbour effects now drain after each owner slot, matching Original's registry-ordered mutation visibility. Soldier52 therefore clears Soldier53's reciprocal left link before Soldier53 executes, restoring PhalanxReinitializeThemList and its blocked visibility query against PC167. Both task-36 schema-14 replay-009 controls match exact EOF; the linux2 Profile_002 Savegame_034 replay-009 representative advances from frame 34476 to the independent Projectile177 movement frontier at frame 34689.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "external-agent"
+}
