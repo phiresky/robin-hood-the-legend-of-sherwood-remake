@@ -89,7 +89,7 @@ fn phalanx_member_detects_360(
 fn phalanx_member_detects_180(
     member: &PhalanxMemberThemList,
     target: &PhalanxEnemySnapshot,
-    obstacles: crate::sight_obstacle::ObstacleList<'_>,
+    ctx: &AiContext,
 ) -> bool {
     if member.in_building || !target.active {
         return false;
@@ -144,6 +144,37 @@ fn phalanx_member_detects_180(
         return false;
     }
 
+    // Original calls ComputeViewRadius here, before the final target LOS.
+    // At night/fog that call emits the ordered light-sector barycentre rays;
+    // its per-surface memo is observable because later detection calls can
+    // reuse the radius without repeating those rays.
+    let obstacles = ctx.obstacle_list();
+    let target_obstacle = target.obstacle.map(|handle| {
+        obstacles.get(usize::from(handle)).unwrap_or_else(|| {
+            panic!(
+                "phalanx detection target {} requires missing sight obstacle {}",
+                target.handle,
+                u16::from(handle)
+            )
+        })
+    });
+    let effective_view_radius =
+        ctx.compute_view_radius_cached(member.entity, target.obstacle, || {
+            crate::ai_vision::compute_view_radius(
+                crate::coordinates::WorldPoint3D::new(viewer_ground.x, viewer_ground.y, viewer_z),
+                member.view_radius,
+                (member.view_direction[0], member.view_direction[1]),
+                member.real_half_aperture,
+                ctx.is_night_or_fog,
+                &ctx.fast_grid,
+                obstacles,
+                target_obstacle,
+            )
+        });
+    if sq_distance > effective_view_radius * effective_view_radius {
+        return false;
+    }
+
     crate::sight_obstacle::is_reachable_3d(
         obstacles,
         [viewer_ground.x, viewer_ground.y, viewer_z],
@@ -156,8 +187,9 @@ fn append_phalanx_member_enemies(
     merged: &mut Vec<HumanHandle>,
     member: &PhalanxMemberThemList,
     kept: &[&PhalanxEnemySnapshot],
-    obstacles: crate::sight_obstacle::ObstacleList<'_>,
+    ctx: &AiContext,
 ) {
+    let obstacles = ctx.obstacle_list();
     tracing::trace!(
         target: "robin_engine::ai_enemy::phalanx",
         member = member.handle,
@@ -192,7 +224,7 @@ fn append_phalanx_member_enemies(
     for target in &member.detectable_enemies {
         // The detection test runs before the dead/unconscious filter, so
         // it queries line of sight even for targets about to be rejected.
-        let detects = phalanx_member_detects_180(member, target, obstacles);
+        let detects = phalanx_member_detects_180(member, target, ctx);
         tracing::trace!(
             target: "robin_engine::ai_enemy::phalanx",
             member = member.handle,
@@ -1485,7 +1517,6 @@ impl EnemyAi {
         // snapshots. Each member cleans its persistent list with its own
         // current 360° radius+LOS, then scans its live detectable-enemy
         // list with its own current 180° radius+LOS.
-        let obstacles = ctx.obstacle_list();
         let mut snapshots: std::collections::HashMap<HumanHandle, &PhalanxEnemySnapshot> =
             std::collections::HashMap::new();
         for member in &tick.phalanx_member_them_lists {
@@ -1507,7 +1538,7 @@ impl EnemyAi {
                     .collect(),
                 None => member.current_them_list.iter().collect(),
             };
-            append_phalanx_member_enemies(&mut self.list_them, member, &kept, obstacles);
+            append_phalanx_member_enemies(&mut self.list_them, member, &kept, ctx);
         }
 
         // (4) Find nearest enemy to phalanx center and make it primary
@@ -3411,8 +3442,8 @@ fn drunk_combat_freezes(sim: &crate::sim_rng::SimulationContext, blood_alcohol: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::element::Posture;
-    use crate::sight_obstacle::{ObstacleList, ObstaclePoint, SightObstacle};
+    use crate::element::{EntityId, Posture, SoldierId};
+    use crate::sight_obstacle::{ObstaclePoint, SharedSightObstacles, SightObstacle};
     use crate::sim_rng::{RngSite, SimulationContext, with_draw_trace};
 
     fn position(x: f32, y: f32) -> Position {
@@ -3438,6 +3469,7 @@ mod tests {
             unconscious: false,
             friend: false,
             in_building: false,
+            obstacle: None,
         }
     }
 
@@ -3449,6 +3481,7 @@ mod tests {
     ) -> PhalanxMemberThemList {
         PhalanxMemberThemList {
             handle,
+            entity: EntityId::Soldier(SoldierId(handle)),
             current_them_list,
             detectable_enemies,
             position: position(0.0, 0.0),
@@ -3457,6 +3490,9 @@ mod tests {
             elevation: 0.0,
             is_rider: false,
             in_building: false,
+            view_radius: radius as u16,
+            view_direction: [1.0, 0.0],
+            real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
             sq_view_radius: radius * radius,
         }
     }
@@ -3508,13 +3544,9 @@ mod tests {
 
         let leftmost_kept: Vec<&PhalanxEnemySnapshot> = leftmost.current_them_list.iter().collect();
         let right_kept: Vec<&PhalanxEnemySnapshot> = right.current_them_list.iter().collect();
-        append_phalanx_member_enemies(
-            &mut merged,
-            &leftmost,
-            &leftmost_kept,
-            ObstacleList::empty(),
-        );
-        append_phalanx_member_enemies(&mut merged, &right, &right_kept, ObstacleList::empty());
+        let ctx = AiContext::default();
+        append_phalanx_member_enemies(&mut merged, &leftmost, &leftmost_kept, &ctx);
+        append_phalanx_member_enemies(&mut merged, &right, &right_kept, &ctx);
 
         assert!(merged.is_empty());
     }
@@ -3526,19 +3558,105 @@ mod tests {
 
         let mut clear_merged = Vec::new();
         let kept: Vec<&PhalanxEnemySnapshot> = member.current_them_list.iter().collect();
-        append_phalanx_member_enemies(&mut clear_merged, &member, &kept, ObstacleList::empty());
+        let clear_ctx = AiContext::default();
+        append_phalanx_member_enemies(&mut clear_merged, &member, &kept, &clear_ctx);
         assert_eq!(clear_merged, vec![9]);
 
         let obstacles = vec![opaque_wall()];
         let active = vec![true];
-        let blocked = ObstacleList {
-            static_obstacles: &obstacles,
-            dynamic_obstacles: &[],
-            static_active: &active,
+        let blocked_ctx = AiContext {
+            sight_obstacles: SharedSightObstacles {
+                static_obstacles: std::sync::Arc::new(obstacles),
+                dynamic_obstacles: std::sync::Arc::new(Vec::new()),
+                static_active: std::sync::Arc::new(active),
+            },
+            ..AiContext::default()
         };
         let mut blocked_merged = Vec::new();
-        append_phalanx_member_enemies(&mut blocked_merged, &member, &kept, blocked);
+        append_phalanx_member_enemies(&mut blocked_merged, &member, &kept, &blocked_ctx);
         assert!(blocked_merged.is_empty());
+    }
+
+    #[test]
+    fn phalanx_night_detection_orders_light_rays_before_target_los() {
+        let mut target = enemy(9, 600.0);
+        target.position.y = 500.0;
+        let mut member = member(2, 500.0, Vec::new(), vec![target]);
+        member.position = position(500.0, 500.0);
+
+        let mut ctx = AiContext {
+            is_night_or_fog: true,
+            ..AiContext::default()
+        };
+        ctx.fast_grid.size_map(20, 20);
+        ctx.fast_grid.allocate_layers(1);
+        let barycentres = [(750.0, 500.0), (760.0, 510.0), (770.0, 490.0)];
+        for (index, &(x, y)) in barycentres.iter().enumerate() {
+            let points = vec![
+                crate::coordinates::MapPoint::new(x - 4.0, y - 4.0),
+                crate::coordinates::MapPoint::new(x + 4.0, y - 4.0),
+                crate::coordinates::MapPoint::new(x + 4.0, y + 4.0),
+                crate::coordinates::MapPoint::new(x - 4.0, y + 4.0),
+            ];
+            let mut bounding_box = crate::coordinates::MapBBox::new();
+            for &point in &points {
+                bounding_box.expand_point(point);
+            }
+            ctx.fast_grid.add_sector(
+                crate::fast_find_grid::GridSector {
+                    points,
+                    bounding_box,
+                    sector_type: crate::sector::SectorType::SHADOW,
+                    layer: 0,
+                    sector_number: crate::sector::SectorNumber::new(index as i16 + 1),
+                    door_index: None,
+                    lift_type: None,
+                    lift_direction: 0,
+                    force_crouched: false,
+                    building_index: None,
+                    low_exit_point: None,
+                    high_exit_point: None,
+                    lowest_door_index: None,
+                    jump_line_indices: Vec::new(),
+                    gate_indices: Vec::new(),
+                    underlying_sector: None,
+                },
+                0,
+            );
+            std::sync::Arc::make_mut(&mut ctx.fast_grid.level)
+                .shadow_data
+                .insert(
+                    index as u32,
+                    crate::sector::ShadowData {
+                        barycentre_2d: crate::coordinates::MapPoint::new(x, y),
+                        barycentre_3d_x: x,
+                        barycentre_3d_y: y,
+                        barycentre_3d_z: 45.0,
+                        radius: 4.0,
+                    },
+                );
+        }
+
+        crate::sight_obstacle::begin_parity_visibility_capture();
+        let mut merged = Vec::new();
+        append_phalanx_member_enemies(&mut merged, &member, &[], &ctx);
+        let queries = crate::sight_obstacle::take_parity_visibility_capture();
+
+        assert_eq!(merged, vec![9]);
+        assert_eq!(queries.len(), 4);
+        assert_eq!(
+            queries
+                .iter()
+                .map(|query| query.destination)
+                .collect::<Vec<_>>(),
+            vec![
+                [750.0, 500.0, 45.0],
+                [760.0, 510.0, 45.0],
+                [770.0, 490.0, 45.0],
+                [600.0, 500.0, 45.0],
+            ]
+        );
+        assert!(queries.iter().all(|query| query.result));
     }
 
     #[test]

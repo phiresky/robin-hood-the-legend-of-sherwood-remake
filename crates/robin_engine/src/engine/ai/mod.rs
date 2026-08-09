@@ -2908,6 +2908,7 @@ impl EngineInner {
                 unconscious: human.unconscious,
                 friend: entity.camp() == member_camp,
                 in_building: self.entity_data_in_building_sector(element),
+                obstacle: element.obstacle_index(),
             }
         };
 
@@ -2952,6 +2953,9 @@ impl EngineInner {
                 .collect();
             out.push(PhalanxMemberThemList {
                 handle: current,
+                entity: self.entity_id_for_index(current).unwrap_or_else(|| {
+                    panic!("phalanx member handle {current} is absent from the entity table")
+                }),
                 current_them_list,
                 detectable_enemies,
                 position: Position {
@@ -2965,6 +2969,9 @@ impl EngineInner {
                 elevation: s.element.sprite.position_iface.get_elevation(),
                 is_rider: s.soldier.rider,
                 in_building: self.entity_data_in_building_sector(&s.element),
+                view_radius: s.npc.view_radius,
+                view_direction: s.npc.view_direction,
+                real_half_aperture: s.npc.real_half_aperture,
                 sq_view_radius: (s.npc.view_radius as f32) * (s.npc.view_radius as f32),
             });
             let next = neighbour_ai.right_combat_neighbour;

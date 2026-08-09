@@ -763,6 +763,9 @@ pub struct PhalanxEnemySnapshot {
     pub unconscious: bool,
     pub friend: bool,
     pub in_building: bool,
+    /// Projection obstacle the target stands on. `ComputeViewRadius` caches
+    /// and slices its view sphere per target surface before the final LOS.
+    pub obstacle: Option<crate::position_interface::ObstacleHandle>,
 }
 
 /// One phalanx member's live viewer state and enemy inputs. Equivalent
@@ -772,6 +775,8 @@ pub struct PhalanxEnemySnapshot {
 pub struct PhalanxMemberThemList {
     /// Member's element handle (matches `FighterSnapshot::handle`).
     pub handle: HumanHandle,
+    /// Concrete viewer identity used by the per-surface view-radius memo.
+    pub entity: crate::element::EntityId,
     /// Persistent `mlistThem` entries evaluated by step 1.
     pub current_them_list: Vec<PhalanxEnemySnapshot>,
     /// Live `GetEnemy(i)` entries evaluated by step 2.
@@ -783,6 +788,10 @@ pub struct PhalanxMemberThemList {
     pub elevation: f32,
     pub is_rider: bool,
     pub in_building: bool,
+    /// Live view-cone values consumed by `ComputeViewRadius`.
+    pub view_radius: u16,
+    pub view_direction: [f32; 2],
+    pub real_half_aperture: f32,
     /// Square of this member's live `mViewParameters.uwRealRadius`.
     pub sq_view_radius: f32,
 }
