@@ -270,10 +270,11 @@ impl EnemyAi {
 
             Substate::DefaultGotoChief => {
                 if stimulus_type == StimulusType::EventReachPoint {
-                    if self.base.patrol_chief.is_some() {
-                        // Face toward the chief's position (cached by engine).
-                        self.base
-                            .face_position_with_ctx(tick.patrol_chief_position, ctx);
+                    if let Some(patrol_chief) = self.base.patrol_chief {
+                        // Original calls the element overload
+                        // `Face(mpPatrolChief)`, which includes the chief's
+                        // truncated elevation in the projection.
+                        self.base.face_entity(patrol_chief.index(), ctx);
                         self.set_state(AiState::Default, Substate::DefaultPatrolEnrouteWaiting);
                         self.base.launch_timer(200, ctx.frame);
                     } else {
@@ -7289,30 +7290,66 @@ mod tests {
     }
 
     #[test]
-    fn goto_chief_reach_uses_face_same_direction_shortcut() {
+    fn goto_chief_reach_faces_live_chief_with_elevation() {
         let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(89);
-        ai.set_state(AiState::Default, Substate::DefaultGotoChief);
+        let mut ai = EnemyAi::new(53);
+        ai.base.current_state = AiState::Default;
+        ai.base.current_substate = Substate::DefaultGotoChief;
         ai.base.patrol_chief = Some(crate::element::EntityId::Soldier(
-            crate::entity_id::SoldierId(91),
+            crate::entity_id::SoldierId(47),
         ));
+        let chief = crate::element::Entity::Soldier(crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        });
+        let mut chief_view = crate::ai_entity_view::entity_view_from_entity(
+            &chief,
+            47,
+            false,
+            None,
+            None,
+            crate::order::OrderType::NonanimationEnd,
+        );
+        chief_view.position = Position {
+            x: 1033.585_9,
+            y: 2036.767,
+            ..Position::default()
+        };
+        chief_view.elevation = 25.100_779;
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        views.insert(47, chief_view);
         let ctx = AiContext {
-            frame: 502,
+            frame: 34_866,
             position: Position {
-                x: 1078.101_9,
-                y: 1783.098,
+                x: 1021.08,
+                y: 2031.790_4,
                 ..Position::default()
             },
-            direction: 12,
+            elevation: 27.711_25,
+            direction: 6,
             self_action_state: crate::element::ActionState::Waiting,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
         let mut tick = AiPerTickData::stub();
-        tick.patrol_chief_position = Position {
-            x: 1042.116_3,
-            y: 1783.832_4,
-            ..Position::default()
-        };
+        tick.patrol_chief_position = ctx.entity_position(47).expect("chief view");
+
+        // The old cached-position overload selects the current sector and
+        // incorrectly completes synchronously. The Original entity overload
+        // adds `(SWORD)25.100779 - 27.71125` to Y and selects sector 5.
+        assert_eq!(
+            crate::position_interface::vector_to_sector_0_to_15_iso(
+                tick.patrol_chief_position.x - ctx.position.x,
+                tick.patrol_chief_position.y - ctx.position.y,
+            ),
+            6
+        );
 
         ai.think_expected_event(
             &sim,
@@ -7323,13 +7360,26 @@ mod tests {
             None,
         );
 
-        assert!(ai.base.already_turned);
-        assert!(ai.base.outbox.actor.orders.is_empty());
+        assert!(!ai.base.already_turned);
+        let [crate::ai::AiOwnerWork::StateChange(notification)] =
+            ai.base.outbox.reentrant.owner_work.as_slice()
+        else {
+            panic!("goto-chief arrival must stage exactly one state change");
+        };
+        let effects = notification
+            .actor_effects_before_callback
+            .as_ref()
+            .expect("Face must precede SetState");
+        let [turn] = effects.orders.as_slice() else {
+            panic!("elevation-aware chief facing must author exactly one turn");
+        };
+        assert_eq!(turn.order_type, crate::order::OrderType::Turning);
+        assert_eq!(turn.explicit_direction, Some(5));
         assert_eq!(
             ai.base.current_substate,
             Substate::DefaultPatrolEnrouteWaiting
         );
-        assert_eq!(ai.base.when_does_timer_ring, 702);
+        assert_eq!(ai.base.when_does_timer_ring, 35_066);
     }
 
     #[test]
