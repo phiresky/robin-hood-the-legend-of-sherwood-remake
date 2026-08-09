@@ -1,0 +1,9 @@
+{
+  "id": "238",
+  "subject": "Preserve authored speed through sword door passes",
+  "description": "Sword-state PassDoor translation now preserves authored sword movement tokens and maps authored RunningUpright to RunningWithSword independently of the door element's intentionally empty FAST flags. SuN1Sh1nE Profile_004 QuickSave replay-009 clears frame 36381 and advances to an independent frame-36915 position-goal frontier; both task-36 controls and the focused regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task232-actor-animation"
+}

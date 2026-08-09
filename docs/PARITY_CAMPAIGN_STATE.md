@@ -263,6 +263,7 @@ Old worktrees under .claude/worktrees/ (agent-* and fix-*) whose branches are fu
 - #239 completed: rolling termination commits Dead/Lying posture before postponed movement resumes. SuN1Sh1nE Profile_004 Savegame_002 replay-012 and both task-36 controls match exact EOF.
 - #236 completed: DefaultGotoChief arrival faces the live chief entity with Original's elevation-aware overload, restoring the postponed Turn. linux2 Profile_002 Savegame_034 replay-009 and both task-36 controls match exact EOF.
 - #240 completed: reactive counterstrikes use the full StopAll/Halt barrier so an interrupted old parry condolence cannot reset the new SpecialStrike state. SuN1Sh1nE Profile_004 Savegame_032 replay-007 clears frame 536 and advances to an independent frame-760 direction frontier; both task-36 controls remain exact EOF.
+- #238 completed: sword-state PassDoor translation preserves authored running speed instead of consulting the door element's empty FAST flags. SuN1Sh1nE Profile_004 QuickSave replay-009 clears frame 36381 and advances to an independent frame-36915 position-goal frontier; both task-36 controls remain exact EOF.
 
 Standing clusters not yet tasked: actor.animation 133 (top cluster, resweep-db67cc978 classification), direction_goal 76, position_goal_map.x 72, motion_state 70, MoveOk→MoveWaiting 57, BoredAnimationChoice 56, AiRandomValueRectangle 55, path_events.length 54, RuntimeBuildingExitWait 51, visibility_queries.length 45 (+43 ai.list_them etc.). Full breakdown: `output/parity-audits/resweep-db67cc978/classification.json`.
 
