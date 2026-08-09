@@ -3076,6 +3076,25 @@ impl AiController {
             return;
         }
 
+        // `GoNear` is implemented by calling this same Original `GoTo`
+        // method with `GOTO_NEAR` stored in the flags. Stuck recovery later
+        // replays those stored flags by calling `GoTo` directly, so the
+        // low-level primitive must preserve the near-distance early-out too.
+        // Unlike the five-pixel shortcut above, this gate is independent of
+        // the current animation and uses SquareNorm on the same layer.
+        let near_tolerance = if flags.contains(GotoFlags::NEAR) {
+            self.stop_before_end_of_path_distance as f32
+        } else {
+            0.0
+        };
+        if flags.contains(GotoFlags::NEAR)
+            && destination.level == ctx.position.level
+            && self.check_already_near(&destination, near_tolerance, ctx)
+        {
+            self.finish_already_on_point();
+            return;
+        }
+
         // Out-of-level-bounds destinations fail fast with
         // `couldnt_reachpoint`. The non-negative half is enforced here;
         // the upper-bound `>= GetLevelSize()` half is enforced by the
@@ -3116,6 +3135,7 @@ impl AiController {
             self.apply_goto_action_state_teardown(flags, ctx);
 
         let mut order = Self::make_move_order(&destination, flags);
+        order.tolerance = near_tolerance;
         order.quit_swordfight_before_move = quit_swordfight_before_move;
         order.stop_menace_before_move = stop_menace_before_move;
         order.lower_shield_before_move = lower_shield_before_move;

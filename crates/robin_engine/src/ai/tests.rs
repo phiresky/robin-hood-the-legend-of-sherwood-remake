@@ -800,6 +800,62 @@ fn goto_already_on_point_uses_original_animation_gate() {
 }
 
 #[test]
+fn goto_replayed_near_flags_finish_inside_stored_tolerance() {
+    let ctx = AiContext {
+        position: Position {
+            x: 1191.0,
+            y: 1807.0,
+            sector: SectorHandle::new(77),
+            level: 1,
+        },
+        // The Original GOTO_NEAR gate is not restricted to idle
+        // animations, unlike the ordinary five-pixel GoTo shortcut.
+        self_animation: crate::order::OrderType::StrikingRightSmalltalk,
+        ..AiContext::default()
+    };
+    let destination = Position {
+        x: 1185.1125,
+        y: 1787.6091,
+        sector: SectorHandle::new(77),
+        level: 1,
+    };
+    let flags = GotoFlags::NEAR | GotoFlags::SWORD;
+    let mut ai = AiController::new(178);
+    ai.think_recursion_depth = 1;
+    ai.stop_before_end_of_path_distance = 65;
+
+    ai.go_to(destination, flags, &ctx);
+
+    assert!(ai.already_on_point);
+    assert!(ai.take_pending_orders().is_empty());
+    assert_eq!(ai.last_goto_destination, destination);
+    assert_eq!(ai.last_goto_flags, flags);
+}
+
+#[test]
+fn goto_replayed_near_flags_propagate_stored_tolerance_outside_radius() {
+    let ctx = goto_short_circuit_ctx(crate::order::OrderType::StrikingRightSmalltalk);
+    let destination = Position {
+        x: 200.0,
+        y: 300.0,
+        sector: SectorHandle::new(1),
+        level: 0,
+    };
+    let flags = GotoFlags::NEAR | GotoFlags::SWORD;
+    let mut ai = AiController::new(178);
+    ai.stop_before_end_of_path_distance = 65;
+
+    ai.go_to(destination, flags, &ctx);
+
+    assert!(!ai.already_on_point);
+    let orders = ai.take_pending_orders();
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].tolerance, 65.0);
+    assert_eq!(ai.last_goto_destination, destination);
+    assert_eq!(ai.last_goto_flags, flags);
+}
+
+#[test]
 fn goto_already_on_point_observes_synchronous_pending_halt_multiplicity() {
     let ctx =
         goto_short_circuit_ctx(crate::order::OrderType::TransitionWalkingUprightRunningUpright);
