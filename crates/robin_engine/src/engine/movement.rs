@@ -563,6 +563,73 @@ fn initialising_climb_uses_lift_direction(
         )
 }
 
+/// Posture owned eagerly by a lift animation while executing a door-pass
+/// step. Wall-exit transitions are different from the climb rows: Original
+/// `RHElementActor::Execute` only inherits `OnWall` when the transition is
+/// initialized, then its raw `DONE` edge is allowed to publish the landing
+/// posture while the animation wrapper remains installed.
+fn door_pass_eager_posture(
+    action: OrderType,
+    has_door_pass_animation: bool,
+    execute_order_initialising: bool,
+) -> Option<crate::element::Posture> {
+    use crate::element::Posture;
+
+    if !has_door_pass_animation {
+        return None;
+    }
+    match action {
+        OrderType::ClimbingWallUp
+        | OrderType::ClimbingWallDown
+        | OrderType::ClimbingWallUpFast
+        | OrderType::ClimbingWallDownFast => Some(Posture::OnWall),
+        OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
+        | OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel
+            if execute_order_initialising =>
+        {
+            Some(Posture::Flying)
+        }
+        OrderType::TransitionClimbingWallUpWaitingCrouched
+        | OrderType::TransitionClimbingWallDownWaitingUpright
+            if execute_order_initialising =>
+        {
+            Some(Posture::OnWall)
+        }
+        OrderType::ClimbingLadderUp
+        | OrderType::ClimbingLadderDown
+        | OrderType::ClimbingLadderUpFast
+        | OrderType::ClimbingLadderDownFast => Some(Posture::OnLadder),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod door_pass_posture_tests {
+    use super::*;
+    use crate::element::Posture;
+
+    #[test]
+    fn recursively_reached_wall_exit_preserves_its_done_posture() {
+        let transition = OrderType::TransitionClimbingWallUpWaitingCrouched;
+
+        assert_eq!(
+            door_pass_eager_posture(transition, true, true),
+            Some(Posture::OnWall),
+            "an initializing wall-exit transition inherits the climb posture"
+        );
+        assert_eq!(
+            door_pass_eager_posture(transition, true, false),
+            None,
+            "a recursively reached Execute must not stomp the crouched posture published by DONE"
+        );
+        assert_eq!(
+            door_pass_eager_posture(OrderType::ClimbingWallUp, true, false),
+            Some(Posture::OnWall),
+            "ordinary wall-climb rows continue owning their posture on every Execute"
+        );
+    }
+}
+
 fn rider_charge_point_in_quad(point: MapPoint, quad: [(f32, f32); 4]) -> bool {
     fn cross(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
         ax * by - ay * bx
@@ -7342,40 +7409,10 @@ impl EngineInner {
             {
                 elem.set_direction_goal(lift_direction);
             }
-            match (anim, door_pass_anim) {
-                (
-                    OrderType::ClimbingWallUp
-                    | OrderType::ClimbingWallDown
-                    | OrderType::ClimbingWallUpFast
-                    | OrderType::ClimbingWallDownFast,
-                    Some(_),
-                ) => {
-                    elem.posture = crate::element::Posture::OnWall;
-                }
-                (
-                    OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
-                    | OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel,
-                    Some(_),
-                ) if execute_order_initialising => {
-                    elem.posture = crate::element::Posture::Flying;
-                }
-                (
-                    OrderType::TransitionClimbingWallUpWaitingCrouched
-                    | OrderType::TransitionClimbingWallDownWaitingUpright,
-                    Some(_),
-                ) => {
-                    elem.posture = crate::element::Posture::OnWall;
-                }
-                (
-                    OrderType::ClimbingLadderUp
-                    | OrderType::ClimbingLadderDown
-                    | OrderType::ClimbingLadderUpFast
-                    | OrderType::ClimbingLadderDownFast,
-                    Some(_),
-                ) => {
-                    elem.posture = crate::element::Posture::OnLadder;
-                }
-                _ => {}
+            if let Some(posture) =
+                door_pass_eager_posture(anim, door_pass_anim.is_some(), execute_order_initialising)
+            {
+                elem.posture = posture;
             }
             if execute_order_initialising
                 && let Some(climb_dir) = door_pass_climb_directions[actor_id]
