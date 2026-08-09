@@ -9,7 +9,7 @@
 use crate::ai::*;
 use crate::parameters_ai;
 
-use super::util::{ai_max_norm_distance, enemy_is_below_me};
+use super::util::{ai_max_norm_distance, ai_square_distance, enemy_is_below_me};
 use super::{EnemyAi, ProfileRank, SeekFlags, UNDEFINED_DIRECTION, combat, task_priority};
 
 impl EnemyAi {
@@ -1934,10 +1934,22 @@ impl EnemyAi {
                     self.base.me
                 )
             });
-            let dx = enemy_pos.x - owner_live_position.x;
-            let dy = (enemy_pos.y - owner_live_position.y)
-                * crate::position_interface::INVERSE_ASPECT_RATIO;
-            let distance = (dx * dx + dy * dy).sqrt();
+            let enemy_elevation = ctx
+                .entity_view(enemy)
+                .map(|view| view.elevation)
+                .unwrap_or_else(|| panic!("EVENT_VIEW target {enemy} requires a live entity view"));
+            // `Distance(pEnemy)` subtracts the actors' literal 3D
+            // `GetPosition()` points, stretches world Y by
+            // INVERSE_ASPECT_RATIO, then takes the Euclidean norm. The
+            // positions carried here are map-space, so recover world Y with
+            // each actor's elevation before dividing by three.
+            let distance = ai_square_distance(
+                &enemy_pos,
+                enemy_elevation,
+                &owner_live_position,
+                ctx.elevation,
+            )
+            .sqrt();
             let radius = (distance / 3.0).max(0.0) as i32;
             self.base
                 .go_near(enemy_pos, radius, crate::ai::GotoFlags::RUN, ctx);
@@ -2939,6 +2951,60 @@ mod tests {
                 .expect("moving-fast EventView queues GoNear")
                 .tolerance,
             161.0
+        );
+    }
+
+    #[test]
+    fn moving_fast_event_view_distance_uses_stretched_world_3d_positions() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(70);
+        let enemy_position = Position {
+            x: 57.0,
+            y: 245.0,
+            sector: crate::position_interface::SectorHandle::new(0),
+            level: 0,
+        };
+        let mut enemy_view = object_view(ObjectType::None);
+        enemy_view.kind = EntityKind::Pc;
+        enemy_view.is_pc = true;
+        enemy_view.position = enemy_position;
+        enemy_view.elevation = 36.001007;
+        let mut views = AiEntityViewMap::new();
+        views.insert(132, enemy_view);
+        let ctx = AiContext {
+            position: Position {
+                x: 277.4972,
+                y: 379.12796,
+                sector: crate::position_interface::SectorHandle::new(0),
+                level: 0,
+            },
+            elevation: 1.387514,
+            self_action_state: crate::element::ActionState::MovingFast,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.owner_live_position = Some(ctx.position);
+        tick.enemy_detectable_positions.push((132, enemy_position));
+
+        ai.event_view_standard_procedure(
+            &sim,
+            132,
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(
+            ai.base
+                .outbox
+                .actor
+                .orders
+                .last()
+                .expect("moving-fast EventView queues GoNear")
+                .tolerance,
+            94.0
         );
     }
 
