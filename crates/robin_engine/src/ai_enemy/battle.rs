@@ -840,7 +840,16 @@ impl EnemyAi {
         // `num_enemies_i_can_see` decrements the personally-visible
         // counter. Friends accidentally on the list are also dropped.
         // The same pass measures the nearest surviving enemy.
-        let mut min_square_enemy_distance = i32::MAX;
+        let owner_world = ctx
+            .entity_view(self.base.me)
+            .unwrap_or_else(|| {
+                panic!(
+                    "BattleDecisions owner {} is absent from its live entity view",
+                    self.base.me
+                )
+            })
+            .detection_position_world;
+        let mut min_square_enemy_distance = u32::MAX;
         let mut unconscious_enemies_from_them = Vec::new();
         {
             let mut idx = 0;
@@ -871,12 +880,13 @@ impl EnemyAi {
                             // holds the targets contributed by nearby
                             // attacking allies, so a fight raging next to
                             // us counts even when our own nearest enemy is
-                            // far away. The stretched-Y square norm is
-                            // truncated to an integer before comparison.
-                            let dx = view.position.x - ctx.position.x;
-                            let dy = (view.position.y - ctx.position.y)
-                                * crate::position_interface::INVERSE_ASPECT_RATIO;
-                            let sq = (dx * dx + dy * dy) as i32;
+                            // far away. `SquareDistance` compares literal 3D
+                            // sprite positions, stretches world Y, includes
+                            // Z, and then truncates the result to `ULONG`.
+                            let sq = battle_owner_target_square_distance(
+                                owner_world,
+                                view.detection_position_world,
+                            );
                             if sq < min_square_enemy_distance {
                                 min_square_enemy_distance = sq;
                             }
@@ -1148,7 +1158,8 @@ impl EnemyAi {
                     // Tower guard offensive.
                     if !self.base.friends_are_alerted {
                         decision = Decision::TowerGuardAlert;
-                    } else if min_square_enemy_distance < combat::MIN_SQUARE_RESERVE_DISTANCE {
+                    } else if min_square_enemy_distance < combat::MIN_SQUARE_RESERVE_DISTANCE as u32
+                    {
                         decision = Decision::Fight;
                     } else {
                         decision = Decision::TowerGuardObserve;
@@ -1161,12 +1172,12 @@ impl EnemyAi {
                     // Officer alerts soldiers (only if simple soldiers are nearby).
                     decision = Decision::AlertSoldiers;
                 } else if friends_with_lower_company >= self.list_them.len() as u16
-                    && min_square_enemy_distance > combat::MIN_SQUARE_RESERVE_DISTANCE
+                    && min_square_enemy_distance > combat::MIN_SQUARE_RESERVE_DISTANCE as u32
                 {
                     // Enough friends closer → hold back.
                     decision = Decision::Reserve;
                 } else if self.company_number == 100
-                    && min_square_enemy_distance > combat::MIN_SQUARE_RESERVE_DISTANCE
+                    && min_square_enemy_distance > combat::MIN_SQUARE_RESERVE_DISTANCE as u32
                 {
                     // Company 100 → last reserve.
                     decision = Decision::LastReserve;
@@ -3480,6 +3491,23 @@ mod tests {
             Decision::Fight
         };
         assert_eq!(decision, Decision::Fight);
+    }
+
+    #[test]
+    fn reserve_cutoff_uses_literal_3d_square_distance() {
+        // linux3/Profile_003/Savegame_010/replay-003, frame 19649.
+        // Projecting the actors to map space puts Soldier 144 just outside
+        // the 150-unit reserve radius, while Original's literal 3D
+        // GetPosition() distance puts it inside and falls through to Observe.
+        let owner_world = crate::coordinates::WorldPoint3D::new(669.78064, 1511.1458, 35.611286);
+        let target_world = crate::coordinates::WorldPoint3D::new(745.8495, 1441.5433, 50.001003);
+        let literal_3d = battle_owner_target_square_distance(owner_world, target_world);
+        assert!(literal_3d < combat::MIN_SQUARE_RESERVE_DISTANCE as u32);
+
+        let dx = 745.8495_f32 - 669.78064_f32;
+        let dy = (1391.5424_f32 - 1475.5344_f32) * INVERSE_ASPECT_RATIO;
+        let projected_map = (dx * dx + dy * dy) as u32;
+        assert!(projected_map > combat::MIN_SQUARE_RESERVE_DISTANCE as u32);
     }
 
     #[test]
