@@ -1,0 +1,9 @@
+{
+  "id": "189",
+  "subject": "Preserve view-radius cache writes from recursive BreakPhalanx",
+  "description": "The direct synchronous BreakPhalanx-from-neighbour path now seeds its AI context from the engine view-radius cache and commits the resulting cache writes afterward, matching typed Think dispatch. Previously Soldier53's phalanx reconstruction computed the ground surface radius but discarded it, so later RefreshDetection repeated two night/fog light-sector rays. linux3 Profile_001 Savegame_024 replay-008 clears frame 8921 and advances to an independent frame-9629 attentive-state frontier. Both task-36 schema-14 replay-009 controls match exact EOF; the focused phalanx night-detection test, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task179-true-seam"
+}

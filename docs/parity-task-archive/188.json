@@ -1,0 +1,9 @@
+{
+  "id": "188",
+  "subject": "Match push and sword-damage speech/informer dispatch",
+  "description": "TranslatePushDamage now follows virtual dispatch: NPCs SayOuch while PCs inherit the human no-op. Push strikes no longer enter the TranslateSwordDamage good/lethal-strike informer path; ordinary informs require Original's reachable postures, soldier attackers, and cutting damage for a surviving victim. PC hurt speech now follows PC::SetLifePoints and compares actual old/final life points after protection or coma handling rather than attempted raw damage, while NPC TranslateSwordDamage and shoulder SayOuch remain virtual NPC behavior. linux2 Profile_002 Savegame_034 replay-001 clears the frame-34770 sound FIFO assertion and advances to an independent frame-34806 movement frontier. Both task-36 schema-14 replay-009 controls match exact EOF; focused tests, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task183-posture"
+}
