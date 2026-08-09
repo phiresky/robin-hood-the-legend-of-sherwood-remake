@@ -3043,6 +3043,7 @@ impl EngineInner {
             let path_failed = gate_path.is_none();
             if let Some(path) = gate_path
                 && !path.is_empty()
+                && swordfight_line_idx.is_some()
             {
                 let (goal_shape, arrival_layer) = if let Some(aggr_idx) = swordfight_line_idx
                     && let Some(jl) = self
@@ -3071,6 +3072,25 @@ impl EngineInner {
                     )
                 };
 
+                let mut enter_elem =
+                    SequenceElement::new_generic(2, Command::EnterSwordfight, Some(pc_id));
+                enter_elem.set_property(Field::Opponent, FieldValue::Element(target_id));
+                enter_elem.set_property(
+                    Field::JumplineDestination,
+                    match swordfight_line_idx {
+                        Some(idx) => FieldValue::LineId(idx),
+                        None => FieldValue::Integer(0),
+                    },
+                );
+
+                // This branch is only the across-jump-line snap case. An
+                // ordinary cross-gate swordfight falls through to the real
+                // entity SEEK below, whose Translate -> RefreshSeek lowering
+                // stamps TIME_SEEK_REFRESH, passes the victim to every gate
+                // approach, and retains ENTER_SWORDFIGHT as actor-owned
+                // post-seek work exactly like the Original. Arrival speech
+                // and generic posture recovery belong to PC group moves, not
+                // RHElementActorSoldier::MouseClicked's interaction.
                 let _ = self.build_gate_movement_sequence(
                     sim,
                     pc_id,
@@ -3082,22 +3102,10 @@ impl EngineInner {
                     1.0,
                     MoveFlags::empty(),
                     Vec::new(),
-                    Vec::new(),
-                    true,
-                    true,
+                    vec![enter_elem],
+                    false,
+                    false,
                 );
-
-                let mut enter_elem =
-                    SequenceElement::new_generic(2, Command::EnterSwordfight, Some(pc_id));
-                enter_elem.set_property(Field::Opponent, FieldValue::Element(target_id));
-                enter_elem.set_property(
-                    Field::JumplineDestination,
-                    match swordfight_line_idx {
-                        Some(idx) => FieldValue::LineId(idx),
-                        None => FieldValue::Integer(0),
-                    },
-                );
-                self.launch_element(enter_elem);
                 return;
             }
 
@@ -4196,9 +4204,9 @@ mod tests {
     use super::*;
     use crate::coordinates::WorldPoint3D;
     use crate::element::{
-        ActorCivilian, ActorData, ActorPc, ElementBonus, ElementData, ElementKind, ElementNet,
-        ElementProjectile, ElementScroll, Entity, HumanData, NetData, NpcData, ObjectData,
-        ObjectType, PcData, Posture, ProjectileData,
+        ActorCivilian, ActorData, ActorPc, ActorSoldier, Camp, ElementBonus, ElementData,
+        ElementKind, ElementNet, ElementProjectile, ElementScroll, Entity, HumanData, NetData,
+        NpcData, ObjectData, ObjectType, PcData, Posture, ProjectileData, SoldierData,
     };
     use crate::engine::MissionScript;
     use crate::engine::ScrollStatus;
@@ -4566,6 +4574,122 @@ mod tests {
             SequenceElementData::Interaction {
                 antagonist: Some(id)
             } if *id == target_id
+        ));
+    }
+
+    #[test]
+    fn cross_gate_swordfight_preserves_entity_seek_refresh_and_post_seek_entry() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
+        engine.scripts.mission = Some(minimal_script());
+
+        let pc_sector = crate::position_interface::SectorHandle::new(7);
+        let target_sector = crate::position_interface::SectorHandle::new(8);
+        {
+            let pc_entity = engine.get_entity_mut(pc_id).expect("test PC exists");
+            pc_entity
+                .position_iface_mut()
+                .set_move_box(crate::coordinates::MoveBox::from_coords(
+                    -4.0, -4.0, 4.0, 4.0,
+                ));
+            let pc = pc_entity.element_data_mut();
+            pc.set_position_map(crate::coordinates::MapPoint::new(10.0, 30.0));
+            pc.set_sector(pc_sector);
+        }
+
+        let mut target = ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            soldier: SoldierData {
+                cached_camp: Camp::Lacklandists,
+                ..SoldierData::default()
+            },
+        };
+        target.element.sprite.position_iface.set_move_box(
+            crate::coordinates::MoveBox::from_coords(-4.0, -4.0, 4.0, 4.0),
+        );
+        target
+            .element
+            .set_position_map(crate::coordinates::MapPoint::new(90.0, 30.0));
+        target.element.set_sector(target_sector);
+        let target_id = engine.add_entity(Entity::Soldier(target));
+
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(crate::gate::Door {
+                point_out: crate::coordinates::MapPoint::new(30.0, 30.0),
+                point_mid: crate::coordinates::MapPoint::new(40.0, 30.0),
+                point_in: crate::coordinates::MapPoint::new(50.0, 30.0),
+                sector_out: crate::sector::SectorNumber::new(7),
+                sector_in: crate::sector::SectorNumber::new(8),
+                ..crate::gate::Door::default()
+            });
+
+        engine.apply_enter_swordfight(&sim, &assets, pc_id, target_id, false);
+        let mut display = HostDisplayState::default();
+        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+        let route = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .find(|sequence| {
+                sequence
+                    .elements
+                    .iter()
+                    .any(|element| element.command == Command::PassDoor)
+            })
+            .expect("cross-gate swordfight route was launched");
+        let commands: Vec<_> = route
+            .elements
+            .iter()
+            .map(|element| element.command)
+            .collect();
+        assert!(!commands.contains(&Command::EnterSwordfight));
+        assert!(
+            !commands
+                .iter()
+                .any(|command| *command == Command::SpeakHeroReachDestination)
+        );
+        assert!(!commands.iter().any(|command| *command == Command::EquipBow));
+
+        let approach = route
+            .elements
+            .iter()
+            .find(|element| element.command == Command::Move)
+            .expect("gate route starts with a movement approach");
+        let SequenceElementData::Movement { element, .. } = &approach.data else {
+            panic!("gate approach must remain a movement element");
+        };
+        assert_eq!(*element, Some(target_id));
+
+        let actor = engine
+            .get_entity(pc_id)
+            .and_then(|entity| entity.actor_data())
+            .expect("test PC has actor state");
+        assert_eq!(actor.wait_time, 25);
+        assert_eq!(actor.seek_refresh_wait, 25);
+        assert_eq!(actor.seek_target, Some(target_id));
+        assert_eq!(actor.seek_distance, 40.0);
+        let post_seek = actor
+            .post_seek_sequence
+            .as_deref()
+            .expect("EnterSwordfight remains owned by the active entity seek");
+        assert_eq!(post_seek.len(), 1);
+        let enter = post_seek.get(0).expect("post-seek swordfight entry exists");
+        assert_eq!(enter.command, Command::EnterSwordfight);
+        assert!(matches!(
+            enter.get_property(Field::Opponent),
+            Some(FieldValue::Element(id)) if *id == target_id
         ));
     }
 
