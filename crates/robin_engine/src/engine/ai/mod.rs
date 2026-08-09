@@ -502,6 +502,36 @@ mod parity_tests {
     }
 
     #[test]
+    fn missed_patrol_visibility_uses_literal_world_position_during_door_pass() {
+        let chief_world = crate::coordinates::WorldPoint3D::new(1033.5859, 2061.8677, 25.10078);
+        // Soldier 48's literal position at the chief's frame-34864 owner
+        // boundary. The AI Position(actor) helper instead reports the door's
+        // committed gate side at map y=2060.
+        let member_world = crate::coordinates::WorldPoint3D::new(1022.0, 2074.301, 7.101156);
+
+        crate::sight_obstacle::begin_parity_visibility_capture();
+        assert!(patrol_member_visible_from_raw_world(
+            chief_world,
+            false,
+            400,
+            false,
+            member_world,
+            crate::element::Posture::Upright,
+            false,
+            0,
+            false,
+            crate::sight_obstacle::ObstacleList::empty(),
+        ));
+        let queries = crate::sight_obstacle::take_parity_visibility_capture();
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].destination, [1022.0, 2074.301, 52.101158]);
+        assert_ne!(
+            queries[0].destination[1], 2067.1012,
+            "missed-member reacquisition must not use the door's gate-side AI position"
+        );
+    }
+
+    #[test]
     fn missed_patrol_visibility_precedes_ability_and_state_predicates() {
         let calls = std::cell::Cell::new(0);
         let reacquired = missed_patrol_member_reacquired(
@@ -9253,14 +9283,12 @@ impl EngineInner {
                     && missed_patrol_member_reacquired(
                         chief_s.is_active && member_s.is_active,
                         || {
-                            crate::ai_enemy::soldier_detects_target_360(
-                                chief_s.position,
-                                chief_s.ground_z,
+                            patrol_member_visible_from_raw_world(
+                                chief_s.detection_position_world,
                                 chief_s.is_rider,
                                 chief_s.real_view_radius,
                                 chief_s.in_building,
-                                member_s.position,
-                                member_s.ground_z,
+                                member_s.detection_position_world,
                                 member_s.posture,
                                 member_s.is_rider,
                                 member_s.direction as i16,
