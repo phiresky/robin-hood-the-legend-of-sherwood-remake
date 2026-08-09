@@ -1,0 +1,9 @@
+{
+  "id": "207",
+  "subject": "Synchronize installed orders after in-place Make rewrites",
+  "description": "In-place Make* posture rewrites now synchronize the detached installed-order action when its order identity matches the selected order, while preserving the existing door-pass mirror update. Original's mpOrder points directly at the mutated order, so GetAnimation observes the new action immediately even though the sprite row does not execute until the actor's next slot. Rust previously left actor.animation one frame behind because installed_order was a detached copy. The identity guard prevents publishing a newly selected but not yet installed order. schema-14 linux3 Profile_001 Savegame_010 replay-011 and both task-36 controls match exact EOF; focused matching/mismatching identity tests, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task183-posture"
+}

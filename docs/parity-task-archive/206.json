@@ -1,0 +1,9 @@
+{
+  "id": "206",
+  "subject": "Use aspect-aware phalanx advance geometry",
+  "description": "ReconsiderPhalanx now computes its forward and rightward formation steps with Original's aspect-aware SBGeoVector2D Normalize(ASPECT_RATIO) and GetNormal(true, ASPECT_RATIO) operations instead of max-norm normalization plus a plain screen-space normal. On schema-14 linux2 Profile_002 Savegame_034 replay-009, the old geometry assigned Soldiers53/58 the wrong gather slots and directions after frame 34293. The corrected literal frame-34182 inputs produce Original's sector-3 movement and clear that frontier, advancing 183 frames to an independent visibility-query-only divergence after frame 34476. Both task-36 controls match exact EOF; focused geometry coverage, cargo fmt, release build, and diff checks pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task179-true-seam"
+}
