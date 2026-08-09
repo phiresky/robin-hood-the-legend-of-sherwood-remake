@@ -9703,6 +9703,104 @@ impl EngineInner {
     // - SendStimulus (e.g. CALL_COORDINATE to archers)
     // - SetLeft/RightCombatNeighbour for phalanx linking
 
+    fn apply_update_left_combat_neighbour(&mut self, target: u32, old_left: u32, new_left: u32) {
+        if old_left != 0
+            && let Some(Entity::Soldier(s)) = self
+                .world
+                .entities
+                .get_mut(EntityId::Soldier(SoldierId(old_left)))
+            && let Some(ai) = s.npc.ai_brain.enemy_mut()
+        {
+            ai.right_combat_neighbour = 0;
+        }
+        if let Some(Entity::Soldier(s)) = self
+            .world
+            .entities
+            .get_mut(EntityId::Soldier(SoldierId(target)))
+            && let Some(ai) = s.npc.ai_brain.enemy_mut()
+        {
+            ai.left_combat_neighbour = new_left;
+        }
+        if new_left != 0 {
+            let new_lefts_old_right = self
+                .world
+                .entities
+                .get(EntityId::Soldier(SoldierId(new_left)))
+                .and_then(|e| match e {
+                    Entity::Soldier(s) => s.npc.ai_brain.enemy(),
+                    _ => None,
+                })
+                .map(|ai| ai.right_combat_neighbour)
+                .unwrap_or(0);
+            if new_lefts_old_right != 0
+                && let Some(Entity::Soldier(s)) = self
+                    .world
+                    .entities
+                    .get_mut(EntityId::Soldier(SoldierId(new_lefts_old_right)))
+                && let Some(ai) = s.npc.ai_brain.enemy_mut()
+            {
+                ai.left_combat_neighbour = 0;
+            }
+            if let Some(Entity::Soldier(s)) = self
+                .world
+                .entities
+                .get_mut(EntityId::Soldier(SoldierId(new_left)))
+                && let Some(ai) = s.npc.ai_brain.enemy_mut()
+            {
+                ai.right_combat_neighbour = target;
+            }
+        }
+    }
+
+    fn apply_update_right_combat_neighbour(&mut self, target: u32, old_right: u32, new_right: u32) {
+        if old_right != 0
+            && let Some(Entity::Soldier(s)) = self
+                .world
+                .entities
+                .get_mut(EntityId::Soldier(SoldierId(old_right)))
+            && let Some(ai) = s.npc.ai_brain.enemy_mut()
+        {
+            ai.left_combat_neighbour = 0;
+        }
+        if let Some(Entity::Soldier(s)) = self
+            .world
+            .entities
+            .get_mut(EntityId::Soldier(SoldierId(target)))
+            && let Some(ai) = s.npc.ai_brain.enemy_mut()
+        {
+            ai.right_combat_neighbour = new_right;
+        }
+        if new_right != 0 {
+            let new_rights_old_left = self
+                .world
+                .entities
+                .get(EntityId::Soldier(SoldierId(new_right)))
+                .and_then(|e| match e {
+                    Entity::Soldier(s) => s.npc.ai_brain.enemy(),
+                    _ => None,
+                })
+                .map(|ai| ai.left_combat_neighbour)
+                .unwrap_or(0);
+            if new_rights_old_left != 0
+                && let Some(Entity::Soldier(s)) = self
+                    .world
+                    .entities
+                    .get_mut(EntityId::Soldier(SoldierId(new_rights_old_left)))
+                && let Some(ai) = s.npc.ai_brain.enemy_mut()
+            {
+                ai.right_combat_neighbour = 0;
+            }
+            if let Some(Entity::Soldier(s)) = self
+                .world
+                .entities
+                .get_mut(EntityId::Soldier(SoldierId(new_right)))
+                && let Some(ai) = s.npc.ai_brain.enemy_mut()
+            {
+                ai.left_combat_neighbour = target;
+            }
+        }
+    }
+
     pub(super) fn process_pending_cross_npc_actions(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -10025,58 +10123,7 @@ impl EngineInner {
                     target,
                     old_left,
                     new_left,
-                } => {
-                    // Step 1: old left's right pointer = 0.
-                    if old_left != 0
-                        && let Some(Entity::Soldier(s)) = self
-                            .world
-                            .entities
-                            .get_mut(EntityId::Soldier(SoldierId(old_left)))
-                        && let Some(ai) = s.npc.ai_brain.enemy_mut()
-                    {
-                        ai.right_combat_neighbour = 0;
-                    }
-                    // Step 2: target.left = new_left.
-                    if let Some(Entity::Soldier(s)) = self
-                        .world
-                        .entities
-                        .get_mut(EntityId::Soldier(SoldierId(target)))
-                        && let Some(ai) = s.npc.ai_brain.enemy_mut()
-                    {
-                        ai.left_combat_neighbour = new_left;
-                    }
-                    if new_left != 0 {
-                        // Step 3: new_left's existing right's left = 0.
-                        let new_lefts_old_right = self
-                            .world
-                            .entities
-                            .get(EntityId::Soldier(SoldierId(new_left)))
-                            .and_then(|e| match e {
-                                Entity::Soldier(s) => s.npc.ai_brain.enemy(),
-                                _ => None,
-                            })
-                            .map(|ai| ai.right_combat_neighbour)
-                            .unwrap_or(0);
-                        if new_lefts_old_right != 0
-                            && let Some(Entity::Soldier(s)) = self
-                                .world
-                                .entities
-                                .get_mut(EntityId::Soldier(SoldierId(new_lefts_old_right)))
-                            && let Some(ai) = s.npc.ai_brain.enemy_mut()
-                        {
-                            ai.left_combat_neighbour = 0;
-                        }
-                        // Step 4: new_left.right = target.
-                        if let Some(Entity::Soldier(s)) = self
-                            .world
-                            .entities
-                            .get_mut(EntityId::Soldier(SoldierId(new_left)))
-                            && let Some(ai) = s.npc.ai_brain.enemy_mut()
-                        {
-                            ai.right_combat_neighbour = target;
-                        }
-                    }
-                }
+                } => self.apply_update_left_combat_neighbour(target, old_left, new_left),
 
                 // Same shape as `update_left_combat_neighbour`, for
                 // the right side.
@@ -10084,58 +10131,7 @@ impl EngineInner {
                     target,
                     old_right,
                     new_right,
-                } => {
-                    // Step 1: old right's left pointer = 0.
-                    if old_right != 0
-                        && let Some(Entity::Soldier(s)) = self
-                            .world
-                            .entities
-                            .get_mut(EntityId::Soldier(SoldierId(old_right)))
-                        && let Some(ai) = s.npc.ai_brain.enemy_mut()
-                    {
-                        ai.left_combat_neighbour = 0;
-                    }
-                    // Step 2: target.right = new_right.
-                    if let Some(Entity::Soldier(s)) = self
-                        .world
-                        .entities
-                        .get_mut(EntityId::Soldier(SoldierId(target)))
-                        && let Some(ai) = s.npc.ai_brain.enemy_mut()
-                    {
-                        ai.right_combat_neighbour = new_right;
-                    }
-                    if new_right != 0 {
-                        // Step 3: new_right's existing left's right = 0.
-                        let new_rights_old_left = self
-                            .world
-                            .entities
-                            .get(EntityId::Soldier(SoldierId(new_right)))
-                            .and_then(|e| match e {
-                                Entity::Soldier(s) => s.npc.ai_brain.enemy(),
-                                _ => None,
-                            })
-                            .map(|ai| ai.left_combat_neighbour)
-                            .unwrap_or(0);
-                        if new_rights_old_left != 0
-                            && let Some(Entity::Soldier(s)) = self
-                                .world
-                                .entities
-                                .get_mut(EntityId::Soldier(SoldierId(new_rights_old_left)))
-                            && let Some(ai) = s.npc.ai_brain.enemy_mut()
-                        {
-                            ai.right_combat_neighbour = 0;
-                        }
-                        // Step 4: new_right.left = target.
-                        if let Some(Entity::Soldier(s)) = self
-                            .world
-                            .entities
-                            .get_mut(EntityId::Soldier(SoldierId(new_right)))
-                            && let Some(ai) = s.npc.ai_brain.enemy_mut()
-                        {
-                            ai.left_combat_neighbour = target;
-                        }
-                    }
-                }
+                } => self.apply_update_right_combat_neighbour(target, old_right, new_right),
 
                 crate::ai::CrossNpcAction::SetPrimaryTarget {
                     target,
@@ -10713,6 +10709,16 @@ impl EngineInner {
                         assets,
                         defer_turn_instruction,
                     ),
+                    crate::ai::CrossNpcAction::UpdateLeftCombatNeighbour {
+                        target,
+                        old_left,
+                        new_left,
+                    } => self.apply_update_left_combat_neighbour(target, old_left, new_left),
+                    crate::ai::CrossNpcAction::UpdateRightCombatNeighbour {
+                        target,
+                        old_right,
+                        new_right,
+                    } => self.apply_update_right_combat_neighbour(target, old_right, new_right),
                     crate::ai::CrossNpcAction::SendStimulus { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
                         self.process_synchronous_stimuli_for(

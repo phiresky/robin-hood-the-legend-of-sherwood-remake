@@ -1122,6 +1122,8 @@ impl AiController {
                     | CrossNpcAction::InstructGatherPosition { .. }
                     | CrossNpcAction::BreakPhalanx { .. }
                     | CrossNpcAction::SetPhalanxThemList { .. }
+                    | CrossNpcAction::UpdateLeftCombatNeighbour { .. }
+                    | CrossNpcAction::UpdateRightCombatNeighbour { .. }
                     | CrossNpcAction::Say { .. }
             ) {
                 synchronous.push(action);
@@ -1152,6 +1154,8 @@ impl AiController {
                         | CrossNpcAction::BroadcastLookThere { .. }
                         | CrossNpcAction::ResumeAfterLookThere { .. }
                         | CrossNpcAction::InstructGatherPosition { .. }
+                        | CrossNpcAction::UpdateLeftCombatNeighbour { .. }
+                        | CrossNpcAction::UpdateRightCombatNeighbour { .. }
                         | CrossNpcAction::Say { .. }
                 )
             })
@@ -4858,6 +4862,42 @@ mod tests {
                 target: 23,
                 remark: Remark::ArchersBehindShieldBearers
             }]
+        ));
+        assert!(ai.outbox.reentrant.cross_npc_actions.is_empty());
+    }
+
+    #[test]
+    fn reciprocal_combat_neighbour_updates_are_drained_synchronously() {
+        let mut ai = AiController::new(17);
+        ai.outbox.reentrant.cross_npc_actions.extend([
+            CrossNpcAction::UpdateLeftCombatNeighbour {
+                target: 17,
+                old_left: 0,
+                new_left: 23,
+            },
+            CrossNpcAction::UpdateRightCombatNeighbour {
+                target: 17,
+                old_right: 0,
+                new_right: 29,
+            },
+        ]);
+
+        let actions = ai.take_pending_synchronous_cross_npc_actions();
+
+        assert!(matches!(
+            actions.as_slice(),
+            [
+                CrossNpcAction::UpdateLeftCombatNeighbour {
+                    target: 17,
+                    old_left: 0,
+                    new_left: 23,
+                },
+                CrossNpcAction::UpdateRightCombatNeighbour {
+                    target: 17,
+                    old_right: 0,
+                    new_right: 29,
+                }
+            ]
         ));
         assert!(ai.outbox.reentrant.cross_npc_actions.is_empty());
     }
