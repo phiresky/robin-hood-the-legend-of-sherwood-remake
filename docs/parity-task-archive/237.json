@@ -1,0 +1,9 @@
+{
+  "id": "237",
+  "subject": "Snap terminal combat flights at owner boundary",
+  "description": "Completed combat push flights now snap to PositionGoal at the actor's owner boundary before the NPC derived tail, matching Original PerformFlight rather than waiting for the later global landing batch. SuN1Sh1nE Profile_004 Savegame_024 replay-013 clears frame-169 visibility endpoint bits and advances to an independent frame-209 RNG frontier; both task-36 controls and the focused regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task237-visibility-float"
+}

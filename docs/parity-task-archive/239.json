@@ -1,0 +1,9 @@
+{
+  "id": "239",
+  "subject": "Set rolling posture before resuming movement",
+  "description": "The specialized rolling owner path now commits Dead or Lying posture when motion terminates before Actor Hourglass resumes postponed movement, matching Original's Human Execute override. SuN1Sh1nE Profile_004 Savegame_002 replay-012 matches exact EOF; both task-36 controls and the focused regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task232-actor-animation"
+}

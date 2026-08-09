@@ -1,0 +1,9 @@
+{
+  "id": "235",
+  "subject": "Suppress PC speech from hit translation",
+  "description": "TranslateHitDamage now calls SayOuch only for soldiers and civilians. Original PCs inherit Human's empty virtual SayOuch; Rust had incorrectly queued HERO_HURT even when PC246 lost no life points, displacing the sound FIFO. SuN1Sh1nE Profile_004 Savegame_032 replay-007 clears frame 371 and advances to an independent frame-536 AI substate frontier; both task-36 controls and the focused regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task235-sound-fifo"
+}
