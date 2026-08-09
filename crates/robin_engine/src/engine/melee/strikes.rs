@@ -1477,7 +1477,12 @@ impl EngineInner {
         {
             return None;
         }
-        self.tick_push_flights_at_owner(sim, assets, Some(owner), false, true)
+        // PerformFlight owns its terminal goal snap before Execute returns.
+        // The generic animation arm has already published the landing posture
+        // by this point, so process a retained zero-frame combat flight here
+        // rather than postponing its exact PositionGoal until the later
+        // gameplay-systems reconciliation pass.
+        self.tick_push_flights_at_owner(sim, assets, Some(owner), false, false)
             .then_some(crate::sprite::MotionState::Terminated)
     }
 
@@ -2974,6 +2979,40 @@ mod tests {
         // posture. The later terminal PerformFlight reconciliation must not
         // mistake this completed flight for one that has yet to start.
         engine.tick_push_flight_terminal_landings(&sim, &LevelAssets::default());
+
+        let victim = engine.get_entity(victim_id).unwrap();
+        assert_eq!(victim.element_data().position_map(), exact_goal);
+        assert_eq!(victim.position_iface().old_map_position(), near_goal);
+        assert!(victim.position_iface().is_moving_map());
+        assert!(victim.actor_data().unwrap().active_flight.is_none());
+    }
+
+    #[test]
+    fn completed_combat_flight_snaps_at_its_owner_boundary() {
+        let sim = crate::sim_rng::test_context();
+        let near_goal = MapPoint::new(696.702_45, 2077.693_8);
+        let exact_goal = MapPoint::new(696.702_45, 2077.694_6);
+        let mut entity = falling_pushed_soldier(false);
+        entity.set_posture(Posture::Lying);
+        entity.element_data_mut().set_position_map(near_goal);
+        entity.position_iface_mut().new_move();
+        let flight = entity
+            .actor_data_mut()
+            .unwrap()
+            .active_flight
+            .as_mut()
+            .unwrap();
+        flight.frames_remaining = 0;
+        flight.increment_x = 0.0;
+        flight.increment_y = 0.0;
+        flight.goal_x = exact_goal.x;
+        flight.goal_y = exact_goal.y;
+        flight.goal_z = 0.0;
+
+        let mut engine = EngineInner::new();
+        let victim_id = engine.add_entity(entity);
+
+        engine.tick_push_flight_for_owner(&sim, &LevelAssets::default(), victim_id);
 
         let victim = engine.get_entity(victim_id).unwrap();
         assert_eq!(victim.element_data().position_map(), exact_goal);
