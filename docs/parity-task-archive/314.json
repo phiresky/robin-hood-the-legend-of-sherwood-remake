@@ -1,0 +1,9 @@
+{
+  "id": "314",
+  "subject": "Clear an unselected PC action before swordfight disablement",
+  "description": "nicouzouf Profile_001 Savegame_065 replay-015 reached frame 1283 with no pending hero-speech request because Rust restored Robin's pre-fight Bow action and queued EquipBow ahead of a reciprocal EnterSwordfight. Original RHElementActorHuman::EnterSwordFight always forwards targeted MSG_SELECT_ACTION(NO_ACTION) before DisableAllActionsTemp; RHEngine::SelectAction sets the target PC's current action even when that PC is not selected. Robin entered the fight at frame 803 while another PC was selected, but Rust incorrectly gated the targeted NoAction delivery on selection and therefore retained saved_action=Bow. PC swordfight entry now delivers targeted NoAction unconditionally before saving the temporary action state. The focused unselected-PC control proves quit does not restore or queue EquipBow, cargo test -p robin_engine unselected_pc_entering_swordfight_saves_targeted_no_action passes, and the parity-profile build succeeds. The representative clears frame 1283 and advances to an independent RNG frontier after frame 1343.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task314-unselected-swordfight-action"
+}

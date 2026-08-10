@@ -3861,6 +3861,10 @@ mod tests {
     #[test]
     fn npc_view_adoption_preserves_complete_serialized_continuation() {
         let converted = convert_npc_view(&sample_npc_view(), None, 31).unwrap();
+        assert!(
+            converted.leaning,
+            "legacy adoption must preserve serialized bLeanOut independently of posture"
+        );
         assert_eq!(converted.angle_iterator, 0.12);
         assert_eq!(converted.angle_iterator_step, 0.13);
         assert_eq!(converted.half_aperture_cosine, 0.23);

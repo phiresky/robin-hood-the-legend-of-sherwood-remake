@@ -1,0 +1,9 @@
+{
+  "id": "335",
+  "subject": "Sort alerted soldiers by Original's literal 3D distance",
+  "description": "nicouzouf Profile_001 Savegame_037 replay-003 from the short parity-random-save-replays corpus diverged after frame 420 because Soldier53 and Soldier54 received each other's formation path goals. Original AlertSoldiers stores RHArtificialIntelligence::SquareDistance for every accepted soldier before inserting it into the farthest-first alerted list; SquareDistance compares literal 3D GetPosition values with stretched world Y. Rust sorted with projected map X/Y only, so Soldier53's elevation of 36.001 was omitted and its ordering with ground-level Soldier54 reversed. The sort now uses the existing ai_square_distance helper with each soldier's world elevation and the officer's elevation, preserving Original's insertion ordering and deterministic nearest-slot ownership. The representative geometry regression passes, the parity-profile build succeeds, and the coordinated representative replay matches every recorded frame through exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task335_swapped_paths"
+}

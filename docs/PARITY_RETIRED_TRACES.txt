@@ -1,4 +1,5 @@
-# Relative to parity-random-save-replays-60s-15x/traces/.
+# Unqualified paths are relative to parity-random-save-replays-60s-15x/traces/.
+# Corpus-qualified paths may retire an exact trace from any corpus.
 # Task 73: recorded behavior contradicts current Original source/assets.
 Savegame_Cyrdach/Profile_156/Savegame_010/replay-001-session-0001.jsonl.zst
 Savegame_Cyrdach/Profile_156/Savegame_015/replay-009-session-0001.jsonl.zst
@@ -24,3 +25,42 @@ Savegame_SuN1Sh1nE/Profile_004/Savegame_016/replay-010-session-0001.jsonl.zst
 Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-012-session-0001.jsonl.zst
 # Task 297: fresh Bonus old_elevation exposes uninitialized Original constructor storage.
 Savegame_SuN1Sh1nE/Profile_004/Savegame_036/replay-004-session-0001.jsonl.zst
+# Task 320: arrow ricochet contradicts current Original source/profile data/RNG stream.
+Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-010-session-0001.jsonl.zst
+# Task 332: schema-12 selected-view rendering queries contaminated the simulation oracle.
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-001-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-002-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-003-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-004-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-005-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-006-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-007-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-008-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-009-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-010-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-011-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-012-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-013-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-014-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-015-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-001-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-002-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-003-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-004-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-005-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-006-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-007-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-008-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-009-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-010-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-011-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-012-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-013-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-014-session-0001.jsonl.zst
+parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-015-session-0001.jsonl.zst
+parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-001-session-0001.jsonl.zst
+parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-002-session-0001.jsonl.zst
+parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_053/replay-003-session-0001.jsonl.zst
+parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-001-session-0001.jsonl.zst
+parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-002-session-0001.jsonl.zst
+parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-003-session-0001.jsonl.zst

@@ -51,6 +51,113 @@ pub(super) fn npc_hourglass_frame_phase(frame: u32, register_number: u32) -> u8 
 /// Number of arrows given to Merry Man archers in forest levels.
 const MERRY_MAN_ARROWS: u16 = 3;
 
+/// Match `RHElementActorNPC::GetDirectionVector()` for the directed-panic
+/// front-facing test. Original builds the facing vector with
+/// `SetSector0to15(direction, ASPECT_RATIO)`, which compresses its Y member
+/// before taking the ordinary 2D dot product.
+fn directed_panic_center_is_in_front(
+    direction: i16,
+    actor_x: f32,
+    actor_y: f32,
+    center_x: f32,
+    center_y: f32,
+) -> bool {
+    let (face_x, face_y) = crate::element::direction_vector_16(direction);
+    let dx = center_x - actor_x;
+    let dy = center_y - actor_y;
+    face_x * dx + face_y * crate::position_interface::ASPECT_RATIO * dy > 0.0
+}
+
+#[cfg(test)]
+mod directed_panic_front_tests {
+    use super::*;
+
+    const ACTOR_X: f32 = 807.457_64;
+    const ACTOR_Y: f32 = 767.533_3;
+    const CENTER_X: f32 = 866.094_1;
+    const CENTER_Y: f32 = 592.307_6;
+
+    #[test]
+    fn task338_aspect_scaled_facing_treats_recorded_center_as_in_front() {
+        let (face_x, face_y) = crate::element::direction_vector_16(5);
+        let dx = CENTER_X - ACTOR_X;
+        let dy = CENTER_Y - ACTOR_Y;
+
+        // The unscaled unit-vector dot has the opposite sign, so this fixture
+        // specifically guards Original's ASPECT_RATIO-compressed facing Y.
+        assert!(face_x * dx + face_y * dy < 0.0);
+        assert!(directed_panic_center_is_in_front(
+            5, ACTOR_X, ACTOR_Y, CENTER_X, CENTER_Y
+        ));
+    }
+
+    #[test]
+    fn task338_aspect_scaled_facing_rejects_mirrored_center() {
+        let mirrored_x = ACTOR_X - (CENTER_X - ACTOR_X);
+        let mirrored_y = ACTOR_Y - (CENTER_Y - ACTOR_Y);
+
+        assert!(!directed_panic_center_is_in_front(
+            5, ACTOR_X, ACTOR_Y, mirrored_x, mirrored_y
+        ));
+    }
+}
+
+fn append_detectable(
+    list: &mut Vec<Detectable>,
+    entity_id: EntityId,
+    detectable_type: DetectableType,
+    preserve_duplicate: bool,
+) {
+    if preserve_duplicate
+        || !list
+            .iter()
+            .any(|detectable| detectable.element == Some(entity_id))
+    {
+        list.push(Detectable {
+            element: Some(entity_id),
+            detectable_type,
+            ..Default::default()
+        });
+    }
+}
+
+#[cfg(test)]
+mod detectable_append_tests {
+    use super::*;
+
+    #[test]
+    fn alert_officer_append_preserves_preseeded_friend_duplicate() {
+        let officer = EntityId::Soldier(SoldierId(97));
+        let mut friends = vec![Detectable {
+            element: Some(officer),
+            detectable_type: DetectableType::Friend,
+            ..Default::default()
+        }];
+
+        append_detectable(&mut friends, officer, DetectableType::Friend, true);
+
+        assert_eq!(friends.len(), 2);
+        assert!(friends.iter().all(|detectable| {
+            detectable.element == Some(officer)
+                && detectable.detectable_type == DetectableType::Friend
+        }));
+    }
+
+    #[test]
+    fn ordinary_detectable_add_remains_unique() {
+        let officer = EntityId::Soldier(SoldierId(97));
+        let mut friends = vec![Detectable {
+            element: Some(officer),
+            detectable_type: DetectableType::Friend,
+            ..Default::default()
+        }];
+
+        append_detectable(&mut friends, officer, DetectableType::Friend, false);
+
+        assert_eq!(friends.len(), 1);
+    }
+}
+
 fn sleeping_enemy_candidates_from_fighter_registry(
     fighters: &[crate::ai_enemy::FighterSnapshot],
 ) -> Vec<crate::ai::SleepingEnemyInfo> {
@@ -6624,6 +6731,10 @@ impl EngineInner {
         //     Original `BeginSwordfight` launches ENTER_SWORDFIGHT; it
         //     does not call `EnterSwordFight` directly from Think.  Keep
         //     relationship and animation changes behind that owner boundary.
+        //   * Direct(target) — EVENT_GOTHIT's direct EnterSwordFight call.
+        //     This immediately updates both opponent lists and, when the
+        //     attacker is not already swordfighting, authors the reciprocal
+        //     ENTER_SWORDFIGHT element with the attacker as owner.
         //   * Rebalance(target) — ReconsiderSwordfight's direct
         //     `RHElementActorHuman::EnterSwordFight` call. This updates the
         //     relationship without authoring a recursive command/EventDone.
@@ -6687,12 +6798,19 @@ impl EngineInner {
                     // ownership.
                     self.launch_element(elem);
                 }
+                crate::ai::EnterSwordfightRequest::Direct(target_handle) => {
+                    let target_id = self.expect_human_id_for_ai_handle(
+                        target_handle,
+                        "AI direct swordfight target",
+                    );
+                    self.direct_enter_swordfight(sim, assets, npc_id, target_id);
+                }
                 crate::ai::EnterSwordfightRequest::Rebalance(target_handle) => {
                     let target_id = self.expect_human_id_for_ai_handle(
                         target_handle,
                         "AI reconsider swordfight target",
                     );
-                    self.reconsider_enter_swordfight(sim, assets, npc_id, target_id);
+                    self.direct_enter_swordfight(sim, assets, npc_id, target_id);
                 }
             }
         }
@@ -7371,6 +7489,7 @@ impl EngineInner {
 
         // Process pending detectable modifications.
         if !effects.add_detectables.is_empty()
+            || !effects.append_detectables.is_empty()
             || !effects.delete_detectables.is_empty()
             || !effects.delete_detectable_entities.is_empty()
         {
@@ -7471,17 +7590,21 @@ impl EngineInner {
                         continue;
                     }
                 }
-                // Don't add duplicates.
-                let already = npc.detectable_lists[idx]
-                    .iter()
-                    .any(|d| d.element == Some(*entity_id));
-                if !already {
-                    npc.detectable_lists[idx].push(crate::element::Detectable {
-                        element: Some(*entity_id),
-                        detectable_type: *det_type,
-                        ..Default::default()
-                    });
-                }
+                append_detectable(&mut npc.detectable_lists[idx], *entity_id, *det_type, false);
+            }
+            // Preserve the release-build behavior of selected direct
+            // AddDetectable calls. Original's uniqueness check is an assert,
+            // so it disappears in the shipped build and the append still
+            // occurs when the entry is already present.
+            for (entity_id, det_type) in &effects.append_detectables {
+                let idx = *det_type as usize;
+                assert!(
+                    idx < npc.detectable_lists.len(),
+                    "pending-drain owner {} has no {:?} detectable list",
+                    npc_id.index(),
+                    det_type
+                );
+                append_detectable(&mut npc.detectable_lists[idx], *entity_id, *det_type, true);
             }
         }
 
@@ -8662,16 +8785,19 @@ impl EngineInner {
         // during a prior run still counts as a new panic.
         let mut is_new_panic = request.is_new_panic;
         if request.center.is_some() && !is_new_panic {
-            let (dx_face, dy_face) = crate::element::direction_vector_16(ctx.direction as i16);
             let ai = self
                 .world
                 .entities
                 .get(npc_id)
                 .and_then(Entity::ai_controller)
                 .unwrap_or_else(|| panic!("panic owner {} has no AI", npc_id.index()));
-            let dx = ai.panic_center_x - ctx.position.x;
-            let dy = ai.panic_center_y - ctx.position.y;
-            if dx_face * dx + dy_face * dy > 0.0 {
+            if directed_panic_center_is_in_front(
+                ctx.direction as i16,
+                ctx.position.x,
+                ctx.position.y,
+                ai.panic_center_x,
+                ai.panic_center_y,
+            ) {
                 is_new_panic = true;
             }
         }

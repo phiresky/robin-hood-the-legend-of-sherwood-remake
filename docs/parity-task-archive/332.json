@@ -1,0 +1,9 @@
+{
+  "id": "332",
+  "subject": "Retire schema-12 selected-view visibility-query contamination",
+  "description": "COMPLETED WITHOUT A RUST CHANGE. The 36 nicouzouf Profile_001 Savegame_053/Savegame_059 records in the schema-12 random-save corpora all reach the same first boundary after frame 441 with one difference: Original records one opaque visibility query while the headless Rust replay records none. The expected query is bit-identical across both saves and sampled replay sets: viewer `(909,392,45)`, destination `(956.9902954101563,404.00244140625,0)`, result clear/true. The viewer is upright Soldier45 at `(909,392)`. Although the destination XY coincides with upright Soldier51, human `ComputeDetectionPoint` must add 45 to its Z; Rust's source-equivalent MissedFriend pass also reports modified frame 517 at frequency 8, so its cadence is closed and cannot issue a simulation query at this boundary. The zero-height endpoint instead matches `RHSectorShadow::GetBarycentre3D()` in the selected-view detection-polygon renderer. Original `RHEngine::Refresh` calls `ShowDetectionPolygon` for `mpSelectedViewElement`; `RHShadowPolygon::DisplayDebug` computes its night radius with `IsReachable(viewer, light-sector barycentre, SIGHTOBSTACLE_OPAQUE)`. Schema 12 recorded this camera/screen-dependent presentation call. Current Original wraps `DisplayDebug` in `RHParity::PresentationScope`, and `RHFastFindGrid::IsReachable` suppresses presentation visibility recording, which is the documented schema-14 correction. The replay runner restores the saved selected-view element but correctly performs no rendering in headless mode. These 36 schema-12 records are therefore retired pending schema-14 recapture rather than contaminating deterministic simulation with a UI-render query or weakening comparison of legitimate simulation visibility calls.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task332-visibility441"
+}

@@ -104,6 +104,23 @@ pub enum QaReplayCommand {
         command: Command,
         double_click: bool,
     },
+    /// Interaction recorded through `RHElementTarget::MouseClicked`.
+    ///
+    /// Unlike the target's live click route, Original stores a coordinate
+    /// `SEEK` (tolerance 0, flags 0) whose post-seek continuation is
+    /// `TURN` followed by the interaction.  Keep the authored movement and
+    /// turn geometry here so playback can clone that recorded shape instead
+    /// of re-entering either the live target route or the generic
+    /// entity-seek interaction path.
+    TargetInteraction {
+        target: EntityId,
+        command: Command,
+        destination: MapPoint,
+        sector: Option<crate::position_interface::SectorHandle>,
+        layer: u16,
+        action: crate::order::OrderType,
+        turn_point: MapPoint,
+    },
     /// Read a scroll carried by / attached to a target NPC. Replayed
     /// through `PlayerCommand::LaunchScrollRead` so the seek + open
     /// scroll sequence is rebuilt from current engine state.

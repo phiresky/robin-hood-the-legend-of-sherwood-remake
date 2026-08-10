@@ -429,6 +429,15 @@ impl EnemyAi {
                     Substate::AttackingObserve => {
                         // Ignore.
                     }
+                    Substate::FleeingPanic => {
+                        // Original routes a failed panic-run movement back
+                        // through the shared FLEEING_PANIC state machine.
+                        // The generic emergency routine would instead return
+                        // a fleeing soldier to duty and discard the remaining
+                        // panic runs.
+                        self.base
+                            .think_expected_event_common_stuff(sim, stimulus, ctx);
+                    }
                     _ => {
                         self.couldnt_reachpoint_emergency_routine(sim, global, ctx, tick);
                     }
@@ -1636,17 +1645,27 @@ impl EnemyAi {
                     if let StimulusInfo::Human(attacker) = stimulus.info {
                         // Only enroll if cross-camp and not already an
                         // opponent.
-                        let attacker_is_friend = ctx
-                            .entity_view(attacker)
-                            .map(|v| v.camp == ctx.camp)
-                            .unwrap_or(false);
-                        let already_opponent = self
-                            .find_fighter(self.base.me, tick)
-                            .map(|f| f.has_as_opponent(attacker))
-                            .unwrap_or(false);
-                        if !attacker_is_friend && !already_opponent {
-                            self.base.outbox.actor.enter_swordfight =
-                                Some(EnterSwordfightRequest::Engage(attacker));
+                        let attacker_view = ctx.entity_view(attacker).unwrap_or_else(|| {
+                            panic!(
+                                "soldier {} EVENT_GOTHIT requires attacker {attacker} entity view",
+                                self.base.me
+                            )
+                        });
+                        let attacker_is_friend = attacker_view.camp == ctx.camp;
+                        if !attacker_is_friend {
+                            let already_opponent = self
+                                .find_fighter(self.base.me, tick)
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "soldier {} EVENT_GOTHIT requires self fighter snapshot",
+                                        self.base.me
+                                    )
+                                })
+                                .has_as_opponent(attacker);
+                            if !already_opponent {
+                                self.base.outbox.actor.enter_swordfight =
+                                    Some(EnterSwordfightRequest::Direct(attacker));
+                            }
                         }
                     }
                 } else if self.base.current_substate == Substate::MenacingPcInComa {
@@ -2874,6 +2893,30 @@ mod tests {
     }
 
     #[test]
+    fn failed_fleeing_panic_move_uses_panic_seek_fallback() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(68);
+        ai.base.current_state = AiState::Fleeing;
+        ai.base.current_substate = Substate::FleeingPanic;
+        ai.base.lasting_panic_runs = 7;
+        ai.base.set_alert_status(crate::ai::AlertLevel::Red);
+
+        ai.think_unexpected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventCouldntReachPoint),
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.current_state, AiState::Fleeing);
+        assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
+        assert_eq!(ai.base.view_alert_status, crate::ai::AlertLevel::Red);
+        assert!(ai.base.outbox.actor.panic_seek_fallback);
+    }
+
+    #[test]
     fn event_view_uses_owner_boundary_position_instead_of_stale_live_map() {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(1);
@@ -3278,6 +3321,162 @@ mod tests {
         assert_eq!(
             ai.base.outbox.recovery.set_eye_status,
             Some(crate::element::EyeStatus::DieOrGetUnconscious)
+        );
+    }
+
+    #[test]
+    fn got_hit_while_swordfighting_requests_direct_entry_against_new_attacker() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+
+        let mut attacker = object_view(ObjectType::None);
+        attacker.kind = EntityKind::Soldier;
+        attacker.camp = Camp::Royalists;
+        let mut views = AiEntityViewMap::new();
+        views.insert(2, attacker);
+        let ctx = AiContext {
+            camp: Camp::Lacklandists,
+            is_swordfighting: true,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry
+            .push(crate::ai_enemy::FighterSnapshot {
+                handle: 1,
+                opponent_handles: vec![3],
+                ..crate::ai_enemy::FighterSnapshot::default()
+            });
+
+        ai.think_alerting_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::EventGotHit, 2),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(
+            ai.base.outbox.actor.enter_swordfight,
+            Some(EnterSwordfightRequest::Direct(2)),
+            "Original calls EnterSwordFight directly from EVENT_GOTHIT"
+        );
+    }
+
+    #[test]
+    fn got_hit_while_swordfighting_ignores_existing_opponent() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        let mut attacker = object_view(ObjectType::None);
+        attacker.kind = EntityKind::Soldier;
+        attacker.camp = Camp::Royalists;
+        let mut views = AiEntityViewMap::new();
+        views.insert(2, attacker);
+        let ctx = AiContext {
+            camp: Camp::Lacklandists,
+            is_swordfighting: true,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry
+            .push(crate::ai_enemy::FighterSnapshot {
+                handle: 1,
+                opponent_handles: vec![2],
+                ..crate::ai_enemy::FighterSnapshot::default()
+            });
+
+        ai.think_alerting_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::EventGotHit, 2),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(ai.base.outbox.actor.enter_swordfight, None);
+    }
+
+    #[test]
+    #[should_panic(expected = "soldier 1 EVENT_GOTHIT requires attacker 2 entity view")]
+    fn got_hit_while_swordfighting_requires_attacker_entity_view() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        let ctx = AiContext {
+            is_swordfighting: true,
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry
+            .push(crate::ai_enemy::FighterSnapshot {
+                handle: 1,
+                ..crate::ai_enemy::FighterSnapshot::default()
+            });
+
+        ai.think_alerting_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::EventGotHit, 2),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+    }
+
+    #[test]
+    fn got_hit_by_friend_does_not_require_fighter_snapshot() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        let mut attacker = object_view(ObjectType::None);
+        attacker.kind = EntityKind::Soldier;
+        attacker.camp = Camp::Lacklandists;
+        let mut views = AiEntityViewMap::new();
+        views.insert(2, attacker);
+        let ctx = AiContext {
+            camp: Camp::Lacklandists,
+            is_swordfighting: true,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.think_alerting_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::EventGotHit, 2),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.outbox.actor.enter_swordfight, None);
+    }
+
+    #[test]
+    #[should_panic(expected = "soldier 1 EVENT_GOTHIT requires self fighter snapshot")]
+    fn got_hit_while_swordfighting_requires_self_fighter_snapshot() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        let mut attacker = object_view(ObjectType::None);
+        attacker.kind = EntityKind::Soldier;
+        attacker.camp = Camp::Royalists;
+        let mut views = AiEntityViewMap::new();
+        views.insert(2, attacker);
+        let ctx = AiContext {
+            camp: Camp::Lacklandists,
+            is_swordfighting: true,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        ai.think_alerting_event(
+            &sim,
+            &Stimulus::with_human(StimulusType::EventGotHit, 2),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
         );
     }
 

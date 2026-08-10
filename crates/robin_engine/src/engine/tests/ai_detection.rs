@@ -5838,6 +5838,130 @@ fn closed_cadence_cached_visibility_contributes_to_maximal_sharpness() {
 }
 
 #[test]
+fn persisted_lean_out_flag_controls_detection_sharpness_after_posture_changes() {
+    use crate::ai::AlertLevel;
+    use crate::element::{DetectableType, Entity, EyeStatus, Posture};
+
+    let (mut engine, assets, observer_id, pc_id, _) = mixed_enemy_fifo_fixture(true);
+    // Observer slot 0 has Original creation order 31, so modified frame 33
+    // closes the modulo-2 PC cadence and reuses the exact cached visibility.
+    engine.control.frame_counter = 2;
+
+    let Entity::Soldier(observer) = engine
+        .get_entity_mut(observer_id)
+        .expect("lean-out observer exists")
+    else {
+        panic!("lean-out observer changed kind")
+    };
+    observer.element.posture = Posture::Upright;
+    observer.npc.eye_status = EyeStatus::LookForward;
+    // Original RefreshView clears bLeanOut only while replacing
+    // EYES_LOOK_DOWNWARDS. If another path already selected LookForward, the
+    // serialized flag remains true even though posture is now Upright.
+    observer.npc.view_lean_out = true;
+    observer
+        .npc
+        .ai_brain
+        .base_mut()
+        .expect("lean-out observer retains AI state")
+        .view_alert_status = AlertLevel::Green;
+    for (kind, list) in observer.npc.detectable_lists.iter_mut().enumerate() {
+        if kind == DetectableType::Enemy as usize {
+            list.retain(|detectable| detectable.element == Some(pc_id));
+        } else {
+            list.clear();
+        }
+    }
+    let detectable = observer.npc.detectable_lists[DetectableType::Enemy as usize]
+        .first_mut()
+        .expect("lean-out observer tracks PC");
+    detectable.last_visibility = 1.0;
+    detectable.seen_now = true;
+    detectable.seen_last_frame = true;
+
+    crate::sim_rng::with_seed(0xA013_1A11, |sim| engine.tick_enemy_ai(sim, &assets));
+
+    let Entity::Soldier(observer) = engine
+        .get_entity(observer_id)
+        .expect("lean-out observer remains present")
+    else {
+        panic!("lean-out observer changed kind")
+    };
+    assert_eq!(observer.element.posture, Posture::Upright);
+    assert!(observer.npc.view_lean_out);
+    assert_eq!(
+        observer
+            .npc
+            .ai_brain
+            .base()
+            .expect("lean-out observer retains AI state")
+            .max_visibility,
+        u32::from(crate::ai_vision::LOOK_DOWN_BASE_VIEW_SPEED),
+        "Original selects the sharpness multiplier from bLeanOut, not posture"
+    );
+}
+
+#[test]
+fn persisted_lean_out_flag_controls_non_enemy_detection_sharpness() {
+    use crate::ai::AlertLevel;
+    use crate::element::{Detectable, DetectableType, Entity, EyeStatus, Posture};
+
+    let (mut engine, assets, observer_id, pc_id, _) = mixed_enemy_fifo_fixture(true);
+    // Observer creation order 31 plus universal frame 2 produces modified
+    // frame 33. Body's modulo-8 cadence is therefore closed, making the
+    // persisted visibility sample the exact input to sharpness conversion.
+    engine.control.frame_counter = 2;
+
+    let Entity::Soldier(observer) = engine
+        .get_entity_mut(observer_id)
+        .expect("non-Enemy lean-out observer exists")
+    else {
+        panic!("non-Enemy lean-out observer changed kind")
+    };
+    observer.element.posture = Posture::Upright;
+    observer.npc.eye_status = EyeStatus::LookForward;
+    observer.npc.view_lean_out = true;
+    observer
+        .npc
+        .ai_brain
+        .base_mut()
+        .expect("non-Enemy lean-out observer retains AI state")
+        .view_alert_status = AlertLevel::Green;
+    for list in &mut observer.npc.detectable_lists {
+        list.clear();
+    }
+    observer.npc.detectable_lists[DetectableType::Body as usize].push(Detectable {
+        element: Some(pc_id),
+        detectable_type: DetectableType::Body,
+        last_visibility: 1.0,
+        seen_now: true,
+        seen_last_frame: true,
+        ..Detectable::default()
+    });
+
+    crate::sim_rng::with_seed(0xA013_1A12, |sim| engine.tick_enemy_ai(sim, &assets));
+
+    let Entity::Soldier(observer) = engine
+        .get_entity(observer_id)
+        .expect("non-Enemy lean-out observer remains present")
+    else {
+        panic!("non-Enemy lean-out observer changed kind")
+    };
+    assert_eq!(observer.element.posture, Posture::Upright);
+    assert!(observer.npc.view_lean_out);
+    assert_eq!(
+        observer
+            .npc
+            .ai_brain
+            .base()
+            .expect("non-Enemy lean-out observer retains AI state")
+            .max_visibility,
+        u32::from(crate::ai_vision::LOOK_DOWN_BASE_VIEW_SPEED),
+        "non-Enemy buckets use persisted bLeanOut for sharpness too"
+    );
+}
+
+#[test]
 fn blipped_lacklandist_in_door_transit_is_inside_for_the_pre_cadence_gate() {
     use crate::ai::{StimulusInfo, StimulusType};
     use crate::element::{DetectableType, Entity};

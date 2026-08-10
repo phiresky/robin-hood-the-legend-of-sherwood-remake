@@ -1720,7 +1720,7 @@ pub enum BeginShotResult {
     /// Shooter will play the shoot animation; arrow will spawn on the
     /// action-done frame.  The sequence element is now `InProgress`.
     Started,
-    /// Shooter or target no longer valid (inactive, despawned, wrong kind).
+    /// Shooter or target no longer valid (despawned or wrong kind).
     /// The sequence element should be marked `Impossible`.
     Impossible,
 }
@@ -1778,15 +1778,17 @@ pub fn begin_bow_shot(
     resolved_shoot_mode: Option<ShootMode>,
     next_order_id: &mut u32,
 ) -> BeginShotResult {
-    // Validate target: must exist, be active/shootable, and not be the shooter.
-    // A human may have died since aiming began. The original still launches
-    // the queued shot at that retained target rather than rejecting the
-    // interaction and sending AI through its lost-enemy path.
+    // Validate target: it must exist, be shootable, and not be the shooter.
+    // Original `CanShootWithBowAt(const RHElement*)` does not test IsActive:
+    // `RHEngine::RemoveElement` deliberately retains removed objects because
+    // sequence elements may still reference them. A human can therefore go
+    // inactive while an injury postpones a shot, and the resumed shot still
+    // uses the retained actor's body point.
     if shooter_id == target_id {
         return BeginShotResult::Impossible;
     }
     let target_valid = match entities.get(target_id) {
-        Some(e) if e.is_human() => e.is_active(),
+        Some(e) if e.is_human() => true,
         Some(Entity::Target(t)) => {
             t.element.active && t.target.action_filter.contains(TargetFilter::ARROW)
         }
@@ -5229,6 +5231,44 @@ mod tests {
                     order.order_type,
                     OrderType::ShootingWithBow | OrderType::ShootingWithBowUp
                 ))
+        );
+    }
+
+    #[test]
+    fn begin_bow_shot_accepts_retained_inactive_human_target() {
+        let mut entities =
+            entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
+        let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
+        if let Some((_, Entity::Soldier(target))) = entities.get_mut_at_index(1) {
+            target.element.active = false;
+        }
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
+
+        let result = begin_bow_shot(
+            &mut entities,
+            &mut sm,
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            target_id,
+            seq_id,
+            elem_idx,
+            false,
+            10,
+            None,
+            &mut 1u32,
+        );
+
+        assert_eq!(result, BeginShotResult::Started);
+        assert!(
+            sm.get_element(seq_id, elem_idx)
+                .unwrap()
+                .orders
+                .iter()
+                .any(|order| matches!(
+                    order.order_type,
+                    OrderType::ShootingWithBow | OrderType::ShootingWithBowUp
+                )),
+            "a retained inactive human remains a valid shot target in Original"
         );
     }
 

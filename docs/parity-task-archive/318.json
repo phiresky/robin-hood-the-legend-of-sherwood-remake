@@ -1,0 +1,9 @@
+{
+  "id": "318",
+  "subject": "Use persisted lean-out view state for detection sharpness",
+  "description": "nicouzouf Profile_001 Savegame_039 replay-008 diverged after frame 122 only on Soldier29's maximal visibility: Original reported 1779 while Rust reported 177. The strongest cached visibility was 8.8961773, making the values the exact truncations of Original's lean-out speed 200 and ordinary speed 20. Original RHElementActorNPC::RefreshDetection selects that multiplier from serialized mViewParameters.bLeanOut, not the actor's live posture. RefreshView clears the flag only when it itself replaces EYES_LOOK_DOWNWARDS, so another path can leave an Upright actor with a sticky true flag. Rust already preserved that state as NpcData.view_lean_out but both detection paths incorrectly derived speed from Posture::LeaningOut. Enemy and non-Enemy detection now read the persisted view flag through their shared sight context. A focused cached-visibility regression proves Upright plus LookForward plus view_lean_out=true still publishes sharpness 200; the adjacent ordinary control remains 20. The focused test and parity-profile build pass. The representative clears frame 122 and advances to an independent frontier after frame 437.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task318-visibility122"
+}

@@ -641,11 +641,12 @@ impl EngineInner {
         )
     }
 
-    /// Direct `RHElementActorHuman::EnterSwordFight` entry used by
-    /// `ReconsiderSwordfight`. Unlike the ENTER_SWORDFIGHT command's
-    /// `Translate` path, the direct Original call does not first invoke
+    /// Direct `RHElementActorHuman::EnterSwordFight` entry used by both
+    /// `ReconsiderSwordfight` and the already-swordfighting `EVENT_GOTHIT`
+    /// arm. Unlike the ENTER_SWORDFIGHT command's `Translate` path, the
+    /// direct Original call does not first invoke
     /// `pOpponent->PrepareToEnterSwordFight(this)`.
-    pub(crate) fn reconsider_enter_swordfight(
+    pub(crate) fn direct_enter_swordfight(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -666,24 +667,6 @@ impl EngineInner {
         prepare_opponent: bool,
     ) -> bool {
         let scratch = self.build_sim_scratch(sim, assets);
-        if opponent.index() == 0 {
-            // Opponent==0 is a legitimate input upstream now — the
-            // the `EnterSwordfightRequest::RaiseSword` drain branch in
-            // `engine/ai/mod.rs::drain_pending_for_npc` routes around this
-            // function and launches a bare `Command::EnterSwordfight`
-            // element so the actor raises the sword without engaging.
-            // Anything reaching this path with opponent==0 means a
-            // direct caller skipped the drain — log at trace and
-            // bail rather than fabricating an opponent.
-            tracing::trace!(
-                ?initiator,
-                "enter_swordfight called with opponent index 0 — \
-                 raise-sword-no-opponent should be routed via the \
-                 EnterSwordfightRequest::RaiseSword drain instead"
-            );
-            return false;
-        }
-
         // PC initiators clear shield-protection before entering the
         // fight to unlink any active shield-protection.  NPC
         // sword-fights don't carry the protection link.
@@ -1162,18 +1145,17 @@ impl EngineInner {
         // `EnterSwordFight` mutates the relationship and initiator PC UI.
         // The ENTER_SWORDFIGHT element that called us owns its pose
         // transition; the reciprocal element does the same for the opponent.
-        // Original first forwards `MSG_SELECT_ACTION(NO_ACTION)`. The engine's
-        // SelectAction handler only accepts that message when this PC is
-        // selected, and DisableAllActionsTemp then saves the resulting action.
-        // Preserve that ordering so a selected PC does not resurrect the
-        // previously armed action when the fight ends.
-        let initiator_is_selected = self.players.seats[0].selection.contains(&initiator);
-        if initiator_is_selected
-            && self
-                .world
-                .entities
-                .get(initiator)
-                .is_some_and(Entity::is_pc)
+        // Original first forwards targeted `MSG_SELECT_ACTION(NO_ACTION)`.
+        // `RHEngine::SelectAction` clears the target PC's current action even
+        // when that PC is not selected; only the selected branch performs the
+        // wider UI/action cleanup. `DisableAllActionsTemp` then saves the
+        // cleared action. Preserve that ordering so quitting the fight cannot
+        // resurrect an action that was armed before entry.
+        if self
+            .world
+            .entities
+            .get(initiator)
+            .is_some_and(Entity::is_pc)
         {
             self.set_pc_action_from_message(
                 assets,
@@ -1216,79 +1198,29 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
     ) {
-        // Collect opponent list first to avoid borrow issues
+        // Original walks a fixed count from the quitter's live list while
+        // every reciprocal `DeleteOpponent` mutates only the other actor.
+        // Snapshotting that list gives the same ownership without holding a
+        // borrow across the synchronous callbacks.
         let opponents: Vec<EntityId> = self
             .world
             .entities
             .get(entity_id)
-            .and_then(|e| e.human_data())
-            .map(|h| h.opponents.clone())
-            .unwrap_or_default();
+            .unwrap_or_else(|| panic!("QuitSwordFight owner {entity_id:?} is missing"))
+            .human_data()
+            .unwrap_or_else(|| panic!("QuitSwordFight owner {entity_id:?} is not human"))
+            .opponents
+            .clone();
 
-        // Remove this entity from each opponent's list
+        // Route every reciprocal unlink through the authoritative
+        // DeleteOpponent translation. It owns strength recomputation, the
+        // logical opponent-list initiative reset, and final-opponent PC/AI
+        // callbacks.
         for opp_id in &opponents {
-            Self::remove_opponent(&mut self.world.entities, *opp_id, entity_id);
-            // `delete_opponent` refreshes the cached
-            // relative-fighting-ability on the surviving opponent so
-            // future strike/parry rolls use up-to-date ratios.  No-op
-            // when their list is now empty
-            // (`compute_relative_fighting_ability(own, 0)` returns
-            // 50).
-            self.recompute_relative_fighting_ability(*opp_id, assets);
-            // If the opponent has no more opponents, mirror the
-            // relationship/UI side effects of their recursive C++
-            // `QuitSwordFight` call. Do not alter their current action
-            // or launch a lowering transition here.
-            let opp_count = self
-                .world
-                .entities
-                .get(*opp_id)
-                .and_then(|e| e.human_data())
-                .map(|h| h.opponents.len())
-                .unwrap_or(0);
-            if opp_count == 0 {
-                let opponent_is_pc =
-                    matches!(self.world.entities.get(*opp_id), Some(Entity::Pc(_)));
-                if opponent_is_pc {
-                    if let Some(pc) = self
-                        .world
-                        .entities
-                        .get_mut(*opp_id)
-                        .and_then(Entity::pc_data_mut)
-                    {
-                        pc.melee_target = None;
-                    }
-                    self.enable_pc_actions_temp(assets, 0, *opp_id);
-                }
-                // When the opponent list becomes empty and the entity
-                // is a soldier, pump EventQuitSwordfight through
-                // their AI.
-                if matches!(self.world.entities.get(*opp_id), Some(Entity::Soldier(_))) {
-                    self.dispatch_synchronous_ai_think_preserving_detection_fifo(
-                        sim,
-                        *opp_id,
-                        assets,
-                        crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
-                    );
-                }
-            }
-
-            // `DeleteOpponent` does not call `EvaluateOpponents` while
-            // `QuitSwordFight` walks the quitter's former opponents. It
-            // retains the survivor list's existing first entry and only
-            // recomputes strength / smalltalk initiative. In particular,
-            // two or more survivors do not consume ChoosePrincipalOpponent's
-            // random draw here.
-            if opp_count >= 1 {
-                let opp_swordfighting = self
-                    .get_entity(*opp_id)
-                    .and_then(|e| e.actor_data())
-                    .map(|a| a.action_state.is_sword())
-                    .unwrap_or(false);
-                if opp_swordfighting {
-                    self.take_smalltalk_initiative(*opp_id);
-                }
-            }
+            assert!(
+                self.delete_opponent(sim, assets, *opp_id, entity_id),
+                "QuitSwordFight owner {entity_id:?} was absent from reciprocal opponent {opp_id:?}"
+            );
         }
 
         // The post-loop self-cleanup is gated on `!is_dead()`: a

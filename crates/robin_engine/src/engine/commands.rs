@@ -370,10 +370,13 @@ impl EngineInner {
                 }
                 // Schema-9 records every resolved interaction under one
                 // command shape, although the Original has several route
-                // constructors. HIT_TARGET is unambiguously emitted by
-                // RHElementTarget::MouseClicked, whose ordinary click path
-                // directly builds AppendMoveToSequence rather than calling
-                // AddInteractionWithSeek.
+                // constructors. Commands resolved against RHElementTarget
+                // use RHElementTarget::MouseClicked's ordinary click path,
+                // which directly builds AppendMoveToSequence rather than
+                // calling AddInteractionWithSeek. Keep the command gate
+                // aligned with RHElementTarget::GetCommand so a malformed
+                // command/target pairing does not silently acquire this
+                // route.
                 // ENTER_SWORDFIGHT is likewise unambiguous: it is only ever
                 // resolved by a soldier click, whose route is the classical
                 // sword seek (tolerance = the PC's own sword range) plus the
@@ -383,12 +386,18 @@ impl EngineInner {
                 // stopping the PC short of — or past — the opponent.
                 if *command == Command::EnterSwordfight {
                     self.apply_enter_swordfight(sim, assets, *actor, *target, *running);
-                } else if *command == Command::HitTarget
-                    && matches!(
-                        self.get_entity(*target),
-                        Some(crate::element::Entity::Target(_))
-                    )
-                    && !self.players.qa_recording_for.contains(actor)
+                } else if matches!(
+                    command,
+                    Command::SearchCmd
+                        | Command::UseLever
+                        | Command::HitTarget
+                        | Command::HandleTarget
+                        | Command::TakeTarget
+                        | Command::Pay
+                ) && matches!(
+                    self.get_entity(*target),
+                    Some(crate::element::Entity::Target(_))
+                ) && !self.players.qa_recording_for.contains(actor)
                 {
                     if *running {
                         self.actor_make_fast(sim, *actor);
@@ -1200,15 +1209,43 @@ impl EngineInner {
                 if *actor != recording_pc {
                     return;
                 }
-                let Some(target_pos) = entity_pos(self, *target) else {
+                let Some(target_entity) = self.get_entity(*target) else {
                     return;
                 };
+                let target_pos = target_entity.element_data().position_map();
                 let action = pc_action(self, *actor);
                 running_move = *running;
-                (
-                    *actor,
-                    action,
-                    target_pos,
+                let replay = if matches!(target_entity, crate::element::Entity::Target(_))
+                    && matches!(
+                        command,
+                        Command::SearchCmd
+                            | Command::UseLever
+                            | Command::HitTarget
+                            | Command::HandleTarget
+                            | Command::TakeTarget
+                            | Command::Pay
+                    ) {
+                    let movement_action = if *running {
+                        crate::order::OrderType::RunningUpright
+                    } else if self.get_entity(*actor).is_some_and(|entity| {
+                        entity.element_data().posture == crate::element::Posture::Crouched
+                    }) {
+                        crate::order::OrderType::WalkingCrouched
+                    } else {
+                        crate::order::OrderType::WalkingUpright
+                    };
+                    QaReplayCommand::TargetInteraction {
+                        target: *target,
+                        command: *command,
+                        destination: target_pos,
+                        sector: target_entity.element_data().sector(),
+                        layer: target_entity.element_data().layer(),
+                        action: movement_action,
+                        turn_point: target_entity.cxx_current_point_map().unwrap_or_else(|| {
+                            panic!("recorded target interaction {target:?} has no current point")
+                        }),
+                    }
+                } else {
                     QaReplayCommand::Interaction {
                         target: *target,
                         command: *command,
@@ -1216,8 +1253,9 @@ impl EngineInner {
                         // drives `running=true` on the input side, so
                         // reuse it as our recorded double-click flag.
                         double_click: *running,
-                    },
-                )
+                    }
+                };
+                (*actor, action, target_pos, replay)
             }
             LaunchGroundTarget {
                 actor,
@@ -1618,6 +1656,30 @@ impl EngineInner {
                         running: false,
                     }
                 }
+                crate::macro_store::QaReplayCommand::TargetInteraction {
+                    target,
+                    command,
+                    destination,
+                    sector,
+                    layer,
+                    action,
+                    turn_point,
+                } => {
+                    if self.get_entity(target).is_none() {
+                        return;
+                    }
+                    self.replay_recorded_target_interaction(
+                        pc,
+                        target,
+                        command,
+                        destination,
+                        sector,
+                        layer,
+                        action,
+                        turn_point,
+                    );
+                    continue;
+                }
                 crate::macro_store::QaReplayCommand::ScrollRead { target, running } => {
                     // See Interaction arm — whole-sequence abort on
                     // target-gone.
@@ -2010,6 +2072,7 @@ impl EngineInner {
         for step in &slot_data.steps {
             let target = match &step.replay {
                 QaReplayCommand::Interaction { target, .. }
+                | QaReplayCommand::TargetInteraction { target, .. }
                 | QaReplayCommand::ScrollRead { target, .. }
                 | QaReplayCommand::Swordfight { target, .. }
                 | QaReplayCommand::SwordStrike { target, .. } => Some(target),
@@ -2603,6 +2666,61 @@ impl EngineInner {
             panic!("target interaction route for {actor:?} -> {target:?} was empty")
         });
         true
+    }
+
+    /// Launch the exact sequence shape authored by the QA branch of
+    /// `RHElementTarget::MouseClicked`: a coordinate SEEK at the recorded
+    /// target position, with no movement flags and zero tolerance, followed
+    /// by the recorded Turn and interaction elements.
+    #[allow(clippy::too_many_arguments)]
+    fn replay_recorded_target_interaction(
+        &mut self,
+        actor: EntityId,
+        target: EntityId,
+        command: Command,
+        destination: MapPoint,
+        sector: Option<crate::position_interface::SectorHandle>,
+        layer: u16,
+        action: crate::order::OrderType,
+        turn_point: MapPoint,
+    ) {
+        let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(actor));
+        turn.set_property(
+            Field::CameraPoint,
+            FieldValue::GeoPoint2D {
+                x: turn_point.x,
+                y: turn_point.y,
+            },
+        );
+        let interaction = SequenceElement::new_interaction(2, command, Some(actor), Some(target));
+        let mut post_seek = Sequence::new();
+        post_seek.append_element(turn);
+        post_seek.append_element(interaction);
+
+        let mut seek = SequenceElement::new_movement(1, Command::Seek, Some(actor), action);
+        if let SequenceElementData::Movement {
+            destination: seek_destination,
+            sector: seek_sector,
+            layer: seek_layer,
+            element,
+            tolerance,
+            flags,
+            post_seek_sequence,
+            ..
+        } = &mut seek.data
+        {
+            *seek_destination = destination;
+            *seek_sector = sector;
+            *seek_layer = layer;
+            *element = None;
+            *tolerance = 0.0;
+            *flags = MoveFlags::empty();
+            *post_seek_sequence = Some(Box::new(post_seek));
+        }
+
+        let mut sequence = Sequence::new();
+        sequence.append_element(seek);
+        self.launch_sequence(sequence);
     }
 
     /// Fire `EVENT_STOP` on a target NPC that a PC is currently
@@ -4272,8 +4390,9 @@ mod tests {
     use crate::coordinates::WorldPoint3D;
     use crate::element::{
         ActorCivilian, ActorData, ActorPc, ActorSoldier, Camp, ElementBonus, ElementData,
-        ElementKind, ElementNet, ElementProjectile, ElementScroll, Entity, HumanData, NetData,
-        NpcData, ObjectData, ObjectType, PcData, Posture, ProjectileData, SoldierData,
+        ElementKind, ElementNet, ElementProjectile, ElementScroll, ElementTarget, Entity, FxData,
+        HumanData, NetData, NpcData, ObjectData, ObjectType, PcData, Posture, ProjectileData,
+        SoldierData, TargetData,
     };
     use crate::engine::MissionScript;
     use crate::engine::ScrollStatus;
@@ -5452,6 +5571,361 @@ mod tests {
         engine.apply_interaction_with_seek(sim, pc_id, target_id, Command::SearchCmd, false);
 
         assert_eq!(first_seek_tolerance(&engine), 19.0);
+    }
+
+    #[test]
+    fn fx_target_click_commands_use_zero_tolerance_move_and_preserve_wait_time() {
+        let commands = [
+            Command::SearchCmd,
+            Command::UseLever,
+            Command::HitTarget,
+            Command::HandleTarget,
+            Command::TakeTarget,
+            Command::Pay,
+        ];
+
+        for command in commands {
+            let sim = crate::sim_rng::test_context();
+            let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
+            engine.scripts.mission = Some(minimal_script());
+            let sector = crate::position_interface::SectorHandle::new(1);
+            {
+                let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
+                pc.element_data_mut()
+                    .set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
+                pc.element_data_mut().set_sector(sector);
+                pc.element_data_mut().sprite.position_iface.set_move_box(
+                    crate::coordinates::MoveBox::from_coords(-6.0, -4.0, 6.0, 4.0),
+                );
+                pc.actor_data_mut()
+                    .expect("test PC has actor data")
+                    .wait_time = 0xffff_ff3e;
+            }
+
+            let mut target = ElementTarget {
+                element: ElementData {
+                    kind: ElementKind::Target,
+                    active: true,
+                    ..ElementData::default()
+                },
+                fx: FxData::default(),
+                target: TargetData::default(),
+            };
+            target
+                .element
+                .set_position_map(crate::coordinates::MapPoint::new(300.0, 100.0));
+            target.element.set_sector(sector);
+            let target_id = engine.add_entity(Entity::Target(target));
+            bind_single_action_point(
+                &mut engine,
+                target_id,
+                crate::order::OrderType::WaitingUpright,
+                crate::coordinates::SpriteLocalPoint::ZERO,
+                crate::coordinates::SpriteAnchor::ZERO,
+            );
+            engine
+                .get_entity_mut(target_id)
+                .expect("target exists after sprite binding")
+                .element_data_mut()
+                .set_sector(sector);
+
+            let mut display = HostDisplayState::default();
+            let mut input = InputState::default();
+            engine.apply_command(
+                &sim,
+                &mut display,
+                &mut input,
+                &assets,
+                &PlayerCommand::LaunchInteraction {
+                    actor: pc_id,
+                    target: target_id,
+                    command,
+                    running: false,
+                },
+            );
+
+            let route = engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .next()
+                .expect("target click launches its direct route");
+            let movement = route.get(0).expect("target route starts with movement");
+            assert_eq!(movement.command, Command::Move, "command {command:?}");
+            let SequenceElementData::Movement {
+                element,
+                tolerance,
+                flags,
+                ..
+            } = &movement.data
+            else {
+                panic!("target route must start with movement for {command:?}");
+            };
+            assert_eq!(*element, Some(target_id), "command {command:?}");
+            assert_eq!(*tolerance, 0.0, "command {command:?}");
+            assert!(!flags.contains(MoveFlags::SEEK), "command {command:?}");
+
+            engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+            assert_eq!(
+                engine
+                    .get_entity(pc_id)
+                    .and_then(Entity::actor_data)
+                    .expect("test PC retains actor data")
+                    .wait_time,
+                0xffff_ff3e,
+                "ordinary target movement must not arm seek refresh for {command:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn recorded_fx_target_replays_authored_coordinate_seek_and_continuation() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
+        let sector = crate::position_interface::SectorHandle::new(3);
+        {
+            let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
+            pc.element_data_mut()
+                .set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
+            pc.element_data_mut().set_sector(sector);
+            pc.element_data_mut().posture = Posture::Crouched;
+        }
+
+        let mut target = ElementTarget {
+            element: ElementData {
+                kind: ElementKind::Target,
+                active: true,
+                ..ElementData::default()
+            },
+            fx: FxData::default(),
+            target: TargetData::default(),
+        };
+        let recorded_destination = crate::coordinates::MapPoint::new(300.0, 120.0);
+        target.element.set_position_map(recorded_destination);
+        target.element.set_sector(sector);
+        target.element.set_layer(4);
+        let target_id = engine.add_entity(Entity::Target(target));
+        bind_single_action_point(
+            &mut engine,
+            target_id,
+            crate::order::OrderType::WaitingUpright,
+            crate::coordinates::SpriteLocalPoint::new(11.0, 7.0),
+            crate::coordinates::SpriteAnchor::ZERO,
+        );
+        {
+            let target = engine
+                .get_entity_mut(target_id)
+                .expect("target exists after sprite binding")
+                .element_data_mut();
+            target.set_sector(sector);
+            target.set_layer(4);
+        }
+        let recorded_turn_point = engine
+            .get_entity(target_id)
+            .and_then(Entity::cxx_current_point_map)
+            .expect("bound target has a current point");
+
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartRecordingMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::LaunchInteraction {
+                actor: pc_id,
+                target: target_id,
+                command: Command::HitTarget,
+                running: false,
+            },
+        );
+
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
+        let state = engine
+            .players
+            .macro_store
+            .get(pc_id)
+            .expect("target interaction was recorded");
+        let recorded = state.slot(0).expect("slot zero exists");
+        assert_eq!(recorded.steps.len(), 1);
+        assert_eq!(
+            recorded.steps[0].replay,
+            QaReplayCommand::TargetInteraction {
+                target: target_id,
+                command: Command::HitTarget,
+                destination: recorded_destination,
+                sector,
+                layer: 4,
+                action: crate::order::OrderType::WalkingCrouched,
+                turn_point: recorded_turn_point,
+            }
+        );
+
+        // Playback clones the recorded sequence. Moving the target after
+        // recording must not rewrite the coordinate seek or turn geometry.
+        engine
+            .get_entity_mut(target_id)
+            .expect("target still exists")
+            .element_data_mut()
+            .set_position_map(crate::coordinates::MapPoint::new(700.0, 500.0));
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("recorded target route launches one seek");
+        assert_eq!(sequence.len(), 1);
+        let seek = sequence.get(0).expect("recorded route starts with seek");
+        assert_eq!(seek.command, Command::Seek);
+        let SequenceElementData::Movement {
+            destination,
+            sector: seek_sector,
+            layer,
+            element,
+            tolerance,
+            flags,
+            action,
+            post_seek_sequence,
+            ..
+        } = &seek.data
+        else {
+            panic!("recorded target route must start with coordinate movement");
+        };
+        assert_eq!(*destination, recorded_destination);
+        assert_eq!(*seek_sector, sector);
+        assert_eq!(*layer, 4);
+        assert_eq!(*element, None);
+        assert_eq!(*tolerance, 0.0);
+        assert_eq!(*flags, MoveFlags::empty());
+        assert_eq!(*action, crate::order::OrderType::WalkingCrouched);
+
+        let post_seek = post_seek_sequence
+            .as_deref()
+            .expect("recorded seek retains Turn and interaction");
+        assert_eq!(post_seek.len(), 2);
+        let turn = post_seek.get(0).expect("Turn follows seek");
+        assert_eq!(turn.command, Command::Turn);
+        assert_eq!(turn.command_level, 1);
+        assert!(matches!(
+            turn.get_property(Field::CameraPoint),
+            Some(FieldValue::GeoPoint2D { x, y })
+                if *x == recorded_turn_point.x && *y == recorded_turn_point.y
+        ));
+        let interaction = post_seek.get(1).expect("interaction follows Turn");
+        assert_eq!(interaction.command, Command::HitTarget);
+        assert_eq!(interaction.command_level, 2);
+        assert!(matches!(
+            interaction.data,
+            SequenceElementData::Interaction {
+                antagonist: Some(id)
+            } if id == target_id
+        ));
+    }
+
+    #[test]
+    fn same_command_against_human_keeps_generic_entity_seek() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
+        let sector = crate::position_interface::SectorHandle::new(1);
+        {
+            let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
+            pc.element_data_mut()
+                .set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
+            pc.element_data_mut().set_sector(sector);
+            pc.actor_data_mut()
+                .expect("test PC has actor data")
+                .wait_time = 7;
+        }
+        bind_single_action_point(
+            &mut engine,
+            pc_id,
+            crate::order::OrderType::Searching,
+            crate::coordinates::SpriteLocalPoint::new(13.0, 0.0),
+            crate::coordinates::SpriteAnchor::ZERO,
+        );
+        engine
+            .get_entity_mut(pc_id)
+            .expect("test PC exists after sprite binding")
+            .element_data_mut()
+            .set_sector(sector);
+        engine
+            .get_entity_mut(pc_id)
+            .expect("test PC exists after sprite binding")
+            .element_data_mut()
+            .sprite
+            .position_iface
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -6.0, -4.0, 6.0, 4.0,
+            ));
+        let target_id = spawn_pc_at(&mut engine, 300.0, 100.0);
+        engine
+            .get_entity_mut(target_id)
+            .expect("target PC exists")
+            .element_data_mut()
+            .set_sector(sector);
+
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::LaunchInteraction {
+                actor: pc_id,
+                target: target_id,
+                command: Command::SearchCmd,
+                running: false,
+            },
+        );
+
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("generic human interaction launches a seek");
+        let seek = sequence.get(0).expect("seek is the first element");
+        assert_eq!(seek.command, Command::Seek);
+        let SequenceElementData::Movement {
+            tolerance, flags, ..
+        } = &seek.data
+        else {
+            panic!("generic interaction starts with movement");
+        };
+        assert_eq!(*tolerance, 13.0);
+        assert!(flags.contains(MoveFlags::SEEK));
+
+        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+        assert_eq!(
+            engine
+                .get_entity(pc_id)
+                .and_then(Entity::actor_data)
+                .expect("test PC retains actor data")
+                .wait_time,
+            25
+        );
     }
 
     #[test]

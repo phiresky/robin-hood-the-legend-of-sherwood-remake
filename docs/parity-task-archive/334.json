@@ -1,0 +1,9 @@
+{
+  "id": "334",
+  "subject": "Route every ordinary target click through zero-tolerance movement",
+  "description": "nicouzouf Profile_001 Savegame_045 replay-007 and Savegame_037 replay-015 diverged after frames 320 and 616 when UseLever clicks queued entity seeks with Rust tolerances 24 and 13 and armed wait_time to 25; Original queued tolerance-zero paths and retained the PCs' saved wait times (0xffffff3e and 0). RHElementTarget::MouseClicked sends every command produced by RHElementTarget::GetCommand through AppendMoveToSequence(..., victim=target, tolerance=0), then Turn and the interaction. Rust had restricted its existing target-specific route to HitTarget, sending UseLever and the rest through generic AddInteractionWithSeek. Target entities now use the ordinary target route for exactly SearchCmd, UseLever, HitTarget, HandleTarget, TakeTarget, and Pay, while the same command against a human retains the generic entity seek. Focused tests cover the complete six-command family, zero tolerance, absence of SEEK, saved wait-time preservation after Hourglass, and a source-realistic human Search control with tolerance 13 and wait_time 25. The parity-profile build succeeds. Savegame_045 replay-007 clears frame 320 and advances to an independent frontier after frame 1140; Savegame_037 replay-015 clears frame 616 and advances to an independent frontier after frame 870.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task334_seek_tolerance"
+}

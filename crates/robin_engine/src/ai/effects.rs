@@ -330,6 +330,11 @@ pub struct AiActorOutbox {
     pub blink_all_enemies: bool,
     pub enemy_in_house_alert: bool,
     pub add_detectables: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
+    /// `AddDetectable` calls whose release-build behavior must retain an
+    /// already-present entry. Original only guards these with a debug assert
+    /// before appending, so recorded release traces can contain duplicates.
+    #[serde(default)]
+    pub append_detectables: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
     pub delete_detectables: Vec<crate::element::DetectableType>,
     pub delete_detectable_entity: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
     pub delete_beggar_for_all_npc: Vec<crate::element::EntityId>,
@@ -461,6 +466,7 @@ pub(crate) struct AiActorCoreEffects {
     pub raise_shield_immediately: bool,
     pub look_sidewards: Option<LookDirection>,
     pub add_detectables: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
+    pub append_detectables: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
     pub delete_detectables: Vec<crate::element::DetectableType>,
     pub delete_detectable_entities: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
     pub slowly_open_eyes: bool,
@@ -486,6 +492,7 @@ impl AiActorOutbox {
             || self.blink_all_enemies
             || self.enemy_in_house_alert
             || !self.add_detectables.is_empty()
+            || !self.append_detectables.is_empty()
             || !self.delete_detectables.is_empty()
             || !self.delete_detectable_entity.is_empty()
             || !self.delete_beggar_for_all_npc.is_empty()
@@ -577,6 +584,7 @@ impl AiActorOutbox {
             raise_shield_immediately: std::mem::take(&mut self.raise_shield_immediately),
             look_sidewards: self.look_sidewards.take(),
             add_detectables: std::mem::take(&mut self.add_detectables),
+            append_detectables: std::mem::take(&mut self.append_detectables),
             delete_detectables: std::mem::take(&mut self.delete_detectables),
             delete_detectable_entities: std::mem::take(&mut self.delete_detectable_entity),
             slowly_open_eyes: std::mem::take(&mut self.slowly_open_eyes),
@@ -633,5 +641,21 @@ mod tests {
         assert_eq!(effects.focus, None);
         assert_eq!(effects.focus_point, None);
         assert!(effects.unfocus);
+    }
+
+    #[test]
+    fn append_detectable_survives_serde_and_core_drain() {
+        let officer = crate::element::EntityId::Soldier(crate::entity_id::SoldierId(97));
+        let expected = (officer, crate::element::DetectableType::Friend);
+        let mut outbox = AiActorOutbox::default();
+        outbox.append_detectables.push(expected);
+
+        let json = serde_json::to_string(&outbox).expect("serialize AI actor outbox");
+        let mut restored: AiActorOutbox =
+            serde_json::from_str(&json).expect("deserialize AI actor outbox");
+        let core = restored.take_core();
+
+        assert_eq!(core.append_detectables, vec![expected]);
+        assert!(restored.append_detectables.is_empty());
     }
 }

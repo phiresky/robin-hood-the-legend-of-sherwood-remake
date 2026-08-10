@@ -2117,14 +2117,18 @@ pub(crate) fn adapt_source_to_current_door(
 /// Legacy `GetDoor()` source state for route construction.
 ///
 /// Rust keeps an executing translated pass in `ActorData` rather than always
-/// mirroring it into `PositionInterface`. Prefer that live pass so commands
-/// issued while crossing a door start from the committed far side.
+/// mirroring it into `PositionInterface`. Prefer that live pass until its
+/// first `PassingDoor` callback. Original `RHElementActor::PassDoor` clears
+/// `GetDoor()` at that callback even though the translated movement element
+/// can keep executing its far-side walk, so later commands must use the live
+/// position/sector instead of adapting through the completed gate.
 pub(crate) fn current_door_for_route_source(
     entity: &crate::element::Entity,
 ) -> (crate::position_interface::DoorHandle, bool) {
     entity
         .actor_data()
         .and_then(|actor| actor.active_door_pass.as_ref())
+        .filter(|pass| pass.triggers_fired == 0)
         .map(|pass| {
             (
                 crate::position_interface::DoorHandle(pass.door_index.0),
@@ -2135,6 +2139,63 @@ pub(crate) fn current_door_for_route_source(
             let position = entity.position_iface();
             (position.get_door(), position.get_door_direction())
         })
+}
+
+#[cfg(test)]
+mod route_source_tests {
+    use super::current_door_for_route_source;
+    use crate::element::{
+        ActiveDoorPass, ActorData, ActorPc, ElementData, Entity, HumanData, PcData,
+    };
+    use crate::gate::DoorIndex;
+    use crate::order::OrderType;
+    use crate::position_interface::DoorHandle;
+
+    fn pc_with_door_pass(triggers_fired: u8) -> Entity {
+        Entity::Pc(ActorPc {
+            element: ElementData::default(),
+            actor: ActorData {
+                active_door_pass: Some(ActiveDoorPass {
+                    door_index: DoorIndex(53),
+                    direct: true,
+                    position_direct: true,
+                    steps: Default::default(),
+                    triggers_fired,
+                    current_action: OrderType::WalkingUpright,
+                    current_reverse: false,
+                    saved_action_state: None,
+                }),
+                ..ActorData::default()
+            },
+            human: HumanData::default(),
+            pc: PcData::default(),
+        })
+    }
+
+    #[test]
+    fn route_source_uses_active_door_before_pass_callback() {
+        let pc = pc_with_door_pass(0);
+
+        assert_eq!(current_door_for_route_source(&pc), (DoorHandle(53), true));
+    }
+
+    #[test]
+    fn route_source_drops_active_door_after_pass_callback() {
+        let pc = pc_with_door_pass(1);
+
+        assert_eq!(
+            current_door_for_route_source(&pc),
+            (DoorHandle::NULL, false)
+        );
+    }
+
+    #[test]
+    fn route_source_uses_position_door_during_pass_callback_queue_window() {
+        let mut pc = pc_with_door_pass(1);
+        pc.position_iface_mut().set_door(DoorHandle(17), false);
+
+        assert_eq!(current_door_for_route_source(&pc), (DoorHandle(17), false));
+    }
 }
 
 /// Radius for circular dispatch (one third of [`GROUP_LIMIT_MAX`]).

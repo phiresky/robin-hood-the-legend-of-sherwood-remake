@@ -1,0 +1,9 @@
+{
+  "id": "323",
+  "subject": "Preserve AlertOfficer's release-build duplicate Friend detectable",
+  "description": "Linux3 Profile_001 Savegame_014 schema-12 first diverged after frame 17481 only because Soldier138 had 36 detectables in Original and 35 in Rust. The exact missing entry was a second identical type-3 Friend detectable for Soldier97: Soldier97 was already the final Friend entry at frame 17480, then Original appended it again as Soldier138 changed from battle into SeekingRunningToOfficer. Original RHArtificialMalignity::AlertOfficer selects Soldier97 and unconditionally calls mpMe->AddDetectable(pNearestOfficer, DETECTABLE_FRIEND) before GoNear. RHElementActorNPC::AddDetectable checks uniqueness only with a debug assert and then always calls InsertLast, so the shipped release preserves this duplicate. Rust correctly queued the officer registration but its shared detectable drain suppressed every duplicate. A separate append_detectables effect channel now preserves the release behavior only for AlertOfficer while ordinary additions remain deduplicated. Because Rust go_near combines Original's SetState and GoNear and closes an actor-prefix StopAll boundary internally, AlertOfficer queues this append immediately after go_near so it remains after that boundary and still applies on route failure. Focused regressions prove a preseeded Friend97 becomes two through the targeted append channel while an ordinary add remains one; both the detectable_append_tests and alert_officer groups pass. The coordinated parity-profile example build succeeds, and parity-save-replays-schema12/traces/Savegame_linux3/Profile_001/Savegame_014-session-0001.jsonl.zst now matches exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task323-lane10-survivors"
+}

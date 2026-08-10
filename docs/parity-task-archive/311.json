@@ -1,0 +1,9 @@
+{
+  "id": "311",
+  "subject": "Enter a new attacker directly from swordfighting EVENT_GOTHIT",
+  "description": "SuN1Sh1nE Profile_004 Savegame_024 replay-010 diverged at frame 373 after Soldier90 received Soldier110's push while already fighting Soldier102. Original RHArtificialMalignity EVENT_GOTHIT calls mpMe->EnterSwordFight(attacker, false) directly: it immediately makes the attacker principal, updates both opponent lists, and when the attacker was not already swordfighting authors the reciprocal ENTER_SWORDFIGHT on the attacker. Rust instead queued a victim-owned Engage request behind ReceiveHitDamage, leaving Soldier110's strike and both relationships unchanged. A typed Direct request now reaches the existing direct-entry boundary with strict live identities; focused tests cover hostile/friendly filtering, missing snapshots, typed slot zero, exact reciprocal command ownership and target, and strong-priority arbitration against a live Preference strike. The parity-profile build succeeds. The representative clears frame 373 and the related frame-377 initiative frontier, then advances to an independent projectile-damage mismatch after frame 431.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task311-gothit-direct-entry"
+}

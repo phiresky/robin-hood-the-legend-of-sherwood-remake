@@ -1,0 +1,9 @@
+{
+  "id": "319",
+  "subject": "Stop adapting route sources through a completed door callback",
+  "description": "nicouzouf Profile_001 Savegame_069 replay-011 first diverged after frame 184 when PC245 followed Original's MoveOk toward door 52 while Rust started a reverse PassDoor through door 53. The frame-180 group move was authored during the far-side walk of an earlier direct door-53 traversal, after its first PassingDoor callback had already changed the actor to sector 18. Original RHElementActor::PassDoor clears GetDoor at that callback, and RHSequence::AppendMoveToSequence adapts a route source only when the live GetDoor remains non-null. Rust instead treated any ActiveDoorPass as the live door for the entire translated movement, adapting the source back to door 53's point-in even with triggers_fired=1 and a null PositionInterface door. current_door_for_route_source now uses the active pass only before its first callback and otherwise falls back to PositionInterface, restoring the actor's live position/sector as the route source. Focused pre/post-callback controls pass 2/2, the parity-profile build succeeds, and the representative matches every recorded frame through exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task319-passdoor184"
+}

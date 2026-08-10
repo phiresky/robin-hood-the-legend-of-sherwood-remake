@@ -56,6 +56,11 @@ pub enum EnterSwordfightRequest {
     /// Direct `RHElementActorHuman::EnterSwordFight` call made by
     /// `ReconsiderSwordfight` while rebalancing an existing melee.
     Rebalance(HumanHandle),
+    /// Direct `RHElementActorHuman::EnterSwordFight` call made by the
+    /// already-swordfighting `EVENT_GOTHIT` arm. This synchronously updates
+    /// the relationship and, when needed, authors the reciprocal command on
+    /// the attacker rather than on the AI receiving the event.
+    Direct(HumanHandle),
 }
 
 pub use crate::position_interface::SectorHandle;

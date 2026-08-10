@@ -1,0 +1,9 @@
+{
+  "id": "315",
+  "subject": "Route QuitSwordFight reciprocal removals through DeleteOpponent",
+  "description": "nicouzouf Profile_001 Savegame_051 replay-015 reached frame 1182 with an extra SmalltalkStrikeSide RNG draw because Rust's QuitSwordFight cleanup gated initiative transfer on a survivor's temporary sword action state. Original RHElementActorHuman::QuitSwordFight calls reciprocal DeleteOpponent for every fixed-list opponent, and DeleteOpponent defines IsSwordfighting from the remaining opponent list before TakeSmalltalkInitiative. Rust now reuses its authoritative delete_opponent boundary for each reciprocal unlink, preserving fighting-strength recomputation, logical list-based initiative transfer, and final-opponent callbacks. Focused controls cover a Moving survivor with a remaining mutual principal and the empty-opponent case; cargo test -p robin_engine quit_swordfight passes 4/4 and the parity-profile build succeeds. The representative clears the RNG frontier and matches every recorded frame through exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task315-quit-delete-opponent"
+}

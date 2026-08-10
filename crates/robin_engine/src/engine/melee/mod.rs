@@ -6271,6 +6271,225 @@ mod tests {
     }
 
     #[test]
+    fn got_hit_direct_entry_authors_reciprocal_enter_on_attacker() {
+        use crate::ai::EnterSwordfightRequest;
+
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let existing_opponent = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: -10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let attacker = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let Entity::Soldier(attacker_soldier) = engine.get_entity_mut(attacker).unwrap() else {
+            unreachable!()
+        };
+        attacker_soldier.soldier.cached_camp = crate::element::Camp::Royalists;
+
+        if let Some(human) = engine.get_entity_mut(victim).unwrap().human_data_mut() {
+            human.opponents = vec![existing_opponent];
+            human.opponent_jump_lines = vec![None];
+        }
+        if let Some(human) = engine
+            .get_entity_mut(existing_opponent)
+            .unwrap()
+            .human_data_mut()
+        {
+            human.opponents = vec![victim];
+            human.opponent_jump_lines = vec![None];
+        }
+
+        let mut strike_element =
+            crate::sequence::SequenceElement::new(1, Command::SwordstrikeThrustA, Some(attacker));
+        strike_element.priority = crate::sequence::SequencePriority::Preference;
+        let mut strike = crate::sequence::Sequence::new();
+        strike.append_element(strike_element);
+        let strike_id = engine.launch_sequence(strike);
+        let strike_order_id = engine.orders.allocate_order_id();
+        let mut strike_order = crate::order::Order::new(
+            crate::order::OrderType::StrikingStraightSword,
+            0.0,
+            0.0,
+            strike_order_id,
+        );
+        strike_order.antagonist = Some(victim);
+        engine
+            .orders
+            .sequence_manager
+            .push_order_on(strike_id, 0, strike_order);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(strike_id, 0);
+
+        let attacker_handle = (0..3)
+            .find(|slot| engine.world.entities.id_at_legacy_slot(*slot) == Some(attacker))
+            .expect("attacker must occupy a legacy entity slot");
+        let Entity::Soldier(soldier) = engine.get_entity_mut(victim).unwrap() else {
+            unreachable!()
+        };
+        soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .unwrap()
+            .base
+            .outbox
+            .actor
+            .enter_swordfight = Some(EnterSwordfightRequest::Direct(attacker_handle));
+
+        engine.drain_pending_for_npc(&sim, victim, &LevelAssets::default());
+
+        assert_eq!(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .opponents,
+            vec![attacker, existing_opponent],
+            "Original AddOpponent installs the new attacker as principal"
+        );
+        assert_eq!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .opponents,
+            vec![victim],
+            "direct entry synchronously installs the reciprocal relationship"
+        );
+        let (enter_sequence, enter_index) = engine
+            .orders
+            .sequence_manager
+            .pending_elements_for_owner(attacker)
+            .into_iter()
+            .find(|(sequence, index)| {
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(*sequence, *index)
+                    .is_some_and(|element| element.command == Command::EnterSwordfight)
+            })
+            .expect("the reciprocal ENTER_SWORDFIGHT must be attacker-owned");
+        let enter = engine
+            .orders
+            .sequence_manager
+            .get_element(enter_sequence, enter_index)
+            .unwrap();
+        assert_eq!(enter.owner, Some(attacker));
+        assert!(matches!(
+            enter.get_property(crate::sequence::Field::Opponent),
+            Some(crate::sequence::FieldValue::Element(opponent)) if *opponent == victim
+        ));
+        assert!(
+            !engine
+                .orders
+                .sequence_manager
+                .element_is_about_to_be_launched(victim, Command::EnterSwordfight),
+            "EVENT_GOTHIT must not defer a self-owned Engage command"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(strike_id, 0)
+                .unwrap()
+                .state,
+            crate::sequence::SequenceState::InProgress,
+            "the direct call bypasses PrepareToEnterSwordFight; interruption belongs to the reciprocal command scheduler"
+        );
+
+        let mut display = crate::engine::HostDisplayState::default();
+        engine.hourglass_phase_sequences(&sim, &mut display, &LevelAssets::default());
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(enter_sequence, enter_index)
+                .unwrap()
+                .state,
+            crate::sequence::SequenceState::InProgress,
+            "the reciprocal high-priority ENTER becomes attacker-current"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(strike_id, 0)
+                .unwrap()
+                .state,
+            crate::sequence::SequenceState::Postponed,
+            "the reciprocal ENTER displaces the attacker's Preference strike"
+        );
+    }
+
+    #[test]
+    fn direct_enter_swordfight_accepts_typed_slot_zero_opponent() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let opponent = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let initiator = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        assert_eq!(opponent.index(), 0, "control requires typed slot zero");
+
+        assert!(
+            engine.direct_enter_swordfight(&sim, &LevelAssets::default(), initiator, opponent,)
+        );
+        assert_eq!(
+            engine
+                .get_entity(initiator)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .opponents,
+            vec![opponent]
+        );
+        assert_eq!(
+            engine
+                .get_entity(opponent)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .opponents,
+            vec![initiator]
+        );
+    }
+
+    #[test]
     fn reconsider_direct_entry_does_not_prepare_or_stop_opponent() {
         let sim = crate::sim_rng::test_context();
         let mut engine = make_engine();
@@ -6310,12 +6529,9 @@ mod tests {
             .continuation
             .motion_state = crate::sprite::MotionState::InProgress;
 
-        assert!(engine.reconsider_enter_swordfight(
-            &sim,
-            &LevelAssets::default(),
-            initiator,
-            opponent,
-        ));
+        assert!(
+            engine.direct_enter_swordfight(&sim, &LevelAssets::default(), initiator, opponent,)
+        );
 
         assert_eq!(
             engine
@@ -6392,7 +6608,7 @@ mod tests {
     }
 
     #[test]
-    fn unselected_pc_entering_swordfight_does_not_receive_saved_action_message() {
+    fn unselected_pc_entering_swordfight_saves_targeted_no_action() {
         use crate::profiles::Action;
 
         let sim = crate::sim_rng::test_context();
@@ -6416,7 +6632,7 @@ mod tests {
         ));
         {
             let pc_data = engine.get_entity_mut(pc).unwrap().pc_data_mut().unwrap();
-            pc_data.current_action = Action::Purse;
+            pc_data.current_action = Action::Bow;
             pc_data.disabled_actions = vec![false; 3];
             pc_data.disabled_actions_temp = vec![false; 3];
         }
@@ -6425,7 +6641,7 @@ mod tests {
         {
             let pc_data = engine.get_entity(pc).unwrap().pc_data().unwrap();
             assert_eq!(pc_data.current_action, Action::NoAction);
-            assert_eq!(pc_data.saved_action, Action::Purse);
+            assert_eq!(pc_data.saved_action, Action::NoAction);
             assert_eq!(pc_data.disabled_actions_temp, vec![true; 3]);
         }
 
@@ -6433,6 +6649,107 @@ mod tests {
         let pc_data = engine.get_entity(pc).unwrap().pc_data().unwrap();
         assert_eq!(pc_data.current_action, Action::NoAction);
         assert_eq!(pc_data.disabled_actions_temp, vec![false; 3]);
+        assert!(
+            !engine
+                .orders
+                .sequence_manager
+                .element_is_about_to_be_launched(pc, Command::EquipBow),
+            "quitting must not restore the action that was armed before entry"
+        );
+    }
+
+    #[test]
+    fn quit_swordfight_resets_moving_survivor_smalltalk_initiative() {
+        use crate::profiles::Action;
+
+        let sim = crate::sim_rng::test_context();
+        let assets = action_test_assets([Action::NoAction; 3]);
+        let mut engine = make_engine();
+        let quitter = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+        let survivor = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+        let principal = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+
+        {
+            let human = engine
+                .get_entity_mut(quitter)
+                .unwrap()
+                .human_data_mut()
+                .unwrap();
+            human.opponents = vec![survivor];
+            human.opponent_jump_lines = vec![None];
+        }
+        {
+            let survivor_entity = engine.get_entity_mut(survivor).unwrap();
+            survivor_entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
+            let human = survivor_entity.human_data_mut().unwrap();
+            human.opponents = vec![quitter, principal];
+            human.opponent_jump_lines = vec![None, None];
+            human.smalltalk_initiative = false;
+            human.received_smalltalk_initiative = false;
+        }
+        {
+            let human = engine
+                .get_entity_mut(principal)
+                .unwrap()
+                .human_data_mut()
+                .unwrap();
+            human.opponents = vec![survivor];
+            human.opponent_jump_lines = vec![None];
+            human.smalltalk_initiative = true;
+        }
+
+        engine.quit_swordfight(&sim, &assets, quitter);
+
+        let survivor_human = engine.get_entity(survivor).unwrap().human_data().unwrap();
+        assert_eq!(survivor_human.opponents, vec![principal]);
+        assert!(survivor_human.smalltalk_initiative);
+        assert!(survivor_human.received_smalltalk_initiative);
+        assert!(
+            !engine
+                .get_entity(principal)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .smalltalk_initiative,
+            "mutual principal must lose initiative even while the survivor is Moving"
+        );
+    }
+
+    #[test]
+    fn quit_swordfight_does_not_reset_initiative_without_surviving_opponents() {
+        use crate::profiles::Action;
+
+        let sim = crate::sim_rng::test_context();
+        let assets = action_test_assets([Action::NoAction; 3]);
+        let mut engine = make_engine();
+        let quitter = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+        let survivor = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+
+        {
+            let human = engine
+                .get_entity_mut(quitter)
+                .unwrap()
+                .human_data_mut()
+                .unwrap();
+            human.opponents = vec![survivor];
+            human.opponent_jump_lines = vec![None];
+        }
+        {
+            let survivor_entity = engine.get_entity_mut(survivor).unwrap();
+            survivor_entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
+            let human = survivor_entity.human_data_mut().unwrap();
+            human.opponents = vec![quitter];
+            human.opponent_jump_lines = vec![None];
+            human.smalltalk_initiative = false;
+            human.received_smalltalk_initiative = false;
+        }
+
+        engine.quit_swordfight(&sim, &assets, quitter);
+
+        let survivor_human = engine.get_entity(survivor).unwrap().human_data().unwrap();
+        assert!(survivor_human.opponents.is_empty());
+        assert!(!survivor_human.smalltalk_initiative);
+        assert!(!survivor_human.received_smalltalk_initiative);
     }
 
     #[test]

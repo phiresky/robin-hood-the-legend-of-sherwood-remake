@@ -56,6 +56,29 @@ fn alert_officer_distance(
     distance
 }
 
+/// Distance stored on each accepted soldier before Original inserts it into
+/// the officer's farthest-first alert list. `SquareDistance` reads literal 3D
+/// element positions, so projected map Y alone is insufficient on ramps.
+fn alert_soldier_sort_distance(
+    soldier_position: WorldPoint3D,
+    officer_position: WorldPoint3D,
+) -> f32 {
+    let dx = soldier_position.x - officer_position.x;
+    let dy = (soldier_position.y - officer_position.y) * INVERSE_ASPECT_RATIO;
+    let dz = soldier_position.z - officer_position.z;
+    dx * dx + dy * dy + dz * dz
+}
+
+fn sort_alerted_soldiers(alerted: &mut [(HumanHandle, f32, usize)]) {
+    alerted.sort_by(
+        |(_, lhs_distance, lhs_index), (_, rhs_distance, rhs_index)| {
+            rhs_distance
+                .total_cmp(lhs_distance)
+                .then_with(|| rhs_index.cmp(lhs_index))
+        },
+    );
+}
+
 /// `camp_soldiers` intentionally excludes the evaluating NPC for its normal
 /// consumers. The fallback bug in Original's `TowerGuardCallAlert`, however,
 /// dereferences the complete camp registry (including the tower guard) for its
@@ -589,6 +612,15 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) -> bool {
         let my_pos = ctx.position;
+        let my_world_pos = ctx
+            .entity_view(self.base.me)
+            .unwrap_or_else(|| {
+                panic!(
+                    "officer {} finalizing accepted alerts is missing its live entity view",
+                    self.base.me
+                )
+            })
+            .detection_position_world;
         let officer_in_building = ctx.in_building;
 
         // Preserve engine/acceptance order for the average-direction sum.
@@ -609,22 +641,14 @@ impl EnemyAi {
                             handle, self.base.me
                         )
                     });
-                let dx = soldier.position.x - my_pos.x;
-                let dy = (soldier.position.y - my_pos.y)
-                    * crate::position_interface::INVERSE_ASPECT_RATIO;
-                (*handle, dx * dx + dy * dy, acceptance_index)
+                let distance = alert_soldier_sort_distance(soldier.position_world, my_world_pos);
+                (*handle, distance, acceptance_index)
             })
             .collect();
         // The C++ comment claims increasing distance, but the insertion loop
         // advances while `new_distance < existing_distance`: farthest first.
         // Equal-distance newcomers are inserted before older entries.
-        alerted.sort_by(
-            |(_, lhs_distance, lhs_index), (_, rhs_distance, rhs_index)| {
-                rhs_distance
-                    .total_cmp(lhs_distance)
-                    .then_with(|| rhs_index.cmp(lhs_index))
-            },
-        );
+        sort_alerted_soldiers(&mut alerted);
         self.alerted_us = alerted.iter().map(|(handle, _, _)| *handle).collect();
 
         let (avg_dir_vec_x, avg_dir_vec_y) = if officer_in_building {
@@ -1136,11 +1160,6 @@ impl EnemyAi {
 
         self.current_task_priority = task_priority::ALERT;
         self.base.antagonist = officer_handle;
-        // Track the officer so the soldier can detect them on the way.
-        self.base.outbox.actor.add_detectables.push((
-            crate::element::EntityId::Soldier(crate::entity_id::SoldierId(officer_handle)),
-            crate::element::DetectableType::Friend,
-        ));
         self.gather_position = officer_target_pos;
         self.go_near(
             AiState::Seeking,
@@ -1150,6 +1169,22 @@ impl EnemyAi {
             GotoFlags::RUN,
             ctx,
         );
+        // Track the officer so the soldier can detect them on the way.
+        // Original does this after SetState and before GoNear. `go_near`
+        // combines those operations, so the Rust statement has to follow the
+        // wrapper call. This still preserves Original's effect order: the
+        // engine drains actor-core effects (including this append) before it
+        // launches and preflights the queued movement order. Consequently the
+        // detectable is retained even when route construction fails.
+        //
+        // Original AddDetectable only asserts uniqueness in debug builds,
+        // then appends unconditionally. The shipped release can therefore
+        // retain a second Friend entry when CreateListOfSoldiersYouCanAlert
+        // already registered this officer.
+        self.base.outbox.actor.append_detectables.push((
+            crate::element::EntityId::Soldier(crate::entity_id::SoldierId(officer_handle)),
+            crate::element::DetectableType::Friend,
+        ));
         self.base.launch_timer(50, ctx.frame);
 
         if self.base.couldnt_reachpoint {
@@ -1709,6 +1744,45 @@ mod tests {
             .abs()
             .max((officer_66.y - owner.y).abs() * INVERSE_ASPECT_RATIO);
         assert!(raw_map_distance_47 > raw_map_distance_66);
+    }
+
+    #[test]
+    fn alert_soldier_sort_distance_uses_literal_3d_position() {
+        let officer = WorldPoint3D::new(884.283, 565.7891, 0.0);
+        let soldier_53 = WorldPoint3D::new(1056.0076, 220.9945, 36.001);
+        let soldier_54 = WorldPoint3D::new(1191.9963, 250.0275, 0.0);
+
+        let distance_53 = alert_soldier_sort_distance(soldier_53, officer);
+        let distance_54 = alert_soldier_sort_distance(soldier_54, officer);
+        assert!(
+            distance_54 > distance_53,
+            "Original's farthest-first list puts ground-level Soldier54 before elevated Soldier53"
+        );
+
+        let officer_map = officer.to_map();
+        let soldier_53_map = soldier_53.to_map();
+        let soldier_54_map = soldier_54.to_map();
+        let raw_map_distance_53 = (soldier_53_map.x - officer_map.x).powi(2)
+            + ((soldier_53_map.y - officer_map.y) * INVERSE_ASPECT_RATIO).powi(2);
+        let raw_map_distance_54 = (soldier_54_map.x - officer_map.x).powi(2)
+            + ((soldier_54_map.y - officer_map.y) * INVERSE_ASPECT_RATIO).powi(2);
+        assert!(
+            raw_map_distance_53 > raw_map_distance_54,
+            "the old projected-2D shortcut must demonstrate the representative reversal"
+        );
+    }
+
+    #[test]
+    fn alert_soldier_sort_is_farthest_first_and_later_first_on_ties() {
+        let mut alerted = [(51, 25.0, 0), (52, 100.0, 1), (53, 25.0, 2)];
+
+        sort_alerted_soldiers(&mut alerted);
+
+        assert_eq!(
+            alerted.map(|(handle, _, _)| handle),
+            [52, 53, 51],
+            "Original inserts farther soldiers first and equal-distance newcomers before older entries"
+        );
     }
 
     #[test]

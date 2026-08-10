@@ -175,7 +175,9 @@ struct SoldierSightContext {
     current_substate: crate::ai::Substate,
     view_forward: (f32, f32),
     real_half_aperture: f32,
-    posture: crate::element::Posture,
+    /// Persisted `mViewParameters.bLeanOut`. Original uses this flag, not the
+    /// actor's live posture, to select the detection sharpness multiplier.
+    view_lean_out: bool,
     action_state: crate::element::ActionState,
     sector: Option<crate::position_interface::SectorHandle>,
     alert_status: crate::ai::AlertLevel,
@@ -282,7 +284,7 @@ impl SoldierSightContext {
             current_substate,
             view_forward: (npc.view_direction[0], npc.view_direction[1]),
             real_half_aperture: npc.real_half_aperture,
-            posture: entity.element_data().posture,
+            view_lean_out: npc.view_lean_out,
             action_state: entity
                 .actor_data()
                 .map(|actor| actor.action_state)
@@ -1691,7 +1693,7 @@ impl EngineInner {
         let current_state = viewer.current_state;
         let view_forward = viewer.view_forward;
         let real_half_aperture = viewer.real_half_aperture;
-        let npc_posture = viewer.posture;
+        let view_lean_out = viewer.view_lean_out;
         let entity_sector = viewer.sector;
         let viewer_blipped = viewer.blipped;
         let me_ground_position = viewer.ground_position;
@@ -1844,10 +1846,10 @@ impl EngineInner {
             let mut best_target: Option<(EntityId, MapPoint, u32)> = None;
             let mut max_sharpness: u32 = 0;
             let viewer_in_building = viewer_building_sector.is_some();
-            // Sharpness depends only on the observer's posture. Keep this in
-            // the scan scope so the predetection diagnostic below reports the
-            // exact same conversion used for every detectable.
-            let view_speed = if npc_posture == Posture::LeaningOut {
+            // Original reads the persisted view-parameter flag here. It can
+            // remain true for one or more frames after posture has changed
+            // when another path already replaced EYES_LOOK_DOWNWARDS.
+            let view_speed = if view_lean_out {
                 ai_vision::LOOK_DOWN_BASE_VIEW_SPEED
             } else {
                 ai_vision::BASE_VIEW_SPEED
@@ -3540,7 +3542,7 @@ impl EngineInner {
         let current_state = viewer.current_state;
         let view_forward = viewer.view_forward;
         let real_half_aperture = viewer.real_half_aperture;
-        let npc_posture = viewer.posture;
+        let view_lean_out = viewer.view_lean_out;
         let current_substate = viewer.current_substate;
         let ignore_bodies = viewer.ignore_bodies;
         let _ = (
@@ -3566,7 +3568,7 @@ impl EngineInner {
         const BODY_DETECTION_FACTOR: f32 = 3.0;
 
         // Reusable view-speed for `sharpness = view_speed * visibility`.
-        let view_speed = if npc_posture == Posture::LeaningOut {
+        let view_speed = if view_lean_out {
             ai_vision::LOOK_DOWN_BASE_VIEW_SPEED
         } else {
             ai_vision::BASE_VIEW_SPEED
