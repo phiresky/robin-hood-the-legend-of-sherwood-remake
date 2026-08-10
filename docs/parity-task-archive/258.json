@@ -1,0 +1,10 @@
+{
+  "id": "258",
+  "subject": "Retire stale Cyrdach deployment-zone replay-004",
+  "description": "COMPLETED AS SOURCE-VERIFIED NO-FIX. Cyrdach Profile_156 Savegame_023 replay-004 reaches the same creation-order-89 Sherwood deployment-zone crossing as Task73 at frame 1620, with byte-identical old/new positions (1546.740845,400.692596) to (1549.510132,399.538757). Current Original FLOAT polygon and segment arithmetic necessarily crosses the active script edge (1771,648.00037) to (1526,375.00034): endpoint determinants are +632.35547/-406.35156, reciprocal determinants are -943.62518/-95.08084, and the old-position determinant is nonzero. RHElementActor::CheckForLineCrossing therefore dispatches RHSectorScript::Enter and adds the PC to zone 14. The archived Original trace omits that required occupancy mutation; Rust correctly retains the occupant and StartUp::Hourglass later sends the two extra PCs away at frame 1626. The trace is retired alongside the four Task73 controls pending recapture; no gameplay code changed.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task258-stale-deployment-zone",
+  "resolution": "Archived as another historical schema-12 recording inconsistent with the current Original source and exact crossing arithmetic."
+}
