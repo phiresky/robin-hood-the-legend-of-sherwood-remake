@@ -4237,8 +4237,22 @@ mod tests {
             .sweep_state
             .as_ref()
             .expect("the replacement strike START must not consume the retained sweep");
-        assert_eq!(retained_on_start.strike, SwordStrike::D);
-        assert_eq!(retained_on_start.current_angle, 0.0);
+        let replacement_direction_angle = sector_to_angle(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .element_data()
+                .direction(),
+        );
+        assert_eq!(retained_on_start.strike, SwordStrike::E);
+        assert_eq!(
+            retained_on_start.pending_victims,
+            vec![victim, unreached_victim],
+            "the START warning forecast rebases geometry but keeps the interrupted victim FIFO"
+        );
+        assert_eq!(retained_on_start.initial_angle, replacement_direction_angle);
+        assert_eq!(retained_on_start.current_angle, replacement_direction_angle);
+        assert_eq!(retained_on_start.final_angle, replacement_direction_angle);
         assert_eq!(soldier_life(&engine, victim), 50);
 
         engine.rebind_retained_sweep_to_active_strike(&assets, attacker);

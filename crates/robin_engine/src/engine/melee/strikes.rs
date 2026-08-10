@@ -148,6 +148,37 @@ impl EngineInner {
                 "melee MotionState::Start owner {attacker_id:?} has non-strike live animation {animation:?}"
             )
         });
+
+        // Original's START-only warning forecast is not side-effect free:
+        // GetPossibleVictimsOfLateralSwordStrike writes the human-owned
+        // initial/current/final sweep angles even though it fills a temporary
+        // warning-victim list.  A replacement lateral strike can therefore
+        // keep an interrupted strike's victim FIFO while rebasing its geometry
+        // to the replacement strike before the first IN_PROGRESS Execute.
+        // Do not create a sweep for an ordinary fresh strike here; its real
+        // victim list is still initialized only at MotionState::Done.
+        let retained_victims = self
+            .get_entity(attacker_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| actor.sweep_state.as_ref())
+            .map(|sweep| sweep.pending_victims.clone())
+            .filter(|victims| !victims.is_empty());
+        let strike_kind = profile_idx
+            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+            .map(|profile| profile.thrusts[strike as usize].kind);
+        if strike_kind == Some(WeaponThrustKind::Lateral)
+            && let Some(retained_victims) = retained_victims
+        {
+            self.initialize_sweep(
+                assets,
+                attacker_id,
+                strike,
+                profile_idx,
+                WeaponThrustKind::Lateral,
+                retained_victims,
+            );
+        }
+
         let victims =
             self.collect_sword_strike_warning_victims(assets, attacker_id, strike, profile_idx);
         self.warn_for_strike(sim, assets, attacker_id, &victims, strike);
