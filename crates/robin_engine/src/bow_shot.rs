@@ -1597,6 +1597,31 @@ pub enum BeginShotResult {
     Impossible,
 }
 
+/// Forget Rust's execution-side bow latch before retranslating the same
+/// postponed Original sequence element.
+///
+/// C++ stores the active shot entirely in the selected sequence element and
+/// its current order. When an injury postpones that element, resuming it calls
+/// `Instruct`/`Translate` again with no separate "shot already active" state.
+/// Rust needs the separate [`ActiveShot`] driver while an order is executing,
+/// but that driver must not reject re-instruction of its own postponed owner.
+pub(crate) fn clear_matching_retranslated_shot(
+    entities: &mut Entities,
+    owner: EntityId,
+    seq_id: SequenceId,
+    elem_idx: usize,
+) {
+    let actor = entities
+        .get_mut(owner)
+        .unwrap_or_else(|| panic!("postponed bow owner {owner:?} disappeared"))
+        .actor_data_mut()
+        .unwrap_or_else(|| panic!("postponed bow owner {owner:?} has no actor data"));
+    if actor.active_shot.sequence_id == Some(seq_id) && actor.active_shot.element_index == elem_idx
+    {
+        actor.active_shot.clear();
+    }
+}
+
 /// Begin a bow shot on behalf of a `Command::ShootBow` sequence element.
 ///
 /// Called from the engine's sequence-action dispatch when it sees a
@@ -4442,6 +4467,77 @@ mod tests {
         assert_eq!(actor.active_shot.shoot_mode, Some(ShootMode::Normal));
         // Should have: shoot order + reload order (and possibly transition orders)
         assert!(sm.get_element(seq_id, elem_idx).unwrap().orders.len() >= 2);
+    }
+
+    #[test]
+    fn todo_shot_retranslation_clears_only_its_own_execution_latch() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(0));
+        let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
+        let mut entities =
+            entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
+        let mut sm = SequenceManager::new();
+        let seq_id = sm.launch_element(build_shoot_bow_element(owner, target_id));
+        let elem_idx = 0;
+        assert_eq!(
+            sm.get_element(seq_id, elem_idx).unwrap().state,
+            crate::sequence::SequenceState::Todo,
+            "cross-postponed elements are refreshed to Todo before dispatch"
+        );
+        entities
+            .get_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_shot = ActiveShot {
+            sequence_id: Some(seq_id),
+            element_index: elem_idx,
+            target: Some(target_id),
+            order_id: Some(std::num::NonZeroU32::new(77).unwrap()),
+            released: true,
+            shoot_mode: Some(ShootMode::Normal),
+        };
+
+        clear_matching_retranslated_shot(&mut entities, owner, SequenceId(999), elem_idx);
+        assert!(
+            entities
+                .get(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_shot
+                .is_active(),
+            "an unrelated sequence must retain its active shot"
+        );
+
+        clear_matching_retranslated_shot(&mut entities, owner, seq_id, elem_idx);
+        assert!(
+            !entities
+                .get(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_shot
+                .is_active(),
+            "the resumed element must release its stale execution latch before translation"
+        );
+
+        let mut next_order_id = 100;
+        assert_eq!(
+            begin_bow_shot(
+                &mut entities,
+                &mut sm,
+                owner,
+                target_id,
+                seq_id,
+                elem_idx,
+                false,
+                1,
+                Some(ShootMode::Normal),
+                &mut next_order_id,
+            ),
+            BeginShotResult::Started,
+            "the resumed Original element must translate as a fresh execution"
+        );
     }
 
     #[test]

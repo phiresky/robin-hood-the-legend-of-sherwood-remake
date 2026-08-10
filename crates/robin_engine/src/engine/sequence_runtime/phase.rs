@@ -840,6 +840,18 @@ impl EngineInner {
                             }
                             Command::ShootBow | Command::ShootBowOnce => {
                                 let shoot_once = cmd == Command::ShootBowOnce;
+                                // Postponed elements are instructed and translated again
+                                // when their injury successor releases them. A cross-sequence
+                                // resume refreshes that element to Todo before this dispatch,
+                                // so the exact execution ownership is the stable discriminator:
+                                // clear Rust's matching latch so the shot cannot reject its own
+                                // retranslation as a second concurrent shot.
+                                bow_shot::clear_matching_retranslated_shot(
+                                    &mut self.world.entities,
+                                    owner,
+                                    seq_id,
+                                    elem_idx,
+                                );
                                 let antagonist = match &elem.data {
                                     crate::sequence::SequenceElementData::Interaction {
                                         antagonist,

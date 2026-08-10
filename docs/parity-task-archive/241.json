@@ -1,0 +1,9 @@
+{
+  "id": "241",
+  "subject": "Resume postponed bow shots without self-collision",
+  "description": "Cross-sequence postponed ShootBow/ShootBowOnce re-instruction now clears Rust's execution-only ActiveShot latch only when that latch belongs to the exact same sequence element. Original re-registers and translates the postponed element without a separate shot latch; Rust previously rejected Soldier99's resumed shot as concurrent, converted ShootBow Impossible to EventDone, rebuilt its enemy list, and consumed an extra BattleCourage draw. SuN1Sh1nE Profile_004 Savegame_024 replay-013 clears the frame-209 RNG frontier and advances to an independent frame-499 detection-alert frontier. Both task-36 controls and the focused Todo-state ownership regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task241-rng-successor"
+}
