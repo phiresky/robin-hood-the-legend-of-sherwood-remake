@@ -907,6 +907,67 @@ pub(super) fn extract_forecast_input(entity: &Entity) -> Option<crate::ai::Forec
     })
 }
 
+/// Map position returned by Original AI `Position(friend)` during SeekArea's
+/// nearby-friend scan. A PassDoor sequence reports its committed destination
+/// side even while the sprite is still interpolating along the door rail.
+fn seek_area_friend_position_map(
+    raw_position: MapPoint,
+    door_pass: Option<(crate::gate::DoorIndex, bool)>,
+    doors: &[crate::gate::Door],
+) -> MapPoint {
+    let Some((door_index, direct)) = door_pass else {
+        return raw_position;
+    };
+    let door = doors
+        .get(usize::from(door_index))
+        .unwrap_or_else(|| panic!("SeekArea friend references missing door {}", door_index.0));
+    if direct {
+        door.point_in
+    } else {
+        door.point_out
+    }
+}
+
+#[cfg(test)]
+mod seek_area_friend_position_tests {
+    use super::*;
+
+    #[test]
+    fn door_passing_friend_uses_committed_side_for_radius_gate() {
+        let owner = MapPoint::new(1155.7197, 1421.6211);
+        let raw_friend = MapPoint::new(727.0, 1168.0);
+        let doors = [crate::gate::Door {
+            point_out: MapPoint::new(718.0, 1179.0),
+            point_in: MapPoint::new(735.0, 1156.0),
+            ..Default::default()
+        }];
+        let distance_squared = |point: MapPoint| {
+            let delta = point - owner;
+            delta.x * delta.x + delta.y * delta.y
+        };
+
+        assert!(distance_squared(raw_friend) < 500.0 * 500.0);
+        let indirect = seek_area_friend_position_map(
+            raw_friend,
+            Some((crate::gate::DoorIndex(0), false)),
+            &doors,
+        );
+        assert_eq!(indirect, doors[0].point_out);
+        assert!(distance_squared(indirect) >= 500.0 * 500.0);
+
+        let direct = seek_area_friend_position_map(
+            raw_friend,
+            Some((crate::gate::DoorIndex(0), true)),
+            &doors,
+        );
+        assert_eq!(direct, doors[0].point_in);
+        assert_eq!(
+            seek_area_friend_position_map(raw_friend, None, &doors),
+            raw_friend
+        );
+    }
+}
+
 /// Build an [`AiContext`] from a generic [`Entity`] reference.
 ///
 /// Extracts position, direction, posture, camp, building status, and
@@ -2015,6 +2076,7 @@ impl EngineInner {
         // distance below 500 contributes to the point-count multiplier.
         // Build this for every Think boundary, not only RefreshDetection,
         // because timer/report callbacks also enter SeekArea synchronously.
+        let doors = self.script_domains.interactables.doors.as_slice();
         for (other_id, other) in self.world.entities.soldiers() {
             if other_id == npc_id {
                 continue;
@@ -2029,7 +2091,14 @@ impl EngineInner {
             if other_ai.base.view_alert_status == crate::ai::AlertLevel::Green {
                 continue;
             }
-            let delta = other.element.position_map() - me_pos;
+            let door_pass = other
+                .actor
+                .active_door_pass
+                .as_ref()
+                .map(|pass| (pass.door_index, pass.position_direct));
+            let friend_position =
+                seek_area_friend_position_map(other.element.position_map(), door_pass, doors);
+            let delta = friend_position - me_pos;
             if delta.x * delta.x + delta.y * delta.y >= 500.0 * 500.0 {
                 continue;
             }
