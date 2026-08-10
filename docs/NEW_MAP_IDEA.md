@@ -1,4 +1,4 @@
-# A new map: castle, river, and town
+# Can we add a new map to Robin Hood - The Legend of Sherwood?
 
 The original game has nine reusable maps: the five fortified towns of Derby,
 Leicester, Lincoln, Nottingham, and York; Sherwood Forest; and three crossroads
@@ -6,7 +6,7 @@ maps (`Croisement01`–`03`).
 
 It would be very nice to expand the game with a tenth map. The idea is an
 entirely new castle, with a river running past it and a town spread out in
-front. Gameplay needs to be considered: There should be multiple ways into the castle and routes in general, soldiers should be able to be placed and to patrol some routes, etc. The more the designer of the map knows about how the game works, the better.
+front.
 
 ## Maps in the game
 
@@ -90,7 +90,18 @@ The Leicester making-of sheet shows that progression particularly clearly:
   <figcaption>Leicester: 3D construction, render, and painted final map.</figcaption>
 </figure>
 
-The second production image shows Derby and is useful as an architectural
+The original game's concept art also preserves a smaller sketch-to-render
+example, showing how a fortified tower design was translated into a finished
+environment asset:
+
+<table>
+  <tr>
+    <td><a href="NEW_MAP_IDEA/original-castle-concept-sketch.avif"><img src="NEW_MAP_IDEA/original-castle-concept-sketch.avif" width="360" alt="Original Robin Hood castle tower concept sketch"></a><br><strong>Concept sketch</strong><br><code>castle_1.jpg</code></td>
+    <td><a href="NEW_MAP_IDEA/original-castle-concept-render.avif"><img src="NEW_MAP_IDEA/original-castle-concept-render.avif" width="360" alt="Finished render of the original Robin Hood castle tower concept"></a><br><strong>Finished render</strong><br><code>castle_2.jpg</code></td>
+  </tr>
+</table>
+
+The Derby production image is useful as an architectural
 reference for the proposed castle's massing, towers, gatehouse, and defensive
 layers:
 
@@ -116,3 +127,25 @@ The game itself includes very simplified versions of the 3D models, used to calc
 For a new map, the same pipeline is sensible: lock the gameplay layout
 first, lay it out in 3D with an orthographic camera, test all routes and
 elevations, render the base, paint it to match the original game's style, then author collision, sectors, patches, and ambient animation.
+
+Gameplay needs to be considered: There should be multiple ways into the castle and routes in general, soldiers should be able to be placed and to patrol some routes, etc. The more the designer of the map knows about how the game works, the better. If you have never played the game, here is a gameplay video: https://www.youtube.com/watch?v=ijkwe15y3e4
+Note that in-game, you do not see the whole castle at once, you scroll around the map.
+
+## AI attempt: Greywatch Castle
+
+I (a developer, but not an artist) attempted to create a new map with the help
+of AI. I called it **Greywatch Castle**: an original, portrait-oriented mission
+space with a fortified summit, a river, a mill and bridge hamlet, a church
+village, and several possible infiltration routes. I began by turning those
+gameplay requirements into a rough layout sketch.
+
+<table>
+  <tr>
+    <td><a href="NEW_MAP_IDEA/greywatch-layout-sketch.avif"><img src="NEW_MAP_IDEA/greywatch-layout-sketch.avif" width="360" alt="Layout sketch for Greywatch Castle"></a><br><strong>Layout sketch</strong><br>My plan for the castle, river, roads, and settlements.</td>
+    <td><a href="NEW_MAP_IDEA/greywatch-castle-concept.avif"><img src="NEW_MAP_IDEA/greywatch-castle-concept.avif" width="360" alt="Best Greywatch Castle AI concept map"></a><br><strong>Best result</strong><br>My single-pass Greywatch Castle concept.</td>
+  </tr>
+</table>
+
+On first glance this looks pretty good and i think it's good for inspiration, but if you look closer it does not work at all. The river flow along the windmill makes no sense, some of the fences and paths just end unexplicably, and so on. Also, the perspective does not work: It's a semi-perspective render, but we need a orthographic / isometric render - the top of the map must have the same scale as the bottom, so that the fixed-size 2D characters can be placed anywhere and have the same relative size.
+
+I tried a few different approaches - starting with a layout SVG or a sketch, generating the image in tiles (this map is too detailed to generate one shot at full resolution), etc, but it's clear that it's not possible right now to create a new map for this game with low-effort AI.
