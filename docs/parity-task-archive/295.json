@@ -1,0 +1,9 @@
+{
+  "id": "295",
+  "subject": "Preserve literal push-strike side boundaries",
+  "description": "Push-aside sword-strike victim geometry now starts from Original's literal 16-sector GetDirectionVector table, including the ordinary ASPECT_RATIO Y scale, instead of sector_to_angle's +0.1-radian roundtrip nudge. The nudge rotated Soldier110's narrow strike-A rectangle enough to admit a Royalist immediately outside its side boundary, converting the otherwise-positive proposal into friendly-fire rejection. The focused boundary regression passes. SuN1Sh1nE Profile_004 Savegame_024 replay-010 clears the frame-353 special-strike proposal frontier and advances to an independent strike-completion/opponent frontier after frame 373.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task295-push-strike-vector"
+}
