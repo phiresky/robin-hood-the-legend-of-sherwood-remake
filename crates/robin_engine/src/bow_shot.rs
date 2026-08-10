@@ -3131,7 +3131,25 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
     if !proj.element.active {
         return;
     }
-    if proj.projectile.trajectory.is_empty() && !proj.element.sprite.position_iface.is_moving() {
+    if proj.projectile.trajectory.is_empty()
+        && (!proj.projectile.flying
+            || (proj.projectile.trajectory_frame_count == 0
+                && !proj
+                    .element
+                    .sprite
+                    .position_iface
+                    .raw_sprite_position_is_moving()))
+    {
+        // The endpoint frame itself is still presented once. Falling arrows
+        // therefore consume their final tumble draw before the settled cache
+        // retires them; an already-stopped loaded arrow retires immediately.
+        if proj.projectile.flying && proj.projectile.falling {
+            apply_arrow_falling_sprite_visual(sim, proj);
+        }
+        // Refresh retires the arrow before another Projectile::Hourglass can
+        // call NewMove. Settle the exposed movement snapshot at the endpoint
+        // as Original's retired sprite state records it.
+        proj.element.sprite.position_iface.new_move();
         proj.element.active = false;
         return;
     }
@@ -7522,7 +7540,7 @@ mod tests {
     }
 
     #[test]
-    fn moving_arrow_with_empty_trajectory_reuses_serialized_orientation_cache() {
+    fn raw_sprite_position_moving_arrow_with_empty_trajectory_reuses_orientation_cache() {
         let mut arrow = refresh_test_arrow();
         arrow.projectile.trajectory.clear();
         arrow.projectile.last_orientation_sector = 7;
@@ -7531,7 +7549,7 @@ mod tests {
             .element
             .sprite
             .position_iface
-            .set_old_position(WorldPoint3D::new(-1.0, 0.0, 0.0));
+            .set_cached_sprite_position(MapPoint::new(1.0, 0.0));
 
         refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
 
@@ -7543,5 +7561,46 @@ mod tests {
             ),
             (7, 3)
         );
+    }
+
+    #[test]
+    fn stopped_empty_trajectory_retires_without_refresh_rng() {
+        let mut arrow = refresh_test_arrow();
+        arrow.projectile.trajectory.clear();
+        arrow.projectile.falling = true;
+        arrow.projectile.flying = false;
+        arrow.projectile.trajectory_frame_count = 3;
+        // Model the terminal landing normalization. It mutates the eager
+        // world position after flight has stopped, but is not another flight
+        // segment that keeps the arrow alive.
+        arrow
+            .element
+            .sprite
+            .position_iface
+            .set_old_position(WorldPoint3D::new(-1.0, 0.0, 0.0));
+
+        let (_, draws) = crate::sim_rng::with_draw_trace(|| {
+            refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow)
+        });
+
+        assert!(!arrow.element.active);
+        assert!(draws.is_empty());
+    }
+
+    #[test]
+    fn flying_endpoint_renders_final_falling_frame_before_retirement() {
+        let mut arrow = refresh_test_arrow();
+        arrow.projectile.trajectory.clear();
+        arrow.projectile.trajectory_frame_count = 0;
+        arrow.projectile.falling = true;
+
+        let (_, draws) = crate::sim_rng::with_draw_trace(|| {
+            refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow)
+        });
+
+        assert!(!arrow.element.active);
+        assert_eq!(draws, vec![crate::sim_rng::RngSite::ArrowFallingFrame]);
+        assert!(!arrow.element.sprite.position_iface.is_moving());
+        assert!(!arrow.element.sprite.position_iface.is_moving_map());
     }
 }
