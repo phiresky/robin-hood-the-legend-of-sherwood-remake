@@ -43,23 +43,20 @@ fn enough_nearer_friends_to_observe(
         >= visible_enemies + visible_enemies * (0.045_f32 * f32::from(courage))
 }
 
-/// Mirror the admission boundary that builds Original BattleDecisions'
-/// nearby-friends list before it derives `bAlertingSoldierNear` from that
-/// list. An alerting soldier elsewhere in the camp must not suppress this
-/// owner's attempt to alert an officer.
+/// Derive Original's `bAlertingSoldierNear` from the friends already admitted
+/// to `mlistUs`. The admission walk has performed the authoritative 360-degree
+/// detection query; querying the camp again here changes both call order and
+/// the opaque-visibility cache.
 fn has_nearby_alerting_soldier(
     owner: NpcHandle,
-    candidates: impl IntoIterator<Item = (NpcHandle, bool, Substate)>,
-    mut is_detecting_360_degrees: impl FnMut(HumanHandle) -> bool,
+    admitted_friends: &[HumanHandle],
+    candidates: impl IntoIterator<Item = (NpcHandle, Substate)>,
 ) -> bool {
-    candidates
-        .into_iter()
-        .any(|(handle, is_able_to_fight, substate)| {
-            handle != owner
-                && is_able_to_fight
-                && is_detecting_360_degrees(handle)
-                && substate == Substate::SeekingRunningToOfficer
-        })
+    candidates.into_iter().any(|(handle, substate)| {
+        handle != owner
+            && admitted_friends.contains(&handle)
+            && substate == Substate::SeekingRunningToOfficer
+    })
 }
 
 /// Original `SquareDistance(primary_target)` compares the actors' literal
@@ -1612,15 +1609,15 @@ impl EnemyAi {
                         .find_fighter(target, tick)
                         .map(|f| f.position)
                         .unwrap_or(self.base.seek_position);
-                    // `bAlertingSoldierNear` short-circuits to Cassos: if
-                    // another soldier is already running to alert an
-                    // officer, don't dispatch a duplicate run.
+                    // Original derives this while building `mlistUs`; reuse
+                    // that admission result rather than issuing a second set
+                    // of 360-degree visibility queries.
                     let alerting_soldier_near = has_nearby_alerting_soldier(
                         self.base.me,
+                        &self.base.list_us,
                         tick.camp_soldiers
                             .iter()
-                            .map(|cs| (cs.handle, cs.is_able_to_fight, cs.ai_substate)),
-                        |handle| self.is_detecting_360_degrees(handle, ctx),
+                            .map(|cs| (cs.handle, cs.ai_substate)),
                     );
                     if alerting_soldier_near || !self.alert_officer(sim, center, 0, ctx, tick) {
                         decision = Decision::Cassos;
@@ -3306,27 +3303,24 @@ mod tests {
 
     #[test]
     fn out_of_view_alerting_soldier_does_not_suppress_officer_alert() {
-        let candidates = [(64, true, Substate::SeekingRunningToOfficer)];
-        let mut detection_queries = Vec::new();
-
-        let alerting_soldier_near = has_nearby_alerting_soldier(65, candidates, |handle| {
-            detection_queries.push(handle);
-            false
-        });
-
-        assert!(!alerting_soldier_near);
-        assert_eq!(detection_queries, [64]);
+        assert!(!has_nearby_alerting_soldier(
+            65,
+            &[65],
+            [(64, Substate::SeekingRunningToOfficer)],
+        ));
     }
 
     #[test]
-    fn detectable_able_alerting_soldier_suppresses_duplicate_officer_alert() {
-        let candidates = [(64, true, Substate::SeekingRunningToOfficer)];
-
-        assert!(has_nearby_alerting_soldier(65, candidates, |_| true));
+    fn admitted_alerting_soldier_suppresses_duplicate_officer_alert() {
+        assert!(has_nearby_alerting_soldier(
+            65,
+            &[65, 64],
+            [(64, Substate::SeekingRunningToOfficer)],
+        ));
         assert!(!has_nearby_alerting_soldier(
             65,
-            [(64, false, Substate::SeekingRunningToOfficer)],
-            |_| true,
+            &[65, 64],
+            [(64, Substate::DefaultOnPost)],
         ));
     }
 
