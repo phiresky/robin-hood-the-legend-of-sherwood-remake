@@ -810,6 +810,19 @@ fn is_sword_motion_context(
         || is_sword_movement_nonanimation(order_action)
 }
 
+/// Whether the selected logical action enters Human's sword-movement Execute
+/// arm. The broader sword-motion context also retains the outgoing live state
+/// for facing and sprite selection, but that stale state does not own START
+/// side effects once an ordinary successor is selected.
+fn executes_sword_movement_action(
+    door_pass_action: Option<OrderType>,
+    order_action: OrderType,
+) -> bool {
+    let action =
+        door_pass_sprite_animation_override(order_action, door_pass_action).unwrap_or(order_action);
+    is_sword_movement_nonanimation(action)
+}
+
 /// Match `RHElementActorHuman::DetermineMovementAnimation`: these are logical
 /// dispatch tokens consumed by the Human Execute override, not sprite rows.
 /// `FaceOpponent` chooses the concrete forward/backward/strafe sword animation
@@ -7315,6 +7328,8 @@ impl EngineInner {
             let combat_target = combat_face_targets[actor_id];
             let is_sword_motion =
                 is_sword_motion_context(action_state, door_pass_anim, order_action);
+            let executes_sword_movement =
+                executes_sword_movement_action(door_pass_anim, order_action);
             let is_shield_motion =
                 matches!(action_state, crate::element::ActionState::MovingShield);
             let is_combat = (is_shield_motion && combat_target.is_some()) || is_sword_motion;
@@ -8011,7 +8026,7 @@ impl EngineInner {
             // so it observes entity-target PerformSeek's wrapper result just
             // like posture/action-state changes do. A raw sprite START hidden
             // as IN_PROGRESS by PerformSeek must not transfer initiative.
-            if matches!(state_effect_motion, MotionState::Start) && is_sword_motion {
+            if matches!(state_effect_motion, MotionState::Start) && executes_sword_movement {
                 sword_movement_starts.push(entity_id);
             }
             tracing::trace!(
@@ -9618,7 +9633,7 @@ impl EngineInner {
                 && let Some((posture, next_action_state)) =
                     movement_execute_state_effect(order_action, MotionState::Start)
             {
-                if is_sword_motion {
+                if executes_sword_movement {
                     sword_movement_starts.push(entity_id);
                 }
                 movement_state_effects.push((entity_id, posture, next_action_state));
@@ -9642,7 +9657,7 @@ impl EngineInner {
                 && let Some((posture, next_action_state)) =
                     movement_execute_state_effect(order_action, MotionState::Start)
             {
-                if is_sword_motion {
+                if executes_sword_movement {
                     sword_movement_starts.push(entity_id);
                 }
                 movement_state_effects.push((entity_id, posture, next_action_state));
@@ -13079,6 +13094,33 @@ mod orphaned_sword_movement_tests {
             ),
             "FORCE on the owning element must not reroute an ordinary transition through FaceOpponent"
         );
+    }
+
+    #[test]
+    fn ordinary_successor_does_not_inherit_sword_movement_start_side_effects() {
+        assert!(
+            is_sword_motion_context(
+                ActionState::MovingSword,
+                Some(OrderType::WalkingUpright),
+                OrderType::WalkingUpright,
+            ),
+            "the outgoing sword state remains valid visual/facing context"
+        );
+        assert!(
+            !executes_sword_movement_action(
+                Some(OrderType::WalkingUpright),
+                OrderType::WalkingUpright,
+            ),
+            "an ordinary door successor must execute the ordinary walking START arm"
+        );
+        assert!(executes_sword_movement_action(
+            Some(OrderType::WalkingWithSword),
+            OrderType::WalkingWithSword,
+        ));
+        assert!(executes_sword_movement_action(
+            None,
+            OrderType::RunningWithSword,
+        ));
     }
 }
 
