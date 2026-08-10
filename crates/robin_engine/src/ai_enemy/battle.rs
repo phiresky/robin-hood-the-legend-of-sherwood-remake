@@ -43,6 +43,25 @@ fn enough_nearer_friends_to_observe(
         >= visible_enemies + visible_enemies * (0.045_f32 * f32::from(courage))
 }
 
+/// Mirror the admission boundary that builds Original BattleDecisions'
+/// nearby-friends list before it derives `bAlertingSoldierNear` from that
+/// list. An alerting soldier elsewhere in the camp must not suppress this
+/// owner's attempt to alert an officer.
+fn has_nearby_alerting_soldier(
+    owner: NpcHandle,
+    candidates: impl IntoIterator<Item = (NpcHandle, bool, Substate)>,
+    mut is_detecting_360_degrees: impl FnMut(HumanHandle) -> bool,
+) -> bool {
+    candidates
+        .into_iter()
+        .any(|(handle, is_able_to_fight, substate)| {
+            handle != owner
+                && is_able_to_fight
+                && is_detecting_360_degrees(handle)
+                && substate == Substate::SeekingRunningToOfficer
+        })
+}
+
 /// Original `SquareDistance(primary_target)` compares the actors' literal
 /// 3D sprite positions, stretches world Y, includes Z, and then truncates the
 /// `FLOAT` result to `ULONG` before BattleDecisions compares friend distances.
@@ -1596,10 +1615,13 @@ impl EnemyAi {
                     // `bAlertingSoldierNear` short-circuits to Cassos: if
                     // another soldier is already running to alert an
                     // officer, don't dispatch a duplicate run.
-                    let alerting_soldier_near = tick.camp_soldiers.iter().any(|cs| {
-                        cs.handle != self.base.me
-                            && cs.ai_substate == Substate::SeekingRunningToOfficer
-                    });
+                    let alerting_soldier_near = has_nearby_alerting_soldier(
+                        self.base.me,
+                        tick.camp_soldiers
+                            .iter()
+                            .map(|cs| (cs.handle, cs.is_able_to_fight, cs.ai_substate)),
+                        |handle| self.is_detecting_360_degrees(handle, ctx),
+                    );
                     if alerting_soldier_near || !self.alert_officer(sim, center, 0, ctx, tick) {
                         decision = Decision::Cassos;
                         continue;
@@ -3279,6 +3301,32 @@ mod tests {
             target.detection_position_world,
             target.direction,
             &target,
+        ));
+    }
+
+    #[test]
+    fn out_of_view_alerting_soldier_does_not_suppress_officer_alert() {
+        let candidates = [(64, true, Substate::SeekingRunningToOfficer)];
+        let mut detection_queries = Vec::new();
+
+        let alerting_soldier_near = has_nearby_alerting_soldier(65, candidates, |handle| {
+            detection_queries.push(handle);
+            false
+        });
+
+        assert!(!alerting_soldier_near);
+        assert_eq!(detection_queries, [64]);
+    }
+
+    #[test]
+    fn detectable_able_alerting_soldier_suppresses_duplicate_officer_alert() {
+        let candidates = [(64, true, Substate::SeekingRunningToOfficer)];
+
+        assert!(has_nearby_alerting_soldier(65, candidates, |_| true));
+        assert!(!has_nearby_alerting_soldier(
+            65,
+            [(64, false, Substate::SeekingRunningToOfficer)],
+            |_| true,
         ));
     }
 
