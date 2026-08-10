@@ -1270,6 +1270,20 @@ impl EngineInner {
             return data.wait_time;
         }
 
+        // Every airborne Jump Execute arm reuses Original's `mulWaitTime`
+        // for the remaining flight ticks. A retained post-seek continuation
+        // is dormant while that order runs and must not expose Rust's split
+        // seek-refresh copy instead. Test the current step rather than the
+        // cached airborne flag, which intentionally survives between steps.
+        if data
+            .active_jump
+            .as_ref()
+            .and_then(|jump| jump.current.as_ref())
+            .is_some_and(|current| current.step.airborne)
+        {
+            return data.wait_time;
+        }
+
         if let Some(sequence_id) = data.active_movement.sequence_id
             && let Some(element) = self
                 .orders

@@ -7259,6 +7259,69 @@ mod bow_command_body_parity_tests {
             .sequence_manager
             .element_in_progress(idle_sequence, 0);
         assert_eq!(engine.actor_legacy_wait_time(owner), 7);
+
+        // Savegame_linux3/Profile_003/Savegame_065 replay-003 frame
+        // 16245: a long jump starts while these post-seek pointers remain
+        // retained. Original's airborne Execute arm overwrites mulWaitTime
+        // with the flight duration, so that live owner must take precedence
+        // over the dormant seek-refresh copy.
+        {
+            use crate::engine::jump::{ActiveJump, CurrentStepState, JumpStep};
+            use crate::sequence::SequenceId;
+            use std::collections::VecDeque;
+            use std::num::NonZeroU32;
+
+            let actor = engine
+                .world
+                .entities
+                .get_mut(owner)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap();
+            actor.wait_time = 4;
+            actor.seek_refresh_wait = 0;
+            actor.active_jump = Some(ActiveJump {
+                steps: VecDeque::new(),
+                current: Some(CurrentStepState {
+                    start_x: 0.0,
+                    start_y: 0.0,
+                    start_z: 0.0,
+                    total_frames: 5,
+                    frames_elapsed: 1,
+                    order_id: NonZeroU32::new(1).unwrap(),
+                    airborne_increment: None,
+                    step: JumpStep {
+                        anim: OrderType::JumpingLong,
+                        target_3d: None,
+                        airborne: true,
+                        max_frames: None,
+                    },
+                }),
+                sequence_id: SequenceId(1),
+                element_index: 0,
+                dest_sector: None,
+                dest_layer: 0,
+                source_direction_goal: 0,
+                dest_projection_point: crate::coordinates::MapPoint::default(),
+            });
+        }
+        assert_eq!(engine.actor_legacy_wait_time(owner), 4);
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_jump
+            .as_mut()
+            .unwrap()
+            .current
+            .as_mut()
+            .unwrap()
+            .step
+            .airborne = false;
+        assert_eq!(engine.actor_legacy_wait_time(owner), 0);
     }
 
     #[test]
