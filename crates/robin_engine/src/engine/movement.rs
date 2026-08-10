@@ -7646,11 +7646,16 @@ impl EngineInner {
             let dest_already_at_pos =
                 motion_method != MotionMethod::TillLastFrame && elem.position_map() == goal;
             let sprite = &mut elem.sprite;
-            // FaceOpponent / FaceDangerPoint calls Turn before PerformSeek
-            // tests its entity-target tolerance. Preserve that turn on the
-            // successful pre-motion branch; the ordinary branch below already
-            // performs the effective per-frame turn before PerformMotion.
-            if tolerance_arrival && is_combat {
+            // Human::FaceOpponent / FaceDangerPoint calls Turn before
+            // PerformSeek. When the seek continues, PerformSeek calls Turn a
+            // second time immediately before PerformMotion; when tolerance
+            // has already been reached, it returns after only this first
+            // turn. A non-soldier without a live opponent returns from
+            // FaceOpponent before setting a direction or turning.
+            if is_combat
+                && combat_target.is_some()
+                && active_move_flags.contains(crate::sequence::MoveFlags::SEEK)
+            {
                 let _ = sprite.position_iface.turn();
             }
             // Entity-target PerformSeek returns from its successful
@@ -12204,6 +12209,91 @@ mod orphaned_sword_movement_tests {
                 .last_action,
             OrderType::WalkingBackwardsSword,
             "FaceOpponent passes a co-located opponent's literal zero vector to Angle, which resolves to PI"
+        );
+    }
+
+    #[test]
+    fn combat_seek_applies_face_opponent_and_perform_seek_turns() {
+        let (mut engine, owner, movement_sequence, _order_id, start) = install_sword_movement(true);
+        let (face_x, face_y) = crate::element::direction_vector_16(11);
+        let opponent_position = MapPoint::new(
+            start.x + face_x * 30.0,
+            start.y + face_y * crate::position_interface::ASPECT_RATIO * 30.0,
+        );
+        assert_eq!(
+            crate::position_interface::vector_to_sector_0_to_15_iso(
+                opponent_position.x - start.x,
+                opponent_position.y - start.y,
+            ),
+            11,
+        );
+
+        let mut opponent_element = ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        };
+        opponent_element.set_position_map(opponent_position);
+        let opponent = engine.add_entity(Entity::Pc(ActorPc {
+            element: opponent_element,
+            actor: ActorData::default(),
+            human: HumanData {
+                opponents: vec![owner],
+                ..HumanData::default()
+            },
+            pc: PcData {
+                life_points: 50,
+                ..PcData::default()
+            },
+        }));
+
+        {
+            let entity = engine.get_entity_mut(owner).unwrap();
+            entity.human_data_mut().unwrap().opponents.push(opponent);
+            let actor = entity.actor_data_mut().unwrap();
+            actor.seek_target = Some(opponent);
+            actor.last_seek_target_position = opponent_position;
+            actor.seek_distance = 0.0;
+            let position = entity.position_iface_mut();
+            let mut state = position.v48_serialized_state();
+            state.direction = crate::position_interface::Direction::from_raw(10);
+            state.direction_goal = crate::position_interface::Direction::from_raw(11);
+            state.anti_collision_on = false;
+            state.deviated = true;
+            state.direction_count = 0;
+            position.restore_v48_serialized_state(state);
+        }
+        let movement = engine
+            .orders
+            .sequence_manager
+            .get_element_mut(movement_sequence, 0)
+            .unwrap();
+        let SequenceElementData::Movement { flags, element, .. } = &mut movement.data else {
+            unreachable!("fixture movement changed data kind")
+        };
+        flags.insert(MoveFlags::SEEK);
+        *element = Some(opponent);
+
+        let sim = crate::sim_rng::test_context();
+        let assets = assets_with_test_pc_profile();
+        engine.tick_entity_movement(&sim, &assets);
+
+        let first = engine.get_entity(owner).unwrap().position_iface();
+        assert_eq!(first.get_direction().as_u8(), 10);
+        assert_eq!(first.v48_serialized_state().direction_count, 2);
+
+        engine.tick_entity_movement(&sim, &assets);
+
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .position_iface()
+                .get_direction()
+                .as_u8(),
+            11,
+            "FaceOpponent's first Turn must rotate once the prior frame's two-call anti-vibration count is stable"
         );
     }
 
