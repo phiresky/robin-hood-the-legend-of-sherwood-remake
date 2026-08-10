@@ -4168,7 +4168,6 @@ pub(crate) fn command_action_distance_animation(cmd: Command) -> Option<crate::o
         Command::SearchCmd => Some(OrderType::Searching),
         Command::HitCmd => Some(OrderType::Hitting),
         Command::RaiseShield => Some(OrderType::RaisingShield),
-        Command::Pay => Some(OrderType::Paying),
         Command::WakeUp => Some(OrderType::WakingUp),
         Command::UseLever => Some(OrderType::UsingLever),
         _ => None,
@@ -5127,7 +5126,7 @@ mod tests {
             &mut engine,
             pc_id,
             crate::order::OrderType::Paying,
-            crate::coordinates::SpriteLocalPoint::ZERO,
+            crate::coordinates::SpriteLocalPoint::new(8.0, 6.0),
             crate::coordinates::SpriteAnchor::ZERO,
         );
         let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
@@ -5142,9 +5141,15 @@ mod tests {
             .expect("Pay registers its seek sequence");
         let seek = sequence.get(0).expect("Pay seek is first");
         match &seek.data {
-            SequenceElementData::Movement { flags, .. } => {
+            SequenceElementData::Movement {
+                flags, tolerance, ..
+            } => {
                 assert!(flags.contains(MoveFlags::SEEK));
                 assert!(flags.contains(MoveFlags::USE_POINT));
+                assert_eq!(
+                    *tolerance, 0.0,
+                    "Original Pay passes literal action distance zero instead of the Paying sprite hotspot distance"
+                );
             }
             other => panic!("expected Pay movement seek element, got {other:?}"),
         }
