@@ -1576,6 +1576,46 @@ fn enter_swordfight_clears_pending_bow_shot_list() {
 }
 
 #[test]
+fn reciprocal_swordfight_entry_preserves_existing_opponent_strength() {
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let initiator = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let opponent = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    engine
+        .get_entity_mut(initiator)
+        .and_then(Entity::human_data_mut)
+        .unwrap()
+        .relative_fighting_ability = 17;
+    {
+        let human = engine
+            .get_entity_mut(opponent)
+            .and_then(Entity::human_data_mut)
+            .unwrap();
+        human.opponents = vec![initiator];
+        human.relative_fighting_ability = 42;
+    }
+
+    assert!(engine.enter_swordfight(&sim, &assets, initiator, opponent, false));
+
+    let initiator_human = engine
+        .get_entity(initiator)
+        .and_then(Entity::human_data)
+        .unwrap();
+    assert_eq!(initiator_human.opponents, vec![opponent]);
+    assert_eq!(initiator_human.relative_fighting_ability, 50);
+
+    let opponent_human = engine
+        .get_entity(opponent)
+        .and_then(Entity::human_data)
+        .unwrap();
+    assert_eq!(opponent_human.opponents, vec![initiator]);
+    assert_eq!(opponent_human.relative_fighting_ability, 42);
+}
+
+#[test]
 fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
     use crate::coordinates::{MapPoint, WorldPoint3D};
 

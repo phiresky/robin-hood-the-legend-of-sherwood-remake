@@ -3310,17 +3310,7 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
     let trajectory_empty = proj.projectile.trajectory.is_empty();
     let flight_at_endpoint = proj.projectile.trajectory_frame_count == 0;
     let world_position_is_moving = proj.element.sprite.position_iface.is_moving();
-    // HitTarget stops flight and deletes the remaining trajectory without
-    // resetting the current segment countdown. That is not a loaded/settled
-    // arrow: Arrow::Refresh still sees old != current and keeps it active for
-    // this refresh before the following Hourglass exposes a stationary
-    // snapshot. Keep the legacy falling-arrow load normalization separate.
-    let preserve_live_non_falling_hit =
-        !proj.projectile.flying && !proj.projectile.falling && world_position_is_moving;
-    let retire_loaded_stopped =
-        !proj.projectile.flying && !flight_at_endpoint && !preserve_live_non_falling_hit;
-    let retire_live_stopped =
-        !proj.projectile.flying && flight_at_endpoint && !world_position_is_moving;
+    let retire_stopped = !proj.projectile.flying && !world_position_is_moving;
     let retire_live_flying = proj.projectile.flying
         && proj.projectile.falling
         && flight_at_endpoint
@@ -3329,7 +3319,7 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
             .sprite
             .position_iface
             .raw_sprite_position_is_moving();
-    if trajectory_empty && (retire_loaded_stopped || retire_live_stopped || retire_live_flying) {
+    if trajectory_empty && (retire_stopped || retire_live_flying) {
         // The endpoint frame itself is still presented once. Falling arrows
         // therefore consume their final tumble draw before the settled cache
         // retires them; an already-stopped loaded arrow retires immediately.
@@ -3342,17 +3332,6 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
         proj.element.sprite.position_iface.new_move();
         proj.element.active = false;
         return;
-    }
-
-    if trajectory_empty
-        && !proj.projectile.flying
-        && (flight_at_endpoint || preserve_live_non_falling_hit)
-    {
-        // Projectile::Hourglass calls NewMove even after flight stops. Rust's
-        // stopped-projectile tick is otherwise skipped, so cross the same
-        // movement-snapshot boundary here before the next Refresh. This also
-        // covers HitTarget with a nonzero leftover segment countdown.
-        proj.element.sprite.position_iface.new_move();
     }
 
     if proj.projectile.falling {
@@ -8331,30 +8310,79 @@ mod tests {
 
         // The exhausted trajectory's next Hourglass stops flight and snaps
         // the landing height. Original exposes that movement for one more
-        // active snapshot, then retires it on the following Refresh.
+        // active snapshot. The following stopped Projectile::Hourglass owns
+        // NewMove; Refresh only observes that snapshot and then retires it.
         arrow.projectile.flying = false;
         refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
         assert!(arrow.element.active);
+        assert!(arrow.element.sprite.position_iface.is_moving());
+        arrow.element.sprite.position_iface.new_move();
         assert!(!arrow.element.sprite.position_iface.is_moving());
         refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
         assert!(!arrow.element.active);
     }
 
     #[test]
-    fn stopped_empty_trajectory_retires_without_refresh_rng() {
+    fn stopped_fx_hit_refresh_waits_for_hourglass_new_move_before_retirement() {
         let mut arrow = refresh_test_arrow();
         arrow.projectile.trajectory.clear();
-        arrow.projectile.falling = true;
+        arrow.projectile.trajectory_frame_count = 0;
         arrow.projectile.flying = false;
-        arrow.projectile.trajectory_frame_count = 3;
-        // Model the terminal landing normalization. It mutates the eager
-        // world position after flight has stopped, but is not another flight
-        // segment that keeps the arrow alive.
         arrow
             .element
             .sprite
             .position_iface
             .set_old_position(WorldPoint3D::new(-1.0, 0.0, 0.0));
+
+        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
+
+        assert!(
+            arrow.element.active,
+            "Refresh must preserve the moving snapshot exposed by successful HitTarget"
+        );
+        assert!(arrow.element.sprite.position_iface.is_moving());
+
+        // RHElementProjectile::Hourglass calls NewMove before checking
+        // mbFlying, even for an arrow already stopped by HitTarget.
+        arrow.element.sprite.position_iface.new_move();
+        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
+        assert!(!arrow.element.active);
+    }
+
+    #[test]
+    fn stopped_moving_empty_trajectory_ignores_retained_counter_until_settled() {
+        let mut arrow = refresh_test_arrow();
+        arrow.projectile.trajectory.clear();
+        arrow.projectile.falling = false;
+        arrow.projectile.flying = false;
+        arrow.projectile.trajectory_frame_count = 3;
+        // A successful HitTarget stops flight and deletes the trajectory but
+        // leaves the current segment's counter and movement intact.
+        arrow
+            .element
+            .sprite
+            .position_iface
+            .set_old_position(WorldPoint3D::new(-1.0, 0.0, 0.0));
+
+        let (_, draws) = crate::sim_rng::with_draw_trace(|| {
+            refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow)
+        });
+
+        assert!(arrow.element.active);
+        assert!(draws.is_empty());
+
+        arrow.element.sprite.position_iface.new_move();
+        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
+        assert!(!arrow.element.active);
+    }
+
+    #[test]
+    fn stopped_settled_empty_trajectory_retires_with_retained_counter() {
+        let mut arrow = refresh_test_arrow();
+        arrow.projectile.trajectory.clear();
+        arrow.projectile.falling = false;
+        arrow.projectile.flying = false;
+        arrow.projectile.trajectory_frame_count = 3;
 
         let (_, draws) = crate::sim_rng::with_draw_trace(|| {
             refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow)
@@ -8382,8 +8410,10 @@ mod tests {
             arrow.element.active,
             "HitTarget movement keeps the arrow alive for this Refresh"
         );
-        assert!(!arrow.element.sprite.position_iface.is_moving());
+        assert!(arrow.element.sprite.position_iface.is_moving());
 
+        // The next stopped Projectile::Hourglass, not Refresh, owns NewMove.
+        arrow.element.sprite.position_iface.new_move();
         refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
         assert!(
             !arrow.element.active,
