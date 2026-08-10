@@ -2365,6 +2365,14 @@ impl EngineInner {
                 *element = Some(target);
                 *tolerance = action_distance;
                 *flags |= MoveFlags::SEEK | per_command_seek_flags;
+                // RHElementActorCivilian::MouseClicked asks
+                // AddInteractionWithSeek to face the beggar. The Original
+                // translates that boolean into RHMOVE_USE_POINT, so
+                // RefreshSeek authorizes the PC's move box at the beggar's
+                // live sprite hotspot rather than at its map centre.
+                if command == Command::Pay {
+                    *flags |= MoveFlags::USE_POINT;
+                }
                 // Net is the only seek target that uses
                 // `DIRECTIONAL_TOLERANCE`.  When the target is a
                 // landed net, set it — the tolerance check projects
@@ -5103,6 +5111,43 @@ mod tests {
         engine.apply_interaction_with_seek(sim, pc_id, target_id, Command::SearchCmd, false);
 
         assert_eq!(first_seek_tolerance(&engine), 19.0);
+    }
+
+    #[test]
+    fn pay_seek_faces_the_beggar_action_point() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let (mut engine, _assets, pc_id) = setup_pc_engine(&[]);
+        {
+            let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
+            pc.set_position_map(crate::coordinates::MapPoint { x: 10.0, y: 10.0 });
+            pc.set_direction_instantly(0);
+        }
+        bind_single_action_point(
+            &mut engine,
+            pc_id,
+            crate::order::OrderType::Paying,
+            crate::coordinates::SpriteLocalPoint::ZERO,
+            crate::coordinates::SpriteAnchor::ZERO,
+        );
+        let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
+
+        engine.apply_interaction_with_seek(sim, pc_id, target_id, Command::Pay, false);
+
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("Pay registers its seek sequence");
+        let seek = sequence.get(0).expect("Pay seek is first");
+        match &seek.data {
+            SequenceElementData::Movement { flags, .. } => {
+                assert!(flags.contains(MoveFlags::SEEK));
+                assert!(flags.contains(MoveFlags::USE_POINT));
+            }
+            other => panic!("expected Pay movement seek element, got {other:?}"),
+        }
     }
 
     #[test]
