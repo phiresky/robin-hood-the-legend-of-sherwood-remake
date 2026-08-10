@@ -873,7 +873,11 @@ fn movement_execute_state_effect(
         // The crouched walk starts the actor moving without standing it
         // up; only the PC executes this animation.
         (OT::WalkingCrouched, MS::Start) => Some((P::Crouched, AS::Moving)),
-        (OT::RunningUpright, MS::Start) => Some((P::Upright, AS::MovingFast)),
+        // Unlike the neighboring walk/stairs arms, Original stamps this
+        // state unconditionally after PerformSeek/PerformMotion. A fresh
+        // short run can therefore return Terminated without ever exposing
+        // Start and must still leave the actor MovingFast.
+        (OT::RunningUpright, _) => Some((P::Upright, AS::MovingFast)),
         (OT::WalkingWithSword, MS::Start) => Some((P::Upright, AS::MovingSword)),
         (OT::RunningWithSword, MS::Start) => Some((P::Upright, AS::MovingFastSword)),
         (OT::WalkingWithCorpse, MS::Start) => Some((P::CarryingCorpse, AS::Moving)),
@@ -12977,6 +12981,17 @@ mod line_jump_tests {
                 MotionState::Done
             ),
             Some((Posture::Upright, ActionState::Waiting))
+        );
+    }
+
+    #[test]
+    fn terminal_first_running_upright_execute_still_stamps_moving_fast() {
+        use crate::element::{ActionState, Posture};
+        use crate::sprite::MotionState;
+
+        assert_eq!(
+            movement_execute_state_effect(OrderType::RunningUpright, MotionState::Terminated),
+            Some((Posture::Upright, ActionState::MovingFast))
         );
     }
 

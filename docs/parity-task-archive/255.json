@@ -1,0 +1,9 @@
+{
+  "id": "255",
+  "subject": "Round-trip one-point post facing through Original vectors",
+  "description": "linux3 Profile_003 Savegame_009 replay-010 diverged after frame 18346 with two extra AiRandomValueRectangle draws after Soldier142 reached a scripted one-point patrol path. Original treats that path as a post and StoreInitialPositionParameters stores the actor's facing as a unit vector; the later FaceTo(vector) re-bins it with ASPECT_RATIO, so body sector 3 becomes facing sector 2 and authors a Turn. Rust stored raw sector 3, falsely considered the post turn complete, reached DefaultOnPost twice across the nested ReturnToDuty/EventAfterScriptGoOn chain, and sampled bored time twice. The one-point handoff now mirrors the vector/aspect round-trip. The representative clears the RNG frontier and advances to an independent visibility-query frontier after frame 18347. Both task-36 controls, the focused real-Turn regression, and the combined 2,856-test robin_engine suite pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task255-one-point-post-facing"
+}

@@ -1270,6 +1270,64 @@ fn goto_route_turn_lookup_preserves_original_endpoint_direction_flip() {
 }
 
 #[test]
+fn one_point_path_post_preserves_store_initial_direction_round_trip() {
+    use crate::ai::macro_patrol::{PathId, PatrolPath};
+    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+
+    let paths = vec![RawHikingPath {
+        waypoints: vec![RawWaypoint {
+            x: 699,
+            y: 1464,
+            sector: 50,
+            level: 1,
+            command: WaypointCommand::None,
+        }],
+    }];
+    let mut ai = AiController::new(142);
+    ai.current_state = AiState::Default;
+    ai.current_substate = Substate::DefaultGotoRouteTurn;
+    ai.has_patrol_path = true;
+    ai.patrol_path = PatrolPath::new(PathId::new(0).unwrap(), &paths);
+    ai.think_recursion_depth = 1;
+    let ctx = AiContext {
+        position: Position {
+            x: 698.99304,
+            y: 1464.0072,
+            sector: SectorHandle::new(50),
+            level: 1,
+        },
+        direction: 3,
+        posture: crate::element::Posture::Upright,
+        self_action_state: crate::element::ActionState::Waiting,
+        self_animation: crate::order::OrderType::NonanimationEnd,
+        hiking_paths: std::sync::Arc::new(paths),
+        ..AiContext::default()
+    };
+    let sim = crate::sim_rng::test_context();
+
+    ai.think_expected_event_common_stuff(&sim, &Stimulus::new(StimulusType::EventDone), &ctx);
+
+    assert!(!ai.has_patrol_path);
+    assert_eq!(ai.initial_position, ctx.position);
+    assert_eq!(
+        ai.initial_view_direction, 2,
+        "StoreInitialPositionParameters stores sector 3 as a unit vector, whose later FaceTo aspect conversion selects sector 2"
+    );
+    assert_eq!(ai.current_substate, Substate::DefaultGotoPost);
+    assert!(ai.already_on_point);
+
+    ai.already_on_point = false;
+    ai.think_expected_event_common_stuff(&sim, &Stimulus::new(StimulusType::EventReachPoint), &ctx);
+
+    assert_eq!(ai.current_substate, Substate::DefaultGotoPostTurn);
+    assert!(!ai.already_turned);
+    let orders = ai.take_pending_orders();
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].order_type, crate::order::OrderType::Turning);
+    assert_eq!(orders[0].explicit_direction, Some(2));
+}
+
+#[test]
 fn entering_fleeing_hiding_blinks_visible_enemies_for_redetection() {
     for substate in [
         Substate::FleeingRunToHide,
