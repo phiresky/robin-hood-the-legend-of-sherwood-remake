@@ -1182,7 +1182,12 @@ fn is_start_stop_movement_rewrite(
 ) -> bool {
     use crate::order::OrderType;
 
-    execute_motion == crate::sprite::MotionState::Start
+    matches!(
+        execute_motion,
+        crate::sprite::MotionState::Start
+            | crate::sprite::MotionState::InProgress
+            | crate::sprite::MotionState::Done
+    )
         // StopMovement calls NewID on the existing order. Runtime order IDs
         // are monotonic, whereas a translated stop-transition successor was
         // allocated before path waypoints that may later be inserted ahead of
@@ -1293,14 +1298,14 @@ mod specialized_execute_motion_tests {
             OrderType::TransitionWalkingUprightWaitingUpright,
             MotionState::Start,
         ));
-        assert!(!is_start_stop_movement_rewrite(
+        assert!(is_start_stop_movement_rewrite(
             std::num::NonZeroU32::new(10).unwrap(),
             OrderType::RunningUpright,
             std::num::NonZeroU32::new(11).unwrap(),
             OrderType::TransitionRunningUprightWaitingUpright,
             MotionState::Done,
         ));
-        assert!(!is_start_stop_movement_rewrite(
+        assert!(is_start_stop_movement_rewrite(
             std::num::NonZeroU32::new(10).unwrap(),
             OrderType::WalkingCrouched,
             std::num::NonZeroU32::new(11).unwrap(),
@@ -1328,6 +1333,31 @@ mod specialized_execute_motion_tests {
             OrderType::TransitionRunningUprightWaitingUpright,
             MotionState::Start,
         ));
+    }
+
+    #[test]
+    fn stop_movement_reseed_preserves_outgoing_done_latch() {
+        let rewritten_by_stop = is_start_stop_movement_rewrite(
+            std::num::NonZeroU32::new(10).unwrap(),
+            OrderType::RunningUpright,
+            std::num::NonZeroU32::new(11).unwrap(),
+            OrderType::TransitionRunningUprightWaitingUpright,
+            MotionState::Done,
+        );
+        assert!(rewritten_by_stop);
+
+        let advanced = specialized_order_advanced_after_execute(
+            Some(MotionState::Done),
+            rewritten_by_stop,
+            false,
+            false,
+            false,
+        );
+        assert!(!advanced);
+        assert_eq!(
+            project_post_completion_motion(MotionState::Done, false, true, advanced),
+            MotionState::Done
+        );
     }
 }
 
@@ -6187,6 +6217,8 @@ impl EngineInner {
 
         for (entity_id, anim_type) in sides.weak_stunned_start {
             self.add_weak_stunned_combat(
+                sim,
+                assets,
                 entity_id,
                 anim_type == crate::order::OrderType::BeingWeakSword,
             );
@@ -7259,6 +7291,69 @@ mod bow_command_body_parity_tests {
             .sequence_manager
             .element_in_progress(idle_sequence, 0);
         assert_eq!(engine.actor_legacy_wait_time(owner), 7);
+
+        // Savegame_linux3/Profile_003/Savegame_065 replay-003 frame
+        // 16245: a long jump starts while these post-seek pointers remain
+        // retained. Original's airborne Execute arm overwrites mulWaitTime
+        // with the flight duration, so that live owner must take precedence
+        // over the dormant seek-refresh copy.
+        {
+            use crate::engine::jump::{ActiveJump, CurrentStepState, JumpStep};
+            use crate::sequence::SequenceId;
+            use std::collections::VecDeque;
+            use std::num::NonZeroU32;
+
+            let actor = engine
+                .world
+                .entities
+                .get_mut(owner)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap();
+            actor.wait_time = 4;
+            actor.seek_refresh_wait = 0;
+            actor.active_jump = Some(ActiveJump {
+                steps: VecDeque::new(),
+                current: Some(CurrentStepState {
+                    start_x: 0.0,
+                    start_y: 0.0,
+                    start_z: 0.0,
+                    total_frames: 5,
+                    frames_elapsed: 1,
+                    order_id: NonZeroU32::new(1).unwrap(),
+                    airborne_increment: None,
+                    step: JumpStep {
+                        anim: OrderType::JumpingLong,
+                        target_3d: None,
+                        airborne: true,
+                        max_frames: None,
+                    },
+                }),
+                sequence_id: SequenceId(1),
+                element_index: 0,
+                dest_sector: None,
+                dest_layer: 0,
+                source_direction_goal: 0,
+                dest_projection_point: crate::coordinates::MapPoint::default(),
+            });
+        }
+        assert_eq!(engine.actor_legacy_wait_time(owner), 4);
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_jump
+            .as_mut()
+            .unwrap()
+            .current
+            .as_mut()
+            .unwrap()
+            .step
+            .airborne = false;
+        assert_eq!(engine.actor_legacy_wait_time(owner), 0);
     }
 
     #[test]

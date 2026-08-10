@@ -1592,7 +1592,12 @@ impl NpcAttentionCommandContext<'_> {
                 ) {
                     self.sequence_manager.element_in_progress(seq_id, elem_idx);
                 } else {
+                    // Soldier::Translate calls SetState(TERMINATED) in this
+                    // branch. That can replace mpSequenceElement while
+                    // Translate is still on the stack, so Actor::Instruct
+                    // returns before publishing mpOrder or IN_PROGRESS.
                     self.sequence_manager.element_terminated(seq_id, elem_idx);
+                    return OwnerActionBarrier::Skip;
                 }
             }
             _ => unreachable!("non-attention command passed to NPC attention context"),

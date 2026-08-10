@@ -4116,6 +4116,75 @@ fn frozen_all_stunned_sword_initialisation_preserves_smalltalk_initiative() {
 }
 
 #[test]
+fn stunned_sword_initialisation_dispatches_adversary_weak_synchronously() {
+    use crate::ai::{AiState, Stimulus, StimulusType, Substate};
+    use crate::order::OrderType;
+
+    let mut engine = EngineInner::new();
+    // AI HumanHandle zero is the legacy null sentinel.
+    let _sentinel_slot = engine.add_entity(make_pc(false));
+    let stunned = engine.add_entity(make_pc(true));
+    let opponent = engine.add_entity(make_scripted_soldier(""));
+    bind_test_actor_animations(&mut engine, stunned, &[OrderType::BeingStunnedSword]);
+    install_test_action(
+        &mut engine,
+        stunned,
+        OrderType::BeingStunnedSword,
+        OrderType::WaitingSword,
+    );
+    engine
+        .get_entity_mut(stunned)
+        .unwrap()
+        .human_data_mut()
+        .unwrap()
+        .opponents = vec![opponent];
+    {
+        let Entity::Soldier(soldier) = engine.get_entity_mut(opponent).unwrap() else {
+            unreachable!()
+        };
+        soldier.human.opponents = vec![stunned];
+        soldier.npc.view_radius = 400;
+        let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
+        ai.base.me = opponent.index();
+        ai.base.primary_target = stunned.index();
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingSwordfight;
+        // An unrelated deferred detection event must not be stolen by the
+        // direct combat callback.
+        ai.base
+            .outbox
+            .detection
+            .stimuli
+            .push(Stimulus::new(StimulusType::EventFitAgain));
+    }
+    engine.control.frame_counter = 42;
+    engine.set_actors_frozen(true);
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+
+    let opponent_ai = engine.get_entity(opponent).unwrap().enemy_ai().unwrap();
+    assert!(
+        opponent_ai.base.timer_is_running,
+        "EVENT_ADVERSARY_WEAK must enter ReconsiderSwordfight before actor initialization returns"
+    );
+    assert_eq!(opponent_ai.base.when_does_timer_ring, 62);
+    assert_eq!(
+        opponent_ai
+            .base
+            .outbox
+            .detection
+            .stimuli
+            .iter()
+            .map(|stimulus| stimulus.stimulus_type)
+            .collect::<Vec<_>>(),
+        vec![StimulusType::EventFitAgain],
+        "the direct weak callback must close immediately while preserving older deferred stimuli"
+    );
+}
+
+#[test]
 fn civilian_random_speech_closes_its_owner_boundary_before_the_lock_gate() {
     use crate::engine::types::SimulationRng;
     use crate::profiles::CivilianType;

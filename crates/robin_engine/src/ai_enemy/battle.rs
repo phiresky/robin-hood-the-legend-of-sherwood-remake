@@ -2823,6 +2823,13 @@ impl EnemyAi {
             self.base.seek_position = tpos;
         }
 
+        // Original focuses the selected target before choosing between the
+        // approach and immediate-charge arms. The immediate-charge arm then
+        // deliberately replaces this with Focus(NULL), while the approach
+        // keeps EYES_FOLLOW. Besides steering the gaze, Follow bypasses the
+        // Lacklandist optical cadence so visibility refreshes immediately.
+        self.base.outbox.actor.set_focus(target);
+
         if !begin_charge {
             // Approach phase — ride toward enemy.
             self.set_state(
@@ -3273,6 +3280,99 @@ mod tests {
             target.direction,
             &target,
         ));
+    }
+
+    #[test]
+    fn rider_charge_approach_focuses_target_for_immediate_visibility_refresh() {
+        let mut ai = EnemyAi::new(51);
+        ai.base.primary_target = 76;
+
+        let ctx = AiContext {
+            self_is_rider: true,
+            position: Position::default(),
+            direction: 0,
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.nearby_fighters = vec![FighterSnapshot {
+            handle: 76,
+            position: Position {
+                y: -200.0,
+                ..Position::default()
+            },
+            is_able_to_fight: true,
+            is_pc: true,
+            ..FighterSnapshot::default()
+        }];
+
+        assert!(ai.maybe_make_rider_attack(&ctx, &tick, None));
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingRiderChargingApproaching
+        );
+        let focus = ai.base.outbox.actor.focus.or_else(|| {
+            ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .find_map(|work| match work {
+                    crate::ai::AiOwnerWork::StateChange(notification) => notification
+                        .actor_effects_before_callback
+                        .as_ref()
+                        .and_then(|effects| effects.focus),
+                    _ => None,
+                })
+        });
+        assert_eq!(focus, Some(76));
+    }
+
+    #[test]
+    fn immediate_rider_charge_replaces_target_focus_with_unfocus() {
+        let mut ai = EnemyAi::new(51);
+        ai.base.primary_target = 76;
+
+        let ctx = AiContext {
+            self_is_rider: true,
+            position: Position::default(),
+            direction: 0,
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.nearby_fighters = vec![FighterSnapshot {
+            handle: 76,
+            position: Position {
+                y: -50.0,
+                ..Position::default()
+            },
+            is_able_to_fight: true,
+            is_pc: true,
+            ..FighterSnapshot::default()
+        }];
+
+        assert!(ai.maybe_make_rider_attack(&ctx, &tick, None));
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::AttackingRiderChargingPassing
+        );
+        assert_eq!(ai.base.outbox.actor.focus, None);
+        let unfocus = ai.base.outbox.actor.unfocus
+            || ai
+                .base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .any(|work| match work {
+                    crate::ai::AiOwnerWork::StateChange(notification) => notification
+                        .actor_effects_before_callback
+                        .as_ref()
+                        .is_some_and(|effects| effects.unfocus),
+                    _ => false,
+                });
+        assert!(unfocus);
     }
 
     #[test]

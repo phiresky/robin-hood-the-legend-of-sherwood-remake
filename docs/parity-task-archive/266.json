@@ -1,0 +1,9 @@
+{
+  "id": "266",
+  "subject": "Preserve Done across StopMovement order reseeding",
+  "description": "nicouzouf Profile_001 Savegame_049 replay-009 diverged after frame 329 with Soldier84 motion InProgress instead of Done. ScriptLockAI calls Stop after the movement order already returned Done; Original StopMovement mutates that same order and assigns a new ID, while the latched Done result remains authoritative. Rust treated the changed ID as a successor order and projected InProgress. In-place StopMovement reseeds are now recognized for Start, InProgress, and Done, but not Terminated or Aborted. Focused latch tests pass and the representative advances to an independent PC127 motion frontier after frame 901.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task266-stopmovement-done"
+}

@@ -352,6 +352,59 @@ fn manager_redundant_stop_parry_skips_instruct_motion_epilogue() {
 }
 
 #[test]
+fn manager_redundant_enter_attentive_skips_instruct_motion_epilogue() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::{SequenceElement, SequenceState};
+    use crate::sprite::MotionState;
+
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    {
+        let entity = engine.get_entity_mut(soldier).unwrap();
+        let crate::element::Entity::Soldier(soldier_entity) = entity else {
+            unreachable!("test owner must remain a soldier")
+        };
+        soldier_entity.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+        entity
+            .enemy_ai_mut()
+            .expect("test soldier must carry enemy AI")
+            .attentive = true;
+        entity.actor_data_mut().unwrap().continuation.motion_state = MotionState::Terminated;
+    }
+    let mut enter = SequenceElement::new(1, Command::EnterAttentiveMode, Some(soldier));
+    enter.posture_after_transition = Posture::Upright;
+    let sequence_id = engine.orders.sequence_manager.launch_element(enter);
+
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .expect("redundant attentive element remains inspectable")
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        MotionState::Terminated,
+        "Translate-time termination must bypass Actor::Instruct's IN_PROGRESS epilogue"
+    );
+}
+
+#[test]
 fn assert_position_translation_preserves_terminal_motion_edge() {
     use crate::coordinates::MapPoint;
     use crate::element::{Command, Posture};

@@ -1414,6 +1414,18 @@ pub enum CrossNpcAction {
         info: StimulusInfo,
         continuation: ThinkResultContinuation,
     },
+    /// Synchronously call a patrol chief's
+    /// `DispatchStimulusToWholePatrol` routine and resume the subordinate
+    /// according to that routine's actual boolean result. This is deliberately
+    /// not a `Think` call: an eligible chief with an empty patrol returns false
+    /// without handling the stimulus, so the subordinate must handle it
+    /// locally.
+    RequestPatrolDispatch {
+        chief: NpcHandle,
+        caller: NpcHandle,
+        stimulus_type: StimulusType,
+        info: StimulusInfo,
+    },
     /// Set gather position and gather direction on the target NPC.
     ///
     /// The gather instruction itself is a plain setter: the alert paths that

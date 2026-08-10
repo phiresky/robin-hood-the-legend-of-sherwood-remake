@@ -777,7 +777,7 @@ impl EngineInner {
                             .element_data()
                             .sector(),
                     );
-                    let entity = self.world.entities.get_mut(owner).expect(
+                    let entity = self.world.entities.get(owner).expect(
                         "validated SwitchToAlertPath soldier disappeared before ReturnToDuty",
                     );
                     let mut ctx = super::ai::build_ai_context_from_entity(
@@ -795,6 +795,10 @@ impl EngineInner {
                         self.control.sim_config.difficulty,
                     );
                     ctx.in_uninterruptible_command = in_uninterruptible_command;
+                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
+                    let entity = self.world.entities.get_mut(owner).expect(
+                        "validated SwitchToAlertPath soldier disappeared before ReturnToDuty",
+                    );
                     entity
                         .enemy_ai_mut()
                         .expect("validated SwitchToAlertPath soldier lost its enemy AI")
@@ -2951,6 +2955,12 @@ impl EngineInner {
                 entity_id,
                 crate::element::Command::EnterSwordfight,
             );
+        // Original Actor::Stop compares the selected element pointer with
+        // mpWaitSequenceElement and skips that exact default Wait/Freeze
+        // element. Supply the corresponding live sequence identity here;
+        // animation and action-state are not valid substitutes because a
+        // default Wait can retain AimingWithBow as its current order.
+        self.refresh_selected_default_wait_identity(entity_id, &mut live_ctx);
         // Hoist the canonical door slice before grabbing the mutable
         // entity borrow — the friendly AI's `alert_soldier` needs it for the
         // `ALERTFLAG_CHECK_DOOR_PATH` retry.
@@ -3188,6 +3198,19 @@ impl EngineInner {
                     );
                     continue;
                 }
+                crate::ai::AiOwnerWork::VirtualReturnToDuty {
+                    flags,
+                    owner_boundary_positions,
+                } => {
+                    self.virtual_return_to_duty_for_npc(
+                        sim,
+                        owner,
+                        assets,
+                        flags,
+                        &owner_boundary_positions,
+                    );
+                    continue;
+                }
                 crate::ai::AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
                     flags,
                     owner_boundary_positions,
@@ -3255,7 +3278,7 @@ impl EngineInner {
                     let frame = self.control.frame_counter;
                     let scratch = self.build_owner_context_scratch_without_forecast(assets);
                     let in_uninterruptible_command = self.is_very_very_busy(owner);
-                    let ctx = {
+                    let mut ctx = {
                         let entity = self.world.entities.get(owner).unwrap_or_else(|| {
                             panic!(
                                 "reconsider-approach continuation owner {} disappeared",
@@ -3281,6 +3304,7 @@ impl EngineInner {
                         ctx.in_uninterruptible_command = in_uninterruptible_command;
                         ctx
                     };
+                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
                     let enemy = self
                         .world
                         .entities

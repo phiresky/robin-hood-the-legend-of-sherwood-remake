@@ -1,0 +1,9 @@
+{
+  "id": "259",
+  "subject": "Abort invalid terminal Tie before facing",
+  "description": "linux3 Profile_001 Savegame_035 replay-015 diverged after frame 50031 because a copied terminal stop transition retained a post-seek Tie whose target was more than 40 map units away. Original Tying validates the raw map-space square distance before facing and aborts immediately; Rust only performed the equivalent terminal interaction validation for Hit. Actor-owned post-seek validation now covers identity-matched Hit and Tie, preserving Hit's face-before-abort behavior while Tie aborts without turning. Focused boundary tests pass and the representative matches exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task259-terminal-tie"
+}

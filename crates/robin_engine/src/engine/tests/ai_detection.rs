@@ -2416,6 +2416,166 @@ fn look_there_broadcast_skips_attacking_chief_and_reacts_on_eligible_member() {
 }
 
 #[test]
+fn subordinate_handles_shadow_locally_when_detected_chief_has_empty_patrol() {
+    use crate::ai::{AiState, CrossNpcAction, Position, StimulusInfo, StimulusType, Substate};
+    use crate::element::{Camp, Entity};
+
+    let mut engine = EngineInner::new();
+    let source_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let chief_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let subordinate_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    for (id, x) in [(source_id, -20.0), (chief_id, 10.0), (subordinate_id, 0.0)] {
+        let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
+            panic!("patrol-dispatch test NPC changed kind")
+        };
+        soldier.element.active = true;
+        soldier.element.set_position_map(MapPoint::new(x, 0.0));
+        soldier.npc.life_points = 100;
+        soldier.npc.view_radius = 400;
+        soldier.npc.ai_brain.base_mut().unwrap().me = id.index();
+    }
+    {
+        let chief = engine
+            .get_entity_mut(chief_id)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap();
+        chief.current_state = AiState::Default;
+        chief.current_substate = Substate::DefaultOnPost;
+        assert!(chief.patrol.is_empty());
+    }
+    {
+        let subordinate = engine
+            .get_entity_mut(subordinate_id)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap();
+        subordinate.current_state = AiState::Default;
+        subordinate.current_substate = Substate::DefaultPatrolEnrouteWaiting;
+        subordinate.patrol_chief = Some(chief_id);
+    }
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .get_entity_mut(source_id)
+        .and_then(Entity::ai_controller_mut)
+        .unwrap()
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .push(CrossNpcAction::SendStimulus {
+            target: subordinate_id.index(),
+            stimulus_type: StimulusType::EventSeesShadow,
+            info: StimulusInfo::Position(Position {
+                x: 100.0,
+                y: 0.0,
+                ..Position::default()
+            }),
+            fallback_to_sender: None,
+            to_whole_patrol: false,
+        });
+
+    crate::sim_rng::with_seed(0xA013_2600, |sim| {
+        engine.process_synchronous_reentrant_actions_for(sim, source_id, &assets);
+    });
+
+    let chief = engine.get_entity(chief_id).unwrap().enemy_ai().unwrap();
+    assert_eq!(chief.base.current_state, AiState::Default);
+    assert_eq!(chief.base.current_substate, Substate::DefaultOnPost);
+    assert_eq!(
+        chief
+            .last_stimulus_dispatched_to_patrol
+            .as_ref()
+            .map(|stimulus| stimulus.stimulus_type),
+        Some(StimulusType::EventSeesShadow),
+        "the empty chief still records the delegated stimulus before returning false"
+    );
+    let subordinate = engine
+        .get_entity(subordinate_id)
+        .unwrap()
+        .enemy_ai()
+        .unwrap();
+    assert_eq!(subordinate.base.current_state, AiState::Default);
+    assert_eq!(
+        subordinate.base.current_substate,
+        Substate::DefaultLookingShadow,
+        "the subordinate must resume its local handler after the chief returns false"
+    );
+}
+
+#[test]
+fn successful_patrol_dispatch_closes_chief_actor_boundary_before_returning() {
+    use crate::ai::{AiState, CrossNpcAction, Position, StimulusInfo, StimulusType, Substate};
+    use crate::element::{Camp, Entity};
+
+    let mut engine = EngineInner::new();
+    let chief_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let subordinate_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    for (id, x) in [(chief_id, 0.0), (subordinate_id, 10.0)] {
+        let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
+            panic!("patrol-dispatch test NPC changed kind")
+        };
+        soldier.element.active = true;
+        soldier.element.set_position_map(MapPoint::new(x, 0.0));
+        soldier.npc.life_points = 100;
+        soldier.npc.view_radius = 400;
+        soldier.npc.ai_brain.base_mut().unwrap().me = id.index();
+    }
+    {
+        let chief = engine
+            .get_entity_mut(chief_id)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap();
+        chief.current_state = AiState::Default;
+        chief.current_substate = Substate::DefaultOnPost;
+        chief.patrol = vec![subordinate_id];
+    }
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .get_entity_mut(subordinate_id)
+        .and_then(Entity::ai_controller_mut)
+        .unwrap()
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .push(CrossNpcAction::RequestPatrolDispatch {
+            chief: chief_id.index(),
+            caller: subordinate_id.index(),
+            stimulus_type: StimulusType::EventSeesShadow,
+            info: StimulusInfo::Position(Position {
+                x: 100.0,
+                y: 0.0,
+                ..Position::default()
+            }),
+        });
+
+    crate::sim_rng::with_seed(0xA013_2640, |sim| {
+        engine.process_synchronous_reentrant_actions_for(sim, subordinate_id, &assets);
+    });
+
+    let chief = engine
+        .get_entity(chief_id)
+        .and_then(Entity::ai_controller)
+        .unwrap();
+    assert_eq!(chief.current_state, AiState::Default);
+    assert_eq!(chief.current_substate, Substate::DefaultLookingShadow);
+    assert!(
+        !chief.outbox.actor.has_boundary_work(),
+        "the direct chief routine must close its Halt/Face work before returning to the subordinate"
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(chief_id, |command| {
+                command == crate::element::Command::Turn
+            }),
+        "the chief's synchronous Face must register its Turn before the patrol call returns"
+    );
+}
+
+#[test]
 fn enemy_tick_data_populates_live_patrol_chief_without_a_primary_target() {
     use crate::ai::AiState;
     use crate::coordinates::MapPoint;

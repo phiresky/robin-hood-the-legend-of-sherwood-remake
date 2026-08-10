@@ -113,6 +113,14 @@ fn roll_destination_box(
     move_box.translated(destination)
 }
 
+/// Fatal push translation clears movement bookkeeping but leaves the actor's
+/// live action state alone. Original `TranslatePushDamage` only authors the
+/// falling order; `ExecuteFallingPushed` changes the state when that order
+/// reaches the actor's Hourglass slot.
+fn clear_fatal_push_path(actor: &mut crate::element::ActorData) {
+    actor.clear_path();
+}
+
 impl EngineInner {
     /// Original `GetPossibleVictimsOfSwordStrike(..., true)` collector used by
     /// the MotionState::Start warning pass. This is intentionally separate
@@ -419,9 +427,12 @@ impl EngineInner {
         // installs no flight — the fall order then never arrives and
         // only ends when its sprite runs out, like the original.
         if let Some(entity) = self.world.entities.get_mut(victim_id)
-            && let Some(actor) = entity.actor_data_mut()
             && let Some(entry) = &low_entry
         {
+            entity.position_iface_mut().set_layer_goal(
+                crate::position_interface::Layer::new(entry.layer)
+                    .expect("ladder-flight goal layer cannot be the no-layer sentinel"),
+            );
             // 3D vector from the victim's cached world position to the
             // low entry point (world y = map y + z).
             let dx = entry.point.x - victim_pos3.x;
@@ -431,6 +442,9 @@ impl EngineInner {
             let wait = (0.1 * distance) as u32;
             if distance > f32::EPSILON && wait > 0 {
                 let scale = 10.0 / distance;
+                let actor = entity
+                    .actor_data_mut()
+                    .expect("ladder-flight victim lost actor data");
                 // Ladder falls accumulate in 3D world space (the flight
                 // tick adds these to the cached 3D position and
                 // re-derives the map position), so `increment_y` holds
@@ -917,12 +931,7 @@ impl EngineInner {
             if is_dead {
                 let is_pc = if let Some(entity) = self.world.entities.get_mut(victim_id) {
                     if let Some(actor) = entity.actor_data_mut() {
-                        if actor.action_state.is_sword()
-                            || actor.action_state == ActionState::Menacing
-                        {
-                            actor.action_state = ActionState::Waiting;
-                        }
-                        actor.clear_path();
+                        clear_fatal_push_path(actor);
                     }
                     if let Some(npc) = entity.npc_data_mut() {
                         crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
@@ -1158,10 +1167,15 @@ impl EngineInner {
                 .unwrap_or_else(|| panic!("push goal obstacle {} is missing", handle.get()));
             crate::position_interface::PlaneZCoeffs::from_plane_points(&source.top_plane_points)
         });
-        self.get_entity_mut(victim_id)
+        let position = self
+            .get_entity_mut(victim_id)
             .expect("falling-pushed victim vanished")
-            .position_iface_mut()
-            .set_obstacle(obstacle, plane);
+            .position_iface_mut();
+        position.set_obstacle(obstacle, plane);
+        position.set_layer_goal(
+            crate::position_interface::Layer::new(layer)
+                .expect("falling-pushed victim layer cannot be the no-layer sentinel"),
+        );
         let dx = goal.x - victim_pos.x;
         let dy = goal.y - victim_pos.y;
         let dz = goal_z - victim_z;
@@ -1595,6 +1609,18 @@ mod tests {
             Some(crate::order::OrderType::FallingPushedWithSword)
         );
         assert_eq!(translated_push_posture(anims.is_some(), true, false), None);
+    }
+
+    #[test]
+    fn fatal_animated_push_preserves_action_until_fall_execute() {
+        let mut actor = crate::element::ActorData {
+            action_state: ActionState::WaitingSword,
+            ..Default::default()
+        };
+
+        clear_fatal_push_path(&mut actor);
+
+        assert_eq!(actor.action_state, ActionState::WaitingSword);
     }
 
     #[test]

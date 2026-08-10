@@ -1228,7 +1228,7 @@ impl EnemyAi {
     /// Forwards a stimulus to all patrol members via
     /// CrossNpcAction::SendStimulus.  Returns `true` if dispatched
     /// (caller should NOT process the stimulus itself).
-    fn dispatch_stimulus_to_whole_patrol(
+    pub(crate) fn dispatch_stimulus_to_whole_patrol(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
@@ -1298,31 +1298,14 @@ impl EnemyAi {
             // Short-circuit: a non-soldier chief never reaches the LOS
             // query, so no visibility-cache traffic is generated for it.
             if chief_is_soldier && self.is_detecting_360_degrees(chief as HumanHandle, ctx) {
-                // Original calls the chief's
-                // `DispatchStimulusToWholePatrol` method directly here; it
-                // does not call `chief->Think(stimulus)`. A chief which has
-                // already entered Attacking (or another ineligible state)
-                // therefore rejects the delegation without processing the
-                // stimulus itself, and this subordinate handles it locally.
-                let chief_dispatches = ctx.entity_view(chief).is_some_and(|view| {
-                    matches!(view.ai_state, AiState::Wondering)
-                        || (view.ai_state == AiState::Default
-                            && view.ai_substate != Substate::DefaultPatrolEnrouteRunning)
-                });
-                if !chief_dispatches {
-                    return false;
-                }
-                self.base
-                    .outbox
-                    .reentrant
-                    .cross_npc_actions
-                    .push(CrossNpcAction::SendStimulus {
-                        fallback_to_sender: None,
-                        to_whole_patrol: false,
-                        target: chief,
+                self.base.outbox.reentrant.cross_npc_actions.push(
+                    CrossNpcAction::RequestPatrolDispatch {
+                        chief,
+                        caller: self.base.me,
                         stimulus_type: stimulus.stimulus_type,
                         info: stimulus.info,
-                    });
+                    },
+                );
                 tracing::trace!(
                     target: "patrol_relay",
                     me = self.base.me as i32,
@@ -5475,6 +5458,77 @@ mod tests {
         ai.resume_return_to_duty_after_patrol_init(sim, DutyFlags::empty(), &ctx);
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.current_task_priority, task_priority::NONE);
+    }
+
+    #[test]
+    fn one_point_enemy_path_dispatches_virtual_return_before_patrol_init_resume() {
+        use crate::ai::{PathId, PatrolPath};
+        use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+
+        let paths = vec![RawHikingPath {
+            waypoints: vec![RawWaypoint {
+                x: 699,
+                y: 1464,
+                sector: 50,
+                level: 1,
+                command: WaypointCommand::None,
+            }],
+        }];
+        let mut ai = EnemyAi::new(142);
+        ai.base.current_state = AiState::Default;
+        ai.base.current_substate = Substate::DefaultGotoRouteTurn;
+        ai.base.has_patrol_path = true;
+        ai.base.patrol_path = PatrolPath::new(PathId::new(0).unwrap(), &paths);
+        let ctx = AiContext {
+            position: Position {
+                x: 698.99304,
+                y: 1464.0072,
+                sector: SectorHandle::new(50),
+                level: 1,
+            },
+            direction: 3,
+            self_is_soldier: true,
+            posture: Posture::Upright,
+            self_action_state: crate::element::ActionState::Waiting,
+            self_animation: OrderType::NonanimationEnd,
+            hiking_paths: Arc::new(paths),
+            ..AiContext::default()
+        };
+        let sim = crate::sim_rng::test_context();
+
+        ai.base.think_expected_event_common_stuff(
+            &sim,
+            &Stimulus::new(StimulusType::EventDone),
+            &ctx,
+        );
+
+        let virtual_requests = std::mem::take(&mut ai.base.outbox.reentrant.owner_work);
+        assert!(matches!(
+            virtual_requests.as_slice(),
+            [AiOwnerWork::VirtualReturnToDuty {
+                flags,
+                owner_boundary_positions
+            }] if flags.is_empty() && owner_boundary_positions.is_empty()
+        ));
+        assert!(
+            !ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .any(|work| matches!(work, AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. })),
+            "the common controller must not skip the Enemy ReturnToDuty override"
+        );
+
+        ai.return_to_duty(&sim, DutyFlags::empty(), &ctx, &AiPerTickData::stub());
+
+        assert!(matches!(
+            ai.base.outbox.reentrant.owner_work.as_slice(),
+            [AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
+                flags,
+                owner_boundary_positions
+            }] if flags.is_empty() && owner_boundary_positions.is_empty()
+        ));
     }
 
     #[test]

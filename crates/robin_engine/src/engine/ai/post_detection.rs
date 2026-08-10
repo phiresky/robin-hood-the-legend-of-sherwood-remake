@@ -506,7 +506,7 @@ impl EngineInner {
                 })
                 .unwrap_or_else(|| self.build_owner_context_scratch_without_forecast(assets));
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-            let ctx = {
+            let mut ctx = {
                 let Some(entity) = self.world.entities.get(npc_id) else {
                     break;
                 };
@@ -551,6 +551,7 @@ impl EngineInner {
                 }
                 ctx
             };
+            self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
             // The Enemy VIEW / OUTOFVIEW block retains the completed scan
             // aggregate, but all tactical and target-specific inputs are
             // rebuilt from the live world for this exact stimulus.

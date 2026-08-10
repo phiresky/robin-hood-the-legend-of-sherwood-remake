@@ -1111,6 +1111,7 @@ impl AiController {
                 action,
                 CrossNpcAction::SendStimulus { .. }
                     | CrossNpcAction::RelayStimulusToPatrolMembers { .. }
+                    | CrossNpcAction::RequestPatrolDispatch { .. }
                     | CrossNpcAction::RequestAlert { .. }
                     | CrossNpcAction::RequestThinkResult { .. }
                     | CrossNpcAction::ReportBackToOfficer { .. }
@@ -1147,6 +1148,7 @@ impl AiController {
                     action,
                     CrossNpcAction::SendStimulus { .. }
                         | CrossNpcAction::RelayStimulusToPatrolMembers { .. }
+                        | CrossNpcAction::RequestPatrolDispatch { .. }
                         | CrossNpcAction::RequestAlert { .. }
                         | CrossNpcAction::RequestThinkResult { .. }
                         | CrossNpcAction::ReportBackToOfficer { .. }
@@ -1180,6 +1182,22 @@ impl AiController {
         }
         self.outbox.reentrant.cross_npc_actions = deferred;
         relays
+    }
+
+    /// Drain only direct patrol-chief dispatch calls. The chief routine's
+    /// boolean controls whether the caller resumes its local event handler.
+    pub fn take_pending_patrol_dispatch_requests(&mut self) -> Vec<CrossNpcAction> {
+        let mut requests = Vec::new();
+        let mut deferred = Vec::with_capacity(self.outbox.reentrant.cross_npc_actions.len());
+        for action in self.outbox.reentrant.cross_npc_actions.drain(..) {
+            if matches!(action, CrossNpcAction::RequestPatrolDispatch { .. }) {
+                requests.push(action);
+            } else {
+                deferred.push(action);
+            }
+        }
+        self.outbox.reentrant.cross_npc_actions = deferred;
+        requests
     }
 
     /// Drain only result-bearing officer reports, leaving ordinary deferred
@@ -3002,6 +3020,43 @@ impl AiController {
         {
             return false;
         }
+        let selected_element_is_default_wait = ctx
+            .self_selected_element_is_default_wait
+            .unwrap_or_else(|| {
+                panic!(
+                    "pending Halt projection for AI {} requires selected default-Wait identity",
+                    self.me
+                )
+            });
+        if selected_element_is_default_wait {
+            return false;
+        }
+        let selected_priority = ctx.self_selected_element_priority.unwrap_or_else(|| {
+            panic!(
+                "pending Halt projection for AI {} requires selected element priority",
+                self.me
+            )
+        });
+        let Some(selected_priority) = selected_priority else {
+            // Original Actor::Stop does nothing when mpSequenceElement is
+            // null, so the Halt cannot expose an idle animation.
+            return false;
+        };
+        assert!(
+            !matches!(
+                selected_priority,
+                crate::sequence::SequencePriority::None
+                    | crate::sequence::SequencePriority::NotYetSet
+            ),
+            "selected element for AI {} has unresolved priority {selected_priority:?}",
+            self.me
+        );
+        if selected_priority < crate::sequence::SequencePriority::Preference {
+            // Stop(PREFERENCE) cannot interrupt Injury, Script, lethal, KO,
+            // or the still stronger priorities. Their live animation remains
+            // visible to the following Original GoTo call.
+            return false;
+        }
         if halt_count >= 2 {
             return true;
         }
@@ -4321,11 +4376,33 @@ impl AiController {
                                                     * crate::position_interface::ASPECT_RATIO,
                                                 initial_view_vector[1],
                                             ) as u16;
-                                        self.return_to_duty_common_stuff(
-                                            sim,
-                                            DutyFlags::empty(),
-                                            ctx,
-                                        );
+                                        if ctx.self_is_soldier {
+                                            // The common C++ route handler calls the
+                                            // virtual ReturnToDuty here. A soldier must
+                                            // enter EnemyAi::return_to_duty so its inline
+                                            // InitializePatrol runs before the common
+                                            // tail. Resume that virtual call at the owner
+                                            // boundary, where the containing Enemy AI and
+                                            // engine patrol geometry are both available.
+                                            self.outbox.reentrant.owner_work.push(
+                                                AiOwnerWork::VirtualReturnToDuty {
+                                                    flags: DutyFlags::empty(),
+                                                    owner_boundary_positions: ctx
+                                                        .entity_views
+                                                        .iter()
+                                                        .map(|(&handle, view)| {
+                                                            (handle, view.position)
+                                                        })
+                                                        .collect(),
+                                                },
+                                            );
+                                        } else {
+                                            self.return_to_duty_common_stuff(
+                                                sim,
+                                                DutyFlags::empty(),
+                                                ctx,
+                                            );
+                                        }
                                     } else {
                                         let mut walk_flags = self.default_path_walking_flags;
                                         if !self.will_stop_at_next_waypoint(sim, hiking_paths) {

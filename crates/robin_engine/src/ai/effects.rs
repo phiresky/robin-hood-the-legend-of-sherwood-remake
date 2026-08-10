@@ -143,6 +143,17 @@ pub enum AiOwnerWork {
         /// movement phase too early.
         owner_boundary_positions: Vec<(u32, Position)>,
     },
+    /// Invoke the virtual `ReturnToDuty` reached by shared AI code.
+    ///
+    /// The shared controller cannot borrow its containing Enemy AI to call
+    /// the override directly. Keep the call on the synchronous owner FIFO;
+    /// the Enemy override will in turn queue
+    /// `ResumeReturnToDutyAfterPatrolInit` around its engine-owned
+    /// `InitializePatrol` call.
+    VirtualReturnToDuty {
+        flags: DutyFlags,
+        owner_boundary_positions: Vec<(u32, Position)>,
+    },
     /// Continue Enemy `ReturnToDuty` after its synchronous
     /// `InitializePatrol` engine callback has completed.
     ResumeReturnToDutyAfterPatrolInit {

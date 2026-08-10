@@ -1,0 +1,9 @@
+{
+  "id": "270",
+  "subject": "Respect selected priority when projecting pending Halt",
+  "description": "nicouzouf Profile_001 Savegame_039 replay-006 diverged after frame 221 because Soldier29's pending Halt(PREFERENCE) was projected as exposing idle while its selected ReceiveArrowDamage/ExtractingArrowBow sequence had stronger Injury priority. Original Stop(PREFERENCE) cannot interrupt Injury, so ReturnToDuty's near-waypoint GoTo does not take the idle shortcut and remains DefaultGotoRoute. Every live AI context now carries required selected-element priority metadata; pending Halt projects idle only when the selection is actually interruptible, with strict missing/unresolved metadata handling. Focused Injury and equal-Preference controls pass. Three representatives clear the shared frame-221 family and advance to independent frontiers.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task270-halt-selected-priority"
+}

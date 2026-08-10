@@ -1077,6 +1077,10 @@ impl PositionInterface {
     pub fn layer_goal(&self) -> Layer {
         self.layer_goal
     }
+    #[inline]
+    pub fn set_layer_goal(&mut self, layer: Layer) {
+        self.layer_goal = layer;
+    }
 
     #[inline]
     pub fn is_moving(&self) -> bool {

@@ -1,0 +1,9 @@
+{
+  "id": "267",
+  "subject": "Preserve resolved PC orientation through terminal Move cleanup",
+  "description": "nicouzouf Profile_001 Savegame_047 replay-003 diverged after frame 335 with PC75 direction_goal 6 instead of 4. A resolved Purse orientation sets direction goal 4 immediately before the final walking-stop transition; Original's terminal movement condolence clears the map goal and movement ownership but retains that external direction goal. Rust restored the outgoing movement sector 6 during cleanup. Terminal generated PC stop transitions now preserve a differing externally supplied goal unless synchronous successor work installed a third direction. The focused transition regression passes and the representative matches exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task267-terminal-pc-orientation"
+}

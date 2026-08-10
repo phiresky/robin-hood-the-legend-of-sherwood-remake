@@ -1,0 +1,9 @@
+{
+  "id": "256",
+  "subject": "Preserve selected default Wait across deferred Halt projection",
+  "description": "SuN1Sh1nE Profile_004 Savegame_016 replay-002 advanced past Task254 and diverged after frame 1529 when Soldier91's same-point ArcherStepBack incorrectly short-circuited to EventReachPoint/TurnFast. Original Stop skips the exact mpWaitSequenceElement, so StopAll preserves the selected Wait carrying AimingWithBow; GoTo's near-point animation gate rejects that order and launches MoveOk. Rust projected a deferred Halt as clearing any non-movement animation and falsely treated the actor as idle. AI contexts now carry required live selected-default-Wait identity from the sequence manager; pending-Halt projection preserves that element and panics if a direct callback omitted the metadata. Every production filtered or direct GoTo-capable AI boundary is enriched, including nested owner-work continuations. The representative and both task-36 controls match exact EOF; the focused regression and the combined 2,858-test robin_engine suite pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task256-default-wait-halt"
+}

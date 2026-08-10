@@ -47,21 +47,45 @@ fn path_request_needs_source_extraction(direct_dispatch: bool, source_authorized
     !direct_dispatch && !source_authorized
 }
 
-/// Whether the actor-owned tail is the Hit whose init-time 40-unit validity
-/// guard immediately follows a completed entity Seek.
-fn actor_post_seek_is_hit(actor: &crate::element::ActorData) -> bool {
-    actor
-        .post_seek_sequence
-        .as_deref()
-        .and_then(|sequence| sequence.elements.first())
-        .is_some_and(|element| element.command == crate::element::Command::HitCmd)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ActorPostSeekInteraction {
+    Hit,
+    Tie,
 }
 
-/// Original `RHElementActorHuman::CheckSequenceElementValidity(HIT, true)`
-/// compares the raw map-space `SBGeoVector2D::SquareNorm()` with 1600
-/// (`original-code/RHelementactorhuman.cpp:6653-6678`).  Keep the strict
-/// comparison: a victim at exactly 40 units is valid.
-fn hit_exceeds_init_range(owner: MapPoint, victim: MapPoint) -> bool {
+/// Identify an actor-owned interaction whose init-time 40-unit validity
+/// guard immediately follows a completed entity Seek.
+///
+/// The copied terminal movement can lose its own target, but the Original
+/// retains one `mpSeekTarget` pointer on the actor. Scope the early handoff to
+/// a post-seek interaction with that exact antagonist; an unrelated tail must
+/// remain on the ordinary sequence-manager path.
+fn actor_post_seek_interaction(
+    actor: &crate::element::ActorData,
+) -> Option<ActorPostSeekInteraction> {
+    let element = actor
+        .post_seek_sequence
+        .as_deref()
+        .and_then(|sequence| sequence.elements.first())?;
+    let antagonist = match &element.data {
+        crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,
+        _ => None,
+    }?;
+    if actor.seek_target != Some(antagonist) {
+        return None;
+    }
+    match element.command {
+        crate::element::Command::HitCmd => Some(ActorPostSeekInteraction::Hit),
+        crate::element::Command::TieCmd => Some(ActorPostSeekInteraction::Tie),
+        _ => None,
+    }
+}
+
+/// Original Hit and Tie initialization compare the raw map-space
+/// `SBGeoVector2D::SquareNorm()` with 1600
+/// (`RHelementactorhuman.cpp:6653-6678`, `RHelementactorpc.cpp:7157-7181`).
+/// Keep the strict comparison: a victim at exactly 40 units is valid.
+fn interaction_exceeds_init_range(owner: MapPoint, victim: MapPoint) -> bool {
     let dx = victim.x - owner.x;
     let dy = victim.y - owner.y;
     dx * dx + dy * dy > 1600.0
@@ -75,17 +99,17 @@ mod post_seek_hit_handoff_tests {
     fn hit_init_range_uses_raw_map_square_norm_and_includes_exact_boundary() {
         let owner = MapPoint::new(1099.375_2, 1823.835_4);
         let nescafe_target = MapPoint::new(1055.0, 1790.0);
-        assert!(hit_exceeds_init_range(owner, nescafe_target));
+        assert!(interaction_exceeds_init_range(owner, nescafe_target));
 
         let owner = MapPoint::new(1483.855_8, 2720.03);
         let cyrdach_target = MapPoint::new(1470.0, 2759.0);
-        assert!(hit_exceeds_init_range(owner, cyrdach_target));
+        assert!(interaction_exceeds_init_range(owner, cyrdach_target));
 
-        assert!(!hit_exceeds_init_range(
+        assert!(!interaction_exceeds_init_range(
             MapPoint::ZERO,
             MapPoint::new(40.0, 0.0)
         ));
-        assert!(hit_exceeds_init_range(
+        assert!(interaction_exceeds_init_range(
             MapPoint::ZERO,
             MapPoint::new(f32::from_bits(40.0f32.to_bits() + 1), 0.0)
         ));
@@ -250,6 +274,34 @@ mod group_move_authorization_tests {
             mirrored,
             OrderType::RunningUpright,
             "a non-animation action point must leave the last sprite action intact"
+        );
+    }
+
+    #[test]
+    fn explicit_door_speed_transition_ignores_stale_walk_mirror() {
+        assert_eq!(
+            door_pass_sprite_animation_override(
+                OrderType::TransitionWaitingUprightRunningUpright,
+                Some(OrderType::WalkingUpright),
+            ),
+            None,
+            "Original executes the concrete transition inserted by MakeFast"
+        );
+        assert_eq!(
+            door_pass_sprite_animation_override(
+                OrderType::RunningUpright,
+                Some(OrderType::WalkingUpright),
+            ),
+            Some(OrderType::WalkingUpright),
+            "concrete distance motion still accepts the active door-route animation"
+        );
+        assert_eq!(
+            door_pass_sprite_animation_override(
+                OrderType::TransitionWaitingUprightClimbingWallUp,
+                Some(OrderType::TransitionWaitingUprightClimbingWallUp),
+            ),
+            Some(OrderType::TransitionWaitingUprightClimbingWallUp),
+            "an agreeing door-authored transition mirror remains valid"
         );
     }
 
@@ -441,6 +493,22 @@ fn synchronize_selected_door_pass_walk_action(
     if order_uses_distance_motion(selected_action) {
         *current_action = selected_action;
     }
+}
+
+/// Ignore a stale split door-route mirror when a distinct concrete transition
+/// has reached the actor slot.
+///
+/// Original keeps the whole translated route in one order list, so an
+/// explicit transition inserted by MakeFast/MakeSlow is authoritative. Rust's
+/// mirror remains useful for concrete distance motion and for door-authored
+/// transitions where it already agrees with the selected order.
+fn door_pass_sprite_animation_override(
+    selected_action: OrderType,
+    current_action: Option<OrderType>,
+) -> Option<OrderType> {
+    current_action.filter(|current| {
+        order_uses_distance_motion(selected_action) || *current == selected_action
+    })
 }
 
 /// Movement Execute arms which call `Turn()` immediately before entering
@@ -6607,6 +6675,13 @@ impl EngineInner {
         // crosses them.  Collected here and processed after the entity
         // loop so the `do_next_order` call can borrow `self` mutably.
         let mut order_pops: Vec<(crate::sequence::SequenceId, usize)> = Vec::new();
+        // A resolved mouse orientation can run immediately before the last
+        // tick of a generated stop transition.  The transition still turns
+        // toward that externally supplied direction, but its outgoing Move
+        // order owns the cached movement increment.  Keep enough context to
+        // restore the external goal after the Move's terminal condolence has
+        // retired that cache.
+        let mut terminal_pc_direction_goal_restores: Vec<(EntityId, i16, i16)> = Vec::new();
 
         // Water-splash titbit emissions queued from the walk branch.
         // Drained after the entity loop so `titbit_manager.add_titbit`
@@ -6949,6 +7024,32 @@ impl EngineInner {
                     legacy_serialized_order_chain,
                 )
             };
+            let terminal_pc_external_direction_goal = if is_pc
+                && is_final_waypoint
+                && matches!(
+                    order_action,
+                    OrderType::TransitionWalkingUprightWaitingUpright
+                        | OrderType::TransitionRunningUprightWaitingUpright
+                        | OrderType::TransitionWalkingCrouchedWaitingCrouched
+                )
+                && order_compute_direction
+            {
+                let pi = entity.position_iface();
+                if !pi.is_increment_all_computed() {
+                    None
+                } else {
+                    let increment = pi.get_increment();
+                    let mut movement_direction = vector_to_sector_0_to_15(increment.x, increment.y);
+                    if order_reverse {
+                        movement_direction ^= 8;
+                    }
+                    let live_direction_goal = i16::from(pi.get_direction_goal());
+                    (live_direction_goal != movement_direction)
+                        .then_some((live_direction_goal, movement_direction))
+                }
+            } else {
+                None
+            };
 
             if order_action == OrderType::Freezing {
                 // `MOVE_WAITING` carries a temporary FREEZING order while
@@ -7188,7 +7289,8 @@ impl EngineInner {
 
             // Choose animation based on action state and movement angle.
             let anim = if let Some(dp_anim) =
-                door_pass_anim.filter(|anim| !is_sword_movement_nonanimation(*anim))
+                door_pass_sprite_animation_override(order_action, door_pass_anim)
+                    .filter(|anim| !is_sword_movement_nonanimation(*anim))
             {
                 // PassDoor supplies the current translated movement step, but
                 // Soldier::Execute still dispatches that logical action
@@ -8236,6 +8338,15 @@ impl EngineInner {
                     door_pass_transition_completion_effects.push(entity_id);
                 }
                 if matches!(motion_state, MotionState::Terminated) {
+                    if let Some((external_direction, movement_direction)) =
+                        terminal_pc_external_direction_goal
+                    {
+                        terminal_pc_direction_goal_restores.push((
+                            entity_id,
+                            external_direction,
+                            movement_direction,
+                        ));
+                    }
                     // TillLastFrame can exhaust its animation before its
                     // distance target is reached (notably the short
                     // Waiting→Walking startup transition). The Original does
@@ -8398,33 +8509,42 @@ impl EngineInner {
                     // instructed the Hit during this same movement drain,
                     // exposing one spurious HitCmd frame before its ordinary
                     // next-Execute validity guard rejected it.
-                    let terminal_hit_out_of_range = final_entity_seek_arrival == Some(true)
-                        && entity.is_pc()
-                        && actor_post_seek_is_hit(entity.actor_data().expect("actor-only branch"))
+                    let terminal_interaction = entity
+                        .is_pc()
+                        .then(|| {
+                            actor_post_seek_interaction(
+                                entity.actor_data().expect("actor-only branch"),
+                            )
+                        })
+                        .flatten();
+                    let terminal_interaction_out_of_range = final_entity_seek_arrival == Some(true)
+                        && terminal_interaction.is_some()
                         && live_seek_target
                             .map(|(target_position, _, _)| {
                                 let here = entity.element_data().position_map();
-                                hit_exceeds_init_range(here, target_position)
+                                interaction_exceeds_init_range(here, target_position)
                             })
                             .unwrap_or(false);
-                    if terminal_hit_out_of_range {
-                        // HITTING initialization turns toward its antagonist
-                        // before the validity check which aborts it
-                        // (`RHelementactorhuman.cpp:4462-4472`). Preserve that
-                        // side effect even though the invalid one-tick command
-                        // is collapsed at this frame boundary.
-                        let target_ground = live_seek_target_ground
-                            .expect("terminal entity seek retained its target ground position");
-                        let here_ground = entity.ground_position();
-                        let facing = vector_to_sector_0_to_15(
-                            target_ground.x - here_ground.x,
-                            target_ground.y - here_ground.y,
-                        );
-                        entity.element_data_mut().set_direction_goal(facing);
+                    if terminal_interaction_out_of_range {
+                        if terminal_interaction == Some(ActorPostSeekInteraction::Hit) {
+                            // HITTING initialization turns toward its antagonist
+                            // before the validity check which aborts it
+                            // (`RHelementactorhuman.cpp:4462-4472`). TYING does
+                            // the opposite: it validates before SetDirection
+                            // (`RHelementactorpc.cpp:5902-5913`).
+                            let target_ground = live_seek_target_ground
+                                .expect("terminal entity seek retained its target ground position");
+                            let here_ground = entity.ground_position();
+                            let facing = vector_to_sector_0_to_15(
+                                target_ground.x - here_ground.x,
+                                target_ground.y - here_ground.y,
+                            );
+                            entity.element_data_mut().set_direction_goal(facing);
+                        }
 
-                        // PC-only: these replay controls use the PC Hit arm,
-                        // whose invalid interaction has no NPC Think/AI
-                        // condolations. Keep NPC post-seek lifecycle on the
+                        // PC-only: these replay controls use PC Hit/Tie arms,
+                        // whose invalid interactions have no NPC Think/AI
+                        // continuation. Keep NPC post-seek lifecycle on the
                         // ordinary sequence-manager path.
                         let actor = entity.actor_data_mut().expect("actor-only branch");
                         // StartPostSeekSequence clears the seek ownership and
@@ -8471,30 +8591,39 @@ impl EngineInner {
                         && entity
                             .actor_data()
                             .is_some_and(|actor| actor.active_door_pass.is_none());
-                    let actor_owned_hit_out_of_range = final_point_post_seek_arrival
-                        && entity.is_pc()
-                        && actor_post_seek_is_hit(entity.actor_data().expect("actor-only branch"))
+                    let actor_owned_interaction = entity
+                        .is_pc()
+                        .then(|| {
+                            actor_post_seek_interaction(
+                                entity.actor_data().expect("actor-only branch"),
+                            )
+                        })
+                        .flatten();
+                    let actor_owned_interaction_out_of_range = final_point_post_seek_arrival
+                        && actor_owned_interaction.is_some()
                         && live_actor_seek_target
                             .map(|(target_position, _)| {
-                                hit_exceeds_init_range(
+                                interaction_exceeds_init_range(
                                     entity.element_data().position_map(),
                                     target_position,
                                 )
                             })
                             .unwrap_or(false);
-                    if actor_owned_hit_out_of_range {
+                    if actor_owned_interaction_out_of_range {
                         // A copied terminal transition can lose its movement
                         // element target while PerformSeek's mpSeekTarget
-                        // remains actor-owned. HITTING still turns toward that
-                        // antagonist before its init validity check aborts.
-                        let (_, target_ground) = live_actor_seek_target
-                            .expect("out-of-range actor-owned Hit retained a live target");
-                        let here_ground = entity.ground_position();
-                        let facing = vector_to_sector_0_to_15(
-                            target_ground.x - here_ground.x,
-                            target_ground.y - here_ground.y,
-                        );
-                        entity.element_data_mut().set_direction_goal(facing);
+                        // remains actor-owned. HITTING still turns before its
+                        // validity abort; TYING validates before turning.
+                        if actor_owned_interaction == Some(ActorPostSeekInteraction::Hit) {
+                            let (_, target_ground) = live_actor_seek_target
+                                .expect("out-of-range actor-owned Hit retained a live target");
+                            let here_ground = entity.ground_position();
+                            let facing = vector_to_sector_0_to_15(
+                                target_ground.x - here_ground.x,
+                                target_ground.y - here_ground.y,
+                            );
+                            entity.element_data_mut().set_direction_goal(facing);
+                        }
 
                         let actor = entity.actor_data_mut().expect("actor-only branch");
                         actor.wait_time = actor.seek_refresh_wait;
@@ -9683,6 +9812,23 @@ impl EngineInner {
                 self.orders
                     .sequence_manager
                     .clear_retained_movement_goals_for_actor(owner);
+            }
+        }
+        for (entity_id, external_direction, movement_direction) in
+            terminal_pc_direction_goal_restores
+        {
+            let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
+                panic!(
+                    "terminal PC direction-goal owner {entity_id:?} disappeared during movement completion"
+                )
+            });
+            // A synchronously instructed successor may deliberately have
+            // installed a third direction.  Only replace the outgoing Move's
+            // trajectory direction; never overwrite such successor work.
+            if i16::from(entity.position_iface().get_direction_goal()) == movement_direction {
+                entity
+                    .element_data_mut()
+                    .set_direction_goal(external_direction);
             }
         }
         // Original LaunchSequenceElement registers the Provoke from inside
@@ -12332,7 +12478,116 @@ mod movement_transition_state_tests {
         );
     }
 
-    fn install_terminal_hit_seek(distance: f32) -> (EngineInner, EntityId, EntityId) {
+    #[test]
+    fn terminal_pc_stop_transition_keeps_mouse_orientation_goal() {
+        let mut engine = EngineInner::new();
+        let transition = OrderType::TransitionWalkingUprightWaitingUpright;
+        let script = SpriteScript {
+            action_id: transition as u16,
+            action_done: 1,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2],
+            delays: vec![0; 2],
+            distances: vec![0; 2],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
+            sound_ids: vec![0; 2],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[transition as usize] = 0;
+
+        let mut element = ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        };
+        element.sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+        element
+            .sprite
+            .position_iface
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -4.0, -4.0, 4.0, 4.0,
+            ));
+        element.sprite.position_iface.set_anti_collision_on(false);
+        element.set_position_map(MapPoint::new(100.0, 100.0));
+        element.set_direction_instantly(6);
+        let owner = engine.add_entity(Entity::Pc(ActorPc {
+            element,
+            actor: ActorData {
+                action_state: ActionState::Waiting,
+                ..ActorData::default()
+            },
+            human: HumanData::default(),
+            pc: PcData::default(),
+        }));
+
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        movement.priority = SequencePriority::Normal;
+        movement.orders.clear();
+        let order_id = engine.orders.allocate_order_id();
+        movement
+            .orders
+            .push_back(Order::new(transition, 500.0, 428.0, order_id));
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let registered = engine.orders.sequence_manager.hourglass();
+        assert_eq!(registered.len(), 1);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_movement = ActiveMovement::new(sequence, 0);
+
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        engine.tick_entity_movement(&sim, &assets);
+        assert_eq!(
+            i16::from(
+                engine
+                    .get_entity(owner)
+                    .unwrap()
+                    .position_iface()
+                    .get_direction_goal()
+            ),
+            6,
+            "the stop transition must initially own the outgoing movement direction"
+        );
+
+        // PerformOrientation runs before the next engine frame and turns once;
+        // the transition's Execute performs the second turn before terminating.
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity.element_data_mut().set_direction_goal(4);
+        entity.position_iface_mut().turn();
+        engine.tick_entity_movement(&sim, &assets);
+
+        let entity = engine.get_entity(owner).unwrap();
+        assert_eq!(i16::from(entity.position_iface().get_direction()), 4);
+        assert_eq!(
+            i16::from(entity.position_iface().get_direction_goal()),
+            4,
+            "terminal Move cleanup must not resurrect the outgoing movement facing"
+        );
+        assert_eq!(entity.position_iface().map_goal(), MapPoint::ZERO);
+    }
+
+    fn install_terminal_interaction_seek(
+        command: Command,
+        distance: f32,
+    ) -> (EngineInner, EntityId, EntityId) {
         let mut engine = EngineInner::new();
         let transition = OrderType::TransitionWalkingUprightWaitingUpright;
         let script = SpriteScript {
@@ -12374,6 +12629,7 @@ mod movement_transition_state_tests {
             crate::position_interface::SectorHandle::new(1).unwrap(),
         ));
         owner_element.set_position_map(MapPoint::new(100.0, 100.0));
+        owner_element.set_direction_goal(7);
         let owner = engine.add_entity(Entity::Pc(ActorPc {
             element: owner_element,
             actor: ActorData {
@@ -12388,7 +12644,11 @@ mod movement_transition_state_tests {
         let mut target_element = ElementData {
             kind: ElementKind::ActorSoldier,
             active: true,
-            posture: Posture::Upright,
+            posture: if command == Command::TieCmd {
+                Posture::Lying
+            } else {
+                Posture::Upright
+            },
             ..ElementData::default()
         };
         target_element.sprite.position_iface.set_move_box(
@@ -12405,7 +12665,10 @@ mod movement_transition_state_tests {
         let target = engine.add_entity(Entity::Soldier(ActorSoldier {
             element: target_element,
             actor: ActorData::default(),
-            human: HumanData::default(),
+            human: HumanData {
+                unconscious: command == Command::TieCmd,
+                ..HumanData::default()
+            },
             npc: NpcData::default(),
             soldier: SoldierData {
                 cached_camp: Camp::Lacklandists,
@@ -12413,10 +12676,10 @@ mod movement_transition_state_tests {
             },
         }));
 
-        let mut hit = Sequence::new();
-        hit.append_element(SequenceElement::new_interaction(
+        let mut interaction = Sequence::new();
+        interaction.append_element(SequenceElement::new_interaction(
             1,
-            Command::HitCmd,
+            command,
             Some(owner),
             Some(target),
         ));
@@ -12427,7 +12690,7 @@ mod movement_transition_state_tests {
             .unwrap();
         actor.seek_target = Some(target);
         actor.last_seek_target_position = MapPoint::new(100.0 + distance, 100.0);
-        actor.post_seek_sequence = Some(Box::new(hit));
+        actor.post_seek_sequence = Some(Box::new(interaction));
 
         let mut movement = SequenceElement::new_movement(
             1,
@@ -12514,7 +12777,7 @@ mod movement_transition_state_tests {
 
     #[test]
     fn terminal_pc_hit_seek_outside_init_range_aborts_without_visible_hit() {
-        let (mut engine, owner, target) = install_terminal_hit_seek(55.8);
+        let (mut engine, owner, target) = install_terminal_interaction_seek(Command::HitCmd, 55.8);
         finish_terminal_seek_tick(&mut engine, owner);
         assert_ne!(engine.actor_order_type(owner), Some(OrderType::Hitting));
         let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
@@ -12541,9 +12804,30 @@ mod movement_transition_state_tests {
 
     #[test]
     fn terminal_pc_hit_seek_at_init_range_launches_hit_normally() {
-        let (mut engine, owner, _target) = install_terminal_hit_seek(40.0);
+        let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::HitCmd, 40.0);
         finish_terminal_seek_tick(&mut engine, owner);
         assert_eq!(engine.actor_order_type(owner), Some(OrderType::Hitting));
+    }
+
+    #[test]
+    fn terminal_pc_tie_seek_outside_init_range_aborts_without_turning_or_visible_tie() {
+        let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::TieCmd, 55.8);
+        finish_terminal_seek_tick(&mut engine, owner);
+
+        assert_ne!(engine.actor_order_type(owner), Some(OrderType::Tying));
+        let entity = engine.get_entity(owner).unwrap();
+        let actor = entity.actor_data().unwrap();
+        assert!(actor.post_seek_sequence.is_none());
+        assert!(actor.seek_target.is_none());
+        assert!(actor.active_movement.sequence_id.is_none());
+        assert_eq!(i16::from(entity.position_iface().get_direction_goal()), 7);
+    }
+
+    #[test]
+    fn terminal_pc_tie_seek_at_init_range_launches_tie_normally() {
+        let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::TieCmd, 40.0);
+        finish_terminal_seek_tick(&mut engine, owner);
+        assert_eq!(engine.actor_order_type(owner), Some(OrderType::Tying));
     }
 }
 
