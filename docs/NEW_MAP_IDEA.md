@@ -100,14 +100,16 @@ environment asset:
   </tr>
 </table>
 
-The Derby production image is useful as an architectural
+The Derby production images are useful as architectural
 reference for the proposed castle's massing, towers, gatehouse, and defensive
 layers:
 
-<p align="center">
-  <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/production-art-derby.jpg"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/production-art-derby.jpg" width="720" alt="Production art of Derby"></a>
-  <br><sub>Original production art for Derby.</sub>
-</p>
+<table>
+  <tr>
+    <td><a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/production-art-derby-blockout.jpg"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/production-art-derby-blockout.jpg" width="360" alt="Original Derby castle blockout"></a><br><strong>Blockout</strong><br>Original 800×1115 artwork.</td>
+    <td><a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/production-art-derby-final.jpg"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/production-art-derby-final.jpg" width="360" alt="Original painted Derby castle production art"></a><br><strong>Painted result</strong><br>Original 593×850 artwork.</td>
+  </tr>
+</table>
 
 In addition, each map needs walkable geometry,
 height and sector data, obstacles, interactive objects, patches, and animated sprites.
