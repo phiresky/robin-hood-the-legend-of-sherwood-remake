@@ -430,6 +430,69 @@ mod parity_tests {
     use super::*;
 
     #[test]
+    fn suspended_look_there_tail_surfaces_engine_deferred_route_rejection() {
+        let mut engine = EngineInner::new();
+        let mut soldier = crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                posture: crate::element::Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        };
+        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let ai = engine
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .expect("test soldier has AI");
+
+        // HeyFolksLookThere resumes its caller tail after the typed Think has
+        // unwound. The helper closes synchronous flags now, while a failed
+        // gate-route build is reported by the immediately following owner
+        // drain. Model that exact split boundary.
+        ai.finish_suspended_common_handler();
+        ai.couldnt_reachpoint = true;
+        engine.surface_synchronous_completion_events_for_owner(owner);
+
+        let ai = engine
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::ai_controller)
+            .expect("test soldier retains AI");
+        assert_eq!(
+            ai.outbox.reentrant.self_stimuli,
+            [crate::ai::StimulusType::EventCouldntReachPoint]
+        );
+
+        // A genuine outside-Think operation still has no EndThink delivery
+        // boundary, so the same deferred result must be discarded.
+        let ai = engine
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .expect("test soldier retains AI");
+        ai.outbox.reentrant.self_stimuli.clear();
+        ai.completion_latch_inside_think = false;
+        ai.couldnt_reachpoint = true;
+        engine.surface_synchronous_completion_events_for_owner(owner);
+        let ai = engine
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::ai_controller)
+            .expect("test soldier retains AI");
+        assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+    }
+
+    #[test]
     fn patrol_visibility_precedes_member_admission_predicates() {
         let calls = std::cell::Cell::new(0);
         let admitted = patrol_member_admitted(
@@ -6543,6 +6606,17 @@ impl EngineInner {
         };
         if let Some(request) = attentive_request {
             self.set_soldier_attentive_mode(npc_id, request.target, request.fast_officer_variant);
+            if request.forget_after
+                && let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(npc_id)
+                && let Some(enemy) = soldier.npc.ai_brain.enemy_mut()
+            {
+                // Original SetState's SetAttentiveMode call has now launched
+                // its transition and written will-be-attentive. The special
+                // event handler's following ForgetAttentiveMode call wins the
+                // final flag state without clearing forced-attentive.
+                enemy.attentive = false;
+                enemy.will_be_attentive = false;
+            }
         }
 
         // Process enter_swordfight.  Two shapes:
@@ -7206,6 +7280,24 @@ impl EngineInner {
                         npc_id.index()
                     )
                 });
+        }
+
+        if effects.raise_shield_immediately {
+            let entity = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .unwrap_or_else(|| panic!("instant shield owner {npc_id:?} disappeared"));
+            entity.set_posture(crate::element::Posture::Upright);
+            entity
+                .actor_data_mut()
+                .expect("instant shield owner is not an actor")
+                .action_state = crate::element::ActionState::HoldingShield;
+            self.refresh_retained_shield_obstacle(assets, npc_id);
+        }
+
+        if effects.refresh_shield {
+            self.refresh_retained_shield_obstacle(assets, npc_id);
         }
 
         // Process pending LookSidewards — build a one- or two-element

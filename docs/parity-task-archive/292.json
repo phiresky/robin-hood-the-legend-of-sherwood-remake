@@ -1,0 +1,9 @@
+{
+  "id": "292",
+  "subject": "Keep caller-tail self stimuli behind ordered actor prefixes",
+  "description": "nicouzouf Profile_001 Savegame_051 replay-015 diverged after frame 1050 when Soldier60's same-frame close GoNear recursively reached its wake-up handler. Original had already settled BattleDecisions' Focus(NULL) and the older StopAll/SetState prefix before EventReachPoint called a second StopAll and registered WakeUp. Rust's AiOwnerWork::ActorEffects detached later owner work and actor effects, but left caller-tail self stimuli and cross-NPC actions visible to its recursive prefix drain; EventReachPoint therefore registered WakeUp before the restored older Halt interrupted it. ActorEffects now isolates those caller-tail queues while settling the prefix, restores self stimuli unchanged, and keeps prefix-produced deferred cross actions ahead of the caller tail. A focused owner-FIFO regression covers Focus(NULL), the older Halt, and the deferred event. The frame-1050 WakeUp frontier clears and the representative advances to an independent Soldier59 attentive-mode frontier after frame 1067.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task292-owner-fifo"
+}

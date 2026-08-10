@@ -1,0 +1,9 @@
+{
+  "id": "306",
+  "subject": "Preserve the shipped elevated bottom-plane impact denominator",
+  "description": "Elevated-obstacle projectile intersection used the geometric bottom-plane crossing denominator even though Original RHFastFindGrid::IsReachableImpactBounce ships a typo that mixes the origin's top-relative height with the destination's bottom-relative height. Rust now preserves that exact nonvertical underside-impact arithmetic while leaving the dedicated vertical, top-plane, wall, and ground paths unchanged. The focused nonvertical elevated-floor regression passes, and linux3 Profile_003 Savegame_046 replay-008 clears its frame-1946 Projectile92 trajectory frontier and matches exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task306-bottom-plane-denominator"
+}

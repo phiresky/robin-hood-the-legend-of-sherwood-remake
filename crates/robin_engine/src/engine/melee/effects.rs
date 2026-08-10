@@ -429,10 +429,6 @@ impl EngineInner {
         if let Some(entity) = self.world.entities.get_mut(victim_id)
             && let Some(entry) = &low_entry
         {
-            entity.position_iface_mut().set_layer_goal(
-                crate::position_interface::Layer::new(entry.layer)
-                    .expect("ladder-flight goal layer cannot be the no-layer sentinel"),
-            );
             // 3D vector from the victim's cached world position to the
             // low entry point (world y = map y + z).
             let dx = entry.point.x - victim_pos3.x;

@@ -58,7 +58,31 @@ fn action_to_quick_phase(action: Action, running: bool) -> QuickAction {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecordedInteractionIdentityError {
+    MissingOrNonPcActor,
+    MissingTarget,
+}
+
 impl EngineInner {
+    fn validate_recorded_interaction_identities(
+        &self,
+        actor: EntityId,
+        target: EntityId,
+    ) -> Result<(), RecordedInteractionIdentityError> {
+        if self
+            .get_entity(actor)
+            .and_then(|entity| entity.pc_data())
+            .is_none()
+        {
+            return Err(RecordedInteractionIdentityError::MissingOrNonPcActor);
+        }
+        if self.get_entity(target).is_none() {
+            return Err(RecordedInteractionIdentityError::MissingTarget);
+        }
+        Ok(())
+    }
+
     /// Apply a batch of player commands for the current frame.
     /// Per-frame scroll dedupe (`frame_scrolled`) is reset at the end
     /// of `perform_hourglass` (after `tick_display_state`), not here —
@@ -155,6 +179,24 @@ impl EngineInner {
             return;
         }
 
+        // A recorded interaction is about to mutate the actor's QA slot in
+        // `record_macro_step_for`. Original already holds concrete actor and
+        // antagonist pointers at this boundary; missing replay identities are
+        // therefore invalid state, not a NoAction/default-position command.
+        if let LaunchInteraction { actor, target, .. } = cmd
+            && self.players.qa_recording_for.contains(actor)
+        {
+            match self.validate_recorded_interaction_identities(*actor, *target) {
+                Ok(()) => {}
+                Err(RecordedInteractionIdentityError::MissingOrNonPcActor) => {
+                    panic!("recorded interaction owner {actor:?} is missing or is not a PC")
+                }
+                Err(RecordedInteractionIdentityError::MissingTarget) => {
+                    panic!("recorded interaction target {target:?} is missing")
+                }
+            }
+        }
+
         // Append-while-recording hook.  Records one `QuickActionStep`
         // per sim-affecting player command addressed at the currently
         // recording PC, keyed by the resolved Action (portrait bar)
@@ -205,11 +247,13 @@ impl EngineInner {
                 command,
                 running,
             } => {
+                let recording_interaction = self.players.qa_recording_for.contains(actor);
                 // Macro recording: if `actor` is in the recording set
                 // and a slot is armed, append this interaction as a step.
-                if self.players.qa_recording_for.contains(actor)
-                    && let Some((pos, tgt_layer, tgt_is_pc, tgt_is_object, tgt_target_filter)) =
-                        self.get_entity(*target).map(|e| {
+                if recording_interaction {
+                    let (pos, tgt_layer, tgt_is_pc, tgt_is_object, tgt_target_filter) = self
+                        .get_entity(*target)
+                        .map(|e| {
                             let target_filter = match e {
                                 crate::element::Entity::Target(t) => Some(t.target.action_filter),
                                 _ => None,
@@ -228,12 +272,12 @@ impl EngineInner {
                                 target_filter,
                             )
                         })
-                {
+                        .expect("recorded interaction target passed strict preflight");
                     let action = self
                         .get_entity(*actor)
                         .and_then(|e| e.pc_data())
                         .map(|pc| pc.current_action)
-                        .unwrap_or(crate::profiles::Action::NoAction);
+                        .expect("recorded interaction PC passed strict preflight");
                     // Pick the QuickAction ordinal.  Priority:
                     //   1. `Command::Take` on an object target → Take.
                     //   2. FX-target interaction → walk the target's
@@ -288,7 +332,7 @@ impl EngineInner {
                         tgt_handle,
                         quick,
                         pc_handle,
-                        false,
+                        *running,
                         crate::titbit::INVALID_ID,
                         true,
                         None,
@@ -307,6 +351,22 @@ impl EngineInner {
                     // `record_macro_step_for` helper which ran at the top
                     // of `apply_command`; no append here to avoid
                     // duplicating the dotted-chain step.
+                    //
+                    // TODO(parity): RHParity::RecordInteraction merges
+                    // command-specific Original recording sites. Audit their
+                    // authored RHQUICK phases, including direct ShootBow and
+                    // TakeCorpse, instead of deriving every phase from the
+                    // actor's current Action here.
+                }
+                if recording_interaction {
+                    // AddInteractionWithSeek stores the constructed sequence
+                    // in the active QA slot and sends STOP_RECORDING_MACRO;
+                    // it does not also launch that sequence live. The parity
+                    // trace records the semantic interaction before this
+                    // branch, so replay must preserve the recording-only
+                    // disposition explicitly.
+                    self.stop_recording_macro();
+                    return;
                 }
                 // Schema-9 records every resolved interaction under one
                 // command shape, although the Original has several route
@@ -4476,6 +4536,288 @@ mod tests {
         element.sprite = sprite;
         element.set_position_map(position);
         element.set_direction_instantly(direction);
+    }
+
+    fn setup_strangle_command_scene() -> (EngineInner, LevelAssets, EntityId, EntityId) {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Strangle, 0)]);
+        let sector = crate::position_interface::SectorHandle::new(1);
+        {
+            let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
+            pc.element_data_mut()
+                .set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
+            pc.element_data_mut().set_sector(sector);
+            pc.pc_data_mut().expect("test PC data").current_action = Action::Strangle;
+        }
+        bind_single_action_point(
+            &mut engine,
+            pc_id,
+            crate::order::OrderType::Strangling,
+            crate::coordinates::SpriteLocalPoint::new(30.0, 0.0),
+            crate::coordinates::SpriteAnchor::new(0.0, 0.0),
+        );
+
+        let mut target = ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            soldier: SoldierData {
+                cached_camp: Camp::Lacklandists,
+                ..SoldierData::default()
+            },
+        };
+        target
+            .element
+            .set_position_map(crate::coordinates::MapPoint::new(110.0, 100.0));
+        target.element.set_sector(sector);
+        let target_id = engine.add_entity(Entity::Soldier(target));
+
+        (engine, assets, pc_id, target_id)
+    }
+
+    #[test]
+    fn recording_strangle_stores_macro_without_launching_live_interaction() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, pc_id, target_id) = setup_strangle_command_scene();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartRecordingMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::LaunchInteraction {
+                actor: pc_id,
+                target: target_id,
+                command: Command::StrangleCmd,
+                running: false,
+            },
+        );
+
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
+        assert!(!engine.is_recording_macro());
+        let state = engine
+            .players
+            .macro_store
+            .get(pc_id)
+            .expect("recording PC has macro state");
+        let slot = state.slot(0).expect("Strangle was stored in slot zero");
+        assert_eq!(slot.steps.len(), 1);
+        assert_eq!(slot.steps[0].action, Action::Strangle);
+        assert_eq!(
+            slot.steps[0].replay,
+            QaReplayCommand::Interaction {
+                target: target_id,
+                command: Command::StrangleCmd,
+                double_click: false,
+            }
+        );
+        assert!(state.get_slot_titbit(0).is_some());
+
+        // Playback happens after recording has stopped and must take the live
+        // route rather than being suppressed by the recording-only guard.
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+    }
+
+    #[test]
+    fn recording_running_strangle_marks_replacement_titbit_as_running() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, pc_id, target_id) = setup_strangle_command_scene();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartRecordingMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::LaunchInteraction {
+                actor: pc_id,
+                target: target_id,
+                command: Command::StrangleCmd,
+                running: true,
+            },
+        );
+
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
+        assert!(!engine.is_recording_macro());
+        let state = engine
+            .players
+            .macro_store
+            .get(pc_id)
+            .expect("recording PC has macro state");
+        let slot = state.slot(0).expect("running Strangle occupies slot zero");
+        assert_eq!(
+            slot.steps[0].replay,
+            QaReplayCommand::Interaction {
+                target: target_id,
+                command: Command::StrangleCmd,
+                double_click: true,
+            }
+        );
+        let titbit_id = state
+            .get_slot_titbit(0)
+            .expect("running Strangle records a replacement titbit");
+        assert!(engine.feedback.titbit_manager.is_running_for_qa(titbit_id));
+    }
+
+    #[test]
+    #[should_panic(expected = "recorded interaction target")]
+    fn recording_interaction_panics_when_target_is_missing() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, pc_id, _target_id) = setup_strangle_command_scene();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartRecordingMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+        let missing_target = EntityId::Soldier(crate::entity_id::SoldierId(u32::MAX));
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::LaunchInteraction {
+                actor: pc_id,
+                target: missing_target,
+                command: Command::StrangleCmd,
+                running: false,
+            },
+        );
+    }
+
+    #[test]
+    fn missing_recording_target_preflight_is_read_only() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, pc_id, _target_id) = setup_strangle_command_scene();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::StartRecordingMacro {
+                pc: Some(pc_id),
+                slot: 0,
+            },
+        );
+        let missing_target = EntityId::Soldier(crate::entity_id::SoldierId(u32::MAX));
+        let recording_before = engine.is_recording_macro();
+        let sequence_count_before = engine.orders.sequence_manager.sequence_count();
+        let (slot_before, titbit_before) = {
+            let state = engine
+                .players
+                .macro_store
+                .get(pc_id)
+                .expect("recording PC has macro state");
+            (state.slot(0).cloned(), state.get_slot_titbit(0))
+        };
+
+        assert_eq!(
+            engine.validate_recorded_interaction_identities(pc_id, missing_target),
+            Err(RecordedInteractionIdentityError::MissingTarget)
+        );
+        assert_eq!(engine.is_recording_macro(), recording_before);
+        assert_eq!(
+            engine.orders.sequence_manager.sequence_count(),
+            sequence_count_before
+        );
+        let state = engine
+            .players
+            .macro_store
+            .get(pc_id)
+            .expect("recording PC has macro state");
+        assert_eq!(state.slot(0), slot_before.as_ref());
+        assert_eq!(state.get_slot_titbit(0), titbit_before);
+    }
+
+    #[test]
+    fn live_strangle_still_launches_interaction_when_not_recording() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, pc_id, target_id) = setup_strangle_command_scene();
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+
+        engine.apply_command(
+            &sim,
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::LaunchInteraction {
+                actor: pc_id,
+                target: target_id,
+                command: Command::StrangleCmd,
+                running: false,
+            },
+        );
+
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("live Strangle launches a sequence");
+        assert_eq!(sequence.len(), 1);
+        let seek = sequence.get(0).expect("live Strangle route has a seek");
+        assert_eq!(seek.command, Command::Seek);
+        let SequenceElementData::Movement {
+            post_seek_sequence, ..
+        } = &seek.data
+        else {
+            panic!("live Strangle route must begin with movement");
+        };
+        let post_seek = post_seek_sequence
+            .as_deref()
+            .expect("live Strangle seek retains its interaction");
+        assert_eq!(post_seek.len(), 1);
+        assert_eq!(post_seek.get(0).unwrap().command, Command::StrangleCmd);
     }
 
     fn spawn_pc_at(engine: &mut EngineInner, x: f32, y: f32) -> EntityId {

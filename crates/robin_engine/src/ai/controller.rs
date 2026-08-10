@@ -4704,6 +4704,14 @@ impl AiController {
     }
 
     pub(crate) fn finish_suspended_common_handler(&mut self) {
+        // The resumed tail still belongs to the Think whose typed Rust frame
+        // had to unwind before an engine-owned synchronous callback could run.
+        // Movement path construction happens only after this helper returns,
+        // so retain that logical EndThink ownership for a deferred
+        // couldn't-reach/already-on-point result. Without this marker a
+        // cross-topology GoNear rejected by the owner drain is treated as an
+        // out-of-Think call and its completion is discarded.
+        self.completion_latch_inside_think = true;
         if self.couldnt_reachpoint {
             self.couldnt_reachpoint = false;
             self.outbox

@@ -549,6 +549,10 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
             released: false,
             shoot_mode: Some(ShootMode::Normal),
         };
+        // This fixture primes the shooting sprite below before entering the
+        // production owner loop. Mirror Actor::mulLastOrderID so that already-
+        // running row is not mistaken for Human::Execute initialization.
+        actor.last_execute_order_id = Some(order_id);
     }
 
     let mut profiles = ProfileManager::new();
@@ -2309,12 +2313,12 @@ fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass(
         .orders
         .sequence_manager
         .element_in_progress(sequence, 0);
-    engine
+    let actor = engine
         .get_entity_mut(owner)
         .unwrap()
         .actor_data_mut()
-        .unwrap()
-        .active_shot = ActiveShot {
+        .unwrap();
+    actor.active_shot = ActiveShot {
         sequence_id: Some(sequence),
         element_index: 0,
         target: Some(owner),
@@ -2322,6 +2326,10 @@ fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass(
         released: false,
         shoot_mode: Some(ShootMode::Normal),
     };
+    // The hook models terminal work from an already-entered specialized bow
+    // Execute arm. Preserve its selected-order history just as a live prior
+    // Actor::Hourglass call would have done.
+    actor.last_execute_order_id = Some(bow_order_id);
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
@@ -2534,6 +2542,125 @@ fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
 }
 
 #[test]
+fn invalid_eat_initialization_short_circuits_the_full_execute_owner_slot() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let mut description = crate::campaign::PcDescription {
+        character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
+        ..Default::default()
+    };
+    description.status.num_rations = 1;
+    let mut campaign = crate::campaign::Campaign::default();
+    campaign.characters.push(description);
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new_with_campaign(campaign);
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    {
+        let pc = engine.get_entity_mut(owner).unwrap().pc_data_mut().unwrap();
+        pc.campaign_description_index = Some(0);
+        pc.life_points = crate::pc_status::LIFEPOINTS_PC;
+    }
+    bind_test_action_point(
+        &mut engine,
+        owner,
+        OrderType::Eating,
+        crate::coordinates::SpriteLocalPoint::ZERO,
+        crate::coordinates::SpriteAnchor::ZERO,
+    );
+
+    let sequence = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::EatCmd, Some(owner)));
+    assert_eq!(
+        crate::abilities::begin_eat(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            owner,
+            sequence,
+            0,
+            &mut engine.orders.next_order_id,
+        ),
+        crate::abilities::BeginResult::Started
+    );
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence, 0);
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let sprite_before = {
+        let sprite = engine.get_entity(owner).unwrap().sprite();
+        (
+            sprite.current_row,
+            sprite.current_frame,
+            sprite.frame_count,
+            sprite.last_processed_order_id,
+        )
+    };
+    let mut selected_ability = None;
+    engine.tick_actor_animation_action_change_slots_with_hooks(
+        &sim,
+        &assets,
+        |_, _| {},
+        |_, _| {},
+        |_, selected_owner, _, _, _, ability, _| {
+            if selected_owner == owner {
+                selected_ability = Some(ability);
+            }
+        },
+        |_, _, _| {},
+    );
+
+    assert_eq!(selected_ability, Some(None));
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        crate::sprite::MotionState::Terminated
+    );
+    let sprite = engine.get_entity(owner).unwrap().sprite();
+    assert_eq!(
+        (
+            sprite.current_row,
+            sprite.current_frame,
+            sprite.frame_count,
+            sprite.last_processed_order_id,
+        ),
+        sprite_before,
+        "Eating's invalid initialization returns before its sprite body"
+    );
+    assert_eq!(engine.campaign().characters[0].status.num_rations, 1);
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .pc_data()
+            .unwrap()
+            .life_points,
+        crate::pc_status::LIFEPOINTS_PC,
+        "the rejected ability must apply neither ammo nor healing side effects"
+    );
+}
+
+#[test]
 fn active_ability_type_mismatch_is_not_selected_or_allowed_to_suppress_generic_execute() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
@@ -2598,6 +2725,229 @@ fn active_ability_type_mismatch_is_not_selected_or_allowed_to_suppress_generic_e
         OrderType::WaitingUpright,
         "the generic selected order remains authoritative"
     );
+}
+
+#[test]
+fn heal_done_revalidates_before_effect_and_ammo_consumption() {
+    use crate::coordinates::MapPoint;
+    use crate::element::{Command, ElementData, ElementFx, ElementKind, Entity, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    enum TargetKind {
+        Human(f32),
+        Fx(f32),
+        SelfHeal,
+    }
+
+    for (target_kind, expect_effect) in [
+        (TargetKind::Human(40.0), false),
+        (TargetKind::Human(39.999), true),
+        (TargetKind::Fx(80.0), true),
+        (TargetKind::SelfHeal, true),
+    ] {
+        let mut engine = EngineInner::new();
+        let healer = engine.add_entity(make_test_pc(Posture::Upright));
+        let healer_entity = engine.get_entity_mut(healer).unwrap();
+        healer_entity.pc_data_mut().unwrap().life_points = 100;
+        healer_entity
+            .element_data_mut()
+            .set_position_map(MapPoint::ZERO);
+
+        let target = match target_kind {
+            TargetKind::Human(distance) => {
+                let target = engine.add_entity(make_test_pc(Posture::Upright));
+                let entity = engine.get_entity_mut(target).unwrap();
+                entity.pc_data_mut().unwrap().life_points = 50;
+                entity
+                    .element_data_mut()
+                    .set_position_map(MapPoint::new(distance, 0.0));
+                target
+            }
+            TargetKind::Fx(distance) => {
+                let mut element = ElementData {
+                    kind: ElementKind::Target,
+                    active: true,
+                    ..Default::default()
+                };
+                element.set_position_map(MapPoint::new(distance, 0.0));
+                engine.add_entity(Entity::Fx(ElementFx {
+                    element,
+                    fx: Default::default(),
+                }))
+            }
+            TargetKind::SelfHeal => {
+                engine
+                    .get_entity_mut(healer)
+                    .unwrap()
+                    .pc_data_mut()
+                    .unwrap()
+                    .life_points = 50;
+                healer
+            }
+        };
+
+        attach_test_campaign_identities(&mut engine);
+        let healer_description = engine
+            .get_entity(healer)
+            .and_then(Entity::pc_data)
+            .and_then(|pc| pc.campaign_description_index)
+            .unwrap() as usize;
+        engine.mission_domain.campaign.characters[healer_description]
+            .status
+            .set_ammo(crate::profiles::Action::Heal, 2);
+
+        let sprite_action = if target == healer {
+            OrderType::Eating
+        } else {
+            OrderType::Healing
+        };
+        // Use a multi-frame action whose DONE point is distinct from its
+        // terminal frame. The one-frame action-point helper terminates on its
+        // first tick and never exercises HealDone's second validity check.
+        let script = crate::sprite_script::SpriteScript {
+            action_id: sprite_action as u16,
+            action_done: 1,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2, 3],
+            delays: vec![0, 0, 0],
+            distances: vec![0, 0, 0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+            sound_ids: vec![0; 3],
+        };
+        let mut conversion =
+            vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+        conversion[sprite_action as usize] = 0;
+        let element = engine.get_entity_mut(healer).unwrap().element_data_mut();
+        let position = element.position_map();
+        let direction = element.direction();
+        element.sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script]),
+            std::sync::Arc::new(conversion),
+        );
+        element.set_position_map(position);
+        element.set_direction_instantly(direction);
+
+        let element =
+            SequenceElement::new_interaction(1, Command::HealCmd, Some(healer), Some(target));
+        let sequence = engine.orders.sequence_manager.launch_element(element);
+        assert!(engine.get_entity(healer).unwrap().is_pc());
+        assert!(!engine.get_entity(healer).unwrap().is_dead());
+        assert!(
+            engine.get_entity(target).unwrap().kind().is_fx_target()
+                || engine
+                    .get_entity(target)
+                    .and_then(Entity::pc_data)
+                    .is_some_and(|pc| pc.life_points > 0 && pc.life_points < 100)
+        );
+        assert_eq!(
+            crate::abilities::begin_heal(
+                &mut engine.world.entities,
+                &mut engine.orders.sequence_manager,
+                healer,
+                target,
+                sequence,
+                0,
+                &mut engine.orders.next_order_id,
+            ),
+            crate::abilities::BeginResult::Started
+        );
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+
+        let target_life_before = engine
+            .get_entity(target)
+            .and_then(Entity::pc_data)
+            .map(|pc| pc.life_points);
+        let assets = assets_with_test_pc_profile();
+        let sim = crate::sim_rng::test_context();
+        let mut display = HostDisplayState::default();
+        for _ in 0..4 {
+            engine.tick_ability_for(&sim, &mut display, &assets, healer);
+            let ammo = engine.mission_domain.campaign.characters[healer_description]
+                .status
+                .get_ammo(crate::profiles::Action::Heal);
+            if ammo < 2
+                || engine
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence, 0)
+                    .is_some_and(|element| element.state == SequenceState::Terminated)
+            {
+                break;
+            }
+        }
+
+        let ammo = engine.mission_domain.campaign.characters[healer_description]
+            .status
+            .get_ammo(crate::profiles::Action::Heal);
+        if expect_effect {
+            assert_eq!(ammo, 1);
+            if let Some(life_before) = target_life_before {
+                assert!(
+                    engine
+                        .get_entity(target)
+                        .and_then(Entity::pc_data)
+                        .unwrap()
+                        .life_points
+                        > life_before
+                );
+            }
+        } else {
+            assert_eq!(ammo, 2, "invalid Heal DONE must not consume a plant");
+            assert_eq!(
+                engine
+                    .get_entity(target)
+                    .and_then(Entity::pc_data)
+                    .map(|pc| pc.life_points),
+                target_life_before,
+                "invalid Heal DONE must not apply its effect"
+            );
+            assert_eq!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence, 0)
+                    .unwrap()
+                    .state,
+                SequenceState::Terminated
+            );
+            assert_eq!(
+                engine
+                    .get_entity(healer)
+                    .and_then(Entity::actor_data)
+                    .unwrap()
+                    .continuation
+                    .motion_state,
+                crate::sprite::MotionState::Terminated
+            );
+            let healer_actor = engine
+                .get_entity(healer)
+                .and_then(Entity::actor_data)
+                .unwrap();
+            assert!(
+                !healer_actor.active_ability.is_active(),
+                "the synchronous owner condolence must clear the terminated Heal mirror"
+            );
+            assert!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(healer)
+                    .is_none(),
+                "the invalid Healing order must no longer be selected"
+            );
+            assert_eq!(
+                engine.actor_order_type(healer),
+                Some(OrderType::NonanimationEnd),
+                "the owner condolence must detach the installed Healing order"
+            );
+        }
+    }
 }
 
 #[test]

@@ -811,9 +811,9 @@ pub struct ActorData {
     pub last_executed_rider_charge_order_id: Option<std::num::NonZeroU32>,
 
     /// 3D bounding-box obstacle representing the shield held in front of
-    /// this actor.  Computed by `update_shield_obstacles` each frame while
-    /// the actor is in a shield action state.  Used by `tick_arrows` to
-    /// block incoming arrows.
+    /// this actor. Refreshed only at the Original's explicit `UpdateShield`
+    /// call sites and retained between them. Used by `tick_arrows` to block
+    /// incoming arrows.
     ///
     pub shield_obstacle: Option<crate::sight_obstacle::SightObstacle>,
 

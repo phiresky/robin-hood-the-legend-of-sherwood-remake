@@ -2675,6 +2675,173 @@ fn native_test_soldier() -> Entity {
     })
 }
 
+#[test]
+fn set_always_attentive_promotes_green_view_when_music_is_already_yellow() {
+    let mut soldier = native_test_soldier();
+    let enemy = soldier
+        .enemy_ai_mut()
+        .expect("native test soldier requires an enemy AI");
+    enemy.base.current_music_alert_status = crate::ai::AlertLevel::Yellow;
+    enemy.base.view_alert_status = crate::ai::AlertLevel::Green;
+
+    let mut host = BoundScriptEffects::new();
+    host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(soldier)]);
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+    let mut sequences = crate::sequence::SequenceManager::new();
+    let mut selected = Vec::new();
+    let mut sounds = crate::sound_source::SoundSourceManager::new();
+    let weather = crate::engine::WeatherState::default();
+    let frame = 656;
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    stack.push_i32(1);
+
+    assert_eq!(
+        call_host_native_with_queries(
+            &mut host,
+            NativeFn::SetAlwaysAttentive,
+            &mut stack,
+            TestQueryViews::new(&mut sequences, &mut selected, &mut sounds, &weather, &frame),
+        ),
+        0
+    );
+
+    let enemy = host
+        .entity_at_legacy_slot(0)
+        .enemy_ai()
+        .expect("native must retain the soldier's enemy AI");
+    assert!(enemy.forced_attentive);
+    assert!(enemy.will_be_attentive);
+    assert_eq!(
+        enemy.base.current_music_alert_status,
+        crate::ai::AlertLevel::Yellow
+    );
+    assert_eq!(enemy.base.view_alert_status, crate::ai::AlertLevel::Yellow);
+}
+
+#[test]
+fn set_always_attentive_preserves_ordinary_alert_branches() {
+    use crate::ai::AlertLevel;
+
+    struct Case {
+        name: &'static str,
+        frame: u32,
+        target: bool,
+        initial_forced: bool,
+        music: AlertLevel,
+        view: AlertLevel,
+        expected_music: AlertLevel,
+        expected_view: AlertLevel,
+    }
+
+    let cases = [
+        Case {
+            name: "ordinary green",
+            frame: 50,
+            target: true,
+            initial_forced: false,
+            music: AlertLevel::Green,
+            view: AlertLevel::Green,
+            expected_music: AlertLevel::Yellow,
+            expected_view: AlertLevel::Yellow,
+        },
+        Case {
+            name: "already yellow",
+            frame: 50,
+            target: true,
+            initial_forced: false,
+            music: AlertLevel::Yellow,
+            view: AlertLevel::Yellow,
+            expected_music: AlertLevel::Yellow,
+            expected_view: AlertLevel::Yellow,
+        },
+        Case {
+            name: "red remains red",
+            frame: 50,
+            target: true,
+            initial_forced: false,
+            music: AlertLevel::Red,
+            view: AlertLevel::Red,
+            expected_music: AlertLevel::Red,
+            expected_view: AlertLevel::Red,
+        },
+        Case {
+            name: "disable retains split alert",
+            frame: 50,
+            target: false,
+            initial_forced: true,
+            music: AlertLevel::Yellow,
+            view: AlertLevel::Green,
+            expected_music: AlertLevel::Yellow,
+            expected_view: AlertLevel::Green,
+        },
+        Case {
+            name: "initial frame retains split alert",
+            frame: 1,
+            target: true,
+            initial_forced: false,
+            music: AlertLevel::Yellow,
+            view: AlertLevel::Green,
+            expected_music: AlertLevel::Yellow,
+            expected_view: AlertLevel::Green,
+        },
+    ];
+
+    for case in cases {
+        let mut soldier = native_test_soldier();
+        let enemy = soldier
+            .enemy_ai_mut()
+            .expect("native test soldier requires an enemy AI");
+        enemy.forced_attentive = case.initial_forced;
+        enemy.will_be_attentive = true;
+        enemy.base.current_music_alert_status = case.music;
+        enemy.base.view_alert_status = case.view;
+
+        let mut host = BoundScriptEffects::new();
+        host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(soldier)]);
+        let mut sequences = crate::sequence::SequenceManager::new();
+        let mut selected = Vec::new();
+        let mut sounds = crate::sound_source::SoundSourceManager::new();
+        let weather = crate::engine::WeatherState::default();
+        let mut stack = NativeStack::default();
+        stack.push_i32(ScriptHandleCodec::actor_handle_from_index(0));
+        stack.push_i32(i32::from(case.target));
+        assert_eq!(
+            call_host_native_with_queries(
+                &mut host,
+                NativeFn::SetAlwaysAttentive,
+                &mut stack,
+                TestQueryViews::new(
+                    &mut sequences,
+                    &mut selected,
+                    &mut sounds,
+                    &weather,
+                    &case.frame,
+                ),
+            ),
+            0,
+            "{}",
+            case.name
+        );
+
+        let enemy = host
+            .entity_at_legacy_slot(0)
+            .enemy_ai()
+            .expect("native must retain the soldier's enemy AI");
+        assert_eq!(enemy.forced_attentive, case.target, "{}", case.name);
+        assert_eq!(
+            enemy.base.current_music_alert_status, case.expected_music,
+            "{} music",
+            case.name
+        );
+        assert_eq!(
+            enemy.base.view_alert_status, case.expected_view,
+            "{} view",
+            case.name
+        );
+    }
+}
+
 fn native_test_pc(disabled_actions: Vec<bool>, disabled_actions_temp: Vec<bool>) -> Entity {
     Entity::Pc(crate::element::ActorPc {
         element: crate::element::ElementData {

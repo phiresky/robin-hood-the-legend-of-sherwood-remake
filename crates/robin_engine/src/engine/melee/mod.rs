@@ -1231,6 +1231,33 @@ fn entity_distance<A: Into<EntityId>, B: Into<EntityId>>(
     (dx * dx + dy * dy).sqrt()
 }
 
+/// Original `ExecuteStraightSwordStrike` measures the strike at its DONE
+/// marker with `(GetPosition() - antagonist->GetPosition()).Norm()`.  Those
+/// are stored world coordinates, including elevation in both `y` and `z`;
+/// projected map distance can therefore admit a target on another height.
+fn entity_world_distance<A: Into<EntityId>, B: Into<EntityId>>(
+    entities: &crate::entities::Entities,
+    a: A,
+    b: B,
+) -> f32 {
+    let a = a.into();
+    let b = b.into();
+    let pos_a = entities
+        .get(a)
+        .unwrap_or_else(|| panic!("straight-strike distance references missing attacker {a:?}"))
+        .element_data()
+        .position();
+    let pos_b = entities
+        .get(b)
+        .unwrap_or_else(|| panic!("straight-strike distance references missing victim {b:?}"))
+        .element_data()
+        .position();
+    let dx = pos_a.x - pos_b.x;
+    let dy = pos_a.y - pos_b.y;
+    let dz = pos_a.z - pos_b.z;
+    (dx * dx + dy * dy + dz * dz).sqrt()
+}
+
 /// Get the 0-15 direction sector from entity A looking at entity B.
 fn direction_to<F: Into<EntityId>, T: Into<EntityId>>(
     entities: &crate::entities::Entities,
@@ -2421,6 +2448,7 @@ mod tests {
         ActiveFlight, ActorCivilian, ActorData, ActorPc, ActorSoldier, CivilianData, ElementData,
         ElementKind, HumanData, NpcData, PcData, SoldierData,
     };
+    use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
 
     #[test]
     fn sector_to_angle_keeps_original_double_intermediate_rounding() {
@@ -2440,6 +2468,40 @@ mod tests {
         assert_eq!(final_angle.to_bits(), 0x40bf_b210);
     }
 
+    #[test]
+    fn straight_strike_range_uses_stored_world_position() {
+        let mut engine = EngineInner::new();
+        let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let target = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        engine
+            .get_entity_mut(target)
+            .unwrap()
+            .element_data_mut()
+            .set_position(WorldPoint3D::new(60.0, 40.0, 40.0));
+
+        // The isometric projection subtracts elevation from world Y, so
+        // these actors are only 60 map units apart while Original's
+        // ExecuteStraightSwordStrike range check sees all three components.
+        assert_eq!(
+            entity_distance(&engine.world.entities, attacker, target),
+            60.0
+        );
+        assert_eq!(
+            entity_world_distance(&engine.world.entities, attacker, target),
+            (60.0_f32 * 60.0 + 40.0 * 40.0 + 40.0 * 40.0).sqrt()
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "straight-strike distance references missing victim Soldier")]
+    fn straight_strike_range_rejects_a_missing_victim() {
+        let mut engine = EngineInner::new();
+        let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let missing = EntityId::Soldier(crate::entity_id::SoldierId(u32::MAX));
+
+        let _ = entity_world_distance(&engine.world.entities, attacker, missing);
+    }
+
     fn make_engine() -> EngineInner {
         let mut engine = EngineInner::new();
         // Every PC built by `make_pc` carries campaign-description index 0,
@@ -2450,6 +2512,22 @@ mod tests {
             ..Default::default()
         }];
         engine
+    }
+
+    fn empty_mission_script() -> crate::engine::types::MissionScript {
+        let startup = ClassEntry {
+            source_file: "melee_test.scs".into(),
+            class_name: "StartUp".into(),
+            size_of_member_variables: 0,
+            member_variables: Vec::new(),
+            functions: Vec::new(),
+            quads: Vec::new(),
+        };
+        crate::engine::types::MissionScript::from_scb(ScbFile {
+            version: SCB_VERSION,
+            classes: vec![startup],
+        })
+        .expect("minimal StartUp script must load")
     }
 
     fn make_soldier(
@@ -2693,6 +2771,7 @@ mod tests {
         let queued_type = queued.order_type;
         let victim_entity = engine.get_entity(victim).unwrap();
         assert_eq!(victim_entity.element_data().direction(), 5);
+        assert_eq!(victim_entity.position_iface().layer_goal().get(), 0);
         assert!(victim_entity.actor_data().unwrap().active_flight.is_none());
 
         engine.initialize_hit_flight(&LevelAssets::default(), victim, Some(attacker), queued_type);
@@ -2715,6 +2794,73 @@ mod tests {
                 .direction(),
             5
         );
+    }
+
+    #[test]
+    fn ladder_fall_translation_retains_layer_goal_and_authors_landing_target() {
+        let mut engine = make_engine();
+        engine.scripts.mission = Some(empty_mission_script());
+
+        let lift_sector = crate::sector::SectorNumber::new(42);
+        let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid.level);
+        level.sector_number_map.insert(lift_sector, 0);
+        level.sectors.push(crate::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: crate::sector::SectorType::LIFT,
+            layer: 0,
+            sector_number: lift_sector,
+            door_index: None,
+            lift_type: Some(crate::sector::LiftType::Ladder),
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: Some(0),
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        });
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(crate::gate::Door {
+                point_out: crate::coordinates::MapPoint::new(30.0, 0.0),
+                layer_out: 3,
+                sector_out: crate::sector::SectorNumber::new(7),
+                ..crate::gate::Door::default()
+            });
+
+        let victim = engine.add_entity(make_pc(
+            WorldPoint3D::default(),
+            crate::position_interface::SectorHandle::new(42),
+        ));
+        let damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveHitDamage, Some(victim));
+        let sequence = engine.launch_element(damage);
+
+        engine.translate_ladder_wall_fall(&LevelAssets::default(), victim, (sequence, 0));
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        assert_eq!(
+            victim_entity.position_iface().layer_goal().get(),
+            0,
+            "translation must not publish the destination layer before arrival"
+        );
+        let flight = victim_entity
+            .actor_data()
+            .unwrap()
+            .active_flight
+            .as_ref()
+            .expect("a non-trivial ladder fall installs a flight");
+        assert_eq!(flight.goal_layer, 3);
+        assert_eq!(
+            flight.goal_sector,
+            crate::position_interface::SectorHandle::new(7)
+        );
+        assert!(flight.ladder_fall);
     }
 
     #[test]
@@ -5596,7 +5742,7 @@ mod tests {
     }
 
     #[test]
-    fn arrow_damage_amulet_coma_uses_post_damage_lying_translation() {
+    fn consecutive_lethal_arrow_damage_preserves_new_amulet_coma() {
         let sim = crate::sim_rng::test_context();
         let mut engine = make_engine();
         let attacker = engine.add_entity(make_soldier(
@@ -5666,22 +5812,52 @@ mod tests {
         let mut display = crate::engine::HostDisplayState::default();
         engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
-        let victim_entity = engine.get_entity(victim).unwrap();
-        assert!(engine.mission_domain.campaign.characters[0].status.in_coma);
-        assert_eq!(victim_entity.element_data().posture, Posture::Lying);
+        {
+            let victim_entity = engine.get_entity(victim).unwrap();
+            assert!(engine.mission_domain.campaign.characters[0].status.in_coma);
+            assert_eq!(victim_entity.pc_data().unwrap().life_points, 5);
+            assert_eq!(victim_entity.element_data().posture, Posture::Lying);
+            assert_eq!(
+                victim_entity.position_iface().map_goal(),
+                crate::coordinates::MapPoint::ZERO,
+                "post-damage Lying translation must terminate and clear the movement goal"
+            );
+            assert_eq!(
+                victim_entity
+                    .actor_data()
+                    .unwrap()
+                    .continuation
+                    .motion_state,
+                crate::sprite::MotionState::Start,
+                "terminal arrow translation must preserve the pre-damage motion state"
+            );
+        }
         assert_eq!(
-            victim_entity.position_iface().map_goal(),
-            crate::coordinates::MapPoint::ZERO,
-            "post-damage Lying translation must terminate and clear the movement goal"
+            engine.mission_domain.campaign.values[crate::campaign::CampaignValue::Amulets],
+            0,
+            "the first lethal arrow must establish coma and consume one amulet"
         );
+
+        let mut second_damage = crate::sequence::SequenceElement::new_damage(
+            1,
+            Command::ReceiveArrowDamage,
+            Some(victim),
+            Some(attacker),
+            10,
+            0,
+        );
+        engine.resolve_element_priority(&mut second_damage);
+        engine.orders.sequence_manager.launch_element(second_damage);
+        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+        let victim_entity = engine.get_entity(victim).unwrap();
+        assert_eq!(victim_entity.pc_data().unwrap().life_points, 5);
+        assert!(!victim_entity.is_dead());
+        assert!(engine.mission_domain.campaign.characters[0].status.in_coma);
         assert_eq!(
-            victim_entity
-                .actor_data()
-                .unwrap()
-                .continuation
-                .motion_state,
-            crate::sprite::MotionState::Start,
-            "terminal arrow translation must preserve the pre-damage motion state"
+            engine.mission_domain.campaign.values[crate::campaign::CampaignValue::Amulets],
+            0,
+            "the second lethal arrow must not consume another amulet"
         );
     }
 
@@ -6260,7 +6436,7 @@ mod tests {
     }
 
     #[test]
-    fn enabling_temp_actions_restores_matching_slot_through_selected_action_path() {
+    fn enabling_temp_actions_restores_matching_slot_after_targeted_selection_collapse() {
         use crate::profiles::Action;
 
         let assets = action_test_assets([Action::Bow, Action::Apple, Action::Purse]);
@@ -6294,9 +6470,10 @@ mod tests {
                 .pc_data()
                 .unwrap()
                 .current_action,
-            Action::Purse,
-            "MSG_SELECT_ACTION applies the restored action to the full selection"
+            Action::Bow,
+            "RHMessenger removes the companion before fanning out the targeted restored action"
         );
+        assert_eq!(engine.players.seats[0].selection, vec![pc]);
         assert_eq!(engine.players.seats[0].selected_action, Action::Purse);
         assert!(
             engine

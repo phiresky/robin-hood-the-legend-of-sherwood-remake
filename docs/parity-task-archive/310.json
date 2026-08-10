@@ -1,0 +1,9 @@
+{
+  "id": "310",
+  "subject": "Preserve forced attentive state across temporary incapacitation",
+  "description": "Original RHElementActorSoldier::ForgetAttentiveMode clears only mbAttentive and mbWillBeAttentive, preserving the script-owned mbForcedAttentive latch. Rust incorrectly cleared all three flags when LoseConsciousness, Wasp, or Net invoked the helper. Rust's deferred actor-effect drain also allowed SetState's earlier SetAttentiveMode request to overwrite the helper's later will-be-attentive clear. ForgetAttentiveMode now preserves forced_attentive and marks the queued attentive request so the engine launches its transition first, then applies the later attentive/will-be-attentive clear in Original statement order. Focused forced/non-forced LoseConsciousness-to-FitAgain and Wasp/Net regressions pass. nicouzouf Profile_001 Savegame_051 replay-015 clears the frame-1067 Soldier59 attentive frontier and advances to an independent RNG frontier at frame 1182; nicouzouf Profile_001 Savegame_020 replay-006 clears the downstream frame-1278 Soldier72 attentive frontier and matches exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task310-forced-attentive"
+}

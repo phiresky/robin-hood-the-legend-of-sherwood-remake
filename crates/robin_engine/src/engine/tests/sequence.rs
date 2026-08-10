@@ -793,6 +793,158 @@ fn manager_redundant_parry_skips_instruct_epilogue_after_generated_transition() 
 }
 
 #[test]
+fn redundant_raise_shield_preserves_prior_look_left_start_edge() {
+    use crate::element::{ActionState, Command, InstalledActorOrder, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceState};
+    use crate::sprite::MotionState;
+
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let look_order_id = engine.orders.allocate_order_id();
+    {
+        let actor = engine
+            .get_entity_mut(soldier)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap();
+        actor.action_state = ActionState::HoldingShield;
+        actor.continuation.motion_state = MotionState::Start;
+        actor.installed_order = Some(InstalledActorOrder {
+            order_id: look_order_id,
+            order_type: OrderType::LookingLeft,
+        });
+    }
+
+    // RHElementActorHuman::Translate terminates this command immediately.
+    // Actor::Instruct observes that its selected element changed and returns
+    // before publishing its ordinary accepted-instruction motion edge.
+    let sequence =
+        engine.launch_element(SequenceElement::new(1, Command::RaiseShield, Some(soldier)));
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        MotionState::Start,
+        "terminal RaiseShield must not overwrite the preceding LookLeft edge"
+    );
+}
+
+#[test]
+fn soldier_moving_shield_still_raises_and_publishes_accepted_motion_edge() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceState};
+    use crate::sprite::MotionState;
+
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    {
+        let actor = engine
+            .get_entity_mut(soldier)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap();
+        actor.action_state = ActionState::MovingShield;
+        actor.continuation.motion_state = MotionState::Start;
+    }
+
+    let sequence =
+        engine.launch_element(SequenceElement::new(1, Command::RaiseShield, Some(soldier)));
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .unwrap();
+    assert_eq!(element.state, SequenceState::InProgress);
+    assert_eq!(
+        element.orders.front().map(|order| order.order_type),
+        Some(OrderType::RaisingShield)
+    );
+    assert_eq!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        MotionState::InProgress
+    );
+}
+
+#[test]
+fn pc_moving_shield_terminates_raise_and_skips_instruct_motion_edge() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::sequence::{SequenceElement, SequenceState};
+    use crate::sprite::MotionState;
+
+    let mut engine = EngineInner::new();
+    let pc = engine.add_entity(make_test_pc(Posture::Upright));
+    {
+        let actor = engine.get_entity_mut(pc).unwrap().actor_data_mut().unwrap();
+        actor.action_state = ActionState::MovingShield;
+        actor.continuation.motion_state = MotionState::Start;
+    }
+
+    let sequence = engine.launch_element(SequenceElement::new(1, Command::RaiseShield, Some(pc)));
+    let mut display = HostDisplayState::default();
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &LevelAssets::default(),
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated
+    );
+    assert_eq!(
+        engine
+            .get_entity(pc)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        MotionState::Start,
+        "PC-only terminal MovingShield branch must skip the accepted-instruct epilogue"
+    );
+}
+
+#[test]
 fn synchronous_redundant_stop_parry_skips_instruct_epilogue() {
     use crate::element::{ActionState, Command, Posture};
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
@@ -1904,6 +2056,46 @@ fn set_soldier_attentive_mode_plays_transition_from_upright() {
         Some(OrderType::TransitionWaitingUprightWaitingAlerted),
         "transition-to-alerted animation should be the actor's current order"
     );
+}
+
+#[test]
+fn deferred_attentive_then_forget_preserves_launch_but_clears_local_flags() {
+    use crate::ai::AttentiveModeEffect;
+    use crate::element::{AiBrain, Command, Posture};
+
+    for forget_after in [false, true] {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let mut entity = make_test_soldier(Posture::Upright);
+        let Entity::Soldier(soldier) = &mut entity else {
+            unreachable!();
+        };
+        soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+        let enemy = soldier.npc.ai_brain.enemy_mut().unwrap();
+        enemy.forced_attentive = true;
+        enemy.attentive = false;
+        enemy.will_be_attentive = false;
+        let mut request = AttentiveModeEffect::new(true, false);
+        request.forget_after = forget_after;
+        enemy.base.outbox.actor.set_attentive_mode = Some(request);
+        let soldier_id = engine.add_entity(entity);
+
+        engine.drain_pending_for_npc(&sim, soldier_id, &LevelAssets::default());
+
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| sequence.elements.iter())
+                .any(|element| element.command == Command::EnterAttentiveMode),
+            "SetState's earlier SetAttentiveMode call must still launch"
+        );
+        let enemy = engine.get_entity(soldier_id).unwrap().enemy_ai().unwrap();
+        assert_eq!(enemy.will_be_attentive, !forget_after);
+        assert!(!enemy.attentive);
+        assert!(enemy.forced_attentive);
+    }
 }
 
 #[test]

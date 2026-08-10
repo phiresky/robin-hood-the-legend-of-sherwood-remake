@@ -1,0 +1,9 @@
+{
+  "id": "309",
+  "subject": "Retain terminal motion state at an exhausted jump landing",
+  "description": "SuN1Sh1nE Profile_004 Savegame_034 replay-002 diverged at frame 875 only on PC241's retained motion state: Original reported Terminated while Rust reported InProgress after the final jump landing order. RHElementActor::DoNextOrder calls Proceed and resets mmotionState to RHMOTION_IN_PROGRESS only when it returns a non-null next order; an exhausted queue instead terminates the sequence element without changing the Execute result. Rust's jump completion path unconditionally projected InProgress after element_terminated, bypassing the common actor completion latch that already distinguishes a genuinely installed successor from an exhausted retained order. The jump-specific override was removed, so an exhausted landing retains Terminated while a synchronous real successor still promotes the result to InProgress. Focused controls cover both branches, cargo test -p robin_engine jump_landing passes 3/3, cargo fmt is clean, and the parity-profile build succeeds. The representative now matches every recorded frame through exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task309-jump-tail"
+}

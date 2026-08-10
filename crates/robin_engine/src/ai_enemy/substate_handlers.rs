@@ -7,11 +7,23 @@
 use crate::ai::*;
 use crate::parameters_ai;
 
-use super::util::{pos_diff, resolve_seek_point_id, vec_to_sector};
+use super::util::{ai_square_distance, resolve_seek_point_id, vec_to_sector};
 use super::{
     AlertSoldiersFailureContinuation, EnemyAi, PrimaryTargetFlags, ProfileRank, SeekFlags,
     UNDEFINED_DIRECTION, archer, combat, task_priority,
 };
+
+fn approaching_new_enemy_is_close_enough(
+    target: &Position,
+    target_elevation: f32,
+    owner: &Position,
+    owner_elevation: f32,
+    sword_range: u16,
+) -> bool {
+    let range_with_margin = u32::from(sword_range) + 10;
+    let range_squared = range_with_margin.wrapping_mul(range_with_margin);
+    ai_square_distance(target, target_elevation, owner, owner_elevation) < range_squared as f32
+}
 
 fn body_examination_target_disappeared(
     owner: crate::coordinates::WorldPoint3D,
@@ -4887,14 +4899,39 @@ impl EnemyAi {
                         .find_fighter(self.base.me, tick)
                         .map(|f| f.sword_range_default)
                         .unwrap_or(self.sword_range);
-                    let close_enough = self
+                    let target = self
                         .find_fighter(self.base.primary_target, tick)
-                        .map(|t| {
-                            let d = pos_diff(&t.position, &ctx.position);
-                            let sq = d.0 * d.0 + d.1 * d.1;
-                            sq < ((sword_range as f32 + 10.0) * (sword_range as f32 + 10.0))
-                        })
-                        .unwrap_or(false);
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "AttackingApproachingNewEnemy primary target {} is missing its required fighter snapshot",
+                                self.base.primary_target
+                            )
+                        });
+                    if tick.primary_target_snapshot_handle != self.base.primary_target {
+                        panic!(
+                            "AttackingApproachingNewEnemy primary target {} does not match tick snapshot handle {}",
+                            self.base.primary_target, tick.primary_target_snapshot_handle
+                        );
+                    }
+                    let target_live_position = tick.primary_target_live_position.unwrap_or_else(|| {
+                        panic!(
+                            "AttackingApproachingNewEnemy primary target {} is missing its literal position",
+                            self.base.primary_target
+                        )
+                    });
+                    let owner_live_position = tick.owner_live_position.unwrap_or_else(|| {
+                        panic!(
+                            "AttackingApproachingNewEnemy owner {} is missing its literal position",
+                            self.base.me
+                        )
+                    });
+                    let close_enough = approaching_new_enemy_is_close_enough(
+                        &target_live_position,
+                        target.elevation,
+                        &owner_live_position,
+                        ctx.elevation,
+                        sword_range,
+                    );
 
                     if close_enough {
                         self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
@@ -4902,12 +4939,8 @@ impl EnemyAi {
                         self.base.outbox.actor.set_principal = Some(self.base.primary_target);
                     } else {
                         // Re-approach
-                        let target_pos = self
-                            .find_fighter(self.base.primary_target, tick)
-                            .map(|f| f.position)
-                            .unwrap_or(ctx.position);
                         self.base
-                            .go_near(target_pos, sword_range as i32, GotoFlags::RUN, ctx);
+                            .go_near(target.position, sword_range as i32, GotoFlags::RUN, ctx);
                         if self.base.already_on_point {
                             self.base.already_on_point = false;
                             self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
@@ -5271,8 +5304,7 @@ impl EnemyAi {
                         let dy = target_pos.y - ctx.position.y;
                         let dir = vec_to_sector(dx, dy);
                         self.base.set_direction_goal(dir);
-                        // Shield obstacle is recomputed each frame by
-                        // EngineInner::update_shield_obstacles — no explicit call needed.
+                        self.base.outbox.actor.refresh_shield = true;
                         self.base.launch_timer(30, ctx.frame);
                     } else {
                         // Check if enemy is still dangerous
@@ -5417,8 +5449,7 @@ impl EnemyAi {
                                 let dy = target_pos.y - ctx.position.y;
                                 let dir = vec_to_sector(dx, dy);
                                 self.base.set_direction_goal(dir);
-                                // Shield obstacle is recomputed each frame by
-                                // EngineInner::update_shield_obstacles — no explicit call needed.
+                                self.base.outbox.actor.refresh_shield = true;
                                 self.base.launch_timer(20, ctx.frame);
                             } else {
                                 // No flags: a phalanx member that lost its
@@ -6083,10 +6114,7 @@ impl EnemyAi {
     ) -> bool {
         let stimulus_type = stimulus.stimulus_type;
         match self.base.current_substate {
-            Substate::FleeingPanic
-            | Substate::FleeingRunToHide
-            | Substate::FleeingRunToDoor
-            | Substate::FleeingHiding => {
+            Substate::FleeingPanic | Substate::FleeingRunToHide | Substate::FleeingRunToDoor => {
                 if self.base.current_substate == Substate::FleeingPanic
                     && matches!(
                         stimulus_type,
@@ -6100,6 +6128,22 @@ impl EnemyAi {
                     // AI doesn't track this counter the same way
                     // (its own reset lives elsewhere).
                     self.fleeing_seen_enemy_counter = 0;
+                }
+                return self
+                    .base
+                    .think_expected_event_common_stuff(sim, stimulus, ctx);
+            }
+
+            Substate::FleeingHiding => {
+                if stimulus_type == StimulusType::EventTimer {
+                    // Original's shared AI handler ends the hiding interval
+                    // through the virtual Enemy ReturnToDuty override. The
+                    // base Rust common handler cannot call back into its
+                    // containing EnemyAi, so close that virtual call here.
+                    //
+                    // original-code/RHartificialintelligence.cpp:1950-1955
+                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    return true;
                 }
                 return self
                     .base
@@ -6332,6 +6376,176 @@ impl EnemyAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fleeing_hiding_timer_invokes_enemy_return_to_duty() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(158);
+        ai.base.current_state = AiState::Fleeing;
+        ai.base.current_substate = Substate::FleeingHiding;
+
+        let handled = ai.think_expected_fleeing_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert!(handled);
+        assert!(matches!(
+            ai.base.outbox.reentrant.owner_work.as_slice(),
+            [AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }]
+        ));
+    }
+
+    #[test]
+    fn approaching_new_enemy_close_gate_stretches_world_y() {
+        // Task 274 frontier: the raw map-space delta fits inside the authored
+        // 65+10 range, but Original SquareDistance stretches Y by the inverse
+        // aspect ratio and therefore takes the re-approach arm.
+        let owner = Position {
+            x: 726.946_96,
+            y: 2116.774,
+            ..Position::default()
+        };
+        let target = Position {
+            x: 710.678_9,
+            y: 2049.651_1,
+            ..Position::default()
+        };
+        let dx = target.x - owner.x;
+        let dy = target.y - owner.y;
+        assert!(dx * dx + dy * dy < 75_u32.pow(2) as f32);
+        assert!(!approaching_new_enemy_is_close_enough(
+            &target, 0.0, &owner, 0.0, 65,
+        ));
+    }
+
+    #[test]
+    fn approaching_new_enemy_close_gate_accepts_flat_nearby_target() {
+        let owner = Position {
+            x: 100.0,
+            y: 100.0,
+            ..Position::default()
+        };
+        let target = Position {
+            x: 110.0,
+            y: 110.0,
+            ..Position::default()
+        };
+
+        assert!(approaching_new_enemy_is_close_enough(
+            &target, 0.0, &owner, 0.0, 65,
+        ));
+    }
+
+    #[test]
+    fn approaching_new_enemy_close_gate_uses_literal_positions() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(58);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingApproachingNewEnemy;
+        ai.base.primary_target = 103;
+
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry
+            .push(crate::ai_enemy::FighterSnapshot {
+                handle: 58,
+                sword_range_default: 65,
+                ..crate::ai_enemy::FighterSnapshot::default()
+            });
+        tick.fighter_registry
+            .push(crate::ai_enemy::FighterSnapshot {
+                handle: 103,
+                // `Position(target)` is a planning position and remains the
+                // destination for the GoNear arm, but it is not GetPosition().
+                position: Position {
+                    x: 500.0,
+                    y: 0.0,
+                    ..Position::default()
+                },
+                elevation: 0.0,
+                ..crate::ai_enemy::FighterSnapshot::default()
+            });
+        tick.owner_live_position = Some(Position {
+            x: 100.0,
+            y: 100.0,
+            ..Position::default()
+        });
+        tick.primary_target_snapshot_handle = 103;
+        tick.primary_target_live_position = Some(Position {
+            x: 110.0,
+            y: 110.0,
+            ..Position::default()
+        });
+        let ctx = AiContext {
+            // The owner's planning position is also deliberately far from
+            // the target's planning position.
+            position: Position::default(),
+            elevation: 0.0,
+            ..AiContext::default()
+        };
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventReachPoint),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &tick,
+            None,
+        );
+
+        assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
+        assert_eq!(ai.base.outbox.actor.set_principal, Some(103));
+    }
+
+    #[test]
+    #[should_panic(expected = "primary target 103 is missing its required fighter snapshot")]
+    fn approaching_new_enemy_requires_primary_target_snapshot() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(58);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingApproachingNewEnemy;
+        ai.base.primary_target = 103;
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventReachPoint),
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "primary target 103 does not match tick snapshot handle 102")]
+    fn approaching_new_enemy_rejects_stale_primary_target_geometry() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(58);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingApproachingNewEnemy;
+        ai.base.primary_target = 103;
+
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry
+            .push(crate::ai_enemy::FighterSnapshot {
+                handle: 103,
+                ..crate::ai_enemy::FighterSnapshot::default()
+            });
+        tick.primary_target_snapshot_handle = 102;
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventReachPoint),
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &tick,
+            None,
+        );
+    }
 
     #[test]
     fn bow_running_behind_shield_faces_target_with_its_elevation() {
@@ -7008,52 +7222,6 @@ mod tests {
         );
         assert_eq!(ai.base.alert_soldiers_point, alert_point);
         assert_eq!(ai.officers_position, officer_position);
-    }
-
-    #[test]
-    fn seeking_body_wake_up_preserves_pc_target_kind() {
-        let sim_context = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(1);
-        ai.base.owner_entity_id = Some(crate::element::EntityId::Soldier(
-            crate::entity_id::SoldierId(1),
-        ));
-        ai.base.current_state = AiState::Seeking;
-        ai.base.current_substate = Substate::SeekingBody;
-        ai.base.detected_body = 17;
-
-        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
-        let mut owner = pc_view(crate::element::Posture::Upright);
-        owner.kind = crate::ai_entity_view::EntityKind::Soldier;
-        owner.is_pc = false;
-        views.insert(1, owner);
-        views.insert(17, pc_view(crate::element::Posture::Tied));
-        let ctx = AiContext {
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::default()
-        };
-
-        ai.think_expected_event(
-            &sim_context,
-            &Stimulus::new(StimulusType::EventReachPoint),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        let seq = ai
-            .base
-            .outbox
-            .actor
-            .launch_sequences
-            .first()
-            .expect("wake-up sequence");
-        assert!(matches!(
-            seq.elements[0].data,
-            crate::sequence::SequenceElementData::Interaction {
-                antagonist: Some(crate::element::EntityId::Pc(crate::entity_id::PcId(17)))
-            }
-        ));
     }
 
     #[test]

@@ -1,0 +1,9 @@
+{
+  "id": "305",
+  "subject": "Measure straight sword strikes in stored 3D space",
+  "description": "RHElementActorHuman::ExecuteStraightSwordStrike tests its DONE-marker range with the full stored 3D GetPosition vector. Rust instead used projected map distance, falsely admitting a cross-elevation thrust whose map distance was about 67.2 units while its stored-world distance was about 83.7. Straight thrust resolution now uses literal stored 3D distance while the Rust-only Assault fallback retains its existing metric. The focused elevation/projection regression passes; linux3 Profile_003 Savegame_046 replay-002 clears the frame-948 PC87 ParrySword/ReceiveSwordDamage frontier and advances to an independent sword-damage/provoke RNG frontier after frame 1444.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task283-frontier"
+}

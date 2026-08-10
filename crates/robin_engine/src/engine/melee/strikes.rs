@@ -521,9 +521,27 @@ impl EngineInner {
         strike: SwordStrike,
         profile_idx: Option<u32>,
     ) {
-        let distance = entity_distance(&self.world.entities, attacker_id, victim_id);
-        let in_range = profile_idx
-            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+        // RHElementActorHuman::ExecuteStraightSwordStrike uses the full
+        // stored 3-D positions here, unlike several swordfight planning
+        // predicates that deliberately use map distance.  Keep the Rust-only
+        // Assault fallback on its existing metric; Original reaches this
+        // helper only for STRAIGHT weapon thrusts.
+        let profile = profile_idx.map(|idx| {
+            assets.profile_manager.get_hth_weapon(idx).unwrap_or_else(|| {
+                panic!(
+                    "straight-strike attacker {attacker_id:?} references missing HtH weapon profile {idx}"
+                )
+            })
+        });
+        let is_straight = profile.is_some_and(|profile| {
+            profile.thrusts[strike as usize].kind == WeaponThrustKind::Straight
+        });
+        let distance = if is_straight {
+            entity_world_distance(&self.world.entities, attacker_id, victim_id)
+        } else {
+            entity_distance(&self.world.entities, attacker_id, victim_id)
+        };
+        let in_range = profile
             .map(|profile| combat::is_strike_in_range(profile, strike, distance))
             .unwrap_or(distance <= 50.0);
         if in_range {
@@ -3116,6 +3134,9 @@ mod tests {
             ..LevelAssets::default()
         };
         let mut entity = falling_pushed_soldier(false);
+        entity
+            .position_iface_mut()
+            .set_layer_goal(crate::position_interface::Layer::ZERO);
         let actor = entity.actor_data_mut().unwrap();
         let flight = actor.active_flight.as_mut().unwrap();
         flight.antagonist = None;
@@ -3151,6 +3172,14 @@ mod tests {
             crate::sprite::MotionState::Terminated
         );
         assert_eq!(actor.installed_order, None);
+        let entity = engine.get_entity(victim).unwrap();
+        assert_eq!(entity.element_data().layer(), 3);
+        assert_eq!(entity.element_data().sector(), SectorHandle::new(4));
+        assert_eq!(
+            entity.position_iface().layer_goal(),
+            crate::position_interface::Layer::ZERO,
+            "ladder landing changes the actual layer without retroactively publishing a goal"
+        );
     }
 
     #[test]

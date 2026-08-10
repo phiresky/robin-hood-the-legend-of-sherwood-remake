@@ -734,6 +734,33 @@ pub(super) fn get_normal_iso(v: (f32, f32), direct: bool, _aspect_ratio: f32) ->
 /// Tests center first, then alternating sides outward.
 const DIRECTION_SPIRAL: [i16; 7] = [0, 1, -1, 2, -2, 3, -3];
 
+/// Mirror the exact promotions and conversions in Original
+/// `ProposeGoodStepBackGoal`'s `(UWORD + SWORD) % 15` expression.
+///
+/// Both operands promote to signed `int`, so a negative sum retains a negative
+/// remainder. Passing that remainder to `SetSector0to15(UBYTE)` then converts
+/// it to one byte, and `SetSector0to15` masks the byte with 15.
+#[inline]
+fn step_back_direction_sector(direction: u16, relative_direction: i16) -> u16 {
+    (((direction as i32 + relative_direction as i32) % 15) as u8 & 15) as u16
+}
+
+#[cfg(test)]
+mod step_back_direction_tests {
+    use super::step_back_direction_sector;
+
+    #[test]
+    fn negative_step_back_offsets_keep_signed_cpp_remainder() {
+        assert_eq!(step_back_direction_sector(1, -2), 15);
+        assert_eq!(step_back_direction_sector(1, -1), 0);
+    }
+
+    #[test]
+    fn positive_step_back_offsets_keep_source_modulo_fifteen() {
+        assert_eq!(step_back_direction_sector(15, 1), 1);
+    }
+}
+
 /// Returns `true` iff the enemy is sufficiently below the viewer
 /// that an archer should bend down to bow-down posture.  The inputs
 /// are the viewer's [`AiContext`] and the target's `(position,
@@ -800,15 +827,10 @@ pub fn propose_good_step_back_goal(
     let mut distance = good_distance as f32 - actual_distance;
     while distance > minimal_run_distance {
         for &rel_dir in &DIRECTION_SPIRAL {
-            // `(direction + relative_direction) % 15`. The `% 15`
-            // is a latent bug (should be `% 16` for 16 sectors), but
-            // with unsigned 16-bit wraparound `(0 + -1) = 65535` and
-            // `65535 % 15 = 0`, so direction=0, rel=-1 maps to
-            // sector 0 instead of 15; direction=15, rel=+1 maps to 1
-            // instead of 0; etc.  Replicate the unsigned 16-bit
-            // wrap, modulo 15 for bug-for-bug parity.
-            let sum = (direction as i32 + rel_dir as i32).rem_euclid(65536) as u16;
-            let sector = sum % 15;
+            // The `% 15` is a source bug (rather than `% 16`), while the
+            // signed-promotion and UBYTE-conversion details are intentional
+            // parity requirements. Keep them local to this source call site.
+            let sector = step_back_direction_sector(direction, rel_dir);
             let dir_vec = sector_to_vector_iso(sector, aspect_ratio);
             let goal = Position {
                 x: pos_me.x + dir_vec.0 * distance,

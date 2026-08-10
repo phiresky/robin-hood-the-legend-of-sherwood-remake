@@ -1,0 +1,9 @@
+{
+  "id": "290",
+  "subject": "Dispatch FleeingHiding timer through virtual ReturnToDuty",
+  "description": "FleeingHiding handled EVENT_TIMER through Rust's shared base expected-event routine, omitting Original's virtual Enemy::ReturnToDuty behavior. The enemy handler now intercepts that exact substate/event pair and closes the virtual return-to-duty path, while other fleeing substates and stimuli retain their existing common handling. The focused owner-work regression passes. The frame-1234 frontier clears; nicouzouf Profile_001 Savegame_022 replays 009 and 015 both match exact EOF on current validation.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task290-fleeing-hiding-return"
+}

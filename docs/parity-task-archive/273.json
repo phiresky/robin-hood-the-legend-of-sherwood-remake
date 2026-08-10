@@ -1,0 +1,9 @@
+{
+  "id": "273",
+  "subject": "Surface deferred GoNear failure from a suspended LookThere tail",
+  "description": "Moving-fast EVENT_VIEW suspended its caller tail around the synchronous HeyFolksLookThere broadcast, then resumed GoNear outside Rust's typed Think frame. Original remains inside that Think: RHArtificialIntelligence::GoTo calls AppendMoveToSequence inline, so the NPC-inaccessible sector-78/layer-2 to sector-136/layer-3 route sets mbCouldntReachpoint before EndThink. Rust rejected the same route in its engine-owned owner drain, but the resumed GoNear had stamped the completion as outside Think and the failure was discarded. Suspended common-handler tails now retain their logical EndThink ownership through the immediately following owner drain, while genuine outside-Think movement remains unchanged. The SuN1Sh1nE Profile_004 Savegame_034 replay-002 representative clears both Soldiers 114 and 117's frame-830 reaction-running frontier, enters AttackingOverviewLookLeft exactly, and advances to an independent PC 241 motion-state mismatch after frame 875. A focused engine regression covers the deferred route rejection and the outside-Think control.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task273-suspended-goto-completion"
+}

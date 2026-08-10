@@ -1,0 +1,9 @@
+{
+  "id": "286",
+  "subject": "Retain layer goal while translating ladder fall",
+  "description": "Ladder-fall translation incorrectly published its authored landing destination as a new LayerGoal, overwriting topology state that Original leaves untouched. The falling order now retains the actor's existing layer goal while separately authoring the landing movement target. The focused translation regression passes. The frame-349 frontier clears, and the representative matches exact EOF on merged commit ca0803f61.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task286-ladder-fall-layer-goal"
+}

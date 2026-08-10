@@ -729,7 +729,11 @@ impl EngineInner {
             .unwrap_or(false);
         if map_flag_terminated && let Some(entity) = self.world.entities.get_mut(owner) {
             let pos = entity.element_data().position_map();
-            let inside_map = self.world.fast_grid.is_inside_grid_point(pos);
+            // RHElementActor::SendCondolationCard tests GetBoxMap(), whose
+            // authored bounds exclude the four grid rows reserved as loader
+            // padding.  Grid-addressability is therefore intentionally not
+            // the activation boundary for a completed RHMOVE_MAP.
+            let inside_map = self.world.fast_grid.level.map_bbox.contains_point(pos);
             // Re-borrow mutably (the read above released the borrow).
             if let Some(entity) = self.world.entities.get_mut(owner) {
                 let ed = entity.element_data_mut();
@@ -1526,6 +1530,20 @@ pub fn turn_drunken_is_very_slow(direction: u16, goal: u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn map_movement_condolence_uses_unpadded_authored_bbox() {
+        let mut grid = crate::fast_find_grid::FastFindGrid::default();
+        grid.size_map(2, 2);
+
+        let inside_authored_map = MapPoint::new(64.0, 127.0);
+        assert!(grid.is_inside_grid_point(inside_authored_map));
+        assert!(grid.level.map_bbox.contains_point(inside_authored_map));
+
+        let inside_padded_grid_only = MapPoint::new(64.0, 128.0);
+        assert!(grid.is_inside_grid_point(inside_padded_grid_only));
+        assert!(!grid.level.map_bbox.contains_point(inside_padded_grid_only));
+    }
 
     #[test]
     fn turn_drunken_very_slow_window() {

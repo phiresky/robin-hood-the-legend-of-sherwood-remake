@@ -477,6 +477,17 @@ fn order_uses_distance_motion(order: OrderType) -> bool {
     )
 }
 
+#[inline]
+fn refresh_pc_walking_shield_after_execute(
+    entity: &mut crate::element::Entity,
+    profiles: &crate::profiles::ProfileManager,
+    order_action: OrderType,
+) {
+    if entity.is_pc() && order_action == OrderType::WalkingWithShield {
+        crate::bow_shot::refresh_retained_shield_obstacle(entity, profiles);
+    }
+}
+
 /// Keep the split door-pass walk mirror aligned with the concrete order that
 /// has reached the actor slot.
 ///
@@ -811,6 +822,26 @@ fn sword_movement_dispatch_action(order: OrderType) -> OrderType {
     }
 }
 
+/// State applied by Rust's blocked-movement teardown.
+///
+/// The Human sword-movement Execute switch has no `ABORTED` state arm. A
+/// blocked terminal strafe therefore keeps the live moving-sword state while
+/// Actor::Hourglass marks the element impossible. Preserve that exact arm;
+/// retain the established teardown normalization for the other movement
+/// families.
+fn state_after_aborted_movement(
+    action_state: crate::element::ActionState,
+    is_swordfighting: bool,
+) -> crate::element::ActionState {
+    use crate::element::ActionState;
+
+    match action_state {
+        ActionState::MovingSword | ActionState::MovingFastSword => action_state,
+        _ if is_swordfighting || action_state.is_sword() => ActionState::WaitingSword,
+        _ => ActionState::Waiting,
+    }
+}
+
 /// Signed angle from the movement displacement to the actor's facing vector,
 /// as `RHElementActorHuman::FaceOpponent` measures it, normalised to
 /// `[0, 2π)`.
@@ -948,6 +979,11 @@ fn movement_execute_state_effect(
         (OT::RunningUpright, _) => Some((P::Upright, AS::MovingFast)),
         (OT::WalkingWithSword, MS::Start) => Some((P::Upright, AS::MovingSword)),
         (OT::RunningWithSword, MS::Start) => Some((P::Upright, AS::MovingFastSword)),
+        // The PC WalkingWithShield Execute arm stamps MovingShield after
+        // every PerformSeek/PerformMotion result, then replaces it with
+        // HoldingShield when that result is TERMINATED.
+        (OT::WalkingWithShield, MS::Terminated) => Some((P::Upright, AS::HoldingShield)),
+        (OT::WalkingWithShield, _) => Some((P::Upright, AS::MovingShield)),
         (OT::WalkingWithCorpse, MS::Start) => Some((P::CarryingCorpse, AS::Moving)),
         (OT::WalkingWithCorpse, MS::Terminated) => Some((P::CarryingCorpse, AS::Waiting)),
         (OT::ClimbingWallUp | OT::ClimbingWallDown, MS::Start) => Some((P::OnWall, AS::Moving)),
@@ -6103,6 +6139,26 @@ impl EngineInner {
                     .expect("globally frozen runner is not an actor")
                     .action_state = crate::element::ActionState::MovingFast;
             }
+            if frozen_order == OrderType::WalkingWithShield {
+                let entity = self.world.entities.get_mut(owner).unwrap_or_else(|| {
+                    panic!("globally frozen shield walker {owner:?} disappeared")
+                });
+                let (posture, action_state) = movement_execute_state_effect(
+                    frozen_order,
+                    crate::sprite::MotionState::InProgress,
+                )
+                .expect("WalkingWithShield must own an unconditional Execute state effect");
+                entity.set_posture(posture);
+                entity
+                    .actor_data_mut()
+                    .expect("globally frozen shield walker is not an actor")
+                    .action_state = action_state;
+                refresh_pc_walking_shield_after_execute(
+                    entity,
+                    &assets.profile_manager,
+                    frozen_order,
+                );
+            }
             // FrozenAll suppresses Sprite::PerformMotion but not the Execute
             // work before it: climb Turn() above and both rider-specific
             // Soldier arms remain live. RiderCharging performs its polygon
@@ -7646,11 +7702,16 @@ impl EngineInner {
             let dest_already_at_pos =
                 motion_method != MotionMethod::TillLastFrame && elem.position_map() == goal;
             let sprite = &mut elem.sprite;
-            // FaceOpponent / FaceDangerPoint calls Turn before PerformSeek
-            // tests its entity-target tolerance. Preserve that turn on the
-            // successful pre-motion branch; the ordinary branch below already
-            // performs the effective per-frame turn before PerformMotion.
-            if tolerance_arrival && is_combat {
+            // Human::FaceOpponent / FaceDangerPoint calls Turn before
+            // PerformSeek. When the seek continues, PerformSeek calls Turn a
+            // second time immediately before PerformMotion; when tolerance
+            // has already been reached, it returns after only this first
+            // turn. A non-soldier without a live opponent returns from
+            // FaceOpponent before setting a direction or turning.
+            if is_combat
+                && combat_target.is_some()
+                && active_move_flags.contains(crate::sequence::MoveFlags::SEEK)
+            {
                 let _ = sprite.position_iface.turn();
             }
             // Entity-target PerformSeek returns from its successful
@@ -8576,15 +8637,19 @@ impl EngineInner {
                         continue 'actors;
                     }
                     // Point-target Seek reaches this early transition arm
-                    // after its authored stop transition terminates. Unlike
-                    // an entity seek it has no live target to revalidate, so
-                    // the transition itself is the final arrival barrier.
+                    // after its authored stop transition terminates. Original
+                    // only starts the post-seek when mpSeekSector still equals
+                    // the actor's sector; a player Stop can terminate the
+                    // transition short of that sector.
                     // Retiring it through the ordinary order-pop path first
                     // creates a fallback Wait and leaves the post-seek action
                     // stranded on ActorData for one frame (or forever).
                     let final_point_post_seek_arrival = is_final_waypoint
                         && movement_is_last_sequence_element
                         && ft.target_id.is_none()
+                        && point_seek_post_sectors[actor_id]
+                            .map(|seek_sector| entity.element_data().sector() == Some(seek_sector))
+                            .unwrap_or(false)
                         && entity
                             .actor_data()
                             .is_some_and(|actor| actor.post_seek_sequence.is_some())
@@ -8832,6 +8897,11 @@ impl EngineInner {
                     entity = ?entity_id,
                     "tick_move: FROZEN seek wait (target in range, no post-seek, mid-path)",
                 );
+                refresh_pc_walking_shield_after_execute(
+                    entity,
+                    &assets.profile_manager,
+                    order_action,
+                );
                 continue;
             }
 
@@ -8918,6 +8988,11 @@ impl EngineInner {
                             ?eid,
                             "tick_move: final seek waypoint is stale; refreshing against live target",
                         );
+                        refresh_pc_walking_shield_after_execute(
+                            entity,
+                            &assets.profile_manager,
+                            order_action,
+                        );
                         continue 'actors;
                     }
 
@@ -8976,6 +9051,11 @@ impl EngineInner {
                                 reach,
                                 "tick_move: seek target out of stop-transition reach; refreshing",
                             );
+                            refresh_pc_walking_shield_after_execute(
+                                entity,
+                                &assets.profile_manager,
+                                order_action,
+                            );
                             continue 'actors;
                         }
                     }
@@ -9022,6 +9102,11 @@ impl EngineInner {
                             human.last_motion_was_step_back_in_combat = active_move_flags
                                 .contains(crate::sequence::MoveFlags::STEP_BACK_IN_COMBAT);
                         }
+                        refresh_pc_walking_shield_after_execute(
+                            entity,
+                            &assets.profile_manager,
+                            order_action,
+                        );
                         continue 'actors;
                     }
 
@@ -9031,6 +9116,11 @@ impl EngineInner {
                     // instead of consuming the final order.
                     if final_entity_seek_arrival == Some(true) {
                         actor.seek_refresh_wait = 0;
+                        refresh_pc_walking_shield_after_execute(
+                            entity,
+                            &assets.profile_manager,
+                            order_action,
+                        );
                         continue 'actors;
                     }
 
@@ -9337,11 +9427,7 @@ impl EngineInner {
                             }
                             actor.clear_path();
                             actor.action_state =
-                                if is_swordfighting || actor.action_state.is_sword() {
-                                    crate::element::ActionState::WaitingSword
-                                } else {
-                                    crate::element::ActionState::Waiting
-                                };
+                                state_after_aborted_movement(actor.action_state, is_swordfighting);
                             actor.active_movement.clear();
                             restore_anti_collision
                         };
@@ -9438,6 +9524,11 @@ impl EngineInner {
                     break 'arrival;
                 }
             }
+
+            // RHElementActorPC::Execute updates the retained shield after
+            // every WALKING_WITH_SHIELD PerformSeek/PerformMotion call,
+            // including a tolerance-arrival frame with no displacement.
+            refresh_pc_walking_shield_after_execute(entity, &assets.profile_manager, order_action);
 
             // Queue an elevation-line-cross check for this tick. The
             // actual fast-grid query + obstacle swap runs after the
@@ -11106,8 +11197,8 @@ impl EngineInner {
         if sword_movement_context {
             move_action = sword_movement_dispatch_action(move_action);
         }
-        // PC shield-action arm: a shield-wielding PC on Upright
-        // ground rewrites the movement element's stored `action`:
+        // PC shield-action arm: a shield-wielding PC with an Upright
+        // stamped posture rewrites the movement element's stored `action`:
         //   WALKING_UPRIGHT / WALKING_WITH_CORPSE → WALKING_WITH_SHIELD
         //   WALKING_WITH_SHIELD                     → already set, no-op
         //   RUNNING_UPRIGHT                         → no
@@ -11116,14 +11207,25 @@ impl EngineInner {
         //                                             upright variant
         //   default                                 → warn (would
         //                                             assert in dev).
-        // Gated on PC because soldier/civilian shield holders fall
-        // through to the upright animation.  Skip when the sprite
-        // lacks the shield row (mirrors the sword PC fallback above).
-        let owner_is_pc = self.world.entities.get(owner).is_some_and(|e| e.is_pc());
-        if owner_is_pc
+        // This derived override is gated on PC and on the stamped state. It
+        // authors the logical shield token unconditionally; FaceDangerPoint
+        // resolves the concrete sprite row later. Actors which delegate to
+        // the base implementation get the separate live-state rewrite below.
+        let owner_entity =
+            self.world.entities.get(owner).unwrap_or_else(|| {
+                panic!("movement owner {owner:?} disappeared during translation")
+            });
+        let owner_is_pc = owner_entity.is_pc();
+        let live_action_state = owner_entity
+            .actor_data()
+            .expect("movement owner must retain actor data during translation")
+            .action_state;
+        let owner_sector = owner_entity.element_data().sector();
+        let owner_is_on_lift = self.sector_is_lift(owner_sector);
+        let pc_stamped_shield_context = owner_is_pc
             && posture_after == crate::element::Posture::Upright
-            && action_after.is_shield()
-        {
+            && action_after.is_shield();
+        if pc_stamped_shield_context {
             let want = match move_action {
                 OrderType::WalkingUpright | OrderType::WalkingWithCorpse => {
                     Some(OrderType::WalkingWithShield)
@@ -11140,12 +11242,23 @@ impl EngineInner {
                     None
                 }
             };
-            if let Some(want) = want
-                && let Some(entity) = self.world.entities.get(owner)
-                && entity.sprite().has_animation(want)
-            {
+            if let Some(want) = want {
                 move_action = want;
             }
+        }
+        // The PC and Human overrides delegate to Actor's base implementation
+        // unless their stamped shield/sword arms above consume the request.
+        // Base DetermineMovementAnimation switches on the actor's *live*
+        // action state.  This is how a soldier already moving with a shield
+        // rewrites a newly instructed upright path even though the sequence
+        // retained an older non-shield action-state stamp.
+        if !sword_movement_context
+            && !pc_stamped_shield_context
+            && posture_after == crate::element::Posture::Upright
+            && !owner_is_on_lift
+            && live_action_state.is_shield()
+        {
+            move_action = OrderType::WalkingWithShield;
         }
         // Posture forces: non-Upright postures rewrite the action
         // regardless of the action-state inner switch.
@@ -11194,12 +11307,6 @@ impl EngineInner {
                 // weapon. Original's base DetermineMovementAnimation treats
                 // that combination as an ordinary upright walk/run; NPCs
                 // retain the token.
-                let owner_sector = self
-                    .world
-                    .entities
-                    .get(owner)
-                    .and_then(|e| e.element_data().sector());
-                let on_lift = self.sector_is_lift(owner_sector);
                 let inner_arm = matches!(
                     action_after,
                     crate::element::ActionState::Waiting
@@ -11209,7 +11316,7 @@ impl EngineInner {
                         | crate::element::ActionState::Sleeping
                         | crate::element::ActionState::Listening
                 ) || action_after.is_bow();
-                if !on_lift && inner_arm {
+                if !owner_is_on_lift && inner_arm {
                     let walk_or_run = if is_fast {
                         OrderType::RunningUpright
                     } else {
@@ -11257,7 +11364,7 @@ impl EngineInner {
         // must not collapse to the lift's ordinary WalkingStairs row.  Base
         // lift translation still applies to non-sword and authored climb
         // movement.
-        if !sword_movement_context {
+        if !sword_movement_context && !pc_stamped_shield_context {
             // The sword / shield / corpse movement tokens are only ever
             // assigned to an element whose post-transition posture is
             // Upright, so a movement that reaches a wall or ladder carries
@@ -11863,14 +11970,27 @@ impl EngineInner {
 mod orphaned_sword_movement_tests {
     use super::*;
     use crate::element::{
-        ActionState, ActorData, ActorPc, Command, ElementData, ElementKind, Entity, HumanData,
-        PcData, Posture,
+        ActionState, ActorData, ActorPc, ActorSoldier, Command, ElementData, ElementKind, Entity,
+        HumanData, NpcData, PcData, Posture, SoldierData,
     };
     use crate::order::Order;
     use crate::sequence::{
         MoveFlags, SequenceElement, SequenceElementData, SequencePriority, SequenceState,
     };
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    fn make_test_pc(posture: Posture) -> Entity {
+        Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture,
+                ..Default::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        })
+    }
 
     fn assets_with_test_pc_profile() -> LevelAssets {
         let mut profiles = crate::profiles::ProfileManager::new();
@@ -11881,6 +12001,339 @@ mod orphaned_sword_movement_tests {
             profile_manager: std::sync::Arc::new(profiles),
             ..LevelAssets::new()
         }
+    }
+
+    fn shield_movement_sprite() -> crate::sprite::Sprite {
+        let directional_script = |action: OrderType| SpriteScript {
+            action_id: action as u16,
+            action_done: 0,
+            average_speed: 8.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 8,
+            frame_ids: vec![1],
+            delays: vec![0],
+            distances: vec![8],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        let mut scripts = Vec::with_capacity(64);
+        for action in [
+            OrderType::WalkingShield,
+            OrderType::WalkingBackwardsShield,
+            OrderType::StrafingRightShield,
+            OrderType::StrafingLeftShield,
+        ] {
+            scripts.extend(vec![directional_script(action); 16]);
+        }
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[OrderType::WalkingShield as usize] = 0;
+        conversion[OrderType::WalkingBackwardsShield as usize] = 16;
+        conversion[OrderType::StrafingRightShield as usize] = 32;
+        conversion[OrderType::StrafingLeftShield as usize] = 48;
+        crate::sprite::Sprite::new(
+            std::sync::Arc::new(scripts),
+            std::sync::Arc::new(conversion),
+        )
+    }
+
+    fn install_pc_walking_shield(
+        engine: &mut EngineInner,
+        start: MapPoint,
+        destination: MapPoint,
+        action_state: ActionState,
+    ) -> EntityId {
+        let mut pc = make_test_pc(Posture::Upright);
+        pc.element_data_mut().sprite = shield_movement_sprite();
+        pc.element_data_mut().sprite.position_iface.set_move_box(
+            crate::coordinates::MoveBox::from_coords(-4.0, -4.0, 4.0, 4.0),
+        );
+        pc.element_data_mut()
+            .sprite
+            .position_iface
+            .set_anti_collision_on(false);
+        pc.element_data_mut().set_position_map(start);
+        pc.element_data_mut().set_direction_instantly(4);
+        pc.actor_data_mut().unwrap().action_state = action_state;
+        let owner = engine.add_entity(pc);
+
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::Move,
+            Some(owner),
+            OrderType::WalkingWithShield,
+        );
+        movement.orders.push_back(Order::test_new(
+            OrderType::WalkingWithShield,
+            destination.x,
+            destination.y,
+        ));
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        owner
+    }
+
+    fn dispatch_shield_movement(
+        owner_is_pc: bool,
+        live_action_state: ActionState,
+        stamped_action_state: ActionState,
+        install_shield_row: bool,
+        on_lift: bool,
+    ) -> OrderType {
+        let mut engine = EngineInner::new();
+        let start = MapPoint::new(100.0, 100.0);
+        let destination = MapPoint::new(140.0, 100.0);
+        let mut element = ElementData {
+            kind: if owner_is_pc {
+                ElementKind::ActorPc
+            } else {
+                ElementKind::ActorSoldier
+            },
+            active: true,
+            posture: Posture::Upright,
+            sprite: if install_shield_row {
+                shield_movement_sprite()
+            } else {
+                crate::sprite::Sprite::default()
+            },
+            ..ElementData::default()
+        };
+        element
+            .sprite
+            .position_iface
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -4.0, -4.0, 4.0, 4.0,
+            ));
+        element.sprite.position_iface.set_anti_collision_on(false);
+        element.set_position_map(start);
+        if on_lift {
+            use crate::fast_find_grid::GridSector;
+            use crate::sector::{LiftType, SectorNumber, SectorType};
+
+            let sector_number = SectorNumber::new(1);
+            element.set_sector(Some(
+                crate::position_interface::SectorHandle::new(1).unwrap(),
+            ));
+            let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid.level);
+            level.sector_number_map.insert(sector_number, 0);
+            level.sectors.push(GridSector {
+                points: Vec::new(),
+                bounding_box: crate::coordinates::MapBBox::new(),
+                sector_type: SectorType::LIFT,
+                layer: 0,
+                sector_number,
+                door_index: None,
+                lift_type: Some(LiftType::Stairs),
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: Vec::new(),
+                gate_indices: Vec::new(),
+                underlying_sector: None,
+            });
+        }
+        let actor = ActorData {
+            action_state: live_action_state,
+            ..ActorData::default()
+        };
+        let owner = if owner_is_pc {
+            engine.add_entity(Entity::Pc(ActorPc {
+                element,
+                actor,
+                human: HumanData::default(),
+                pc: PcData::default(),
+            }))
+        } else {
+            engine.add_entity(Entity::Soldier(ActorSoldier {
+                element,
+                actor,
+                human: HumanData::default(),
+                npc: NpcData::default(),
+                soldier: SoldierData::default(),
+            }))
+        };
+
+        let mut movement =
+            SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+        movement.posture_after_transition = Posture::Upright;
+        movement.action_state_after_transition = stamped_action_state;
+        let SequenceElementData::Movement {
+            destination: goal, ..
+        } = &mut movement.data
+        else {
+            unreachable!("new_movement must create movement data")
+        };
+        *goal = destination;
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        assert!(matches!(
+            engine.try_dispatch_move_path(
+                &crate::sim_rng::test_context(),
+                &LevelAssets::new(),
+                owner,
+                sequence,
+                0,
+                destination,
+                OrderType::WalkingUpright,
+            ),
+            MovePathOutcome::Success
+        ));
+        let movement = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .expect("dispatched shield movement must remain registered");
+        let SequenceElementData::Movement { action, .. } = &movement.data else {
+            panic!("dispatched shield movement changed data kind")
+        };
+        *action
+    }
+
+    #[test]
+    fn soldier_live_shield_state_rewrites_new_upright_path_request() {
+        assert_eq!(
+            dispatch_shield_movement(
+                false,
+                ActionState::MovingShield,
+                ActionState::Waiting,
+                false,
+                false,
+            ),
+            OrderType::WalkingWithShield,
+            "Actor::DetermineMovementAnimation reads Soldier 61's live shield state, not the older sequence stamp"
+        );
+    }
+
+    #[test]
+    fn pc_stamped_shield_override_still_rewrites_upright_path_request() {
+        assert_eq!(
+            dispatch_shield_movement(
+                true,
+                ActionState::Waiting,
+                ActionState::HoldingShield,
+                false,
+                true,
+            ),
+            OrderType::WalkingWithShield,
+            "the PC override owns its stamped shield arm before sprite-row checks and base lift translation"
+        );
+    }
+
+    #[test]
+    fn terminal_pc_walking_with_shield_stamps_holding_shield() {
+        let mut engine = EngineInner::new();
+        let assets = assets_with_test_pc_profile();
+        let owner = install_pc_walking_shield(
+            &mut engine,
+            MapPoint::new(100.0, 100.0),
+            MapPoint::new(100.0, 100.0),
+            ActionState::Waiting,
+        );
+
+        engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .action_state,
+            ActionState::HoldingShield
+        );
+    }
+
+    #[test]
+    fn frozen_all_pc_walking_with_shield_still_refreshes_retained_box() {
+        let mut engine = EngineInner::new();
+        let assets = assets_with_test_pc_profile();
+        let mut pc = make_test_pc(Posture::Upright);
+        pc.element_data_mut().sprite = shield_movement_sprite();
+        pc.element_data_mut()
+            .set_position_map(MapPoint::new(100.0, 100.0));
+        pc.element_data_mut().set_direction_instantly(4);
+        pc.actor_data_mut().unwrap().action_state = ActionState::Waiting;
+        let stale = crate::bow_shot::compute_shield_obstacle(
+            MapPoint::new(-50.0, 100.0),
+            0.0,
+            4,
+            &crate::bow_shot::shield_params_for_pc(false),
+        );
+        pc.actor_data_mut().unwrap().shield_obstacle = Some(stale);
+        let owner = engine.add_entity(pc);
+
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::Move,
+            Some(owner),
+            OrderType::WalkingWithShield,
+        );
+        movement
+            .orders
+            .push_back(Order::test_new(OrderType::WalkingWithShield, 140.0, 100.0));
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine.set_actors_frozen(true);
+
+        engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+
+        let entity = engine.get_entity(owner).unwrap();
+        assert_eq!(
+            entity.element_data().position_map(),
+            MapPoint::new(100.0, 100.0)
+        );
+        assert_eq!(
+            entity.actor_data().unwrap().action_state,
+            ActionState::MovingShield,
+            "FrozenAll suppresses sprite motion, but not the PC WalkingWithShield Execute state stamp"
+        );
+        let actual = entity
+            .actor_data()
+            .unwrap()
+            .shield_obstacle
+            .as_ref()
+            .unwrap();
+        let expected = crate::bow_shot::compute_shield_obstacle(
+            MapPoint::new(100.0, 100.0),
+            0.0,
+            4,
+            &crate::bow_shot::shield_params_for_pc(false),
+        );
+        assert_eq!(actual.box_3d_min, expected.box_3d_min);
+        assert_eq!(actual.box_3d_max, expected.box_3d_max);
+    }
+
+    #[test]
+    fn aborted_sword_movement_retains_the_live_combat_motion_state() {
+        assert_eq!(
+            state_after_aborted_movement(ActionState::MovingSword, true),
+            ActionState::MovingSword,
+            "a terminal strafing WalkingWithSword Execute has no invented WaitingSword side effect"
+        );
+        assert_eq!(
+            state_after_aborted_movement(ActionState::MovingFastSword, true),
+            ActionState::MovingFastSword,
+            "RunningWithSword has the same terminal switch arm"
+        );
+    }
+
+    #[test]
+    fn aborted_nonmoving_states_still_use_existing_normalization() {
+        assert_eq!(
+            state_after_aborted_movement(ActionState::ParryingSword, true),
+            ActionState::WaitingSword
+        );
+        assert_eq!(
+            state_after_aborted_movement(ActionState::Moving, false),
+            ActionState::Waiting
+        );
     }
 
     fn install_sword_movement(
@@ -11992,6 +12445,80 @@ mod orphaned_sword_movement_tests {
             .active_movement = ActiveMovement::new(sequence, 0);
 
         (engine, owner, sequence, order_id, start)
+    }
+
+    #[test]
+    fn blocked_terminal_sword_execute_marks_impossible_without_entering_waiting_sword() {
+        let (mut engine, owner, movement_sequence, order_id, _start) = install_sword_movement(true);
+        let mut opponent_element = ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        };
+        opponent_element.set_position_map(MapPoint::new(100.0, 50.0));
+        let opponent = engine.add_entity(Entity::Pc(ActorPc {
+            element: opponent_element,
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        }));
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .opponents
+            .push(opponent);
+        let owner_entity = engine.get_entity_mut(owner).unwrap();
+        // The replay's strafe order was already initialized before its
+        // blocked counter crossed the threshold. A fresh fixture order calls
+        // Sprite::initialize_motion_order and resets that counter, so install
+        // the matching live sprite-order identity and cached trajectory first.
+        owner_entity
+            .element_data_mut()
+            .sprite
+            .last_processed_order_id = order_id.get();
+        let position_iface = owner_entity.position_iface_mut();
+        position_iface.set_map_goal(MapPoint::new(140.0, 100.0));
+        position_iface.compute_increment_all(true);
+        position_iface.blocked_count = 51;
+
+        engine.tick_entity_movement(
+            &crate::sim_rng::test_context(),
+            &assets_with_test_pc_profile(),
+        );
+
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .action_state,
+            ActionState::MovingSword,
+            "the Human Execute ABORTED arm does not normalize a live sword-motion state"
+        );
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .element_data()
+                .sprite
+                .last_action,
+            OrderType::StrafingLeftSword,
+            "the regression drives the same terminal strafe family as Soldier 57"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(movement_sequence, 0)
+                .unwrap()
+                .state,
+            SequenceState::Impossible,
+            "Actor::Hourglass must still reject the blocked movement element"
+        );
     }
 
     #[test]
@@ -12204,6 +12731,91 @@ mod orphaned_sword_movement_tests {
                 .last_action,
             OrderType::WalkingBackwardsSword,
             "FaceOpponent passes a co-located opponent's literal zero vector to Angle, which resolves to PI"
+        );
+    }
+
+    #[test]
+    fn combat_seek_applies_face_opponent_and_perform_seek_turns() {
+        let (mut engine, owner, movement_sequence, _order_id, start) = install_sword_movement(true);
+        let (face_x, face_y) = crate::element::direction_vector_16(11);
+        let opponent_position = MapPoint::new(
+            start.x + face_x * 30.0,
+            start.y + face_y * crate::position_interface::ASPECT_RATIO * 30.0,
+        );
+        assert_eq!(
+            crate::position_interface::vector_to_sector_0_to_15_iso(
+                opponent_position.x - start.x,
+                opponent_position.y - start.y,
+            ),
+            11,
+        );
+
+        let mut opponent_element = ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        };
+        opponent_element.set_position_map(opponent_position);
+        let opponent = engine.add_entity(Entity::Pc(ActorPc {
+            element: opponent_element,
+            actor: ActorData::default(),
+            human: HumanData {
+                opponents: vec![owner],
+                ..HumanData::default()
+            },
+            pc: PcData {
+                life_points: 50,
+                ..PcData::default()
+            },
+        }));
+
+        {
+            let entity = engine.get_entity_mut(owner).unwrap();
+            entity.human_data_mut().unwrap().opponents.push(opponent);
+            let actor = entity.actor_data_mut().unwrap();
+            actor.seek_target = Some(opponent);
+            actor.last_seek_target_position = opponent_position;
+            actor.seek_distance = 0.0;
+            let position = entity.position_iface_mut();
+            let mut state = position.v48_serialized_state();
+            state.direction = crate::position_interface::Direction::from_raw(10);
+            state.direction_goal = crate::position_interface::Direction::from_raw(11);
+            state.anti_collision_on = false;
+            state.deviated = true;
+            state.direction_count = 0;
+            position.restore_v48_serialized_state(state);
+        }
+        let movement = engine
+            .orders
+            .sequence_manager
+            .get_element_mut(movement_sequence, 0)
+            .unwrap();
+        let SequenceElementData::Movement { flags, element, .. } = &mut movement.data else {
+            unreachable!("fixture movement changed data kind")
+        };
+        flags.insert(MoveFlags::SEEK);
+        *element = Some(opponent);
+
+        let sim = crate::sim_rng::test_context();
+        let assets = assets_with_test_pc_profile();
+        engine.tick_entity_movement(&sim, &assets);
+
+        let first = engine.get_entity(owner).unwrap().position_iface();
+        assert_eq!(first.get_direction().as_u8(), 10);
+        assert_eq!(first.v48_serialized_state().direction_count, 2);
+
+        engine.tick_entity_movement(&sim, &assets);
+
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .position_iface()
+                .get_direction()
+                .as_u8(),
+            11,
+            "FaceOpponent's first Turn must rotate once the prior frame's two-call anti-vibration count is stable"
         );
     }
 
@@ -12702,6 +13314,7 @@ mod movement_transition_state_tests {
         if let SequenceElementData::Movement {
             flags,
             element,
+            sector,
             tolerance,
             destination,
             ..
@@ -12713,6 +13326,7 @@ mod movement_transition_state_tests {
             // element target, while PerformSeek still owns seek_target on
             // ActorData.
             *element = None;
+            *sector = crate::position_interface::SectorHandle::new(1);
             *tolerance = 34.0;
             *destination = MapPoint::new(100.0 + distance, 100.0);
         }
@@ -12828,6 +13442,66 @@ mod movement_transition_state_tests {
         let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::TieCmd, 40.0);
         finish_terminal_seek_tick(&mut engine, owner);
         assert_eq!(engine.actor_order_type(owner), Some(OrderType::Tying));
+    }
+
+    #[test]
+    fn stopped_short_point_seek_does_not_launch_post_seek() {
+        let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::HitCmd, 40.0);
+        let seek_sector = crate::position_interface::SectorHandle::new(2).unwrap();
+        let (sequence_id, element_index) = {
+            let actor = engine
+                .get_entity_mut(owner)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap();
+            actor.seek_target = None;
+            let mut post_seek = Sequence::new();
+            post_seek.append_element(SequenceElement::new(1, Command::DropAle, Some(owner)));
+            actor.post_seek_sequence = Some(Box::new(post_seek));
+            (
+                actor.active_movement.sequence_id.unwrap(),
+                actor.active_movement.element_index,
+            )
+        };
+        let movement = engine
+            .orders
+            .sequence_manager
+            .get_element_mut(sequence_id, element_index)
+            .unwrap();
+        let SequenceElementData::Movement { sector, .. } = &mut movement.data else {
+            panic!("point-seek fixture must retain its movement element")
+        };
+        *sector = Some(seek_sector);
+
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        for _ in 0..4 {
+            engine.tick_entity_movement(&sim, &assets);
+            engine.hourglass_phase_sequences(
+                &sim,
+                &mut crate::engine::HostDisplayState::default(),
+                &assets,
+            );
+            if engine
+                .get_entity(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_movement
+                .sequence_id
+                .is_none()
+            {
+                break;
+            }
+        }
+
+        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        assert!(actor.active_movement.sequence_id.is_none());
+        assert!(
+            actor.post_seek_sequence.is_some(),
+            "a stop transition ending outside the point seek's sector must not launch its stale post-seek"
+        );
+        assert_ne!(engine.actor_order_type(owner), Some(OrderType::DroppingAle));
     }
 }
 
@@ -13276,6 +13950,17 @@ mod line_jump_tests {
         assert_eq!(
             movement_execute_state_effect(OrderType::RunningUpright, MotionState::Terminated),
             Some((Posture::Upright, ActionState::MovingFast))
+        );
+    }
+
+    #[test]
+    fn in_progress_walking_with_shield_stamps_moving_shield() {
+        use crate::element::{ActionState, Posture};
+        use crate::sprite::MotionState;
+
+        assert_eq!(
+            movement_execute_state_effect(OrderType::WalkingWithShield, MotionState::InProgress),
+            Some((Posture::Upright, ActionState::MovingShield))
         );
     }
 

@@ -686,13 +686,22 @@ pub fn receive_piercing_damage(
     max_life_points: i16,
     ctx: &ConcussionContext,
 ) -> bool {
-    let died = get_wounded(
-        life_points,
-        damage,
-        ctx.is_invulnerable,
-        max_life_points,
-        ctx.is_sherwood_pc,
-    );
+    // RHElementActorPC::GetWounded ignores an otherwise-lethal hit while
+    // the PC is already in an amulet coma. ReceivePiercingDamage still
+    // proceeds to AddConcussionOfTheBrain, and sublethal wounds still use
+    // the ordinary base-human implementation.
+    let lethal_hit_in_coma = ctx.is_in_coma && i32::from(damage) >= i32::from(*life_points);
+    let died = if lethal_hit_in_coma {
+        false
+    } else {
+        get_wounded(
+            life_points,
+            damage,
+            ctx.is_invulnerable,
+            max_life_points,
+            ctx.is_sherwood_pc,
+        )
+    };
     add_concussion(human, concussion as i16, *life_points, ctx);
     died
 }
@@ -1062,17 +1071,19 @@ fn is_victim_in_strike_arc(
 
         // Push: rectangle geometry.
         //
-        // The forward vector stretches Y by `ASPECT_RATIO` before
-        // normalisation — so the cone widens east/west relative to a plain
-        // map-space unit vector. The half-width is `repulsion / 2`, not
-        // the full repulsion.
+        // Original GetDirectionVector starts from the literal 16-sector
+        // table and applies ordinary ASPECT_RATIO to Y; the collector then
+        // applies the shipping no-op INVERSE_SWORDFIGHT_ASPECT_RATIO and
+        // normalises. Do not use `sector_to_angle` here: its +0.1 radian
+        // roundtrip nudge rotates this narrow rectangle enough to admit
+        // actors immediately beyond a side boundary.
         WeaponThrustKind::PushAside => {
             if max_norm >= 150.0 {
                 return false;
             }
-            let dir_angle = sector_to_angle(attacker_direction);
-            let fx_raw = dir_angle.sin();
-            let fy_raw = -dir_angle.cos() * ASPECT_RATIO;
+            let (fx_raw, fy_raw) = crate::element_kinds::direction_vector_16(attacker_direction);
+            let fy_raw =
+                fy_raw * ASPECT_RATIO * crate::position_interface::INVERSE_SWORDFIGHT_ASPECT_RATIO;
             let len = (fx_raw * fx_raw + fy_raw * fy_raw).sqrt();
             let (fx, fy) = if len > 1e-3 {
                 (fx_raw / len, fy_raw / len)
@@ -1620,6 +1631,72 @@ mod tests {
         );
     }
 
+    #[test]
+    fn push_estimation_keeps_literal_facing_side_boundary() {
+        let mut profile = HtHWeaponProfile::default();
+        profile.thrusts[SwordStrike::A as usize] = ThrustProfile {
+            kind: WeaponThrustKind::PushAside,
+            stunning: 10,
+            cutting: 5,
+            minimal_distance: 0,
+            maximal_distance: 45,
+            repulsion: 20,
+            ..Default::default()
+        };
+        let primary = NearbyVictim {
+            eligible_for_regular_strikes: true,
+            dx: 1.292_724_6,
+            dy_stretched: -39.592_773,
+            distance: 39.613_873,
+            direction_sector: 0,
+            camp: Camp::Lacklandists,
+            facing_direction: 8,
+            elevation: 0.0,
+            life_points: 36,
+            defender_profile: None,
+            is_primary_target: true,
+            is_walking_with_sword: false,
+        };
+        let friend = NearbyVictim {
+            eligible_for_regular_strikes: true,
+            dx: 11.060_913,
+            dy_stretched: -17.675_049,
+            distance: 20.850_687,
+            direction_sector: 1,
+            camp: Camp::Royalists,
+            facing_direction: 7,
+            elevation: 0.0,
+            life_points: 35,
+            defender_profile: None,
+            is_primary_target: false,
+            is_walking_with_sword: false,
+        };
+        let ctx = StrikeSelectionContext {
+            attacker_profile: &profile,
+            fighting_ability: 100,
+            blood_alcohol: 0,
+            is_rank_soldier: false,
+            attacker_direction: 0,
+            attacker_elevation: 0.0,
+            attacker_camp: Camp::Royalists,
+            is_swordfighting: true,
+            opponent_time_limit: Some(1000),
+            strike_startup_frames: None,
+            parry_startup_frames: None,
+            is_npc: true,
+        };
+
+        let result = propose_good_sword_strike(
+            &crate::sim_rng::test_context(),
+            &ctx,
+            &[primary, friend],
+            &mut vec![0; NUM_NORMAL_SWORD_STRIKES],
+            false,
+        );
+
+        assert_eq!(result, Some(ProposedCombatAction::Strike(SwordStrike::A)));
+    }
+
     // ── Life points ────────────────────────────────────────────────
 
     #[test]
@@ -1831,6 +1908,52 @@ mod tests {
         let ctx = default_ctx();
         assert!(!receive_piercing_damage(&mut h, &mut lp, 20, 5, 100, &ctx));
         assert_eq!(lp, 80);
+    }
+
+    #[test]
+    fn repeated_lethal_piercing_hits_preserve_already_comatose_pc() {
+        let mut human = make_human();
+        human.concussion_of_the_brain = CONCUSSION_MAX;
+        human.unconscious = true;
+        let mut life_points = 5;
+        let ctx = ConcussionContext {
+            is_in_coma: true,
+            ..default_ctx()
+        };
+
+        for _ in 0..2 {
+            assert!(!receive_piercing_damage(
+                &mut human,
+                &mut life_points,
+                20,
+                0,
+                100,
+                &ctx,
+            ));
+            assert_eq!(life_points, 5);
+        }
+    }
+
+    #[test]
+    fn sublethal_piercing_hit_still_wounds_comatose_pc() {
+        let mut human = make_human();
+        human.concussion_of_the_brain = CONCUSSION_MAX;
+        human.unconscious = true;
+        let mut life_points = 20;
+        let ctx = ConcussionContext {
+            is_in_coma: true,
+            ..default_ctx()
+        };
+
+        assert!(!receive_piercing_damage(
+            &mut human,
+            &mut life_points,
+            5,
+            0,
+            100,
+            &ctx,
+        ));
+        assert_eq!(life_points, 15);
     }
 
     // ── Hit damage ─────────────────────────────────────────────────

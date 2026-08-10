@@ -62,14 +62,13 @@ impl std::fmt::Display for SightObstacleIndex {
 // ─── Two-part obstacle list (static + dynamic) ────────────────────
 
 /// Borrowed view over the level's static sight obstacles plus any
-/// per-frame dynamic obstacles (currently just shields). Replaces the
+/// engine-owned dynamic obstacles. Replaces the
 /// flat `&[SightObstacle]` parameter that pre-LevelGrid code used to
 /// pass around.
 ///
 /// Static obstacles live in `LevelAssets::static_sight_obstacles`
 /// (Arc-shared so `EngineInner::clone` is cheap); dynamic obstacles live in
-/// `EngineInner::dynamic_sight_obstacles` and are rebuilt each tick by
-/// `update_shield_obstacles`. The "global obstacle index" used by
+/// `EngineInner::dynamic_sight_obstacles`. The "global obstacle index" used by
 /// patches and per-actor `obstacle_index` lookups continues to be a
 /// flat 0..N indexing — entries 0..static_len() come from the static
 /// slice, entries static_len().. come from the dynamic slice.
@@ -977,10 +976,11 @@ impl SightObstacle {
 
         // Bottom-plane crossing for elevated obstacles: when origin is
         // below bottom and destination isn't, the ray rises through the
-        // obstacle floor. The legacy implementation had a typo in the
-        // denominator (mixing top and bottom relative heights); we use
-        // the correct `origin_rel_bot - dest_rel_bot` linear crossing
-        // formula.
+        // obstacle floor. Preserve Original's shipped denominator typo:
+        // `RHFastFindGrid::IsReachableImpactBounce` subtracts the
+        // destination's bottom-relative height from the origin's
+        // *top*-relative height. The resulting early underside impact is
+        // visible in projectile trajectories.
         if !self.on_ground {
             let origin_rel_bot = origin[2] - self.compute_bottom_z(origin[0], origin[1]);
             let dest_rel_bot =
@@ -988,7 +988,7 @@ impl SightObstacle {
             let origin_below_bot = origin_rel_bot < 0.0;
             let dest_below_bot = dest_rel_bot < 0.0;
             if origin_below_bot && !dest_below_bot {
-                let denom = origin_rel_bot - dest_rel_bot;
+                let denom = origin_rel_top - dest_rel_bot;
                 if denom.abs() > 1e-9 {
                     let t_plane = origin_rel_bot / denom;
                     let ix = origin[0] + t_plane * (destination[0] - origin[0]);
@@ -2118,6 +2118,69 @@ mod tests {
         .unwrap();
         assert_eq!(result.obstacle_index, Some(0));
         assert!((result.impact.z - 3.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn impact_3d_nonvertical_floor_crossing_preserves_original_denominator_typo() {
+        // Original mixes the origin's top-relative height into the
+        // bottom-plane denominator. With top=10, bottom=3, and this rising
+        // ray, that produces t=(-3)/(-10-7)=3/17 rather than the geometric
+        // t=3/10. Vertical rays use the dedicated upward-impact path, so use
+        // a nonvertical segment to exercise IsReachableImpactBounce.
+        let mut obs = SightObstacle::new_default(0);
+        obs.obstacle_points = vec![
+            ObstaclePoint {
+                x: 0.0,
+                y: 0.0,
+                z_top: 10.0,
+                z_bottom: 3.0,
+            },
+            ObstaclePoint {
+                x: 10.0,
+                y: 0.0,
+                z_top: 10.0,
+                z_bottom: 3.0,
+            },
+            ObstaclePoint {
+                x: 10.0,
+                y: 10.0,
+                z_top: 10.0,
+                z_bottom: 3.0,
+            },
+            ObstaclePoint {
+                x: 0.0,
+                y: 10.0,
+                z_top: 10.0,
+                z_bottom: 3.0,
+            },
+        ];
+        obs.top_plane_points = [[0.0, 0.0, 10.0], [10.0, 0.0, 10.0], [0.0, 10.0, 10.0]];
+        obs.bottom_plane_points = [[0.0, 0.0, 3.0], [10.0, 0.0, 3.0], [0.0, 10.0, 3.0]];
+        obs.rebuild_geometry();
+
+        let origin = WorldPoint3D {
+            x: 2.0,
+            y: 5.0,
+            z: 0.0,
+        };
+        let dest = WorldPoint3D {
+            x: 8.0,
+            y: 5.0,
+            z: 10.0,
+        };
+        let result = is_reachable_impact_3d(
+            origin,
+            dest,
+            SIGHTOBSTACLE_SOLID,
+            ObstacleList::from_slice_all_active(std::slice::from_ref(&obs)),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.obstacle_index, Some(0));
+        assert!((result.impact.x - (2.0 + 6.0 * (3.0 / 17.0))).abs() < 1e-6);
+        assert_eq!(result.impact.y, 5.0);
+        assert_eq!(result.impact.z, 3.0);
     }
 
     #[test]

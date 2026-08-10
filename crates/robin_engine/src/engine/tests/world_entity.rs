@@ -158,6 +158,65 @@ fn zero_duration_resolution_completes_mytalk_at_current_boundary() {
 }
 
 #[test]
+fn actor_effect_prefix_does_not_consume_caller_tail_self_stimulus() {
+    use crate::ai::{
+        AiActorOutbox, AiOwnerWork, AiState, AiStateChangeNotification, AiStateChangeSource,
+        StimulusType, Substate,
+    };
+    use crate::element::AiBrain;
+
+    let mut engine = EngineInner::new();
+    let mut soldier_entity = make_test_soldier(crate::element::Posture::Upright);
+    let Entity::Soldier(soldier) = &mut soldier_entity else {
+        unreachable!();
+    };
+    soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+    let ai = soldier.npc.ai_brain.base_mut().expect("test soldier AI");
+    let mut prefix = AiActorOutbox::default();
+    prefix.unfocus = true;
+    ai.outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::ActorEffects(prefix));
+    let mut halt_before_callback = AiActorOutbox::default();
+    halt_before_callback.queue_halt();
+    ai.outbox
+        .reentrant
+        .owner_work
+        .push(AiOwnerWork::StateChange(AiStateChangeNotification {
+            outgoing_state: AiState::Default,
+            outgoing_substate: Substate::DefaultOnPost,
+            incoming_state: AiState::Seeking,
+            incoming_substate: Substate::SeekingBody,
+            source: AiStateChangeSource::SelfActor,
+            actor_effects_before_callback: Some(halt_before_callback),
+        }));
+    ai.outbox
+        .reentrant
+        .self_stimuli
+        .push(StimulusType::EventTimer);
+    let soldier_id = engine.add_entity(soldier_entity);
+
+    engine.drain_ai_owner_work_for(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        soldier_id,
+    );
+
+    let ai = engine
+        .get_entity(soldier_id)
+        .and_then(Entity::ai_controller)
+        .expect("test soldier AI survives prefix drain");
+    assert_eq!(
+        ai.outbox.reentrant.self_stimuli,
+        [StimulusType::EventTimer],
+        "Focus(NULL)'s recursive ActorEffects boundary must leave the caller-tail event behind the older Halt"
+    );
+    assert!(ai.outbox.reentrant.owner_work.is_empty());
+    assert!(!ai.outbox.actor.halt);
+}
+
+#[test]
 fn matured_mytalk_completion_precedes_deferred_hades_replacement() {
     use crate::ai::{LogLineType, Remark};
 
@@ -1573,6 +1632,46 @@ fn enter_swordfight_clears_pending_bow_shot_list() {
         !engine.pc_has_pending_shoot_bow(pc),
         "C++ EnterSwordFight clears the actor's pending shoot list before validity checks"
     );
+}
+
+#[test]
+fn reciprocal_swordfight_entry_preserves_existing_opponent_strength() {
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let initiator = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let opponent = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    engine
+        .get_entity_mut(initiator)
+        .and_then(Entity::human_data_mut)
+        .unwrap()
+        .relative_fighting_ability = 17;
+    {
+        let human = engine
+            .get_entity_mut(opponent)
+            .and_then(Entity::human_data_mut)
+            .unwrap();
+        human.opponents = vec![initiator];
+        human.relative_fighting_ability = 42;
+    }
+
+    assert!(engine.enter_swordfight(&sim, &assets, initiator, opponent, false));
+
+    let initiator_human = engine
+        .get_entity(initiator)
+        .and_then(Entity::human_data)
+        .unwrap();
+    assert_eq!(initiator_human.opponents, vec![opponent]);
+    assert_eq!(initiator_human.relative_fighting_ability, 50);
+
+    let opponent_human = engine
+        .get_entity(opponent)
+        .and_then(Entity::human_data)
+        .unwrap();
+    assert_eq!(opponent_human.opponents, vec![initiator]);
+    assert_eq!(opponent_human.relative_fighting_ability, 42);
 }
 
 #[test]

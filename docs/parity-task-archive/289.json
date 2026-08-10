@@ -1,0 +1,9 @@
+{
+  "id": "289",
+  "subject": "Scope projectile materials and preserve target-hit refresh timing",
+  "description": "Projectile material lookup could project a raised dry obstacle onto an unrelated global ground hole, and a successful target hit exposed its stopped snapshot one refresh too early. Original resolves water/hole material only inside the exact terminal obstacle, falling back to the global sector registry solely for bare ground, and retains the exact hole polygon for trajectory extension. HitTarget stops flight without resetting the current segment countdown; Arrow::Refresh therefore keeps the arrow active for that refresh before the following Hourglass exposes it as stationary. Scoped material resolution and the target-hit retirement seam now mirror those rules. Focused raised-platform, exact-hole, bare-ground, dry-island, and leftover-countdown controls pass; the representative matches exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task289-projectile-material-refresh"
+}

@@ -720,6 +720,7 @@ impl EngineInner {
             let left_combat_neighbour = enemy_ai.left_combat_neighbour;
             let right_combat_neighbour = enemy_ai.right_combat_neighbour;
             let shield_bearer_before_me = enemy_ai.shield_bearer_before_me;
+            let archer_behind_me = enemy_ai.archer_behind_me;
             let shield_bearer_direction = enemy_ai.shield_bearer_direction;
             let script_locked = enemy_ai.base.script_locked;
             let ai_lock_frozen = enemy_ai
@@ -907,8 +908,7 @@ impl EngineInner {
                 is_tower_guard,
                 seek_position,
                 shield_bearer_before_me,
-                // Derived below from reverse scan.
-                archer_behind_me: 0,
+                archer_behind_me,
                 shield_bearer_direction,
                 bow_max_range,
                 script_locked,
@@ -944,23 +944,59 @@ impl EngineInner {
         // Derive `archer_behind_me` from the reverse of
         // `shield_bearer_before_me` links so the filter in
         // `get_nearest_free_shield_bearer` prevents double-claiming.
-        // Also propagate back to the stored EnemyAi field for
-        // consistency with direct self-reads.
+        // Relationship pointers in Original remain valid while either
+        // soldier is inactive, so a mutually linked inactive archer must
+        // participate even though combat scans ignore it. A one-sided
+        // inactive archer link can be stale, however: require the serialized
+        // shield-side pointer to agree before retaining it. Active archers
+        // keep the existing reverse-reconstruction behavior because their
+        // reciprocal action may have been queued during this tick.
+        // Also propagate back to the stored EnemyAi field for consistency
+        // with direct self-reads.
         {
+            let stored_archers: std::collections::HashMap<u32, u32> = soldier_snapshots
+                .iter()
+                .map(|snapshot| (snapshot.id.index(), snapshot.archer_behind_me))
+                .collect();
+            for snapshot in &mut soldier_snapshots {
+                snapshot.archer_behind_me = 0;
+            }
             // Collect (archer_handle, shield_bearer_handle) pairs.
-            let mut pairs: Vec<(u32, u32)> = Vec::with_capacity(soldier_snapshots.len());
+            let mut pairs: Vec<(u32, u32, bool)> = Vec::with_capacity(soldier_snapshots.len());
             pairs.extend(
                 soldier_snapshots
                     .iter()
-                    .filter(|s| s.active && s.shield_bearer_before_me != 0)
-                    .map(|s| (s.id.index(), s.shield_bearer_before_me)),
+                    .filter(|s| s.shield_bearer_before_me != 0)
+                    .map(|s| (s.id.index(), s.shield_bearer_before_me, s.active)),
             );
-            for (archer_handle, sb_handle) in &pairs {
+            for (archer_handle, sb_handle, archer_active) in &pairs {
                 if let Some(sb) = soldier_snapshots
                     .iter_mut()
-                    .find(|s| s.active && s.id.index() == *sb_handle)
+                    .find(|s| s.id.index() == *sb_handle)
                 {
-                    sb.archer_behind_me = *archer_handle;
+                    let stored_archer =
+                        stored_archers.get(sb_handle).copied().unwrap_or_else(|| {
+                            panic!(
+                                "shield-bearer snapshot {} lost its stored relationship entry",
+                                sb_handle
+                            )
+                        });
+                    if *archer_active || stored_archer == *archer_handle {
+                        sb.archer_behind_me = *archer_handle;
+                    } else {
+                        tracing::warn!(
+                            archer = *archer_handle,
+                            shield_bearer = *sb_handle,
+                            shield_archer = stored_archer,
+                            "ignoring stale one-sided inactive archer relationship"
+                        );
+                    }
+                } else {
+                    tracing::warn!(
+                        archer = *archer_handle,
+                        shield_bearer = *sb_handle,
+                        "shield-bearer relationship points outside the conscious soldier snapshot"
+                    );
                 }
             }
             // Write back to stored EnemyAi fields so direct self-reads

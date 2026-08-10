@@ -1,0 +1,8 @@
+{
+  "id": "293",
+  "subject": "Archive another source-inconsistent projectile landing membership trace",
+  "description": "COMPLETED WITHOUT A RUST CHANGE. nicouzouf Profile_001 Savegame_065 replay-008 first diverges after frame 674 only because Projectile98 reports Original layer/sector 0 while Rust reports layer 0xFFFF and null sector. The trajectory geometry is otherwise exact: its terminal landing footprint is (647, 509), followed by the recorded terminal movement to projected position (647, 511.867919921875). The current fullgame Linux Croisement01 assets place (647, 509) robustly inside both the layer-0 motion area (sector 0) and its non-area motion obstacle index 39 (sector 40), whose polygon contains the point away from an edge. Current Original RHElementProjectile::ComputeTrajectory queries SECTOR_MOTION at the landing footprint, can first assign the containing area, then explicitly SetSector(NULL) and return when the containing non-area obstacle is visited; that return occurs before SetLayer and therefore preserves layer 0xFFFF. Rust's landing resolver reproduces this source-required result. This is the same current-source/assets contradiction established for the Task89 projectile-membership family, so the exact trace is retired pending deterministic current-Original recapture rather than adding trace-specific Rust behavior.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

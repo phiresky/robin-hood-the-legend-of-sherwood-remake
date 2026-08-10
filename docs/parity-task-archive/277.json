@@ -1,0 +1,9 @@
+{
+  "id": "277",
+  "subject": "Run human bow validity at the selected Execute boundary",
+  "description": "Ordinary and high bow releases inherited Human::Execute validity in Original, but Rust's PC-only pre-pass could validate stale work and omitted non-PC humans. Validity now runs from the exact selected-order Execute entry after Actor::Hourglass establishes initialization, covers every human owner, and returns an explicit short-circuit when a guard fails so no stale movement, melee, bow, ability, beggar, or generic-animation Execute driver runs later in that owner slot. This also clears the full-health Eat regression at frame 274. A matching active-shot driver is cleared only when its element was actually made Impossible; NonInterruptable no-ops retain it. Held shoot-list processing accepts the retail entry states, applies GenerateTransition first, rejects Terminated/Impossible/Interrupted pointers before priority arbitration, and preserves the selected priority source order. Focused invalid, valid, retained-shot, held-list, and owner-loop controls pass. The frame-529 bow frontier clears and advances to an independent frame-1038 mismatch.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task277-shootbow-validity"
+}

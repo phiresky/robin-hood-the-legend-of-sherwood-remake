@@ -1,0 +1,9 @@
+{
+  "id": "303",
+  "subject": "Reuse admitted battle friends for the officer-alert gate",
+  "description": "BattleDecisions correctly performed Original's 360-degree visibility checks while building the nearby-friend list, but the LookForHelp arm then scanned the camp and repeated those checks to recompute bAlertingSoldierNear. Original RHArtificialMalignity::BattleDecisions derives that flag inside the single mlistUs admission walk and reuses it before AlertOfficer. Rust now derives the flag from the already-admitted list, preserving the authoritative visibility results, query order, and cache state without admitting an out-of-view alerting soldier. The nicouzouf Profile_001 Savegame_041 replay-015 representative clears its frame-1038 visibility-query frontier and advances to an independent PC HitCmd/MoveOk frontier after frame 1078. Focused admitted/out-of-view controls pass, and both Task 36 schema-14 controls match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task303-battle-friend-admission"
+}

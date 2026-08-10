@@ -353,8 +353,8 @@ impl EngineInner {
         //
         // Static (load-time) obstacles live in `LevelAssets::static_sight_obstacles`
         // (Arc-shared so per-frame `EngineInner::clone` is a refcount bump).
-        // Per-frame dynamic obstacles (shields) get appended to
-        // `EngineInner::dynamic_sight_obstacles` later by `update_shield_obstacles`.
+        // Engine-owned runtime obstacles remain in the separate
+        // `EngineInner::dynamic_sight_obstacles` list.
         //
         // Per-obstacle material sub-sectors index into the **unfiltered**
         // CHUNK_MATERIAL list, which holds every CHUNK_MATERIAL entry

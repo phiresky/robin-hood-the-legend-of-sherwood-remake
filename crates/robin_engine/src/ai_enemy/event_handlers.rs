@@ -1448,12 +1448,17 @@ impl EnemyAi {
                         seq.append_element(elem);
                         self.base.outbox.actor.launch_sequences.push(seq);
 
-                        // SetStates(UPRIGHT, HOLDING_SHIELD) + UpdateShield
-                        // are redundant with the sequence dispatch, which
-                        // `dispatch_raise_shield_instantly` processes at
-                        // post-think; shield obstacles are recomputed
-                        // every frame by
-                        // `EngineInner::update_shield_obstacles`.
+                        // Original immediately repeats SetStates +
+                        // UpdateShield after the synchronous instant-raise
+                        // launch, then Focuses the shooter. Close that actor
+                        // prefix so the trailing Focus cannot overtake it at
+                        // the deferred owner boundary.
+                        self.base.outbox.actor.raise_shield_immediately = true;
+                        self.base.outbox.reentrant.owner_work.push(
+                            crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
+                                &mut self.base.outbox.actor,
+                            )),
+                        );
 
                         self.base.outbox.actor.set_focus(shooter);
 

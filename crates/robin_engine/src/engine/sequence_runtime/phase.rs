@@ -12,7 +12,7 @@ impl EngineInner {
         owner: EntityId,
         element_ref: crate::sequence::SequenceElementRef,
     ) -> bool {
-        use crate::sequence::{SequencePriority, SequenceState};
+        use crate::sequence::SequenceState;
 
         let seq_id = element_ref.sequence_id;
         let elem_idx = element_ref.element_index;
@@ -21,29 +21,6 @@ impl EngineInner {
         };
         assert_eq!(element.owner, Some(owner));
         assert_eq!(element.command, Command::ShootBow);
-        if !matches!(
-            element.state,
-            SequenceState::Todo | SequenceState::Postponed | SequenceState::Terminated
-        ) {
-            panic!(
-                "shoot-list element {seq_id:?}/{elem_idx} has invalid state {:?}",
-                element.state
-            );
-        }
-        let retained_terminal = element.state == SequenceState::Terminated;
-
-        if element.priority == SequencePriority::NotYetSet {
-            let priority = {
-                let resolver = Self::priority_resolver(&self.world.entities);
-                resolver(element)
-            };
-            self.orders
-                .sequence_manager
-                .get_element_mut(seq_id, elem_idx)
-                .expect("held shoot element vanished during priority resolution")
-                .priority = priority;
-        }
-
         self.stamp_element_transition_state(owner, seq_id, elem_idx);
         if self.non_interruptable_guard(owner, seq_id, elem_idx) {
             self.dispatch_condolations(sim, assets);
@@ -57,13 +34,26 @@ impl EngineInner {
             return false;
         }
         // `RHElementActor::Instruct` checks the element state again after
-        // `GenerateTransition`. Its entry assertion is absent from retail, so
-        // a terminal pointer retained in Human's shoot list reaches this
-        // point, but the explicit runtime guard still rejects it before
-        // priority arbitration or translation. ProcessShootList consequently
-        // keeps the pointer and the actor continues its already-started bow
-        // Wait order instead of restarting that order on this frame.
-        if retained_terminal {
+        // `GenerateTransition`. Its only entry-state check is a debug-only
+        // assertion against Terminated, so a retained pointer that became
+        // Terminated, Impossible, or Interrupted still reaches this point in
+        // retail. The explicit runtime guard then rejects it before priority
+        // arbitration or translation. ProcessShootList consequently keeps
+        // the pointer and the actor continues its already-started bow Wait
+        // order instead of restarting that order on this frame.
+        if self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .is_some_and(|element| {
+                matches!(
+                    element.state,
+                    SequenceState::Terminated
+                        | SequenceState::Impossible
+                        | SequenceState::Interrupted
+                )
+            })
+        {
             return false;
         }
         if !self.arbitrate_held_shoot_instruct(seq_id, elem_idx) {
@@ -1272,12 +1262,43 @@ impl EngineInner {
                                     &mut self.orders.next_order_id,
                                 )
                                 .dispatch(owner, cmd, seq_id, elem_idx);
+                                if cmd == Command::RaiseShieldInstantly {
+                                    // RHElementActorHuman::Translate performs
+                                    // UpdateShield immediately after entering
+                                    // HOLDING_SHIELD.
+                                    self.refresh_retained_shield_obstacle(assets, owner);
+                                }
                                 if let Some(follow_up) = follow_up {
                                     // `RHElementActorPC::Translate(RAISE_SHIELD)`
                                     // launches this SEEK synchronously. Route it
                                     // through the full owned-element Instruct path
                                     // before the action-loop splice below.
                                     self.launch_element(follow_up);
+                                }
+                                // Human::Translate terminates a redundant
+                                // RAISE_SHIELD synchronously when the actor is
+                                // already holding it. Actor::Instruct then sees
+                                // that translation changed mpSequenceElement and
+                                // returns before its accepted-instruct
+                                // MOTION_IN_PROGRESS epilogue. Preserve the
+                                // preceding Execute edge (for example LookLeft's
+                                // START) while still registering the PC's
+                                // synchronous protectee Seek above.
+                                let barrier = if cmd == Command::RaiseShield
+                                    && self
+                                        .orders
+                                        .sequence_manager
+                                        .get_element(seq_id, elem_idx)
+                                        .is_none_or(|element| {
+                                            element.state
+                                                != crate::sequence::SequenceState::InProgress
+                                        }) {
+                                    OwnerActionBarrier::Skip
+                                } else {
+                                    OwnerActionBarrier::Reach
+                                };
+                                if barrier == OwnerActionBarrier::Skip {
+                                    break 'action;
                                 }
                             }
                             // ── Bow equip / raise / lower ───────────
@@ -2754,6 +2775,11 @@ impl EngineInner {
                                     .element_terminated(seq_id, elem_idx);
                             }
                         }
+                        // Accepted Actor::Instruct publishes the translated
+                        // current order through mpOrder. Keep this write at the
+                        // dispatch boundary rather than inferring it later from
+                        // whichever element happens to be selected.
+                        self.publish_selected_order_for_instruct_owner(owner);
                         if self
                             .world
                             .entities
@@ -2762,11 +2788,6 @@ impl EngineInner {
                         {
                             accepted_instruct_owners.push(owner);
                         }
-                        // Accepted Actor::Instruct publishes the translated
-                        // current order through mpOrder. Keep this write at the
-                        // dispatch boundary rather than inferring it later from
-                        // whichever element happens to be selected.
-                        self.publish_selected_order_for_instruct_owner(owner);
                     }
                     crate::sequence::SequenceAction::ExecuteImmediateOwner {
                         owner,

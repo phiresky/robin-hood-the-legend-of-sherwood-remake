@@ -1,0 +1,9 @@
+{
+  "id": "282",
+  "subject": "Preserve swordfight strength on reciprocal re-entry",
+  "description": "A swordfight entry could find that the opponent already held the initiator in its reciprocal opponent list. Original recomputes relative fighting ability and takes initiative only when AddOpponent actually inserts a new entry on that side; Rust performed an additional unconditional recomputation for both actors, overwriting the already-engaged opponent's cached strength even though its list was unchanged. Reciprocal re-entry now recomputes only the side whose opponent was newly added, while fresh bilateral entry retains the established updates. The focused asymmetric-entry regression passes. SuN1Sh1nE Profile_004 Savegame_036 replay-005 matches exact EOF on merged commit ca0803f61.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task282-reciprocal-strength"
+}

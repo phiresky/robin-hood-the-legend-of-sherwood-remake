@@ -1,0 +1,9 @@
+{
+  "id": "274",
+  "subject": "Use literal stretched distance for approaching-new-enemy range",
+  "description": "An AttackingApproachingNewEnemy arrival took the swordfight arm because Rust compared raw planning-map X/Y, while Original calls SquareDistance on the actors' literal positions, stretching world Y and including elevation before the authored sword-range-plus-ten threshold. The close gate now requires identity-matched live geometry and uses Original's stretched 3D distance, while the re-approach GoNear destination remains the target's planning position. Focused stretched-Y, elevation, live-position, and missing-snapshot controls pass. The frame-113 frontier clears and advances to an independent frame-117 mismatch.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task274-approach-square-distance"
+}
