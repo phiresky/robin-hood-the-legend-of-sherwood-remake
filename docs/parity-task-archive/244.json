@@ -1,0 +1,9 @@
+{
+  "id": "244",
+  "subject": "Classify stale out-of-range LowerBow recordings",
+  "description": "SuN1Sh1nE Profile_004 Savegame_016 replay-009 diverges at frame 318 because the historical Original recording interpreted an uninitialized ShootType after CanShootWithBowAt returned OUT_OF_RANGE, accidentally launching LowerBow. Current Original commit 3c83560e and Rust commit 750224e6f intentionally reject invalid classifications before reading the mode. The captured hand/target geometry is 644 planar units apart with a 400-unit maximum range, confirming the deterministic Rust Wait result. Regressing Rust to reproduce stack garbage would be incorrect; this replay and its LowerBow-to-Wait cohort require recapture with the fixed Original oracle.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task244-lowerbow-ub"
+}
