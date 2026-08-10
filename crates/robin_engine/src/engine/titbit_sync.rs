@@ -194,6 +194,8 @@ impl EngineInner {
     /// `BeingStunnedSword` shares the visual/AI effects but not the handoff.
     pub(super) fn add_weak_stunned_combat(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         entity_id: EntityId,
         transfer_smalltalk_initiative: bool,
     ) {
@@ -230,9 +232,27 @@ impl EngineInner {
             }
         }
 
-        for opp_id in opponents {
-            self.dispatch_ai_stimulus(
-                opp_id,
+        for opponent_id in opponents {
+            let opponent = self.world.entities.get(opponent_id).unwrap_or_else(|| {
+                panic!(
+                    "weak/stunned actor {} references missing opponent {}",
+                    entity_id.index(),
+                    opponent_id.index()
+                )
+            });
+            if !matches!(opponent, Entity::Soldier(_)) {
+                continue;
+            }
+
+            // RHElementActorHuman::Execute calls each soldier opponent's
+            // Think(EVENT_ADVERSARY_WEAK) directly during the weak/stunned
+            // order's initialization. Preserve older detection stimuli, but
+            // close this call before advancing to the next opponent or the
+            // actor's PerformAction.
+            self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                sim,
+                opponent_id,
+                assets,
                 crate::ai::Stimulus::with_human(
                     crate::ai::StimulusType::EventAdversaryWeak,
                     entity_id.index(),

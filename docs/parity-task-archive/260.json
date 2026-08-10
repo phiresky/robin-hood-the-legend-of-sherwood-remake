@@ -1,0 +1,9 @@
+{
+  "id": "260",
+  "subject": "Dispatch subordinate stimuli through the live patrol chief",
+  "description": "SuN1Sh1nE Profile_004 Savegame_016 replay-011 diverged because a subordinate predicted that its detected chief would accept EventSeesShadow, queued a generic Think, and suppressed its own handler. Original directly calls the chief's DispatchStimulusToWholePatrol and uses the routine's actual boolean; an empty chief records the stimulus, returns false, and the subordinate handles it locally. A typed synchronous patrol-dispatch request now invokes the live chief routine and resumes the caller only on false, with required selected-default-Wait metadata. The focused empty-patrol regression passes; Task264 completes the successful-chief owner boundary.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task260-live-patrol-dispatch"
+}

@@ -1811,30 +1811,6 @@ pub(crate) fn is_possible_sword_strike_victim(
     true
 }
 
-fn is_possible_sword_strike_victim_id(
-    entities: &crate::entities::Entities,
-    attacker: impl Into<EntityId>,
-    target_id: impl Into<EntityId>,
-    profile_manager: &crate::profiles::ProfileManager,
-    fast_grid: &crate::fast_find_grid::FastFindGrid,
-    obstacles: crate::sight_obstacle::ObstacleList<'_>,
-) -> bool {
-    let attacker = attacker.into();
-    let target_id = target_id.into();
-    let Some(target_entity) = entities.get(target_id) else {
-        return false;
-    };
-    is_possible_sword_strike_victim(
-        entities,
-        attacker,
-        target_entity,
-        target_id,
-        profile_manager,
-        fast_grid,
-        obstacles,
-    )
-}
-
 /// Collect possible victims for a lateral/circle sword strike within an angular arc.
 ///
 /// Returns EntityIds of all valid targets within `[min_distance, max_distance]`
@@ -4645,6 +4621,56 @@ mod tests {
             vec![first_victim, second_victim],
             "push damage launches must retain the original actor-list victim FIFO; lives were {first_life}/{second_life}"
         );
+    }
+
+    #[test]
+    fn push_strike_does_not_recover_antagonist_outside_rectangle() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let target = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 11.0,
+                y: 80.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let mut assets = assets_with_nonstraight_profile(
+            SwordStrike::A,
+            crate::profiles::WeaponThrustKind::PushAside,
+        );
+        std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].thrusts
+            [SwordStrike::A as usize]
+            .repulsion = 20;
+        let selected =
+            install_test_melee_order(&mut engine, attacker, target, SwordStrike::A, false);
+
+        assert_eq!(
+            engine.tick_nonstraight_melee_for(sim, &assets, attacker, selected),
+            strikes::SweepTickPhase::InProgress
+        );
+
+        assert!(
+            !engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| sequence.elements.iter())
+                .any(|element| {
+                    element.command == Command::ReceiveSwordDamage && element.owner == Some(target)
+                }),
+            "Original's PushAside scan rejects side projection 11 outside half-width 10 even when the actor is the interaction antagonist"
+        );
+        assert_eq!(soldier_life(&engine, target), 50);
     }
 
     #[test]

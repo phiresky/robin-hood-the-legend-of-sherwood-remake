@@ -1182,7 +1182,12 @@ fn is_start_stop_movement_rewrite(
 ) -> bool {
     use crate::order::OrderType;
 
-    execute_motion == crate::sprite::MotionState::Start
+    matches!(
+        execute_motion,
+        crate::sprite::MotionState::Start
+            | crate::sprite::MotionState::InProgress
+            | crate::sprite::MotionState::Done
+    )
         // StopMovement calls NewID on the existing order. Runtime order IDs
         // are monotonic, whereas a translated stop-transition successor was
         // allocated before path waypoints that may later be inserted ahead of
@@ -1293,14 +1298,14 @@ mod specialized_execute_motion_tests {
             OrderType::TransitionWalkingUprightWaitingUpright,
             MotionState::Start,
         ));
-        assert!(!is_start_stop_movement_rewrite(
+        assert!(is_start_stop_movement_rewrite(
             std::num::NonZeroU32::new(10).unwrap(),
             OrderType::RunningUpright,
             std::num::NonZeroU32::new(11).unwrap(),
             OrderType::TransitionRunningUprightWaitingUpright,
             MotionState::Done,
         ));
-        assert!(!is_start_stop_movement_rewrite(
+        assert!(is_start_stop_movement_rewrite(
             std::num::NonZeroU32::new(10).unwrap(),
             OrderType::WalkingCrouched,
             std::num::NonZeroU32::new(11).unwrap(),
@@ -1328,6 +1333,31 @@ mod specialized_execute_motion_tests {
             OrderType::TransitionRunningUprightWaitingUpright,
             MotionState::Start,
         ));
+    }
+
+    #[test]
+    fn stop_movement_reseed_preserves_outgoing_done_latch() {
+        let rewritten_by_stop = is_start_stop_movement_rewrite(
+            std::num::NonZeroU32::new(10).unwrap(),
+            OrderType::RunningUpright,
+            std::num::NonZeroU32::new(11).unwrap(),
+            OrderType::TransitionRunningUprightWaitingUpright,
+            MotionState::Done,
+        );
+        assert!(rewritten_by_stop);
+
+        let advanced = specialized_order_advanced_after_execute(
+            Some(MotionState::Done),
+            rewritten_by_stop,
+            false,
+            false,
+            false,
+        );
+        assert!(!advanced);
+        assert_eq!(
+            project_post_completion_motion(MotionState::Done, false, true, advanced),
+            MotionState::Done
+        );
     }
 }
 
@@ -6187,6 +6217,8 @@ impl EngineInner {
 
         for (entity_id, anim_type) in sides.weak_stunned_start {
             self.add_weak_stunned_combat(
+                sim,
+                assets,
                 entity_id,
                 anim_type == crate::order::OrderType::BeingWeakSword,
             );

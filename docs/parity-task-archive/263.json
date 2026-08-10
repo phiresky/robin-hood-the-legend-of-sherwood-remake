@@ -1,0 +1,9 @@
+{
+  "id": "263",
+  "subject": "Deliver adversary-weak combat callbacks synchronously",
+  "description": "linux3 Profile_001 Savegame_028 replay-012 diverged after frame 11502 when PC282 entered BeingStunnedSword. Original directly calls each soldier opponent's Think(EVENT_ADVERSARY_WEAK), immediately running Soldier241's ReconsiderSwordfight, RNG draws, visibility checks, and WaitTimer transition. Rust queued the stimulus in the opponent's detection outbox. Weak/stunned initialization now walks the opponent snapshot in order and closes each direct Think while preserving older detection FIFO entries; the context includes required selected-default-Wait metadata and missing opponents panic. Focused synchronous delivery and existing smalltalk controls pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task263-adversary-weak-sync"
+}

@@ -1210,7 +1210,9 @@ impl EngineInner {
                                     next_order_id: &mut self.orders.next_order_id,
                                 }
                                 .dispatch(owner, cmd, seq_id, elem_idx);
-                                debug_assert_eq!(barrier, OwnerActionBarrier::Reach);
+                                if barrier == OwnerActionBarrier::Skip {
+                                    break 'action;
+                                }
                             }
 
                             // ── Wasp sting ─────────────────────────

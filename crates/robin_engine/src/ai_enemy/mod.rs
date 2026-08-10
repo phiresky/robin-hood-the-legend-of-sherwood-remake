@@ -1228,7 +1228,7 @@ impl EnemyAi {
     /// Forwards a stimulus to all patrol members via
     /// CrossNpcAction::SendStimulus.  Returns `true` if dispatched
     /// (caller should NOT process the stimulus itself).
-    fn dispatch_stimulus_to_whole_patrol(
+    pub(crate) fn dispatch_stimulus_to_whole_patrol(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
@@ -1298,31 +1298,14 @@ impl EnemyAi {
             // Short-circuit: a non-soldier chief never reaches the LOS
             // query, so no visibility-cache traffic is generated for it.
             if chief_is_soldier && self.is_detecting_360_degrees(chief as HumanHandle, ctx) {
-                // Original calls the chief's
-                // `DispatchStimulusToWholePatrol` method directly here; it
-                // does not call `chief->Think(stimulus)`. A chief which has
-                // already entered Attacking (or another ineligible state)
-                // therefore rejects the delegation without processing the
-                // stimulus itself, and this subordinate handles it locally.
-                let chief_dispatches = ctx.entity_view(chief).is_some_and(|view| {
-                    matches!(view.ai_state, AiState::Wondering)
-                        || (view.ai_state == AiState::Default
-                            && view.ai_substate != Substate::DefaultPatrolEnrouteRunning)
-                });
-                if !chief_dispatches {
-                    return false;
-                }
-                self.base
-                    .outbox
-                    .reentrant
-                    .cross_npc_actions
-                    .push(CrossNpcAction::SendStimulus {
-                        fallback_to_sender: None,
-                        to_whole_patrol: false,
-                        target: chief,
+                self.base.outbox.reentrant.cross_npc_actions.push(
+                    CrossNpcAction::RequestPatrolDispatch {
+                        chief,
+                        caller: self.base.me,
                         stimulus_type: stimulus.stimulus_type,
                         info: stimulus.info,
-                    });
+                    },
+                );
                 tracing::trace!(
                     target: "patrol_relay",
                     me = self.base.me as i32,

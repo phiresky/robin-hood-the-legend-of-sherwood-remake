@@ -10095,6 +10095,11 @@ impl EngineInner {
                         "result-bearing Think request {caller}->{target} escaped its owner boundary"
                     )
                 }
+                crate::ai::CrossNpcAction::RequestPatrolDispatch { caller, chief, .. } => {
+                    panic!(
+                        "result-bearing patrol dispatch {caller}->{chief} escaped its owner boundary"
+                    )
+                }
                 crate::ai::CrossNpcAction::FinalizeAlertSoldiers { caller, .. } => {
                     panic!(
                         "AlertSoldiers finalization for caller {caller} escaped its owner boundary"
@@ -11020,6 +11025,15 @@ impl EngineInner {
                             defer_turn_instruction,
                         )
                     }
+                    crate::ai::CrossNpcAction::RequestPatrolDispatch { .. } => {
+                        self.requeue_isolated_synchronous_action(source_id, action.clone());
+                        self.process_synchronous_patrol_dispatch_requests_for(
+                            sim,
+                            source_id,
+                            assets,
+                            defer_turn_instruction,
+                        )
+                    }
                     crate::ai::CrossNpcAction::RequestAlert { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
                         self.process_synchronous_alert_requests_for(sim, source_id, assets)
@@ -11867,6 +11881,166 @@ impl EngineInner {
                     defer_turn_instruction,
                 );
             }
+        }
+    }
+
+    /// Invoke a patrol chief's dispatch routine exactly as the subordinate's
+    /// direct C++ call does. The routine's return value, rather than a
+    /// prediction from the chief's state, decides whether the subordinate
+    /// resumes its local handler.
+    fn process_synchronous_patrol_dispatch_requests_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        source_id: crate::element::EntityId,
+        assets: &LevelAssets,
+        defer_turn_instruction: bool,
+    ) {
+        let requests = self
+            .world
+            .entities
+            .get_mut(source_id)
+            .and_then(Entity::ai_controller_mut)
+            .map(crate::ai::AiController::take_pending_patrol_dispatch_requests)
+            .unwrap_or_else(|| {
+                panic!(
+                    "patrol-dispatch source {} has no AI controller",
+                    source_id.index()
+                )
+            });
+
+        for request in requests {
+            let crate::ai::CrossNpcAction::RequestPatrolDispatch {
+                chief,
+                caller,
+                stimulus_type,
+                info,
+            } = request
+            else {
+                unreachable!("patrol-dispatch drain returned a different action")
+            };
+            assert_eq!(
+                source_id.index(),
+                caller,
+                "patrol-dispatch caller must be its owner"
+            );
+            let chief_id = self.entity_id_for_index(chief).unwrap_or_else(|| {
+                panic!(
+                    "synchronous patrol dispatch from NPC {caller} references missing chief {chief}"
+                )
+            });
+            if !matches!(self.world.entities.get(chief_id), Some(Entity::Soldier(s)) if s.npc.ai_brain.enemy().is_some())
+            {
+                panic!("patrol chief {chief} is not an enemy soldier");
+            }
+
+            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let chief_building_sector = self
+                .world
+                .entities
+                .get(chief_id)
+                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+                .unwrap_or_else(|| panic!("patrol chief {chief} disappeared"));
+            let mut chief_ctx = {
+                let entity = self
+                    .world
+                    .entities
+                    .get(chief_id)
+                    .unwrap_or_else(|| panic!("patrol chief {chief} disappeared"));
+                build_ai_context_from_entity(
+                    entity,
+                    self.control.frame_counter,
+                    chief_building_sector,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
+                    self.ai.standard_view_polygon_radius,
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
+                    &self.world.fast_grid,
+                    &assets.hiking_paths,
+                    &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
+                )
+            };
+            self.refresh_selected_default_wait_identity(chief_id, &mut chief_ctx);
+            let chief_tick = self.build_npc_tick_data(sim, chief_id, &scratch, assets);
+            let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
+            stimulus.info = info;
+            chief_ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
+            let dispatched = {
+                let global = &mut self.ai.global;
+                let grid = &self.world.fast_grid;
+                self.world
+                    .entities
+                    .get_mut(chief_id)
+                    .and_then(Entity::enemy_ai_mut)
+                    .unwrap_or_else(|| panic!("patrol chief {chief} lost its EnemyAi"))
+                    .dispatch_stimulus_to_whole_patrol(
+                        sim,
+                        &stimulus,
+                        global,
+                        &chief_ctx,
+                        &chief_tick,
+                        Some(grid),
+                    )
+            };
+            chief_ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
+
+            // A successful chief routine can recursively Think and queue the
+            // member walk. Close those effects before the direct call returns.
+            if dispatched {
+                self.drain_direct_ai_owner_boundary_mode(
+                    sim,
+                    chief_id,
+                    assets,
+                    true,
+                    defer_turn_instruction,
+                );
+                continue;
+            }
+
+            // The caller's outer handler resumes after the chief returned
+            // false. Re-enter with the patrol flag set solely as a recursion
+            // guard; no other handler observes that flag.
+            let caller_scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let caller_building_sector = self
+                .world
+                .entities
+                .get(source_id)
+                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+                .unwrap_or_else(|| panic!("patrol-dispatch caller {caller} disappeared"));
+            let caller_ctx = {
+                let entity = self
+                    .world
+                    .entities
+                    .get(source_id)
+                    .unwrap_or_else(|| panic!("patrol-dispatch caller {caller} disappeared"));
+                build_ai_context_from_entity(
+                    entity,
+                    self.control.frame_counter,
+                    caller_building_sector,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
+                    self.ai.standard_view_polygon_radius,
+                    &caller_scratch.ai_entity_views,
+                    &caller_scratch.ai_sight_obstacles,
+                    &self.world.fast_grid,
+                    &assets.hiking_paths,
+                    &self.ai.global.all_soldier_handles,
+                    self.control.sim_config.difficulty,
+                )
+            };
+            let caller_tick = self.build_npc_tick_data(sim, source_id, &caller_scratch, assets);
+            stimulus.to_whole_patrol = true;
+            self.dispatch_think_with_drain_mode(
+                sim,
+                source_id,
+                &stimulus,
+                &caller_ctx,
+                &caller_tick,
+                assets,
+                true,
+                defer_turn_instruction,
+            );
         }
     }
 

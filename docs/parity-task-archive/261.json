@@ -1,0 +1,9 @@
+{
+  "id": "261",
+  "subject": "Use only rectangular victims for PushAside strikes",
+  "description": "SuN1Sh1nE Profile_004 Savegame_024 replay-012 diverged after frame 325 when Soldier111's PushAside damaged antagonist Soldier81 outside the authored rectangle. Original scans only the rectangular push geometry; Soldier81 passed the 45-unit forward interval but failed its 10-unit half-width. Rust then incorrectly recovered the antagonist through a radial fallback shared with other strikes. PushAside now uses only its rectangular scan. The focused geometry regression passes and the representative advances to an independent detection frontier after frame 753.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task261-pushaside-rectangle"
+}

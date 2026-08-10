@@ -1,0 +1,9 @@
+{
+  "id": "262",
+  "subject": "Skip Instruct epilogue after attentive translation terminates",
+  "description": "SuN1Sh1nE Profile_004 Savegame_011 replay-008 diverged after frame 1231 with Soldier91 motion InProgress instead of Terminated. Original Soldier::Translate can synchronously SetState(TERMINATED) for a redundant EnterAttentiveMode, replacing the sequence element while Translate is on the stack; Actor::Instruct then returns before publishing mpOrder or IN_PROGRESS. The attentive translation path now returns a Skip owner barrier when it terminates, and the phase dispatcher omits the accepted-Instruct epilogue. Focused redundant-attentive and StopParry controls pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task262-attentive-instruct-barrier"
+}

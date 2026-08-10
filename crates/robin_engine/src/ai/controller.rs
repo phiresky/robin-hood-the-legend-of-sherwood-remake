@@ -1111,6 +1111,7 @@ impl AiController {
                 action,
                 CrossNpcAction::SendStimulus { .. }
                     | CrossNpcAction::RelayStimulusToPatrolMembers { .. }
+                    | CrossNpcAction::RequestPatrolDispatch { .. }
                     | CrossNpcAction::RequestAlert { .. }
                     | CrossNpcAction::RequestThinkResult { .. }
                     | CrossNpcAction::ReportBackToOfficer { .. }
@@ -1147,6 +1148,7 @@ impl AiController {
                     action,
                     CrossNpcAction::SendStimulus { .. }
                         | CrossNpcAction::RelayStimulusToPatrolMembers { .. }
+                        | CrossNpcAction::RequestPatrolDispatch { .. }
                         | CrossNpcAction::RequestAlert { .. }
                         | CrossNpcAction::RequestThinkResult { .. }
                         | CrossNpcAction::ReportBackToOfficer { .. }
@@ -1180,6 +1182,22 @@ impl AiController {
         }
         self.outbox.reentrant.cross_npc_actions = deferred;
         relays
+    }
+
+    /// Drain only direct patrol-chief dispatch calls. The chief routine's
+    /// boolean controls whether the caller resumes its local event handler.
+    pub fn take_pending_patrol_dispatch_requests(&mut self) -> Vec<CrossNpcAction> {
+        let mut requests = Vec::new();
+        let mut deferred = Vec::with_capacity(self.outbox.reentrant.cross_npc_actions.len());
+        for action in self.outbox.reentrant.cross_npc_actions.drain(..) {
+            if matches!(action, CrossNpcAction::RequestPatrolDispatch { .. }) {
+                requests.push(action);
+            } else {
+                deferred.push(action);
+            }
+        }
+        self.outbox.reentrant.cross_npc_actions = deferred;
+        requests
     }
 
     /// Drain only result-bearing officer reports, leaving ordinary deferred

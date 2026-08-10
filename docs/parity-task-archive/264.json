@@ -1,0 +1,9 @@
+{
+  "id": "264",
+  "subject": "Close the successful patrol-chief actor boundary",
+  "description": "Task260 exposed an earlier frame-373 animation divergence in SuN1Sh1nE Profile_004 Savegame_016 replay-011. A clean merged-wave HEAD still reached frame 889, proving the waves did not introduce it. Original DispatchStimulusToWholePatrol synchronously Thinks the chief and every patrol member, including all StopAll/Face actor work, before returning. Rust closed only callback and relay queues, so later subordinate relays restarted Soldier90's transition. Successful chief dispatch now uses the complete direct owner-boundary drain. Focused successful/empty-chief regressions pass and the representative advances to an independent RNG frontier after frame 1379.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task264-patrol-chief-boundary"
+}
