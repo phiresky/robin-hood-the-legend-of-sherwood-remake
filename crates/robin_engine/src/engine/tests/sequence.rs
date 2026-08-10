@@ -3089,6 +3089,33 @@ fn initialize_mission_script_binds_waypoint_classes() {
     assert_eq!(script.waypoint_instances.len(), 2);
 }
 
+#[test]
+fn mission_startup_runs_after_script_sector_occupants_are_initialized() {
+    use crate::engine::script::{
+        MissionInitializationPhase, capture_mission_initialization_phases,
+    };
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    engine.mission_domain.campaign = crate::campaign::Campaign::default();
+    engine.scripts.mission =
+        Some(MissionScript::from_scb(scripted_waypoint_scb()).expect("minimal mission script"));
+    let assets = crate::engine::LevelAssets::new();
+
+    let (_, phases) = capture_mission_initialization_phases(|| {
+        engine.initialize_mission_script_with(&sim, &assets, 0, &[]);
+    });
+
+    assert_eq!(
+        phases,
+        vec![
+            MissionInitializationPhase::ScriptSectorOccupants,
+            MissionInitializationPhase::StartUpInitialize,
+        ],
+        "RHEngine::Initialize populates sector occupants before calling IEngineScript::Initialize"
+    );
+}
+
 /// Waypoint-script heaps round-trip through plain serde: heap bytes
 /// written to the instance before serialising must come back
 /// verbatim on deserialise.  This is the path `Engine::restore` uses
