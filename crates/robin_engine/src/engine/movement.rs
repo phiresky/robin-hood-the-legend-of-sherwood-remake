@@ -254,6 +254,34 @@ mod group_move_authorization_tests {
     }
 
     #[test]
+    fn explicit_door_speed_transition_ignores_stale_walk_mirror() {
+        assert_eq!(
+            door_pass_sprite_animation_override(
+                OrderType::TransitionWaitingUprightRunningUpright,
+                Some(OrderType::WalkingUpright),
+            ),
+            None,
+            "Original executes the concrete transition inserted by MakeFast"
+        );
+        assert_eq!(
+            door_pass_sprite_animation_override(
+                OrderType::RunningUpright,
+                Some(OrderType::WalkingUpright),
+            ),
+            Some(OrderType::WalkingUpright),
+            "concrete distance motion still accepts the active door-route animation"
+        );
+        assert_eq!(
+            door_pass_sprite_animation_override(
+                OrderType::TransitionWaitingUprightClimbingWallUp,
+                Some(OrderType::TransitionWaitingUprightClimbingWallUp),
+            ),
+            Some(OrderType::TransitionWaitingUprightClimbingWallUp),
+            "an agreeing door-authored transition mirror remains valid"
+        );
+    }
+
+    #[test]
     fn recursively_reached_climb_keeps_transition_facing() {
         assert!(!initialising_climb_uses_lift_direction(
             OrderType::ClimbingLadderUp,
@@ -441,6 +469,22 @@ fn synchronize_selected_door_pass_walk_action(
     if order_uses_distance_motion(selected_action) {
         *current_action = selected_action;
     }
+}
+
+/// Ignore a stale split door-route mirror when a distinct concrete transition
+/// has reached the actor slot.
+///
+/// Original keeps the whole translated route in one order list, so an
+/// explicit transition inserted by MakeFast/MakeSlow is authoritative. Rust's
+/// mirror remains useful for concrete distance motion and for door-authored
+/// transitions where it already agrees with the selected order.
+fn door_pass_sprite_animation_override(
+    selected_action: OrderType,
+    current_action: Option<OrderType>,
+) -> Option<OrderType> {
+    current_action.filter(|current| {
+        order_uses_distance_motion(selected_action) || *current == selected_action
+    })
 }
 
 /// Movement Execute arms which call `Turn()` immediately before entering
@@ -7188,7 +7232,8 @@ impl EngineInner {
 
             // Choose animation based on action state and movement angle.
             let anim = if let Some(dp_anim) =
-                door_pass_anim.filter(|anim| !is_sword_movement_nonanimation(*anim))
+                door_pass_sprite_animation_override(order_action, door_pass_anim)
+                    .filter(|anim| !is_sword_movement_nonanimation(*anim))
             {
                 // PassDoor supplies the current translated movement step, but
                 // Soldier::Execute still dispatches that logical action
