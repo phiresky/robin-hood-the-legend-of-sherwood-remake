@@ -5435,6 +5435,74 @@ mod tests {
     }
 
     #[test]
+    fn sword_damage_on_dying_pc_preserves_the_fresh_sprite_start() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let Entity::Soldier(attacker_entity) = engine.get_entity_mut(attacker).unwrap() else {
+            unreachable!()
+        };
+        let crate::element::AiBrain::Enemy(attacker_ai) = &mut attacker_entity.npc.ai_brain else {
+            unreachable!()
+        };
+        attacker_ai.hth_weapon_id = 1;
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            victim_entity.pc_data_mut().unwrap().life_points = 0;
+            victim_entity.set_posture(Posture::Dead);
+            let actor = victim_entity.actor_data_mut().unwrap();
+            actor.action_state = crate::element::ActionState::WaitingSword;
+            actor.continuation.motion_state = crate::sprite::MotionState::Start;
+        }
+
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data =
+            crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+        engine.resolve_element_priority(&mut damage);
+        let damage_sequence = engine.orders.sequence_manager.launch_element(damage);
+
+        let mut display = crate::engine::HostDisplayState::default();
+        engine.hourglass_phase_sequences(&sim, &mut display, &assets_with_sword_profile(200, 30));
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(damage_sequence, 0)
+                .unwrap()
+                .state,
+            crate::sequence::SequenceState::Terminated
+        );
+        assert_eq!(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .continuation
+                .motion_state,
+            crate::sprite::MotionState::Start,
+            "TranslateSwordDamage changes the selected pointer before Actor::Instruct can stamp InProgress"
+        );
+    }
+
+    #[test]
     fn sword_damage_amulet_coma_terminates_during_translation() {
         let sim = crate::sim_rng::test_context();
         let mut engine = make_engine();

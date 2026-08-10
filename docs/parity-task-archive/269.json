@@ -1,0 +1,9 @@
+{
+  "id": "269",
+  "subject": "Terminate grounded sword damage during translation",
+  "description": "nicouzouf Profile_001 Savegame_049 replay-009 advanced through Task266 and diverged after frame 901 with PC127 motion InProgress instead of Start. The PC's fresh DyingSword Execute correctly produced Start, but a same-frame ReceiveSwordDamage translation on its Dead posture was treated as accepted-empty and the manager stamped InProgress. Original TranslateSwordDamage terminates immediately for grounded postures while the element is still selected, so Actor::Instruct returns before its motion epilogue; a dead rider is the documented exception. Rust now mirrors the full grounded posture arm with strict victim identity. The DyingSword regression, amulet-coma and accepted-empty parry controls pass, and the representative matches exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task269-grounded-sword-damage"
+}

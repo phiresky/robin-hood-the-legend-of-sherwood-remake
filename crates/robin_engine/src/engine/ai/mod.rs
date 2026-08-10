@@ -1258,6 +1258,7 @@ pub(super) fn build_ai_context_from_entity(
         self_animation_reached_action_done,
         self_animation,
         self_selected_element_is_default_wait: None,
+        self_selected_element_priority: None,
         antagonist: None,
         entity_views: entity_views.clone(),
         sight_obstacles: sight_obstacles.clone(),
@@ -1705,22 +1706,22 @@ impl EngineInner {
         entity_id: EntityId,
         ctx: &mut crate::ai::AiContext,
     ) {
-        ctx.self_selected_element_is_default_wait = Some(
-            self.orders
-                .sequence_manager
-                .current_element_for_actor(entity_id)
-                .and_then(|(sequence_id, element_index)| {
-                    self.orders
-                        .sequence_manager
-                        .get_element(sequence_id, element_index)
-                })
-                .is_some_and(|element| {
-                    matches!(
-                        element.command,
-                        crate::element::Command::Wait | crate::element::Command::Freeze
-                    )
-                }),
-        );
+        let selected = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(entity_id)
+            .and_then(|(sequence_id, element_index)| {
+                self.orders
+                    .sequence_manager
+                    .get_element(sequence_id, element_index)
+            });
+        ctx.self_selected_element_is_default_wait = Some(selected.is_some_and(|element| {
+            matches!(
+                element.command,
+                crate::element::Command::Wait | crate::element::Command::Freeze
+            )
+        }));
+        ctx.self_selected_element_priority = Some(selected.map(|element| element.priority));
     }
 
     /// Resolve an AI `HumanHandle` back through the original sparse element

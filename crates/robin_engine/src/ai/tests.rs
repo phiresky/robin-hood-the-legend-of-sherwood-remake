@@ -860,6 +860,7 @@ fn goto_already_on_point_observes_synchronous_pending_halt_multiplicity() {
     let mut ctx =
         goto_short_circuit_ctx(crate::order::OrderType::TransitionWalkingUprightRunningUpright);
     ctx.self_selected_element_is_default_wait = Some(false);
+    ctx.self_selected_element_priority = Some(Some(crate::sequence::SequencePriority::Preference));
     let mut ai = AiController::new(1);
     ai.think_recursion_depth = 1;
     ai.outbox.actor.queue_halt();
@@ -882,6 +883,8 @@ fn goto_already_on_point_observes_synchronous_pending_halt_multiplicity() {
 
     let mut running_ctx = goto_short_circuit_ctx(crate::order::OrderType::RunningUpright);
     running_ctx.self_selected_element_is_default_wait = Some(false);
+    running_ctx.self_selected_element_priority =
+        Some(Some(crate::sequence::SequencePriority::Preference));
     let mut speed_ai = AiController::new(1);
     speed_ai.think_recursion_depth = 1;
     speed_ai.outbox.actor.queue_halt();
@@ -901,6 +904,8 @@ fn goto_already_on_point_observes_synchronous_pending_halt_multiplicity() {
     ] {
         let mut transition_ctx = goto_short_circuit_ctx(animation);
         transition_ctx.self_selected_element_is_default_wait = Some(false);
+        transition_ctx.self_selected_element_priority =
+            Some(Some(crate::sequence::SequencePriority::Preference));
         let mut one_halt_ai = AiController::new(1);
         one_halt_ai.think_recursion_depth = 1;
         one_halt_ai.outbox.actor.queue_halt();
@@ -917,6 +922,8 @@ fn goto_already_on_point_observes_synchronous_pending_halt_multiplicity() {
 
     let mut walking_ctx = goto_short_circuit_ctx(crate::order::OrderType::WalkingUpright);
     walking_ctx.self_selected_element_is_default_wait = Some(false);
+    walking_ctx.self_selected_element_priority =
+        Some(Some(crate::sequence::SequencePriority::Preference));
     let mut two_halt_ai = AiController::new(1);
     two_halt_ai.think_recursion_depth = 1;
     two_halt_ai.outbox.actor.queue_halt();
@@ -947,6 +954,7 @@ fn goto_already_on_point_observes_synchronous_pending_halt_multiplicity() {
 fn goto_pending_halt_does_not_clear_selected_default_wait_animation() {
     let mut ctx = goto_short_circuit_ctx(crate::order::OrderType::AimingWithBow);
     ctx.self_selected_element_is_default_wait = Some(true);
+    ctx.self_selected_element_priority = Some(Some(crate::sequence::SequencePriority::Wait));
     let mut ai = AiController::new(91);
     ai.think_recursion_depth = 1;
     ai.stop_all();
@@ -961,6 +969,43 @@ fn goto_pending_halt_does_not_clear_selected_default_wait_animation() {
         orders[0].order_type,
         crate::order::OrderType::RunningUpright
     );
+}
+
+#[test]
+fn goto_pending_halt_respects_selected_injury_priority_near_route_point() {
+    let mut injury_ctx = goto_short_circuit_ctx(crate::order::OrderType::ExtractingArrowBow);
+    injury_ctx.self_selected_element_is_default_wait = Some(false);
+    injury_ctx.self_selected_element_priority =
+        Some(Some(crate::sequence::SequencePriority::Injury));
+    let route_point = Position {
+        x: injury_ctx.position.x + 1.0,
+        y: injury_ctx.position.y + 2.0,
+        ..injury_ctx.position
+    };
+    let mut injury_ai = AiController::new(29);
+    injury_ai.think_recursion_depth = 1;
+    injury_ai.stop_all();
+
+    injury_ai.go_to(route_point, GotoFlags::RUN, &injury_ctx);
+
+    assert!(!injury_ai.already_on_point);
+    assert!(injury_ai.outbox.reentrant.self_stimuli.is_empty());
+    assert_eq!(injury_ai.take_pending_orders().len(), 1);
+
+    // Stop(PREFERENCE) can stop an equal-priority selected element, so the
+    // same deferred Halt does expose an idle animation and takes Original's
+    // under-five-pixel route shortcut.
+    let mut preference_ctx = injury_ctx;
+    preference_ctx.self_selected_element_priority =
+        Some(Some(crate::sequence::SequencePriority::Preference));
+    let mut preference_ai = AiController::new(29);
+    preference_ai.think_recursion_depth = 1;
+    preference_ai.stop_all();
+
+    preference_ai.go_to(route_point, GotoFlags::RUN, &preference_ctx);
+
+    assert!(preference_ai.already_on_point);
+    assert!(preference_ai.take_pending_orders().is_empty());
 }
 
 #[test]

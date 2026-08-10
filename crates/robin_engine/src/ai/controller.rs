@@ -3031,6 +3031,32 @@ impl AiController {
         if selected_element_is_default_wait {
             return false;
         }
+        let selected_priority = ctx.self_selected_element_priority.unwrap_or_else(|| {
+            panic!(
+                "pending Halt projection for AI {} requires selected element priority",
+                self.me
+            )
+        });
+        let Some(selected_priority) = selected_priority else {
+            // Original Actor::Stop does nothing when mpSequenceElement is
+            // null, so the Halt cannot expose an idle animation.
+            return false;
+        };
+        assert!(
+            !matches!(
+                selected_priority,
+                crate::sequence::SequencePriority::None
+                    | crate::sequence::SequencePriority::NotYetSet
+            ),
+            "selected element for AI {} has unresolved priority {selected_priority:?}",
+            self.me
+        );
+        if selected_priority < crate::sequence::SequencePriority::Preference {
+            // Stop(PREFERENCE) cannot interrupt Injury, Script, lethal, KO,
+            // or the still stronger priorities. Their live animation remains
+            // visible to the following Original GoTo call.
+            return false;
+        }
         if halt_count >= 2 {
             return true;
         }

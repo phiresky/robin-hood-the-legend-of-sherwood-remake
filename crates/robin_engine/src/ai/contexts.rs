@@ -218,6 +218,14 @@ pub struct AiContext {
     /// Refreshed from the sequence manager at every filtered Think boundary.
     pub self_selected_element_is_default_wait: Option<bool>,
 
+    /// Priority of the sequence-manager element currently selected by the
+    /// actor. The outer `Option` distinguishes a context that has not been
+    /// refreshed at the live owner boundary; the inner `Option` represents
+    /// an actor with no selected `mpSequenceElement`. `Halt()` uses
+    /// `Stop(PREFERENCE)`, so deferred Halt projection must consult this
+    /// priority before pretending that the selected animation was stopped.
+    pub self_selected_element_priority: Option<Option<crate::sequence::SequencePriority>>,
+
     /// `true` when the sprite backing `self_animation` has reached or passed
     /// its authored action-done frame/counter. The Original actor hourglass
     /// retires a completed move-to-wait transition before later NPC timer

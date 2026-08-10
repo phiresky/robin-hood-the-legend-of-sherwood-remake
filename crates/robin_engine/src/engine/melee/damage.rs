@@ -593,16 +593,38 @@ impl EngineInner {
             false
         };
 
-        // A VIP PC saved by an amulet becomes unconscious and Lying inside
-        // GetWounded.  Original then enters TranslateSwordDamage's Lying arm
-        // and terminates the damage element immediately, while it is still
-        // the actor's selected translation element.  That synchronous
-        // condolence clears PositionGoalMap and makes Actor::Instruct return
-        // before overwriting the MotionState produced by this frame's
-        // Execute.  Do not route this case through the ordinary accepted-
-        // empty-order tail, which deliberately releases the translation
-        // selection and publishes MotionState::InProgress first.
-        if coma_saved && !pushed {
+        // TranslateSwordDamage terminates immediately for a human who is
+        // already down (including a VIP PC moved to Lying by an amulet save),
+        // except for the Original's dead-rider fall-through. The element is
+        // still Actor::Instruct's selected pointer at this point, so its
+        // synchronous condolence makes Instruct return before the ordinary
+        // mmotionState=IN_PROGRESS epilogue. This is observably different
+        // from a true accepted-empty translation such as an already-held
+        // parry, which publishes InProgress before detaching the element.
+        let grounded_translation_terminates = if pushed || result.is_empty() {
+            false
+        } else {
+            let victim = self.get_entity(victim_id).unwrap_or_else(|| {
+                panic!(
+                    "ReceiveSwordDamage victim {victim_id:?} vanished before grounded-posture translation"
+                )
+            });
+            let posture = victim.element_data().posture;
+            let dead_rider =
+                matches!(victim, Entity::Soldier(s) if s.soldier.rider) && life_points_after <= 0;
+            matches!(
+                posture,
+                Posture::Lying
+                    | Posture::StuckUnderNet
+                    | Posture::Flying
+                    | Posture::Carried
+                    | Posture::OnShoulders
+                    | Posture::Tied
+                    | Posture::Dead
+                    | Posture::DeadBack
+            ) && !dead_rider
+        };
+        if grounded_translation_terminates {
             let (dseq, didx) = damage_element;
             self.orders.sequence_manager.element_terminated(dseq, didx);
         }
