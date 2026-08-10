@@ -11,8 +11,7 @@ front.
 ## Maps in the game
 
 These renders come from full-map screenshots (`cargo run --example render_mission_maps`).
-Click one to open the full image (full-resolution AVIF, encoded with `avifenc`
-using libaom at quality 60, speed 0, and YUV 4:4:4; ask me if you need lossless).
+Click one to open the full image (full-resolution but lossy, ask me if you need lossless).
 
 | Map | Day | Fog | Night |
 | --- | --- | --- | --- |
@@ -134,18 +133,16 @@ Note that in-game, you do not see the whole castle at once, you scroll around th
 ## AI attempt: Greywatch Castle
 
 I (a developer, but not an artist) attempted to create a new map with the help
-of AI. I called it **Greywatch Castle**: an original, portrait-oriented mission
-space with a fortified summit, a river, a mill and bridge hamlet, a church
-village, and several possible infiltration routes. I began by turning those
-gameplay requirements into a rough layout sketch.
+of AI. **Greywatch Castle**: an original, portrait-oriented mission
+space with a fortified summit, a river, a mill and bridge hamlet, a church village.
 
 <table>
   <tr>
-    <td><a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/greywatch-layout-sketch.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/greywatch-layout-sketch.avif" width="360" alt="Layout sketch for Greywatch Castle"></a><br><strong>Layout sketch</strong><br>My plan for the castle, river, roads, and settlements.</td>
-    <td><a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/greywatch-castle-concept.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/greywatch-castle-concept.avif" width="360" alt="Best Greywatch Castle AI concept map"></a><br><strong>Best result</strong><br>My single-pass Greywatch Castle concept.</td>
+    <td><a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/greywatch-layout-sketch.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/greywatch-layout-sketch.avif" width="360" alt="Layout sketch for Greywatch Castle"></a><br><strong>Layout sketch</strong></td>
+    <td><a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/greywatch-castle-concept.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/greywatch-castle-concept.avif" width="360" alt="Best Greywatch Castle AI concept map"></a><br><strong>Best result</strong></td>
   </tr>
 </table>
 
 On first glance this looks pretty good and i think it's good for inspiration, but if you look closer it does not work at all. The river flow along the windmill makes no sense, some of the fences and paths just end unexplicably, and so on. Also, the perspective does not work: It's a semi-perspective render, but we need a orthographic / isometric render - the top of the map must have the same scale as the bottom, so that the fixed-size 2D characters can be placed anywhere and have the same relative size.
 
-I tried a few different approaches - starting with a layout SVG or a sketch, generating the image in tiles (this map is too detailed to generate one shot at full resolution), etc, but it's clear that it's not possible right now to create a new map for this game with low-effort AI.
+I tried a few different approaches - starting with a layout SVG or a sketch, generating the image in tiles (this map is too detailed to generate one shot at full resolution), etc, but it's clear that it's not possible right now to create a new map for this game with only low-effort AI.
