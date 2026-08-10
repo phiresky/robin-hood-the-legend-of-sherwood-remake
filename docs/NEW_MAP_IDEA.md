@@ -78,15 +78,16 @@ legible, but their relative placement is unchanged.
 
 ## Creation of maps
 
-The surviving production art suggests that the original maps were drafted,
-built as 3D scenes, rendered with an orthographic camera, and then painted over
-in 2D. The result was exported as the static terrain bitmap.
+The surviving production art shows that sketches, blockouts, and 3D models
+were used while creating the original maps. It does not establish how the
+final images were produced: they may have been rendered from more detailed 3D
+scenes, refined in 2D, or made with a combination of both.
 
 The Leicester making-of sheet shows that progression particularly clearly:
 
 <p align="center">
-  <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/making-of-leicester.jpg"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/making-of-leicester.jpg" width="372" alt="Making-of sheet showing Leicester from blockout to painted game map"></a>
-  <br><sub>Leicester: 3D construction, render, and painted final map.</sub>
+  <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/making-of-leicester.jpg"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/making-of-leicester.jpg" width="372" alt="Making-of sheet showing Leicester progressing from a blockout to the finished game map"></a>
+  <br><sub>Leicester: construction stages progressing from simple geometry to the finished map.</sub>
 </p>
 
 The original game's concept art also preserves a smaller sketch-to-render
@@ -101,13 +102,13 @@ environment asset:
 </table>
 
 The Derby production images are useful as architectural
-reference for the proposed castle's massing, towers, gatehouse, and defensive
+references for the proposed castle's massing, towers, gatehouse, and defensive
 layers:
 
 <table>
   <tr>
     <td><a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/production-art-derby-blockout.jpg"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/production-art-derby-blockout.jpg" width="360" alt="Original Derby castle blockout"></a><br><strong>Blockout</strong><br>Original 800×1115 artwork.</td>
-    <td><a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/production-art-derby-final.jpg"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/production-art-derby-final.jpg" width="360" alt="Original painted Derby castle production art"></a><br><strong>Painted result</strong><br>Original 593×850 artwork.</td>
+    <td><a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/production-art-derby-final.jpg"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/production-art-derby-final.jpg" width="360" alt="Finished Derby castle production art"></a><br><strong>Finished artwork</strong><br>Original 593×850 artwork.</td>
   </tr>
 </table>
 
@@ -125,9 +126,11 @@ The game itself includes very simplified versions of the 3D models, used to calc
 
 
 
-For a new map, the same pipeline is sensible: lock the gameplay layout
-first, lay it out in 3D with an orthographic camera, test all routes and
-elevations, render the base, paint it to match the original game's style, then author collision, sectors, patches, and ambient animation.
+For a new map, a sensible pipeline would be to lock the gameplay layout first,
+build and test the routes and elevations, and then produce the static background
+with an orthographic camera. That background could come from a detailed 3D
+scene, 2D artwork, or a hybrid process. Collision, sectors, patches, and ambient
+animation would then have to be authored for it.
 
 Gameplay needs to be considered: There should be multiple ways into the castle and routes in general, soldiers should be able to be placed and to patrol some routes, etc. The more the designer of the map knows about how the game works, the better. If you have never played the game, here is a gameplay video: https://www.youtube.com/watch?v=ijkwe15y3e4
 Note that in-game, you do not see the whole castle at once, you scroll around the map.
