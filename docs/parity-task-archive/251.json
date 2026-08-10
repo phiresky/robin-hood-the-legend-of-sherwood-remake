@@ -1,0 +1,9 @@
+{
+  "id": "251",
+  "subject": "Detect active unconscious targets in the 180-degree check",
+  "description": "SuN1Sh1nE Profile_004 Savegame_016 replay-002 diverged after frame 1225 when Soldier90 rejected unconscious PC134 before geometry and LOS, rebuilt its target list, and entered OverviewLookLeft instead of ApproachingSleepingEnemy. Original IsDetecting180Degrees checks the target's raw RHElement::IsActive flag; Rust incorrectly substituted is_able_to_fight, which is false for an unconscious but still-active actor. The gate now uses the projected raw active flag. The representative advances to an independent PC132 EatCmd/Wait animation frontier after frame 1522. Both task-36 controls and the focused unconscious-target regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task251-active-unconscious-detection"
+}

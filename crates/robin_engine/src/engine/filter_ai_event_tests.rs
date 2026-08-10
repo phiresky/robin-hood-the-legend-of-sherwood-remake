@@ -2368,7 +2368,7 @@ fn ai_sequence_launch_drains_immediate_engine_elements_inside_owner_tail() {
 }
 
 #[test]
-fn generic_animation_skip_does_not_skip_action_change() {
+fn animation_execution_gates_do_not_skip_action_change() {
     use crate::element::ActionState;
     use crate::order::OrderType;
 
@@ -2494,9 +2494,11 @@ fn generic_animation_skip_does_not_skip_action_change() {
         // sequence time — so an inactive actor still executes its selected
         // order. Likewise a stale moving action-state cannot suppress
         // ordinary Execute of a selected generic order; only movement
-        // elements belong to the movement driver. The remaining gates skip
-        // generic sprite execution.
-        let expected_last_action = if matches!(skip, "inactive" | "moving") {
+        // elements belong to the movement driver. Original also executes the
+        // selected current order for dead and unconscious actors. Only the
+        // explicit global and per-actor freeze gates suppress sprite work.
+        let expected_last_action = if matches!(skip, "inactive" | "moving" | "dead" | "unconscious")
+        {
             OrderType::WalkingUpright
         } else {
             last_action_before

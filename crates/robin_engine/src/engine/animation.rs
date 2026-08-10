@@ -448,6 +448,80 @@ mod tests {
     }
 
     #[test]
+    fn dead_actor_executes_its_selected_ordinary_animation() {
+        use crate::element::{ActionState, Command, Posture};
+        use crate::order::Order;
+        use crate::sequence::SequenceElement;
+        use crate::sprite::MotionState;
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+        let mut engine = EngineInner::new();
+        let actor = engine.add_entity(weak_soldier_at_action_done(0));
+        {
+            let entity = engine.get_entity_mut(actor).expect("dead actor exists");
+            entity
+                .npc_data_mut()
+                .expect("soldier has NPC data")
+                .life_points = 0;
+            entity.element_data_mut().posture = Posture::DeadBack;
+            entity
+                .actor_data_mut()
+                .expect("soldier has actor data")
+                .action_state = ActionState::Waiting;
+
+            let action = OrderType::WaitingUprightBored;
+            let script = SpriteScript {
+                action_id: action as u16,
+                action_done: 0,
+                average_speed: 0.0,
+                hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+                sum_distance: 0,
+                frame_ids: vec![1],
+                delays: vec![1],
+                distances: vec![0],
+                offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+                sound_ids: vec![0],
+            };
+            let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+            conversion[action as usize] = 0;
+            entity.element_data_mut().sprite = crate::sprite::Sprite::new(
+                std::sync::Arc::new(vec![script]),
+                std::sync::Arc::new(conversion),
+            );
+        }
+
+        let mut selected = SequenceElement::new(1, Command::Wait, Some(actor));
+        selected
+            .orders
+            .push_back(Order::test_new(OrderType::WaitingUprightBored, 0.0, 0.0));
+        let sequence = engine.orders.sequence_manager.launch_element(selected);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+
+        let (_, _, result) = engine.tick_actor_animation_for(
+            &crate::sim_rng::test_context(),
+            &crate::engine::types::LevelAssets::new(),
+            actor,
+        );
+
+        assert_eq!(result.map(|result| result.motion), Some(MotionState::Start));
+        let entity = engine.get_entity(actor).expect("dead actor remains live");
+        assert_eq!(
+            entity.element_data().sprite.last_action,
+            OrderType::WaitingUprightBored
+        );
+        assert_eq!(
+            entity
+                .actor_data()
+                .expect("soldier has actor data")
+                .action_state,
+            ActionState::Bored
+        );
+    }
+
+    #[test]
     fn standing_up_sword_turns_toward_existing_goal_outside_swordfight() {
         let mut pc = Entity::Pc(ActorPc {
             element: ElementData {
@@ -4156,17 +4230,6 @@ impl EngineInner {
             else {
                 return (Vec::new(), AnimCompletionOutcomes::default(), None);
             };
-            let cur_command = self
-                .orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "actor {entity_id:?} current order references missing sequence element {seq_id:?}/{elem_idx} at legacy slot {}",
-                        entity_id.index()
-                    )
-                })
-                .command;
             let exact_selected_bow = actor.active_shot.is_active()
                 && actor.active_shot.sequence_id == Some(seq_id)
                 && actor.active_shot.element_index == elem_idx
@@ -4175,37 +4238,6 @@ impl EngineInner {
                 return (Vec::new(), AnimCompletionOutcomes::default(), None);
             }
             let anim_type = order.order_type;
-            let driving_one_shot = !matches!(
-                cur_command,
-                Command::Wait | Command::WaitTimer | Command::WaitFreeLift
-            );
-            let settled_dead_or_ko_hold = matches!(
-                anim_type,
-                OrderType::BeingDead
-                    | OrderType::BeingDeadFallenBack
-                    | OrderType::BeingDeadSword
-                    | OrderType::BeingDeadBow
-                    | OrderType::BeingDeadFallenBackSword
-                    | OrderType::BeingDeadFallenBackBow
-                    | OrderType::BeingUnconscious
-                    | OrderType::BeingUnconsciousSword
-                    | OrderType::BeingUnconsciousBow
-                    // Being tied sets HumanData::unconscious too, but its
-                    // Wait order remains a live animation hold. Original
-                    // RHElementActorHuman::Execute always calls
-                    // PerformAction for RHANIMATION_BEING_TIED.
-                    | OrderType::BeingTied
-            );
-            if (entity.is_dead()
-                || entity
-                    .human_data()
-                    .map(|human| human.unconscious)
-                    .unwrap_or(false))
-                && !driving_one_shot
-                && !settled_dead_or_ko_hold
-            {
-                return (Vec::new(), AnimCompletionOutcomes::default(), None);
-            }
             let principal_frames = if anim_type == OrderType::TransitionWaitingSwordParryingSwordLow
             {
                 entity
@@ -4807,50 +4839,6 @@ impl EngineInner {
                 } else {
                     None
                 };
-                let driving_one_shot = matches!(cur_command, Some(cmd) if !matches!(
-                    cmd,
-                    Command::Wait | Command::WaitTimer | Command::WaitFreeLift
-                ));
-                let settled_dead_or_ko_hold = matches!(
-                    anim_type,
-                    OrderType::BeingDead
-                        | OrderType::BeingDeadFallenBack
-                        | OrderType::BeingDeadSword
-                        | OrderType::BeingDeadBow
-                        | OrderType::BeingDeadFallenBackSword
-                        | OrderType::BeingDeadFallenBackBow
-                        | OrderType::BeingUnconscious
-                        | OrderType::BeingUnconsciousSword
-                        | OrderType::BeingUnconsciousBow
-                        | OrderType::BeingTied
-                );
-
-                // Dead entities: freeze on last frame unless a
-                // combat one-shot (DYING_*) is still playing.  The
-                // dispatch keeps driving DYING_SWORD even after
-                // `is_dead` is true — that's where `set_posture(Dead)`
-                // runs, and the animation needs to play to visible
-                // completion before the corpse settles.  Skipping too
-                // early here meant killed enemies snapped to the
-                // ground / held their last pose without ever falling.
-                if entity.is_dead() && !driving_one_shot && !settled_dead_or_ko_hold {
-                    break 'actor;
-                }
-
-                // Unconscious entities: freeze on last frame unless a
-                // combat one-shot (falling-hit / KO fall) is still
-                // playing.  The dispatch keeps driving FALLING_HIT_*
-                // even while `unconscious` is set; once the fall
-                // terminates, the entity lies still.  Skipping too
-                // early here meant KO'd NPCs snapped to the ground
-                // without ever playing the fall animation.
-                if entity.human_data().map(|h| h.unconscious).unwrap_or(false)
-                    && !driving_one_shot
-                    && !settled_dead_or_ko_hold
-                {
-                    break 'actor;
-                }
-
                 // AI-driven animation (Pointing, RaisingShield, dying,
                 // falling-hit, BORED idle cycle, …)?  Drive it via
                 // perform_action; on completion, run side-effect

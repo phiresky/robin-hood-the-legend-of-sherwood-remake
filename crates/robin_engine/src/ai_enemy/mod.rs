@@ -2380,9 +2380,10 @@ fn detects_180_degrees(viewer: &Viewer180, target: HumanHandle, ctx: &AiContext)
         );
         return false;
     };
-    // Step 2: both must be able to act — `is_able_to_fight`
-    // is the closest standalone "active" predicate we have.
-    if !view.is_able_to_fight {
+    // Step 2: Original checks the raw RHElement::IsActive flag, not whether
+    // the target can fight. An unconscious actor remains active and can
+    // therefore still pass this standalone 180-degree visibility test.
+    if !view.active {
         return false;
     }
 
@@ -4839,6 +4840,34 @@ mod tests {
                 dynamic_obstacles: Arc::new(Vec::new()),
                 static_active: Arc::new(vec![true]),
             },
+            ..AiContext::default()
+        };
+
+        assert!(ai.is_detecting_180_degrees(2, &ctx));
+    }
+
+    #[test]
+    fn detection_180_accepts_an_active_unconscious_target() {
+        let ai = EnemyAi::new(1);
+        let mut viewer = soldier_view(test_position(0.0, 0.0));
+        viewer.direction = 4;
+        let mut target = soldier_view(test_position(100.0, 0.0));
+        target.is_able_to_fight = false;
+        target.is_unconscious = true;
+        target.active = true;
+
+        let mut views = AiEntityViewMap::new();
+        views.insert(1, viewer);
+        views.insert(2, target);
+        let ctx = AiContext {
+            direction: 4,
+            self_eye_position: MapPoint::ZERO,
+            self_eye_z: 45.0,
+            self_view_radius: 400,
+            sq_self_view_radius: 400.0 * 400.0,
+            self_view_direction: [1.0, 0.0],
+            self_real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
             ..AiContext::default()
         };
 
