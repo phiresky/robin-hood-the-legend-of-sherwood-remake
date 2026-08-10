@@ -1,0 +1,9 @@
+{
+  "id": "350",
+  "subject": "Retire schema-12 linux3 Savegame_038 selected-view contamination",
+  "description": "COMPLETED WITHOUT A RUST CHANGE. The authoritative schema-12 linux3 Profile_001 Savegame_038 trace reproduces its first current divergence after frame 54408 with Original visibility_queries length 16 and Rust length 11. Original queries 0 through 4 share Soldier186's exact eyes point `(1428,1164.0009765625,135.00100708007812)` and target five nearby night-light sector barycentres. Removing that five-query prefix leaves Original queries 5 through 15 bit-for-bit identical to Rust queries 0 through 10 in geometry, boolean result, and order. The prefix is not simulation detection: `RHEngine::Refresh` asks the selected view element to `ShowDetectionPolygon`; `RHElementActorNPC::ShowDetectionPolygon` calls `RHShadowPolygon::DisplayDebug`; and its night-radius `ComputeViewRadius` tests each light-sector barycentre with opaque `IsReachable`. Current Original wraps `DisplayDebug` in `RHParity::PresentationScope`, while `RHFastFindGrid::IsReachable` records opaque queries only outside that scope. Schema 12 predates this presentation suppression. The record is retired pending schema-14 recapture rather than adding render-only queries to Rust simulation or weakening comparison of legitimate simulation visibility calls.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task350-visibility54408"
+}

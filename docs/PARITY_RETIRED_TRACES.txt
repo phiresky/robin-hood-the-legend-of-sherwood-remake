@@ -69,3 +69,5 @@ parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_059/re
 # External parity 20: schema-12 selected-view rendering contaminated visibility queries.
 parity-save-replays-schema12/traces/Savegame_linux2/Profile_002/Savegame_033-session-0001.jsonl.zst
 parity-save-replays-schema12/traces/Savegame_linux2/Profile_002/Savegame_035-session-0001.jsonl.zst
+# Task 350: schema-12 selected-view rendering contaminated visibility queries.
+parity-save-replays-schema12/traces/Savegame_linux3/Profile_001/Savegame_038-session-0001.jsonl.zst
