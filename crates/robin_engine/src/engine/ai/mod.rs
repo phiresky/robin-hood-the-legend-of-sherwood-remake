@@ -1196,6 +1196,7 @@ pub(super) fn build_ai_context_from_entity(
         self_forced_attentive,
         self_animation_reached_action_done,
         self_animation,
+        self_selected_element_is_default_wait: None,
         antagonist: None,
         entity_views: entity_views.clone(),
         sight_obstacles: sight_obstacles.clone(),
@@ -1634,6 +1635,33 @@ fn build_entity_views_inner(engine: &EngineInner) -> AiEntityViewMap {
 }
 
 impl EngineInner {
+    /// Refresh the Original actor's selected `mpWaitSequenceElement` identity
+    /// on a context immediately before an AI call that may project deferred
+    /// Halt effects. The legacy ownership decoder proves that only Wait and
+    /// historical Freeze elements may occupy that pointer.
+    pub(super) fn refresh_selected_default_wait_identity(
+        &self,
+        entity_id: EntityId,
+        ctx: &mut crate::ai::AiContext,
+    ) {
+        ctx.self_selected_element_is_default_wait = Some(
+            self.orders
+                .sequence_manager
+                .current_element_for_actor(entity_id)
+                .and_then(|(sequence_id, element_index)| {
+                    self.orders
+                        .sequence_manager
+                        .get_element(sequence_id, element_index)
+                })
+                .is_some_and(|element| {
+                    matches!(
+                        element.command,
+                        crate::element::Command::Wait | crate::element::Command::Freeze
+                    )
+                }),
+        );
+    }
+
     /// Resolve an AI `HumanHandle` back through the original sparse element
     /// table without inventing an entity kind.  AI still stores these handles
     /// as raw slots, so a target can be a PC, soldier, or civilian.
@@ -3635,7 +3663,7 @@ impl EngineInner {
         };
 
         // -- Phase 6: Build the init ctx and commit patrol/path state. --
-        let init_ctx = {
+        let mut init_ctx = {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
@@ -3654,6 +3682,7 @@ impl EngineInner {
                 self.control.sim_config.difficulty,
             )
         };
+        self.refresh_selected_default_wait_identity(npc_id, &mut init_ctx);
 
         {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
@@ -7455,7 +7484,7 @@ impl EngineInner {
                 .get(npc_id)
                 .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
             let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let ctx = build_ai_context_from_entity(
+            let mut ctx = build_ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
@@ -7469,6 +7498,7 @@ impl EngineInner {
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
+            self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
             self.process_pending_begin_panic_for(sim, assets, npc_id, &ctx);
         }
 
@@ -7488,7 +7518,7 @@ impl EngineInner {
                 .get(npc_id)
                 .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
             let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let ctx = build_ai_context_from_entity(
+            let mut ctx = build_ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
@@ -7502,6 +7532,7 @@ impl EngineInner {
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
+            self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
             self.process_pending_panic_seek_fallback_for(sim, assets, npc_id, &ctx);
         }
 
@@ -7531,7 +7562,7 @@ impl EngineInner {
                 .get(npc_id)
                 .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
             let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let ctx = build_ai_context_from_entity(
+            let mut ctx = build_ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
@@ -7545,6 +7576,7 @@ impl EngineInner {
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
+            self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
             let tick_for_seek =
                 self.build_npc_tick_data_without_forecasts(sim, npc_id, &scratch, assets);
             self.process_pending_script_seek_area_for(sim, assets, npc_id, &ctx, &tick_for_seek);
@@ -7562,7 +7594,7 @@ impl EngineInner {
                 .get(npc_id)
                 .unwrap_or_else(|| panic!("lost-enemy overview owner {npc_id:?} disappeared"));
             let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let ctx = build_ai_context_from_entity(
+            let mut ctx = build_ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
@@ -7576,6 +7608,7 @@ impl EngineInner {
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
+            self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
             let tick = self.build_npc_tick_data_without_forecasts(sim, npc_id, &scratch, assets);
             self.world
                 .entities
@@ -7729,7 +7762,7 @@ impl EngineInner {
         runs: u8,
     ) {
         let scratch = self.build_sim_scratch(sim, assets);
-        let ctx = {
+        let mut ctx = {
             let Some(entity) = self.world.entities.get(civ_id) else {
                 return;
             };
@@ -7753,6 +7786,7 @@ impl EngineInner {
                 self.control.sim_config.difficulty,
             )
         };
+        self.refresh_selected_default_wait_identity(civ_id, &mut ctx);
 
         if let Some(Entity::Civilian(c)) = self.world.entities.get_mut(civ_id)
             && let Some(friendly_ai) = c.npc.ai_brain.friendly_mut()
@@ -7775,6 +7809,7 @@ impl EngineInner {
 
         // Drain the PanicRequest so a door gets picked and GoTo fires.
         self.process_pending_begin_panic_for(sim, assets, civ_id, &ctx);
+        self.refresh_selected_default_wait_identity(civ_id, &mut ctx);
         self.process_pending_panic_seek_fallback_for(sim, assets, civ_id, &ctx);
     }
 
@@ -8013,7 +8048,7 @@ impl EngineInner {
 
         // Build the per-tick AiContext for `go_to` (mirrors how the
         // panic / patrol-coordination paths build it).
-        let ctx = {
+        let mut ctx = {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
@@ -8034,6 +8069,7 @@ impl EngineInner {
                 self.control.sim_config.difficulty,
             )
         };
+        self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
 
         // Compute `WillStopAtNextWaypoint` and call `go_to`.
         let Some(entity) = self.world.entities.get_mut(npc_id) else {
@@ -8654,7 +8690,7 @@ impl EngineInner {
             self.world.entities.get(npc_id).unwrap_or_else(|| {
                 panic!("SetAIState EndThink owner {} disappeared", npc_id.index())
             });
-        let ctx = build_ai_context_from_entity(
+        let mut ctx = build_ai_context_from_entity(
             entity,
             self.control.frame_counter,
             self.entity_building_sector(entity.element_data().sector()),
@@ -8668,6 +8704,7 @@ impl EngineInner {
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
+        self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
         let enemy_tick = matches!(self.world.entities.get(npc_id), Some(Entity::Soldier(_)))
             .then(|| self.build_npc_tick_data_without_forecasts(sim, npc_id, &scratch, assets));
         let stimulus_depth = self
@@ -9493,7 +9530,7 @@ impl EngineInner {
                 continue;
             }
             let scratch = self.build_owner_context_scratch_without_forecast(assets);
-            let ctx = {
+            let mut ctx = {
                 let entity = self.world.entities.get(member).unwrap_or_else(|| {
                     panic!(
                         "RemoveAllSubordinates member {} vanished before ForceReturnToDuty",
@@ -9516,6 +9553,7 @@ impl EngineInner {
                     self.control.sim_config.difficulty,
                 )
             };
+            self.refresh_selected_default_wait_identity(member, &mut ctx);
             let tick_data = self.build_npc_tick_data(sim, member, &scratch, assets);
             {
                 let entity = self.world.entities.get_mut(member).unwrap_or_else(|| {
@@ -11054,7 +11092,7 @@ impl EngineInner {
         let Some(entity @ Entity::Soldier(_)) = self.world.entities.get(target_id) else {
             return;
         };
-        let ctx = build_ai_context_from_entity(
+        let mut ctx = build_ai_context_from_entity(
             entity,
             self.control.frame_counter,
             None,
@@ -11068,6 +11106,7 @@ impl EngineInner {
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
+        self.refresh_selected_default_wait_identity(target_id, &mut ctx);
         // This is a direct recursive `BreakPhalanx` call rather than a typed
         // Think dispatch, but its `PhalanxReinitializeThemList` performs live
         // `IsDetecting180Degrees` checks. Those checks share the Original's
@@ -11122,7 +11161,7 @@ impl EngineInner {
             .get(source_id)
             .map(|entity| self.entity_building_sector(entity.element_data().sector()))
             .unwrap_or_else(|| panic!("tower-guard caller {caller} disappeared"));
-        let ctx = {
+        let mut ctx = {
             let entity = self
                 .world
                 .entities
@@ -11143,6 +11182,7 @@ impl EngineInner {
                 self.control.sim_config.difficulty,
             )
         };
+        self.refresh_selected_default_wait_identity(source_id, &mut ctx);
         let tick = self.build_npc_tick_data(sim, source_id, &scratch, assets);
         let global = &mut self.ai.global;
         let grid = &self.world.fast_grid;
@@ -11196,7 +11236,7 @@ impl EngineInner {
             .get(source_id)
             .map(|entity| self.entity_building_sector(entity.element_data().sector()))
             .unwrap_or_else(|| panic!("AlertSoldiers caller {caller} disappeared"));
-        let ctx = {
+        let mut ctx = {
             let entity = self
                 .world
                 .entities
@@ -11217,6 +11257,7 @@ impl EngineInner {
                 self.control.sim_config.difficulty,
             )
         };
+        self.refresh_selected_default_wait_identity(source_id, &mut ctx);
         let tick = self.build_npc_tick_data(sim, source_id, &scratch, assets);
         let global = &mut self.ai.global;
         let grid = use_formation.then_some(&self.world.fast_grid);
@@ -11349,7 +11390,7 @@ impl EngineInner {
             .get(source_id)
             .map(|entity| self.entity_building_sector(entity.element_data().sector()))
             .unwrap_or_else(|| panic!("HeyFolksLookThere caller {caller} disappeared"));
-        let ctx = {
+        let mut ctx = {
             let entity = self
                 .world
                 .entities
@@ -11370,6 +11411,7 @@ impl EngineInner {
                 self.control.sim_config.difficulty,
             )
         };
+        self.refresh_selected_default_wait_identity(source_id, &mut ctx);
         // The tail of `EVENT_VIEW` is what adopts the sighted enemy as the
         // primary target, so at this point the AI still carries whatever
         // target it had before the sighting. Reconstructing the per-tick
@@ -11865,7 +11907,7 @@ impl EngineInner {
                 .get(source_id)
                 .map(|entity| self.entity_building_sector(entity.element_data().sector()))
                 .unwrap_or_else(|| panic!("Think-result caller {caller} disappeared"));
-            let source_ctx = {
+            let mut source_ctx = {
                 let entity = self
                     .world
                     .entities
@@ -11886,6 +11928,7 @@ impl EngineInner {
                     self.control.sim_config.difficulty,
                 )
             };
+            self.refresh_selected_default_wait_identity(source_id, &mut source_ctx);
             let source_tick = self.build_npc_tick_data(sim, source_id, &source_scratch, assets);
             let global = &mut self.ai.global;
             let grid = &self.world.fast_grid;
@@ -12002,7 +12045,7 @@ impl EngineInner {
                 .get(source_id)
                 .map(|entity| self.entity_building_sector(entity.element_data().sector()))
                 .unwrap_or_else(|| panic!("CALL_ALERT caller {caller} disappeared"));
-            let source_ctx = {
+            let mut source_ctx = {
                 let entity = self
                     .world
                     .entities
@@ -12023,6 +12066,7 @@ impl EngineInner {
                     self.control.sim_config.difficulty,
                 )
             };
+            self.refresh_selected_default_wait_identity(source_id, &mut source_ctx);
             let source_tick = self.build_npc_tick_data(sim, source_id, &source_scratch, assets);
             match continuation {
                 crate::ai::AlertContinuation::CivilianReachedSoldier
@@ -12125,7 +12169,7 @@ impl EngineInner {
                 .get(charly_id)
                 .map(|entity| self.entity_building_sector(entity.element_data().sector()))
                 .unwrap_or_else(|| panic!("officer response requires missing Charly {charly}"));
-            let charly_ctx = {
+            let mut charly_ctx = {
                 let entity =
                     self.world.entities.get(charly_id).unwrap_or_else(|| {
                         panic!("officer response requires missing Charly {charly}")
@@ -12145,6 +12189,7 @@ impl EngineInner {
                     self.control.sim_config.difficulty,
                 )
             };
+            self.refresh_selected_default_wait_identity(charly_id, &mut charly_ctx);
             let charly_tick = self.build_npc_tick_data(sim, charly_id, &scratch, assets);
             let entity = self
                 .world
@@ -12603,7 +12648,7 @@ impl EngineInner {
         }
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-        let ctx = {
+        let mut ctx = {
             let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
                 panic!(
                     "route-arrival continuation owner {} disappeared",
@@ -12628,6 +12673,7 @@ impl EngineInner {
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             ctx
         };
+        self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
         self.world
             .entities
             .get_mut(npc_id)
@@ -12646,6 +12692,95 @@ impl EngineInner {
         // formation equally-close members occupy because later legacy slots
         // have moved by then.
         self.initialize_patrol_for_npc_from_owner_views(assets, npc_id, &scratch.ai_entity_views);
+    }
+
+    /// Invoke the Enemy `ReturnToDuty` override requested by shared AI code.
+    /// The override queues its existing patrol-initialization continuation on
+    /// the same owner FIFO, so the caller observes the complete virtual call
+    /// before later owner work runs.
+    pub(super) fn virtual_return_to_duty_for_npc(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+        flags: crate::ai::DutyFlags,
+        owner_boundary_positions: &[(u32, crate::ai::Position)],
+    ) {
+        // Work already behind this virtual call belongs to the caller after
+        // ReturnToDuty returns. Detach it so work emitted by the override
+        // (notably ResumeReturnToDutyAfterPatrolInit) stays nested ahead of
+        // that caller tail instead of being appended after it.
+        let later_owner_work = {
+            let ai = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| {
+                    panic!("virtual ReturnToDuty owner {} lost its AI", npc_id.index())
+                });
+            std::mem::take(&mut ai.outbox.reentrant.owner_work)
+        };
+        let mut scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let views = std::sync::Arc::make_mut(&mut scratch.ai_entity_views);
+        for &(handle, position) in owner_boundary_positions {
+            if let Some(view) = views.get_mut(&handle) {
+                view.position = position;
+            }
+        }
+
+        let frame = self.control.frame_counter;
+        let in_uninterruptible_command = self.is_very_very_busy(npc_id);
+        let mut ctx = {
+            let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
+                panic!("virtual ReturnToDuty owner {} disappeared", npc_id.index())
+            });
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let mut ctx = build_ai_context_from_entity(
+                entity,
+                frame,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.hiking_paths,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            ctx.in_uninterruptible_command = in_uninterruptible_command;
+            ctx
+        };
+        self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
+        let tick = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+        self.world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "virtual ReturnToDuty owner {} is not a soldier",
+                    npc_id.index()
+                )
+            })
+            .return_to_duty(sim, flags, &ctx, &tick);
+
+        self.world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "virtual ReturnToDuty owner {} lost its AI after override",
+                    npc_id.index()
+                )
+            })
+            .outbox
+            .reentrant
+            .owner_work
+            .extend(later_owner_work);
     }
 
     /// Run Enemy `ReturnToDuty`'s synchronous patrol initialization and then
@@ -12673,7 +12808,7 @@ impl EngineInner {
 
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-        let ctx = {
+        let mut ctx = {
             let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
                 panic!(
                     "return-to-duty continuation owner {} disappeared",
@@ -12698,6 +12833,7 @@ impl EngineInner {
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             ctx
         };
+        self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
         self.world
             .entities
             .get_mut(npc_id)
@@ -12732,7 +12868,7 @@ impl EngineInner {
 
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-        let ctx = {
+        let mut ctx = {
             let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
                 panic!("patrol-start macro owner {} disappeared", npc_id.index())
             });
@@ -12754,6 +12890,7 @@ impl EngineInner {
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             ctx
         };
+        self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
         self.world
             .entities
             .get_mut(npc_id)
@@ -13158,11 +13295,11 @@ impl EngineInner {
             .map(|entity| self.entity_building_sector(entity.element_data().sector()))
             .unwrap_or_else(|| panic!("periodic NPC {} disappeared", npc_id.index()));
         let entity =
-            self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+            self.world.entities.get(npc_id).unwrap_or_else(|| {
                 panic!("periodic NPC {} disappeared before call", npc_id.index())
             });
 
-        let ctx = build_ai_context_from_entity(
+        let mut ctx = build_ai_context_from_entity(
             entity,
             current_frame,
             building_sector,
@@ -13176,6 +13313,12 @@ impl EngineInner {
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
+        self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
+
+        let entity =
+            self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+                panic!("periodic NPC {} disappeared before call", npc_id.index())
+            });
 
         match entity {
             Entity::Soldier(s) => {
@@ -13427,13 +13570,13 @@ impl EngineInner {
             .get(npc_id)
             .map(|entity| self.entity_building_sector(entity.element_data().sector()))
             .unwrap_or_else(|| panic!("macro-timer NPC {} disappeared", npc_id.index()));
-        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
             panic!(
                 "macro-timer NPC {} disappeared before execute",
                 npc_id.index()
             )
         });
-        let ctx = build_ai_context_from_entity(
+        let mut ctx = build_ai_context_from_entity(
             entity,
             current_frame,
             building_sector,
@@ -13447,13 +13590,23 @@ impl EngineInner {
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
+        self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
 
         // Stop the timer and resume the macro VM.  `execute_next_
         // macro_command` may transition the substate (e.g. to
         // `DefaultEnroute` when the byte stream ends) — we don't
         // post-process beyond that; any downstream state changes
         // ride the normal think dispatch.
-        let base = entity
+        let base = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "macro-timer NPC {} disappeared before execute",
+                    npc_id.index()
+                )
+            })
             .ai_controller_mut()
             .unwrap_or_else(|| panic!("macro-timer NPC {} lost its AI controller", npc_id.index()));
         base.macro_timer_is_running = false;
@@ -13638,7 +13791,7 @@ impl EngineInner {
             .get(npc_id)
             .map(|entity| self.entity_building_sector(entity.element_data().sector()))
             .unwrap_or_else(|| panic!("ladder-tail NPC {} disappeared", npc_id.index()));
-        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
             panic!(
                 "ladder-tail NPC {} disappeared before recovery",
                 npc_id.index()
@@ -13659,6 +13812,13 @@ impl EngineInner {
             self.control.sim_config.difficulty,
         );
         ctx.in_uninterruptible_command = in_uninterruptible_command;
+        self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
+        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+            panic!(
+                "ladder-tail NPC {} disappeared before recovery",
+                npc_id.index()
+            )
+        });
         match entity {
             Entity::Soldier(s) => {
                 s.npc

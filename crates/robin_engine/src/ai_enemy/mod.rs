@@ -5478,6 +5478,77 @@ mod tests {
     }
 
     #[test]
+    fn one_point_enemy_path_dispatches_virtual_return_before_patrol_init_resume() {
+        use crate::ai::{PathId, PatrolPath};
+        use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+
+        let paths = vec![RawHikingPath {
+            waypoints: vec![RawWaypoint {
+                x: 699,
+                y: 1464,
+                sector: 50,
+                level: 1,
+                command: WaypointCommand::None,
+            }],
+        }];
+        let mut ai = EnemyAi::new(142);
+        ai.base.current_state = AiState::Default;
+        ai.base.current_substate = Substate::DefaultGotoRouteTurn;
+        ai.base.has_patrol_path = true;
+        ai.base.patrol_path = PatrolPath::new(PathId::new(0).unwrap(), &paths);
+        let ctx = AiContext {
+            position: Position {
+                x: 698.99304,
+                y: 1464.0072,
+                sector: SectorHandle::new(50),
+                level: 1,
+            },
+            direction: 3,
+            self_is_soldier: true,
+            posture: Posture::Upright,
+            self_action_state: crate::element::ActionState::Waiting,
+            self_animation: OrderType::NonanimationEnd,
+            hiking_paths: Arc::new(paths),
+            ..AiContext::default()
+        };
+        let sim = crate::sim_rng::test_context();
+
+        ai.base.think_expected_event_common_stuff(
+            &sim,
+            &Stimulus::new(StimulusType::EventDone),
+            &ctx,
+        );
+
+        let virtual_requests = std::mem::take(&mut ai.base.outbox.reentrant.owner_work);
+        assert!(matches!(
+            virtual_requests.as_slice(),
+            [AiOwnerWork::VirtualReturnToDuty {
+                flags,
+                owner_boundary_positions
+            }] if flags.is_empty() && owner_boundary_positions.is_empty()
+        ));
+        assert!(
+            !ai.base
+                .outbox
+                .reentrant
+                .owner_work
+                .iter()
+                .any(|work| matches!(work, AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. })),
+            "the common controller must not skip the Enemy ReturnToDuty override"
+        );
+
+        ai.return_to_duty(&sim, DutyFlags::empty(), &ctx, &AiPerTickData::stub());
+
+        assert!(matches!(
+            ai.base.outbox.reentrant.owner_work.as_slice(),
+            [AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
+                flags,
+                owner_boundary_positions
+            }] if flags.is_empty() && owner_boundary_positions.is_empty()
+        ));
+    }
+
+    #[test]
     fn return_to_duty_virtual_state_tail_clears_guarded_pc() {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(1);

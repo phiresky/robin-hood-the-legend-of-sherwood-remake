@@ -1,0 +1,9 @@
+{
+  "id": "257",
+  "subject": "Dispatch one-point route ReturnToDuty virtually",
+  "description": "linux3 Profile_003 Savegame_009 replay-010 advanced past Task255 and diverged after frame 18347 with 16 missing visibility queries: two absent eight-ray InitializePatrol scans for Soldier142. Original's shared one-point route branch calls virtual ReturnToDuty; the enemy override synchronously initializes patrol before its common tail. Rust called return_to_duty_common_stuff directly, bypassing the override. Soldier one-point handoff now queues typed owner work that invokes the strict Enemy override, runs the existing patrol-init continuation, and resumes the common tail before any previously queued caller work; civilian behavior remains direct common handling. The representative and both task-36 controls match exact EOF; the focused virtual-dispatch/FIFO regression and the combined 2,858-test robin_engine suite pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task257-virtual-return-to-duty"
+}

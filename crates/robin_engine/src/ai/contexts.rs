@@ -211,6 +211,13 @@ pub struct AiContext {
     /// already playing.
     pub self_animation: crate::order::OrderType,
 
+    /// The sequence-manager element currently selected by the actor is its
+    /// default Wait element (`mpWaitSequenceElement` in the Original).
+    /// `RHElementActor::Stop` deliberately skips that exact element, so a
+    /// deferred `Halt` must not be projected as clearing its live animation.
+    /// Refreshed from the sequence manager at every filtered Think boundary.
+    pub self_selected_element_is_default_wait: Option<bool>,
+
     /// `true` when the sprite backing `self_animation` has reached or passed
     /// its authored action-done frame/counter. The Original actor hourglass
     /// retires a completed move-to-wait transition before later NPC timer

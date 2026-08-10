@@ -857,8 +857,9 @@ fn goto_replayed_near_flags_propagate_stored_tolerance_outside_radius() {
 
 #[test]
 fn goto_already_on_point_observes_synchronous_pending_halt_multiplicity() {
-    let ctx =
+    let mut ctx =
         goto_short_circuit_ctx(crate::order::OrderType::TransitionWalkingUprightRunningUpright);
+    ctx.self_selected_element_is_default_wait = Some(false);
     let mut ai = AiController::new(1);
     ai.think_recursion_depth = 1;
     ai.outbox.actor.queue_halt();
@@ -879,7 +880,8 @@ fn goto_already_on_point_observes_synchronous_pending_halt_multiplicity() {
     assert!(ai.already_on_point);
     assert!(ai.take_pending_orders().is_empty());
 
-    let running_ctx = goto_short_circuit_ctx(crate::order::OrderType::RunningUpright);
+    let mut running_ctx = goto_short_circuit_ctx(crate::order::OrderType::RunningUpright);
+    running_ctx.self_selected_element_is_default_wait = Some(false);
     let mut speed_ai = AiController::new(1);
     speed_ai.think_recursion_depth = 1;
     speed_ai.outbox.actor.queue_halt();
@@ -897,7 +899,8 @@ fn goto_already_on_point_observes_synchronous_pending_halt_multiplicity() {
         crate::order::OrderType::TransitionRunningUprightWaitingUpright,
         crate::order::OrderType::TransitionWalkingCrouchedWaitingCrouched,
     ] {
-        let transition_ctx = goto_short_circuit_ctx(animation);
+        let mut transition_ctx = goto_short_circuit_ctx(animation);
+        transition_ctx.self_selected_element_is_default_wait = Some(false);
         let mut one_halt_ai = AiController::new(1);
         one_halt_ai.think_recursion_depth = 1;
         one_halt_ai.outbox.actor.queue_halt();
@@ -912,7 +915,8 @@ fn goto_already_on_point_observes_synchronous_pending_halt_multiplicity() {
         );
     }
 
-    let walking_ctx = goto_short_circuit_ctx(crate::order::OrderType::WalkingUpright);
+    let mut walking_ctx = goto_short_circuit_ctx(crate::order::OrderType::WalkingUpright);
+    walking_ctx.self_selected_element_is_default_wait = Some(false);
     let mut two_halt_ai = AiController::new(1);
     two_halt_ai.think_recursion_depth = 1;
     two_halt_ai.outbox.actor.queue_halt();
@@ -937,6 +941,26 @@ fn goto_already_on_point_observes_synchronous_pending_halt_multiplicity() {
 
     assert!(!uninterruptible_ai.already_on_point);
     assert_eq!(uninterruptible_ai.take_pending_orders().len(), 1);
+}
+
+#[test]
+fn goto_pending_halt_does_not_clear_selected_default_wait_animation() {
+    let mut ctx = goto_short_circuit_ctx(crate::order::OrderType::AimingWithBow);
+    ctx.self_selected_element_is_default_wait = Some(true);
+    let mut ai = AiController::new(91);
+    ai.think_recursion_depth = 1;
+    ai.stop_all();
+
+    ai.go_to(ctx.position, GotoFlags::RUN, &ctx);
+
+    assert!(!ai.already_on_point);
+    assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+    let orders = ai.take_pending_orders();
+    assert_eq!(orders.len(), 1);
+    assert_eq!(
+        orders[0].order_type,
+        crate::order::OrderType::RunningUpright
+    );
 }
 
 #[test]

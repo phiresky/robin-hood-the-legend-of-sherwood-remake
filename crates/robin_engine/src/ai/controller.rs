@@ -3002,6 +3002,17 @@ impl AiController {
         {
             return false;
         }
+        let selected_element_is_default_wait = ctx
+            .self_selected_element_is_default_wait
+            .unwrap_or_else(|| {
+                panic!(
+                    "pending Halt projection for AI {} requires selected default-Wait identity",
+                    self.me
+                )
+            });
+        if selected_element_is_default_wait {
+            return false;
+        }
         if halt_count >= 2 {
             return true;
         }
@@ -4321,11 +4332,33 @@ impl AiController {
                                                     * crate::position_interface::ASPECT_RATIO,
                                                 initial_view_vector[1],
                                             ) as u16;
-                                        self.return_to_duty_common_stuff(
-                                            sim,
-                                            DutyFlags::empty(),
-                                            ctx,
-                                        );
+                                        if ctx.self_is_soldier {
+                                            // The common C++ route handler calls the
+                                            // virtual ReturnToDuty here. A soldier must
+                                            // enter EnemyAi::return_to_duty so its inline
+                                            // InitializePatrol runs before the common
+                                            // tail. Resume that virtual call at the owner
+                                            // boundary, where the containing Enemy AI and
+                                            // engine patrol geometry are both available.
+                                            self.outbox.reentrant.owner_work.push(
+                                                AiOwnerWork::VirtualReturnToDuty {
+                                                    flags: DutyFlags::empty(),
+                                                    owner_boundary_positions: ctx
+                                                        .entity_views
+                                                        .iter()
+                                                        .map(|(&handle, view)| {
+                                                            (handle, view.position)
+                                                        })
+                                                        .collect(),
+                                                },
+                                            );
+                                        } else {
+                                            self.return_to_duty_common_stuff(
+                                                sim,
+                                                DutyFlags::empty(),
+                                                ctx,
+                                            );
+                                        }
                                     } else {
                                         let mut walk_flags = self.default_path_walking_flags;
                                         if !self.will_stop_at_next_waypoint(sim, hiking_paths) {
