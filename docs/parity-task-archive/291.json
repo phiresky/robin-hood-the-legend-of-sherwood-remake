@@ -1,0 +1,9 @@
+{
+  "id": "291",
+  "subject": "Keep recorded interactions recording-only",
+  "description": "LaunchInteraction while recording could silently accept missing identities, derive incomplete macro data, and also launch the interaction live after storing it. Original already holds concrete PC and antagonist pointers at this boundary, replaces the armed quick-action titbit with the interaction and its running state, then stops recording without live launch. Recorded interactions now strictly preflight both identities before mutation, preserve running in the replacement step, and return with an explicit recording-only disposition; ordinary playback and non-recorded launches remain live. Focused recording, running, missing-target, read-only preflight, and live controls pass. The frame-448 frontier clears and advances to an independent frame-1106 mismatch.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task291-recorded-interaction"
+}

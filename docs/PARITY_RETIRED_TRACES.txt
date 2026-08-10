@@ -13,8 +13,12 @@ Savegame_linux3/Profile_001/Savegame_046/replay-001-session-0001.jsonl.zst
 Savegame_nicouzouf/Profile_001/Savegame_051/replay-003-session-0001.jsonl.zst
 Savegame_nicouzouf/Profile_001/Savegame_051/replay-009-session-0001.jsonl.zst
 Savegame_nicouzouf/Profile_001/Savegame_051/replay-013-session-0001.jsonl.zst
+# Task 293: another current-source-inconsistent projectile membership capture.
+Savegame_nicouzouf/Profile_001/Savegame_065/replay-008-session-0001.jsonl.zst
 # Task 96: seek-point choice contradicts current Original source/assets.
 Savegame_nicouzouf/Profile_001/Savegame_067/replay-008-session-0001.jsonl.zst
 Savegame_nicouzouf/Profile_001/Savegame_067/replay-009-session-0001.jsonl.zst
 # Task 265: pre-restoration Focus/RefreshView behavior contradicts current Original binary/source.
 Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-012-session-0001.jsonl.zst
+# Task 297: fresh Bonus old_elevation exposes uninitialized Original constructor storage.
+Savegame_SuN1Sh1nE/Profile_004/Savegame_036/replay-004-session-0001.jsonl.zst

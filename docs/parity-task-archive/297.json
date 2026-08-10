@@ -1,0 +1,9 @@
+{
+  "id": "297",
+  "subject": "Retire fresh-Bonus uninitialized old-elevation trace",
+  "description": "COMPLETED WITHOUT A RUST CHANGE. The completed e166 sweep of SuN1Sh1nE Profile_004 Savegame_036 replay-004 first diverges after frame 1062 in one field: newly created Bonus321 has Original old_elevation bits 0x6b0c9c51 (about 1.699878e26) while Rust reports 0. Original RHPositionInterface::RHPositionInterface initializes control flags, directions, topology pointers, tolerance, and movement bookkeeping, but never initializes mpointPosition, mpointOldPosition, or the old map/sprite coordinates. RHElementBonus::Initialize creates the object from its master, sets its quantity, and randomizes its sprite frame without calling NewMove or otherwise defining mpointOldPosition. RHPositionInterface::GetOldElevation then exposes mpointOldPosition.mZ directly on the bonus's first compared creation frame. Rust PositionInterface::new deliberately initializes old_position to WorldPoint3D::ZERO, and fresh runtime bonus construction starts from ElementData::default before applying current placement, so its old elevation remains deterministically zero. Every earlier frame matches and the impossible finite Original magnitude proves this is fresh-construction undefined storage rather than saved-state adoption or gameplay behavior. Reproducing the captured stack word in Rust would be unsafe and source-unfaithful. This single trace is retired pending deterministic initialization in the Original oracle and recapture.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task297-bonus-old-elevation"
+}

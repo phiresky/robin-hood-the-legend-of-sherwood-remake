@@ -1,0 +1,9 @@
+{
+  "id": "271",
+  "subject": "Require seek-sector arrival before launching point post-seek work",
+  "description": "A point seek could terminate through its authored Stop transition while still outside the stored seek sector, yet Rust launched the retained post-seek sequence as though the destination had been reached. Original launches point-target post-seek work only when mpSeekSector still equals the actor's current sector after that transition. Point-seek completion now preserves stale attached work rather than executing it when the sector check fails. The focused stopped-short regression passes and the representative matches exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task271-point-postseek-sector"
+}

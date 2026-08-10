@@ -3116,6 +3116,9 @@ mod tests {
             ..LevelAssets::default()
         };
         let mut entity = falling_pushed_soldier(false);
+        entity
+            .position_iface_mut()
+            .set_layer_goal(crate::position_interface::Layer::ZERO);
         let actor = entity.actor_data_mut().unwrap();
         let flight = actor.active_flight.as_mut().unwrap();
         flight.antagonist = None;
@@ -3151,6 +3154,14 @@ mod tests {
             crate::sprite::MotionState::Terminated
         );
         assert_eq!(actor.installed_order, None);
+        let entity = engine.get_entity(victim).unwrap();
+        assert_eq!(entity.element_data().layer(), 3);
+        assert_eq!(entity.element_data().sector(), SectorHandle::new(4));
+        assert_eq!(
+            entity.position_iface().layer_goal(),
+            crate::position_interface::Layer::ZERO,
+            "ladder landing changes the actual layer without retroactively publishing a goal"
+        );
     }
 
     #[test]

@@ -3,7 +3,7 @@
 use super::input::BowTarget;
 use super::*;
 use crate::bow_shot::{self};
-use crate::coordinates::{GroundPoint, MapPoint};
+use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId};
 
 #[cfg(test)]
@@ -355,6 +355,12 @@ impl EngineInner {
             expected_order_id,
             sprite_frozen,
         );
+        for pc_id in events.pc_equip_actions {
+            // The specialized active-shot owner bypasses generic animation
+            // side effects. Close Human::Execute's synchronous
+            // MSG_SELECT_ACTION(BOW) callback before this actor slot returns.
+            self.set_pc_action_from_message(assets, 0, pc_id, crate::profiles::Action::Bow);
+        }
         for result in events.fired {
             let Some(shooter_entity) = self.get_entity(result.shooter) else {
                 tracing::warn!(
@@ -589,7 +595,7 @@ impl EngineInner {
                 sight_obstacles: obstacle_list,
                 water_zones: Some(&assets.water_zones),
             };
-            let (trajectory, terminal_obstacle, terminal_impact) =
+            let (trajectory, terminal_obstacle, terminal_impact, terminal_lands_in_hole) =
                 bow_shot::compute_trajectory_ballistic_with_terminal_impact(
                     bow_point,
                     velocity,
@@ -660,17 +666,6 @@ impl EngineInner {
             );
 
             // ── Spawn the arrow ──────────────────────────────────
-            // Pre-flag `disappear` when the trajectory's final approach
-            // lies inside a hole polygon.  The extension inside
-            // `compute_trajectory_ballistic_impl` may have already slid
-            // the last waypoint to the hole's far edge, so we inspect
-            // the last two points — one of them is the original
-            // pre-extension landing.
-            let lands_in_hole = trajectory
-                .iter()
-                .rev()
-                .take(2)
-                .any(|tp| assets.water_zones.landing_is_in_hole(tp.position.to_map()));
             let mut arrow = bow_shot::spawn_arrow(bow_shot::SpawnArrowParams {
                 shooter: result.shooter,
                 bow_point,
@@ -683,7 +678,7 @@ impl EngineInner {
                 trajectory,
                 damage,
                 layer,
-                lands_in_hole,
+                lands_in_hole: terminal_lands_in_hole,
                 initial_velocity: velocity,
             });
             let Entity::Projectile(arrow_projectile) = &mut arrow else {
@@ -2212,7 +2207,6 @@ impl EngineInner {
         assets: &LevelAssets,
         projectile_id: EntityId,
     ) {
-        self.update_shield_obstacles(assets);
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
             static_obstacles: assets.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
@@ -2242,7 +2236,6 @@ impl EngineInner {
         assets: &LevelAssets,
         arrow_id: EntityId,
     ) {
-        self.update_shield_obstacles(assets);
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
             static_obstacles: assets.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
@@ -2928,30 +2921,24 @@ impl EngineInner {
             return;
         }
 
-        // Water-hole determination has three branches: a standalone
-        // sector-sound scan (branch 1) and two obstacle-anchored
-        // sub-sector iterations (branches 2 & 3, lakes / holes carved
-        // into a roof).  The obstacle is the impact-bounce target.
-        //
-        // Note: `apply_projectile_landing_resolution` does write
-        // `element.set_obstacle_index(...)` before this runs, so we
-        // *could* read the projectile's stored obstacle. We
-        // deliberately don't, because `resolve_projectile_landing`
-        // picks the first projection-area obstacle covering the
-        // landing in screen coords, while splash detection wants the
-        // topmost obstacle by `compute_top_z`.  For overlapping
-        // obstacles — a roof above a water polygon — the topmost rule
-        // is the correct one.  If none of the projection-area obstacles
-        // cover the landing, fall through to the standalone water-zone
-        // scan (branch 1).
+        // Original scopes material lookup to the exact obstacle returned by
+        // the terminal trajectory raycast. Only a bare-ground impact scans
+        // global sound sectors. This prevents a raised dry platform from
+        // inheriting a projected ground-level water/hole polygon.
         let landing_map = position_map;
-        let landing_ground = GroundPoint::new(position.x, position.y);
-        let landing_obstacle = self.find_landing_water_obstacle(assets, landing_ground);
-        let resolved_material = if let Some(obs) = landing_obstacle {
-            crate::water_zones::determine_water_hole_with_obstacle(obs, landing_map)
-        } else {
-            assets.water_zones.determine_water_hole(landing_map)
-        };
+        let obstacle_handle = elem.obstacle_index();
+        let obstacles = self.sight_obstacles(assets);
+        let landing_obstacle = obstacle_handle.map(|handle| {
+            obstacles
+                .get(usize::from(handle))
+                .unwrap_or_else(|| panic!("projectile landing obstacle {handle} disappeared"))
+        });
+        let resolved_material = crate::water_zones::determine_water_hole_scoped(
+            &assets.water_zones,
+            landing_obstacle,
+            landing_map,
+        )
+        .map(|resolution| resolution.material);
 
         let material = match resolved_material {
             Some(m) => m,
@@ -3032,163 +3019,18 @@ impl EngineInner {
         );
     }
 
-    /// Pick the topmost sight obstacle whose ground polygon contains the
-    /// landing impact and whose configuration could yield a water/hole
-    /// hit — i.e. either the obstacle's own material is WATER (branch 2)
-    /// or it carries a non-empty material sub-sector list (branch 3).
-    /// Implements the "highest projection-area" disambiguation.
-    ///
-    /// Selection-rule note: the projectile carries a stored
-    /// `obstacle_index()` by this point (set in
-    /// `apply_projectile_landing_resolution`), but that index comes
-    /// from `FastFindGrid::resolve_projectile_landing` which picks the
-    /// *first* projection-area obstacle covering the landing in screen
-    /// coords. Splash detection wants the *topmost* by `compute_top_z`,
-    /// matching the projection-area disambiguation, so this scan
-    /// recovers the correct obstacle independently rather than reading
-    /// `obstacle_index()`. Pre-filtering on
-    /// `material == WATER || !material_sectors.is_empty()` keeps the
-    /// scan cheap on levels with many non-water obstacles.
-    fn find_landing_water_obstacle<'a>(
-        &'a self,
-        assets: &'a LevelAssets,
-        landing: GroundPoint,
-    ) -> Option<&'a crate::sight_obstacle::SightObstacle> {
-        use crate::geo2d::polygon_contains_point;
-        const WATER_MATERIAL_CODE: u8 = 5;
-        let obstacles = self.sight_obstacles(assets);
-        let mut best: Option<(&crate::sight_obstacle::SightObstacle, f32)> = None;
-        for (idx, obs) in obstacles.iter_indexed() {
-            if !obstacles.is_active(idx as usize) {
-                continue;
-            }
-            if obs.material != WATER_MATERIAL_CODE && obs.material_sectors.is_empty() {
-                continue;
-            }
-            if !obs.box_ground.contains_point(landing) {
-                continue;
-            }
-            if !polygon_contains_point(obs.polygon.as_geo(), landing.to_geo()) {
-                continue;
-            }
-            let height = obs.compute_top_z(landing.x, landing.y);
-            match best {
-                None => best = Some((obs, height)),
-                Some((_, best_h)) if height > best_h => best = Some((obs, height)),
-                _ => {}
-            }
-        }
-        best.map(|(o, _)| o)
-    }
-
     // ─── Shield obstacle update ─────────────────────────────────
 
-    /// Recompute shield obstacles for all actors currently holding a shield.
-    ///
-    /// Called every frame before `tick_arrows` so the arrow-blocking
-    /// geometry is always up-to-date with the actor's current position
-    /// and facing direction.
-    ///
-    /// Shield obstacles are stored in two places:
-    /// 1. `ActorData::shield_obstacle` — used by `tick_arrows` for the
-    ///    per-arrow directional check + 3D intersection.
-    /// 2. `EngineInner::sight_obstacles` (appended after static obstacles) —
-    ///    makes shields visible to all systems that query the global
-    ///    obstacle list (AI vision filters them out via `is_opaque()`,
-    ///    but reachability checks and trajectory checks will see them).
-    fn update_shield_obstacles(&mut self, assets: &LevelAssets) {
-        use crate::bow_shot::{
-            compute_shield_obstacle, shield_params_for_pc, shield_params_for_soldier,
-        };
-
-        // Remove previous frame's dynamic shield obstacles.
-        self.world.dynamic_sight_obstacles.clear();
-
-        let mut clear_obstacles = Vec::new();
-        let mut set_obstacles = Vec::new();
-        let mut dynamic_sight_obstacles = Vec::new();
-
-        for (id, entity) in self.world.entities.humans() {
-            let id: EntityId = id.into();
-            if !entity.is_active() || entity.is_dead() {
-                continue;
-            }
-            let actor = match entity.actor_data() {
-                Some(a) => a,
-                None => continue,
-            };
-
-            if !actor.action_state.is_shield() {
-                // Not holding shield — clear any stale obstacle.
-                if actor.shield_obstacle.is_some() {
-                    clear_obstacles.push(id);
-                }
-                continue;
-            }
-
-            // Compute shield dimensions based on entity type.
-            let params = match entity {
-                Entity::Pc(pc) => {
-                    // Check BigShield via character profile.
-                    let has_big_shield = assets
-                        .profile_manager
-                        .get_character(pc.pc.profile_index)
-                        .map(|p| p.has_action(crate::profiles::Action::BigShield))
-                        .unwrap_or(false);
-                    shield_params_for_pc(has_big_shield)
-                }
-                Entity::Soldier(s) => {
-                    // Look up HtH weapon profile for shield dimensions.
-                    let Some((sw, sh)) = soldier_shield_dimensions(
-                        &assets.profile_manager,
-                        s.soldier.soldier_profile_index,
-                    ) else {
-                        tracing::warn!(
-                            soldier = ?id,
-                            profile_index = ?s.soldier.soldier_profile_index,
-                            "shield update: missing soldier HtH weapon profile; clearing shield obstacle"
-                        );
-                        if actor.shield_obstacle.is_some() {
-                            clear_obstacles.push(id);
-                        }
-                        continue;
-                    };
-                    shield_params_for_soldier(sw, sh)
-                }
-                _ => continue,
-            };
-
-            let elem = entity.element_data();
-            let elevation = elem.position().z;
-            let position_map = elem.position_map();
-            let obstacle = compute_shield_obstacle(
-                crate::coordinates::MapPoint {
-                    x: position_map.x,
-                    y: position_map.y + elevation,
-                },
-                elevation,
-                elem.direction(),
-                &params,
-            );
-
-            // Store on the entity (for tick_arrows per-arrow directional check)
-            // and append to the global obstacle list (for all other systems).
-            dynamic_sight_obstacles.push(obstacle.clone());
-            set_obstacles.push((id, obstacle));
-        }
-
-        self.world.dynamic_sight_obstacles = dynamic_sight_obstacles;
-
-        for id in clear_obstacles {
-            if let Some(actor) = self.get_entity_mut(id).and_then(|e| e.actor_data_mut()) {
-                actor.shield_obstacle = None;
-            }
-        }
-        for (id, obstacle) in set_obstacles {
-            if let Some(actor) = self.get_entity_mut(id).and_then(|e| e.actor_data_mut()) {
-                actor.shield_obstacle = Some(obstacle);
-            }
-        }
+    /// Apply one Original `UpdateShield` call to the owner's retained box.
+    pub(super) fn refresh_retained_shield_obstacle(
+        &mut self,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        let entity = self
+            .get_entity_mut(owner)
+            .unwrap_or_else(|| panic!("shield refresh owner {owner:?} disappeared"));
+        crate::bow_shot::refresh_retained_shield_obstacle(entity, &assets.profile_manager);
     }
 
     // ─── Hero ability tick ──────────────────────────────────────
@@ -3965,6 +3807,55 @@ impl EngineInner {
                     seq_id,
                     elem_idx,
                 } => {
+                    // RHElementActorPC::Execute checks Heal validity again in
+                    // the RHMOTION_DONE arm, immediately before healing (or
+                    // FX activation) and consuming a plant. The target may
+                    // have moved out of the strict 40-unit action range while
+                    // the Healing animation played.
+                    let heal_still_valid = {
+                        let element = self
+                            .orders
+                            .sequence_manager
+                            .get_element(seq_id, elem_idx)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "Heal DONE owner {healer_id:?} lost element {seq_id:?}/{elem_idx}"
+                                )
+                            });
+                        self.check_sequence_element_validity(assets, healer_id, element, true)
+                    };
+                    if !heal_still_valid {
+                        let healer = self
+                            .get_entity_mut(healer_id)
+                            .unwrap_or_else(|| panic!("Heal DONE owner {healer_id:?} disappeared"));
+                        healer.element_data_mut().sprite.last_motion_state =
+                            Some(crate::sprite::MotionState::Terminated);
+                        let actor = healer
+                            .actor_data_mut()
+                            .expect("Heal DONE owner lost actor state");
+                        actor.continuation.motion_state = crate::sprite::MotionState::Terminated;
+                        // Execute returned TERMINATED: close the selected
+                        // order through the ordinary Actor::Hourglass path,
+                        // including the synchronous owner condolence card.
+                        self.do_next_order(seq_id, elem_idx);
+                        self.dispatch_condolations_for_owner_boundary(sim, healer_id, assets);
+                        // The actor envelope normally serializes Execute's
+                        // return after the synchronous completion stack. This
+                        // DONE guard closes that stack locally, so publish the
+                        // returned TERMINATED value after it unwinds as well.
+                        let healer = self.get_entity_mut(healer_id).unwrap_or_else(|| {
+                            panic!("Heal DONE owner {healer_id:?} disappeared after condolence")
+                        });
+                        healer.element_data_mut().sprite.last_motion_state =
+                            Some(crate::sprite::MotionState::Terminated);
+                        healer
+                            .actor_data_mut()
+                            .expect("Heal DONE owner lost actor state after condolence")
+                            .continuation
+                            .motion_state = crate::sprite::MotionState::Terminated;
+                        continue;
+                    }
+
                     // Heal effect depends on the antagonist's type.
                     let target_is_fx_target = self
                         .get_entity(target_id)

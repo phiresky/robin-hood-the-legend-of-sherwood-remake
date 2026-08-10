@@ -3658,12 +3658,6 @@ impl EngineInner {
                             entity_id,
                         ));
 
-                        // PC validity belongs to the live Execute entry. Earlier
-                        // actor callbacks may replace this PC's selected order in
-                        // the same owner walk, so sampling in a global pre-pass
-                        // would validate stale work.
-                        self.pre_tick_pc_execute_validity_for(assets, entity_id);
-
                         // RHElementActor::Hourglass calls NewMove after lazy Wait
                         // installation and immediately before it samples the
                         // current order ID and enters Execute. The delayed-position
@@ -3728,8 +3722,17 @@ impl EngineInner {
                                 actor.last_execute_order_id != Some(order_id);
                             actor.last_execute_order_id = Some(order_id);
                         }
-                        let movement_selection =
-                            selected_order.and_then(|(seq_id, elem_idx, order_id)| {
+                        // Human/PC validity belongs to the live Execute entry,
+                        // after Actor::Hourglass has established mbNewOrder for
+                        // this exact selected order. Earlier actor callbacks may
+                        // replace the selected order in the same owner walk, so
+                        // sampling in a global pre-pass would validate stale work.
+                        let validity_short_circuited =
+                            self.pre_tick_human_execute_validity_for(assets, entity_id);
+                        let movement_selection = (!validity_short_circuited)
+                            .then_some(selected_order)
+                            .flatten()
+                            .and_then(|(seq_id, elem_idx, order_id)| {
                                 self.orders
                                     .sequence_manager
                                     .get_element(seq_id, elem_idx)
@@ -3776,8 +3779,10 @@ impl EngineInner {
                                             })
                                     })
                             });
-                        let melee_selection =
-                            selected_order.and_then(|(seq_id, elem_idx, order_id)| {
+                        let melee_selection = (!validity_short_circuited)
+                            .then_some(selected_order)
+                            .flatten()
+                            .and_then(|(seq_id, elem_idx, order_id)| {
                                 let order_type = self
                                     .orders
                                     .sequence_manager
@@ -3797,12 +3802,13 @@ impl EngineInner {
                         // successor order, that successor must wait until the
                         // actor's next Hourglass rather than entering generic
                         // Execute later in this same slot.
-                        let bow_selection = (selected_owner_family
-                            == Some(ExecuteOwnerFamily::Bow))
+                        let bow_selection = (!validity_short_circuited
+                            && selected_owner_family == Some(ExecuteOwnerFamily::Bow))
                         .then(|| self.selected_bow_order(entity_id))
                         .flatten();
                         let ability_selection = selected_order.filter(|(seq, elem, order_id)| {
-                            selected_owner_family == Some(ExecuteOwnerFamily::Ability)
+                            !validity_short_circuited
+                                && selected_owner_family == Some(ExecuteOwnerFamily::Ability)
                                 && self
                                     .world
                                     .entities
@@ -3828,7 +3834,9 @@ impl EngineInner {
                                     })
                         });
                         let beggar_selection = selected_order.and_then(|(seq, elem, order_id)| {
-                            if selected_owner_family != Some(ExecuteOwnerFamily::Beggar) {
+                            if validity_short_circuited
+                                || selected_owner_family != Some(ExecuteOwnerFamily::Beggar)
+                            {
                                 return None;
                             }
                             self.orders
@@ -3855,7 +3863,9 @@ impl EngineInner {
                             ability_selection,
                             beggar_selection,
                         );
-                        let specialized_execute_motion = selected_owner_family
+                        let specialized_execute_motion = (!validity_short_circuited)
+                            .then_some(selected_owner_family)
+                            .flatten()
                             .filter(|family| *family != ExecuteOwnerFamily::GenericAnimation)
                             .and_then(|_| {
                                 specialized_execute_motion(
@@ -3882,7 +3892,8 @@ impl EngineInner {
                             .continuation
                             .motion_state = motion;
                         }
-                        if selected_owner_family.is_some()
+                        if !validity_short_circuited
+                            && selected_owner_family.is_some()
                             && self.world.entities.get(entity_id).is_some_and(|entity| {
                                 entity.element_data().sprite.last_motion_state
                                     == Some(crate::sprite::MotionState::Done)
@@ -3907,7 +3918,8 @@ impl EngineInner {
                             ActorAnimationBoundaryPhase::GenericExecute(entity_id),
                         );
                         let (combat_injury_terminated, mut outcomes, mut execute_result) =
-                            if movement_selection.is_some()
+                            if validity_short_circuited
+                                || movement_selection.is_some()
                                 || melee_selection.is_some()
                                 || bow_selection.is_some()
                                 || ability_selection.is_some()

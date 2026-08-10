@@ -1,0 +1,9 @@
+{
+  "id": "278",
+  "subject": "Retain shield geometry between explicit UpdateShield calls",
+  "description": "nicouzouf Profile_001 Savegame_020 replay-006 diverged after frame 584 because Rust invented a parry against Soldier58's sector-15 shield. Original stores the shield box and refreshes it only at explicit UpdateShield call sites; projectile processing must not silently recompute or globally publish it each frame. Its RHSightObstacle::UpdateBox also normalizes the already aspect-compressed GetDirectionVector before constructing the perpendicular, rather than treating that compass vector as already normalized. Shield geometry now follows that exact construction and retained lifecycle across translation, animation, AI facing/phalanx, and PC WalkingWithShield Execute sites. Focused diagonal geometry and stale-until-refresh controls pass. The frame-584 parry clears and the representative advances to an unrelated projectile frontier after frame 587.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task278-retained-shield-geometry"
+}

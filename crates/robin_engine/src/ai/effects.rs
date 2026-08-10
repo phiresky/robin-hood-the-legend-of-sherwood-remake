@@ -305,6 +305,14 @@ pub struct AiActorOutbox {
     pub lost_enemy_overview_after_quit: bool,
     pub stop_menace: bool,
     pub lower_shield: bool,
+    /// Perform the Original's explicit `UpdateShield` after an AI facing or
+    /// phalanx update.
+    #[serde(default)]
+    pub refresh_shield: bool,
+    /// Complete EventArrowLaunched's synchronous post-launch
+    /// `SetStates(Upright, HoldingShield); UpdateShield();` pair.
+    #[serde(default)]
+    pub raise_shield_immediately: bool,
     pub deactivate: bool,
     pub halt: bool,
     /// Additional synchronous `Halt()` calls coalesced into this deferred
@@ -443,6 +451,8 @@ pub(crate) struct AiActorCoreEffects {
     pub launch_on_target: Vec<(NpcHandle, crate::element::Command)>,
     pub say_on_target: Vec<(NpcHandle, Remark)>,
     pub launch_sequences: Vec<crate::sequence::Sequence>,
+    pub refresh_shield: bool,
+    pub raise_shield_immediately: bool,
     pub look_sidewards: Option<LookDirection>,
     pub add_detectables: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
     pub delete_detectables: Vec<crate::element::DetectableType>,
@@ -463,6 +473,8 @@ impl AiActorOutbox {
             || self.lost_enemy_overview_after_quit
             || self.stop_menace
             || self.lower_shield
+            || self.refresh_shield
+            || self.raise_shield_immediately
             || self.deactivate
             || self.halt
             || self.blink_all_enemies
@@ -555,6 +567,8 @@ impl AiActorOutbox {
             launch_on_target: std::mem::take(&mut self.launch_on_target),
             say_on_target: std::mem::take(&mut self.say_on_target),
             launch_sequences: std::mem::take(&mut self.launch_sequences),
+            refresh_shield: std::mem::take(&mut self.refresh_shield),
+            raise_shield_immediately: std::mem::take(&mut self.raise_shield_immediately),
             look_sidewards: self.look_sidewards.take(),
             add_detectables: std::mem::take(&mut self.add_detectables),
             delete_detectables: std::mem::take(&mut self.delete_detectables),

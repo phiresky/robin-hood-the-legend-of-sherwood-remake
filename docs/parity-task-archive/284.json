@@ -1,0 +1,9 @@
+{
+  "id": "284",
+  "subject": "Mirror live and stamped shield movement rewrites",
+  "description": "Shield movement animation selection conflated the PC override with the base Actor path and gated the result on concrete sprite/lift state. Original's PC override uses the movement element's stamped Upright plus shield action, while delegated actors inspect the live MovingShield state; both author the logical shield movement before sprite resolution. Rust now preserves that split, including the soldier live-state rewrite and the PC stamped override without an invented sprite or lift bypass. Focused NPC, PC, terminal, and frozen-owner controls pass. The frame-702 frontier clears and advances to an independent frame-1946 mismatch.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task284-shield-movement-rewrite"
+}

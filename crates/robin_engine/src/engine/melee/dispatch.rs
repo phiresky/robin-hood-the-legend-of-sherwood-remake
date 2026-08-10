@@ -695,20 +695,23 @@ impl<'a> ShieldCommandContext<'a> {
             }
         }
 
-        // Action-state branch.  If already shielding (HOLDING_SHIELD or
-        // MOVING_SHIELD), terminate the RAISE_SHIELD element — only
-        // the danger-point/protected updates above are wanted — and,
-        // when a protectee is set, launch a fresh SEEK so the
-        // protector follows the protectee.  WALKING_UPRIGHT with
-        // tolerance 50 when the danger point is zero; tolerance 0 +
-        // SEEK_SHIELD when a danger point is set.
-        let action_state = self
+        // Human-base Translate treats only HOLDING_SHIELD as redundant.
+        // RHElementActorPC's override additionally accepts MOVING_SHIELD so a
+        // player protector can refresh its danger point/protectee while
+        // following them. A soldier in MOVING_SHIELD must still append the
+        // ordinary raising animation.
+        let (action_state, owner_is_pc) = self
             .entities
             .get(owner)
-            .and_then(|e| e.actor_data())
-            .map(|a| a.action_state);
-        match action_state {
-            Some(ActionState::HoldingShield) | Some(ActionState::MovingShield) => {
+            .map(|entity| {
+                (
+                    entity.actor_data().map(|actor| actor.action_state),
+                    entity.is_pc(),
+                )
+            })
+            .unwrap_or((None, false));
+        match (action_state, owner_is_pc) {
+            (Some(ActionState::HoldingShield), _) | (Some(ActionState::MovingShield), true) => {
                 self.sequence_manager.element_terminated(seq_id, elem_idx);
                 let protected_now = self
                     .entities
@@ -753,7 +756,7 @@ impl<'a> ShieldCommandContext<'a> {
                 }
                 return None;
             }
-            None => {
+            (None, _) => {
                 self.sequence_manager.element_impossible(seq_id, elem_idx);
                 return None;
             }
@@ -791,7 +794,6 @@ impl<'a> ShieldCommandContext<'a> {
                 actor.shield_face_point = danger_pt;
                 started = true;
             }
-            entity.set_posture(Posture::Upright);
         }
         if started {
             // Push the order onto the element so `do_next_order` sees
@@ -1284,7 +1286,12 @@ mod swordfight_preparation_tests {
 #[cfg(test)]
 mod shield_order_tests {
     use super::ShieldCommandContext;
+    use crate::element::{
+        ActionState, ActorData, ActorSoldier, ElementData, ElementKind, Entity, HumanData, NpcData,
+        Posture, SoldierData,
+    };
     use crate::entities::Entities;
+    use crate::entity_id::{EntityId, SoldierId};
     use crate::order::OrderType;
     use crate::sequence::{Sequence, SequenceElement, SequenceManager};
     use crate::{element::Command, sequence::SequenceState};
@@ -1319,5 +1326,93 @@ mod shield_order_tests {
             assert_eq!(element.orders[0].order_type, order_type);
             assert!(!element.orders[0].compute_direction);
         }
+    }
+
+    fn lying_soldier() -> Entity {
+        Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                active: true,
+                posture: Posture::Lying,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            soldier: SoldierData::default(),
+        })
+    }
+
+    #[test]
+    fn ordinary_raise_shield_retains_lying_until_generated_stand_up_executes() {
+        let owner = EntityId::Soldier(SoldierId(0));
+        let mut entities = Entities::from_legacy_slots(vec![Some(lying_soldier())]);
+        let mut sequence_manager = SequenceManager::new();
+        let mut sequence = Sequence::new();
+        sequence.append_element(SequenceElement::new_generic(
+            1,
+            Command::RaiseShield,
+            Some(owner),
+        ));
+        let sequence_id = sequence_manager.launch_sequence(sequence);
+        let mut next_order_id = 1;
+        let mut context =
+            ShieldCommandContext::new(&mut entities, &mut sequence_manager, &mut next_order_id);
+
+        // MakePostureTransition has already prepended this order. Translation
+        // may append RaisingShield, but Original does not stand the actor up
+        // until StandingUp itself executes and returns MotionState::Start.
+        context.push_order(sequence_id, 0, OrderType::StandingUp);
+        context.dispatch(owner, Command::RaiseShield, sequence_id, 0);
+
+        assert_eq!(
+            entities.get(owner).unwrap().element_data().posture,
+            Posture::Lying
+        );
+        assert_eq!(
+            sequence_manager
+                .get_element(sequence_id, 0)
+                .unwrap()
+                .orders
+                .iter()
+                .map(|order| order.order_type)
+                .collect::<Vec<_>>(),
+            [OrderType::StandingUp, OrderType::RaisingShield]
+        );
+    }
+
+    #[test]
+    fn instant_raise_shield_still_enters_upright_holding_state_immediately() {
+        let owner = EntityId::Soldier(SoldierId(0));
+        let mut entities = Entities::from_legacy_slots(vec![Some(lying_soldier())]);
+        let mut sequence_manager = SequenceManager::new();
+        let mut sequence = Sequence::new();
+        sequence.append_element(SequenceElement::new_generic(
+            1,
+            Command::RaiseShieldInstantly,
+            Some(owner),
+        ));
+        let sequence_id = sequence_manager.launch_sequence(sequence);
+        let mut next_order_id = 1;
+
+        ShieldCommandContext::new(&mut entities, &mut sequence_manager, &mut next_order_id)
+            .dispatch(owner, Command::RaiseShieldInstantly, sequence_id, 0);
+
+        let entity = entities.get(owner).unwrap();
+        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(
+            entity.actor_data().unwrap().action_state,
+            ActionState::HoldingShield
+        );
+        assert_eq!(
+            sequence_manager
+                .get_element(sequence_id, 0)
+                .unwrap()
+                .orders
+                .iter()
+                .map(|order| order.order_type)
+                .collect::<Vec<_>>(),
+            [OrderType::WaitingShield]
+        );
     }
 }

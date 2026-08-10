@@ -1,0 +1,9 @@
+{
+  "id": "288",
+  "subject": "Preserve moving-sword state on blocked terminal movement",
+  "description": "A terminal blocked strafe correctly made its movement element Impossible but Rust's shared abort cleanup also invented WaitingSword. Original Human sword-movement Execute has no ABORTED switch arm, so the live MovingSword or MovingFastSword action state survives while Actor::Hourglass rejects the element. Aborted sword movement now retains those live combat-motion states, while nonmoving and ordinary movement families keep their established normalization. Focused state and blocked-order controls pass and the representative matches exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task288-blocked-sword-state"
+}

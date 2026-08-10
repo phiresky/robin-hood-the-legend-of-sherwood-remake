@@ -1,0 +1,9 @@
+{
+  "id": "283",
+  "subject": "Restore Bow action at active-shot equip START",
+  "description": "A non-script PC bow equip owned by the specialized active-shot runner bypassed Human::Execute's synchronous MSG_SELECT_ACTION(BOW), leaving the portrait action and selection side effects stale. The bow owner now publishes that callback at equip START. Messenger handling also mirrors Original's addressed non-NoAction path: a selected target in a multi-selection first collapses selection to that PC, performs single-selection restitution, then fans out the requested action, preserving another PC's retained shot. Script-driven equips remain suppressed. Focused equip, script, and multi-selection controls pass; the former frame-723/panic family clears and advances to an independent frame-948 mismatch.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task283-active-equip-selection"
+}

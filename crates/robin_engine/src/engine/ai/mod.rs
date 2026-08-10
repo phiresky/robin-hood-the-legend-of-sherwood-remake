@@ -7208,6 +7208,24 @@ impl EngineInner {
                 });
         }
 
+        if effects.raise_shield_immediately {
+            let entity = self
+                .world
+                .entities
+                .get_mut(npc_id)
+                .unwrap_or_else(|| panic!("instant shield owner {npc_id:?} disappeared"));
+            entity.set_posture(crate::element::Posture::Upright);
+            entity
+                .actor_data_mut()
+                .expect("instant shield owner is not an actor")
+                .action_state = crate::element::ActionState::HoldingShield;
+            self.refresh_retained_shield_obstacle(assets, npc_id);
+        }
+
+        if effects.refresh_shield {
+            self.refresh_retained_shield_obstacle(assets, npc_id);
+        }
+
         // Process pending LookSidewards — build a one- or two-element
         // sequence of LookLeft / LookRight / LeanOut commands and
         // launch it.

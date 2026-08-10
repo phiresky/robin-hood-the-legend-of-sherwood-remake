@@ -62,14 +62,13 @@ impl std::fmt::Display for SightObstacleIndex {
 // ─── Two-part obstacle list (static + dynamic) ────────────────────
 
 /// Borrowed view over the level's static sight obstacles plus any
-/// per-frame dynamic obstacles (currently just shields). Replaces the
+/// engine-owned dynamic obstacles. Replaces the
 /// flat `&[SightObstacle]` parameter that pre-LevelGrid code used to
 /// pass around.
 ///
 /// Static obstacles live in `LevelAssets::static_sight_obstacles`
 /// (Arc-shared so `EngineInner::clone` is cheap); dynamic obstacles live in
-/// `EngineInner::dynamic_sight_obstacles` and are rebuilt each tick by
-/// `update_shield_obstacles`. The "global obstacle index" used by
+/// `EngineInner::dynamic_sight_obstacles`. The "global obstacle index" used by
 /// patches and per-actor `obstacle_index` lookups continues to be a
 /// flat 0..N indexing — entries 0..static_len() come from the static
 /// slice, entries static_len().. come from the dynamic slice.

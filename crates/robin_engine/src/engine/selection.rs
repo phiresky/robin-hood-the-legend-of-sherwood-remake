@@ -357,9 +357,9 @@ impl EngineInner {
             .and_then(|pc| pc.enable_all_actions_temp(is_swordfighting, &actions));
 
         // `EnableAllActionsTemp` forwards MSG_SELECT_ACTION with this PC as
-        // the message target. `RHEngine::SelectAction` accepts that target
-        // only when it is selected, then applies the action to the complete
-        // selection (including unselect/preview side effects).
+        // the message target. When that target belongs to a multi-selection,
+        // RHMessenger first reduces the selection to this PC; the engine then
+        // performs the ordinary selected-action side effects for it alone.
         if let Some(action) = restore_action
             && self.players.seats[seat].selection.contains(&pc_id)
         {
@@ -613,7 +613,9 @@ impl EngineInner {
     ///
     /// - If `pc_id` is not currently selected, only sets `current_action` on
     ///   that one PC.
-    /// - If `pc_id` is selected, sets `current_action` on every selected PC.
+    /// - A targeted non-NoAction message with a multi-selection first reduces
+    ///   the selection to `pc_id`; otherwise the selected branch applies the
+    ///   action to every selected PC.
     ///
     /// The selected branch also updates the seat's messenger-level armed
     /// action. The not-selected branch deliberately leaves it untouched.
@@ -656,6 +658,28 @@ impl EngineInner {
                 "parity action: set_pc_action enter pc={pc_id:?} action={action:?} seat={seat}"
             );
         }
+
+        // RHMessenger handles a non-NoAction MSG_SELECT_ACTION addressed to
+        // one selected PC before RHEngine sees the action: with multiple PCs
+        // selected it synchronously forwards UNSELECT_CHARACTER(all), then
+        // SELECT_CHARACTER(target). SelectPC's single-selection restitution
+        // therefore runs before the requested action is fanned out. Preserve
+        // both that ordering and the case where the target became
+        // unselectable between the two messages.
+        if action != Action::NoAction
+            && self.players.seats[seat].selection.len() > 1
+            && self.players.seats[seat].selection.contains(&pc_id)
+        {
+            let old_selection = self.players.seats[seat].selection.clone();
+            for old_id in old_selection {
+                if let Some(Entity::Pc(pc)) = self.get_entity_mut(old_id) {
+                    pc.pc.portrait.open = false;
+                }
+            }
+            self.players.seats[seat].selection.clear();
+            self.select_pc(assets, seat, pc_id, false, false);
+        }
+
         if !self.players.seats[seat].selection.contains(&pc_id) {
             // "Not-selected" branch — only set the current action on the
             // single PC, no cleanup of the outgoing action. Don't call
@@ -1461,6 +1485,20 @@ mod tests {
     use crate::element::{ActorPc, ElementData, ElementKind, Posture};
     use crate::sequence::SequenceState;
 
+    fn add_selectable_test_pc(engine: &mut EngineInner) -> EntityId {
+        engine.add_entity(Entity::Pc(ActorPc {
+            element: ElementData {
+                active: true,
+                kind: ElementKind::ActorPc,
+                posture: Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        }))
+    }
+
     #[test]
     fn single_selection_restitution_replays_current_action_side_effects() {
         let assets = LevelAssets::default();
@@ -1499,6 +1537,57 @@ mod tests {
                 .state,
             SequenceState::Interrupted,
             "reselecting one PC must resend its action and run SelectAction's stop-in-place hook"
+        );
+    }
+
+    #[test]
+    fn targeted_bow_action_collapses_multi_selection_and_retains_other_pc_shot() {
+        let assets = LevelAssets::default();
+        let mut engine = EngineInner::new();
+        let target_pc = add_selectable_test_pc(&mut engine);
+        let shooting_pc = add_selectable_test_pc(&mut engine);
+        engine.players.seats[0].selection = vec![target_pc, shooting_pc];
+
+        let mut shooting = SequenceElement::new(1, Command::ShootBow, Some(shooting_pc));
+        shooting.priority = SequencePriority::Normal;
+        let shooting_sequence = engine.orders.sequence_manager.launch_element(shooting);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(shooting_sequence, 0);
+
+        engine.set_pc_action_from_message(&assets, 0, target_pc, Action::Bow);
+
+        assert_eq!(engine.players.seats[0].selection, vec![target_pc]);
+        assert_eq!(
+            engine
+                .get_entity(target_pc)
+                .and_then(Entity::pc_data)
+                .expect("target PC exists")
+                .current_action,
+            Action::Bow
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(shooting_sequence, 0)
+                .expect("other PC's shot remains registered")
+                .state,
+            SequenceState::InProgress,
+            "the action fanout must not interrupt a retained shot owned by the unselected PC"
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .any(|sequence| {
+                    sequence.elements.iter().any(|element| {
+                        element.owner == Some(target_pc) && element.command == Command::EquipBow
+                    })
+                }),
+            "the specialized single-PC Bow path must still launch EquipBow for the target"
         );
     }
 }

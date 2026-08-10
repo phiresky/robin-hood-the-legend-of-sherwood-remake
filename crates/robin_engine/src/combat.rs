@@ -686,13 +686,22 @@ pub fn receive_piercing_damage(
     max_life_points: i16,
     ctx: &ConcussionContext,
 ) -> bool {
-    let died = get_wounded(
-        life_points,
-        damage,
-        ctx.is_invulnerable,
-        max_life_points,
-        ctx.is_sherwood_pc,
-    );
+    // RHElementActorPC::GetWounded ignores an otherwise-lethal hit while
+    // the PC is already in an amulet coma. ReceivePiercingDamage still
+    // proceeds to AddConcussionOfTheBrain, and sublethal wounds still use
+    // the ordinary base-human implementation.
+    let lethal_hit_in_coma = ctx.is_in_coma && i32::from(damage) >= i32::from(*life_points);
+    let died = if lethal_hit_in_coma {
+        false
+    } else {
+        get_wounded(
+            life_points,
+            damage,
+            ctx.is_invulnerable,
+            max_life_points,
+            ctx.is_sherwood_pc,
+        )
+    };
     add_concussion(human, concussion as i16, *life_points, ctx);
     died
 }
@@ -1831,6 +1840,52 @@ mod tests {
         let ctx = default_ctx();
         assert!(!receive_piercing_damage(&mut h, &mut lp, 20, 5, 100, &ctx));
         assert_eq!(lp, 80);
+    }
+
+    #[test]
+    fn repeated_lethal_piercing_hits_preserve_already_comatose_pc() {
+        let mut human = make_human();
+        human.concussion_of_the_brain = CONCUSSION_MAX;
+        human.unconscious = true;
+        let mut life_points = 5;
+        let ctx = ConcussionContext {
+            is_in_coma: true,
+            ..default_ctx()
+        };
+
+        for _ in 0..2 {
+            assert!(!receive_piercing_damage(
+                &mut human,
+                &mut life_points,
+                20,
+                0,
+                100,
+                &ctx,
+            ));
+            assert_eq!(life_points, 5);
+        }
+    }
+
+    #[test]
+    fn sublethal_piercing_hit_still_wounds_comatose_pc() {
+        let mut human = make_human();
+        human.concussion_of_the_brain = CONCUSSION_MAX;
+        human.unconscious = true;
+        let mut life_points = 20;
+        let ctx = ConcussionContext {
+            is_in_coma: true,
+            ..default_ctx()
+        };
+
+        assert!(!receive_piercing_damage(
+            &mut human,
+            &mut life_points,
+            5,
+            0,
+            100,
+            &ctx,
+        ));
+        assert_eq!(life_points, 15);
     }
 
     // ── Hit damage ─────────────────────────────────────────────────

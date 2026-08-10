@@ -1,0 +1,9 @@
+{
+  "id": "285",
+  "subject": "Promote live view alert in SetAlwaysAttentive",
+  "description": "SetAlwaysAttentive tested the music alert channel before promoting an attentive NPC, so an earlier ALERT_ONLY_MUSIC update could leave the live view alert green while music was already yellow and suppress Original's promotion. The native now tests view_alert_status, routes the update through the soldier alert wrapper, and rejects a resolved enemy without an actor entity ID instead of silently omitting its EnterAttentiveMode sequence. Focused mixed-channel and ordinary-branch controls pass. The representative clears its target and advances to an independent frame-784 mismatch.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task285-always-attentive-view"
+}

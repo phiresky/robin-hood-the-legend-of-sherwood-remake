@@ -61,6 +61,15 @@ pub struct WaterZones {
     pub zones: Vec<WaterZone>,
 }
 
+/// Material lookup result tied to the exact sector polygon that produced it.
+/// Original keeps the `RHSectorMaterial*` returned by `DetermineWaterHole` and
+/// passes that same polygon to `AddTrajectoryFallIntoHole`.
+#[derive(Debug, Clone, Copy)]
+pub struct WaterHoleResolution<'a> {
+    pub material: Material,
+    pub sector_points: Option<&'a [MapPoint]>,
+}
+
 impl WaterZones {
     pub fn new() -> Self {
         Self::default()
@@ -166,27 +175,94 @@ impl WaterZones {
             .iter()
             .find(|z| matches!(z.material, Material::Hole) && z.contains(landing))?;
 
-        // The disappear point is seeded at landing + (0, 2000) and
-        // improved downward toward landing whenever a closer candidate
-        // is found.  We keep just the y-value and the winning point.
-        let mut best: Option<MapPoint> = None;
-        let mut best_y = landing.y + 2000.0;
-        let n = hole.points.len();
-        for i in 0..n {
-            let a = hole.points[i];
-            let b = hole.points[(i + 1) % n];
-            let Some(isec) = segment_line_intersection(entry, landing, a, b) else {
-                continue;
-            };
-            // isec.y must be strictly greater than landing.y AND less
-            // than the current best y.
-            if isec.y > landing.y && isec.y < best_y {
-                best_y = isec.y;
-                best = Some(isec);
-            }
-        }
-        best
+        find_hole_far_exit_in_sector(&hole.points, entry, landing)
     }
+}
+
+/// Extend a trajectory through one already-resolved hole sector. This must
+/// not search the global hole registry: a raised dry obstacle may overlap a
+/// ground-level hole in projection, and Original extends through only the
+/// `RHSectorMaterial*` returned for the actual impact obstacle.
+pub fn find_hole_far_exit_in_sector(
+    sector_points: &[MapPoint],
+    entry: MapPoint,
+    landing: MapPoint,
+) -> Option<MapPoint> {
+    let mut best = None;
+    let mut best_y = landing.y + 2000.0;
+    let n = sector_points.len();
+    if n < 3 {
+        return None;
+    }
+    for i in 0..n {
+        let a = sector_points[i];
+        let b = sector_points[(i + 1) % n];
+        let Some(isec) = segment_line_intersection(entry, landing, a, b) else {
+            continue;
+        };
+        if isec.y > landing.y && isec.y < best_y {
+            best_y = isec.y;
+            best = Some(isec);
+        }
+    }
+    best
+}
+
+/// Resolve water/hole material in the same scope as Original's
+/// `DetermineWaterHole`: material sub-sectors of the exact impact obstacle
+/// when one exists, otherwise the global ground sector registry.
+pub fn determine_water_hole_scoped<'a>(
+    water_zones: &'a WaterZones,
+    obstacle: Option<&'a crate::sight_obstacle::SightObstacle>,
+    point: MapPoint,
+) -> Option<WaterHoleResolution<'a>> {
+    use crate::element::GameMaterial;
+
+    let Some(obstacle) = obstacle else {
+        return water_zones.zones.iter().find_map(|zone| {
+            zone.contains(point).then_some(WaterHoleResolution {
+                material: zone.material,
+                sector_points: matches!(zone.material, Material::Hole)
+                    .then_some(zone.points.as_slice()),
+            })
+        });
+    };
+
+    let obstacle_material = GameMaterial::from_u32(obstacle.material as u32);
+    assert!(
+        !matches!(obstacle_material, GameMaterial::Hole),
+        "overall sight-obstacle material must not be HOLE"
+    );
+    if matches!(obstacle_material, GameMaterial::Water) {
+        if obstacle
+            .material_sectors
+            .iter()
+            .any(|sector| sector.contains(point))
+        {
+            return None;
+        }
+        return Some(WaterHoleResolution {
+            material: Material::Water,
+            sector_points: None,
+        });
+    }
+
+    obstacle.material_sectors.iter().find_map(|sector| {
+        if !sector.contains(point) {
+            return None;
+        }
+        match sector.material {
+            GameMaterial::Water => Some(WaterHoleResolution {
+                material: Material::Water,
+                sector_points: None,
+            }),
+            GameMaterial::Hole => Some(WaterHoleResolution {
+                material: Material::Hole,
+                sector_points: Some(sector.points.as_slice()),
+            }),
+            _ => None,
+        }
+    })
 }
 
 /// Obstacle-anchored variant of [`WaterZones::determine_water_hole`].
@@ -208,34 +284,9 @@ pub fn determine_water_hole_with_obstacle(
     obstacle: &crate::sight_obstacle::SightObstacle,
     point: MapPoint,
 ) -> Option<Material> {
-    use crate::element::GameMaterial;
-
-    let obstacle_material = GameMaterial::from_u32(obstacle.material as u32);
-
-    if matches!(obstacle_material, GameMaterial::Water) {
-        // Branch 2: water obstacle. Any sub-sector hit (regardless of
-        // its material) is treated as a dry "island" within the lake
-        // and produces no splash, without inspecting the sub-sector's
-        // material.
-        for sector in &obstacle.material_sectors {
-            if sector.contains(point) {
-                return None;
-            }
-        }
-        Some(Material::Water)
-    } else {
-        // Branch 3: non-water obstacle. Only WATER/HOLE sub-sectors
-        // produce a splash/disappear; other sub-sector materials are
-        // gated out before the polygon test runs.
-        for sector in &obstacle.material_sectors {
-            match sector.material {
-                GameMaterial::Water if sector.contains(point) => return Some(Material::Water),
-                GameMaterial::Hole if sector.contains(point) => return Some(Material::Hole),
-                _ => {}
-            }
-        }
-        None
-    }
+    let empty_ground_zones = WaterZones::new();
+    determine_water_hole_scoped(&empty_ground_zones, Some(obstacle), point)
+        .map(|resolution| resolution.material)
 }
 
 /// Intersect an infinite line through `line_a→line_b` with the finite
@@ -538,5 +589,79 @@ mod tests {
         assert!(!zones.landing_is_in_hole(MapPoint::new(5.0, 5.0)));
         assert!(zones.landing_is_in_hole(MapPoint::new(25.0, 25.0)));
         assert!(!zones.landing_is_in_hole(MapPoint::new(15.0, 15.0)));
+    }
+
+    #[test]
+    fn raised_dry_obstacle_does_not_inherit_overlapping_global_hole() {
+        let zones = WaterZones::build_from_raw(&[square(8, 0, 10)]);
+        let obstacle = make_obstacle(2 /* STONE */, vec![]);
+
+        assert!(
+            determine_water_hole_scoped(&zones, Some(&obstacle), MapPoint::new(5.0, 5.0)).is_none(),
+            "an exact obstacle impact must not fall through to projected ground sectors"
+        );
+    }
+
+    #[test]
+    fn obstacle_hole_retains_its_exact_polygon_for_extension() {
+        let zones = WaterZones::build_from_raw(&[square(8, -100, 100)]);
+        let obstacle_hole = material_sector(crate::element::GameMaterial::Hole, 0.0, 10.0);
+        let obstacle = make_obstacle(2 /* STONE */, vec![obstacle_hole.clone()]);
+
+        let resolution =
+            determine_water_hole_scoped(&zones, Some(&obstacle), MapPoint::new(5.0, 5.0))
+                .expect("hole sub-sector should classify as a hole");
+        assert_eq!(resolution.material, Material::Hole);
+        assert_eq!(
+            resolution.sector_points,
+            Some(obstacle_hole.points.as_slice())
+        );
+        assert_eq!(
+            find_hole_far_exit_in_sector(
+                resolution.sector_points.unwrap(),
+                MapPoint::new(5.0, 3.0),
+                MapPoint::new(5.0, 5.0),
+            ),
+            Some(MapPoint::new(5.0, 10.0)),
+            "extension must use the obstacle's small hole, not the overlapping global polygon"
+        );
+    }
+
+    #[test]
+    fn bare_ground_hole_uses_global_sector_and_retains_polygon() {
+        let zones = WaterZones::build_from_raw(&[square(8, 0, 10)]);
+        let resolution =
+            determine_water_hole_scoped(&zones, None, MapPoint::new(5.0, 5.0)).unwrap();
+
+        assert_eq!(resolution.material, Material::Hole);
+        assert_eq!(
+            resolution.sector_points,
+            Some(zones.zones[0].points.as_slice())
+        );
+    }
+
+    #[test]
+    fn water_obstacle_dry_island_stays_dry_under_scoped_lookup() {
+        let zones = WaterZones::build_from_raw(&[square(5, 0, 10)]);
+        let obstacle = make_obstacle(
+            5,
+            vec![material_sector(
+                crate::element::GameMaterial::Stone,
+                0.0,
+                10.0,
+            )],
+        );
+
+        assert!(
+            determine_water_hole_scoped(&zones, Some(&obstacle), MapPoint::new(5.0, 5.0)).is_none()
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "overall sight-obstacle material must not be HOLE")]
+    fn overall_hole_obstacle_violates_original_invariant() {
+        let zones = WaterZones::new();
+        let obstacle = make_obstacle(8 /* HOLE */, vec![]);
+        let _ = determine_water_hole_scoped(&zones, Some(&obstacle), MapPoint::new(0.0, 0.0));
     }
 }

@@ -971,13 +971,13 @@ impl EngineInner {
     }
 
     /// Per-arm `check_sequence_element_validity` pre-tick gate for the
-    /// PC `Execute` switch.
+    /// Human and PC `Execute` switches.
     ///
     /// Many `Execute` arms gate the very first frame of a queued sprite
     /// anim on `check_sequence_element_validity(...)` returning true
     /// and early-out with `Aborted` / `Terminated` on failure.  The
     /// Rust animation driver in `engine/animation.rs` runs the sprite
-    /// unconditionally, so we run a pre-pass here that walks PCs and
+    /// unconditionally, so we run a pre-pass here that walks humans and
     /// marks the failing sequence elements `Impossible` / `Terminated`
     /// before the animation tick advances them.
     ///
@@ -985,7 +985,12 @@ impl EngineInner {
     /// independently of sprite processing (FrozenAll consumes initialization
     /// even though RHSprite returns before stamping its own order ID).
     ///
-    /// Arms covered:
+    /// Human arms covered:
+    /// - `ShootingWithBow`, `ShootingWithBowAnonymous`,
+    ///   `ShootingWithBowUp`, and `ShootingWithBowUpAnonymous`:
+    ///   `check_position=true`, ABORTED on failure.
+    ///
+    /// PC-only arms covered:
     /// - `Taking` / `TakingCrouched`: `check_position=true`,
     ///   ABORTED on failure.
     /// - `Eating`: `check_position=false`, TERMINATED.
@@ -1009,20 +1014,20 @@ impl EngineInner {
     ///   a silent no-op via the priority guard at
     ///   `sequence.rs::element_impossible` — matching shipping
     ///   behaviour where the same NI guard blocks the cascade.
-    pub(super) fn pre_tick_pc_execute_validity_for(
+    pub(super) fn pre_tick_human_execute_validity_for(
         &mut self,
         assets: &LevelAssets,
         entity_id: EntityId,
-    ) {
+    ) -> bool {
         let Some(entity) = self.world.entities.get(entity_id) else {
-            return;
+            return false;
         };
-        if entity.pc_data().is_none() {
-            return;
+        if !entity.is_human() {
+            return false;
         }
         let actor = entity
             .actor_data()
-            .expect("PC Execute validity owner must retain actor data");
+            .expect("Human Execute validity owner must retain actor data");
         // Inactive (off-map roster) PCs still run Execute and its
         // init-time validity guards: a self-ability launched on a
         // parked PC selects its element, fails the init validity
@@ -1030,42 +1035,47 @@ impl EngineInner {
         // any animation.  Skipping the pre-pass for inactive PCs let
         // the transition play instead, so no active gate here.
         if entity.element_data().posture.is_dead() {
-            return;
+            return false;
         }
         // PC override `Execute` opens with
         // `if (execution_frozen) return InProgress;` — frozen PCs
-        // never reach the validity guards.
+        // never reach the validity guards. Human::Execute has the same
+        // execution-freeze entry guard for non-PC humans.
         if actor.execution_frozen {
-            return;
+            return false;
         }
 
         let snapshot = self
             .orders
             .sequence_manager
             .current_order_for_actor(entity_id)
-            .map(|(s, i, o)| (s, i, o.order_type, o.order_id.get()));
-        let Some((seq_id, elem_idx, order_type, order_id)) = snapshot else {
-            return;
+            .map(|(s, i, o)| (s, i, o.order_type));
+        let Some((seq_id, elem_idx, order_type)) = snapshot else {
+            return false;
         };
 
-        let Some((check_position, terminal)) = pc_init_validity_arm(order_type) else {
-            return;
+        let Some((check_position, terminal)) = human_init_validity_arm(order_type, entity.is_pc())
+        else {
+            return false;
         };
 
-        if actor
-            .last_execute_order_id
-            .is_some_and(|id| id.get() == order_id)
-        {
-            return;
+        // Original's guard is `IsInitialisation() == mbNewOrder`, which
+        // Actor::Hourglass establishes for this exact Execute call before
+        // entering Human::Execute. Do not reconstruct it from a stale or
+        // absent historical order ID here: specialized bow owners and
+        // restored/test actors can retain a live shot without that history,
+        // and re-validating their already-running shoot row would abort it.
+        if !actor.execute_order_initialising {
+            return false;
         }
 
         // Look up the element so we can run the per-command
         // validity rule.
         let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
-            return;
+            return false;
         };
         if self.check_sequence_element_validity(assets, entity_id, elem, check_position) {
-            return;
+            return false;
         }
 
         // Resolve the special `TransitionCarryingCorpseWaitingUpright`
@@ -1086,10 +1096,11 @@ impl EngineInner {
             seq_id = ?seq_id,
             elem_idx,
             terminal = ?terminal,
-            "pc_execute_validity: PC init-arm validity failed — aborting/terminating"
+            "human_execute_validity: Human init-arm validity failed — aborting/terminating"
         );
 
-        // These guards are early returns from RHElementActorPC::Execute, so
+        // These guards are early returns from RHElementActorHuman::Execute or
+        // RHElementActorPC::Execute, so
         // Actor::Hourglass observes and serializes their motion result before
         // it applies the corresponding sequence-state transition.  Merely
         // terminating the Rust element can leave no selected Execute owner
@@ -1107,7 +1118,7 @@ impl EngineInner {
             .entities
             .get_mut(entity_id)
             .and_then(Entity::actor_data_mut)
-            .expect("PC validity owner disappeared before motion-state latch")
+            .expect("Human validity owner disappeared before motion-state latch")
             .continuation
             .motion_state = motion;
 
@@ -1116,6 +1127,33 @@ impl EngineInner {
                 self.orders
                     .sequence_manager
                     .element_impossible(seq_id, elem_idx);
+                // The bow driver is keyed independently from the selected
+                // sequence element. Once this Execute guard aborts a shot,
+                // the specialized bow tick no longer sees a selected shoot
+                // order and therefore cannot clear that runtime latch for
+                // us. Only detach the exact shot that was actually made
+                // Impossible: NonInterruptable elements deliberately ignore
+                // `element_impossible` and must retain their live driver.
+                let became_impossible = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .is_some_and(|element| {
+                        element.state == crate::sequence::SequenceState::Impossible
+                    });
+                if became_impossible {
+                    let actor = self
+                        .world
+                        .entities
+                        .get_mut(entity_id)
+                        .and_then(Entity::actor_data_mut)
+                        .expect("aborted bow-validity owner lost actor data");
+                    if actor.active_shot.sequence_id == Some(seq_id)
+                        && actor.active_shot.element_index == elem_idx
+                    {
+                        actor.active_shot.clear();
+                    }
+                }
             }
             ValidityArmTerminal::Terminated => {
                 self.orders
@@ -1138,13 +1176,14 @@ impl EngineInner {
             ValidityArmTerminal::TerminatedDropCorpseUnlessDrop => {
                 tracing::warn!(
                     ?entity_id,
-                    "pc_execute_validity: unresolved TerminatedDropCorpseUnlessDrop"
+                    "human_execute_validity: unresolved TerminatedDropCorpseUnlessDrop"
                 );
                 self.orders
                     .sequence_manager
                     .element_terminated(seq_id, elem_idx);
             }
         }
+        true
     }
 
     /// Returns true iff the PC is alive, conscious, not netted, not
@@ -1357,6 +1396,24 @@ pub(super) fn pc_init_validity_arm(
     }
 }
 
+/// Human::Execute owns the ordinary/high bow-release arms for PCs, soldiers,
+/// and civilians. PC::Execute delegates those orders to Human::Execute, while
+/// its other initialization guards remain PC-only.
+fn human_init_validity_arm(
+    anim: crate::order::OrderType,
+    owner_is_pc: bool,
+) -> Option<(bool, ValidityArmTerminal)> {
+    use crate::order::OrderType as OT;
+    match anim {
+        OT::ShootingWithBow
+        | OT::ShootingWithBowAnonymous
+        | OT::ShootingWithBowUp
+        | OT::ShootingWithBowUpAnonymous => Some((true, ValidityArmTerminal::Aborted)),
+        _ if owner_is_pc => pc_init_validity_arm(anim),
+        _ => None,
+    }
+}
+
 // ─── Local helpers ─────────────────────────────────────────────
 
 fn interaction_victim_id(element: &SequenceElement) -> Option<EntityId> {
@@ -1538,6 +1595,119 @@ mod tests {
         }))
     }
 
+    fn bow_execute_fixture() -> (
+        EngineInner,
+        LevelAssets,
+        EntityId,
+        EntityId,
+        crate::sequence::SequenceId,
+    ) {
+        use crate::coordinates::{SpriteFrameOffset, SpriteLocalPoint};
+        use crate::profiles::{BowProfile, BowShootMode, CharacterProfile, ProfileManager};
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+        let mut campaign = crate::campaign::Campaign::default();
+        let mut description = crate::campaign::PcDescription::default();
+        // Campaign status lookup validates the serialized description's
+        // profile identity before exposing ammo to the PC. A bare default
+        // description has no profile and therefore correctly looks corrupt.
+        description.character_profile_idx = Some(crate::profiles::CharacterProfileIdx(0));
+        description.status.num_arrows = 10;
+        campaign.characters.push(description);
+        let mut engine = EngineInner::new_with_campaign(campaign);
+
+        let shooter = add_pc(&mut engine);
+        let pc = engine
+            .get_entity_mut(shooter)
+            .and_then(Entity::pc_data_mut)
+            .expect("test shooter PC data");
+        pc.life_points = 100;
+        pc.campaign_description_index = Some(0);
+
+        // Use another PC as the antagonist so this focused fixture exercises
+        // the Human out-of-order rule without also depending on NPC camp,
+        // civilian, or VIP policy.
+        let target = add_pc(&mut engine);
+        engine
+            .get_entity_mut(target)
+            .and_then(Entity::pc_data_mut)
+            .expect("test target PC data")
+            .life_points = 100;
+        let target_element = engine
+            .get_entity_mut(target)
+            .expect("test target")
+            .element_data_mut();
+        // Keep the independently stored Original map/ground coordinates
+        // coherent. A 1000-unit target is comfortably inside this fixture's
+        // 2000-unit normal-shot range and mirrors the established bow
+        // lifecycle fixtures.
+        target_element.set_position_map(crate::coordinates::MapPoint::new(1000.0, 0.0));
+        target_element.set_position(crate::coordinates::WorldPoint3D {
+            x: 1000.0,
+            y: 0.0,
+            z: 0.0,
+        });
+
+        let action = crate::order::OrderType::ShootingWithBow;
+        let script = SpriteScript {
+            action_id: action as u16,
+            action_done: 0,
+            average_speed: 0.0,
+            hotspot: SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1],
+            delays: vec![1],
+            distances: vec![0],
+            offsets: vec![SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[action as usize] = 0;
+        engine
+            .get_entity_mut(shooter)
+            .expect("test shooter")
+            .element_data_mut()
+            .sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+
+        let mut profiles = ProfileManager::new();
+        profiles.characters.push(CharacterProfile {
+            shooting_weapon_id: 1,
+            shooting: 100,
+            ..CharacterProfile::default()
+        });
+        profiles.bows.push(BowProfile {
+            normal_shoot: BowShootMode {
+                range: 2000,
+                ..BowShootMode::default()
+            },
+            ..BowProfile::default()
+        });
+        let assets = LevelAssets {
+            profile_manager: std::sync::Arc::new(profiles),
+            ..LevelAssets::new()
+        };
+
+        let mut element =
+            SequenceElement::new_interaction(1, Command::ShootBow, Some(shooter), Some(target));
+        element
+            .orders
+            .push_back(crate::order::Order::test_new(action, 0.0, 0.0));
+        let sequence = engine.orders.sequence_manager.launch_element(element);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(shooter)
+            .and_then(Entity::actor_data_mut)
+            .expect("test shooter actor data")
+            .execute_order_initialising = true;
+        (engine, assets, shooter, target, sequence)
+    }
+
     fn take_valid_for(actor_is_pc: bool, object_type: ObjectType) -> bool {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
@@ -1642,8 +1812,13 @@ mod tests {
             .orders
             .sequence_manager
             .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(pc_id)
+            .and_then(Entity::actor_data_mut)
+            .expect("test actor data")
+            .execute_order_initialising = true;
 
-        engine.pre_tick_pc_execute_validity_for(&LevelAssets::new(), pc_id);
+        engine.pre_tick_human_execute_validity_for(&LevelAssets::new(), pc_id);
 
         assert_eq!(
             engine
@@ -1654,6 +1829,347 @@ mod tests {
                 .motion_state,
             crate::sprite::MotionState::Terminated,
             "PC::Execute returns TERMINATED before Actor::Hourglass retires invalid Eating"
+        );
+    }
+
+    #[test]
+    fn healing_new_order_owner_loop_validates_before_ability_effects() {
+        enum TargetKind {
+            Human(f32),
+            Fx(f32),
+            SelfHeal,
+        }
+
+        for (target_kind, expected_state) in [
+            (
+                TargetKind::Human(40.0),
+                crate::sequence::SequenceState::Terminated,
+            ),
+            (
+                TargetKind::Human(39.999),
+                crate::sequence::SequenceState::InProgress,
+            ),
+            (
+                TargetKind::Fx(80.0),
+                crate::sequence::SequenceState::InProgress,
+            ),
+            (
+                TargetKind::SelfHeal,
+                crate::sequence::SequenceState::InProgress,
+            ),
+        ] {
+            let mut description = crate::campaign::PcDescription {
+                character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
+                ..Default::default()
+            };
+            description
+                .status
+                .set_ammo(crate::profiles::Action::Heal, 1);
+            let mut campaign = crate::campaign::Campaign::default();
+            campaign.characters.push(description);
+            let mut engine = EngineInner::new_with_campaign(campaign);
+
+            let healer = add_pc(&mut engine);
+            {
+                let healer_entity = engine.get_entity_mut(healer).unwrap();
+                let pc = healer_entity.pc_data_mut().unwrap();
+                pc.campaign_description_index = Some(0);
+                pc.life_points = if matches!(&target_kind, TargetKind::SelfHeal) {
+                    50
+                } else {
+                    100
+                };
+            }
+            let target = match target_kind {
+                TargetKind::Human(distance) => {
+                    let target = add_pc(&mut engine);
+                    let entity = engine.get_entity_mut(target).unwrap();
+                    entity.pc_data_mut().unwrap().life_points = 50;
+                    entity
+                        .element_data_mut()
+                        .set_position_map(crate::coordinates::MapPoint::new(distance, 0.0));
+                    target
+                }
+                TargetKind::Fx(distance) => {
+                    let mut element = actor_element(ElementKind::Fx);
+                    element.set_position_map(crate::coordinates::MapPoint::new(distance, 0.0));
+                    engine.add_entity(Entity::Fx(crate::element::ElementFx {
+                        element,
+                        fx: Default::default(),
+                    }))
+                }
+                TargetKind::SelfHeal => healer,
+            };
+            let target_life_before = engine
+                .get_entity(target)
+                .and_then(Entity::pc_data)
+                .map(|pc| pc.life_points);
+
+            let mut element =
+                SequenceElement::new_interaction(1, Command::HealCmd, Some(healer), Some(target));
+            element.orders.push_back(crate::order::Order::test_new(
+                crate::order::OrderType::Healing,
+                0.0,
+                0.0,
+            ));
+            let sequence = engine.orders.sequence_manager.launch_element(element);
+            engine
+                .orders
+                .sequence_manager
+                .element_in_progress(sequence, 0);
+            let installed_order = engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .and_then(SequenceElement::current_order)
+                .map(|order| crate::element::InstalledActorOrder {
+                    order_id: order.order_id,
+                    order_type: order.order_type,
+                })
+                .unwrap();
+            let actor = engine
+                .get_entity_mut(healer)
+                .and_then(Entity::actor_data_mut)
+                .unwrap();
+            actor.installed_order = Some(installed_order);
+
+            let assets = LevelAssets::new();
+            let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+            engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets, &positions);
+
+            assert_eq!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence, 0)
+                    .unwrap()
+                    .state,
+                expected_state
+            );
+            assert_eq!(
+                engine
+                    .get_entity(target)
+                    .and_then(Entity::pc_data)
+                    .map(|pc| pc.life_points),
+                target_life_before,
+                "Healing validity must run before any ability effect"
+            );
+            if expected_state == crate::sequence::SequenceState::Terminated {
+                assert_eq!(
+                    engine
+                        .get_entity(healer)
+                        .and_then(Entity::actor_data)
+                        .unwrap()
+                        .continuation
+                        .motion_state,
+                    crate::sprite::MotionState::Terminated
+                );
+            } else {
+                assert_eq!(
+                    engine.actor_order_type(healer),
+                    Some(crate::order::OrderType::Healing),
+                    "valid FX and self-Heal targets retain canonical Healing"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bow_release_initialization_aborts_when_target_becomes_invalid_during_raise() {
+        let (mut engine, assets, shooter, target, sequence) = bow_execute_fixture();
+        // The valid-control test below establishes the fixture baseline. This
+        // test changes only the target state that became stale during raise.
+        engine
+            .get_entity_mut(target)
+            .and_then(Entity::human_data_mut)
+            .expect("test target human data")
+            .unconscious = true;
+        engine.pre_tick_human_execute_validity_for(&assets, shooter);
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .expect("test shot element after abort")
+                .state,
+            crate::sequence::SequenceState::Impossible,
+            "PC bow shot must abort before its shooting row starts",
+        );
+        assert_eq!(
+            engine
+                .get_entity(shooter)
+                .and_then(Entity::actor_data)
+                .expect("test shooter actor data")
+                .continuation
+                .motion_state,
+            crate::sprite::MotionState::Aborted,
+        );
+    }
+
+    #[test]
+    fn aborted_bow_release_clears_matching_active_shot_and_allows_the_next_launch() {
+        use crate::bow_shot::{BeginShotResult, begin_bow_shot};
+        use crate::movement::ActiveShot;
+        use crate::weapons::ShootMode;
+
+        let (mut engine, assets, shooter, target, sequence) = bow_execute_fixture();
+        engine
+            .get_entity_mut(shooter)
+            .and_then(Entity::actor_data_mut)
+            .expect("test shooter actor data")
+            .active_shot = ActiveShot {
+            sequence_id: Some(sequence),
+            element_index: 0,
+            target: Some(target),
+            order_id: Some(std::num::NonZeroU32::new(77).expect("nonzero test order")),
+            released: false,
+            shoot_mode: Some(ShootMode::Normal),
+        };
+        engine
+            .get_entity_mut(target)
+            .and_then(Entity::human_data_mut)
+            .expect("test target human data")
+            .unconscious = true;
+
+        engine.pre_tick_human_execute_validity_for(&assets, shooter);
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .expect("aborted test shot element")
+                .state,
+            crate::sequence::SequenceState::Impossible,
+        );
+        assert!(
+            !engine
+                .get_entity(shooter)
+                .and_then(Entity::actor_data)
+                .expect("test shooter actor data after abort")
+                .active_shot
+                .is_active(),
+            "execute-time abort must detach its matching bow runtime"
+        );
+
+        let next_sequence =
+            engine
+                .orders
+                .sequence_manager
+                .launch_element(SequenceElement::new_interaction(
+                    1,
+                    Command::ShootBow,
+                    Some(shooter),
+                    Some(target),
+                ));
+        let result = begin_bow_shot(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            shooter,
+            target,
+            next_sequence,
+            0,
+            false,
+            1,
+            Some(ShootMode::Normal),
+            &mut engine.orders.next_order_id,
+        );
+        assert_eq!(
+            result,
+            BeginShotResult::Started,
+            "the stale ActiveShot latch must not reject a later bow launch"
+        );
+    }
+
+    #[test]
+    fn non_interruptable_bow_validity_noop_retains_matching_active_shot() {
+        use crate::movement::ActiveShot;
+        use crate::weapons::ShootMode;
+
+        let (mut engine, assets, shooter, target, sequence) = bow_execute_fixture();
+        engine.orders.sequence_manager.set_element_priority(
+            sequence,
+            0,
+            crate::sequence::SequencePriority::NonInterruptable,
+        );
+        engine
+            .get_entity_mut(shooter)
+            .and_then(Entity::actor_data_mut)
+            .expect("test shooter actor data")
+            .active_shot = ActiveShot {
+            sequence_id: Some(sequence),
+            element_index: 0,
+            target: Some(target),
+            order_id: Some(std::num::NonZeroU32::new(78).expect("nonzero test order")),
+            released: false,
+            shoot_mode: Some(ShootMode::Normal),
+        };
+        engine
+            .get_entity_mut(target)
+            .and_then(Entity::human_data_mut)
+            .expect("test target human data")
+            .unconscious = true;
+
+        engine.pre_tick_human_execute_validity_for(&assets, shooter);
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .expect("non-interruptable test shot element")
+                .state,
+            crate::sequence::SequenceState::InProgress,
+        );
+        assert!(
+            engine
+                .get_entity(shooter)
+                .and_then(Entity::actor_data)
+                .expect("test shooter actor data after guarded abort")
+                .active_shot
+                .is_active(),
+            "a blocked Impossible transition must retain its matching bow runtime"
+        );
+    }
+
+    #[test]
+    fn human_bow_validity_arms_cover_ordinary_releases_but_not_leaning_out() {
+        use crate::order::OrderType as OT;
+
+        for order in [
+            OT::ShootingWithBow,
+            OT::ShootingWithBowAnonymous,
+            OT::ShootingWithBowUp,
+            OT::ShootingWithBowUpAnonymous,
+        ] {
+            assert!(matches!(
+                human_init_validity_arm(order, true),
+                Some((true, ValidityArmTerminal::Aborted))
+            ));
+            assert!(matches!(
+                human_init_validity_arm(order, false),
+                Some((true, ValidityArmTerminal::Aborted))
+            ));
+        }
+
+        assert!(human_init_validity_arm(OT::ShootingWithBowLeaningOut, false).is_none());
+    }
+
+    #[test]
+    fn bow_release_initialization_preserves_valid_target_shots() {
+        let (mut engine, assets, shooter, _target, sequence) = bow_execute_fixture();
+        engine.pre_tick_human_execute_validity_for(&assets, shooter);
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .expect("valid test shot element")
+                .state,
+            crate::sequence::SequenceState::InProgress,
+            "valid PC bow shot must remain in progress",
         );
     }
 

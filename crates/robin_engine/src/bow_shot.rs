@@ -50,7 +50,7 @@ use crate::element::{
 use crate::entities::{Entities, EntitySlots};
 use crate::movement::ActiveShot;
 use crate::order::{Order, OrderType};
-use crate::profiles::Action;
+use crate::profiles::{Action, ProfileManager};
 use crate::sequence::{SequenceElement, SequenceElementData, SequenceId, SequenceManager};
 use crate::sprite::MotionState as SpriteMotionState;
 use crate::weapons::ShootMode;
@@ -214,7 +214,12 @@ pub fn compute_shield_obstacle(
         ObstaclePoint, SIGHTOBSTACLE_SHIELD, SIGHTOBSTACLE_SOLID, SightObstacle,
     };
 
-    let (dir_x, dir_y) = direction_vector_16(direction_sector);
+    let (dir_x, dir_y_unscaled) = direction_vector_16(direction_sector);
+    // GetDirectionVector constructs the caller's direction with
+    // SetSector0to15(..., ASPECT_RATIO). The caller uses that vector for its
+    // first offset, then UpdateBox normalizes the already-compressed vector
+    // before applying ASPECT_RATIO to its Y components once more.
+    let dir_y = dir_y_unscaled * ASPECT_RATIO;
 
     // Pre-offset: move position forward in the facing direction
     // before constructing the shield box.
@@ -222,11 +227,12 @@ pub fn compute_shield_obstacle(
     let py = position_ground.y + params.pre_offset * dir_y;
     let pz = z + params.z_offset;
 
-    // Box construction: direction is already unit from
-    // `direction_vector_16`; compute perpendicular, apply aspect ratio,
-    // then offset another 20 units forward.
-    let fwd_x = dir_x;
-    let fwd_y = dir_y;
+    // RHSightObstacle::UpdateBox normalizes its compressed input in ordinary
+    // Euclidean space before deriving the perpendicular.
+    let direction_norm = (dir_x * dir_x + dir_y * dir_y).sqrt();
+    assert!(direction_norm > 0.0, "16-sector shield direction is zero");
+    let fwd_x = dir_x / direction_norm;
+    let fwd_y = dir_y / direction_norm;
 
     // Perpendicular (Normal): (-y, x)
     let side_x = -fwd_y;
@@ -300,6 +306,62 @@ pub fn compute_shield_obstacle(
 
     obstacle.rebuild_geometry();
     obstacle
+}
+
+/// Refresh retained shield geometry at an Original `UpdateShield` call site.
+/// Projectile ticks consume this value without deriving it again.
+pub(crate) fn refresh_retained_shield_obstacle(entity: &mut Entity, profiles: &ProfileManager) {
+    let params = match entity {
+        Entity::Pc(pc) => {
+            let profile = profiles
+                .get_character(pc.pc.profile_index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing character profile {:?} while refreshing shield",
+                        pc.pc.profile_index
+                    )
+                });
+            let has_big_shield = profile.has_action(Action::BigShield);
+            shield_params_for_pc(has_big_shield)
+        }
+        Entity::Soldier(soldier) => {
+            let profile = profiles
+                .get_soldier(soldier.soldier.soldier_profile_index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing soldier profile {:?} while refreshing shield",
+                        soldier.soldier.soldier_profile_index
+                    )
+                });
+            let weapon = profiles
+                .get_hth_weapon(profile.hth_weapon_id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing HtH weapon profile {:?} while refreshing shield",
+                        profile.hth_weapon_id
+                    )
+                });
+            shield_params_for_soldier(weapon.shield_width, weapon.shield_height)
+        }
+        _ => panic!("shield geometry requested for non-shield-bearing entity"),
+    };
+
+    let elem = entity.element_data();
+    let elevation = elem.position().z;
+    let position_map = elem.position_map();
+    let obstacle = compute_shield_obstacle(
+        MapPoint {
+            x: position_map.x,
+            y: position_map.y + elevation,
+        },
+        elevation,
+        elem.direction(),
+        &params,
+    );
+    entity
+        .actor_data_mut()
+        .expect("shield-bearing entity must have actor data")
+        .shield_obstacle = Some(obstacle);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -671,7 +733,10 @@ pub fn compute_trajectory_ballistic_with_terminal_obstacle(
     Vec<TrajectoryPoint>,
     Option<crate::position_interface::ObstacleHandle>,
 ) {
-    let (trajectory, terminal_obstacle, _) = compute_trajectory_ballistic_impl(
+    // Small-throwable owners currently retain only obstacle identity. Their
+    // distinct landing lifecycles resolve presentation later; do not smuggle
+    // arrow disappearance semantics through this compatibility API.
+    let (trajectory, terminal_obstacle, _, _) = compute_trajectory_ballistic_impl(
         start,
         initial_velocity,
         mass,
@@ -694,6 +759,7 @@ pub fn compute_trajectory_ballistic_with_terminal_impact(
 ) -> (
     Vec<TrajectoryPoint>,
     Option<crate::position_interface::ObstacleHandle>,
+    bool,
     bool,
 ) {
     compute_trajectory_ballistic_impl(
@@ -720,6 +786,34 @@ pub fn compute_trajectory_ballistic_bounce(
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
     bounce_factors: (f32, f32),
 ) -> Vec<TrajectoryPoint> {
+    // Net/wasp/coin lifecycles do not consume ProjectileData::disappear.
+    // Keep scoped material handling inside integration (so water/hole stops
+    // the bounce and exact hole geometry drives extension), while exposing
+    // no unused flag until those Original lifecycles are source-proven.
+    compute_trajectory_ballistic_bounce_with_terminal(
+        start,
+        initial_velocity,
+        mass,
+        flat_shot,
+        obstacle_check,
+        bounce_factors,
+    )
+    .0
+}
+
+fn compute_trajectory_ballistic_bounce_with_terminal(
+    start: WorldPoint3D,
+    initial_velocity: WorldVec3D,
+    mass: f32,
+    flat_shot: bool,
+    obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
+    bounce_factors: (f32, f32),
+) -> (
+    Vec<TrajectoryPoint>,
+    Option<crate::position_interface::ObstacleHandle>,
+    bool,
+    bool,
+) {
     compute_trajectory_ballistic_impl(
         start,
         initial_velocity,
@@ -728,7 +822,6 @@ pub fn compute_trajectory_ballistic_bounce(
         obstacle_check,
         Some(bounce_factors),
     )
-    .0
 }
 
 /// Impact classifications used by trajectory bounce dispatch.
@@ -952,6 +1045,7 @@ fn compute_trajectory_ballistic_impl(
     Vec<TrajectoryPoint>,
     Option<crate::position_interface::ObstacleHandle>,
     bool,
+    bool,
 ) {
     /// Top-impact termination speed threshold (`||v|| < 5`).
     /// Only applies when the previous iteration hit an obstacle's top
@@ -964,6 +1058,7 @@ fn compute_trajectory_ballistic_impl(
     let mut trajectory = Vec::new();
     let mut terminal_obstacle = None;
     let mut terminal_impact = false;
+    let mut terminal_lands_in_hole = false;
     let mut velocity = initial_velocity;
     let mut position = start;
 
@@ -1101,6 +1196,12 @@ fn compute_trajectory_ballistic_impl(
                 continue;
             };
             let r = impact_3d.unwrap();
+            let impact_obstacle = r.obstacle_index.map(|index| {
+                let index = u16::try_from(index)
+                    .expect("projectile obstacle index does not fit ObstacleHandle");
+                crate::position_interface::ObstacleHandle::new(index)
+                    .expect("projectile obstacle index used reserved sentinel")
+            });
             let obstacle = r
                 .obstacle_index
                 .and_then(|i| check.sight_obstacles.get(i as usize));
@@ -1125,19 +1226,29 @@ fn compute_trajectory_ballistic_impl(
                 time: impact_time,
             });
 
+            let water_hole = check.water_zones.and_then(|water_zones| {
+                crate::water_zones::determine_water_hole_scoped(
+                    water_zones,
+                    obstacle,
+                    MapPoint::from_world_xyz(impact.x, impact.y, impact.z),
+                )
+            });
+            terminal_lands_in_hole = water_hole.is_some_and(|resolution| {
+                matches!(resolution.material, crate::sound_cache::Material::Hole)
+            });
+
             if let Some(proj_bounce) = bounce {
                 let info = classify_impact(impact, position, new_position, obstacle);
                 let new_vel = apply_bounce_reflection(velocity, new_vz, ratio, info, proj_bounce);
 
-                // Water mid-trajectory: if a bouncing projectile
-                // impacts a water / hole sector, it dives instead of
-                // continuing the bounce integration.  Stop here;
-                // `maybe_splash_on_landing` marks `dive`.
-                if let Some(water_zones) = check.water_zones {
-                    let map_pt = MapPoint::from_world_xyz(impact.x, impact.y, impact.z);
-                    if water_zones.determine_water_hole(map_pt).is_some() {
-                        break;
-                    }
+                // Water/hole impacts terminate bounce integration in
+                // Original. Hole disappearance is returned to the owner;
+                // water presentation remains owned by each projectile's
+                // existing landing lifecycle.
+                if water_hole.is_some() {
+                    terminal_obstacle = impact_obstacle;
+                    terminal_impact = true;
+                    break;
                 }
 
                 velocity = new_vel;
@@ -1147,10 +1258,7 @@ fn compute_trajectory_ballistic_impl(
                 last_impact = Some(info);
                 continue;
             }
-            terminal_obstacle = r
-                .obstacle_index
-                .and_then(|index| u16::try_from(index).ok())
-                .and_then(crate::position_interface::ObstacleHandle::new);
+            terminal_obstacle = impact_obstacle;
             terminal_impact = true;
             break;
         }
@@ -1171,6 +1279,7 @@ fn compute_trajectory_ballistic_impl(
     // stopping at the hole's near lip would otherwise float in
     // mid-air (since holes have no back-wall to catch it).
     if let Some(check) = obstacle_check
+        && terminal_lands_in_hole
         && let Some(water_zones) = check.water_zones
         && trajectory.len() >= 2
     {
@@ -1178,7 +1287,21 @@ fn compute_trajectory_ballistic_impl(
         let prev = trajectory[trajectory.len() - 2].position;
         let landing_map = MapPoint::from_world_xyz(last.x, last.y, last.z);
         let prev_map = MapPoint::from_world_xyz(prev.x, prev.y, prev.z);
-        if let Some(exit) = water_zones.find_hole_far_exit(prev_map, landing_map) {
+        let obstacle = terminal_obstacle.map(|handle| {
+            check
+                .sight_obstacles
+                .get(usize::from(handle))
+                .unwrap_or_else(|| panic!("terminal obstacle {handle} disappeared"))
+        });
+        let resolution =
+            crate::water_zones::determine_water_hole_scoped(water_zones, obstacle, landing_map)
+                .expect("terminal hole classification lost its material sector");
+        let sector_points = resolution
+            .sector_points
+            .expect("hole classification did not retain its exact sector polygon");
+        if let Some(exit) =
+            crate::water_zones::find_hole_far_exit_in_sector(sector_points, prev_map, landing_map)
+        {
             // Duration proportional to the 2D distance from the
             // landing point to the exit.
             let dx = exit.x - landing_map.x;
@@ -1209,7 +1332,12 @@ fn compute_trajectory_ballistic_impl(
         }
     }
 
-    (trajectory, terminal_obstacle, terminal_impact)
+    (
+        trajectory,
+        terminal_obstacle,
+        terminal_impact,
+        terminal_lands_in_hole,
+    )
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1862,6 +1990,10 @@ struct PendingShotTickResult {
 pub struct BowTickEvents {
     pub fired: Vec<ShotTickResult>,
     pub completed: Vec<(SequenceId, usize)>,
+    /// Non-script PC equip transitions that reached START while owned by the
+    /// specialized active-shot runner. The engine closes Original's
+    /// synchronous `MSG_SELECT_ACTION(BOW)` boundary for these owners.
+    pub pc_equip_actions: Vec<EntityId>,
 }
 
 #[cfg(test)]
@@ -1969,11 +2101,16 @@ fn tick_bow_shots_matching(
             (Some(id), ix) => (id, ix),
             _ => continue,
         };
-        let (current_order_type, current_order_id) = match sequence_manager
+        let (current_order_type, current_order_id, script_driven) = match sequence_manager
             .get_element(shot_seq_id, shot_elem_idx)
-            .and_then(|e| e.current_order())
-        {
-            Some(o) => (o.order_type, Some(o.order_id)),
+            .and_then(|element| {
+                element
+                    .current_order()
+                    .map(|order| (order.order_type, order.order_id, element.script_driven))
+            }) {
+            Some((order_type, order_id, script_driven)) => {
+                (order_type, Some(order_id), script_driven)
+            }
             None => continue,
         };
         if expected_order_id.is_some() && expected_order_id != current_order_id {
@@ -2108,6 +2245,20 @@ fn tick_bow_shots_matching(
             // C++ execute arm.  Keep the visual transition order alive until
             // Terminated so it does not collapse to a one-frame animation.
             apply_bow_transition_state_side_effect(entity, current_order_type, motion);
+            if entity.is_pc()
+                && !script_driven
+                && motion == SpriteMotionState::Start
+                && matches!(
+                    current_order_type,
+                    OrderType::TransitionEquipBow | OrderType::TransitionEquipBowAnonymous
+                )
+            {
+                // RHElementActorHuman::Execute forwards this immediately
+                // after setting AimingWithBow. Active-shot bow orders bypass
+                // the generic actor-animation owner, so publish the same
+                // callback from this mutually exclusive owner seam.
+                events.pc_equip_actions.push(shooter_id);
+            }
             let actor = entity.actor_data_mut().unwrap();
             if matches!(
                 motion,
@@ -3159,7 +3310,15 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
     let trajectory_empty = proj.projectile.trajectory.is_empty();
     let flight_at_endpoint = proj.projectile.trajectory_frame_count == 0;
     let world_position_is_moving = proj.element.sprite.position_iface.is_moving();
-    let retire_loaded_stopped = !proj.projectile.flying && !flight_at_endpoint;
+    // HitTarget stops flight and deletes the remaining trajectory without
+    // resetting the current segment countdown. That is not a loaded/settled
+    // arrow: Arrow::Refresh still sees old != current and keeps it active for
+    // this refresh before the following Hourglass exposes a stationary
+    // snapshot. Keep the legacy falling-arrow load normalization separate.
+    let preserve_live_non_falling_hit =
+        !proj.projectile.flying && !proj.projectile.falling && world_position_is_moving;
+    let retire_loaded_stopped =
+        !proj.projectile.flying && !flight_at_endpoint && !preserve_live_non_falling_hit;
     let retire_live_stopped =
         !proj.projectile.flying && flight_at_endpoint && !world_position_is_moving;
     let retire_live_flying = proj.projectile.flying
@@ -3185,10 +3344,14 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
         return;
     }
 
-    if trajectory_empty && !proj.projectile.flying && flight_at_endpoint {
+    if trajectory_empty
+        && !proj.projectile.flying
+        && (flight_at_endpoint || preserve_live_non_falling_hit)
+    {
         // Projectile::Hourglass calls NewMove even after flight stops. Rust's
-        // landed-projectile tick is otherwise skipped at that point, so cross
-        // the same movement-snapshot boundary here before the next Refresh.
+        // stopped-projectile tick is otherwise skipped, so cross the same
+        // movement-snapshot boundary here before the next Refresh. This also
+        // covers HitTarget with a nonzero leftover segment countdown.
         proj.element.sprite.position_iface.new_move();
     }
 
@@ -3246,7 +3409,7 @@ pub(crate) fn make_arrow_falling_down(
     // stops at the wall or floor it is thrown into instead of sailing through
     // it. Segment clipping also shortens the first waypoint's frame count,
     // which is directly observable as this tick's movement increment.
-    let (trajectory, terminal_obstacle, terminal_impact) =
+    let (trajectory, terminal_obstacle, terminal_impact, terminal_lands_in_hole) =
         compute_trajectory_ballistic_with_terminal_impact(
             proj.element.position(),
             velocity,
@@ -3257,9 +3420,7 @@ pub(crate) fn make_arrow_falling_down(
     proj.projectile.trajectory = trajectory;
     proj.projectile.trajectory_frame_count = 0;
     proj.projectile.launch_segment_start = None;
-    if let Some(water_zones) = obstacle_check.and_then(|check| check.water_zones) {
-        preserve_falling_hole_disappearance(proj, water_zones);
-    }
+    preserve_falling_hole_disappearance(proj, terminal_lands_in_hole);
 
     // Recomputing a trajectory drops the projectile's current membership and
     // re-derives it from where the new trajectory ends, so the deflected
@@ -3303,22 +3464,13 @@ pub(crate) fn make_arrow_falling_down(
     proj.advance_trajectory_one_frame();
 }
 
-fn preserve_falling_hole_disappearance(
-    proj: &mut ElementProjectile,
-    water_zones: &crate::water_zones::WaterZones,
-) {
+fn preserve_falling_hole_disappearance(proj: &mut ElementProjectile, terminal_lands_in_hole: bool) {
     // `ComputeTrajectory` does not clear `mbDisappear`, and
     // `AddTrajectoryFallIntoHole` sets it before checking whether there are
     // enough waypoints to append the visual far-edge extension. A short
     // ricochet can therefore have only one terminal waypoint and must still
     // disappear silently when that point lies in a hole.
-    proj.projectile.disappear |= proj
-        .projectile
-        .trajectory
-        .iter()
-        .rev()
-        .take(2)
-        .any(|point| water_zones.landing_is_in_hole(point.position.to_map()));
+    proj.projectile.disappear |= terminal_lands_in_hole;
 }
 
 /// Advance every arrow projectile by one frame along its precomputed
@@ -3577,8 +3729,10 @@ fn tick_arrows_matching(
             }
             let obstacle = actor.shield_obstacle.as_ref()?.clone();
             let (dx, dy) = crate::element::direction_vector_16(e.element_data().direction());
-            // Un-compress Y for angular comparison.
-            let look_dir = (dx, dy * INVERSE_ASPECT_RATIO);
+            // Original starts with GetDirectionVector (Y compressed by
+            // ASPECT_RATIO), then un-compresses it for this dot product. The
+            // two factors cancel back to the raw 16-sector direction.
+            let look_dir = (dx, dy);
             Some(ShieldSnapshot {
                 holder_id: entity_id,
                 look_dir,
@@ -6783,6 +6937,74 @@ mod tests {
         );
     }
 
+    fn tick_active_pc_equip_start(script_driven: bool) -> BowTickEvents {
+        let sim = crate::sim_rng::test_context();
+        let shooter = EntityId::Pc(crate::entity_id::PcId(0));
+        let target = EntityId::Soldier(crate::entity_id::SoldierId(1));
+        let mut pc = make_pc(0.0, 0.0);
+        bind_test_bow_release_rows(&mut pc, OrderType::TransitionEquipBow);
+        let mut entities = entity_table(vec![Some(pc), Some(make_soldier(50.0, 0.0))]);
+        let mut sm = SequenceManager::new();
+        let mut element = build_shoot_bow_element(shooter, target);
+        element.script_driven = script_driven;
+        let mut next_order_id = 1;
+        let order_id = crate::order::alloc_order_id(&mut next_order_id);
+        element.orders.push_back(Order::new(
+            OrderType::TransitionEquipBow,
+            0.0,
+            0.0,
+            order_id,
+        ));
+        let sequence_id = sm.launch_element(element);
+        sm.element_in_progress(sequence_id, 0);
+        entities
+            .get_mut(shooter)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_shot = ActiveShot {
+            sequence_id: Some(sequence_id),
+            element_index: 0,
+            target: Some(target),
+            order_id: Some(order_id),
+            released: false,
+            shoot_mode: Some(ShootMode::Normal),
+        };
+
+        let events = tick_bow_shots(&sim, &mut entities, &mut sm);
+        assert_eq!(
+            entities
+                .get(shooter)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .action_state,
+            ActionState::AimingWithBow,
+            "the specialized owner must still apply the equip START state before its callback"
+        );
+        events
+    }
+
+    #[test]
+    fn active_shot_pc_equip_start_requests_bow_action_restitution() {
+        let events = tick_active_pc_equip_start(false);
+
+        assert_eq!(
+            events.pc_equip_actions,
+            [EntityId::Pc(crate::entity_id::PcId(0))]
+        );
+    }
+
+    #[test]
+    fn active_shot_script_pc_equip_start_suppresses_bow_action_restitution() {
+        let events = tick_active_pc_equip_start(true);
+
+        assert!(
+            events.pc_equip_actions.is_empty(),
+            "script-driven equip transitions must preserve the PC's toolbar action"
+        );
+    }
+
     #[test]
     fn equip_and_unload_are_active_bow_transition_orders() {
         assert!(is_bow_transition_order(OrderType::TransitionEquipBow));
@@ -6948,6 +7170,149 @@ mod tests {
     //  throw impact path.
     // ═══════════════════════════════════════════════════════════════
 
+    fn trajectory_into_material_test_wall(
+        material_sectors: Vec<crate::material_sectors::MaterialSector>,
+        water_zones: &crate::water_zones::WaterZones,
+    ) -> (
+        Vec<TrajectoryPoint>,
+        Option<crate::position_interface::ObstacleHandle>,
+        bool,
+        bool,
+    ) {
+        let mut obstacle = compute_shield_obstacle(
+            MapPoint::new(0.0, 0.0),
+            0.0,
+            4,
+            &ShieldParams {
+                pre_offset: 0.0,
+                width: 100.0,
+                depth: 5.0,
+                height: 100.0,
+                z_offset: 0.0,
+            },
+        );
+        obstacle.set_flag(crate::sight_obstacle::SIGHTOBSTACLE_SHIELD, false);
+        obstacle.material = 2; // STONE
+        obstacle.material_sectors = material_sectors;
+        let obstacles = [obstacle];
+        let mut grid = crate::fast_find_grid::FastFindGrid::default();
+        {
+            let mut level = (*grid.level).clone();
+            level.map_bbox =
+                crate::coordinates::MapBBox::from_coords(-10_000.0, -10_000.0, 10_000.0, 10_000.0);
+            grid.level = std::sync::Arc::new(level);
+        }
+        let check = TrajectoryObstacleCheck {
+            fast_find_grid: &grid,
+            layer: 0,
+            sight_obstacles: crate::sight_obstacle::ObstacleList::from_slice_all_active(&obstacles),
+            water_zones: Some(water_zones),
+        };
+        compute_trajectory_ballistic_with_terminal_impact(
+            // Begin far enough behind the thin wall to retain at least one
+            // free-flight waypoint before impact. Original's
+            // AddTrajectoryFallIntoHole deliberately needs two points before
+            // it can derive the approach line and append a far-edge point.
+            WorldPoint3D::new(-40.0, 0.0, 25.0),
+            WorldVec3D::new(10.0, 0.0, 0.0),
+            MASS_ARROW_FLAT,
+            false,
+            Some(&check),
+        )
+    }
+
+    fn test_water_zone(points: Vec<MapPoint>) -> crate::water_zones::WaterZone {
+        let mut bounding_box = crate::coordinates::MapBBox::new();
+        for &point in &points {
+            bounding_box.expand_point(point);
+        }
+        crate::water_zones::WaterZone {
+            points,
+            bounding_box,
+            material: crate::sound_cache::Material::Hole,
+        }
+    }
+
+    fn test_material_sector(
+        points: Vec<MapPoint>,
+        material: crate::element::GameMaterial,
+    ) -> crate::material_sectors::MaterialSector {
+        let mut bounding_box = crate::coordinates::MapBBox::new();
+        for &point in &points {
+            bounding_box.expand_point(point);
+        }
+        crate::material_sectors::MaterialSector {
+            points,
+            bounding_box,
+            material,
+        }
+    }
+
+    #[test]
+    fn raised_dry_terminal_obstacle_ignores_projected_global_hole() {
+        let water_zones = crate::water_zones::WaterZones {
+            zones: vec![test_water_zone(vec![
+                MapPoint::new(-1000.0, -1000.0),
+                MapPoint::new(1000.0, -1000.0),
+                MapPoint::new(1000.0, 1000.0),
+                MapPoint::new(-1000.0, 1000.0),
+            ])],
+        };
+
+        let (_, terminal_obstacle, terminal_impact, terminal_lands_in_hole) =
+            trajectory_into_material_test_wall(vec![], &water_zones);
+
+        assert_eq!(terminal_obstacle.map(u16::from), Some(0));
+        assert!(terminal_impact);
+        assert!(
+            !terminal_lands_in_hole,
+            "the global ground hole must not leak through an exact dry obstacle impact"
+        );
+    }
+
+    #[test]
+    fn terminal_obstacle_hole_extends_through_exact_local_polygon() {
+        let water_zones = crate::water_zones::WaterZones {
+            zones: vec![test_water_zone(vec![
+                MapPoint::new(-1000.0, -1000.0),
+                MapPoint::new(1000.0, -1000.0),
+                MapPoint::new(1000.0, 1000.0),
+                MapPoint::new(-1000.0, 1000.0),
+            ])],
+        };
+        let local_hole = test_material_sector(
+            vec![
+                MapPoint::new(-10_000.0, -50.0),
+                MapPoint::new(10_000.0, -50.0),
+                MapPoint::new(10_000.0, 50.0),
+                MapPoint::new(-10_000.0, 50.0),
+            ],
+            crate::element::GameMaterial::Hole,
+        );
+
+        let (trajectory, terminal_obstacle, terminal_impact, terminal_lands_in_hole) =
+            trajectory_into_material_test_wall(vec![local_hole.clone()], &water_zones);
+
+        assert_eq!(terminal_obstacle.map(u16::from), Some(0));
+        assert!(terminal_impact);
+        assert!(terminal_lands_in_hole);
+        assert!(
+            trajectory.len() >= 3,
+            "fixture must retain free flight, terminal impact, and the appended hole exit"
+        );
+        let impact = trajectory[trajectory.len() - 2].position.to_map();
+        assert!(local_hole.contains(impact));
+        assert!(
+            water_zones.landing_is_in_hole(impact),
+            "fixture must genuinely overlap local and global hole polygons"
+        );
+        let exit = trajectory.last().unwrap().position.to_map();
+        assert!(
+            (exit.y - 50.0).abs() < 0.01,
+            "far-edge extension must use the local obstacle hole (y=50), got {exit:?}"
+        );
+    }
+
     #[test]
     fn arrow_trajectory_retains_exact_terminal_obstacle_identity() {
         let mut obstacle = compute_shield_obstacle(
@@ -7020,7 +7385,7 @@ mod tests {
             water_zones: None,
         };
 
-        let (trajectory, terminal_obstacle, terminal_impact) =
+        let (trajectory, terminal_obstacle, terminal_impact, terminal_lands_in_hole) =
             compute_trajectory_ballistic_with_terminal_impact(
                 WorldPoint3D::new(0.0, 0.0, 25.0),
                 WorldVec3D {
@@ -7035,7 +7400,68 @@ mod tests {
 
         assert!(terminal_impact);
         assert_eq!(terminal_obstacle, None);
+        assert!(!terminal_lands_in_hole);
         assert_eq!(trajectory.last().unwrap().position.z, 0.0);
+    }
+
+    #[test]
+    fn bare_ground_hole_is_propagated_from_terminal_trajectory_impact() {
+        let mut grid = crate::fast_find_grid::FastFindGrid::default();
+        {
+            let mut level = (*grid.level).clone();
+            level.map_bbox =
+                crate::coordinates::MapBBox::from_coords(-10_000.0, -10_000.0, 10_000.0, 10_000.0);
+            grid.level = std::sync::Arc::new(level);
+        }
+        let water_zones = crate::water_zones::WaterZones {
+            zones: vec![crate::water_zones::WaterZone {
+                points: vec![
+                    MapPoint::new(-1000.0, -1000.0),
+                    MapPoint::new(1000.0, -1000.0),
+                    MapPoint::new(1000.0, 1000.0),
+                    MapPoint::new(-1000.0, 1000.0),
+                ],
+                bounding_box: crate::coordinates::MapBBox::from_coords(
+                    -1000.0, -1000.0, 1000.0, 1000.0,
+                ),
+                material: crate::sound_cache::Material::Hole,
+            }],
+        };
+        let check = TrajectoryObstacleCheck {
+            fast_find_grid: &grid,
+            layer: 0,
+            sight_obstacles: crate::sight_obstacle::ObstacleList::empty(),
+            water_zones: Some(&water_zones),
+        };
+
+        let (_, terminal_obstacle, terminal_impact, terminal_lands_in_hole) =
+            compute_trajectory_ballistic_with_terminal_impact(
+                WorldPoint3D::new(0.0, 0.0, 25.0),
+                WorldVec3D::new(10.0, 0.0, 0.0),
+                MASS_ARROW_HIGH,
+                false,
+                Some(&check),
+            );
+
+        assert!(terminal_impact);
+        assert_eq!(terminal_obstacle, None);
+        assert!(terminal_lands_in_hole);
+
+        let (_, bounce_obstacle, bounce_impact, bounce_lands_in_hole) =
+            compute_trajectory_ballistic_bounce_with_terminal(
+                WorldPoint3D::new(0.0, 0.0, 25.0),
+                WorldVec3D::new(10.0, 0.0, 0.0),
+                MASS_COIN,
+                false,
+                Some(&check),
+                BOUNCE_COIN,
+            );
+        assert!(bounce_impact);
+        assert_eq!(bounce_obstacle, None);
+        assert!(
+            bounce_lands_in_hole,
+            "bounce integration must use the same scoped terminal material resolver"
+        );
     }
 
     /// A projectile that passes close to a target on the ground (not
@@ -7375,6 +7801,130 @@ mod tests {
     }
 
     #[test]
+    fn projectile_uses_stale_shield_until_explicit_refresh() {
+        fn run(
+            explicit_refresh: bool,
+        ) -> (Option<EntityId>, ([f32; 3], [f32; 3]), ([f32; 3], [f32; 3])) {
+            let sim = crate::sim_rng::test_context();
+            let mut holder = make_pc(50.0, 0.0);
+            holder.element_data_mut().set_direction_instantly(4);
+            holder.actor_data_mut().unwrap().action_state = ActionState::HoldingShield;
+
+            // Authoritative geometry deliberately retained from an old
+            // position. A projectile tick must not silently move it to the
+            // actor's current position/facing.
+            let stale = compute_shield_obstacle(
+                MapPoint { x: -50.0, y: 100.0 },
+                0.0,
+                4,
+                &shield_params_for_pc(false),
+            );
+            holder.actor_data_mut().unwrap().shield_obstacle = Some(stale);
+            if explicit_refresh {
+                let mut profiles = ProfileManager::new();
+                profiles
+                    .characters
+                    .push(crate::profiles::CharacterProfile::default());
+                refresh_retained_shield_obstacle(&mut holder, &profiles);
+            }
+
+            let before_obstacle = holder
+                .actor_data()
+                .unwrap()
+                .shield_obstacle
+                .as_ref()
+                .unwrap();
+            let before = (before_obstacle.box_3d_min, before_obstacle.box_3d_max);
+            let arrow = spawn_arrow(SpawnArrowParams {
+                shooter: EntityId::Pc(crate::entity_id::PcId(0)),
+                bow_point: WorldPoint3D {
+                    x: 100.0,
+                    y: 0.0,
+                    z: 40.0,
+                },
+                trajectory_origin: MapPoint { x: 100.0, y: 0.0 },
+                target: EntityId::Pc(crate::entity_id::PcId(1)),
+                target_pos: MapPoint { x: 50.0, y: 0.0 },
+                trajectory: vec![TrajectoryPoint {
+                    position: WorldPoint3D {
+                        x: 50.0,
+                        y: 0.0,
+                        z: 40.0,
+                    },
+                    time: 2,
+                }],
+                damage: 30,
+                layer: 0,
+                lands_in_hole: false,
+                initial_velocity: WorldVec3D {
+                    x: -1.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+            });
+            let mut entities =
+                entity_table(vec![Some(make_pc(100.0, 0.0)), Some(holder), Some(arrow)]);
+            let mut shield_hit = None;
+            for _ in 0..10 {
+                for result in tick_arrows(
+                    &sim,
+                    &mut entities,
+                    crate::sight_obstacle::ObstacleList::empty(),
+                ) {
+                    shield_hit = shield_hit.or(result.shield_hit);
+                }
+            }
+            let after_obstacle = entities
+                .get_at_index(1)
+                .unwrap()
+                .1
+                .actor_data()
+                .unwrap()
+                .shield_obstacle
+                .as_ref()
+                .unwrap();
+            let after = (after_obstacle.box_3d_min, after_obstacle.box_3d_max);
+            (shield_hit, before, after)
+        }
+
+        let (stale_hit, stale_before, stale_after) = run(false);
+        assert_eq!(
+            stale_hit, None,
+            "stale retained box must not block the arrow"
+        );
+        assert_eq!(
+            stale_after, stale_before,
+            "projectile processing must not recompute retained shield geometry"
+        );
+
+        let (fresh_hit, fresh_before, fresh_after) = run(true);
+        assert_eq!(
+            fresh_hit,
+            Some(EntityId::Pc(crate::entity_id::PcId(1))),
+            "an explicit shield refresh must publish geometry that blocks the arrow"
+        );
+        assert_eq!(fresh_after, fresh_before);
+    }
+
+    #[test]
+    fn diagonal_soldier_shield_uses_update_box_normalization() {
+        // Savegame_nicouzouf/Profile_001/Savegame_020/replay-006, frame 584:
+        // this segment passes beside Soldier 58's retained sector-15 shield.
+        // Treating the raw compass vector as UpdateBox's already-normalized
+        // input widens/rotates the quad onto the arrow and invents a parry.
+        let obstacle = compute_shield_obstacle(
+            MapPoint::new(867.4834, 406.6131),
+            0.0,
+            15,
+            &shield_params_for_soldier(40, 50),
+        );
+        let current = [853.1472, 379.94678, 25.0];
+        let old = [824.3604, 383.21008, 28.75];
+
+        assert!(!obstacle.is_blocking_ray_3d(current, old));
+    }
+
+    #[test]
     fn non_shield_arrow_ricochet_advances_immediately() {
         crate::sim_rng::with_seed(1, |sim| {
             // Two waypoints: the spawn primer consumes the first segment, so
@@ -7551,10 +8101,16 @@ mod tests {
         }];
         arrow.projectile.flying = true;
         arrow.projectile.launch_segment_start = None;
-        preserve_falling_hole_disappearance(&mut arrow, &water_zones);
+        preserve_falling_hole_disappearance(&mut arrow, true);
         assert!(
             arrow.projectile.disappear,
             "AddTrajectoryFallIntoHole marks even a one-waypoint trajectory"
+        );
+
+        preserve_falling_hole_disappearance(&mut arrow, false);
+        assert!(
+            arrow.projectile.disappear,
+            "recomputing a dry falling trajectory must preserve an existing disappear flag"
         );
 
         arrow.advance_trajectory_one_frame();
@@ -7806,6 +8362,33 @@ mod tests {
 
         assert!(!arrow.element.active);
         assert!(draws.is_empty());
+    }
+
+    #[test]
+    fn non_falling_target_hit_with_leftover_countdown_exposes_stopped_snapshot() {
+        let mut arrow = refresh_test_arrow();
+        arrow.projectile.trajectory.clear();
+        arrow.projectile.flying = false;
+        arrow.projectile.falling = false;
+        arrow.projectile.trajectory_frame_count = 1;
+        arrow
+            .element
+            .sprite
+            .position_iface
+            .set_old_position(WorldPoint3D::new(-1.0, 0.0, 0.0));
+
+        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
+        assert!(
+            arrow.element.active,
+            "HitTarget movement keeps the arrow alive for this Refresh"
+        );
+        assert!(!arrow.element.sprite.position_iface.is_moving());
+
+        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
+        assert!(
+            !arrow.element.active,
+            "the following stationary Refresh retires the arrow"
+        );
     }
 
     #[test]

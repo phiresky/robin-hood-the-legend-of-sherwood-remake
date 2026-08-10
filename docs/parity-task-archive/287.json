@@ -1,0 +1,9 @@
+{
+  "id": "287",
+  "subject": "Ignore lethal piercing wounds against an already-comatose PC",
+  "description": "A repeated lethal arrow hit against a PC already protected by an amulet coma re-entered Rust's ordinary wound/death path, while Original RHElementActorPC::GetWounded ignores an otherwise-lethal wound in that state. ReceivePiercingDamage now preserves the PC's life and coma for that exact case while still performing AddConcussionOfTheBrain; sublethal piercing damage continues through the base-human wound implementation. Focused repeated-lethal and sublethal controls pass. The representative's original frame-714 coma/lethal mismatch clears and advances to an independent Projectile143 active-only frontier after frame 720.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task287-comatose-piercing"
+}

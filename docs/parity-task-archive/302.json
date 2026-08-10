@@ -1,0 +1,9 @@
+{
+  "id": "302",
+  "subject": "Defer ordinary RaiseShield posture to stand-up execution",
+  "description": "Ordinary RaiseShield translation eagerly stamped a lying soldier Upright even though Original first prepends an authored standing-up transition and changes posture only when that order executes. Translation may append RaisingShield, but it no longer applies the immediate Upright/HoldingShield state pair reserved for RaiseShieldInstantly. Focused lying-soldier and instant-raise controls pass and the representative matches exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task302-ordinary-raise-posture"
+}

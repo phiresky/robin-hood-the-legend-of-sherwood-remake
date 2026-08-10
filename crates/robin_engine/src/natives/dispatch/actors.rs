@@ -544,8 +544,9 @@ impl NativeContext<'_, '_> {
                 // Set the AI's `forced_attentive` flag, launch
                 // an `EnterAttentiveMode` sequence on the
                 // false→true transition, and — on the true
-                // branch with frame>1 and the NPC already on
-                // GREEN — bump the alert to YELLOW.
+                // branch with frame>1 and the NPC's live view alert already
+                // on GREEN — bump the alert to YELLOW. The music channel can
+                // already be Yellow after an ALERT_ONLY_MUSIC update.
                 let val = stack.pop_i32();
                 let actor = stack.pop_i32();
                 let target = val != 0;
@@ -569,7 +570,7 @@ impl NativeContext<'_, '_> {
                             }
                             if target
                                 && frame > 1
-                                && enemy.base.current_music_alert_status == AlertLevel::Green
+                                && enemy.base.view_alert_status == AlertLevel::Green
                             {
                                 // Route through the soldier wrapper so view
                                 // tracks the override; SetAlwaysAttentive
@@ -579,7 +580,12 @@ impl NativeContext<'_, '_> {
                         }
                     },
                 }
-                if launch_enter && let Some(target_id) = self.actor_id(actor) {
+                if launch_enter {
+                    let target_id = self.actor_id(actor).unwrap_or_else(|| {
+                        panic!(
+                            "SetAlwaysAttentive resolved enemy soldier {actor} without an actor entity ID"
+                        )
+                    });
                     let mut seq = Sequence::new();
                     seq.append_element(SequenceElement::new(
                         1,

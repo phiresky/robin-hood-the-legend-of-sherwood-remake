@@ -1,0 +1,9 @@
+{
+  "id": "299",
+  "subject": "Skip accepted-Instruct epilogue for redundant RaiseShield",
+  "description": "When RaiseShield was redundant for an already HoldingShield human, translation terminated and replaced the sequence element synchronously, but Rust still published the accepted-Instruct InProgress edge over the preceding Execute result. Original Actor::Instruct observes that mpSequenceElement changed and returns before that epilogue. Redundant RaiseShield now exposes an owner-action Skip barrier after retaining any PC protectee Seek side effect; a moving-shield soldier still accepts and raises normally. Focused redundant, soldier, and PC controls pass and the representative matches exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task299-redundant-raise-barrier"
+}

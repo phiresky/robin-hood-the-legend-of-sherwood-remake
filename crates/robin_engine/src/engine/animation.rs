@@ -5225,6 +5225,14 @@ impl EngineInner {
                                 let _ = entity.position_iface_mut().turn();
                             }
                             let still_turning = entity.position_iface_mut().turn();
+                            if anim_type == OrderType::WaitingShield && still_turning {
+                                // WaitingShield calls UpdateShield iff Turn()
+                                // actually changed the facing direction.
+                                crate::bow_shot::refresh_retained_shield_obstacle(
+                                    entity,
+                                    &assets.profile_manager,
+                                );
+                            }
                             if matches!(anim_type, OrderType::GettingFreeFromWasp) {
                                 wasp_still_turning = still_turning;
                             }
@@ -5621,6 +5629,14 @@ impl EngineInner {
                         );
                         apply_arrow_extraction_start_side_effect(entity, anim_type, motion_state);
                         apply_shield_transition_side_effect(entity, anim_type, motion_state);
+                        if anim_type == OrderType::RaisingShield
+                            && motion_state == MotionState::Done
+                        {
+                            crate::bow_shot::refresh_retained_shield_obstacle(
+                                entity,
+                                &assets.profile_manager,
+                            );
+                        }
                         apply_pc_disguise_exit_side_effect(
                             entity,
                             anim_type,

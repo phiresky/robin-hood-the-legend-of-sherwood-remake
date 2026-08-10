@@ -1734,8 +1734,9 @@ impl EnemyAi {
             return true;
         }
 
-        // The engine's `update_shield_obstacles()` runs every frame, so
-        // the shield box is always current — no explicit refresh needed.
+        // Original explicitly refreshes the retained shield box after
+        // recalculating the phalanx formation.
+        self.base.outbox.actor.refresh_shield = true;
 
         // Build phalanx member list by walking right chain. The per-guy
         // loop starts at `pGuy = me`, so the substate-check /

@@ -1,0 +1,9 @@
+{
+  "id": "296",
+  "subject": "Revalidate Heal immediately before its DONE effect",
+  "description": "A Healing target could become invalid while the animation played, but Rust applied the healing/FX effect and consumed a plant from the stale initialization decision. Original RHElementActorPC::Execute repeats Heal validity in the RHMOTION_DONE arm immediately before either effect and ammo consumption, including strict target identity, target-kind state, and the raw 40-unit action range. The DONE path now performs that second validation, terminates invalid work through the synchronous owner condolence, clears the selected Healing mirror, and preserves both the target and plant count; valid healing remains unchanged. Focused self/other-heal validity and effect/ammo controls pass, and the representative matches exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task296-heal-done-validity"
+}
