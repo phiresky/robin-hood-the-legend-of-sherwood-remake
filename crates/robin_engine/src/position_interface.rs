@@ -998,6 +998,20 @@ impl PositionInterface {
         self.position_sprite_valid.then_some(self.position_sprite)
     }
 
+    /// Compare the raw current and old sprite-position caches without forcing
+    /// another representation to be recomputed.
+    ///
+    /// Original's arrow `Refresh` retirement test observes the sprite's
+    /// existing caches at the presentation boundary. Rust's eager 3D landing
+    /// normalization can still move the eager 3D representation by a tiny
+    /// amount after the cached sprite endpoint has settled, so that world
+    /// delta is not equivalent at this boundary. Invalid/offscreen cache
+    /// values deliberately remain observable here.
+    #[inline]
+    pub(crate) fn raw_sprite_position_is_moving(&self) -> bool {
+        self.position_sprite != self.old_position_sprite
+    }
+
     /// Install the exact integer sprite-space top-left used by C++ gameplay
     /// hotspot queries.
     #[inline]
