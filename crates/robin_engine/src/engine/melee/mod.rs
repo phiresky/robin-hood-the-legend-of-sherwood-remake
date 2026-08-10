@@ -2131,7 +2131,12 @@ fn is_sector_between(sector: u8, begin: u8, end: u8) -> bool {
 /// sector's begin edge, so the floor-based `angle_to_sector`
 /// round-trips back to the same sector.
 fn sector_to_angle(sector: i16) -> f32 {
-    (sector as f32) * std::f32::consts::PI * 2.0 / 16.0 + 0.1
+    // Original's `(sector / 16.0) * 2.0 * PI + 0.1` uses double
+    // intermediates because its decimal literals are unsuffixed, then
+    // narrows the result to FLOAT. That last bit matters to circle strikes:
+    // repeated FLOAT rotation additions can otherwise stop an epsilon short
+    // of the final angle and hold the animation for one extra Hourglass.
+    ((sector as f64 / 16.0) * 2.0 * f64::from(std::f32::consts::PI) + 0.1) as f32
 }
 
 /// Map a SwordStrike to its animation OrderType.
@@ -2440,6 +2445,24 @@ mod tests {
         ActiveFlight, ActorCivilian, ActorData, ActorPc, ActorSoldier, CivilianData, ElementData,
         ElementKind, HumanData, NpcData, PcData, SoldierData,
     };
+
+    #[test]
+    fn sector_to_angle_keeps_original_double_intermediate_rounding() {
+        let direction_angle = sector_to_angle(9);
+        assert_eq!(direction_angle.to_bits(), 0x4068_983d);
+
+        // Profile angle getters likewise narrow 45 degrees to this FLOAT.
+        // Three rotation ticks must reach the true-half-circle final angle
+        // exactly, allowing ExecuteTrueCircleSwordStrikeAction to resume the
+        // sprite animation on the terminal-direction Hourglass.
+        let quarter_turn = ((45.0_f64 / 360.0) * 2.0 * f64::from(std::f32::consts::PI)) as f32;
+        let initial_angle = direction_angle - quarter_turn;
+        let final_angle = initial_angle + std::f32::consts::PI;
+        let after_three_ticks = direction_angle + quarter_turn + quarter_turn + quarter_turn;
+
+        assert_eq!(after_three_ticks.to_bits(), final_angle.to_bits());
+        assert_eq!(final_angle.to_bits(), 0x40bf_b210);
+    }
 
     fn make_engine() -> EngineInner {
         let mut engine = EngineInner::new();
