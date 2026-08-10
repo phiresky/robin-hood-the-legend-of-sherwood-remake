@@ -6,7 +6,7 @@ maps (`Croisement01`–`03`).
 
 It would be very nice to expand the game with a tenth map. The idea is an
 entirely new castle, with a river running past it and a town spread out in
-front.
+front. The new map can be both larger and more complex (more entities) than the existing ones since we are not constrained by compute or memory compared to 2002.
 
 ## Maps in the game
 
@@ -78,10 +78,19 @@ legible, but their relative placement is unchanged.
 
 ## Creation of maps
 
-The surviving production art shows that sketches, blockouts, and 3D models
-were used while creating the original maps. It does not establish how the
-final images were produced: they may have been rendered from more detailed 3D
-scenes, refined in 2D, or made with a combination of both.
+The surviving production art and [contemporary interviews](interviews/README.md)
+support a more specific conclusion. Creative director Jean-Marc Haessig
+explicitly refers to the "3D-modellers who designed the houses and castles,"
+while the Leicester making-of sheet keeps the same geometry and camera as it
+progresses from an untextured model to a textured, lit environment. The most
+likely pipeline was therefore to build detailed 3D scenes and render them
+from a fixed oblique camera into monolithic 2D backgrounds. Final compositing,
+colour grading, or local 2D retouching may still have been used; the surviving
+material does not show how much.
+
+Other interviews corroborate the bitmap-heavy final format: improved
+compression allowed four times as much image data, and the composer worked
+from A3 printouts of each level; neither detail proves how the art was made.
 
 The Leicester making-of sheet shows that progression particularly clearly:
 
@@ -122,15 +131,26 @@ height and sector data, obstacles, interactive objects, patches, and animated sp
 
 
 
-The game itself includes very simplified versions of the 3D models, used to calculate some things like sound occlusion and arrow trajectories: https://www.youtube.com/watch?v=rs7UrwmwqE0
+This production geometry should not be confused with the separate, much
+simpler 3D structure used by the game at runtime. The engine loads the visible
+`.map` as one bitmap and the `.rhp` proto-level separately; the latter contains
+movement, elevation, sight, material, building, lift, and other gameplay data.
+It projects 3D positions onto the map with the fixed relationship
+`screen_x = x`, `screen_y = y - z`, which is also used for view cones, sound
+occlusion, and projectile trajectories. Nothing in the shipped files proves
+whether this runtime geometry was exported from the production scene or
+authored separately. It can be seen in this debug visualization:
+https://www.youtube.com/watch?v=rs7UrwmwqE0
 
 
 
-For a new map, a sensible pipeline would be to lock the gameplay layout first,
-build and test the routes and elevations, and then produce the static background
-with an orthographic camera. That background could come from a detailed 3D
-scene, 2D artwork, or a hybrid process. Collision, sectors, patches, and ambient
-animation would then have to be authored for it.
+For a new map, the closest match to the documented pipeline would be to lock
+the gameplay layout first, build and test the routes and elevations, construct
+a detailed 3D scene, and render the static background with a matching fixed
+oblique camera. The render could then be composited or refined in 2D where
+needed. The simplified runtime geometry, collision, sectors, patches, and
+ambient animation would still have to be authored and registered precisely to
+that background.
 
 Gameplay needs to be considered: There should be multiple ways into the castle and routes in general, soldiers should be able to be placed and to patrol some routes, etc. The more the designer of the map knows about how the game works, the better. If you have never played the game, here is a gameplay video: https://www.youtube.com/watch?v=ijkwe15y3e4
 Note that in-game, you do not see the whole castle at once, you scroll around the map.

@@ -53,3 +53,14 @@
 # Local API credentials
 /concept-maps/.env
 /original-code
+
+
+# temporary
+
+/parity-hang-diagnostics
+/parity-random-save-replays-60s-15x
+/parity-random-save-replays
+/parity-save-replays
+/concept-maps
+/factorio-mods
+/mission-maps
