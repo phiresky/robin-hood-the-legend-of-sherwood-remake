@@ -2683,7 +2683,9 @@ mod tests {
             None,
         ));
         {
-            let position = engine.get_entity_mut(victim).unwrap().position_iface_mut();
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            victim_entity.element_data_mut().set_layer(4);
+            let position = victim_entity.position_iface_mut();
             position.set_direction_instantly(crate::position_interface::Direction::from_raw(5));
             position.set_move_box(crate::coordinates::MoveBox::from_coords(
                 -5.0, -5.0, 5.0, 5.0,
@@ -2719,6 +2721,16 @@ mod tests {
 
         engine.initialize_hit_flight(&LevelAssets::default(), victim, Some(attacker), queued_type);
 
+        assert_eq!(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .position_iface()
+                .layer_goal()
+                .get(),
+            4,
+            "ReadyForTakeOff publishes its authored goal layer immediately"
+        );
         assert_ne!(
             engine
                 .get_entity(victim)

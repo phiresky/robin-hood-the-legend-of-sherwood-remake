@@ -1765,6 +1765,10 @@ impl EngineInner {
             .entities
             .get_mut(victim_id)
             .unwrap_or_else(|| panic!("falling-hit victim {victim_id:?} vanished"));
+        victim.position_iface_mut().set_layer_goal(
+            crate::position_interface::Layer::new(victim_layer)
+                .expect("falling-hit victim layer cannot be the no-layer sentinel"),
+        );
         victim.position_iface_mut().set_direction_instantly(
             crate::position_interface::Direction::from_raw(facing_sector as i32),
         );
