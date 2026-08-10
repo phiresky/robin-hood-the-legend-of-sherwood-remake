@@ -3159,9 +3159,7 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
     let trajectory_empty = proj.projectile.trajectory.is_empty();
     let flight_at_endpoint = proj.projectile.trajectory_frame_count == 0;
     let world_position_is_moving = proj.element.sprite.position_iface.is_moving();
-    let retire_loaded_stopped = !proj.projectile.flying && !flight_at_endpoint;
-    let retire_live_stopped =
-        !proj.projectile.flying && flight_at_endpoint && !world_position_is_moving;
+    let retire_stopped = !proj.projectile.flying && !world_position_is_moving;
     let retire_live_flying = proj.projectile.flying
         && proj.projectile.falling
         && flight_at_endpoint
@@ -3170,7 +3168,7 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
             .sprite
             .position_iface
             .raw_sprite_position_is_moving();
-    if trajectory_empty && (retire_loaded_stopped || retire_live_stopped || retire_live_flying) {
+    if trajectory_empty && (retire_stopped || retire_live_flying) {
         // The endpoint frame itself is still presented once. Falling arrows
         // therefore consume their final tumble draw before the settled cache
         // retires them; an already-stopped loaded arrow retires immediately.
@@ -7785,20 +7783,39 @@ mod tests {
     }
 
     #[test]
-    fn stopped_empty_trajectory_retires_without_refresh_rng() {
+    fn stopped_moving_empty_trajectory_ignores_retained_counter_until_settled() {
         let mut arrow = refresh_test_arrow();
         arrow.projectile.trajectory.clear();
-        arrow.projectile.falling = true;
+        arrow.projectile.falling = false;
         arrow.projectile.flying = false;
         arrow.projectile.trajectory_frame_count = 3;
-        // Model the terminal landing normalization. It mutates the eager
-        // world position after flight has stopped, but is not another flight
-        // segment that keeps the arrow alive.
+        // A successful HitTarget stops flight and deletes the trajectory but
+        // leaves the current segment's counter and movement intact.
         arrow
             .element
             .sprite
             .position_iface
             .set_old_position(WorldPoint3D::new(-1.0, 0.0, 0.0));
+
+        let (_, draws) = crate::sim_rng::with_draw_trace(|| {
+            refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow)
+        });
+
+        assert!(arrow.element.active);
+        assert!(draws.is_empty());
+
+        arrow.element.sprite.position_iface.new_move();
+        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
+        assert!(!arrow.element.active);
+    }
+
+    #[test]
+    fn stopped_settled_empty_trajectory_retires_with_retained_counter() {
+        let mut arrow = refresh_test_arrow();
+        arrow.projectile.trajectory.clear();
+        arrow.projectile.falling = false;
+        arrow.projectile.flying = false;
+        arrow.projectile.trajectory_frame_count = 3;
 
         let (_, draws) = crate::sim_rng::with_draw_trace(|| {
             refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow)
