@@ -1120,11 +1120,6 @@ impl EngineInner {
             self.take_smalltalk_initiative(initiator);
         }
 
-        // Recompute relative fighting ability on both sides after
-        // the opponent lists change.
-        self.recompute_relative_fighting_ability(initiator, assets);
-        self.recompute_relative_fighting_ability(opponent, assets);
-
         // Cancel pending pathfinder requests and active paths only
         // for entities that are ENTERING combat fresh (not already in
         // a sword or shield state).  This happens via the
