@@ -3183,13 +3183,6 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
         return;
     }
 
-    if trajectory_empty && !proj.projectile.flying && flight_at_endpoint {
-        // Projectile::Hourglass calls NewMove even after flight stops. Rust's
-        // landed-projectile tick is otherwise skipped at that point, so cross
-        // the same movement-snapshot boundary here before the next Refresh.
-        proj.element.sprite.position_iface.new_move();
-    }
-
     if proj.projectile.falling {
         apply_arrow_falling_sprite_visual(sim, proj);
     } else {
@@ -7773,11 +7766,41 @@ mod tests {
 
         // The exhausted trajectory's next Hourglass stops flight and snaps
         // the landing height. Original exposes that movement for one more
-        // active snapshot, then retires it on the following Refresh.
+        // active snapshot. The following stopped Projectile::Hourglass owns
+        // NewMove; Refresh only observes that snapshot and then retires it.
         arrow.projectile.flying = false;
         refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
         assert!(arrow.element.active);
+        assert!(arrow.element.sprite.position_iface.is_moving());
+        arrow.element.sprite.position_iface.new_move();
         assert!(!arrow.element.sprite.position_iface.is_moving());
+        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
+        assert!(!arrow.element.active);
+    }
+
+    #[test]
+    fn stopped_fx_hit_refresh_waits_for_hourglass_new_move_before_retirement() {
+        let mut arrow = refresh_test_arrow();
+        arrow.projectile.trajectory.clear();
+        arrow.projectile.trajectory_frame_count = 0;
+        arrow.projectile.flying = false;
+        arrow
+            .element
+            .sprite
+            .position_iface
+            .set_old_position(WorldPoint3D::new(-1.0, 0.0, 0.0));
+
+        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
+
+        assert!(
+            arrow.element.active,
+            "Refresh must preserve the moving snapshot exposed by successful HitTarget"
+        );
+        assert!(arrow.element.sprite.position_iface.is_moving());
+
+        // RHElementProjectile::Hourglass calls NewMove before checking
+        // mbFlying, even for an arrow already stopped by HitTarget.
+        arrow.element.sprite.position_iface.new_move();
         refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
         assert!(!arrow.element.active);
     }
