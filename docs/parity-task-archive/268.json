@@ -1,0 +1,9 @@
+{
+  "id": "268",
+  "subject": "Clear retained lateral sweep victims on termination",
+  "description": "SuN1Sh1nE Profile_004 Savegame_016 replay-011 advanced through Task264 and panicked after frame 1379 because Rust consumed two SwordDamageProtection draws and MeleeProvoke beyond Original. Soldier70's prior lateral strike D had genuinely terminated, but Rust cleared only actor.sweep_state and retained PC134 in human.sword_sweep. Fresh strike E then rehydrated that stale victim before its action point and invented damage. Original ExecuteLateralSwordStrike deletes its victim list on RHMOTION_TERMINATED. Genuine non-straight termination now clears both Rust mirrors while interrupted/loaded sweep hydration remains intact. The focused regression passes and the representative matches exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task268-retained-lateral-sweep"
+}

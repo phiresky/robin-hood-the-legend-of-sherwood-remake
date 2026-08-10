@@ -540,7 +540,7 @@ impl EngineInner {
         }
     }
 
-    fn complete_melee_strike(
+    pub(super) fn complete_melee_strike(
         &mut self,
         _sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -564,7 +564,16 @@ impl EngineInner {
             if clears_shared_sweep {
                 actor.sweep_state = None;
             }
-            std::mem::take(&mut actor.pending_push_swordfight)
+            let pending_swordfights = std::mem::take(&mut actor.pending_push_swordfight);
+            if clears_shared_sweep && let Some(human) = entity.human_data_mut() {
+                // ExecuteLateralSwordStrike/ExecuteCircleSwordStrike delete
+                // their human-owned victim list when the strike genuinely
+                // terminates. Keep the serialized mirror in lockstep with
+                // the executable Rust sweep so a later fresh strike cannot
+                // mistake terminated geometry for a resumed saved sweep.
+                human.sword_sweep = crate::element::HumanSwordSweepState::default();
+            }
+            pending_swordfights
         } else {
             Vec::new()
         };

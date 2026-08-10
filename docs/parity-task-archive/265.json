@@ -1,0 +1,9 @@
+{
+  "id": "265",
+  "subject": "Retire pre-restoration Focus and RefreshView capture",
+  "description": "SuN1Sh1nE Profile_004 Savegame_024 replay-012 advanced past Task261 and exposed a frame-753 S152-to-S112 visibility query that current Rust correctly omits. The August 1 capture behaves as if S152 retains its old S110 follow cone for an extra frame after ReconsiderEnemyApproach focuses S111. Static inspection of the August 9 Original binary and restored source proves Focus writes the target immediately and RefreshView immediately reads it with the same aspect and snap math as Rust, which necessarily rejects S112. Fourteen sibling seeds provide no contradictory control. The trace is retired pending deterministic current-Original recapture; no Rust change is appropriate.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task265-stale-focus-capture"
+}

@@ -4358,6 +4358,81 @@ mod tests {
     }
 
     #[test]
+    fn terminated_lateral_sweep_cannot_rehydrate_into_a_fresh_strike() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let assets = assets_with_nonstraight_profile(
+            SwordStrike::D,
+            crate::profiles::WeaponThrustKind::Lateral,
+        );
+
+        engine.initialize_sweep(
+            &assets,
+            attacker,
+            SwordStrike::D,
+            Some(1),
+            crate::profiles::WeaponThrustKind::Lateral,
+            vec![victim],
+        );
+        assert_eq!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .sword_sweep
+                .victims,
+            vec![victim]
+        );
+
+        engine.complete_melee_strike(&sim, &assets, attacker, None, 0, SwordStrike::D, Some(1));
+
+        let attacker_entity = engine.get_entity(attacker).unwrap();
+        assert!(
+            attacker_entity.actor_data().unwrap().sweep_state.is_none(),
+            "termination clears the executable sweep"
+        );
+        assert!(
+            attacker_entity
+                .human_data()
+                .unwrap()
+                .sword_sweep
+                .victims
+                .is_empty(),
+            "Original deletes the human-owned victim list on RHMOTION_TERMINATED"
+        );
+
+        install_test_melee_order(&mut engine, attacker, victim, SwordStrike::D, true);
+        engine.rebind_retained_sweep_to_active_strike(&assets, attacker);
+        assert!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .sweep_state
+                .is_none(),
+            "a fresh lateral strike must wait for its own action-done initialization"
+        );
+    }
+
+    #[test]
     fn later_circle_frame_tests_existing_angle_before_tail_advance() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
