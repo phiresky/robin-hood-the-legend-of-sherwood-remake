@@ -103,6 +103,12 @@ fn raising_sword_direction(owner: &Entity, opponent: &Entity) -> i16 {
     crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy)
 }
 
+fn striking_down_sword_direction(owner: &Entity, antagonist: &Entity) -> i16 {
+    let from = owner.ground_position();
+    let to = antagonist.ground_position();
+    crate::position_interface::vector_to_sector_0_to_15_iso(to.x - from.x, to.y - from.y)
+}
+
 /// Beggar animation arms whose original PC `Execute` handler calls `Turn()`
 /// before advancing the sprite action.
 fn pc_beggar_execute_calls_turn(anim: OrderType) -> bool {
@@ -1240,6 +1246,7 @@ mod tests {
     fn striking_down_sword_start_and_done_match_original_side_effects() {
         let mut entity = weak_soldier_at_action_done(0);
         entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
+        entity.element_data_mut().set_direction_instantly(14);
         let mut outcomes = ExecuteSideOutcomes::default();
 
         apply_striking_down_sword_side_effect(
@@ -1247,6 +1254,7 @@ mod tests {
             OrderType::StrikingDownSword,
             MotionState::Start,
             Some(EntityId::Pc(crate::entity_id::PcId(9))),
+            Some(15),
             EntityId::Pc(crate::entity_id::PcId(7)),
             &mut outcomes,
         );
@@ -1256,6 +1264,8 @@ mod tests {
             entity.actor_data().unwrap().action_state,
             ActionState::WaitingSword
         );
+        assert_eq!(entity.element_data().direction(), 14);
+        assert_eq!(entity.position_iface().get_direction_goal().as_u8(), 15);
         assert!(outcomes.killed_at_bottom.is_empty());
 
         apply_striking_down_sword_side_effect(
@@ -1263,6 +1273,7 @@ mod tests {
             OrderType::StrikingDownSword,
             MotionState::Done,
             Some(EntityId::Pc(crate::entity_id::PcId(9))),
+            Some(15),
             EntityId::Pc(crate::entity_id::PcId(7)),
             &mut outcomes,
         );
@@ -1273,6 +1284,38 @@ mod tests {
                 EntityId::Pc(crate::entity_id::PcId(9)),
                 EntityId::Pc(crate::entity_id::PcId(7))
             )]
+        );
+    }
+
+    #[test]
+    fn striking_down_sword_start_facing_uses_stretched_ground_positions() {
+        let mut owner = weak_soldier_at_action_done(0);
+        let mut antagonist = weak_soldier_at_action_done(0);
+        owner
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D::ZERO);
+        owner
+            .element_data_mut()
+            .set_position_map_preserving_3d(crate::coordinates::MapPoint::new(100.0, 100.0));
+        antagonist
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D {
+                x: -17.0,
+                y: -16.0,
+                z: 20.0,
+            });
+        antagonist
+            .element_data_mut()
+            .set_position_map_preserving_3d(crate::coordinates::MapPoint::new(-100.0, -100.0));
+
+        assert_eq!(
+            striking_down_sword_direction(&owner, &antagonist),
+            crate::position_interface::vector_to_sector_0_to_15_iso(-17.0, -16.0)
+        );
+        assert_ne!(
+            striking_down_sword_direction(&owner, &antagonist),
+            crate::position_interface::vector_to_sector_0_to_15(-17.0, -16.0),
+            "strike START must not use bare map-space binning"
         );
     }
 
@@ -3012,13 +3055,15 @@ fn apply_smalltalk_start_and_recovery_side_effect(
     }
 }
 
-/// STRIKING_DOWN_SWORD sets sword-waiting state at Start and launches
-/// GET_KILLED_AT_BOTTOM on the victim at the action-done tag.
+/// STRIKING_DOWN_SWORD refreshes its antagonist-facing goal and sets
+/// sword-waiting state at Start, then launches GET_KILLED_AT_BOTTOM on the
+/// victim at the action-done tag.
 fn apply_striking_down_sword_side_effect(
     entity: &mut Entity,
     anim_type: OrderType,
     motion: MotionState,
     antagonist: Option<EntityId>,
+    antagonist_direction: Option<i16>,
     entity_id: EntityId,
     outcomes: &mut ExecuteSideOutcomes,
 ) {
@@ -3031,6 +3076,14 @@ fn apply_striking_down_sword_side_effect(
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::WaitingSword;
             }
+            let direction = antagonist_direction.unwrap_or_else(|| {
+                panic!(
+                    "actor {entity_id:?} StrikingDownSword started without an antagonist direction"
+                )
+            });
+            entity.position_iface_mut().set_direction(
+                crate::position_interface::Direction::from_raw(i32::from(direction)),
+            );
         }
         MotionState::Done => {
             let Some(target) = antagonist else {
@@ -4068,6 +4121,7 @@ impl EngineInner {
             waiting_sword_direction_goal,
             standing_up_sword_direction_goal,
             extracting_arrow_sword_direction_goal,
+            striking_down_sword_direction_goal,
             pc_taking_direction_goal,
             pc_target_direction_goal,
         ) = {
@@ -4216,6 +4270,20 @@ impl EngineInner {
                     None
                 }
             }).flatten();
+
+            let striking_down_sword_direction = if anim_type == OrderType::StrikingDownSword {
+                let antagonist_id = validated_antagonist
+                    .expect("StrikingDownSword requires a validated antagonist");
+                let antagonist = self.world.entities.get(antagonist_id).unwrap_or_else(|| {
+                        panic!(
+                            "actor {entity_id:?} StrikingDownSword antagonist {antagonist_id:?} is missing at legacy slot {}",
+                            entity_id.index()
+                        )
+                    });
+                Some(striking_down_sword_direction(entity, antagonist))
+            } else {
+                None
+            };
 
             let door_direction = if matches!(
                 anim_type,
@@ -4470,6 +4538,7 @@ impl EngineInner {
                 waiting_sword_direction,
                 standing_up_sword_direction,
                 extracting_arrow_sword_direction,
+                striking_down_sword_direction,
                 taking_direction,
                 target_direction,
             )
@@ -5558,6 +5627,7 @@ impl EngineInner {
                             anim_type,
                             motion_state,
                             antagonist,
+                            striking_down_sword_direction_goal,
                             entity_id,
                             &mut completion_outcomes.execute_sides,
                         );

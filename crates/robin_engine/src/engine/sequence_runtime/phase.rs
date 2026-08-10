@@ -1400,19 +1400,12 @@ impl EngineInner {
                                         .element_impossible(seq_id, elem_idx);
                                     break 'action;
                                 };
-                                let (tx, ty, dir) =
+                                let (tx, ty) =
                                     match (self.get_entity(owner), self.get_entity(target)) {
-                                        (Some(owner_entity), Some(target_entity)) => {
-                                            let owner_pos =
-                                                owner_entity.element_data().position_map();
+                                        (Some(_), Some(target_entity)) => {
                                             let target_pos =
                                                 target_entity.element_data().position_map();
-                                            let dir =
-                                                crate::position_interface::vector_to_sector_0_to_15(
-                                                    target_pos.x - owner_pos.x,
-                                                    target_pos.y - owner_pos.y,
-                                                );
-                                            (target_pos.x, target_pos.y, dir)
+                                            (target_pos.x, target_pos.y)
                                         }
                                         _ => {
                                             tracing::warn!(
@@ -1427,7 +1420,6 @@ impl EngineInner {
                                         }
                                     };
                                 if let Some(entity) = self.world.entities.get_mut(owner) {
-                                    entity.element_data_mut().set_direction_instantly(dir);
                                     if let Some(actor) = entity.actor_data_mut() {
                                         actor.clear_path();
                                     }
@@ -1458,6 +1450,11 @@ impl EngineInner {
                                         } => antagonist,
                                         _ => None,
                                     });
+                                let already_in_coma = self
+                                    .get_entity(owner)
+                                    .and_then(crate::element::Entity::pc_data)
+                                    .and_then(|pc| self.pc_description_for_pc_data(pc))
+                                    .is_some_and(|description| description.status.in_coma);
                                 let (damage, raw_life_points_after) = {
                                     let Some(victim) = self.world.entities.get_mut(owner) else {
                                         self.orders
@@ -1492,13 +1489,20 @@ impl EngineInner {
                                     let (_, lp) = victim.human_and_life_points_mut().expect(
                                         "validated GetKilledAtBottom human lost life points",
                                     );
-                                    crate::combat::get_wounded(
-                                        lp,
-                                        damage,
-                                        false,
-                                        max_life_points,
-                                        false,
-                                    );
+                                    // RHElementActorPC::GetWounded drops the entire
+                                    // lethal branch when the PC is already in coma.
+                                    // GET_KILLED_AT_BOTTOM still says ouch and
+                                    // terminates its element, but cannot subtract the
+                                    // protected five-point coma floor.
+                                    if !already_in_coma {
+                                        crate::combat::get_wounded(
+                                            lp,
+                                            damage,
+                                            false,
+                                            max_life_points,
+                                            false,
+                                        );
+                                    }
                                     (damage, *lp)
                                 };
 
