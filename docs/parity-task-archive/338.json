@@ -1,0 +1,9 @@
+{
+  "id": "338",
+  "subject": "Use Original's aspect-scaled facing for directed-panic restarts",
+  "description": "A repeated directed panic decides whether to begin a new panic by testing whether the remembered panic center has moved in front of the actor. Original `RHArtificialIntelligence::Panic` ORs that decision with the dot product of `RHElement::GetDirectionVector()` and the center-minus-actor displacement. `GetDirectionVector()` constructs its 16-sector vector with `SetSector0to15(direction, ASPECT_RATIO)`, whose implementation multiplies the vector's Y component by the isometric aspect ratio. Rust instead dotted an unscaled unit direction against the map displacement, which reverses the sign for the recorded direction-5 geometry: actor `(807.45764,767.5333)`, center `(866.0941,592.3076)`. The directed-panic front gate now applies the aspect ratio to the facing Y component before the ordinary 2D dot product. Focused regressions prove that the recorded center is behind under the old unscaled calculation but in front under Original's calculation, and that the mirrored center remains behind. The change is integrated in consolidation commit `031676ffc`; its scoped diff has no whitespace errors. No optimized representative replay or control result is retained in the current tree, so no replay-advance or exact-EOF claim is made here.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task338-directed-panic-facing"
+}

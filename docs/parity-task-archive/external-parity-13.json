@@ -1,0 +1,10 @@
+{
+  "id": "external-parity-13",
+  "subject": "Match retained lateral sweep forecast geometry",
+  "description": "Original's START-only warning call to GetPossibleVictimsOfLateralSwordStrike writes the human-owned initial, current, and final sweep angles even though it fills a temporary warning-victim list. A replacement lateral strike can therefore retain an interrupted strike's victim FIFO while rebasing that shared geometry to the replacement strike before its first IN_PROGRESS Execute. Rust now performs those warning-forecast angle writes when retained victims exist, without creating real sweep state for an ordinary fresh strike. Focused coverage constructs an interrupted strike D and replacement strike E, checks that E's START preserves the victim FIFO while rebasing all three angles, and exercises E's retained geometry on the following sweep tick. Branch commit 31aeb6a538c4465e149d30885f5a1a186bacc2af was integrated as 49c160ba7e045f6063531c7335a6b9670c77671a.",
+  "activeForm": "Matching retained lateral sweep forecast geometry",
+  "owner": "external-parity-13",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

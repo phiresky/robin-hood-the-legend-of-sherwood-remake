@@ -1,0 +1,10 @@
+{
+  "id": "external-parity-18",
+  "subject": "Gate sword initiative transfer on the executed sword action",
+  "description": "Original transfers swordfight initiative only inside RHElementActorHuman's sword-movement Execute RHMOTION_START arm. A broader retained sword-motion context can still own visual and facing behavior, but a raw sprite START hidden by the PerformSeek wrapper, or an ordinary successor selected while a stale sword action state remains live, does not own that side effect. Rust now distinguishes the logical action that actually enters the sword-movement Execute arm from the broader sword-motion context before transferring initiative. Focused coverage keeps the outgoing sword context while selecting an ordinary walking successor and verifies that only actual walking or running sword actions qualify. Branch commit e901d800bb8618b431092b64a3f72505ddf3c38e was integrated as 8091bcfcf114f812d584fab367dd13c3e418f928.",
+  "activeForm": "Gating sword initiative on executed action",
+  "owner": "external-parity-18",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}

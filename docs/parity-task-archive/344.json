@@ -1,0 +1,9 @@
+{
+  "id": "344",
+  "subject": "Use Original's aspect-scaled facing vector for push-strike rectangles",
+  "description": "parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_039/replay-008-session-0001.jsonl.zst reached a downstream RNG mismatch during Original frame 596 because Original applied one ReceiveSwordDamage event that Rust omitted. Soldier110's raw HtH profile 17 maps strike A to PushAside even though the installed animation is StrikingStraightSword; Original dispatches by weapon strike kind, not animation name. RHElement::GetDirectionVector constructs the literal 16-sector vector with ASPECT_RATIO, and ExecutePushSwordStrike normalizes that vector before projecting every candidate onto its front and side axes. Rust's warning and live-hit PushAside collectors instead used an unscaled unit-circle vector. At the authoritative boundary Soldier110 was at (648.4297485, 2083.1838379), direction 3, and Soldier91 at (686.1061401, 2080.0742188); Rust's side projection was about 11.55 and rejected the profile's 10-unit half-width, while Original's aspect-scaled projection was about 5.67 and admitted the victim. Both collectors now use direction_vector_16 with ASPECT_RATIO before the existing shipping swordfight stretch and normalization. The focused push rectangle regression passes, and the parity-profile runner builds successfully. The representative clears frame 596 and advances 877 frames to an independent frontier after frame 1473 (97.614% of the 1509-frame trace), where Soldier81 first differs in direction_goal (Original 10, Rust 11) with position, movement and visibility-query fallout.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task344_push_aspect"
+}

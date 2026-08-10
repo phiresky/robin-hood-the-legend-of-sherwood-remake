@@ -1,0 +1,10 @@
+{
+  "id": "external-parity-14",
+  "subject": "Retire pre-typed NearbyCiviliansPanic replay",
+  "description": "COMPLETED WITHOUT A RUST CHANGE. Savegame_SuN1Sh1nE/Profile_004/Savegame_021/replay-006-session-0001.jsonl.zst records a NearbyCiviliansPanic boundary from before Original corrected the EVENT_PANIC payload type. The old path selected the INFO_HUMAN overload while the civilian handler consumed INFO_POS, making the panic center and escape-door choice depend on pointer or stale union bytes. Current Original constructs the stimulus with the caller's concrete Position(mpMe), while Rust already uses the semantic source position. The stale trace is retired pending deterministic recapture rather than reproducing address-dependent behavior. Branch commit b5a23c10039a677747146a63f0aff07d718add80 was integrated as 912d9a3bab281f845dea5890d2f66f17e6600b18.",
+  "activeForm": "Retiring a pre-typed civilian panic replay",
+  "owner": "external-parity-14",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": []
+}
