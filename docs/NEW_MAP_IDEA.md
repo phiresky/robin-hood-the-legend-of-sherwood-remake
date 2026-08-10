@@ -16,15 +16,15 @@ using libaom at quality 60, speed 0, and YUV 4:4:4; ask me if you need lossless)
 
 | Map | Day | Fog | Night |
 | --- | --- | --- | --- |
-| **Crossroads 1** (`Croisement01`) | <a href="NEW_MAP_IDEA/crossroads-1-day-full.avif"><img src="NEW_MAP_IDEA/crossroads-1-day.jpg" width="180" alt="Crossroads 1 by day"></a><br><sub>Tactical mission 1</sub> | — | — |
-| **Crossroads 2** (`Croisement02`) | <a href="NEW_MAP_IDEA/crossroads-2-day-full.avif"><img src="NEW_MAP_IDEA/crossroads-2-day.jpg" width="180" alt="Crossroads 2 by day"></a><br><sub>Tactical mission 2</sub> | — | — |
-| **Crossroads 3** (`Croisement03`) | <a href="NEW_MAP_IDEA/crossroads-3-day-full.avif"><img src="NEW_MAP_IDEA/crossroads-3-day.jpg" width="180" alt="Crossroads 3 by day"></a><br><sub>Tactical mission 3</sub> | — | — |
-| **Derby** | <a href="NEW_MAP_IDEA/derby-day-full.avif"><img src="NEW_MAP_IDEA/derby-day.jpg" width="180" alt="Derby by day"></a><br><sub>Attack Derby</sub> | <a href="NEW_MAP_IDEA/derby-fog-full.avif"><img src="NEW_MAP_IDEA/derby-fog.jpg" width="180" alt="Derby in fog"></a><br><sub>The Outlaw and the Prince</sub> | <a href="NEW_MAP_IDEA/derby-night-full.avif"><img src="NEW_MAP_IDEA/derby-night.jpg" width="180" alt="Derby by night"></a><br><sub>Save Tuck</sub> |
-| **Leicester** | <a href="NEW_MAP_IDEA/leicester-day-full.avif"><img src="NEW_MAP_IDEA/leicester-day.jpg" width="180" alt="Leicester by day"></a><br><sub>Contact Ranulph</sub> | — | <a href="NEW_MAP_IDEA/leicester-night-full.avif"><img src="NEW_MAP_IDEA/leicester-night.jpg" width="180" alt="Leicester by night"></a><br><sub>Save Scarlett</sub> |
-| **Lincoln** | <a href="NEW_MAP_IDEA/lincoln-day-full.avif"><img src="NEW_MAP_IDEA/lincoln-day.jpg" width="180" alt="Lincoln by day"></a><br><sub>Robin's Godfather</sub> | <a href="NEW_MAP_IDEA/lincoln-fog-full.avif"><img src="NEW_MAP_IDEA/lincoln-fog.jpg" width="180" alt="Lincoln in fog"></a><br><sub>Attack Lincoln</sub> | <a href="NEW_MAP_IDEA/lincoln-night-full.avif"><img src="NEW_MAP_IDEA/lincoln-night.jpg" width="180" alt="Lincoln by night"></a><br><sub>Free Godwin</sub> |
-| **Nottingham** | <a href="NEW_MAP_IDEA/nottingham-day-full.avif"><img src="NEW_MAP_IDEA/nottingham-day.jpg" width="180" alt="Nottingham by day"></a><br><sub>The Sheriff of Nottingham</sub> | <a href="NEW_MAP_IDEA/nottingham-fog-full.avif"><img src="NEW_MAP_IDEA/nottingham-fog.jpg" width="180" alt="Nottingham in fog"></a><br><sub>Free Robin</sub> | <a href="NEW_MAP_IDEA/nottingham-night-full.avif"><img src="NEW_MAP_IDEA/nottingham-night.jpg" width="180" alt="Nottingham by night"></a><br><sub>Contact Marian</sub> |
-| **Sherwood Forest** | <a href="NEW_MAP_IDEA/sherwood-day-full.avif"><img src="NEW_MAP_IDEA/sherwood-day.jpg" width="180" alt="Sherwood Forest by day"></a><br><sub>Sherwood Forest</sub> | — | <a href="NEW_MAP_IDEA/sherwood-night-full.avif"><img src="NEW_MAP_IDEA/sherwood-night.jpg" width="180" alt="Sherwood Forest by night"></a><br><sub>Sherwood Outro</sub> |
-| **York** | <a href="NEW_MAP_IDEA/york-day-full.avif"><img src="NEW_MAP_IDEA/york-day.jpg" width="180" alt="York by day"></a><br><sub>Save Marian</sub> | <a href="NEW_MAP_IDEA/york-fog-full.avif"><img src="NEW_MAP_IDEA/york-fog.jpg" width="180" alt="York in fog"></a><br><sub>Attack York</sub> | <a href="NEW_MAP_IDEA/york-night-full.avif"><img src="NEW_MAP_IDEA/york-night.jpg" width="180" alt="York by night"></a><br><sub>Lackland's Plan</sub> |
+| **Crossroads 1** (`Croisement01`) | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/crossroads-1-day-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/crossroads-1-day.jpg" width="180" alt="Crossroads 1 by day"></a><br><sub>Tactical mission 1</sub> | — | — |
+| **Crossroads 2** (`Croisement02`) | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/crossroads-2-day-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/crossroads-2-day.jpg" width="180" alt="Crossroads 2 by day"></a><br><sub>Tactical mission 2</sub> | — | — |
+| **Crossroads 3** (`Croisement03`) | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/crossroads-3-day-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/crossroads-3-day.jpg" width="180" alt="Crossroads 3 by day"></a><br><sub>Tactical mission 3</sub> | — | — |
+| **Derby** | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/derby-day-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/derby-day.jpg" width="180" alt="Derby by day"></a><br><sub>Attack Derby</sub> | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/derby-fog-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/derby-fog.jpg" width="180" alt="Derby in fog"></a><br><sub>The Outlaw and the Prince</sub> | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/derby-night-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/derby-night.jpg" width="180" alt="Derby by night"></a><br><sub>Save Tuck</sub> |
+| **Leicester** | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/leicester-day-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/leicester-day.jpg" width="180" alt="Leicester by day"></a><br><sub>Contact Ranulph</sub> | — | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/leicester-night-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/leicester-night.jpg" width="180" alt="Leicester by night"></a><br><sub>Save Scarlett</sub> |
+| **Lincoln** | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/lincoln-day-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/lincoln-day.jpg" width="180" alt="Lincoln by day"></a><br><sub>Robin's Godfather</sub> | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/lincoln-fog-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/lincoln-fog.jpg" width="180" alt="Lincoln in fog"></a><br><sub>Attack Lincoln</sub> | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/lincoln-night-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/lincoln-night.jpg" width="180" alt="Lincoln by night"></a><br><sub>Free Godwin</sub> |
+| **Nottingham** | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/nottingham-day-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/nottingham-day.jpg" width="180" alt="Nottingham by day"></a><br><sub>The Sheriff of Nottingham</sub> | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/nottingham-fog-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/nottingham-fog.jpg" width="180" alt="Nottingham in fog"></a><br><sub>Free Robin</sub> | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/nottingham-night-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/nottingham-night.jpg" width="180" alt="Nottingham by night"></a><br><sub>Contact Marian</sub> |
+| **Sherwood Forest** | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/sherwood-day-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/sherwood-day.jpg" width="180" alt="Sherwood Forest by day"></a><br><sub>Sherwood Forest</sub> | — | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/sherwood-night-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/sherwood-night.jpg" width="180" alt="Sherwood Forest by night"></a><br><sub>Sherwood Outro</sub> |
+| **York** | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/york-day-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/york-day.jpg" width="180" alt="York by day"></a><br><sub>Save Marian</sub> | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/york-fog-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/york-fog.jpg" width="180" alt="York in fog"></a><br><sub>Attack York</sub> | <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/york-night-full.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/york-night.jpg" width="180" alt="York by night"></a><br><sub>Lackland's Plan</sub> |
 
 Nottingham also has a `Custom1` background used by *The Silver Arrow*; it is
 outside the three standard ambience columns above.
@@ -42,8 +42,8 @@ and overlays; both frames retain the same map framing and scale.
 
 <table>
   <tr>
-    <td><img src="NEW_MAP_IDEA/leicester-mission-vs-background.avif" width="420" alt="Animated comparison of Contact Ranulph and the raw Leicester Day background"><br><strong>Leicester</strong><br><code>Contact Ranulph.png ↔ Day/Leicester.map.png</code></td>
-    <td><img src="NEW_MAP_IDEA/tactical-4-mission-vs-background.avif" width="420" alt="Animated comparison of Tactical mission 4 and the raw Crossroads 1 Day background"><br><strong>Tactical mission 4</strong><br><code>Tactical mission 4.png ↔ Day/Croisement01.map.png</code></td>
+    <td><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/leicester-mission-vs-background.avif" width="420" alt="Animated comparison of Contact Ranulph and the raw Leicester Day background"><br><strong>Leicester</strong><br><code>Contact Ranulph.png ↔ Day/Leicester.map.png</code></td>
+    <td><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/tactical-4-mission-vs-background.avif" width="420" alt="Animated comparison of Tactical mission 4 and the raw Crossroads 1 Day background"><br><strong>Tactical mission 4</strong><br><code>Tactical mission 4.png ↔ Day/Croisement01.map.png</code></td>
   </tr>
 </table>
 
@@ -56,24 +56,24 @@ legible, but their relative placement is unchanged.
 
 <table>
   <tr>
-    <td><img src="NEW_MAP_IDEA/sherwood-tree-animation.avif" width="260" alt="Animated Sherwood tree canopy"><br><strong>Sherwood tree canopy</strong><br><code>shertree.rhs: Sherwood - Arbre01</code></td>
-    <td><img src="NEW_MAP_IDEA/sherwood-river.avif" width="260" alt="Animated Sherwood river overlay"><br><strong>Sherwood river</strong><br><code>sherwood.rhs: Sherwood - Riviere_b1</code></td>
-    <td><img src="NEW_MAP_IDEA/crossroads-tree-animation.avif" width="260" alt="Animated Crossroads 1 tree canopy"><br><strong>Crossroads 1 tree canopy</strong><br><code>Treecr01.rhs: Croisement01 - Arbre01</code></td>
+    <td><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/sherwood-tree-animation.avif" width="260" alt="Animated Sherwood tree canopy"><br><strong>Sherwood tree canopy</strong><br><code>shertree.rhs: Sherwood - Arbre01</code></td>
+    <td><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/sherwood-river.avif" width="260" alt="Animated Sherwood river overlay"><br><strong>Sherwood river</strong><br><code>sherwood.rhs: Sherwood - Riviere_b1</code></td>
+    <td><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/crossroads-tree-animation.avif" width="260" alt="Animated Crossroads 1 tree canopy"><br><strong>Crossroads 1 tree canopy</strong><br><code>Treecr01.rhs: Croisement01 - Arbre01</code></td>
   </tr>
   <tr>
-    <td><img src="NEW_MAP_IDEA/derby-drawbridge-animation.avif" width="260" alt="Animated Derby drawbridge"><br><strong>Derby drawbridge</strong><br><code>Derpatch.rhs: Derby - Pont_levis01</code></td>
-    <td><img src="NEW_MAP_IDEA/leicester-drawbridge-animation.avif" width="260" alt="Animated Leicester drawbridge"><br><strong>Leicester drawbridge</strong><br><code>leipatch.rhs: Leicester - Pontlevis01</code></td>
-    <td><img src="NEW_MAP_IDEA/lincoln-drawbridge-animation.avif" width="260" alt="Animated Lincoln drawbridge"><br><strong>Lincoln drawbridge</strong><br><code>Linpatch.rhs: Lincoln - Pont_levis</code></td>
+    <td><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/derby-drawbridge-animation.avif" width="260" alt="Animated Derby drawbridge"><br><strong>Derby drawbridge</strong><br><code>Derpatch.rhs: Derby - Pont_levis01</code></td>
+    <td><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/leicester-drawbridge-animation.avif" width="260" alt="Animated Leicester drawbridge"><br><strong>Leicester drawbridge</strong><br><code>leipatch.rhs: Leicester - Pontlevis01</code></td>
+    <td><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/lincoln-drawbridge-animation.avif" width="260" alt="Animated Lincoln drawbridge"><br><strong>Lincoln drawbridge</strong><br><code>Linpatch.rhs: Lincoln - Pont_levis</code></td>
   </tr>
   <tr>
-    <td><img src="NEW_MAP_IDEA/nottingham-portcullis-animation.avif" width="260" alt="Animated Nottingham portcullis"><br><strong>Nottingham portcullis</strong><br><code>notpatch.rhs: Nottingham - herse</code></td>
-    <td><img src="NEW_MAP_IDEA/york-portcullis-animation.avif" width="260" alt="Animated York portcullis"><br><strong>York portcullis</strong><br><code>Yorkpatch.rhs: York - herse</code></td>
-    <td><img src="NEW_MAP_IDEA/leicester-windmill-animation.avif" width="260" alt="Animated Leicester windmill blades"><br><strong>Leicester windmill</strong><br><code>Leifx.rhs: Leicester - moulin</code></td>
+    <td><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/nottingham-portcullis-animation.avif" width="260" alt="Animated Nottingham portcullis"><br><strong>Nottingham portcullis</strong><br><code>notpatch.rhs: Nottingham - herse</code></td>
+    <td><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/york-portcullis-animation.avif" width="260" alt="Animated York portcullis"><br><strong>York portcullis</strong><br><code>Yorkpatch.rhs: York - herse</code></td>
+    <td><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/leicester-windmill-animation.avif" width="260" alt="Animated Leicester windmill blades"><br><strong>Leicester windmill</strong><br><code>Leifx.rhs: Leicester - moulin</code></td>
   </tr>
   <tr>
-    <td><img src="NEW_MAP_IDEA/nottingham-windmill-animation.avif" width="260" alt="Animated Nottingham windmill blades"><br><strong>Nottingham windmill</strong><br><code>notfx.rhs: Nottingham - moulin</code></td>
-    <td><img src="NEW_MAP_IDEA/crossroads-pit-animation.avif" width="260" alt="Animated opening pit trap at Crossroads 1"><br><strong>Crossroads 1 pit</strong><br><code>Trapcr01.rhs: Croisement01 - hole</code></td>
-    <td><img src="NEW_MAP_IDEA/crossroads-trap-animation.avif" width="260" alt="Animated trap overlay at Crossroads 1"><br><strong>Crossroads 1 trap</strong><br><code>Trapcr01.rhs: Croisement01 - piege01e</code></td>
+    <td><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/nottingham-windmill-animation.avif" width="260" alt="Animated Nottingham windmill blades"><br><strong>Nottingham windmill</strong><br><code>notfx.rhs: Nottingham - moulin</code></td>
+    <td><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/crossroads-pit-animation.avif" width="260" alt="Animated opening pit trap at Crossroads 1"><br><strong>Crossroads 1 pit</strong><br><code>Trapcr01.rhs: Croisement01 - hole</code></td>
+    <td><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/crossroads-trap-animation.avif" width="260" alt="Animated trap overlay at Crossroads 1"><br><strong>Crossroads 1 trap</strong><br><code>Trapcr01.rhs: Croisement01 - piege01e</code></td>
   </tr>
 </table>
 
@@ -85,10 +85,10 @@ in 2D. The result was exported as the static terrain bitmap.
 
 The Leicester making-of sheet shows that progression particularly clearly:
 
-<figure>
-  <a href="NEW_MAP_IDEA/making-of-leicester.jpg"><img src="NEW_MAP_IDEA/making-of-leicester.jpg" width="372" alt="Making-of sheet showing Leicester from blockout to painted game map"></a>
-  <figcaption>Leicester: 3D construction, render, and painted final map.</figcaption>
-</figure>
+<p align="center">
+  <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/making-of-leicester.jpg"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/making-of-leicester.jpg" width="372" alt="Making-of sheet showing Leicester from blockout to painted game map"></a>
+  <br><sub>Leicester: 3D construction, render, and painted final map.</sub>
+</p>
 
 The original game's concept art also preserves a smaller sketch-to-render
 example, showing how a fortified tower design was translated into a finished
@@ -96,8 +96,8 @@ environment asset:
 
 <table>
   <tr>
-    <td><a href="NEW_MAP_IDEA/original-castle-concept-sketch.avif"><img src="NEW_MAP_IDEA/original-castle-concept-sketch.avif" width="360" alt="Original Robin Hood castle tower concept sketch"></a><br><strong>Concept sketch</strong><br><code>castle_1.jpg</code></td>
-    <td><a href="NEW_MAP_IDEA/original-castle-concept-render.avif"><img src="NEW_MAP_IDEA/original-castle-concept-render.avif" width="360" alt="Finished render of the original Robin Hood castle tower concept"></a><br><strong>Finished render</strong><br><code>castle_2.jpg</code></td>
+    <td><a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/original-castle-concept-sketch.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/original-castle-concept-sketch.avif" width="360" alt="Original Robin Hood castle tower concept sketch"></a><br><strong>Concept sketch</strong><br><code>castle_1.jpg</code></td>
+    <td><a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/original-castle-concept-render.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/original-castle-concept-render.avif" width="360" alt="Finished render of the original Robin Hood castle tower concept"></a><br><strong>Finished render</strong><br><code>castle_2.jpg</code></td>
   </tr>
 </table>
 
@@ -105,18 +105,18 @@ The Derby production image is useful as an architectural
 reference for the proposed castle's massing, towers, gatehouse, and defensive
 layers:
 
-<figure>
-  <a href="NEW_MAP_IDEA/production-art-derby.jpg"><img src="NEW_MAP_IDEA/production-art-derby.jpg" width="720" alt="Production art of Derby"></a>
-  <figcaption>Original production art for Derby.</figcaption>
-</figure>
+<p align="center">
+  <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/production-art-derby.jpg"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/production-art-derby.jpg" width="720" alt="Production art of Derby"></a>
+  <br><sub>Original production art for Derby.</sub>
+</p>
 
 In addition, each map needs walkable geometry,
 height and sector data, obstacles, interactive objects, patches, and animated sprites.
 
-<figure>
-  <a href="NEW_MAP_IDEA/gameplay-geometry-overlay.avif"><img src="NEW_MAP_IDEA/gameplay-geometry-overlay.avif" width="720" alt="Game map with its gameplay geometry visualized as colored wireframes"></a>
-  <figcaption>A game map with its collision, sector, and gameplay geometry overlays visualized.</figcaption>
-</figure>
+<p align="center">
+  <a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/gameplay-geometry-overlay.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/gameplay-geometry-overlay.avif" width="720" alt="Game map with its gameplay geometry visualized as colored wireframes"></a>
+  <br><sub>A game map with its collision, sector, and gameplay geometry overlays visualized.</sub>
+</p>
 
 
 
@@ -141,8 +141,8 @@ gameplay requirements into a rough layout sketch.
 
 <table>
   <tr>
-    <td><a href="NEW_MAP_IDEA/greywatch-layout-sketch.avif"><img src="NEW_MAP_IDEA/greywatch-layout-sketch.avif" width="360" alt="Layout sketch for Greywatch Castle"></a><br><strong>Layout sketch</strong><br>My plan for the castle, river, roads, and settlements.</td>
-    <td><a href="NEW_MAP_IDEA/greywatch-castle-concept.avif"><img src="NEW_MAP_IDEA/greywatch-castle-concept.avif" width="360" alt="Best Greywatch Castle AI concept map"></a><br><strong>Best result</strong><br>My single-pass Greywatch Castle concept.</td>
+    <td><a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/greywatch-layout-sketch.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/greywatch-layout-sketch.avif" width="360" alt="Layout sketch for Greywatch Castle"></a><br><strong>Layout sketch</strong><br>My plan for the castle, river, roads, and settlements.</td>
+    <td><a href="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/greywatch-castle-concept.avif"><img src="https://raw.githubusercontent.com/phiresky/robin-hood-the-legend-of-sherwood-remake/refs/heads/main/docs/NEW_MAP_IDEA/greywatch-castle-concept.avif" width="360" alt="Best Greywatch Castle AI concept map"></a><br><strong>Best result</strong><br>My single-pass Greywatch Castle concept.</td>
   </tr>
 </table>
 
