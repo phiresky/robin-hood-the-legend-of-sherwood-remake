@@ -2,6 +2,7 @@
 # Task 73: recorded behavior contradicts current Original source/assets.
 Savegame_Cyrdach/Profile_156/Savegame_010/replay-001-session-0001.jsonl.zst
 Savegame_Cyrdach/Profile_156/Savegame_015/replay-009-session-0001.jsonl.zst
+Savegame_Cyrdach/Profile_156/Savegame_023/replay-004-session-0001.jsonl.zst
 Savegame_Cyrdach/Profile_156/Savegame_023/replay-009-session-0001.jsonl.zst
 Savegame_Cyrdach/Profile_156/Savegame_023/replay-011-session-0001.jsonl.zst
 # Task 79: valid zstd containers with truncated JSONL records.

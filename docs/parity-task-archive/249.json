@@ -1,0 +1,9 @@
+{
+  "id": "249",
+  "subject": "Preserve Original strict LinkSource grid reachability",
+  "description": "Nescafe Profile_001 Restart replay-005 diverged after frame 792 when Original returned an empty path but Rust invented a three-point route. Original RHPathFinder::LinkSource always requires IsReachableGrid from the source to every candidate docking point. Rust carried a deliberate non-parity fallback that retried authorized sources with that check disabled, linking 20 otherwise-invalid nodes. The relaxed retry is removed, restoring Original's single strict pass. The representative clears frame 792 and advances to independent frame-892 SeekPointSelection RNG work. Both task-36 controls and the focused blocked-corridor regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task249-strict-linksource"
+}

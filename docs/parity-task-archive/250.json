@@ -1,0 +1,9 @@
+{
+  "id": "250",
+  "subject": "Force patrol members directly back to duty",
+  "description": "linux2 Profile_002 ExQuickSave replay-009 advanced past Task248 and diverged after frame 1059 because script-locked Civilian68 remained in DefaultPatrolEnrouteWaiting. Original ClearPatrol clears each member's chief and calls the inline virtual ForceReturnToDuty, which directly invokes ReturnToDuty and bypasses StartThink's script-lock admission. Rust incorrectly modeled it as Think(EVENT_RETURN_TO_DUTY), producing EventRefused and no transition. RemoveAllSubordinates now performs the virtual enemy/friendly ReturnToDuty call directly and drains its owner effects synchronously. The representative and both task-36 controls match exact EOF; the focused script-locked patrol regression and the combined 2,854-test robin_engine suite pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task250-force-return-to-duty"
+}

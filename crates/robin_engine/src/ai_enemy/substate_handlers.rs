@@ -6442,8 +6442,11 @@ mod tests {
 
         let mut self_view = pc_view(crate::element::Posture::Upright);
         self_view.is_able_to_fight = true;
+        self_view.active = true;
         let mut missed_view = pc_view(crate::element::Posture::Upright);
         missed_view.is_able_to_fight = false;
+        missed_view.is_unconscious = true;
+        missed_view.active = true;
         let mut views = crate::ai_entity_view::AiEntityViewMap::new();
         views.insert(1, self_view);
         views.insert(2, missed_view);

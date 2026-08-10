@@ -2370,6 +2370,14 @@ impl EngineInner {
 
         // NPC kill cascade: clear stale pre-death work, then enqueue the
         // death-owned alert/music transition and snap the terminal state.
+        let forced_attentive = if victim.is_soldier() {
+            victim
+                .enemy_ai()
+                .expect("dying soldier NPC has no EnemyAi")
+                .forced_attentive
+        } else {
+            false
+        };
         if let Some(ai) = victim.ai_controller_mut() {
             // Drop every remaining AI intent queued by the think that ran
             // earlier in this tick.  The relationship-maintenance effects
@@ -2379,7 +2387,7 @@ impl EngineInner {
             ai.set_alert_status_with_flags(
                 crate::ai::AlertLevel::Green,
                 crate::ai::AlertFlags::INSTANT_MUSIC_CHANGE,
-                false,
+                forced_attentive,
             );
             ai.current_state = crate::ai::AiState::Sleeping;
             ai.current_substate = crate::ai::Substate::SleepingForever;

@@ -1,0 +1,9 @@
+{
+  "id": "247",
+  "subject": "Preserve falling-arrow hole disappearance",
+  "description": "Recomputed falling-arrow trajectories now preserve Original's mbDisappear flag and preflag a terminal HOLE approach even when only one waypoint exists. At exhaustion, disappearing projectiles return before HitObstacle's ordinary elevation snap. Raw-cache empty-endpoint retirement is limited to falling arrows so ordinary flying arrows remain active for their next Projectile::Hourglass. SuN1Sh1nE Profile_004 Savegame_017 replay-009 matches exact EOF; Savegame_024 replay-013 clears the combined frame-137 retirement regression and advances beyond its prior frame-499 frontier. Both task-36 controls and three focused regressions pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task247-falling-hole"
+}

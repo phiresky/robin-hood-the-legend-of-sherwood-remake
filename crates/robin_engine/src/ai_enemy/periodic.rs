@@ -27,6 +27,7 @@ impl EnemyAi {
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
         is_idle: bool,
         receiving_wasp_sting: bool,
+        stuck_command_active: bool,
         sequence_null_about_to_launch: bool,
     ) {
         // Scotch — wasp stuck recovery.  The gate is on the NPC no
@@ -160,7 +161,7 @@ impl EnemyAi {
                 | Substate::FleeingRunForArrowReserves,
         );
 
-        if in_reachpoint_arm && is_idle {
+        if in_reachpoint_arm && stuck_command_active {
             // A queued Null sequence element means a
             // transition is in-flight — don't bump the stuck counter.
             if sequence_null_about_to_launch {
@@ -188,7 +189,7 @@ impl EnemyAi {
                 }
                 self.base.stuck_counter = 0;
             }
-        } else {
+        } else if !in_reachpoint_arm {
             self.base.stuck_counter = 0;
         }
 

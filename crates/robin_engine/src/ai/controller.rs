@@ -4305,7 +4305,22 @@ impl AiController {
                                         // level-load spawn.
                                         self.has_patrol_path = false;
                                         self.initial_position = ctx.position;
-                                        self.initial_view_direction = ctx.direction & 0x0F;
+                                        // RHElementActorNPC::StoreInitialPositionParameters
+                                        // stores a unit vector with the default
+                                        // aspect, then return-to-post FaceTo bins
+                                        // that vector with ASPECT_RATIO. Diagonal
+                                        // body sectors therefore do not always
+                                        // round-trip (sector 3 becomes 2).
+                                        let initial_view_vector =
+                                            crate::shadow_polygon::sector_to_direction(
+                                                (ctx.direction & 0x0F) as i16,
+                                            );
+                                        self.initial_view_direction =
+                                            crate::position_interface::vector_to_sector_0_to_15(
+                                                initial_view_vector[0]
+                                                    * crate::position_interface::ASPECT_RATIO,
+                                                initial_view_vector[1],
+                                            ) as u16;
                                         self.return_to_duty_common_stuff(
                                             sim,
                                             DutyFlags::empty(),

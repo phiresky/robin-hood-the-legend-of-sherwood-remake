@@ -1,0 +1,9 @@
+{
+  "id": "254",
+  "subject": "Rebuild postponed Eat ability identity",
+  "description": "SuN1Sh1nE Profile_004 Savegame_016 replay-002 advanced past Task251 and diverged after frame 1522 when PC132 fell from EatCmd to Wait after an arrow injury completed. Original postponement deletes the outgoing Eat element's orders and retranslates the element when it resumes. Rust deleted the orders but retained its active_ability mirror, so resumed begin_eat rejected the fresh translation as a concurrent ability. Active-mechanics teardown now clears an active ability only when its sequence/element identity exactly matches the selected outgoing element, including the corresponding Listen and ReceivePurse phase mirrors. The representative clears the Eat/Wait frontier and advances to an independent Soldier91 turn frontier after frame 1529. Both task-36 controls, the focused injury-postponed Eat regression, and the combined 2,854-test robin_engine suite pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task254-postponed-eat"
+}

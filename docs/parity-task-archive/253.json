@@ -1,0 +1,9 @@
+{
+  "id": "253",
+  "subject": "Stamp terminal-first upright runs as MovingFast",
+  "description": "SuN1Sh1nE Profile_004 Savegame_016 replay-004 diverged after frame 1364 because Soldier92's first RunningUpright execution reached its exact goal and terminated without Rust changing Waiting to MovingFast. Original RHElementActor::Execute calls SetStates(Upright, MovingFast) unconditionally after PerformSeek/PerformMotion for RunningUpright, before switching on the returned motion state. Rust incorrectly limited that state effect to MotionState::Start. RunningUpright now stamps the state for every motion result; the audited walk, stairs, and Human sword-movement arms remain Start-only as in Original. The representative clears frame 1364 and advances to an independent Soldier92 movement frontier after frame 1501. Both task-36 controls, the focused terminal-first regression, and the combined 2,856-test robin_engine suite pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task253-terminal-first-run"
+}

@@ -1062,6 +1062,39 @@ pub(in crate::engine) struct WaitCommandContext<'a> {
     pub(in crate::engine) profiles: &'a crate::profiles::ProfileManager,
 }
 
+/// `RHElementActor::Translate`'s base WAIT posture switch.
+///
+/// Human WAIT translation normally handles dead/unconscious holds itself.
+/// Its upright-dead emergency fall has one deliberate default fallthrough to
+/// this base switch, which re-reads the element's stamped transition state
+/// rather than the Human translator's local collapsed posture.
+fn base_wait_animation(
+    posture: crate::element::Posture,
+    action_state: crate::element::ActionState,
+) -> crate::order::OrderType {
+    use crate::element::{ActionState as AS, Posture as P};
+    use crate::order::OrderType as OT;
+
+    match posture {
+        P::Upright => OT::WaitingUprightBored,
+        P::Crouched => OT::WaitingCrouched,
+        P::OnWall | P::OnLadder => OT::Freezing,
+        P::Sitting => OT::Sitting,
+        P::Lying => OT::BeingUnconscious,
+        P::DeadBack => match action_state {
+            state if state.is_sword() || state == AS::Menacing => OT::BeingDeadFallenBackSword,
+            state if state.is_bow() => OT::BeingDeadFallenBackBow,
+            _ => OT::BeingDeadFallenBack,
+        },
+        P::Dead => match action_state {
+            state if state.is_sword() => OT::BeingDeadSword,
+            state if state.is_bow() => OT::BeingDeadBow,
+            _ => OT::BeingDead,
+        },
+        other => panic!("base WAIT translation does not support posture {other:?}"),
+    }
+}
+
 impl WaitCommandContext<'_> {
     pub(in crate::engine) fn dispatch(
         &mut self,
@@ -1147,6 +1180,7 @@ impl WaitCommandContext<'_> {
             action_state_after_transition = ?wait_element.action_state_after_transition,
             "translating actor wait"
         );
+        let stamped_posture = wait_element.posture_after_transition;
         let after_state = wait_element.action_state_after_transition;
         let pc_posture_animation = if is_pc {
             use crate::element::{ActionState as AS, Posture as P};
@@ -1184,9 +1218,9 @@ impl WaitCommandContext<'_> {
             } else {
                 None
             };
-        // Only the base-class posture switch sees the collapsed posture; the
-        // PC and soldier overrides above and the listening wait below keep
-        // reading the actor's live posture.
+        // Human's local posture switch sees the collapsed posture. Its
+        // default dead-back arm delegates to the base Actor translator,
+        // which re-reads the element's original stamped posture instead.
         let switch_posture = if heart_attack_animation.is_some() {
             if is_unconscious {
                 crate::element::Posture::Lying
@@ -1266,8 +1300,13 @@ impl WaitCommandContext<'_> {
                     }
                 }
                 P::DeadBack => Some(match after_state {
-                    AS::WaitingSword | AS::Menacing => OT::BeingDeadFallenBackSword,
-                    AS::AimingWithBow | AS::AimingWithBowDown => OT::BeingDeadFallenBackBow,
+                    state if state.is_sword() || state == AS::Menacing => {
+                        OT::BeingDeadFallenBackSword
+                    }
+                    state if state.is_bow() => OT::BeingDeadFallenBackBow,
+                    _ if heart_attack_animation.is_some() && is_dead => {
+                        base_wait_animation(stamped_posture, after_state)
+                    }
                     _ => OT::BeingDeadFallenBack,
                 }),
                 P::Dead => Some(match after_state {
@@ -2681,6 +2720,61 @@ mod sequence_phase_context_tests {
                 ..Default::default()
             },
         })
+    }
+
+    #[test]
+    fn upright_dead_wait_keeps_base_upright_follow_up_after_emergency_fall() {
+        use crate::element::{ActionState, ActorSoldier, ElementData, ElementKind, Posture};
+        use crate::order::OrderType;
+        use crate::sequence::SequenceElement;
+
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                active: true,
+                posture: Posture::Upright,
+                ..Default::default()
+            },
+            actor: crate::element::ActorData {
+                action_state: ActionState::Moving,
+                ..Default::default()
+            },
+            human: Default::default(),
+            npc: crate::element::NpcData {
+                life_points: 0,
+                ..Default::default()
+            },
+            soldier: Default::default(),
+        }));
+        let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
+        wait.posture_after_transition = Posture::Upright;
+        wait.action_state_after_transition = ActionState::Bored;
+        let sequence = engine.orders.sequence_manager.launch_element(wait);
+
+        WaitCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+            profiles: &crate::profiles::ProfileManager::default(),
+        }
+        .dispatch(owner, Command::Wait, sequence, 0);
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .expect("dead actor wait remains live")
+                .orders
+                .iter()
+                .map(|order| order.order_type)
+                .collect::<Vec<_>>(),
+            vec![
+                OrderType::FallingHitHarderUpright,
+                OrderType::WaitingUprightBored,
+            ]
+        );
     }
 
     #[test]

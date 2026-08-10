@@ -1,0 +1,9 @@
+{
+  "id": "252",
+  "subject": "Select self-heal through its canonical Healing order",
+  "description": "SuN1Sh1nE Profile_004 Savegame_013 replay-003 diverged after frame 1626 because PC172's self-heal retained the canonical Healing order but generic animation dispatch performed Healing instead of Original's self-heal Eating sprite substitution. Rust's ability owner selector incorrectly expected the selected order itself to be Eating, so it failed to route the active Heal through tick_ability. Original Translate installs RHANIMATION_HEALING for every Heal command; PC::Execute substitutes RHANIMATION_EATING only when the injured target is self. Owner selection now matches the canonical active-ability order, allowing the existing execution path to make that sprite-only substitution. The representative and both task-36 controls match exact EOF; the focused self-heal owner-selection regression and the full 2,852-test robin_engine suite pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task252-self-heal-owner"
+}

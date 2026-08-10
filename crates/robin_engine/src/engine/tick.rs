@@ -692,6 +692,53 @@ pub(super) enum ExecuteOwnerFamily {
     WaitingSword,
 }
 
+/// Return the canonical order installed by `TranslateCommand` for the active
+/// ability.  Execute-owner selection must match that order, even when an
+/// ability later asks the sprite to perform a different animation.  In
+/// particular, Original installs `RHANIMATION_HEALING` for every Heal command
+/// and substitutes `RHANIMATION_EATING` only inside PC::Execute for self-heal.
+fn active_ability_order_type(actor: &crate::element::ActorData) -> Option<crate::order::OrderType> {
+    use crate::element::{ListenPhase, ReceivePursePhase};
+    use crate::movement::AbilityKind;
+    use crate::order::OrderType;
+
+    match actor.active_ability.kind? {
+        AbilityKind::Listen => match actor.listen_phase {
+            ListenPhase::EnterTransition => Some(OrderType::TransitionWaitingUprightListening),
+            ListenPhase::CountingDown => Some(OrderType::Listening),
+            ListenPhase::ExitTransition => Some(OrderType::TransitionListeningWaitingUpright),
+            ListenPhase::Inactive => None,
+        },
+        AbilityKind::ReceivePurse => match actor.receive_purse_phase {
+            ReceivePursePhase::Receiving => Some(OrderType::ReceivingPurse),
+            ReceivePursePhase::Waiting => Some(OrderType::WaitingWithPurse),
+            ReceivePursePhase::Transition => {
+                Some(OrderType::TransitionWaitingWithPurseWaitingUpright)
+            }
+            ReceivePursePhase::Inactive => None,
+        },
+        kind => Some(crate::abilities::ability_order_type(kind)),
+    }
+}
+
+#[cfg(test)]
+mod active_ability_owner_selection_tests {
+    use super::active_ability_order_type;
+    use crate::element::{ActorData, EntityId, EntityIdKind};
+    use crate::movement::AbilityKind;
+    use crate::order::OrderType;
+
+    #[test]
+    fn self_heal_keeps_the_canonical_healing_order_for_owner_selection() {
+        let healer = EntityId::new(172, EntityIdKind::Pc);
+        let mut actor = ActorData::default();
+        actor.active_ability.kind = Some(AbilityKind::Heal);
+        actor.active_ability.target = Some(healer);
+
+        assert_eq!(active_ability_order_type(&actor), Some(OrderType::Healing));
+    }
+}
+
 macro_rules! actor_execute_arm_catalog {
     ($emit:ident) => {
         $emit! {
@@ -3725,44 +3772,31 @@ impl EngineInner {
                         .then(|| self.selected_bow_order(entity_id))
                         .flatten();
                         let ability_selection = selected_order.filter(|(seq, elem, order_id)| {
-                        selected_owner_family == Some(ExecuteOwnerFamily::Ability)
-                            && self.world
-                            .entities
-                            .get(entity_id)
-                            .and_then(Entity::actor_data)
-                            .is_some_and(|actor| {
-                                let expected_type = match actor.active_ability.kind {
-                                    Some(crate::movement::AbilityKind::Listen) => {
-                                        match actor.listen_phase {
-                                            crate::element::ListenPhase::EnterTransition => crate::order::OrderType::TransitionWaitingUprightListening,
-                                            crate::element::ListenPhase::CountingDown => crate::order::OrderType::Listening,
-                                            crate::element::ListenPhase::ExitTransition => crate::order::OrderType::TransitionListeningWaitingUpright,
-                                            crate::element::ListenPhase::Inactive => return false,
-                                        }
-                                    }
-                                    Some(crate::movement::AbilityKind::ReceivePurse) => {
-                                        match actor.receive_purse_phase {
-                                            crate::element::ReceivePursePhase::Receiving => crate::order::OrderType::ReceivingPurse,
-                                            crate::element::ReceivePursePhase::Waiting => crate::order::OrderType::WaitingWithPurse,
-                                            crate::element::ReceivePursePhase::Transition => crate::order::OrderType::TransitionWaitingWithPurseWaitingUpright,
-                                            crate::element::ReceivePursePhase::Inactive => return false,
-                                        }
-                                    }
-                                    Some(crate::movement::AbilityKind::Heal)
-                                        if actor.active_ability.target == Some(entity_id) => crate::order::OrderType::Eating,
-                                    Some(kind) => crate::abilities::ability_order_type(kind),
-                                    None => return false,
-                                };
-                                actor.active_ability.is_active()
-                                    && actor.active_ability.sequence_id == Some(*seq)
-                                    && actor.active_ability.element_index == *elem
-                                    && actor.active_ability.order_id == Some(*order_id)
-                                    && self.orders.sequence_manager
-                                        .get_element(*seq, *elem)
-                                        .and_then(|element| element.current_order())
-                                        .is_some_and(|order| order.order_type == expected_type)
-                            })
-                    });
+                            selected_owner_family == Some(ExecuteOwnerFamily::Ability)
+                                && self
+                                    .world
+                                    .entities
+                                    .get(entity_id)
+                                    .and_then(Entity::actor_data)
+                                    .is_some_and(|actor| {
+                                        let Some(expected_type) = active_ability_order_type(actor)
+                                        else {
+                                            return false;
+                                        };
+                                        actor.active_ability.is_active()
+                                            && actor.active_ability.sequence_id == Some(*seq)
+                                            && actor.active_ability.element_index == *elem
+                                            && actor.active_ability.order_id == Some(*order_id)
+                                            && self
+                                                .orders
+                                                .sequence_manager
+                                                .get_element(*seq, *elem)
+                                                .and_then(|element| element.current_order())
+                                                .is_some_and(|order| {
+                                                    order.order_type == expected_type
+                                                })
+                                    })
+                        });
                         let beggar_selection = selected_order.and_then(|(seq, elem, order_id)| {
                             if selected_owner_family != Some(ExecuteOwnerFamily::Beggar) {
                                 return None;

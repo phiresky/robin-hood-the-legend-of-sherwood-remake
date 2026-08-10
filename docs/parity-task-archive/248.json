@@ -1,0 +1,9 @@
+{
+  "id": "248",
+  "subject": "Execute Wait-carried lethal falling-hit animations",
+  "description": "linux2 Profile_002 ExQuickSave replay-009 exposed one connected lethal-Wait chain at frames 941, 958, and 959. Original translates an upright dead actor's emergency fall through the Human WAIT arm, then delegates the default follow-up to RHElementActor::Translate, which re-reads the stamped Upright posture and appends WaitingUprightBored. Rust instead used the Human arm's locally collapsed DeadBack posture and then suppressed execution because the owner was dead. WAIT translation now preserves the stamped posture for that base-class delegation, and animation dispatch no longer uses the source-invented dead/unconscious allowlist: Original Execute always performs the selected current order. The representative clears all three connected frontiers and advances to an independent Civilian68 AI substate divergence after frame 1059. Both task-36 controls and two focused regressions pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task248-lethal-wait-animation"
+}

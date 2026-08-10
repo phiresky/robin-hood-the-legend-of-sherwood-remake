@@ -1429,83 +1429,21 @@ impl PathFinderRuntime {
             )
         };
 
-        // Single pass over candidate nodes.  Returns the number of
-        // nodes actually linked.  Factored out so we can retry with a
-        // relaxed docking-check when the strict pass produces nothing
-        // (see `relax_grid` below).
-        let linked = self.try_link_nodes(grid, source, goal, &box_link, false);
-
-        if linked == 0 {
-            // Fallback: the thick-corridor grid check rejected every
-            // candidate docking point.  This happens when the actor
-            // is in a "narrow pocket" — its 1-px-shrunk bbox fits
-            // between nearby motion lines (so `object_position_
-            // authorized` passes and the actor legitimately stands
-            // here), but every full-corridor sweep to a nearby graph
-            // node clips a line because the corridor is ~hd wider
-            // than the bbox.  Without this fallback the symptom is a
-            // PC that stalls at an interrupted-walk midpoint:
-            // `find_path` returns None and the Move element ages out
-            // to `IMPOSSIBLE` after the 100-frame timeout, so the
-            // actor is frozen for a full second of in-game time even
-            // though it legitimately stands at an authorized spot.
-            //
-            // The unauthorized-source case is handled upstream:
-            // `engine::movement::try_dispatch_move_path` pre-snaps any
-            // unauthorized actor bbox via `find_authorized_position`
-            // before submitting, then sets `use_first_point = true` so
-            // the snapped point becomes the first waypoint.  This
-            // branch therefore only handles the *narrow-pocket* case
-            // below.
-            //
-            // Relaxed retry: only if the source position itself is
-            // authorized (so we're not papering over an actor that
-            // actually clipped out of bounds — `try_dispatch_move_path`
-            // already extracted those before calling `find_path`), drop
-            // the `is_reachable_grid` check at the docking-point step.
-            // The skeleton (`is_reachable_fast`) check and the
-            // `is_good_docking_place` geometry test still gate which
-            // nodes get linked, so the pathfinder still respects
-            // coarse sector topology.  Per-frame motion-line
-            // collision during the actual walk (handled in
-            // `engine/movement.rs`) will clamp any detail that the
-            // relaxed check glossed over.
-            if self.object_position_authorized(grid, source) {
-                let relaxed_linked = self.try_link_nodes(grid, source, goal, &box_link, true);
-                tracing::trace!(
-                    ?source,
-                    ?goal,
-                    relaxed_linked,
-                    "link_source: strict pass empty; fell back to relaxed grid check",
-                );
-            } else {
-                tracing::trace!(
-                    ?source,
-                    ?goal,
-                    "link_source: strict pass empty and source not authorized; no fallback",
-                );
-            }
-        }
+        self.try_link_nodes(grid, source, goal, &box_link);
     }
 
-    /// Body of `link_source`.  When `relax_grid` is true the
-    /// `is_reachable_grid` check on the source→docking-point corridor is
-    /// skipped — used as a fallback when the strict pass finds nothing
-    /// (see `link_source` for rationale).  Returns the number of nodes
-    /// successfully added to the open list.
+    /// Body of `link_source`, including Original's required grid-reachability
+    /// check from the source to each candidate docking point.
     fn try_link_nodes(
         &mut self,
         grid: &FastFindGrid,
         source: MapPoint,
         goal: MapPoint,
         box_link: &MapBBox,
-        relax_grid: bool,
-    ) -> u32 {
+    ) {
         let (layer, area) = self.current_graph_area;
         let hd_idx = self.current_half_diagonal_idx as usize;
         let hd = self.current_half_diagonal;
-
-        let mut cnt_linked: u32 = 0;
 
         let num_obstacles = self.graph.layers[layer][area].len();
         for obs_idx in 0..num_obstacles {
@@ -1537,16 +1475,14 @@ impl PathFinderRuntime {
                         let good_indirect =
                             self.is_good_docking_place(source, node_idx, dp, hd, false);
 
-                        if good_direct || good_indirect {
-                            let grid_ok = relax_grid
-                                || self.is_reachable_grid(
-                                    grid,
-                                    source,
-                                    self.docking_point(node_idx, dp, hd),
-                                );
-                            if grid_ok {
-                                start_config |= dp;
-                            }
+                        if (good_direct || good_indirect)
+                            && self.is_reachable_grid(
+                                grid,
+                                source,
+                                self.docking_point(node_idx, dp, hd),
+                            )
+                        {
+                            start_config |= dp;
                         }
                     }
                     dp <<= 1;
@@ -1564,12 +1500,9 @@ impl PathFinderRuntime {
                     node.visited = true;
 
                     self.add_to_open_nodes(node_idx);
-                    cnt_linked += 1;
                 }
             }
         }
-
-        cnt_linked
     }
 
     /// Reset the graph for a new A* search.
@@ -2749,6 +2682,71 @@ mod tests {
         let path = path.unwrap();
         // Direct path: just source and goal
         assert_eq!(path.len(), 1); // Only goal (source is at front after reverse, but direct path returns just goal)
+    }
+
+    #[test]
+    fn link_source_does_not_bypass_blocked_docking_corridor() {
+        let mut runtime = PathFinderRuntime::new();
+        let mut grid = FastFindGrid::new();
+        grid.size_map(4, 4);
+        grid.allocate_layers(1);
+
+        // The source's (half-diagonal - 1) authorization box ends at x=59,
+        // so this line does not overlap the actor. The full movement corridor
+        // toward the node uses the unshrunk half-diagonal and is blocked at
+        // x=60. Original LinkSource requires that corridor check even when it
+        // leaves an authorized source with no graph node to enter.
+        grid.add_line(
+            crate::fast_find_grid::GridLine::new(
+                MapPoint::new(60.0, 70.0),
+                MapPoint::new(60.0, 130.0),
+                true,
+            ),
+            0,
+        );
+
+        runtime
+            .graph
+            .static_mut()
+            .move_layers
+            .push(vec![MotionArea {
+                polygon: Vec::new(),
+                skeleton: Vec::new(),
+                motion_obstacles: Vec::new(),
+            }]);
+        runtime.graph.nodes.push(PathGraphNode {
+            position: MapPoint::new(100.0, 100.0),
+            vector_to_node: MapVec::new(0.0, 1.0),
+            vector_from_node: MapVec::new(0.0, -1.0),
+            required_state: 0,
+            configurations: vec![TOP_LEFT],
+            link_indices: Vec::new(),
+            alternative_link_indices: Vec::new(),
+            visited: false,
+            distance_from_source: 0.0,
+            distance_to_goal: 0.0,
+            score: 0.0,
+            previous_link_on_path: None,
+            leave_place: 0,
+            enter_place: 0,
+        });
+        runtime.graph.layers = vec![vec![vec![vec![NodeIdx(0)]]]];
+        runtime.current_layer = 0;
+        runtime.current_graph_area = (0, 0);
+        runtime.current_motion_area = (0, 0);
+        runtime.current_half_diagonal_idx = 0;
+        runtime.current_half_diagonal = MoveBoxHalfDiagonal::new(10.0, 10.0);
+
+        let source = MapPoint::new(50.0, 100.0);
+        let goal = MapPoint::new(120.0, 100.0);
+        let docking = runtime.docking_point(NodeIdx(0), TOP_LEFT, runtime.current_half_diagonal);
+        assert!(runtime.object_position_authorized(&grid, source));
+        assert!(!runtime.is_reachable_grid(&grid, source, docking));
+
+        runtime.link_source(&grid, source, goal);
+
+        assert!(runtime.open_nodes.is_empty());
+        assert!(!runtime.graph.nodes[0].visited);
     }
 
     #[test]

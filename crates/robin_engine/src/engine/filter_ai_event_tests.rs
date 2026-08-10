@@ -475,6 +475,74 @@ fn reentrant_return_to_duty_uses_absent_live_order_not_stale_sprite_animation() 
     );
 }
 
+#[test]
+fn remove_all_subordinates_force_returns_script_locked_civilian_to_duty() {
+    let sim = crate::sim_rng::test_context();
+    let mut assets = LevelAssets::new();
+    let (mut engine, _, _, _) = build_engine();
+    let member = engine.add_entity(make_scripted_civilian(""));
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let chief = engine
+        .world
+        .entities
+        .npc_ids()
+        .find(|&id| {
+            engine
+                .get_entity(id)
+                .and_then(Entity::actor_data)
+                .is_some_and(|actor| actor.script_class == "SourceSensitive")
+        })
+        .expect("SourceSensitive patrol chief");
+
+    {
+        let ai = engine
+            .get_entity_mut(member)
+            .expect("civilian patrol member")
+            .ai_controller_mut()
+            .expect("civilian AI");
+        ai.me = member.index();
+        ai.current_state = crate::ai::AiState::Default;
+        ai.current_substate = crate::ai::Substate::DefaultPatrolEnrouteWaiting;
+        ai.initial_position = crate::ai::Position {
+            x: 100.0,
+            ..Default::default()
+        };
+        ai.script_locked = true;
+        ai.patrol_chief = Some(chief);
+    }
+    engine
+        .get_entity_mut(chief)
+        .expect("patrol chief")
+        .ai_controller_mut()
+        .expect("chief AI")
+        .theoretical_patrol = vec![member];
+
+    engine.script_remove_all_subordinates(&sim, &assets, chief);
+
+    let member_ai = engine
+        .get_entity(member)
+        .expect("civilian patrol member")
+        .ai_controller()
+        .expect("civilian AI");
+    assert!(
+        member_ai.script_locked,
+        "ForceReturnToDuty does not release the script lock"
+    );
+    assert_eq!(member_ai.patrol_chief, None);
+    assert_eq!(member_ai.current_state, crate::ai::AiState::Default);
+    assert_eq!(
+        member_ai.current_substate,
+        crate::ai::Substate::DefaultGotoPost,
+        "ForceReturnToDuty calls virtual ReturnToDuty directly instead of routing through the lock-refused Think(EVENT_RETURN_TO_DUTY)"
+    );
+    assert!(
+        !member_ai.ai_log.iter().any(|line| {
+            line.line_type == crate::ai::LogLineType::EventRefused && line.info == 2
+        }),
+        "the direct ForceReturnToDuty path must bypass StartThink's script-lock gate"
+    );
+}
+
 /// Actors with no bound script instance at all pass through
 /// unfiltered.  (Most shipped actors aren't scripted.)
 #[test]
@@ -2368,7 +2436,7 @@ fn ai_sequence_launch_drains_immediate_engine_elements_inside_owner_tail() {
 }
 
 #[test]
-fn generic_animation_skip_does_not_skip_action_change() {
+fn animation_execution_gates_do_not_skip_action_change() {
     use crate::element::ActionState;
     use crate::order::OrderType;
 
@@ -2494,9 +2562,11 @@ fn generic_animation_skip_does_not_skip_action_change() {
         // sequence time — so an inactive actor still executes its selected
         // order. Likewise a stale moving action-state cannot suppress
         // ordinary Execute of a selected generic order; only movement
-        // elements belong to the movement driver. The remaining gates skip
-        // generic sprite execution.
-        let expected_last_action = if matches!(skip, "inactive" | "moving") {
+        // elements belong to the movement driver. Original also executes the
+        // selected current order for dead and unconscious actors. Only the
+        // explicit global and per-actor freeze gates suppress sprite work.
+        let expected_last_action = if matches!(skip, "inactive" | "moving" | "dead" | "unconscious")
+        {
             OrderType::WalkingUpright
         } else {
             last_action_before
