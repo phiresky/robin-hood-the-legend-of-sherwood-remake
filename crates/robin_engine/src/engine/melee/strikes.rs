@@ -766,11 +766,10 @@ impl EngineInner {
                 .and_then(|actor| actor.sweep_state.as_ref())
                 .is_some_and(true_sweep_still_rotating)
                 && entity.element_data().sprite.last_processed_order_id == selected.order_id.get()
-                && entity
-                    .element_data()
-                    .sprite
-                    .frames_from_now_till_action_done()
-                    <= 0;
+                && entity.element_data().sprite.current_frame
+                    == entity.element_data().sprite.action_done_frame
+                && entity.element_data().sprite.frame_count
+                    == entity.element_data().sprite.action_done_counter;
             if hold_true_sweep {
                 // The rotation phase runs no Sprite method and reports
                 // IN_PROGRESS outright. Latch that here: without it the arm
@@ -985,6 +984,63 @@ impl EngineInner {
                 self.tick_sweep_for(sim, assets, attacker_id, true);
             }
             SweepTickPhase::InProgress => {
+                // ExecuteCircleSwordStrike advances its retained angles only
+                // after RHSprite::IsActionDone becomes true.  A new circle
+                // strike can inherit the previous strike's human-owned victim
+                // list/angles, but it must first play to its own action point;
+                // otherwise the old geometry rotates the new animation on its
+                // first IN_PROGRESS frame. Lateral strikes deliberately keep
+                // their different legacy rule and advance any retained list
+                // on IN_PROGRESS.
+                let (active_strike, active_order_id) = self
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(attacker_id)
+                    .and_then(|(_, _, order)| {
+                        sword_strike_from_animation(order.order_type)
+                            .map(|strike| (strike, order.order_id))
+                    })
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "selected non-straight melee attacker {attacker_id:?} lost its strike order"
+                        )
+                    });
+                let entity = self.get_entity(attacker_id).unwrap_or_else(|| {
+                    panic!("selected non-straight melee attacker {attacker_id:?} disappeared")
+                });
+                let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "selected non-straight melee attacker {attacker_id:?} has no melee weapon profile"
+                        )
+                    });
+                let profile = assets
+                    .profile_manager
+                    .get_hth_weapon(profile_idx)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "selected non-straight melee attacker {attacker_id:?} references missing weapon profile {profile_idx}"
+                        )
+                    });
+                let active_kind = profile.thrusts[active_strike as usize].kind;
+                let action_done = entity.element_data().sprite.last_processed_order_id
+                    == active_order_id.get()
+                    && entity.element_data().sprite.current_frame
+                        == entity.element_data().sprite.action_done_frame
+                    && entity.element_data().sprite.frame_count
+                        == entity.element_data().sprite.action_done_counter;
+                let inherited_circle_before_action_point = self
+                    .get_entity(attacker_id)
+                    .and_then(|entity| entity.actor_data())
+                    .and_then(|actor| actor.sweep_state.as_ref())
+                    .is_some_and(|sweep| {
+                        active_strike != sweep.strike
+                            && is_circle_sweep(active_kind)
+                            && !action_done
+                    });
+                if inherited_circle_before_action_point {
+                    return;
+                }
                 self.rebind_retained_sweep_to_active_strike(assets, attacker_id);
                 self.tick_sweep_for(sim, assets, attacker_id, false);
             }

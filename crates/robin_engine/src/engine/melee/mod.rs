@@ -4108,6 +4108,155 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_circle_sweep_waits_for_replacement_action_point_before_rebinding() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+
+        let mut profile_manager = crate::profiles::ProfileManager::new();
+        let mut weapon = crate::profiles::HtHWeaponProfile::default();
+        for strike in [SwordStrike::I, SwordStrike::F] {
+            let thrust = &mut weapon.thrusts[strike as usize];
+            thrust.kind = crate::profiles::WeaponThrustKind::TrueCircle;
+            thrust.direction = crate::profiles::WeaponThrustDirection::LeftToRight;
+            thrust.minimal_distance = 0;
+            thrust.maximal_distance = 100;
+            thrust.initial_angle = 0;
+            thrust.final_angle = 360;
+            thrust.rotation_angle = 45;
+        }
+        profile_manager.hth_weapons.push(weapon);
+        profile_manager
+            .characters
+            .push(crate::profiles::CharacterProfile {
+                hth_weapon_id: 1,
+                ..crate::profiles::CharacterProfile::default()
+            });
+        let assets = LevelAssets {
+            profile_manager: std::sync::Arc::new(profile_manager),
+            ..LevelAssets::default()
+        };
+
+        let retained_selection =
+            install_test_melee_order(&mut engine, attacker, victim, SwordStrike::I, true);
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .element_data_mut()
+            .set_direction_instantly(7);
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .sweep_state = Some(crate::movement::SweepState {
+            pending_victims: vec![victim],
+            initial_angle: 0.0,
+            current_angle: 0.0,
+            final_angle: std::f32::consts::TAU,
+            rotation_per_frame: std::f32::consts::FRAC_PI_4,
+            direction: crate::profiles::WeaponThrustDirection::LeftToRight,
+            strike: SwordStrike::I,
+            attacker_profile_idx: Some(1),
+            strike_kind: crate::profiles::WeaponThrustKind::TrueCircle,
+        });
+
+        let replacement_order_id = engine.orders.allocate_order_id();
+        let replacement_element = engine
+            .orders
+            .sequence_manager
+            .get_element_mut(retained_selection.seq_id, retained_selection.elem_idx)
+            .expect("retained strike element exists");
+        replacement_element.command = SwordStrike::F.to_command();
+        let replacement_order = replacement_element
+            .orders
+            .front_mut()
+            .expect("retained strike order exists");
+        replacement_order.order_type = strike_to_animation(SwordStrike::F);
+        replacement_order.antagonist = Some(victim);
+        replacement_order.reseed_id(replacement_order_id);
+        engine.publish_selected_order_as_installed(attacker);
+        {
+            let entity = engine.get_entity_mut(attacker).unwrap();
+            let sprite = &mut entity.element_data_mut().sprite;
+            sprite.use_alternate_profile = false;
+            sprite.scripts = std::sync::Arc::new(vec![
+                crate::sprite_script::SpriteScript {
+                    action_done: 5,
+                    frame_ids: vec![0, 1, 2, 3, 4, 5, 6],
+                    delays: vec![1; 7],
+                    distances: vec![0; 7],
+                    offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 7],
+                    sound_ids: vec![0; 7],
+                    ..Default::default()
+                };
+                16
+            ]);
+            sprite.conversion =
+                std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]);
+        }
+
+        engine.tick_melee_strikes(sim, &assets);
+        {
+            let sprite = &mut engine
+                .get_entity_mut(attacker)
+                .unwrap()
+                .element_data_mut()
+                .sprite;
+            assert_eq!(sprite.action_done_frame, 5);
+            assert_eq!(sprite.action_done_counter, 0);
+            sprite.current_frame = 4;
+            sprite.frame_count = 0;
+        }
+        engine.tick_melee_strikes(sim, &assets);
+
+        let attacker_entity = engine.get_entity(attacker).unwrap();
+        let retained_before_action = attacker_entity
+            .actor_data()
+            .unwrap()
+            .sweep_state
+            .as_ref()
+            .expect("replacement pre-action frames retain the interrupted circle sweep");
+        assert_eq!(retained_before_action.strike, SwordStrike::I);
+        assert_eq!(retained_before_action.current_angle, 0.0);
+        assert_eq!(
+            attacker_entity.element_data().direction(),
+            7,
+            "the interrupted circle geometry must not rotate replacement strike F before its action point"
+        );
+
+        engine.tick_melee_strikes(sim, &assets);
+        assert_eq!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .sweep_state
+                .as_ref()
+                .expect("replacement circle initializes its own sweep at action done")
+                .strike,
+            SwordStrike::F,
+        );
+    }
+
+    #[test]
     fn saved_human_sweep_is_rehydrated_for_the_live_strike_order() {
         let mut engine = make_engine();
         let attacker = engine.add_entity(make_pc(

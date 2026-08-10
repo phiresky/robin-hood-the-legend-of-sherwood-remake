@@ -1,0 +1,9 @@
+{
+  "id": "243",
+  "subject": "Honor exact action boundaries for replacement circle strikes",
+  "description": "Replacement circle strikes now leave retained geometry from the interrupted strike untouched until the replacement reaches its own action point, matching ExecuteCircleSwordStrike's RHSprite::IsActionDone gate. The true-circle hold also uses Original's exact order ID and action-done frame/counter predicate instead of a forecast that became zero one tick early. SuN1Sh1nE Profile_004 Savegame_032 replay-007 clears Soldier197's frame-760 direction and frame-771 motion/frame timing frontiers and advances to an independent Soldier198 MoveOk frontier at frame 776. Both task-36 controls and the focused inherited-circle regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task243-direction"
+}
