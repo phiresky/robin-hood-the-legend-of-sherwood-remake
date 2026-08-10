@@ -653,7 +653,7 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
         capture_condolation_stimuli, capture_owner_boundary_resumes,
         install_condolation_nested_termination,
     };
-    use crate::sequence::{Field, FieldValue, SequenceElement};
+    use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
     let assets = LevelAssets::new();
@@ -678,14 +678,6 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
         .and_then(crate::element::Entity::actor_data)
         .and_then(|actor| actor.active_movement.sequence_id)
         .expect("movement is armed");
-    let mut timer = SequenceElement::new_generic(2, Command::Timer, None);
-    timer.set_property(Field::Timer, FieldValue::Integer(17));
-    engine
-        .orders
-        .sequence_manager
-        .get_sequence_mut(movement_seq)
-        .expect("movement sequence remains installed")
-        .append_element(timer);
 
     let foreign_owner = engine.add_entity(make_test_pc(Posture::Upright));
     let nested_owner = engine.add_entity(make_test_pc(Posture::Upright));
@@ -734,8 +726,7 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
         vec![nested_owner, mover_id, foreign_owner],
         "the nested cross-owner SetState must close before A resumes Ready/successors"
     );
-    assert_eq!(engine.orders.timer_elements.len(), 1);
-    assert_eq!(engine.orders.timer_elements[0].remaining, 17);
+    assert!(engine.orders.timer_elements.is_empty());
     assert_eq!(
         engine
             .orders

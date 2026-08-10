@@ -3314,11 +3314,7 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
     let retire_live_flying = proj.projectile.flying
         && proj.projectile.falling
         && flight_at_endpoint
-        && !proj
-            .element
-            .sprite
-            .position_iface
-            .raw_sprite_position_is_moving();
+        && !world_position_is_moving;
     if trajectory_empty && (retire_stopped || retire_live_flying) {
         // The endpoint frame itself is still presented once. Falling arrows
         // therefore consume their final tumble draw before the settled cache
@@ -8436,6 +8432,27 @@ mod tests {
         assert_eq!(draws, vec![crate::sim_rng::RngSite::ArrowFallingFrame]);
         assert!(!arrow.element.sprite.position_iface.is_moving());
         assert!(!arrow.element.sprite.position_iface.is_moving_map());
+    }
+
+    #[test]
+    fn moving_falling_endpoint_survives_refresh_even_with_settled_sprite_cache() {
+        let mut arrow = refresh_test_arrow();
+        arrow.projectile.trajectory.clear();
+        arrow.projectile.trajectory_frame_count = 0;
+        arrow.projectile.falling = true;
+        arrow
+            .element
+            .sprite
+            .position_iface
+            .set_old_position(WorldPoint3D::new(-1.0, 0.0, 0.0));
+
+        // RHElementArrow::Refresh compares GetOldPosition/GetPosition, which
+        // are the 3D position-interface values. The separately serialized
+        // sprite-space cache is not part of its retirement decision.
+        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
+
+        assert!(arrow.element.active);
+        assert!(arrow.element.sprite.position_iface.is_moving());
     }
 
     #[test]

@@ -1231,6 +1231,33 @@ fn entity_distance<A: Into<EntityId>, B: Into<EntityId>>(
     (dx * dx + dy * dy).sqrt()
 }
 
+/// Original `ExecuteStraightSwordStrike` measures the strike at its DONE
+/// marker with `(GetPosition() - antagonist->GetPosition()).Norm()`.  Those
+/// are stored world coordinates, including elevation in both `y` and `z`;
+/// projected map distance can therefore admit a target on another height.
+fn entity_world_distance<A: Into<EntityId>, B: Into<EntityId>>(
+    entities: &crate::entities::Entities,
+    a: A,
+    b: B,
+) -> f32 {
+    let a = a.into();
+    let b = b.into();
+    let pos_a = entities
+        .get(a)
+        .unwrap_or_else(|| panic!("straight-strike distance references missing attacker {a:?}"))
+        .element_data()
+        .position();
+    let pos_b = entities
+        .get(b)
+        .unwrap_or_else(|| panic!("straight-strike distance references missing victim {b:?}"))
+        .element_data()
+        .position();
+    let dx = pos_a.x - pos_b.x;
+    let dy = pos_a.y - pos_b.y;
+    let dz = pos_a.z - pos_b.z;
+    (dx * dx + dy * dy + dz * dz).sqrt()
+}
+
 /// Get the 0-15 direction sector from entity A looking at entity B.
 fn direction_to<F: Into<EntityId>, T: Into<EntityId>>(
     entities: &crate::entities::Entities,
@@ -2439,6 +2466,40 @@ mod tests {
 
         assert_eq!(after_three_ticks.to_bits(), final_angle.to_bits());
         assert_eq!(final_angle.to_bits(), 0x40bf_b210);
+    }
+
+    #[test]
+    fn straight_strike_range_uses_stored_world_position() {
+        let mut engine = EngineInner::new();
+        let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let target = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        engine
+            .get_entity_mut(target)
+            .unwrap()
+            .element_data_mut()
+            .set_position(WorldPoint3D::new(60.0, 40.0, 40.0));
+
+        // The isometric projection subtracts elevation from world Y, so
+        // these actors are only 60 map units apart while Original's
+        // ExecuteStraightSwordStrike range check sees all three components.
+        assert_eq!(
+            entity_distance(&engine.world.entities, attacker, target),
+            60.0
+        );
+        assert_eq!(
+            entity_world_distance(&engine.world.entities, attacker, target),
+            (60.0_f32 * 60.0 + 40.0 * 40.0 + 40.0 * 40.0).sqrt()
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "straight-strike distance references missing victim Soldier")]
+    fn straight_strike_range_rejects_a_missing_victim() {
+        let mut engine = EngineInner::new();
+        let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let missing = EntityId::Soldier(crate::entity_id::SoldierId(u32::MAX));
+
+        let _ = entity_world_distance(&engine.world.entities, attacker, missing);
     }
 
     fn make_engine() -> EngineInner {

@@ -3111,7 +3111,12 @@ impl EngineInner {
                     // then restore the tail.  In particular, a GoTo prefix
                     // must launch before the following Halt can select and
                     // cancel its new sequence.
-                    let (later_work, later_actor_effects) = {
+                    let (
+                        later_work,
+                        later_actor_effects,
+                        later_self_stimuli,
+                        later_cross_npc_actions,
+                    ) = {
                         let ai = self
                             .world
                             .entities
@@ -3126,6 +3131,8 @@ impl EngineInner {
                         (
                             std::mem::take(&mut ai.outbox.reentrant.owner_work),
                             std::mem::replace(&mut ai.outbox.actor, prefix),
+                            std::mem::take(&mut ai.outbox.reentrant.self_stimuli),
+                            std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions),
                         )
                     };
                     self.drain_direct_ai_owner_boundary_mode(
@@ -3154,8 +3161,17 @@ impl EngineInner {
                         ai.outbox.reentrant.owner_work.is_empty(),
                         "owner-local actor prefix left undrained owner work"
                     );
+                    debug_assert!(
+                        ai.outbox.reentrant.self_stimuli.is_empty(),
+                        "owner-local actor prefix left undrained self stimuli"
+                    );
+                    let mut prefix_cross_npc_actions =
+                        std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions);
+                    prefix_cross_npc_actions.extend(later_cross_npc_actions);
                     ai.outbox.actor = later_actor_effects;
                     ai.outbox.reentrant.owner_work = later_work;
+                    ai.outbox.reentrant.self_stimuli = later_self_stimuli;
+                    ai.outbox.reentrant.cross_npc_actions = prefix_cross_npc_actions;
                     continue;
                 }
                 crate::ai::AiOwnerWork::BattleLookForHelpSuccessRemark => {

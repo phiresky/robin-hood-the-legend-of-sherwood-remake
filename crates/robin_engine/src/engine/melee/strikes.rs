@@ -521,9 +521,27 @@ impl EngineInner {
         strike: SwordStrike,
         profile_idx: Option<u32>,
     ) {
-        let distance = entity_distance(&self.world.entities, attacker_id, victim_id);
-        let in_range = profile_idx
-            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+        // RHElementActorHuman::ExecuteStraightSwordStrike uses the full
+        // stored 3-D positions here, unlike several swordfight planning
+        // predicates that deliberately use map distance.  Keep the Rust-only
+        // Assault fallback on its existing metric; Original reaches this
+        // helper only for STRAIGHT weapon thrusts.
+        let profile = profile_idx.map(|idx| {
+            assets.profile_manager.get_hth_weapon(idx).unwrap_or_else(|| {
+                panic!(
+                    "straight-strike attacker {attacker_id:?} references missing HtH weapon profile {idx}"
+                )
+            })
+        });
+        let is_straight = profile.is_some_and(|profile| {
+            profile.thrusts[strike as usize].kind == WeaponThrustKind::Straight
+        });
+        let distance = if is_straight {
+            entity_world_distance(&self.world.entities, attacker_id, victim_id)
+        } else {
+            entity_distance(&self.world.entities, attacker_id, victim_id)
+        };
+        let in_range = profile
             .map(|profile| combat::is_strike_in_range(profile, strike, distance))
             .unwrap_or(distance <= 50.0);
         if in_range {

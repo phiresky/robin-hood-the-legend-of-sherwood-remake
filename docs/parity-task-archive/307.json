@@ -1,0 +1,9 @@
+{
+  "id": "307",
+  "subject": "Preserve cross-owner followers in IsLastRealAction",
+  "description": "RHElementActorNPC::IsLastRealAction follows GetFollowingElement without checking the following element's owner. Rust reused a movement-chain helper whose owner-identity gate incorrectly treated Soldier45's MoveOk as the last real action when a manager-owned Timer followed it, emitting EVENT_REACHPOINT and entering DefaultGotoRouteTurn. The condolence-only query now follows the raw runtime or loaded-v48 next pointer while movement-chain queries retain their owner gate. The focused manager-owned follower test passes; nicouzouf Profile_001 Savegame_065 replay-015 clears frame 784 and advances to an independent Soldier55 active-only mismatch after frame 836.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task285-frontier"
+}

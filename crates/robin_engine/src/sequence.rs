@@ -5321,8 +5321,21 @@ impl SequenceManager {
             if this.postponed_element_index.is_some() || this.cross_postponed.is_some() {
                 return false;
             }
-            let Some((next_seq, next_idx)) = self.next_element_in_chain(cur.0, cur.1) else {
-                return true;
+            // RHElementActorNPC::IsLastRealAction follows the raw
+            // GetFollowingElement pointer without requiring the next element
+            // to have the same owner. This differs deliberately from the
+            // movement-chain queries above: a manager-owned Timer or an
+            // action for another actor still suppresses this actor's
+            // condolence callback when it follows in the same sequence.
+            //
+            // Original: original-code/RHelementactornpc.cpp:5746-5767.
+            let (next_seq, next_idx) = if let Some(legacy) = &this.legacy_v48 {
+                let Some(next) = legacy.next else {
+                    return true;
+                };
+                (next.sequence_id, next.element_index)
+            } else {
+                (cur.0, cur.1 + 1)
             };
             let Some(next_elem) = self.get_element(next_seq, next_idx) else {
                 return true;
@@ -7777,6 +7790,21 @@ mod tests {
                 "{skipped_command:?} follower's postponed action must count as real"
             );
         }
+    }
+
+    #[test]
+    fn last_real_action_counts_following_manager_owned_element() {
+        let first_owner = EntityId::Soldier(crate::entity_id::SoldierId(1));
+        let mut mgr = SequenceManager::new();
+        let mut sequence = Sequence::new();
+        sequence.append_element(SequenceElement::new(1, Command::MoveOk, Some(first_owner)));
+        sequence.append_element(SequenceElement::new(2, Command::Timer, None));
+        let sequence_id = mgr.launch_sequence(sequence);
+
+        assert!(
+            !mgr.is_last_real_action(sequence_id, 0),
+            "Original follows GetFollowingElement without an owner-identity gate"
+        );
     }
 
     #[test]
