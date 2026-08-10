@@ -5153,12 +5153,66 @@ impl SequenceManager {
         next_order_id: &mut u32,
         cancel_path: &mut dyn FnMut(EntityId),
     ) -> bool {
+        self.stop_movement_for_owner_from_root(
+            entity,
+            None,
+            owner_pos,
+            stop_priority,
+            resolver,
+            next_order_id,
+            cancel_path,
+        )
+    }
+
+    /// Run the movement-specific virtual `StopMovement` phase for exactly one
+    /// selected element. This is the narrow counterpart to
+    /// [`Self::stop_movement_for_owner`]: call sites modeling
+    /// `mpSequenceElement->Stop(...)` must not rewrite unrelated in-progress
+    /// movements owned by the same actor.
+    pub fn stop_movement_from_root(
+        &mut self,
+        entity: EntityId,
+        root: (SequenceId, usize),
+        owner_pos: crate::coordinates::MapPoint,
+        stop_priority: SequencePriority,
+        resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
+        next_order_id: &mut u32,
+        cancel_path: &mut dyn FnMut(EntityId),
+    ) -> bool {
+        self.stop_movement_for_owner_from_root(
+            entity,
+            Some(root),
+            owner_pos,
+            stop_priority,
+            resolver,
+            next_order_id,
+            cancel_path,
+        )
+    }
+
+    fn stop_movement_for_owner_from_root(
+        &mut self,
+        entity: EntityId,
+        root: Option<(SequenceId, usize)>,
+        owner_pos: crate::coordinates::MapPoint,
+        stop_priority: SequencePriority,
+        resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
+        next_order_id: &mut u32,
+        cancel_path: &mut dyn FnMut(EntityId),
+    ) -> bool {
         let mut changed = false;
         let mut to_interrupt: Vec<(SequenceId, usize)> = Vec::new();
-        let Some(refs) = self.actor_in_progress.get(&entity) else {
-            return false;
+        let refs: Vec<SequenceElementRef> = if let Some((sequence_id, element_index)) = root {
+            vec![SequenceElementRef {
+                sequence_id,
+                element_index,
+            }]
+        } else {
+            let Some(refs) = self.actor_in_progress.get(&entity) else {
+                return false;
+            };
+            refs.iter().copied().collect()
         };
-        let refs: Vec<SequenceElementRef> = refs.iter().copied().collect();
         for elem_ref in refs {
             let Some(seq) = self.sequences.get_mut(&elem_ref.sequence_id) else {
                 debug_assert!(false, "actor_in_progress contains stale sequence ref");

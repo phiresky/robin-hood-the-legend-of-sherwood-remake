@@ -1,5 +1,5 @@
-# Unqualified paths are relative to parity-random-save-replays-60s-15x/traces/.
-# Corpus-qualified paths may retire an exact trace from any corpus.
+# Unqualified entries are relative to parity-random-save-replays-60s-15x/traces/.
+# Corpus-qualified entries retire exactly that path from the full snapshot.
 # Task 73: recorded behavior contradicts current Original source/assets.
 Savegame_Cyrdach/Profile_156/Savegame_010/replay-001-session-0001.jsonl.zst
 Savegame_Cyrdach/Profile_156/Savegame_015/replay-009-session-0001.jsonl.zst
@@ -23,6 +23,8 @@ Savegame_nicouzouf/Profile_001/Savegame_067/replay-009-session-0001.jsonl.zst
 Savegame_SuN1Sh1nE/Profile_004/Savegame_016/replay-010-session-0001.jsonl.zst
 # Task 265: pre-restoration Focus/RefreshView behavior contradicts current Original binary/source.
 Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-012-session-0001.jsonl.zst
+# External parity 14: pre-typed NearbyCiviliansPanic payload contradicts current Original source/recapture.
+Savegame_SuN1Sh1nE/Profile_004/Savegame_021/replay-006-session-0001.jsonl.zst
 # Task 297: fresh Bonus old_elevation exposes uninitialized Original constructor storage.
 Savegame_SuN1Sh1nE/Profile_004/Savegame_036/replay-004-session-0001.jsonl.zst
 # Task 320: arrow ricochet contradicts current Original source/profile data/RNG stream.
@@ -64,3 +66,6 @@ parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_053/re
 parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-001-session-0001.jsonl.zst
 parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-002-session-0001.jsonl.zst
 parity-random-save-replays/traces/Savegame_nicouzouf/Profile_001/Savegame_059/replay-003-session-0001.jsonl.zst
+# External parity 20: schema-12 selected-view rendering contaminated visibility queries.
+parity-save-replays-schema12/traces/Savegame_linux2/Profile_002/Savegame_033-session-0001.jsonl.zst
+parity-save-replays-schema12/traces/Savegame_linux2/Profile_002/Savegame_035-session-0001.jsonl.zst

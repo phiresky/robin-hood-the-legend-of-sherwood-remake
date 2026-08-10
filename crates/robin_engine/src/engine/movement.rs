@@ -810,6 +810,19 @@ fn is_sword_motion_context(
         || is_sword_movement_nonanimation(order_action)
 }
 
+/// Whether the selected logical action enters Human's sword-movement Execute
+/// arm. The broader sword-motion context also retains the outgoing live state
+/// for facing and sprite selection, but that stale state does not own START
+/// side effects once an ordinary successor is selected.
+fn executes_sword_movement_action(
+    door_pass_action: Option<OrderType>,
+    order_action: OrderType,
+) -> bool {
+    let action =
+        door_pass_sprite_animation_override(order_action, door_pass_action).unwrap_or(order_action);
+    is_sword_movement_nonanimation(action)
+}
+
 /// Match `RHElementActorHuman::DetermineMovementAnimation`: these are logical
 /// dispatch tokens consumed by the Human Execute override, not sprite rows.
 /// `FaceOpponent` chooses the concrete forward/backward/strafe sword animation
@@ -6075,20 +6088,55 @@ impl EngineInner {
             return false;
         }
 
-        // Retire and clean the old movement first. This ensures the
-        // replacement QuitSwordfight cannot be postponed behind the very
-        // element whose Execute arm just rejected itself.
-        self.stop_owner_active_mechanics(owner);
-        self.orders
-            .sequence_manager
-            .element_impossible(selected.seq_id, selected.elem_idx);
+        // Human::Execute calls the selected movement element's virtual
+        // Stop(Injury) before registering QuitSwordfight. That exact-root
+        // stop follows only the element's linked successor/postponed graph;
+        // in particular, a FaceTo Turn queued by EventReachPoint is
+        // interrupted and sends its condolence card on this stack. Do not use
+        // Actor::Stop here: its pending-list scan would also stop unrelated
+        // work, and retiring the movement before this boundary would release
+        // the Turn to be inherited by QuitSwordfight.
+        let selected_priority = {
+            let resolver = Self::priority_resolver(&self.world.entities);
+            let element = self
+                .orders
+                .sequence_manager
+                .get_element_mut(selected.seq_id, selected.elem_idx)
+                .expect("selected orphan sword movement disappeared before Stop");
+            if element.priority == crate::sequence::SequencePriority::NotYetSet {
+                let mut resolved = resolver(element);
+                if resolved == crate::sequence::SequencePriority::None {
+                    resolved = crate::sequence::SequencePriority::Normal;
+                }
+                element.priority = resolved;
+            }
+            element.priority
+        };
+        if selected_priority >= crate::sequence::SequencePriority::Injury {
+            let owner_pos = self
+                .get_entity(owner)
+                .expect("orphan sword movement owner disappeared before Stop")
+                .element_data()
+                .position_map();
+            let resolver = Self::priority_resolver(&self.world.entities);
+            let pathfinder = &mut self.world.pathfinder;
+            self.orders.sequence_manager.stop_movement_from_root(
+                owner,
+                (selected.seq_id, selected.elem_idx),
+                owner_pos,
+                crate::sequence::SequencePriority::Injury,
+                &resolver,
+                &mut self.orders.next_order_id,
+                &mut |id| pathfinder.cancel_requests_for(id),
+            );
+            self.orders.sequence_manager.stop_owner_current_from_root(
+                owner,
+                Some((selected.seq_id, selected.elem_idx)),
+                crate::sequence::SequencePriority::Injury,
+                &resolver,
+            );
+        }
         self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
-        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
-            .unwrap_or_else(|error| {
-                panic!(
-                    "orphaned sword movement owner {owner:?} failed to retire rejected movement: {error:?}"
-                )
-            });
         // Human::Execute only registers this command here. Its ABORTED return
         // reaches Actor::Hourglass first; SequenceManager::Hourglass later
         // calls the ordinary Actor::Instruct path, which translates the
@@ -6118,6 +6166,16 @@ impl EngineInner {
                 crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
             );
         }
+
+        // Actor::Hourglass captures the entry movement before Execute. Only
+        // after Human::Execute has returned ABORTED does it mark that captured
+        // element Impossible. Keep this after the direct soldier callback so
+        // neither QuitSwordfight nor the callback can inherit the stopped
+        // Turn's cross-element link.
+        self.orders
+            .sequence_manager
+            .element_impossible(selected.seq_id, selected.elem_idx);
+        self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
         true
     }
 
@@ -7362,6 +7420,8 @@ impl EngineInner {
             let combat_target = combat_face_targets[actor_id];
             let is_sword_motion =
                 is_sword_motion_context(action_state, door_pass_anim, order_action);
+            let executes_sword_movement =
+                executes_sword_movement_action(door_pass_anim, order_action);
             let is_shield_motion =
                 matches!(action_state, crate::element::ActionState::MovingShield);
             let is_combat = (is_shield_motion && combat_target.is_some()) || is_sword_motion;
@@ -8058,7 +8118,7 @@ impl EngineInner {
             // so it observes entity-target PerformSeek's wrapper result just
             // like posture/action-state changes do. A raw sprite START hidden
             // as IN_PROGRESS by PerformSeek must not transfer initiative.
-            if matches!(state_effect_motion, MotionState::Start) && is_sword_motion {
+            if matches!(state_effect_motion, MotionState::Start) && executes_sword_movement {
                 sword_movement_starts.push(entity_id);
             }
             tracing::trace!(
@@ -9665,7 +9725,7 @@ impl EngineInner {
                 && let Some((posture, next_action_state)) =
                     movement_execute_state_effect(order_action, MotionState::Start)
             {
-                if is_sword_motion {
+                if executes_sword_movement {
                     sword_movement_starts.push(entity_id);
                 }
                 movement_state_effects.push((entity_id, posture, next_action_state));
@@ -9689,7 +9749,7 @@ impl EngineInner {
                 && let Some((posture, next_action_state)) =
                     movement_execute_state_effect(order_action, MotionState::Start)
             {
-                if is_sword_motion {
+                if executes_sword_movement {
                     sword_movement_starts.push(entity_id);
                 }
                 movement_state_effects.push((entity_id, posture, next_action_state));
@@ -12058,6 +12118,13 @@ mod orphaned_sword_movement_tests {
         profiles
             .characters
             .push(crate::profiles::CharacterProfile::default());
+        profiles.soldiers.push(crate::profiles::SoldierProfile {
+            hth_weapon_id: 1,
+            ..crate::profiles::SoldierProfile::default()
+        });
+        profiles
+            .hth_weapons
+            .push(crate::profiles::HtHWeaponProfile::default());
         LevelAssets {
             profile_manager: std::sync::Arc::new(profiles),
             ..LevelAssets::new()
@@ -12397,8 +12464,9 @@ mod orphaned_sword_movement_tests {
         );
     }
 
-    fn install_sword_movement(
+    fn install_sword_movement_for_kind(
         force: bool,
+        soldier: bool,
     ) -> (
         EngineInner,
         EntityId,
@@ -12460,18 +12528,34 @@ mod orphaned_sword_movement_tests {
         element.sprite.position_iface.set_anti_collision_on(false);
         element.set_position_map(start);
 
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
-            element,
-            actor: ActorData {
-                action_state: ActionState::MovingSword,
-                ..ActorData::default()
-            },
-            human: HumanData::default(),
-            pc: PcData {
-                life_points: 50,
-                ..PcData::default()
-            },
-        }));
+        let actor = ActorData {
+            action_state: ActionState::MovingSword,
+            ..ActorData::default()
+        };
+        let owner = if soldier {
+            element.kind = ElementKind::ActorSoldier;
+            let mut npc = NpcData::default();
+            let mut enemy_ai = crate::ai_enemy::EnemyAi::new(0);
+            enemy_ai.hth_weapon_id = 1;
+            npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(enemy_ai));
+            engine.add_entity(Entity::Soldier(ActorSoldier {
+                element,
+                actor,
+                human: HumanData::default(),
+                npc,
+                soldier: SoldierData::default(),
+            }))
+        } else {
+            engine.add_entity(Entity::Pc(ActorPc {
+                element,
+                actor,
+                human: HumanData::default(),
+                pc: PcData {
+                    life_points: 50,
+                    ..PcData::default()
+                },
+            }))
+        };
 
         let order_id = engine.orders.allocate_order_id();
         let mut movement = SequenceElement::new_movement(
@@ -12506,6 +12590,18 @@ mod orphaned_sword_movement_tests {
             .active_movement = ActiveMovement::new(sequence, 0);
 
         (engine, owner, sequence, order_id, start)
+    }
+
+    fn install_sword_movement(
+        force: bool,
+    ) -> (
+        EngineInner,
+        EntityId,
+        crate::sequence::SequenceId,
+        std::num::NonZeroU32,
+        MapPoint,
+    ) {
+        install_sword_movement_for_kind(force, false)
     }
 
     #[test]
@@ -12662,6 +12758,117 @@ mod orphaned_sword_movement_tests {
         assert_eq!(
             engine.actor_order_type(owner),
             Some(OrderType::TransitionLoweringSword)
+        );
+    }
+
+    #[test]
+    fn npc_orphaned_sword_movement_stops_linked_turn_before_quit() {
+        let (mut engine, owner, movement_sequence, _order_id, _start) =
+            install_sword_movement_for_kind(false, true);
+        let sim = crate::sim_rng::test_context();
+        let assets = assets_with_test_pc_profile();
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .position_iface_mut()
+            .set_direction_instantly(crate::position_interface::Direction::from_raw(10));
+
+        let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(owner));
+        turn.priority = SequencePriority::Normal;
+        turn.set_property(
+            crate::sequence::Field::Direction,
+            crate::sequence::FieldValue::Integer(9),
+        );
+        let turn_sequence = engine.orders.sequence_manager.launch_element(turn);
+        engine
+            .orders
+            .sequence_manager
+            .postpone_element(turn_sequence, 0);
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(movement_sequence, 0)
+            .unwrap()
+            .cross_postponed = Some((turn_sequence, 0));
+
+        let unrelated_sequence = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, Command::LookLeft, Some(owner)));
+
+        engine.tick_entity_movement(&sim, &assets);
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(turn_sequence, 0)
+                .unwrap()
+                .state,
+            SequenceState::Interrupted,
+            "Stop(Injury) must close the linked Turn before QuitSwordfight is registered"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(movement_sequence, 0)
+                .unwrap()
+                .cross_postponed,
+            None,
+            "the interrupted Turn must not remain inheritable by QuitSwordfight"
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .is_registered_to_go(unrelated_sequence, 0),
+            "the exact-root stop must preserve unrelated pending owner work"
+        );
+        let quit = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .find(|element| {
+                element.owner == Some(owner) && element.command == Command::QuitSwordfight
+            })
+            .expect("the orphan guard must register QuitSwordfight");
+        assert_eq!(
+            quit.cross_postponed, None,
+            "QuitSwordfight must not inherit the interrupted Turn"
+        );
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .position_iface()
+                .get_direction_goal()
+                .as_u8(),
+            10,
+            "an unexecuted direction-9 Turn must not overwrite the live direction goal"
+        );
+        let events = engine
+            .get_entity(owner)
+            .unwrap()
+            .ai_controller()
+            .unwrap()
+            .ai_log
+            .iter()
+            .filter(|entry| entry.line_type == crate::ai::LogLineType::Event)
+            .map(|entry| entry.info)
+            .collect::<Vec<_>>();
+        let turn_card = events
+            .iter()
+            .position(|event| *event == crate::ai::StimulusType::EventDone as u16)
+            .expect("interrupting the linked Turn must synchronously send its condolence card");
+        let quit_event = events
+            .iter()
+            .position(|event| *event == crate::ai::StimulusType::EventQuitSwordfight as u16)
+            .expect("the orphan guard must notify the soldier brain about quitting");
+        assert!(
+            turn_card < quit_event,
+            "the Turn condolence callback must close before EVENT_QUIT_SWORDFIGHT"
         );
     }
 
@@ -12979,6 +13186,33 @@ mod orphaned_sword_movement_tests {
             ),
             "FORCE on the owning element must not reroute an ordinary transition through FaceOpponent"
         );
+    }
+
+    #[test]
+    fn ordinary_successor_does_not_inherit_sword_movement_start_side_effects() {
+        assert!(
+            is_sword_motion_context(
+                ActionState::MovingSword,
+                Some(OrderType::WalkingUpright),
+                OrderType::WalkingUpright,
+            ),
+            "the outgoing sword state remains valid visual/facing context"
+        );
+        assert!(
+            !executes_sword_movement_action(
+                Some(OrderType::WalkingUpright),
+                OrderType::WalkingUpright,
+            ),
+            "an ordinary door successor must execute the ordinary walking START arm"
+        );
+        assert!(executes_sword_movement_action(
+            Some(OrderType::WalkingWithSword),
+            OrderType::WalkingWithSword,
+        ));
+        assert!(executes_sword_movement_action(
+            None,
+            OrderType::RunningWithSword,
+        ));
     }
 }
 

@@ -202,8 +202,11 @@ impl EnemyAi {
             let sq_standard_radius = (standard_radius as f32) * (standard_radius as f32);
             let mut obligatory_idx: Option<usize> = None;
             let mut obligatory2_idx: Option<usize> = None;
-            let mut min_sqr_norm: f32 = f32::MAX;
-            let mut min_sqr_norm2: f32 = f32::MAX;
+            // Original seeds both FLOAT minima with its local `oo` macro
+            // (65432), not floating-point infinity. Direction candidates
+            // beyond that squared distance cannot become obligatory.
+            let mut min_sqr_norm: f32 = 65_432.0;
+            let mut min_sqr_norm2: f32 = 65_432.0;
             let mut expected_points_for_one = 1u16;
             let mut square_norms = vec![f32::MAX; global.seek_points.len()];
 
@@ -1202,6 +1205,65 @@ impl EnemyAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seek_area_obligatory_selection_respects_original_finite_sentinel() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(131);
+        let center = Position {
+            x: 1585.620_1,
+            y: 2454.293_2,
+            sector: None,
+            level: 0,
+        };
+        let mut global = AiGlobalState::default();
+        global.seek_points = vec![
+            SeekPoint {
+                position: Position {
+                    x: 1547.0,
+                    y: 2488.0,
+                    sector: None,
+                    level: 0,
+                },
+                frame_when_full_interest: 0,
+                directions: vec![],
+                last_calculated_interest: 100,
+                locked: false,
+                id: 212,
+            },
+            SeekPoint {
+                position: Position {
+                    x: 1753.0,
+                    y: 2670.0,
+                    sector: None,
+                    level: 0,
+                },
+                frame_when_full_interest: 0,
+                directions: vec![],
+                last_calculated_interest: 100,
+                locked: false,
+                id: 218,
+            },
+        ];
+        let ctx = AiContext {
+            camp: crate::element::Camp::Lacklandists,
+            in_building: true,
+            ..AiContext::default()
+        };
+
+        ai.seek_area(
+            &sim,
+            center,
+            300,
+            SeekFlags::empty(),
+            8,
+            &mut global,
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        assert_eq!(ai.my_seek_points.first(), Some(&212));
+    }
 
     #[test]
     fn seek_next_point_preserves_the_search_center() {

@@ -49,20 +49,20 @@ trap 'rm -f "$snapshot_tmp"' EXIT
 while IFS= read -r -d '' trace; do
     relative=${trace#"$old_corpus/traces/"}
     save=${relative%/replay-*}
-    if [[ ! -v "retired_saves[$save]" && ! -v "retired_traces[$relative]" && ! -v "retired_traces[$trace]" ]]; then
+    if [[ ! -v "retired_saves[$save]" \
+        && ! -v "retired_traces[$relative]" \
+        && ! -v "retired_traces[$trace]" ]]; then
         printf '%s\n' "$trace"
     fi
 done < <(find "$old_corpus/traces" -type f -name '*.jsonl.zst' -print0 | sort -z) > "$snapshot_tmp"
 
-while IFS= read -r -d '' trace; do
-    if [[ ! -v "retired_traces[$trace]" ]]; then
-        printf '%s\n' "$trace"
-    fi
-done < <(
-    for corpus in "${corpora[@]}"; do
-        find "$corpus/traces" -type f -name '*.jsonl.zst' -print0
-    done | sort -z
-) >> "$snapshot_tmp"
+for corpus in "${corpora[@]}"; do
+    while IFS= read -r -d '' trace; do
+        if [[ ! -v "retired_traces[$trace]" ]]; then
+            printf '%s\n' "$trace"
+        fi
+    done < <(find "$corpus/traces" -type f -name '*.jsonl.zst' -print0 | sort -z)
+done | sort >> "$snapshot_tmp"
 
 mv "$snapshot_tmp" "$output"
 trap - EXIT
