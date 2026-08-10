@@ -13102,9 +13102,17 @@ impl EngineInner {
         // `Command::Wait`) or a false-negative on the brief
         // window where a teardown nulls the sequence-element
         // before the next animation tick resets `action_state`.
-        let is_idle = self.actor_command(npc_id) == crate::element::Command::Wait;
-        let receiving_wasp_sting =
-            self.actor_command(npc_id) == crate::element::Command::ReceiveWaspSting;
+        let actor_command = self.actor_command(npc_id);
+        let is_idle = actor_command == crate::element::Command::Wait;
+        let receiving_wasp_sting = actor_command == crate::element::Command::ReceiveWaspSting;
+        let stuck_command_active = matches!(
+            actor_command,
+            crate::element::Command::Wait
+                | crate::element::Command::SwordstrikeSmalltalkLeft
+                | crate::element::Command::SwordstrikeSmalltalkRight
+                | crate::element::Command::ParrySmalltalkLeft
+                | crate::element::Command::ParrySmalltalkRight
+        );
         // C++ `RHElementActor::GetAnimation()` returns `mpOrder->action`, not
         // the sprite row most recently performed. A transition may complete
         // during Actor::Execute and promote its successor before NPC
@@ -13165,6 +13173,7 @@ impl EngineInner {
                         Some(&self.world.fast_grid),
                         is_idle,
                         receiving_wasp_sting,
+                        stuck_command_active,
                         sequence_null_about_to_launch,
                     );
             }

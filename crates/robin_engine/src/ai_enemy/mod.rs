@@ -5693,11 +5693,15 @@ mod tests {
             ..AiGlobalState::default()
         };
 
-        ai.the_16th_frame(sim, 0, &ctx, &global, &tick, None, false, false, false);
+        ai.the_16th_frame(
+            sim, 0, &ctx, &global, &tick, None, false, false, false, false,
+        );
         assert!(!ai.base.timer_is_running);
 
         global.freeze = false;
-        ai.the_16th_frame(sim, 0, &ctx, &global, &tick, None, false, false, false);
+        ai.the_16th_frame(
+            sim, 0, &ctx, &global, &tick, None, false, false, false, false,
+        );
         assert!(ai.base.timer_is_running);
     }
 
@@ -5725,6 +5729,7 @@ mod tests {
             None,
             true,
             false,
+            true,
             false,
         );
 
@@ -5732,6 +5737,33 @@ mod tests {
             sim.seed(),
             seed_before,
             "GetAnimation() must consume the bored-roll draw from the live sprite action"
+        );
+    }
+
+    #[test]
+    fn periodic_smalltalk_command_advances_reachpoint_stuck_counter() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_substate = Substate::AttackingMovingAroundOldEnemy;
+        ai.base.stuck_counter = 2;
+        let ctx = AiContext::default();
+        let global = AiGlobalState::default();
+        let tick = AiPerTickData::stub();
+
+        ai.the_16th_frame(
+            &sim, 0, &ctx, &global, &tick, None, false, false, true, false,
+        );
+        assert_eq!(
+            ai.base.stuck_counter, 3,
+            "Original monitors smalltalk strike/parry commands while waiting for EVENT_REACHPOINT"
+        );
+
+        ai.the_16th_frame(
+            &sim, 0, &ctx, &global, &tick, None, false, false, false, false,
+        );
+        assert_eq!(
+            ai.base.stuck_counter, 3,
+            "an unrelated command in the same movement substate leaves the counter untouched"
         );
     }
 

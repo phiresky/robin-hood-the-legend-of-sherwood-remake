@@ -3158,7 +3158,8 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
     }
     if proj.projectile.trajectory.is_empty()
         && (!proj.projectile.flying
-            || (proj.projectile.trajectory_frame_count == 0
+            || (proj.projectile.falling
+                && proj.projectile.trajectory_frame_count == 0
                 && !proj
                     .element
                     .sprite
@@ -3244,6 +3245,9 @@ pub(crate) fn make_arrow_falling_down(
     proj.projectile.trajectory = trajectory;
     proj.projectile.trajectory_frame_count = 0;
     proj.projectile.launch_segment_start = None;
+    if let Some(water_zones) = obstacle_check.and_then(|check| check.water_zones) {
+        preserve_falling_hole_disappearance(proj, water_zones);
+    }
 
     // Recomputing a trajectory drops the projectile's current membership and
     // re-derives it from where the new trajectory ends, so the deflected
@@ -3285,6 +3289,24 @@ pub(crate) fn make_arrow_falling_down(
     // the impact point before the deflection step is applied.
     proj.element.sprite.position_iface.new_move();
     proj.advance_trajectory_one_frame();
+}
+
+fn preserve_falling_hole_disappearance(
+    proj: &mut ElementProjectile,
+    water_zones: &crate::water_zones::WaterZones,
+) {
+    // `ComputeTrajectory` does not clear `mbDisappear`, and
+    // `AddTrajectoryFallIntoHole` sets it before checking whether there are
+    // enough waypoints to append the visual far-edge extension. A short
+    // ricochet can therefore have only one terminal waypoint and must still
+    // disappear silently when that point lies in a hole.
+    proj.projectile.disappear |= proj
+        .projectile
+        .trajectory
+        .iter()
+        .rev()
+        .take(2)
+        .any(|point| water_zones.landing_is_in_hole(point.position.to_map()));
 }
 
 /// Advance every arrow projectile by one frame along its precomputed
@@ -3675,28 +3697,39 @@ fn tick_arrows_matching(
                 // projection polygon yet hit no obstacle at all, and gets
                 // the flat 0.001 ground snap.
                 let pos = proj.element.position();
-                let top_plane_z = proj.element.obstacle_index().map(|handle| {
-                    let index = usize::from(u16::from(handle));
-                    let obstacle = sight_obstacles.get(index).unwrap_or_else(|| {
-                        panic!("landed projectile obstacle {index} is absent from its source list")
+                let (top_plane_z, new_z) = if proj.projectile.disappear {
+                    // Original tests `mbDisappear` before `HitObstacle`.
+                    // Reaching a hole therefore preserves the trajectory-end
+                    // elevation instead of applying the ordinary +0.001
+                    // ground/obstacle snap.
+                    (None, None)
+                } else {
+                    let top_plane_z = proj.element.obstacle_index().map(|handle| {
+                        let index = usize::from(u16::from(handle));
+                        let obstacle = sight_obstacles.get(index).unwrap_or_else(|| {
+                            panic!(
+                                "landed projectile obstacle {index} is absent from its source list"
+                            )
+                        });
+                        crate::position_interface::PlaneZCoeffs::from_plane_points(
+                            &obstacle.top_plane_points,
+                        )
+                        .compute_z(pos.x, pos.y)
                     });
-                    crate::position_interface::PlaneZCoeffs::from_plane_points(
-                        &obstacle.top_plane_points,
-                    )
-                    .compute_z(pos.x, pos.y)
-                });
 
-                let new_z = match top_plane_z {
-                    None => Some(0.001),
-                    Some(z) => {
-                        if !matches!(proj.object.object_type, ObjectType::Arrow)
-                            && proj.element.layer() != 0xFFFF
-                        {
-                            Some(z + 0.001)
-                        } else {
-                            None
+                    let new_z = match top_plane_z {
+                        None => Some(0.001),
+                        Some(z) => {
+                            if !matches!(proj.object.object_type, ObjectType::Arrow)
+                                && proj.element.layer() != 0xFFFF
+                            {
+                                Some(z + 0.001)
+                            } else {
+                                None
+                            }
                         }
-                    }
+                    };
+                    (top_plane_z, new_z)
                 };
                 tracing::trace!(
                     target: "arrow_landing",
@@ -7468,6 +7501,75 @@ mod tests {
         );
     }
 
+    #[test]
+    fn one_waypoint_falling_arrow_into_hole_disappears_without_ground_snap() {
+        let endpoint = WorldPoint3D::new(10.0, 0.0, -0.5);
+        let endpoint_map = endpoint.to_map();
+        let water_zones = crate::water_zones::WaterZones {
+            zones: vec![crate::water_zones::WaterZone {
+                points: vec![
+                    MapPoint::new(0.0, -10.0),
+                    MapPoint::new(20.0, -10.0),
+                    MapPoint::new(20.0, 10.0),
+                    MapPoint::new(0.0, 10.0),
+                ],
+                bounding_box: crate::coordinates::MapBBox::from_coords(0.0, -10.0, 20.0, 10.0),
+                material: crate::sound_cache::Material::Hole,
+            }],
+        };
+        assert!(water_zones.landing_is_in_hole(endpoint_map));
+
+        let Entity::Projectile(mut arrow) = spawn_arrow(SpawnArrowParams {
+            shooter: EntityId::Pc(crate::entity_id::PcId(0)),
+            bow_point: WorldPoint3D::new(0.0, 0.0, 5.0),
+            trajectory_origin: MapPoint::new(0.0, 0.0),
+            target: EntityId::Pc(crate::entity_id::PcId(0)),
+            target_pos: endpoint_map,
+            trajectory: vec![],
+            damage: 30,
+            layer: 0,
+            lands_in_hole: false,
+            initial_velocity: WorldVec3D::new(1.0, 0.0, 0.0),
+        }) else {
+            panic!("spawn_arrow returned a non-projectile entity");
+        };
+        arrow.projectile.trajectory = vec![TrajectoryPoint {
+            position: endpoint,
+            time: 1,
+        }];
+        arrow.projectile.flying = true;
+        arrow.projectile.launch_segment_start = None;
+        preserve_falling_hole_disappearance(&mut arrow, &water_zones);
+        assert!(
+            arrow.projectile.disappear,
+            "AddTrajectoryFallIntoHole marks even a one-waypoint trajectory"
+        );
+
+        arrow.advance_trajectory_one_frame();
+        assert_eq!(arrow.element.position().z.to_bits(), endpoint.z.to_bits());
+        let mut entities = entity_table(vec![
+            Some(make_pc(100.0, 100.0)),
+            Some(Entity::Projectile(arrow)),
+        ]);
+        let results = tick_arrows(
+            &crate::sim_rng::test_context(),
+            &mut entities,
+            crate::sight_obstacle::ObstacleList::empty(),
+        );
+
+        assert!(results.iter().any(|result| result.despawn));
+        let Entity::Projectile(arrow) = entities.get_at_index(1).unwrap().1 else {
+            panic!("falling arrow changed concrete entity kind");
+        };
+        assert!(!arrow.projectile.flying);
+        assert_eq!(
+            arrow.element.position().z.to_bits(),
+            endpoint.z.to_bits(),
+            "mbDisappear returns before HitObstacle's +0.001 elevation snap"
+        );
+        assert!(!arrow.element.sprite.position_iface.is_moving());
+    }
+
     /// Wasp nest thrown at a ground target bursts (`flying == false`)
     /// once its bounce trajectory is exhausted.  Unlike arrows, the
     /// nest keeps a projectile slot for the post-impact wasp swarm
@@ -7698,5 +7800,21 @@ mod tests {
         assert_eq!(draws, vec![crate::sim_rng::RngSite::ArrowFallingFrame]);
         assert!(!arrow.element.sprite.position_iface.is_moving());
         assert!(!arrow.element.sprite.position_iface.is_moving_map());
+    }
+
+    #[test]
+    fn non_falling_flying_endpoint_waits_for_projectile_hourglass() {
+        let mut arrow = refresh_test_arrow();
+        arrow.projectile.trajectory.clear();
+        arrow.projectile.trajectory_frame_count = 0;
+        arrow.projectile.falling = false;
+
+        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
+
+        assert!(
+            arrow.element.active,
+            "ordinary arrows process the empty trajectory in Projectile::Hourglass"
+        );
+        assert!(arrow.projectile.flying);
     }
 }

@@ -1,0 +1,9 @@
+{
+  "id": "245",
+  "subject": "Preserve forced-attentive view alert on death",
+  "description": "Damage-element NPC death now passes a soldier's live forced-attentive state through the canonical alert setter. Original Kill lowers the music alert to Green with an instant change, while SetAlertStatus pins a forced-attentive soldier's view alert at Yellow; Rust hard-coded the override off and made both values Green. SuN1Sh1nE Profile_004 Savegame_024 replay-013 clears Soldier52's frame-499 detection-alert frontier and advances to independent RNG work after frame 517. Both task-36 controls and the focused lethal-damage lifecycle regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task245-alert-status"
+}

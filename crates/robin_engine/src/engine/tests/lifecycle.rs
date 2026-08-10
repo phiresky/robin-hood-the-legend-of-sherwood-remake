@@ -5726,7 +5726,7 @@ fn explicit_quit_dispatch_preserves_cross_postponed_sword_movement_action() {
 }
 
 #[test]
-fn lethal_sword_damage_hands_the_corpse_hold_to_wait() {
+fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
     use crate::element::{ActionState, Command, Posture};
     use crate::order::OrderType;
     use crate::sequence::{SequenceElement, SequenceElementData, SequenceState};
@@ -5736,11 +5736,19 @@ fn lethal_sword_damage_hands_the_corpse_hold_to_wait() {
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    let victim = engine.add_entity(super::world_entity::make_test_ai_soldier(
+        crate::element::Camp::Lacklandists,
+    ));
     {
         let victim_entity = engine.get_entity_mut(victim).unwrap();
         victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         *victim_entity.human_and_life_points_mut().unwrap().1 = 0;
+        let enemy = victim_entity
+            .enemy_ai_mut()
+            .expect("test soldier has EnemyAi");
+        enemy.forced_attentive = true;
+        enemy.base.current_music_alert_status = crate::ai::AlertLevel::Red;
+        enemy.base.view_alert_status = crate::ai::AlertLevel::Red;
     }
 
     let mut damage = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
@@ -5752,6 +5760,21 @@ fn lethal_sword_damage_hands_the_corpse_hold_to_wait() {
         .element_in_progress(damage_sequence, 0);
 
     engine.handle_death_with_damage_element(&sim, &assets, victim, (damage_sequence, 0), None);
+
+    let enemy = engine
+        .get_entity(victim)
+        .and_then(crate::element::Entity::enemy_ai)
+        .expect("dead soldier retains EnemyAi");
+    assert_eq!(
+        enemy.base.current_music_alert_status,
+        crate::ai::AlertLevel::Green,
+        "death lowers the music alert to Green"
+    );
+    assert_eq!(
+        enemy.base.view_alert_status,
+        crate::ai::AlertLevel::Yellow,
+        "Original pins a forced-attentive soldier's view alert at Yellow"
+    );
 
     let damage = engine
         .orders

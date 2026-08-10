@@ -1,0 +1,9 @@
+{
+  "id": "246",
+  "subject": "Restore smalltalk reachpoint stuck recovery",
+  "description": "Original's periodic reachpoint stuck detector monitors Wait plus all four smalltalk strike/parry commands, while unrelated commands in a tracked substate preserve the counter. Rust reset Soldier198's accumulated counter during smalltalk, so it failed to reissue the saved GoTo at the fourth eligible periodic slot. SuN1Sh1nE Profile_004 Savegame_032 replay-007 clears the frame-776 MoveOk frontier and matches exact EOF. Both task-36 controls and the focused periodic regression pass.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task246-smalltalk-stuck"
+}
