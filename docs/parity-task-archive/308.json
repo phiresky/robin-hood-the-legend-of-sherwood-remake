@@ -1,0 +1,9 @@
+{
+  "id": "308",
+  "subject": "Use the authored map box for MAP-movement condolence",
+  "description": "RHElementActor::SendCondolationCard classifies a completed RHMOVE_MAP position with RHFastFindGrid::GetBoxMap().IsInside. Rust instead used fast-grid addressability, whose height includes four loader-padding rows beyond the authored map box, and therefore left Soldier55 active after it crossed the real map boundary. MAP-movement condolence now uses the inclusive authored map_bbox while retaining the padded grid for indexing. A focused boundary regression proves the authored bottom edge remains inside and the first padded-only row is outside; nicouzouf Profile_001 Savegame_065 replay-015 clears frame 836 and advances exactly through frame 1283 to an independent sound-manager pending-request panic.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task308-map-bbox"
+}

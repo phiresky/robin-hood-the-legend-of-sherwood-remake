@@ -231,6 +231,11 @@ pub struct AiMusicOutbox {
 pub struct AttentiveModeEffect {
     pub target: bool,
     pub fast_officer_variant: bool,
+    /// Apply `RHElementActorSoldier::ForgetAttentiveMode` after the
+    /// synchronous SetAttentiveMode call. Special-event handlers can call
+    /// both in that order while the Rust engine borrow is deferred.
+    #[serde(default)]
+    pub forget_after: bool,
 }
 
 /// Typed PC relationship delta emitted by `EnemyAi::set_guarded_pc`.
@@ -285,6 +290,7 @@ impl AttentiveModeEffect {
         Self {
             target,
             fast_officer_variant,
+            forget_after: false,
         }
     }
 }

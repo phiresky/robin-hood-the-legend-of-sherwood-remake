@@ -6606,6 +6606,17 @@ impl EngineInner {
         };
         if let Some(request) = attentive_request {
             self.set_soldier_attentive_mode(npc_id, request.target, request.fast_officer_variant);
+            if request.forget_after
+                && let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(npc_id)
+                && let Some(enemy) = soldier.npc.ai_brain.enemy_mut()
+            {
+                // Original SetState's SetAttentiveMode call has now launched
+                // its transition and written will-be-attentive. The special
+                // event handler's following ForgetAttentiveMode call wins the
+                // final flag state without clearing forced-attentive.
+                enemy.attentive = false;
+                enemy.will_be_attentive = false;
+            }
         }
 
         // Process enter_swordfight.  Two shapes:

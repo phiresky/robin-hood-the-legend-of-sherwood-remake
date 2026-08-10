@@ -709,7 +709,13 @@ impl EnemyAi {
     fn forget_attentive_mode(&mut self) {
         self.attentive = false;
         self.will_be_attentive = false;
-        self.forced_attentive = false;
+        if let Some(request) = self.base.outbox.actor.set_attentive_mode.as_mut() {
+            // SetState called SetAttentiveMode synchronously before the
+            // Original reached ForgetAttentiveMode. Preserve the transition
+            // launch, then restore this helper's later flag writes after the
+            // deferred engine-side request settles.
+            request.forget_after = true;
+        }
     }
 
     /// Two-step purge:
@@ -5858,6 +5864,63 @@ mod tests {
         assert!(!ai.start_think(&stimulus, &ctx, false));
         assert_eq!(ai.base.current_state, AiState::Sleeping);
         assert_eq!(ai.base.current_substate, Substate::SleepingUnconscious);
+    }
+
+    #[test]
+    fn forget_attentive_events_preserve_the_forced_script_latch() {
+        for stimulus_type in [
+            StimulusType::EventLoseConsciousness,
+            StimulusType::EventWasp,
+            StimulusType::EventNet,
+        ] {
+            for forced_attentive in [false, true] {
+                let sim = crate::sim_rng::test_context();
+                let mut ai = EnemyAi::new(1);
+                ai.attentive = true;
+                ai.will_be_attentive = true;
+                ai.forced_attentive = forced_attentive;
+                let mut global = AiGlobalState::default();
+                let ctx = AiContext::default();
+                let tick = AiPerTickData::stub();
+
+                ai.think(
+                    &sim,
+                    &Stimulus::new(stimulus_type),
+                    &mut global,
+                    &ctx,
+                    &tick,
+                    None,
+                );
+
+                assert!(!ai.attentive, "{stimulus_type:?}");
+                assert!(!ai.will_be_attentive, "{stimulus_type:?}");
+                assert_eq!(
+                    ai.forced_attentive, forced_attentive,
+                    "{stimulus_type:?} must not clear the script-owned latch"
+                );
+                assert!(
+                    ai.base
+                        .outbox
+                        .actor
+                        .set_attentive_mode
+                        .is_some_and(|request| request.forget_after),
+                    "{stimulus_type:?} must retain SetState's attentive transition before forgetting its flags"
+                );
+
+                if stimulus_type == StimulusType::EventLoseConsciousness {
+                    ai.think(
+                        &sim,
+                        &Stimulus::new(StimulusType::EventFitAgain),
+                        &mut global,
+                        &ctx,
+                        &tick,
+                        None,
+                    );
+                    assert_eq!(ai.base.current_substate, Substate::SleepingAwakening);
+                    assert_eq!(ai.forced_attentive, forced_attentive);
+                }
+            }
+        }
     }
 
     #[test]

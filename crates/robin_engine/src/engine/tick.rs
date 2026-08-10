@@ -1259,6 +1259,22 @@ mod specialized_execute_motion_tests {
     }
 
     #[test]
+    fn exhausted_jump_landing_retains_terminated_without_a_successor() {
+        assert_eq!(
+            project_post_completion_motion(MotionState::Terminated, false, false, true),
+            MotionState::Terminated
+        );
+    }
+
+    #[test]
+    fn jump_landing_with_an_installed_successor_resumes_in_progress() {
+        assert_eq!(
+            project_post_completion_motion(MotionState::Terminated, false, true, true),
+            MotionState::InProgress
+        );
+    }
+
+    #[test]
     fn synchronous_line_crossing_interruption_preserves_nonterminal_execute_result() {
         assert!(!specialized_order_advanced_after_execute(
             Some(MotionState::InProgress),

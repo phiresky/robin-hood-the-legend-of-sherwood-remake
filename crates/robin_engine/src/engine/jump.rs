@@ -1378,19 +1378,12 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_terminated(sequence_id, element_index);
-            // `RHSequenceElement::SetState(TERMINATED)` synchronously calls
-            // Ready/Instruct. `RHElementActor::Instruct` resets the retained
-            // `mmotionState` to IN_PROGRESS before the owner's frame ends,
-            // including when the resumed successor is the low-priority Wait.
-            // SequenceManager cannot mutate actor state itself, so mirror that
-            // owner-side part of Instruct at this jump completion boundary.
-            self.world
-                .entities
-                .get_mut(entity_id)
-                .and_then(crate::element::Entity::actor_data_mut)
-                .expect("completed jump owner disappeared during synchronous instruction")
-                .continuation
-                .motion_state = crate::sprite::MotionState::InProgress;
+            // Do not project `IN_PROGRESS` merely because the jump element
+            // terminated. Original DoNextOrder does that only when Proceed
+            // returns a real next order. The common actor completion latch
+            // below this owner boundary observes `installed_order`: it keeps
+            // an exhausted landing TERMINATED and promotes only a successor
+            // actually installed by the synchronous condolence callback.
         }
         landing_finalize
     }
