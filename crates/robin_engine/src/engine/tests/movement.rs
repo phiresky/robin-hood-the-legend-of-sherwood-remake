@@ -32,6 +32,111 @@ fn tick_movement_and_sequences(
 }
 
 #[test]
+fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
+    use crate::ai::{LogLineType, StimulusType};
+    use crate::element::{Camp, Entity};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let earlier_timer_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let expired_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let nonexpired_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let launch_failed_move = |engine: &mut EngineInner, owner| {
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::MoveWaiting,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        movement.orders.push_back(Order::new(
+            OrderType::Freezing,
+            0.0,
+            0.0,
+            engine.orders.allocate_order_id(),
+        ));
+        let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+        let _ = engine.orders.sequence_manager.hourglass();
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+        sequence_id
+    };
+    let expired_sequence = launch_failed_move(&mut engine, expired_owner);
+    let nonexpired_sequence = launch_failed_move(&mut engine, nonexpired_owner);
+    engine.orders.failed_path_requests.extend([
+        FailedPathRequest::from_pending(
+            PendingPathRequest::test_request(expired_owner, expired_sequence, 0),
+            0,
+        ),
+        FailedPathRequest::from_pending(
+            PendingPathRequest::test_request(nonexpired_owner, nonexpired_sequence, 0),
+            1,
+        ),
+    ]);
+    engine.control.frame_counter = 101;
+
+    engine.hourglass_phase_paths(&sim, &assets);
+
+    let expired = engine
+        .orders
+        .sequence_manager
+        .get_element(expired_sequence, 0)
+        .expect("expired movement remains registered through its owner card");
+    assert_eq!(expired.state, SequenceState::Impossible);
+    let expired_ai = engine
+        .get_entity(expired_owner)
+        .and_then(Entity::ai_controller)
+        .expect("expired path owner retains AI");
+    assert!(
+        expired_ai.ai_log.iter().any(|line| {
+            line.line_type == LogLineType::Event
+                && line.info == StimulusType::EventCouldntReachPoint as u16
+        }),
+        "ProcessPathRequests must synchronously deliver the failed MOVE card before actor Hourglass slots"
+    );
+
+    let nonexpired = engine
+        .orders
+        .sequence_manager
+        .get_element(nonexpired_sequence, 0)
+        .expect("nonexpired movement remains registered");
+    assert_eq!(nonexpired.state, SequenceState::InProgress);
+    assert_eq!(engine.orders.failed_path_requests.len(), 1);
+    assert_eq!(
+        engine.orders.failed_path_requests[0].owner,
+        nonexpired_owner
+    );
+    let nonexpired_ai = engine
+        .get_entity(nonexpired_owner)
+        .and_then(Entity::ai_controller)
+        .expect("nonexpired path owner retains AI");
+    assert!(
+        !nonexpired_ai.ai_log.iter().any(|line| {
+            line.line_type == LogLineType::Event
+                && line.info == StimulusType::EventCouldntReachPoint as u16
+        }),
+        "a failure at age 100 must not dispatch early"
+    );
+
+    let earlier_ai = engine
+        .get_entity(earlier_timer_owner)
+        .and_then(Entity::ai_controller)
+        .expect("earlier actor retains AI");
+    assert!(
+        !earlier_ai.ai_log.iter().any(|line| {
+            line.line_type == LogLineType::Event && line.info == StimulusType::EventTimer as u16
+        }),
+        "the paths barrier must finish before the earlier actor's timer slot begins"
+    );
+}
+
+#[test]
 fn make_fast_does_not_postprocess_an_unrelated_live_movement() {
     use crate::order::{Order, OrderType};
     use crate::sequence::{MoveFlags, Sequence, SequenceElement, SequenceElementData};

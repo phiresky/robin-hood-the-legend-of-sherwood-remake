@@ -2937,7 +2937,7 @@ impl EngineInner {
     /// `ProcessPathRequests` once before collision and entity hourglasses;
     /// `original-code/RHpathfinder.cpp:710-765` returns at most one completed
     /// request and begins at most one successor at that scheduling point.
-    fn hourglass_phase_paths(
+    pub(super) fn hourglass_phase_paths(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -3021,6 +3021,13 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .element_impossible(request.seq_id, request.elem_idx);
+            // RHSequenceElement::SetState(RHSEQ_IMPOSSIBLE) invokes the
+            // owner's SendCondolationCard synchronously inside
+            // RHEngine::ProcessPathRequests. Close only this timeout's owner
+            // boundary here, before collision and every element Hourglass;
+            // leaving the card queued until the actor's creation-order slot
+            // lets earlier actors consume RNG before EVENT_COULDNT_REACHPOINT.
+            self.dispatch_condolations_for_owner_boundary(sim, request.owner, assets);
             tracing::debug!(
                 actor = ?request.owner,
                 seq_id = ?request.seq_id,
