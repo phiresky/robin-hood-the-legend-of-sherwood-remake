@@ -1,5 +1,9 @@
 # Fabian Del Priore on composing Chicago 1930
 
+- Publication date: September 30, 2003
+- Publication: chicago1930.de.vu
+- Original language: German, with a brief English closing remark
+
 > Original-language transcript. The interview text is preserved as published; no translation has been applied. Follow the preserved-source links for the original files.
 
 ## chicago1930.de.vu — Interview mit Fabian Del Priore — Chicago 1930 composer interview discussing Robin Hood composer Tapio Muley and Spellbound

@@ -1,5 +1,9 @@
 # Mischa Strecker on Robin Hood — Krawall
 
+- Publication date: February 12, 2002
+- Publication: Krawall
+- Original language: German
+
 > Original-language transcript. The interview text is preserved as published; no translation has been applied. Follow the preserved-source links for the original files.
 
 ## Krawall Gaming Network - Das Spiele-Info-Portal für die echten Zocker — Robin Hood design principles at Krawall

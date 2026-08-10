@@ -1,5 +1,9 @@
 # Jean-Marc Haessig and Anne Devouassoux on Robin Hood — HomeLAN Fed
 
+- Publication date: August 13, 2002
+- Publication: HomeLAN Fed
+- Original language: English
+
 > Original-language transcript. The interview text is preserved as published; no translation has been applied. Follow the preserved-source links for the original files.
 
 ## HomeLAN Fed : Exclusives : Robin Hood: The Legend Of Sherwood Interview : — Extensive Robin Hood interview at HomeLAN Fed

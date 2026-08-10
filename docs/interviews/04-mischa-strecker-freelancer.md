@@ -1,5 +1,9 @@
 # Mischa Strecker on Robin Hood — Freelancer / AG.ru
 
+- Publication date: March 11, 2002
+- Publication: Freelancer / AG.ru
+- Original language: English
+
 > Original-language transcript. The interview text is preserved as published; no translation has been applied. Follow the preserved-source links for the original files.
 
 ## FREELANCER: Your tactical source — English Robin Hood interview at Freelancer / AG.ru

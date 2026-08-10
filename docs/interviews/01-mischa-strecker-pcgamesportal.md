@@ -1,5 +1,9 @@
 # Mischa Strecker on Robin Hood — PCGamesPortal
 
+- Publication date: February 8, 2002
+- Publication: PCGamesPortal
+- Original language: German
+
 > Original-language transcript. The interview text is preserved as published; no translation has been applied. Follow the preserved-source links for the original files.
 
 ## PC Games Portal ...more Games than you can Play — Robin Hood interview at PCGamesPortal

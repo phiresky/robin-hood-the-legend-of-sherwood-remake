@@ -1,5 +1,9 @@
 # Daniel Würstl on Chicago 1930 and Desperados 2
 
+- Publication date: September 3, 2003
+- Publication: robinhood-game.de
+- Original language: German
+
 > Original-language transcript. The interview text is preserved as published; no translation has been applied. Follow the preserved-source links for the original files.
 
 ## robinhood-game.de — Daniel Würstl

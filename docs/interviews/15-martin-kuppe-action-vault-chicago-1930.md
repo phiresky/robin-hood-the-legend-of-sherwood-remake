@@ -1,5 +1,9 @@
 # Martin Kuppe on Chicago 1930 — Action Vault
 
+- Publication date: August 15–18, 2003
+- Publication: Action Vault
+- Original language: English
+
 > Original-language transcript. The interview text is preserved as published; no translation has been applied. Follow the preserved-source links for the original files.
 
 ## Action Vault - Chicago 1930 Interview, Part 1 — Chicago 1930 interview, part 1

@@ -1,5 +1,9 @@
 # Robin Hood staff favorite-character Q&A — Action Vault
 
+- Publication date: October 17, 2002
+- Publication: Action Vault
+- Original language: English
+
 > Original-language transcript. The interview text is preserved as published; no translation has been applied. Follow the preserved-source links for the original files.
 
 ## Action Vault - Robin Hood - The Legend of Sherwood Q&A #2 — Robin Hood Q&A #2 at ActionVault

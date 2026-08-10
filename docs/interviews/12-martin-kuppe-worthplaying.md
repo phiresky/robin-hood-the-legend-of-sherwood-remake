@@ -1,5 +1,9 @@
 # Martin Kuppe on Robin Hood — WorthPlaying
 
+- Publication date: October 30, 2002
+- Publication: WorthPlaying
+- Original language: English
+
 > Original-language transcript. The interview text is preserved as published; no translation has been applied. Follow the preserved-source links for the original files.
 
 ## Worthplaying | 'Robin Hood The Legend of Sherwood' - Developer Interview — Robin Hood: The Legend of Sherwood developer interview at WorthPlaying

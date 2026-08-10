@@ -1,5 +1,9 @@
 # Martin Kuppe on Al Capone / Chicago 1930 — HomeLAN Fed
 
+- Publication date: January 30, 2003
+- Publication: HomeLAN Fed
+- Original language: English
+
 > Original-language transcript. The interview text is preserved as published; no translation has been applied. Follow the preserved-source links for the original files.
 
 ## HomeLAN Fed : Exclusives : Al Capone Interview : — First interview about Al Capone / Chicago 1930

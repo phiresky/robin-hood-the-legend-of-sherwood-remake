@@ -1,5 +1,10 @@
 # Jean-Marc Haessig on Robin Hood — Computer and Video Games
 
+- Publication date: April 25, 2002
+- Date note: Dated from the contemporary robinhood-game.de announcement; the preserved CVG page omits its publication date.
+- Publication: Computer and Video Games
+- Original language: English
+
 > Original-language transcript. The interview text is preserved as published; no translation has been applied. Follow the preserved-source links for the original files.
 
 ## CVG - News — Robin Hood Q&A at Computer and Video Games

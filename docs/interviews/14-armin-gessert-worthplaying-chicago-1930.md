@@ -1,5 +1,9 @@
 # Armin Gessert on Chicago 1930 — WorthPlaying
 
+- Publication date: May 20, 2003
+- Publication: WorthPlaying
+- Original language: English
+
 > Original-language transcript. The interview text is preserved as published; no translation has been applied. Follow the preserved-source links for the original files.
 
 ## WORTHPLAYING  - -  All about games ! — Short interview with Spellbound's founder

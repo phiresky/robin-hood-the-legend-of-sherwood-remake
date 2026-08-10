@@ -1,5 +1,9 @@
 # Jean-Marc Haessig and Anne Devouassoux on Robin Hood — Action Vault
 
+- Publication date: August 21, 2002
+- Publication: Action Vault
+- Original language: English
+
 > Original-language transcript. The interview text is preserved as published; no translation has been applied. Follow the preserved-source links for the original files.
 
 ## Action Vault - Robin Hood - The Legend of Sherwood Interview — Three-part Robin Hood interview at ActionVault

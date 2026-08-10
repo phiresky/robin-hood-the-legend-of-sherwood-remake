@@ -1,5 +1,9 @@
 # Martin Kuppe on Robin Hood — XGR
 
+- Publication date: August 27, 2002
+- Publication: XGR
+- Original language: English
+
 > Original-language transcript. The interview text is preserved as published; no translation has been applied. Follow the preserved-source links for the original files.
 
 ## XGR : Interviews : The Martin Kuppe Interview : — Robin Hood interview at XGR

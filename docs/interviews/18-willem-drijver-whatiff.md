@@ -1,5 +1,9 @@
 # Willem Drijver on porting Robin Hood to Apollo Vampire V4
 
+- Publication date: April 2024
+- Publication: WhatIFF? Issue 3.13
+- Original language: English
+
 > Original-language transcript. The interview text is preserved as published; no translation has been applied. Follow the preserved-source links for the original files.
 
 ## WhatIFF? Issue 3.13 — Interview: Willem Drijver: Robin Hood — Robin Hood Apollo/Vampire Amiga port interview in WhatIFF? Issue 3.13

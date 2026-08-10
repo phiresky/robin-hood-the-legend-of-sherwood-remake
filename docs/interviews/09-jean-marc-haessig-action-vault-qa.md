@@ -1,5 +1,9 @@
 # Jean-Marc Haessig on Robin Hood’s visual design — Action Vault Q&A
 
+- Publication date: October 1, 2002
+- Publication: Action Vault
+- Original language: English
+
 > Original-language transcript. The interview text is preserved as published; no translation has been applied. Follow the preserved-source links for the original files.
 
 ## Action Vault - Robin Hood - The Legend of Sherwood Q&A — Robin Hood Q&A at ActionVault
