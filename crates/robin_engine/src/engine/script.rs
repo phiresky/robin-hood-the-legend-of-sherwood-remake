@@ -47,6 +47,44 @@ std::thread_local! {
     static ACTIVE_DRIVER_SNAPSHOT_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static ACTIVE_DRIVER_SNAPSHOT_ERROR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     static AI_STATE_CALLBACK_OBSERVATIONS: std::cell::RefCell<Option<Vec<AiStateCallbackObservation>>> = const { std::cell::RefCell::new(None) };
+    static MISSION_INITIALIZATION_PHASES: std::cell::RefCell<Option<Vec<MissionInitializationPhase>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MissionInitializationPhase {
+    ScriptSectorOccupants,
+    StartUpInitialize,
+}
+
+#[cfg(test)]
+pub(super) fn capture_mission_initialization_phases<R>(
+    f: impl FnOnce() -> R,
+) -> (R, Vec<MissionInitializationPhase>) {
+    MISSION_INITIALIZATION_PHASES.with(|phases| {
+        assert!(
+            phases.borrow().is_none(),
+            "mission initialization phase capture is already active"
+        );
+        *phases.borrow_mut() = Some(Vec::new());
+    });
+    let result = f();
+    let phases = MISSION_INITIALIZATION_PHASES.with(|phases| {
+        phases
+            .borrow_mut()
+            .take()
+            .expect("mission initialization phase capture disappeared")
+    });
+    (result, phases)
+}
+
+#[cfg(test)]
+fn observe_mission_initialization_phase(phase: MissionInitializationPhase) {
+    MISSION_INITIALIZATION_PHASES.with(|phases| {
+        if let Some(phases) = phases.borrow_mut().as_mut() {
+            phases.push(phase);
+        }
+    });
 }
 
 #[cfg(test)]
@@ -1899,6 +1937,15 @@ impl EngineInner {
                 }
             }
         }
+        // RHEngine::Initialize populates RHSectorScript occupant lists before
+        // IEngineScript::Initialize(0). Mission startup scripts query those
+        // lists synchronously (for example H07's UnBlipAllNPCsInside), so the
+        // scan cannot wait until after StartUp::Initialize returns.
+        self.initialize_zone_occupants(assets);
+        #[cfg(test)]
+        observe_mission_initialization_phase(MissionInitializationPhase::ScriptSectorOccupants);
+        #[cfg(test)]
+        observe_mission_initialization_phase(MissionInitializationPhase::StartUpInitialize);
         match self.call_script_vm(
             sim,
             assets,
@@ -1937,9 +1984,6 @@ impl EngineInner {
 
         // ── Phase 3: Zone script Initialize ──
         self.initialize_zone_scripts(sim, assets);
-
-        // ── Phase 4: Populate initial zone occupants ──
-        self.initialize_zone_occupants(assets);
     }
 
     /// Finalize the mission script (called on mission end).

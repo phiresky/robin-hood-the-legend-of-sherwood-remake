@@ -877,7 +877,6 @@ impl LegacyStaticElementAdoption {
 }
 
 fn apply_element_base(element: &mut crate::element::ElementData, converted: ConvertedElementBase) {
-    let pre_restore_active = element.active;
     element.outline_colors = converted.outline_colors;
     element.current_outline = converted.current_outline;
     element.outline_width = converted.outline_width;
@@ -899,15 +898,7 @@ fn apply_element_base(element: &mut crate::element::ElementData, converted: Conv
     // position/direction is restored only afterward. Preserve that observable
     // load-order artifact instead of treating the payload as one atomic state.
     let pre_restore_alternate_profile = sprite.use_alternate_profile;
-    // Original's inactive static actors have already retained their serialized
-    // facing when their sprite is deserialized. Rust keeps the mission's active
-    // placeholder alive until this atomic adoption point, so its unrelated
-    // facing must not leak into the profile-switch row.
-    let pre_restore_direction = if pre_restore_active && !converted.active {
-        converted.sprite.position.direction.as_u8() as u16
-    } else {
-        sprite.position_iface.get_direction().as_u8() as u16
-    };
+    let pre_restore_direction = sprite.position_iface.get_direction().as_u8() as u16;
     sprite.current_row = converted.sprite.current_row;
     sprite.current_frame = converted.sprite.current_frame;
     sprite.frame_count = converted.sprite.frame_count;
@@ -3801,74 +3792,6 @@ mod tests {
         assert_eq!(element.sprite.position_iface.get_direction().as_u8(), 6);
         assert_eq!(element.sprite.current_row, 234);
         assert_eq!(element.sprite.current_frame, 7);
-    }
-
-    #[test]
-    fn inactive_sprite_adoption_does_not_use_active_placeholder_facing() {
-        use crate::position_interface::Direction;
-        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
-
-        let mut element = crate::element::ElementData::default();
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
-        conversion[OrderType::RunningUpright as usize] = 224;
-        let mut scripts = vec![SpriteScript::default(); 240];
-        scripts[227].frame_ids = vec![0; 8];
-        element.sprite.scripts = std::sync::Arc::new(scripts.clone());
-        element.sprite.alternate_scripts = Some(std::sync::Arc::new(scripts));
-        element.sprite.conversion = std::sync::Arc::new(conversion.clone());
-        element.sprite.alternate_conversion = Some(std::sync::Arc::new(conversion));
-        element.active = true;
-        element.sprite.use_alternate_profile = true;
-        element
-            .sprite
-            .position_iface
-            .set_direction_instantly(Direction::from_raw(13));
-
-        let mut saved_position = element.sprite.position_iface.v48_serialized_state();
-        saved_position.direction = Direction::from_raw(3);
-        saved_position.direction_goal = Direction::from_raw(3);
-        let converted = ConvertedElementBase {
-            outline_colors: [0; 5],
-            current_outline: OutlineColorName::Default,
-            outline_width: 0,
-            custom_minimap_dot: 0,
-            active: false,
-            position_map_delayed: false,
-            delayed_map_position: MapPoint::new(0.0, 0.0),
-            position_delayed: false,
-            delayed_position: crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0),
-            in_honolulu: false,
-            index_in_elements_list: 73,
-            blipped: false,
-            unreachable: false,
-            sprite: ConvertedSprite {
-                current_row: 227,
-                current_frame: 1,
-                frame_count: 0,
-                flight_frame_countdown: 48,
-                current_height: 48,
-                current_width: 32,
-                last_action: OrderType::RunningUpright,
-                alternate_profile: false,
-                masked: true,
-                behind_display_order_reference: false,
-                display_order_reference: None,
-                action_done_frame: 30,
-                action_done_counter: 0,
-                last_sound_id: 0,
-                last_processed_order_id: 867840,
-                animation_replacements: Vec::new(),
-                position: saved_position,
-            },
-        };
-
-        apply_element_base(&mut element, converted);
-
-        assert!(!element.active);
-        assert!(!element.sprite.use_alternate_profile);
-        assert_eq!(element.sprite.position_iface.get_direction().as_u8(), 3);
-        assert_eq!(element.sprite.current_row, 227);
-        assert_eq!(element.sprite.current_frame, 1);
     }
 
     #[test]
