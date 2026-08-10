@@ -3156,15 +3156,24 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
     if !proj.element.active {
         return;
     }
-    if proj.projectile.trajectory.is_empty()
-        && (!proj.projectile.flying
-            || (proj.projectile.trajectory_frame_count == 0
-                && !proj
-                    .element
-                    .sprite
-                    .position_iface
-                    .raw_sprite_position_is_moving()))
-    {
+    let trajectory_empty = proj.projectile.trajectory.is_empty();
+    let flight_at_endpoint = proj.projectile.trajectory_frame_count == 0;
+    let world_position_is_moving = proj.element.sprite.position_iface.is_moving();
+    let retire_loaded_stopped = !proj.projectile.flying && !flight_at_endpoint;
+    let retire_live_stopped =
+        !proj.projectile.flying && flight_at_endpoint && !world_position_is_moving;
+    let retire_live_flying = proj.projectile.flying
+        && flight_at_endpoint
+        && if proj.projectile.falling {
+            !proj
+                .element
+                .sprite
+                .position_iface
+                .raw_sprite_position_is_moving()
+        } else {
+            !world_position_is_moving
+        };
+    if trajectory_empty && (retire_loaded_stopped || retire_live_stopped || retire_live_flying) {
         // The endpoint frame itself is still presented once. Falling arrows
         // therefore consume their final tumble draw before the settled cache
         // retires them; an already-stopped loaded arrow retires immediately.
@@ -3177,6 +3186,13 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
         proj.element.sprite.position_iface.new_move();
         proj.element.active = false;
         return;
+    }
+
+    if trajectory_empty && !proj.projectile.flying && flight_at_endpoint {
+        // Projectile::Hourglass calls NewMove even after flight stops. Rust's
+        // landed-projectile tick is otherwise skipped at that point, so cross
+        // the same movement-snapshot boundary here before the next Refresh.
+        proj.element.sprite.position_iface.new_move();
     }
 
     if proj.projectile.falling {
@@ -7636,16 +7652,17 @@ mod tests {
     }
 
     #[test]
-    fn raw_sprite_position_moving_arrow_with_empty_trajectory_reuses_orientation_cache() {
+    fn live_flying_arrow_with_world_movement_reuses_orientation_cache() {
         let mut arrow = refresh_test_arrow();
         arrow.projectile.trajectory.clear();
+        arrow.projectile.trajectory_frame_count = 0;
         arrow.projectile.last_orientation_sector = 7;
         arrow.projectile.last_orientation_azimuth = -30;
         arrow
             .element
             .sprite
             .position_iface
-            .set_cached_sprite_position(MapPoint::new(1.0, 0.0));
+            .set_old_position(WorldPoint3D::new(-1.0, 0.0, 0.0));
 
         refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
 
@@ -7657,6 +7674,16 @@ mod tests {
             ),
             (7, 3)
         );
+
+        // The exhausted trajectory's next Hourglass stops flight and snaps
+        // the landing height. Original exposes that movement for one more
+        // active snapshot, then retires it on the following Refresh.
+        arrow.projectile.flying = false;
+        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
+        assert!(arrow.element.active);
+        assert!(!arrow.element.sprite.position_iface.is_moving());
+        refresh_arrow_after_previous_hourglass(&crate::sim_rng::test_context(), &mut arrow);
+        assert!(!arrow.element.active);
     }
 
     #[test]
