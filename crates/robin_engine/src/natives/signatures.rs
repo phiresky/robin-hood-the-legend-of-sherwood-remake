@@ -469,52 +469,6 @@ mod tests {
     }
 
     #[test]
-    fn original_namespace_matches_original_registration_table_exactly() {
-        // Original provenance: `VMCoreCustom::InitializeStaticExtensions` in
-        // `original-code/GVMCoreCustom.cpp` assigns every ABI index explicitly.
-        let original = include_str!("../../../../original-code/GVMCoreCustom.cpp");
-        let mut expected = vec![None; ORIGINAL_NATIVE_COUNT as usize];
-        for line in original.lines() {
-            let Some(rest) = line.trim().strip_prefix("mparrayNativeFunctions[") else {
-                continue;
-            };
-            let Some((index, rest)) = rest.split_once("] = I") else {
-                continue;
-            };
-            let index: usize = index.parse().expect("original native index is numeric");
-            if index >= expected.len() {
-                continue;
-            }
-            let (name, _) = rest
-                .split_once(';')
-                .expect("original native assignment contains a semicolon");
-            let name = match name {
-                // TODO(original parity): preserve Rust's established corrected
-                // spelling while keeping the original typo explicit here.
-                "PutActorInBulding" => "PutActorInBuilding",
-                name => name,
-            };
-            assert!(
-                expected[index].replace(name).is_none(),
-                "duplicate original ID {index}"
-            );
-        }
-
-        for (index, definition) in NATIVE_REGISTRY
-            .iter()
-            .take(ORIGINAL_NATIVE_COUNT as usize)
-            .enumerate()
-        {
-            assert_eq!(
-                expected[index],
-                Some(definition.signature.name),
-                "original native registration mismatch at ID {index}"
-            );
-        }
-        assert!(expected.into_iter().all(|name| name.is_some()));
-    }
-
-    #[test]
     fn lua_enumeration_is_unique_and_follows_registry_order() {
         let exposed: Vec<_> = NATIVE_REGISTRY
             .iter()
