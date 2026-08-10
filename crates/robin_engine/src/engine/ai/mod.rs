@@ -9446,11 +9446,12 @@ impl EngineInner {
     ///
     /// `RHArtificialIntelligence::ClearPatrol` clears each member's chief
     /// pointer and calls `ForceReturnToDuty` directly before clearing the
-    /// chief's lists. The member Think calls are therefore nested inside the
-    /// script native, not deferred self-stimuli. Keep their movement
-    /// construction and recursive callbacks inside this engine-owned script
-    /// barrier while leaving ordinary owner instruction to the subsequent
-    /// `RHSequenceManager::Hourglass`.
+    /// chief's lists. `ForceReturnToDuty` is an inline virtual
+    /// `ReturnToDuty()` call, not `Think(EVENT_RETURN_TO_DUTY)`: in
+    /// particular, it bypasses `StartThink`'s script-lock refusal. Keep the
+    /// direct duty transition, movement construction, and recursive callbacks
+    /// inside this engine-owned script barrier while leaving ordinary owner
+    /// instruction to the subsequent `RHSequenceManager::Hourglass`.
     pub(crate) fn script_remove_all_subordinates(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -9516,14 +9517,34 @@ impl EngineInner {
                 )
             };
             let tick_data = self.build_npc_tick_data(sim, member, &scratch, assets);
-            self.dispatch_think_with_drain_without_forecast(
-                sim,
-                member,
-                &crate::ai::Stimulus::new(crate::ai::StimulusType::EventReturnToDuty),
-                &ctx,
-                &tick_data,
-                assets,
-            );
+            {
+                let entity = self.world.entities.get_mut(member).unwrap_or_else(|| {
+                    panic!(
+                        "RemoveAllSubordinates member {} vanished before ForceReturnToDuty",
+                        member.index()
+                    )
+                });
+                let npc = entity.npc_data_mut().unwrap_or_else(|| {
+                    panic!(
+                        "RemoveAllSubordinates member {} has no NPC data",
+                        member.index()
+                    )
+                });
+                match &mut npc.ai_brain {
+                    crate::element::AiBrain::Enemy(ai) => {
+                        ai.return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx, &tick_data)
+                    }
+                    crate::element::AiBrain::Friendly(ai) => {
+                        ai.return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx)
+                    }
+                    crate::element::AiBrain::None => panic!(
+                        "RemoveAllSubordinates member {} has no AI brain",
+                        member.index()
+                    ),
+                }
+            }
+            self.drain_direct_ai_owner_boundary_without_forecast(sim, member, assets);
+            self.drain_pending_move_requests_for_owner(sim, member);
         }
 
         self.world

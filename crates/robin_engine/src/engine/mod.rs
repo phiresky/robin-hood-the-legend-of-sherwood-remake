@@ -2957,6 +2957,7 @@ impl EngineInner {
     /// MaybeCancelPathRequest cleanup we need before a state
     /// transition.
     fn stop_owner_active_mechanics(&mut self, owner: EntityId) {
+        let selected_element = self.current_sequence_element_for_actor(owner);
         self.world.pathfinder.cancel_requests_for(owner);
         self.orders.pending_path_requests.cancel_for_owner(owner);
         // `MaybeCancelPathRequest` fires from both
@@ -2972,6 +2973,25 @@ impl EngineInner {
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.active_movement.clear();
+            // `active_ability` is a Rust-only mirror of the selected C++
+            // element/order. Postpone deletes the outgoing element's orders,
+            // and Original rebuilds them by calling Translate again when the
+            // element resumes. Drop only the mirror belonging to that exact
+            // selected element so the resumed Translate can install its fresh
+            // order identity without being rejected as a concurrent ability.
+            if selected_element.is_some_and(|(seq_id, elem_idx)| {
+                actor.active_ability.sequence_id == Some(seq_id)
+                    && actor.active_ability.element_index == elem_idx
+            }) {
+                let kind = actor.active_ability.kind;
+                actor.active_ability.clear();
+                if kind == Some(crate::movement::AbilityKind::Listen) {
+                    actor.listen_phase = crate::element::ListenPhase::Inactive;
+                    actor.listen_wait_time = 0;
+                } else if kind == Some(crate::movement::AbilityKind::ReceivePurse) {
+                    actor.receive_purse_phase = crate::element::ReceivePursePhase::Inactive;
+                }
+            }
             // Original's lateral/circle victim list and angles are
             // human-owned members, not sequence-owned state. They survive an
             // interrupted strike and are cleared only when a sweep genuinely

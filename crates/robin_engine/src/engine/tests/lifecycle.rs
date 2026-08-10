@@ -2601,6 +2601,116 @@ fn active_ability_type_mismatch_is_not_selected_or_allowed_to_suppress_generic_e
 }
 
 #[test]
+fn injury_postponement_rebuilds_eat_with_a_fresh_ability_identity() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::profiles::Action;
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::default();
+    let mut display = HostDisplayState::default();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    attach_test_campaign_identities(&mut engine);
+    engine.mission_domain.campaign.characters[0]
+        .status
+        .set_ammo(Action::Eat, 1);
+    engine.mission_domain.campaign.characters[0]
+        .status
+        .life_points = 70;
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .pc_data_mut()
+        .unwrap()
+        .life_points = 70;
+
+    let eat = engine.launch_element_for_owner(
+        &sim,
+        &assets,
+        SequenceElement::new(1, Command::EatCmd, Some(owner)),
+    );
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    let first_order = engine
+        .orders
+        .sequence_manager
+        .get_element(eat, 0)
+        .unwrap()
+        .current_order()
+        .expect("initial Eat translation must install an order")
+        .order_id;
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(eat, 0)
+            .unwrap()
+            .state,
+        SequenceState::InProgress
+    );
+
+    let injury = engine.launch_element_for_owner(
+        &sim,
+        &assets,
+        SequenceElement::new_damage(1, Command::ReceiveArrowDamage, Some(owner), None, 10, 0),
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(eat, 0)
+            .unwrap()
+            .state,
+        SequenceState::Postponed
+    );
+    assert!(
+        !engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .is_active(),
+        "postponing the selected Eat deletes its order and must also delete Rust's order mirror"
+    );
+
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(injury, 0)
+            .unwrap()
+            .state,
+        SequenceState::InProgress
+    );
+    engine.orders.sequence_manager.element_terminated(injury, 0);
+    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+    let resumed = engine
+        .orders
+        .sequence_manager
+        .get_element(eat, 0)
+        .expect("postponed Eat must remain registered");
+    assert_eq!(resumed.state, SequenceState::InProgress);
+    let resumed_order = resumed
+        .current_order()
+        .expect("resumed Eat must be translated again");
+    assert_eq!(resumed_order.order_type, OrderType::Eating);
+    assert_ne!(resumed_order.order_id, first_order);
+    let active = &engine
+        .get_entity(owner)
+        .unwrap()
+        .actor_data()
+        .unwrap()
+        .active_ability;
+    assert_eq!(active.sequence_id, Some(eat));
+    assert_eq!(active.element_index, 0);
+    assert_eq!(active.order_id, Some(resumed_order.order_id));
+}
+
+#[test]
 fn aborted_ability_cleanup_is_exact_and_allows_later_selection() {
     use crate::element::{Command, Posture};
     use crate::movement::{AbilityKind, ActiveAbility};
