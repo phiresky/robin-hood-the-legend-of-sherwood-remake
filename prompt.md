@@ -68,6 +68,12 @@ supply a new baseline containing Task507's disposition, or explicitly require
 that disposition to be cherry-picked. Only the frontier that remains on that
 resulting baseline belongs to lane 36.
 
+Lane 40 is reserved by coordinator Task484's Projectile121 water patch and
+must also remain unstarted on `dc09f516d`. Its integration owner must first
+supply a new baseline containing Task484's disposition, or explicitly require
+that disposition to be cherry-picked. Only the independently live frontier on
+that resulting baseline belongs to lane 40.
+
 Lanes 31 and 40 both begin in projectile trajectory/first-Hourglass territory.
 Their owners must exchange the exact Original and Rust source owner as soon as
 it is identified. If both converge on the same `ComputeTrajectory`, landing
@@ -206,23 +212,28 @@ the first missing or excess call to its actor/AI/script gate and compare that
 gate with Original. Stop with no-fix if compatible callsite provenance or
 decisive transient state is unavailable.
 
-## Lane 40 — nicouzouf Save045 Projectile121 water/lifecycle
+## Lane 40 — nicouzouf Save045 Projectile121 water/lifecycle (Task484 reserved)
 
 Representative:
 `parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_045/replay-003-session-0001.jsonl.zst`
 
 The current independent frontier is after frame 1191 on Projectile121's
-water/material/lifecycle state. Record the terminal obstacle identity,
-trajectory endpoint, water/hole sector candidates, active/flying/disappear
-flags, layer/sector, elevation, movement, and refresh countdown. Compare
-Original `ComputeTrajectory`, material resolution, first projectile
-`Hourglass`, and refresh order with Rust's corresponding owners. Search Tasks
-178, 180, 247, 289, 293, 304, and 320 before editing; this lane must prove a
-new source boundary rather than reimplement or contradict those projectile
-families. Coordinate with lane 31 before editing: if both identify the same
-trajectory, landing-resolution, or first-Hourglass owner defect, this lane
-must stop and serve as a control/downstream replay for lane 31 (or vice versa,
-if lane 40 proved and claimed the owner first).
+water/material/lifecycle state, but its source fix is currently owned by
+Task484. Do not create this lane's worktree or start it from `dc09f516d`. Wait
+until the integration owner supplies a new baseline containing Task484's
+disposition or explicitly requires that disposition to be cherry-picked, then
+re-run the representative on that resulting baseline. If a distinct frontier
+remains, record the terminal obstacle identity, trajectory endpoint,
+water/hole sector candidates, active/flying/disappear flags, layer/sector,
+elevation, movement, and refresh countdown. Compare Original
+`ComputeTrajectory`, material resolution, first projectile `Hourglass`, and
+refresh order with Rust's corresponding owners. Search Tasks 178, 180, 247,
+289, 293, 304, and 320 before editing; this lane must prove a new source
+boundary rather than reimplement or contradict those projectile families.
+Retain coordination with lane 31: if both identify the same trajectory,
+landing-resolution, or first-Hourglass owner defect, this lane must stop and
+serve as a control/downstream replay for lane 31 (or vice versa, if lane 40
+proved and claimed the remaining owner first).
 
 ## Required report
 
