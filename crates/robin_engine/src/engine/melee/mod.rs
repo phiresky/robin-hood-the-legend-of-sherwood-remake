@@ -6098,6 +6098,264 @@ mod tests {
     }
 
     #[test]
+    fn pushed_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plane() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            crate::position_interface::SectorHandle::new(32),
+        ));
+
+        // The landing projection is ten units above the takeoff point. An
+        // empty test grid rejects the horizontal push, which isolates the
+        // vertical ReadyForTakeOff behavior: installing this goal plane must
+        // not eagerly lift the actor before PerformFlight's first increment.
+        let mut obstacle = crate::sight_obstacle::SightObstacle::new(
+            0,
+            crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
+        );
+        obstacle.layer = 0;
+        obstacle.sector = 32;
+        obstacle.obstacle_points = vec![
+            crate::sight_obstacle::ObstaclePoint {
+                x: -1000.0,
+                y: -1000.0,
+                z_top: 10.0,
+                z_bottom: 0.0,
+            },
+            crate::sight_obstacle::ObstaclePoint {
+                x: 1000.0,
+                y: -1000.0,
+                z_top: 10.0,
+                z_bottom: 0.0,
+            },
+            crate::sight_obstacle::ObstaclePoint {
+                x: 1000.0,
+                y: 1000.0,
+                z_top: 10.0,
+                z_bottom: 0.0,
+            },
+            crate::sight_obstacle::ObstaclePoint {
+                x: -1000.0,
+                y: 1000.0,
+                z_top: 10.0,
+                z_bottom: 0.0,
+            },
+        ];
+        obstacle.top_plane_points = [
+            [-1000.0, -1000.0, 10.0],
+            [1000.0, -1000.0, 10.0],
+            [-1000.0, 1000.0, 10.0],
+        ];
+        obstacle.rebuild_geometry();
+
+        let mut assets = assets_with_nonstraight_profile(
+            SwordStrike::H,
+            crate::profiles::WeaponThrustKind::TrueCircle,
+        );
+        assets.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
+
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data =
+            crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::H, 1);
+        damage.orders.push_back(crate::order::Order::new(
+            OrderType::FallingPushedWithSword,
+            0.0,
+            0.0,
+            engine.orders.allocate_order_id(),
+        ));
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .set_posture(Posture::Flying);
+
+        engine.initialize_push_flight(
+            &assets,
+            victim,
+            (sequence, 0),
+            OrderType::FallingPushedWithSword,
+        );
+        let flight = engine
+            .get_entity(victim)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_flight
+            .expect("elevated landing plane must author a flight");
+        assert_eq!(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .position_iface()
+                .get_elevation()
+                .to_bits(),
+            0.0_f32.to_bits(),
+            "SetObstacle must preserve ReadyForTakeOff's cached starting 3D point"
+        );
+
+        engine.tick_push_flights(&sim, &assets);
+        let position = engine
+            .get_entity(victim)
+            .unwrap()
+            .position_iface()
+            .get_position();
+        assert_eq!(
+            position.z.to_bits(),
+            flight.increment_z.to_bits(),
+            "the first PerformFlight tick advances from takeoff Z, not the landing plane"
+        );
+        assert_eq!(
+            position.y.to_bits(),
+            (100.0_f32 + flight.increment_y).to_bits(),
+            "PerformFlight accumulates the authored world-space Y increment before re-projecting map Y"
+        );
+    }
+
+    #[test]
+    fn hit_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plane() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            crate::position_interface::SectorHandle::new(32),
+        ));
+
+        let mut obstacle = crate::sight_obstacle::SightObstacle::new(
+            0,
+            crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
+        );
+        obstacle.layer = 0;
+        obstacle.sector = 32;
+        obstacle.obstacle_points = vec![
+            crate::sight_obstacle::ObstaclePoint {
+                x: -1000.0,
+                y: -1000.0,
+                z_top: 10.0,
+                z_bottom: 0.0,
+            },
+            crate::sight_obstacle::ObstaclePoint {
+                x: 1000.0,
+                y: -1000.0,
+                z_top: 10.0,
+                z_bottom: 0.0,
+            },
+            crate::sight_obstacle::ObstaclePoint {
+                x: 1000.0,
+                y: 1000.0,
+                z_top: 10.0,
+                z_bottom: 0.0,
+            },
+            crate::sight_obstacle::ObstaclePoint {
+                x: -1000.0,
+                y: 1000.0,
+                z_top: 10.0,
+                z_bottom: 0.0,
+            },
+        ];
+        obstacle.top_plane_points = [
+            [-1000.0, -1000.0, 10.0],
+            [1000.0, -1000.0, 10.0],
+            [-1000.0, 1000.0, 10.0],
+        ];
+        obstacle.rebuild_geometry();
+        let mut assets = LevelAssets::new();
+        assets.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
+
+        let mut damage = crate::sequence::SequenceElement::new_damage(
+            1,
+            Command::ReceiveHitDamage,
+            Some(victim),
+            Some(attacker),
+            1,
+            0,
+        );
+        let mut fall = crate::order::Order::new(
+            OrderType::FallingHitUpright,
+            0.0,
+            0.0,
+            engine.orders.allocate_order_id(),
+        );
+        fall.antagonist = Some(attacker);
+        damage.orders.push_back(fall);
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .set_posture(Posture::Flying);
+
+        engine.initialize_hit_flight(
+            &assets,
+            victim,
+            Some(attacker),
+            OrderType::FallingHitUpright,
+        );
+        let flight = engine
+            .get_entity(victim)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_flight
+            .expect("elevated landing plane must author a hit flight");
+        assert_eq!(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .position_iface()
+                .get_elevation()
+                .to_bits(),
+            0.0_f32.to_bits(),
+            "FallingHit must retain ReadyForTakeOff's cached starting 3D point"
+        );
+
+        engine.tick_push_flights(&sim, &assets);
+        let position = engine
+            .get_entity(victim)
+            .unwrap()
+            .position_iface()
+            .get_position();
+        assert_eq!(position.z.to_bits(), flight.increment_z.to_bits());
+        assert_eq!(
+            position.y.to_bits(),
+            (100.0_f32 + flight.increment_y).to_bits(),
+            "FallingHit accumulates the authored world-space Y increment"
+        );
+    }
+
+    #[test]
     fn damage_to_already_dead_pc_does_not_repeat_virtual_kill() {
         let sim = crate::sim_rng::SimulationContext::with_seed(0x181);
         let mut engine = make_engine();

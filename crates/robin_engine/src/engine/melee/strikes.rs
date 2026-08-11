@@ -1684,13 +1684,17 @@ impl EngineInner {
             // Capture the domino-sweep request *before* clearing the
             // flight on the final frame.  An exact zero increment
             // skips frames where the sprite isn't actually moving.
-            let is_moving = flight.increment_x != 0.0 || flight.increment_y != 0.0;
+            let increment_map_y = match flight.geometry {
+                crate::element::FlightGeometry::GroundPlane => flight.increment_y,
+                crate::element::FlightGeometry::World3d => flight.increment_y - flight.increment_z,
+            };
+            let is_moving = flight.increment_x != 0.0 || increment_map_y != 0.0;
             if is_moving && let Some(hitter) = flight.antagonist {
                 domino_sweeps.push((
                     entity_id.into(),
                     hitter,
                     flight.increment_x,
-                    flight.increment_y,
+                    increment_map_y,
                 ));
             }
 
@@ -1718,11 +1722,22 @@ impl EngineInner {
                 // frame. It snaps to the exact PositionGoal only when the
                 // sprite later reports TERMINATED.
                 if flight.antagonist.is_some() {
-                    let mut map = entity.element_data().position_map();
-                    map.x += flight.increment_x;
-                    map.y += flight.increment_y;
-                    let z = entity.position_iface().get_elevation() + flight.increment_z;
-                    set_flight_position(entity, flight.geometry, map, z);
+                    if matches!(flight.geometry, crate::element::FlightGeometry::World3d) {
+                        let pos3 = entity.position_iface().get_position();
+                        entity.position_iface_mut().set_position(
+                            crate::coordinates::WorldPoint3D {
+                                x: pos3.x + flight.increment_x,
+                                y: pos3.y + flight.increment_y,
+                                z: pos3.z + flight.increment_z,
+                            },
+                        );
+                    } else {
+                        let mut map = entity.element_data().position_map();
+                        map.x += flight.increment_x;
+                        map.y += flight.increment_y;
+                        let z = entity.position_iface().get_elevation() + flight.increment_z;
+                        set_flight_position(entity, flight.geometry, map, z);
+                    }
                 } else {
                     // Non-combat translations have no wrapper termination
                     // event, so their final flight tick owns the exact snap.
@@ -1768,11 +1783,10 @@ impl EngineInner {
                 // Advance by increment.  The per-frame increment in
                 // 3D is `(goal - position) / frames_of_flight`, so
                 // the z advance is linear from start_z to goal_z.
-                if flight.ladder_fall {
-                    // Ladder falls store a 3D increment and accumulate
-                    // on the cached 3D position; the map position is
-                    // re-derived from the accumulated components each
-                    // tick, reproducing the original's rounding.
+                if matches!(flight.geometry, crate::element::FlightGeometry::World3d) {
+                    // ReadyForTakeOff stores and accumulates one complete 3D
+                    // increment. Re-derive map position after the addition;
+                    // separately accumulating map Y and Z rounds differently.
                     let pos3 = entity.position_iface().get_position();
                     entity
                         .position_iface_mut()

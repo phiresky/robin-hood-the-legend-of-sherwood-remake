@@ -1782,12 +1782,23 @@ impl EngineInner {
             None => (None, 0.0),
         };
 
-        // ReadyForTakeOff installs the endpoint obstacle immediately.
+        // ReadyForTakeOff retains its already-cached 3D takeoff point while
+        // SetObstacle invalidates the lazy cache underneath it. Rust installs
+        // obstacles eagerly, so preserve that captured point explicitly.
+        let takeoff_position = self
+            .get_entity(victim_id)
+            .unwrap_or_else(|| panic!("falling-hit victim {victim_id:?} vanished"))
+            .position_iface()
+            .get_position();
         self.set_obstacle_and_material(
             assets,
             victim_id,
             goal_obstacle.map(|obstacle| obstacle.get()),
         );
+        self.get_entity_mut(victim_id)
+            .unwrap_or_else(|| panic!("falling-hit victim {victim_id:?} vanished"))
+            .position_iface_mut()
+            .set_position(takeoff_position);
 
         let flight_sector = crate::position_interface::vector_to_sector_0_to_15(flight_x, flight_y);
         let facing_sector = (flight_sector + 8) % 16;
@@ -1806,6 +1817,7 @@ impl EngineInner {
         let dx = goal_x - victim_pos.x;
         let dy = goal_y - victim_pos.y;
         let dz = goal_z - victim_z;
+        let dy_world = (goal_y + goal_z) - (victim_pos.y + victim_z);
         if dx.abs() > 0.01 || dy.abs() > 0.01 || dz.abs() > 0.01 {
             victim
                 .actor_data_mut()
@@ -1813,7 +1825,7 @@ impl EngineInner {
                 .active_flight = Some(crate::element::ActiveFlight {
                 geometry: crate::element::FlightGeometry::World3d,
                 increment_x: dx / frames as f32,
-                increment_y: dy / frames as f32,
+                increment_y: dy_world / frames as f32,
                 goal_x,
                 goal_y,
                 frames_remaining: frames,

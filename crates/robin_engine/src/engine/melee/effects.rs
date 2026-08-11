@@ -1171,7 +1171,15 @@ impl EngineInner {
             .get_entity_mut(victim_id)
             .expect("falling-pushed victim vanished")
             .position_iface_mut();
+        // Original ReadyForTakeOff captures `ptMyPosition3D` before it
+        // installs the landing obstacle. SetObstacle only invalidates the
+        // lazy 3D cache there; the following SetIncrement/UpdatePosition
+        // continues from that captured takeoff point. Rust's eager
+        // set_obstacle recomputation must therefore not replace the flight's
+        // starting elevation with the landing plane's height.
+        let takeoff_position = position.get_position();
         position.set_obstacle(obstacle, plane);
+        position.set_position(takeoff_position);
         position.set_layer_goal(
             crate::position_interface::Layer::new(layer)
                 .expect("falling-pushed victim layer cannot be the no-layer sentinel"),
@@ -1179,6 +1187,7 @@ impl EngineInner {
         let dx = goal.x - victim_pos.x;
         let dy = goal.y - victim_pos.y;
         let dz = goal_z - victim_z;
+        let dy_world = (goal.y + goal_z) - (victim_pos.y + victim_z);
         let actor = self
             .get_entity_mut(victim_id)
             .expect("falling-pushed victim vanished")
@@ -1188,7 +1197,7 @@ impl EngineInner {
             crate::element::ActiveFlight {
                 geometry: crate::element::FlightGeometry::World3d,
                 increment_x: dx / frames as f32,
-                increment_y: dy / frames as f32,
+                increment_y: dy_world / frames as f32,
                 goal_x: goal.x,
                 goal_y: goal.y,
                 frames_remaining: frames,

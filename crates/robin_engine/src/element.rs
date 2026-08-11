@@ -505,7 +505,9 @@ pub enum FlightGeometry {
 )]
 pub struct ActiveFlight {
     pub geometry: FlightGeometry,
-    /// Per-frame position increment (total displacement / frames).
+    /// Per-frame position increment (total displacement / frames). For
+    /// [`FlightGeometry::World3d`], Y is the cached world-space Y increment;
+    /// the projected map-space increment is `increment_y - increment_z`.
     pub increment_x: f32,
     pub increment_y: f32,
     /// Goal position to snap to on completion.
