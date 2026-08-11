@@ -13707,6 +13707,20 @@ impl EngineInner {
         owner_local_no_forecast: bool,
         defer_turn_instruction: bool,
     ) {
+        // This entry point models one direct, synchronous member-call stack.
+        // Cards that were already queued for other owners belong to their
+        // established later Hourglass boundaries; nested helpers below still
+        // use the global drain because cards they create on this stack are
+        // causal and must close re-entrantly. Detach only the pre-existing
+        // foreign backlog for the duration of the fixed point.
+        let pending = self.orders.sequence_manager.drain_pending_condolations();
+        let (owner_roots, foreign_backlog): (Vec<_>, Vec<_>) = pending
+            .into_iter()
+            .partition(|dispatch| dispatch.card.owner == npc_id);
+        self.orders
+            .sequence_manager
+            .restore_pending_condolations(owner_roots);
+
         const MAX_ITERS: u32 = 8;
         for iter in 0..MAX_ITERS {
             self.drain_pending_for_npc_mode(
@@ -13720,6 +13734,9 @@ impl EngineInner {
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
             self.surface_synchronous_completion_events_for_owner(npc_id);
             self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
+            // All foreign cards that predated this direct boundary are held
+            // aside above. Any foreign-owner card visible here was therefore
+            // produced causally on this call stack and must close now.
             self.dispatch_condolations_for_npc(sim, npc_id, assets);
             let has_self_stimuli = {
                 let ai = self
@@ -13767,6 +13784,39 @@ impl EngineInner {
                 npc_id.index()
             );
         }
+
+        self.orders
+            .sequence_manager
+            .restore_pending_condolations(foreign_backlog);
+    }
+
+    /// Apply one AI `StopAll` prefix as a synchronous owner boundary.
+    ///
+    /// Existing cards for unrelated owners belong to their established
+    /// Hourglass slots. Cards produced while draining this owner's queued
+    /// SetState/StopAll work are causal, including cross-owner callbacks, and
+    /// remain visible to the ordinary global condolence drain.
+    pub(super) fn drain_ai_owner_halt_boundary(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        npc_id: EntityId,
+    ) {
+        let pending = self.orders.sequence_manager.drain_pending_condolations();
+        let (owner_roots, foreign_backlog): (Vec<_>, Vec<_>) = pending
+            .into_iter()
+            .partition(|dispatch| dispatch.card.owner == npc_id);
+        self.orders
+            .sequence_manager
+            .restore_pending_condolations(owner_roots);
+
+        self.drain_ai_owner_work_for(sim, assets, npc_id);
+        self.apply_pending_ai_halt(npc_id);
+        self.dispatch_condolations_for_npc(sim, npc_id, assets);
+
+        self.orders
+            .sequence_manager
+            .restore_pending_condolations(foreign_backlog);
     }
 
     // ── The16thFrame — periodic AI tasks (staggered) ──────────────

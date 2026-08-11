@@ -1238,6 +1238,22 @@ impl SequenceElement {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn movement_action_for_test(&self) -> Option<OrderType> {
+        match &self.data {
+            SequenceElementData::Movement { action, .. } => Some(*action),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn movement_flags_for_test(&self) -> Option<MoveFlags> {
+        match &self.data {
+            SequenceElementData::Movement { flags, .. } => Some(*flags),
+            _ => None,
+        }
+    }
+
     /// Insert a posture/action-state-transition order (with movement)
     /// at the front of this movement element's order list. Any prefix
     /// of orders whose action matches `animation_to_replace` is eaten

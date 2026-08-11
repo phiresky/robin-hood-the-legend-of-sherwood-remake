@@ -1764,6 +1764,84 @@ pub(super) fn make_test_ai_soldier(camp: crate::element::Camp) -> Entity {
 }
 
 #[test]
+fn direct_ai_owner_boundary_preserves_preexisting_foreign_condolation() {
+    use crate::element::Command;
+    use crate::sequence::SequenceElement;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let foreign_a = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let foreign_b = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let terminate = |engine: &mut EngineInner, card_owner| {
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, Command::Wait, Some(card_owner)));
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        engine
+            .orders
+            .sequence_manager
+            .element_terminated(sequence, 0);
+    };
+    terminate(&mut engine, foreign_a);
+    terminate(&mut engine, owner);
+    terminate(&mut engine, foreign_b);
+
+    // Exercise the nested global drain in `drain_pending_for_npc_mode`, not
+    // merely the idle direct-boundary endpoint. The owner's Halt and its
+    // pre-existing root must close now, while foreign A/B stay queued.
+    let live_owner_sequence = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::Wait, Some(owner)));
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(live_owner_sequence, 0);
+    engine
+        .get_entity_mut(owner)
+        .and_then(Entity::ai_controller_mut)
+        .expect("direct-boundary owner has AI")
+        .outbox
+        .actor
+        .halt = true;
+
+    let ((), stimuli) = crate::engine::soldier_helpers::capture_condolation_stimuli(|| {
+        engine.drain_direct_ai_owner_boundary_without_forecast(&sim, owner, &assets);
+    });
+
+    let backlog = engine.orders.sequence_manager.drain_pending_condolations();
+    assert_eq!(
+        backlog
+            .iter()
+            .map(|dispatch| dispatch.card.owner)
+            .collect::<Vec<_>>(),
+        vec![foreign_a, foreign_b],
+        "pre-existing foreign cards retain their FIFO around owner Halt recursion"
+    );
+    assert!(
+        stimuli.iter().any(|(stimulus_owner, stimulus)| {
+            *stimulus_owner == owner && *stimulus == crate::ai::StimulusType::EventDone
+        }),
+        "the owner's pre-existing terminal root must be delivered, not dropped"
+    );
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(owner, |_| true),
+        "the selected owner's Halt must still close causally inside the direct boundary"
+    );
+}
+
+#[test]
 fn synchronous_one_shot_noise_is_handled_before_broadcast_returns() {
     use crate::ai::{AiState, NoiseType, Stimulus, StimulusType, Substate};
     use crate::coordinates::{MapPoint, WorldPoint3D};

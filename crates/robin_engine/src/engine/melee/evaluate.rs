@@ -2041,6 +2041,56 @@ impl EngineInner {
             Some(crate::combat::ProposedCombatAction::Parry) => {
                 const MIN_CAPACITY_AVOID_PUSH_BACK: u16 = 50;
 
+                // StopAll interrupts the selected element, but Original does
+                // not install an idle sprite order before this method's
+                // following GoTo reads GetAnimation/GetActionState. Rust's
+                // halt cleanup normalizes that actor state eagerly, so retain
+                // the complete live owner context across the narrow barrier.
+                let mut step_back_ctx = if victim_fighting_ability >= MIN_CAPACITY_AVOID_PUSH_BACK
+                    && push_back_distance != 0
+                {
+                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                    let victim_sector = self
+                        .world
+                        .entities
+                        .get(victim_id)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "ConsiderToBeginParade step-back victim {} disappeared",
+                                victim_id.index()
+                            )
+                        })
+                        .element_data()
+                        .sector();
+                    let building_sector = self.entity_building_sector(victim_sector);
+                    let mut ctx = {
+                        let victim = self.world.entities.get(victim_id).unwrap_or_else(|| {
+                            panic!(
+                                "ConsiderToBeginParade step-back victim {} disappeared",
+                                victim_id.index()
+                            )
+                        });
+                        crate::engine::ai::build_ai_context_from_entity(
+                            victim,
+                            self.control.frame_counter,
+                            building_sector,
+                            self.world.weather.is_forest_level,
+                            self.world.weather.ambiance,
+                            self.ai.standard_view_polygon_radius,
+                            &scratch.ai_entity_views,
+                            &scratch.ai_sight_obstacles,
+                            &self.world.fast_grid,
+                            &assets.hiking_paths,
+                            &self.ai.global.all_soldier_handles,
+                            self.control.sim_config.difficulty,
+                        )
+                    };
+                    self.refresh_selected_default_wait_identity(victim_id, &mut ctx);
+                    Some(ctx)
+                } else {
+                    None
+                };
+
                 // StopAll().
                 if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
                     && let Some(ai) = s.npc.ai_brain.base_mut()
@@ -2052,8 +2102,7 @@ impl EngineInner {
                 // sequence launch. Close the callback boundary and then apply
                 // that narrow halt barrier now, so it cannot interrupt the
                 // replacement work below.
-                self.drain_ai_owner_work_for(sim, assets, victim_id);
-                self.apply_pending_ai_halt(victim_id);
+                self.drain_ai_owner_halt_boundary(sim, assets, victim_id);
 
                 // Step-back dodge for push-back strikes if
                 // fighting ability is high enough.
@@ -2103,15 +2152,21 @@ impl EngineInner {
                         Some(&self.world.fast_grid),
                         crate::position_interface::SWORDFIGHT_ASPECT_RATIO,
                     ) {
+                        let ctx = step_back_ctx.take().unwrap_or_else(|| {
+                            panic!(
+                                "ConsiderToBeginParade step-back victim {} has no retained GoTo context",
+                                victim_id.index()
+                            )
+                        });
+
                         // Step back to avoid strike.
                         if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
                             && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
                         {
-                            let flags = crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::SWORD;
-                            let ctx = crate::ai::AiContext {
-                                position: victim_ai_pos,
-                                direction: victim_direction as u16,
-                                ..Default::default()
+                            let flags = if ctx.self_is_rider {
+                                crate::ai::GotoFlags::SWORD
+                            } else {
+                                crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::SWORD
                             };
                             ai.go_to(
                                 crate::ai::AiState::Attacking,
@@ -2123,7 +2178,9 @@ impl EngineInner {
                         }
                         // This branch returns immediately after GoTo; close the
                         // owner-local callback boundary before the caller resumes.
-                        self.drain_ai_owner_work_for(sim, assets, victim_id);
+                        self.drain_direct_ai_owner_boundary_without_forecast(
+                            sim, victim_id, assets,
+                        );
                         tracing::debug!(
                             ?victim_id,
                             ?attacker_id,
@@ -2206,9 +2263,7 @@ impl EngineInner {
                     ai.begin_special_strike();
                     ai.base.stop_all();
                 }
-                self.drain_ai_owner_work_for(sim, assets, victim_id);
-                self.apply_pending_ai_halt(victim_id);
-                self.dispatch_condolations_for_owner_boundary(sim, victim_id, assets);
+                self.drain_ai_owner_halt_boundary(sim, assets, victim_id);
 
                 // Launch counter-strike sequence
                 let counter_cmd = counter_strike.to_command();

@@ -3480,6 +3480,205 @@ mod tests {
         );
     }
 
+    #[test]
+    fn reactive_step_back_launches_replacement_move_before_returning() {
+        for rider in [false, true] {
+            let mut engine = make_engine();
+            let (victim, attacker) = make_enemy_strike_pair(&mut engine, false);
+            let Entity::Soldier(victim_soldier) = engine.get_entity_mut(victim).unwrap() else {
+                unreachable!()
+            };
+            victim_soldier.soldier.rider = rider;
+            engine.world.fast_grid.size_map(4, 4);
+            engine.world.fast_grid.allocate_layers(1);
+            let sector_points = vec![
+                crate::coordinates::MapPoint::new(0.0, 0.0),
+                crate::coordinates::MapPoint::new(256.0, 0.0),
+                crate::coordinates::MapPoint::new(256.0, 256.0),
+                crate::coordinates::MapPoint::new(0.0, 256.0),
+            ];
+            engine.world.fast_grid.add_sector(
+                crate::fast_find_grid::GridSector {
+                    points: sector_points,
+                    bounding_box: crate::coordinates::MapBBox::from_coords(0.0, 0.0, 256.0, 256.0),
+                    sector_type: crate::sector::SectorType::MOTION
+                        | crate::sector::SectorType::AREA,
+                    layer: 0,
+                    sector_number: crate::sector::SectorNumber::new(0),
+                    door_index: None,
+                    lift_type: None,
+                    lift_direction: 0,
+                    force_crouched: false,
+                    building_index: None,
+                    low_exit_point: None,
+                    high_exit_point: None,
+                    lowest_door_index: None,
+                    jump_line_indices: Vec::new(),
+                    gate_indices: Vec::new(),
+                    underlying_sector: None,
+                },
+                0,
+            );
+            {
+                let victim_element = engine.get_entity_mut(victim).unwrap().element_data_mut();
+                victim_element.set_position(WorldPoint3D::new(100.0, 100.0, 0.0));
+                victim_element.set_sector(crate::position_interface::SectorHandle::new(0));
+                victim_element.sprite.position_iface.set_move_box(
+                    crate::coordinates::MoveBox::from_coords(-5.0, -5.0, 5.0, 5.0),
+                );
+            }
+            engine
+                .get_entity_mut(attacker)
+                .unwrap()
+                .element_data_mut()
+                .set_position(WorldPoint3D::new(180.0, 100.0, 0.0));
+            for actor in [victim, attacker] {
+                let sprite = &mut engine
+                    .get_entity_mut(actor)
+                    .unwrap()
+                    .element_data_mut()
+                    .sprite;
+                sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+                    action_done: 0,
+                    frame_ids: vec![0],
+                    delays: vec![1],
+                    distances: vec![0],
+                    offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+                    sound_ids: vec![0],
+                    ..Default::default()
+                }]);
+                sprite.conversion =
+                    std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]);
+            }
+
+            // The replay victim is already moving with a sword. StopAll
+            // interrupts that selected movement, but Original's immediately
+            // following GoTo still reads its installed sword animation. The
+            // attacker is already beyond the desired separation, making the
+            // proposed step-back goal the victim's current point and exposing
+            // the animation-gated zero-distance path.
+            let old_movement = crate::sequence::SequenceElement::new_movement(
+                1,
+                Command::MoveOk,
+                Some(victim),
+                OrderType::WalkingWithSword,
+            );
+            let old_sequence = engine.launch_element(old_movement);
+            let old_order =
+                engine.push_new_order(old_sequence, 0, OrderType::WalkingWithSword, 90.0, 100.0);
+            engine
+                .orders
+                .sequence_manager
+                .element_in_progress(old_sequence, 0);
+            {
+                let actor = engine
+                    .get_entity_mut(victim)
+                    .unwrap()
+                    .actor_data_mut()
+                    .unwrap();
+                actor.action_state = ActionState::MovingSword;
+                actor.installed_order = Some(crate::element::InstalledActorOrder {
+                    order_id: old_order,
+                    order_type: OrderType::WalkingWithSword,
+                });
+                actor.active_movement = crate::movement::ActiveMovement::new(old_sequence, 0);
+            }
+            let mut assets = assets_with_sword_profile(7, 30);
+            let profiles = std::sync::Arc::get_mut(&mut assets.profile_manager).unwrap();
+            profiles.soldiers[0].fighting = 50;
+            let incoming_thrust = &mut profiles.hth_weapons[0].thrusts[SwordStrike::A as usize];
+            incoming_thrust.kind = crate::profiles::WeaponThrustKind::PushAside;
+            incoming_thrust.maximal_distance = 30;
+            {
+                let ai = engine
+                    .get_entity_mut(victim)
+                    .and_then(Entity::enemy_ai_mut)
+                    .unwrap();
+                ai.known_enemy_strike_1 = Some(SwordStrike::A);
+            }
+
+            // 65 rejects an offensive response at fighting ability 50, selecting
+            // the parade path. A push-aside strike turns that parade into a
+            // step-back GoTo, which Original launches synchronously before this
+            // callback returns.
+            engine.control.rng = SimulationRng::with_original_replay(vec![65]);
+            engine.with_simulation_context(|engine, sim| {
+                engine.consider_to_begin_parade(sim, &assets, victim, attacker, SwordStrike::A);
+            });
+
+            let ai = engine
+                .get_entity(victim)
+                .and_then(Entity::enemy_ai)
+                .unwrap();
+            assert_eq!(
+                ai.base.current_substate,
+                crate::ai::Substate::AttackingSwordfightStepBack
+            );
+            assert!(
+                ai.base
+                    .last_goto_flags
+                    .contains(crate::ai::GotoFlags::SWORD)
+            );
+            assert_eq!(
+                ai.base.last_goto_flags.contains(crate::ai::GotoFlags::RUN),
+                !rider,
+                "Original's rider step-back omits GOTO_RUN"
+            );
+            let owned_elements: Vec<_> = engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| sequence.elements.iter())
+                .filter(|element| element.owner == Some(victim))
+                .map(|element| {
+                    (
+                        element.command,
+                        element.state,
+                        element.current_order().map(|order| order.order_type),
+                    )
+                })
+                .collect();
+            assert!(
+                !owned_elements
+                    .iter()
+                    .any(|(command, _, _)| *command == Command::EnterSwordfight),
+                "a soldier already in WaitingSword must not receive a spurious raise-sword prefix: {owned_elements:?}"
+            );
+            let (move_sequence, move_element) = engine
+            .orders
+            .sequence_manager
+            .live_element_for_actor_matching(victim, |element| {
+                matches!(element.command, Command::Move | Command::MoveOk)
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "step-back GoTo must not remain queued until the next owner slot; owned elements: {owned_elements:?}; pending moves: {:?}",
+                    engine.orders.pending_move_requests
+                )
+            });
+            let movement = engine
+                .orders
+                .sequence_manager
+                .get_element(move_sequence, move_element)
+                .expect("live step-back movement remains inspectable");
+            assert_eq!(
+                movement.movement_action_for_test(),
+                Some(if rider {
+                    OrderType::WalkingUpright
+                } else {
+                    OrderType::RunningUpright
+                }),
+                "GOTO_RUN authors only the non-rider replacement's pre-instruction movement action"
+            );
+            assert!(
+                movement.movement_flags_for_test().is_some_and(
+                    |flags| flags.contains(crate::sequence::MoveFlags::FORCE_SWORD_MOVEMENT)
+                ),
+                "the live soldier context must preserve GOTO_SWORD on the replacement movement"
+            );
+        }
+    }
+
     fn assets_with_nonstraight_profile(
         strike: SwordStrike,
         kind: crate::profiles::WeaponThrustKind,
