@@ -13975,6 +13975,69 @@ mod movement_transition_state_tests {
     }
 
     #[test]
+    fn terminal_pc_hit_in_live_range_precedes_expired_stale_seek_refresh() {
+        let (mut engine, owner, target) = install_terminal_interaction_seek(Command::HitCmd, 20.0);
+        let (seq_id, elem_idx) = {
+            let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+            (
+                actor.active_movement.sequence_id.unwrap(),
+                actor.active_movement.element_index,
+            )
+        };
+        let target_position = engine
+            .get_entity(target)
+            .unwrap()
+            .element_data()
+            .position_map();
+        let stale_position = MapPoint::new(target_position.x + 100.0, target_position.y);
+        let SequenceElementData::Movement {
+            element,
+            destination,
+            ..
+        } = &mut engine
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
+            .unwrap()
+            .data
+        else {
+            panic!("terminal seek fixture lost movement data")
+        };
+        *element = Some(target);
+        *destination = stale_position;
+        {
+            let actor = engine
+                .get_entity_mut(owner)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap();
+            actor.seek_refresh_wait = 0;
+            actor.wait_time = 0;
+            actor.last_seek_target_position = stale_position;
+        }
+
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        assert!(
+            !engine.tick_refresh_seek_for_owner(&sim, &assets, owner),
+            "PerformSeek must observe the live in-range target before testing stale-route refresh"
+        );
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .seek_refresh_wait,
+            0,
+            "the suppressed refresh must not rearm the 25-frame timer"
+        );
+
+        finish_terminal_seek_tick(&mut engine, owner);
+        assert_eq!(engine.actor_order_type(owner), Some(OrderType::Hitting));
+    }
+
+    #[test]
     fn terminal_pc_tie_seek_outside_init_range_aborts_without_turning_or_visible_tie() {
         let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::TieCmd, 55.8);
         finish_terminal_seek_tick(&mut engine, owner);

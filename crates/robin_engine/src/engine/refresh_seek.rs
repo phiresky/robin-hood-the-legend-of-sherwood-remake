@@ -31,7 +31,7 @@
 
 use super::movement::GoalShape;
 use crate::coordinates::{MapPoint, MapVec};
-use crate::element::{ActionState, EntityId};
+use crate::element::{ActionState, Entity, EntityId};
 use crate::engine::LevelAssets;
 use crate::order::OrderType;
 use crate::sequence::{
@@ -41,6 +41,47 @@ use crate::sequence::{
 #[inline]
 fn seek_refresh_wait_elapsed(wait: u32) -> bool {
     (wait as i32) <= 0
+}
+
+/// `RHElementActor::PerformSeek` tests the live target tolerance before its
+/// moved-target refresh arm.  Keep the same test at the pre-owner refresh
+/// seam so an expired stale route cannot replace a seek whose target has
+/// already entered interaction range.
+fn entity_seek_live_tolerance_reached(
+    owner: &Entity,
+    target: &Entity,
+    flags: MoveFlags,
+    seek_distance: f32,
+) -> bool {
+    // The Original's SEEK_SHIELD arm is intentionally different: it tests
+    // moved-target refresh before computing distance to the saved shield
+    // destination.
+    if seek_distance <= 0.0 || flags.contains(MoveFlags::SEEK_SHIELD) {
+        return false;
+    }
+    let owner_position = owner.element_data().position_map();
+    let owner_sector = owner.element_data().sector();
+    let target_position = target.element_data().position_map();
+    let target_sector = target.element_data().sector();
+    if owner_sector != target_sector {
+        return false;
+    }
+
+    let target_point = if flags.contains(MoveFlags::USE_POINT) {
+        target
+            .cxx_current_point_map()
+            .filter(|point| *point != target_position)
+            .unwrap_or(target_position)
+    } else {
+        target_position
+    };
+    let delta = target_point - owner_position;
+    let dy = if flags.contains(MoveFlags::DIRECTIONAL_TOLERANCE) {
+        delta.y * 1.743_446_8
+    } else {
+        delta.y
+    };
+    delta.x * delta.x + dy * dy < seek_distance * seek_distance * 1.1025
 }
 
 pub(crate) struct ResolvedEntitySeek {
@@ -387,6 +428,20 @@ impl crate::engine::EngineInner {
                 return false;
             };
             let target_pos = target_entity.element_data().position_map();
+
+            // PerformSeek's same-sector distance gate precedes its expired
+            // timer / moved-target test. In particular, a target can enter
+            // range while this route still points at its old position; the
+            // ensuing owner Execute must consume the post-seek handoff rather
+            // than RefreshSeek replacing the route first.
+            if entity_seek_live_tolerance_reached(
+                entity,
+                target_entity,
+                *flags,
+                actor.seek_distance,
+            ) {
+                return false;
+            }
 
             // Original stores this as ULONG but tests expiry through
             // `(SLONG)mulWaitTime <= 0`. Wrapped high-bit values therefore
