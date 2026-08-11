@@ -1271,7 +1271,11 @@ fn read_stimulus(
             let raw_level = reader.read_u16("noise.raw_position.level")?;
             let raw_padding = reader.read_u16("noise.raw_position.padding")?;
             let first_sector = read_sector_ref(reader, "noise.first_sector")?;
-            let origin = read_stimulus_position(reader, "noise.origin")?;
+            // INFO_NOISE is the sole RHStimulus position variant whose v22+
+            // compatibility payload writes uwLevel before the sector pointer.
+            // See RHStimulus::Serialize; the generic position variants below
+            // retain their x, y, sector, level wire order.
+            let origin = read_noise_stimulus_position(reader)?;
             let noise_type = reader.read_i32("noise.type")?;
             let volume = reader.read_u16("noise.volume")?;
             let elevation = reader.read_u16("noise.elevation")?;
@@ -1346,6 +1350,19 @@ fn read_stimulus_position(
             y: reader.read_f32("y")?,
             sector: read_sector_ref(reader, "sector")?,
             level: reader.read_u16("level")?,
+        })
+    })
+}
+
+fn read_noise_stimulus_position(
+    reader: &mut LegacyReader<'_>,
+) -> LegacyResult<LegacyStimulusPosition> {
+    reader.scope("noise.origin", |reader| {
+        Ok(LegacyStimulusPosition {
+            x: reader.read_f32("x")?,
+            y: reader.read_f32("y")?,
+            level: reader.read_u16("level")?,
+            sector: read_sector_ref(reader, "sector")?,
         })
     })
 }
@@ -1676,6 +1693,73 @@ mod tests {
         i32(bytes, 61);
         i32(bytes, 0);
         u32(bytes, u32::MAX);
+    }
+
+    #[test]
+    fn noise_origin_reads_level_before_sector_without_changing_hint_order() {
+        let mut bytes = Vec::new();
+
+        bytes.extend_from_slice(&STIMULUS_FINGERPRINT);
+        bytes.push(0);
+        i32(&mut bytes, 2);
+        i32(&mut bytes, 1);
+        u32(&mut bytes, u32::MAX);
+        f32(&mut bytes, 10.0);
+        f32(&mut bytes, 11.0);
+        u32(&mut bytes, 0xdead_beef);
+        u16(&mut bytes, 12);
+        u16(&mut bytes, 0xabcd);
+        u16(&mut bytes, 13);
+        f32(&mut bytes, 20.0);
+        f32(&mut bytes, 21.0);
+        u16(&mut bytes, 22);
+        u16(&mut bytes, 23);
+        i32(&mut bytes, 24);
+        u16(&mut bytes, 25);
+        u16(&mut bytes, 26);
+
+        bytes.extend_from_slice(&STIMULUS_FINGERPRINT);
+        bytes.push(0);
+        i32(&mut bytes, 3);
+        i32(&mut bytes, 4);
+        u32(&mut bytes, u32::MAX);
+        f32(&mut bytes, 30.0);
+        f32(&mut bytes, 31.0);
+        u16(&mut bytes, 32);
+        u16(&mut bytes, 33);
+        u16(&mut bytes, u16::MAX);
+        u16(&mut bytes, 34);
+
+        with_reader(&bytes, |reader| {
+            let noise = read_stimulus(reader, 0).unwrap();
+            let LegacyStimulusInfo::Noise { origin, .. } = noise.info else {
+                panic!("expected noise stimulus");
+            };
+            assert_eq!(
+                origin,
+                LegacyStimulusPosition {
+                    x: 20.0,
+                    y: 21.0,
+                    sector: LegacySectorRef(Some(23)),
+                    level: 22,
+                }
+            );
+
+            let hint = read_stimulus(reader, 0).unwrap();
+            let LegacyStimulusInfo::Hint { position, .. } = hint.info else {
+                panic!("expected hint stimulus");
+            };
+            assert_eq!(
+                position,
+                LegacyStimulusPosition {
+                    x: 30.0,
+                    y: 31.0,
+                    sector: LegacySectorRef(Some(32)),
+                    level: 33,
+                }
+            );
+            assert_eq!(reader.offset(), bytes.len() as u64);
+        });
     }
 
     fn append_seek_point(bytes: &mut Vec<u8>, seed: u16) {
