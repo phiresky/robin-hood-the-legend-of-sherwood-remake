@@ -736,7 +736,7 @@ pub fn compute_trajectory_ballistic_with_terminal_obstacle(
     // Small-throwable owners currently retain only obstacle identity. Their
     // distinct landing lifecycles resolve presentation later; do not smuggle
     // arrow disappearance semantics through this compatibility API.
-    let (trajectory, terminal_obstacle, _, _) = compute_trajectory_ballistic_impl(
+    let (trajectory, terminal_obstacle, _, _, _) = compute_trajectory_ballistic_impl(
         start,
         initial_velocity,
         mass,
@@ -759,6 +759,7 @@ pub fn compute_trajectory_ballistic_with_terminal_impact(
 ) -> (
     Vec<TrajectoryPoint>,
     Option<crate::position_interface::ObstacleHandle>,
+    bool,
     bool,
     bool,
 ) {
@@ -814,14 +815,15 @@ fn compute_trajectory_ballistic_bounce_with_terminal(
     bool,
     bool,
 ) {
-    compute_trajectory_ballistic_impl(
+    let (trajectory, obstacle, impact, hole, _) = compute_trajectory_ballistic_impl(
         start,
         initial_velocity,
         mass,
         flat_shot,
         obstacle_check,
         Some(bounce_factors),
-    )
+    );
+    (trajectory, obstacle, impact, hole)
 }
 
 /// Impact classifications used by trajectory bounce dispatch.
@@ -1046,6 +1048,7 @@ fn compute_trajectory_ballistic_impl(
     Option<crate::position_interface::ObstacleHandle>,
     bool,
     bool,
+    bool,
 ) {
     /// Top-impact termination speed threshold (`||v|| < 5`).
     /// Only applies when the previous iteration hit an obstacle's top
@@ -1059,6 +1062,7 @@ fn compute_trajectory_ballistic_impl(
     let mut terminal_obstacle = None;
     let mut terminal_impact = false;
     let mut terminal_lands_in_hole = false;
+    let mut terminal_lands_in_water = false;
     let mut velocity = initial_velocity;
     let mut position = start;
 
@@ -1236,6 +1240,9 @@ fn compute_trajectory_ballistic_impl(
             terminal_lands_in_hole = water_hole.is_some_and(|resolution| {
                 matches!(resolution.material, crate::sound_cache::Material::Hole)
             });
+            terminal_lands_in_water = water_hole.is_some_and(|resolution| {
+                matches!(resolution.material, crate::sound_cache::Material::Water)
+            });
 
             if let Some(proj_bounce) = bounce {
                 let info = classify_impact(impact, position, new_position, obstacle);
@@ -1337,6 +1344,7 @@ fn compute_trajectory_ballistic_impl(
         terminal_obstacle,
         terminal_impact,
         terminal_lands_in_hole,
+        terminal_lands_in_water,
     )
 }
 
@@ -3386,18 +3394,28 @@ pub(crate) fn make_arrow_falling_down(
     // stops at the wall or floor it is thrown into instead of sailing through
     // it. Segment clipping also shortens the first waypoint's frame count,
     // which is directly observable as this tick's movement increment.
-    let (trajectory, terminal_obstacle, terminal_impact, terminal_lands_in_hole) =
-        compute_trajectory_ballistic_with_terminal_impact(
-            proj.element.position(),
-            velocity,
-            MASS_ARROW_HIGH,
-            false,
-            obstacle_check,
-        );
+    let (
+        trajectory,
+        terminal_obstacle,
+        terminal_impact,
+        terminal_lands_in_hole,
+        terminal_lands_in_water,
+    ) = compute_trajectory_ballistic_impl(
+        proj.element.position(),
+        velocity,
+        MASS_ARROW_HIGH,
+        false,
+        obstacle_check,
+        None,
+    );
     proj.projectile.trajectory = trajectory;
     proj.projectile.trajectory_frame_count = 0;
     proj.projectile.launch_segment_start = None;
     preserve_falling_hole_disappearance(proj, terminal_lands_in_hole);
+    // Original ComputeTrajectory records WATER separately from HOLE.  The
+    // terminal Projectile::Hourglass uses this flag to return before
+    // HitObstacle can apply the ordinary bare-ground +0.001 elevation snap.
+    proj.projectile.dive |= terminal_lands_in_water;
 
     // Recomputing a trajectory drops the projectile's current membership and
     // re-derives it from where the new trajectory ends, so the deflected
@@ -3840,11 +3858,11 @@ fn tick_arrows_matching(
                 // projection polygon yet hit no obstacle at all, and gets
                 // the flat 0.001 ground snap.
                 let pos = proj.element.position();
-                let (top_plane_z, new_z) = if proj.projectile.disappear {
-                    // Original tests `mbDisappear` before `HitObstacle`.
-                    // Reaching a hole therefore preserves the trajectory-end
-                    // elevation instead of applying the ordinary +0.001
-                    // ground/obstacle snap.
+                let (top_plane_z, new_z) = if proj.projectile.disappear || proj.projectile.dive {
+                    // Original tests `mbDive` / `mbDisappear` before
+                    // `HitObstacle`. Reaching water or a hole therefore
+                    // preserves the trajectory-end elevation instead of
+                    // applying the ordinary +0.001 ground/obstacle snap.
                     (None, None)
                 } else {
                     let top_plane_z = proj.element.obstacle_index().map(|handle| {
@@ -3893,6 +3911,13 @@ fn tick_arrows_matching(
                 }
                 let impact_pos = proj.element.position_map();
                 proj.projectile.flying = false;
+                if proj.projectile.dive {
+                    // Projectile::Hourglass returns false for mbDive and the
+                    // engine retires the arrow on this same boundary. Keep
+                    // the tombstone so parity can still observe its settled
+                    // terminal state.
+                    proj.element.active = false;
+                }
                 let despawn = if is_burster {
                     set_projectile_animation(proj, Animation::ObjectBursting);
                     false
@@ -7353,17 +7378,19 @@ mod tests {
             sight_obstacles: crate::sight_obstacle::ObstacleList::from_slice_all_active(&obstacles),
             water_zones: Some(water_zones),
         };
-        compute_trajectory_ballistic_with_terminal_impact(
-            // Begin far enough behind the thin wall to retain at least one
-            // free-flight waypoint before impact. Original's
-            // AddTrajectoryFallIntoHole deliberately needs two points before
-            // it can derive the approach line and append a far-edge point.
-            WorldPoint3D::new(-40.0, 0.0, 25.0),
-            WorldVec3D::new(10.0, 0.0, 0.0),
-            MASS_ARROW_FLAT,
-            false,
-            Some(&check),
-        )
+        let (trajectory, obstacle, impact, hole, _) =
+            compute_trajectory_ballistic_with_terminal_impact(
+                // Begin far enough behind the thin wall to retain at least one
+                // free-flight waypoint before impact. Original's
+                // AddTrajectoryFallIntoHole deliberately needs two points before
+                // it can derive the approach line and append a far-edge point.
+                WorldPoint3D::new(-40.0, 0.0, 25.0),
+                WorldVec3D::new(10.0, 0.0, 0.0),
+                MASS_ARROW_FLAT,
+                false,
+                Some(&check),
+            );
+        (trajectory, obstacle, impact, hole)
     }
 
     fn test_water_zone(points: Vec<MapPoint>) -> crate::water_zones::WaterZone {
@@ -7530,22 +7557,28 @@ mod tests {
             water_zones: None,
         };
 
-        let (trajectory, terminal_obstacle, terminal_impact, terminal_lands_in_hole) =
-            compute_trajectory_ballistic_with_terminal_impact(
-                WorldPoint3D::new(0.0, 0.0, 25.0),
-                WorldVec3D {
-                    x: 10.0,
-                    y: 0.0,
-                    z: 0.0,
-                },
-                MASS_ARROW_HIGH,
-                false,
-                Some(&check),
-            );
+        let (
+            trajectory,
+            terminal_obstacle,
+            terminal_impact,
+            terminal_lands_in_hole,
+            terminal_lands_in_water,
+        ) = compute_trajectory_ballistic_with_terminal_impact(
+            WorldPoint3D::new(0.0, 0.0, 25.0),
+            WorldVec3D {
+                x: 10.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            MASS_ARROW_HIGH,
+            false,
+            Some(&check),
+        );
 
         assert!(terminal_impact);
         assert_eq!(terminal_obstacle, None);
         assert!(!terminal_lands_in_hole);
+        assert!(!terminal_lands_in_water);
         assert_eq!(trajectory.last().unwrap().position.z, 0.0);
     }
 
@@ -7579,18 +7612,24 @@ mod tests {
             water_zones: Some(&water_zones),
         };
 
-        let (_, terminal_obstacle, terminal_impact, terminal_lands_in_hole) =
-            compute_trajectory_ballistic_with_terminal_impact(
-                WorldPoint3D::new(0.0, 0.0, 25.0),
-                WorldVec3D::new(10.0, 0.0, 0.0),
-                MASS_ARROW_HIGH,
-                false,
-                Some(&check),
-            );
+        let (
+            _,
+            terminal_obstacle,
+            terminal_impact,
+            terminal_lands_in_hole,
+            terminal_lands_in_water,
+        ) = compute_trajectory_ballistic_with_terminal_impact(
+            WorldPoint3D::new(0.0, 0.0, 25.0),
+            WorldVec3D::new(10.0, 0.0, 0.0),
+            MASS_ARROW_HIGH,
+            false,
+            Some(&check),
+        );
 
         assert!(terminal_impact);
         assert_eq!(terminal_obstacle, None);
         assert!(terminal_lands_in_hole);
+        assert!(!terminal_lands_in_water);
 
         let (_, bounce_obstacle, bounce_impact, bounce_lands_in_hole) =
             compute_trajectory_ballistic_bounce_with_terminal(
@@ -7606,6 +7645,115 @@ mod tests {
         assert!(
             bounce_lands_in_hole,
             "bounce integration must use the same scoped terminal material resolver"
+        );
+    }
+
+    #[test]
+    fn bare_ground_water_is_retained_for_arrow_terminal_lifecycle() {
+        let mut grid = crate::fast_find_grid::FastFindGrid::default();
+        {
+            let mut level = (*grid.level).clone();
+            level.map_bbox =
+                crate::coordinates::MapBBox::from_coords(-10_000.0, -10_000.0, 10_000.0, 10_000.0);
+            grid.level = std::sync::Arc::new(level);
+        }
+        let water_zones = crate::water_zones::WaterZones {
+            zones: vec![crate::water_zones::WaterZone {
+                points: vec![
+                    MapPoint::new(-1000.0, -1000.0),
+                    MapPoint::new(1000.0, -1000.0),
+                    MapPoint::new(1000.0, 1000.0),
+                    MapPoint::new(-1000.0, 1000.0),
+                ],
+                bounding_box: crate::coordinates::MapBBox::from_coords(
+                    -1000.0, -1000.0, 1000.0, 1000.0,
+                ),
+                material: crate::sound_cache::Material::Water,
+            }],
+        };
+        let check = TrajectoryObstacleCheck {
+            fast_find_grid: &grid,
+            layer: 0,
+            sight_obstacles: crate::sight_obstacle::ObstacleList::empty(),
+            water_zones: Some(&water_zones),
+        };
+
+        let (_, terminal_obstacle, terminal_impact, terminal_hole, terminal_water) =
+            compute_trajectory_ballistic_impl(
+                WorldPoint3D::new(0.0, 0.0, 25.0),
+                WorldVec3D::new(10.0, 0.0, 0.0),
+                MASS_ARROW_HIGH,
+                false,
+                Some(&check),
+                None,
+            );
+
+        assert!(terminal_impact);
+        assert_eq!(terminal_obstacle, None);
+        assert!(!terminal_hole);
+        assert!(terminal_water);
+    }
+
+    #[test]
+    fn falling_arrow_trajectory_transfers_terminal_water_to_dive_state() {
+        let mut grid = crate::fast_find_grid::FastFindGrid::default();
+        {
+            let mut level = (*grid.level).clone();
+            level.map_bbox =
+                crate::coordinates::MapBBox::from_coords(-10_000.0, -10_000.0, 10_000.0, 10_000.0);
+            grid.level = std::sync::Arc::new(level);
+        }
+        let water_zones = crate::water_zones::WaterZones {
+            zones: vec![crate::water_zones::WaterZone {
+                points: vec![
+                    MapPoint::new(-1000.0, -1000.0),
+                    MapPoint::new(1000.0, -1000.0),
+                    MapPoint::new(1000.0, 1000.0),
+                    MapPoint::new(-1000.0, 1000.0),
+                ],
+                bounding_box: crate::coordinates::MapBBox::from_coords(
+                    -1000.0, -1000.0, 1000.0, 1000.0,
+                ),
+                material: crate::sound_cache::Material::Water,
+            }],
+        };
+        let check = TrajectoryObstacleCheck {
+            fast_find_grid: &grid,
+            layer: 0,
+            sight_obstacles: crate::sight_obstacle::ObstacleList::empty(),
+            water_zones: Some(&water_zones),
+        };
+        let mut arrow = refresh_test_arrow();
+        arrow
+            .element
+            .set_position(WorldPoint3D::new(0.0, 0.0, 25.0));
+        arrow.projectile.dive = false;
+
+        make_arrow_falling_down(
+            &crate::sim_rng::test_context(),
+            &mut arrow,
+            false,
+            Some(&check),
+        );
+
+        assert!(arrow.projectile.falling);
+        assert!(arrow.projectile.dive);
+        assert!(!arrow.projectile.disappear);
+
+        let dry_zones = crate::water_zones::WaterZones::new();
+        let dry_check = TrajectoryObstacleCheck {
+            water_zones: Some(&dry_zones),
+            ..check
+        };
+        make_arrow_falling_down(
+            &crate::sim_rng::test_context(),
+            &mut arrow,
+            false,
+            Some(&dry_check),
+        );
+        assert!(
+            arrow.projectile.dive,
+            "ComputeTrajectory does not clear an earlier mbDive when a ricochet recomputes a dry fall"
         );
     }
 
@@ -8281,6 +8429,55 @@ mod tests {
             "mbDisappear returns before HitObstacle's +0.001 elevation snap"
         );
         assert!(!arrow.element.sprite.position_iface.is_moving());
+    }
+
+    #[test]
+    fn falling_arrow_into_water_retires_without_ground_snap() {
+        let endpoint = WorldPoint3D::new(10.0, 0.0, -0.000_001_907_348_6);
+        let Entity::Projectile(mut arrow) = spawn_arrow(SpawnArrowParams {
+            shooter: EntityId::Pc(crate::entity_id::PcId(0)),
+            bow_point: WorldPoint3D::new(0.0, 0.0, 5.0),
+            trajectory_origin: MapPoint::new(0.0, 0.0),
+            target: EntityId::Pc(crate::entity_id::PcId(0)),
+            target_pos: endpoint.to_map(),
+            trajectory: vec![],
+            damage: 30,
+            layer: 0,
+            lands_in_hole: false,
+            initial_velocity: WorldVec3D::new(1.0, 0.0, 0.0),
+        }) else {
+            panic!("spawn_arrow returned a non-projectile entity");
+        };
+        arrow.element.set_position(endpoint);
+        arrow
+            .element
+            .set_position_map_preserving_3d(endpoint.to_map());
+        arrow.projectile.trajectory.clear();
+        arrow.projectile.trajectory_frame_count = 0;
+        arrow.projectile.launch_segment_start = None;
+        arrow.projectile.falling = true;
+        arrow.projectile.flying = true;
+        arrow.projectile.dive = true;
+
+        let mut entities = entity_table(vec![
+            Some(make_pc(100.0, 100.0)),
+            Some(Entity::Projectile(arrow)),
+        ]);
+        let results = tick_arrows(
+            &crate::sim_rng::test_context(),
+            &mut entities,
+            crate::sight_obstacle::ObstacleList::empty(),
+        );
+
+        assert!(results.iter().any(|result| result.despawn));
+        let Entity::Projectile(arrow) = entities.get_at_index(1).unwrap().1 else {
+            panic!("falling arrow changed concrete entity kind");
+        };
+        assert!(!arrow.element.active);
+        assert!(!arrow.projectile.flying);
+        assert_eq!(arrow.element.position().z.to_bits(), endpoint.z.to_bits());
+        assert!(!arrow.element.sprite.position_iface.is_moving());
+        assert!(!arrow.element.sprite.position_iface.is_moving_map());
     }
 
     /// Wasp nest thrown at a ground target bursts (`flying == false`)

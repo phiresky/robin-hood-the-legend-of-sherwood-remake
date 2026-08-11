@@ -595,19 +595,24 @@ impl EngineInner {
                 sight_obstacles: obstacle_list,
                 water_zones: Some(&assets.water_zones),
             };
-            let (trajectory, terminal_obstacle, terminal_impact, terminal_lands_in_hole) =
-                bow_shot::compute_trajectory_ballistic_with_terminal_impact(
-                    bow_point,
-                    velocity,
-                    mass,
-                    flat_shot,
-                    // Magic-bullet short-circuit: skip the obstacle check entirely.
-                    if magic_bullet {
-                        None
-                    } else {
-                        Some(&obstacle_check)
-                    },
-                );
+            let (
+                trajectory,
+                terminal_obstacle,
+                terminal_impact,
+                terminal_lands_in_hole,
+                terminal_lands_in_water,
+            ) = bow_shot::compute_trajectory_ballistic_with_terminal_impact(
+                bow_point,
+                velocity,
+                mass,
+                flat_shot,
+                // Magic-bullet short-circuit: skip the obstacle check entirely.
+                if magic_bullet {
+                    None
+                } else {
+                    Some(&obstacle_check)
+                },
+            );
             let terminal_obstacle_plane =
                 bow_shot::terminal_obstacle_plane(terminal_obstacle, obstacle_list);
             let trajectory_end = trajectory.last().map(|tp| tp.position);
@@ -684,6 +689,10 @@ impl EngineInner {
             let Entity::Projectile(arrow_projectile) = &mut arrow else {
                 panic!("spawn_arrow returned a non-projectile entity");
             };
+            // ComputeTrajectory retains mbDive across a later ricochet
+            // trajectory. Its terminal Hourglass must therefore still take
+            // the water-return path even when the recomputed fall ends dry.
+            arrow_projectile.projectile.dive = terminal_lands_in_water;
             arrow_projectile.projectile.trajectory_origin_sector = trajectory_origin_sector;
             arrow_projectile.projectile.trajectory_origin_layer = layer;
             let arrow_id = self.add_entity(arrow);
@@ -2907,8 +2916,12 @@ impl EngineInner {
         let position = elem.position();
         let position_map = elem.position_map();
         let layer = elem.layer();
-        let (object_type, pre_flagged_disappear) = match proj_entity {
-            Entity::Projectile(p) => (p.object.object_type, p.projectile.disappear),
+        let (object_type, pre_flagged_disappear, pre_flagged_dive) = match proj_entity {
+            Entity::Projectile(p) => (
+                p.object.object_type,
+                p.projectile.disappear,
+                p.projectile.dive,
+            ),
             _ => return,
         };
 
@@ -2933,12 +2946,20 @@ impl EngineInner {
                 .get(usize::from(handle))
                 .unwrap_or_else(|| panic!("projectile landing obstacle {handle} disappeared"))
         });
-        let resolved_material = crate::water_zones::determine_water_hole_scoped(
-            &assets.water_zones,
-            landing_obstacle,
-            landing_map,
-        )
-        .map(|resolution| resolution.material);
+        // ComputeTrajectory stores mbDive at the trajectory that first found
+        // water and does not clear it when MakeFallingDown later recomputes a
+        // dry ricochet. Terminal Hourglass still emits the Plouf at the final
+        // position in that case, so the retained flag outranks a fresh lookup.
+        let resolved_material = if pre_flagged_dive {
+            Some(crate::sound_cache::Material::Water)
+        } else {
+            crate::water_zones::determine_water_hole_scoped(
+                &assets.water_zones,
+                landing_obstacle,
+                landing_map,
+            )
+            .map(|resolution| resolution.material)
+        };
 
         let material = match resolved_material {
             Some(m) => m,
