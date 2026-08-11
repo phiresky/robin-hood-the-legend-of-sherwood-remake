@@ -852,26 +852,6 @@ fn sword_movement_dispatch_action(order: OrderType) -> OrderType {
     }
 }
 
-/// State applied by Rust's blocked-movement teardown.
-///
-/// The Human sword-movement Execute switch has no `ABORTED` state arm. A
-/// blocked terminal strafe therefore keeps the live moving-sword state while
-/// Actor::Hourglass marks the element impossible. Preserve that exact arm;
-/// retain the established teardown normalization for the other movement
-/// families.
-fn state_after_aborted_movement(
-    action_state: crate::element::ActionState,
-    is_swordfighting: bool,
-) -> crate::element::ActionState {
-    use crate::element::ActionState;
-
-    match action_state {
-        ActionState::MovingSword | ActionState::MovingFastSword => action_state,
-        _ if is_swordfighting || action_state.is_sword() => ActionState::WaitingSword,
-        _ => ActionState::Waiting,
-    }
-}
-
 /// Signed angle from the movement displacement to the actor's facing vector,
 /// as `RHElementActorHuman::FaceOpponent` measures it, normalised to
 /// `[0, 2π)`.
@@ -9645,8 +9625,13 @@ impl EngineInner {
                                 actor.active_door_pass = None;
                             }
                             actor.clear_path();
-                            actor.action_state =
-                                state_after_aborted_movement(actor.action_state, is_swordfighting);
+                            // The movement Execute switches have no ABORTED
+                            // state arm. Actor::Hourglass marks the captured
+                            // element Impossible, but the actor keeps whatever
+                            // live state Execute established before returning.
+                            // In particular a walking actor remains Moving;
+                            // RunningUpright's unconditional Execute effect is
+                            // applied below and still publishes MovingFast.
                             actor.active_movement.clear();
                             restore_anti_collision
                         };
@@ -12681,29 +12666,126 @@ mod orphaned_sword_movement_tests {
         assert_eq!(actual.box_3d_max, expected.box_3d_max);
     }
 
-    #[test]
-    fn aborted_sword_movement_retains_the_live_combat_motion_state() {
+    fn install_blocked_upright_movement(
+        action: OrderType,
+        initial_action_state: ActionState,
+    ) -> (EngineInner, EntityId, crate::sequence::SequenceId) {
+        let mut engine = EngineInner::new();
+        let start = MapPoint::new(100.0, 100.0);
+        let destination = MapPoint::new(140.0, 100.0);
+        let script = SpriteScript {
+            action_id: action as u16,
+            action_done: 0,
+            average_speed: 10.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 10,
+            frame_ids: vec![1],
+            delays: vec![0],
+            distances: vec![10],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[action as usize] = 0;
+        let mut element = ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            posture: Posture::Upright,
+            sprite: crate::sprite::Sprite::new(
+                std::sync::Arc::new(vec![script; 16]),
+                std::sync::Arc::new(conversion),
+            ),
+            ..ElementData::default()
+        };
+        element.sprite.position_iface.set_anti_collision_on(false);
+        element.set_position_map(start);
+        let owner = engine.add_entity(Entity::Pc(ActorPc {
+            element,
+            actor: ActorData {
+                action_state: initial_action_state,
+                ..ActorData::default()
+            },
+            human: HumanData::default(),
+            pc: PcData::default(),
+        }));
+
+        let order_id = engine.orders.allocate_order_id();
+        let mut movement = SequenceElement::new_movement(1, Command::Move, Some(owner), action);
+        movement.priority = SequencePriority::Normal;
+        movement
+            .orders
+            .push_back(Order::new(action, destination.x, destination.y, order_id));
+        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+        let owner_entity = engine.get_entity_mut(owner).unwrap();
+        owner_entity.actor_data_mut().unwrap().active_movement = ActiveMovement::new(sequence, 0);
+        owner_entity
+            .element_data_mut()
+            .sprite
+            .last_processed_order_id = order_id.get();
+        let position_iface = owner_entity.position_iface_mut();
+        position_iface.set_map_goal(destination);
+        position_iface.compute_increment_all(true);
+        position_iface.blocked_count = 51;
+
+        (engine, owner, sequence)
+    }
+
+    fn assert_blocked_upright_movement_state(
+        action: OrderType,
+        initial_action_state: ActionState,
+        expected_action_state: ActionState,
+    ) {
+        let (mut engine, owner, sequence) =
+            install_blocked_upright_movement(action, initial_action_state);
+
+        engine.tick_entity_movement(
+            &crate::sim_rng::test_context(),
+            &assets_with_test_pc_profile(),
+        );
+
+        let entity = engine.get_entity(owner).unwrap();
         assert_eq!(
-            state_after_aborted_movement(ActionState::MovingSword, true),
-            ActionState::MovingSword,
-            "a terminal strafing WalkingWithSword Execute has no invented WaitingSword side effect"
+            entity.actor_data().unwrap().action_state,
+            expected_action_state
         );
         assert_eq!(
-            state_after_aborted_movement(ActionState::MovingFastSword, true),
-            ActionState::MovingFastSword,
-            "RunningWithSword has the same terminal switch arm"
+            entity.actor_data().unwrap().active_movement,
+            ActiveMovement::none(),
+            "the aborted movement tracker must still detach"
+        );
+        assert_eq!(entity.position_iface().blocked_count, 0);
+        assert!(entity.position_iface().box_blocked.0.is_none());
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .state,
+            SequenceState::Impossible,
+            "Actor::Hourglass must still reject the blocked element"
         );
     }
 
     #[test]
-    fn aborted_nonmoving_states_still_use_existing_normalization() {
-        assert_eq!(
-            state_after_aborted_movement(ActionState::ParryingSword, true),
-            ActionState::WaitingSword
+    fn blocked_walking_upright_retains_moving_state_while_tearing_down_movement() {
+        assert_blocked_upright_movement_state(
+            OrderType::WalkingUpright,
+            ActionState::Moving,
+            ActionState::Moving,
         );
-        assert_eq!(
-            state_after_aborted_movement(ActionState::Moving, false),
-            ActionState::Waiting
+    }
+
+    #[test]
+    fn blocked_running_upright_still_applies_its_unconditional_moving_fast_state() {
+        assert_blocked_upright_movement_state(
+            OrderType::RunningUpright,
+            ActionState::Waiting,
+            ActionState::MovingFast,
         );
     }
 
