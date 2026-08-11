@@ -3272,7 +3272,7 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
     use crate::campaign::CampaignValue;
     use crate::element::{Command, Entity, Posture};
     use crate::order::OrderType;
-    use crate::sequence::SequenceElement;
+    use crate::sequence::{SequenceElement, SequenceState};
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
     let sim = crate::sim_rng::test_context();
@@ -3305,11 +3305,11 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
             average_speed: 0.0,
             hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
             sum_distance: 0,
-            frame_ids: vec![1, 2],
-            delays: vec![10, 10],
-            distances: vec![0, 0],
-            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
-            sound_ids: vec![0; 2],
+            frame_ids: vec![1, 2, 3],
+            delays: vec![10, 10, 10],
+            distances: vec![0, 0, 0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+            sound_ids: vec![0; 3],
         })
         .collect();
     let mut conversion = vec![UNMAPPED; NONANIMATION_END];
@@ -3429,6 +3429,79 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
         "first valid Execute must emit HERO_GIVE_MONEY exactly once"
     );
 
+    // Capture the invalid-completion branch immediately after first Execute,
+    // before another sprite tick can reach PAYING's DONE boundary.
+    let mut invalid_completion = engine.clone();
+    let mut valid_completion = engine.clone();
+    for completion in [&mut invalid_completion, &mut valid_completion] {
+        completion
+            .get_entity_mut(pc)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .execute_order_initialising = false;
+    }
+    let invalid_completion_sim = crate::sim_rng::test_context();
+    let valid_completion_sim = crate::sim_rng::test_context();
+    let invalid_sequence_count = invalid_completion
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .count();
+    assert_eq!(
+        invalid_completion
+            .orders
+            .sequence_manager
+            .get_element(seq, 0)
+            .expect("Pay remains selected before completion invalidation")
+            .state,
+        SequenceState::InProgress
+    );
+    assert!(
+        !invalid_completion
+            .get_entity(pc)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .done_effect_applied
+    );
+    assert!(
+        !invalid_completion
+            .get_entity(pc)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .execute_order_initialising
+    );
+    assert_eq!(
+        invalid_completion
+            .mission_domain
+            .campaign
+            .get_value(CampaignValue::Ransom),
+        crate::engine::BEGGAR_SALARY
+    );
+    assert!(
+        !invalid_completion
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(beggar, |command| {
+                command == Command::ReceivePurse
+            })
+    );
+    assert!(
+        valid_completion.check_sequence_element_validity(
+            &assets,
+            pc,
+            valid_completion
+                .orders
+                .sequence_manager
+                .get_element(seq, 0)
+                .expect("valid Pay element remains selected"),
+            true,
+        )
+    );
+
     engine.control.chorus_timer = 0;
     let Entity::Pc(pc_entity) = engine.get_entity_mut(pc).unwrap() else {
         unreachable!()
@@ -3466,6 +3539,150 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
             .count(),
         1,
         "later Execute frames must not re-emit HERO_GIVE_MONEY"
+    );
+
+    // Original validates PAY again after PerformAction reports DONE. A
+    // campaign change during the animation aborts before salary deduction or
+    // the beggar's ReceivePurse response.
+    invalid_completion
+        .mission_domain
+        .campaign
+        .set_value(CampaignValue::Ransom, 0);
+    let ((), invalid_cards) = crate::engine::soldier_helpers::capture_condolation_cards(|| {
+        for _ in 0..128 {
+            invalid_completion.tick_ability_for(
+                &invalid_completion_sim,
+                &mut HostDisplayState::default(),
+                &assets,
+                pc,
+            );
+            if invalid_completion
+                .orders
+                .sequence_manager
+                .get_element(seq, 0)
+                .is_some_and(|element| element.state != SequenceState::InProgress)
+                && !invalid_completion
+                    .get_entity(pc)
+                    .unwrap()
+                    .actor_data()
+                    .unwrap()
+                    .active_ability
+                    .is_active()
+            {
+                break;
+            }
+        }
+    });
+    assert!(
+        invalid_cards.contains(&(pc, Command::Pay)),
+        "completion abort must send the Pay owner's condolation card: {invalid_cards:?}"
+    );
+    assert_eq!(
+        invalid_completion
+            .orders
+            .sequence_manager
+            .get_element(seq, 0)
+            .expect("invalid Pay element remains registered")
+            .state,
+        SequenceState::Impossible,
+        "completion validity failure must abort the selected Pay element"
+    );
+    assert_eq!(
+        invalid_completion
+            .mission_domain
+            .campaign
+            .get_value(CampaignValue::Ransom),
+        0,
+        "completion failure must not deduct another salary"
+    );
+    assert!(
+        !invalid_completion
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(beggar, |command| {
+                command == Command::ReceivePurse
+            }),
+        "completion failure must not launch ReceivePurse"
+    );
+    assert_eq!(
+        invalid_completion
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .count(),
+        invalid_sequence_count,
+        "completion failure must not launch any response sequence"
+    );
+    assert!(
+        !invalid_completion
+            .get_entity(pc)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability
+            .is_active()
+    );
+    // Valid completion still applies the salary exactly once and launches
+    // the civilian response.
+    for _ in 0..128 {
+        valid_completion.tick_ability_for(
+            &valid_completion_sim,
+            &mut HostDisplayState::default(),
+            &assets,
+            pc,
+        );
+        if valid_completion
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(beggar, |command| command == Command::ReceivePurse)
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        valid_completion
+            .mission_domain
+            .campaign
+            .get_value(CampaignValue::Ransom),
+        0,
+        "valid completion state={:?}, active_ability={:?}, motion={:?}, pc_pos={:?}, beggar_pos={:?}",
+        valid_completion
+            .orders
+            .sequence_manager
+            .get_element(seq, 0)
+            .map(|element| element.state),
+        valid_completion
+            .get_entity(pc)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .active_ability,
+        valid_completion
+            .get_entity(pc)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        valid_completion
+            .get_entity(pc)
+            .unwrap()
+            .element_data()
+            .position_map(),
+        valid_completion
+            .get_entity(beggar)
+            .unwrap()
+            .element_data()
+            .position_map(),
+    );
+    assert!(
+        valid_completion
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(beggar, |command| {
+                command == Command::ReceivePurse
+            }),
+        "valid Pay completion launches the beggar response"
     );
 }
 

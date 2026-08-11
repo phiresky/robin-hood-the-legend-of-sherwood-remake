@@ -4293,15 +4293,54 @@ impl EngineInner {
                     seq_id,
                     elem_idx,
                 } => {
+                    // PAYING validates again after PerformAction reports DONE.
+                    // Ransom or distance may have changed while the PC was
+                    // turning/animating; Original aborts before launching the
+                    // antagonist response or deducting any money in that case.
+                    let (valid, order_id) = {
+                        let element = self
+                            .orders
+                            .sequence_manager
+                            .get_element(seq_id, elem_idx)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "completed Pay owner {pc_id:?} lost element {seq_id:?}/{elem_idx}"
+                                )
+                            });
+                        assert_eq!(element.owner, Some(pc_id));
+                        assert_eq!(element.command, crate::element::Command::Pay);
+                        let order = element.current_order().unwrap_or_else(|| {
+                            panic!(
+                                "completed Pay element {seq_id:?}/{elem_idx} lost its selected order"
+                            )
+                        });
+                        assert_eq!(order.order_type, crate::order::OrderType::Paying);
+                        assert_eq!(order.target_actor, Some(beggar_id.index()));
+                        (
+                            self.check_sequence_element_validity(assets, pc_id, element, true),
+                            order.order_id,
+                        )
+                    };
+                    if !valid {
+                        self.cleanup_aborted_ability(
+                            pc_id,
+                            crate::movement::AbilityKind::Pay,
+                            seq_id,
+                            elem_idx,
+                            Some(order_id),
+                        );
+                        self.orders
+                            .sequence_manager
+                            .element_impossible(seq_id, elem_idx);
+                        self.dispatch_condolations_for_owner_boundary(sim, pc_id, assets);
+                        continue;
+                    }
+
                     // On Paying-animation completion: deduct
                     // BEGGAR_SALARY from the ransom, and either launch
                     // `Command::ActivateMoney` on an FX-target antagonist
                     // or a `Command::ReceivePurse` sequence element on a
                     // beggar NPC.
-                    self.add_campaign_value(
-                        crate::campaign::CampaignValue::Ransom,
-                        -crate::engine::BEGGAR_SALARY,
-                    );
                     let antagonist_is_fx_target = self
                         .get_entity(beggar_id)
                         .is_some_and(|e| e.kind().is_fx_target());
@@ -4327,6 +4366,10 @@ impl EngineInner {
                         receive.priority = crate::sequence::SequencePriority::Normal;
                         self.launch_element(receive);
                     }
+                    self.add_campaign_value(
+                        crate::campaign::CampaignValue::Ransom,
+                        -crate::engine::BEGGAR_SALARY,
+                    );
                     tracing::debug!(
                         pc = ?pc_id,
                         beggar = ?beggar_id,
