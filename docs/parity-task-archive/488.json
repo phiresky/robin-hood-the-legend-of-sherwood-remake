@@ -1,0 +1,9 @@
+{
+  "id": "488",
+  "subject": "Retire source-inconsistent SuN projectile landing membership trace",
+  "description": "COMPLETED WITHOUT A RUST CHANGE. The old schema-12 capture `parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_017/replay-013-session-0001.jsonl.zst` first diverges after frame 1165 only because newly spawned Projectile182 reports Original layer/sector `0xFFFF` while Rust reports layer/sector 0. Launch and flight state are bit-exact: start `(1794,379,50)`, initial velocity `(-24.71604,3.88407,25.736)`, first-frame position `(1769.283935546875,307.1480407714844)`, elevation `75.73600006103516`, and movement `(-12.3580322265625,-10.92596435546875)` agree, and the subsequent recorded Original waypoints agree through the last full ballistic waypoint. Current `RHElementProjectile::ComputeTrajectory` necessarily appends the crossing segment's bare-ground impact and queries layer-0 `SECTOR_MOTION` at terminal footprint `(1536.70849609375,419.43267822265625)`. The trace's own serialized active motion geometry places that footprint, and the complete containing 64-unit grid cell, strictly inside motion area sector 0; no non-area motion sector contains it. Direct parsing of the current Leicester proto found 392 authored sight obstacles and no solid obstacle whose ground bounding box overlaps the terminal segment, excluding the only ordinary-obstacle early-return branch that could preserve no-layer. Current Original must therefore assign layer/sector 0 exactly as Rust does. The single stale capture is retired pending deterministic current-Original recapture. The similarly numbered schema-14 `linux2/Profile_002/Savegame_017/replay-013` remains authoritative and retained: it is Task186's unrelated move-to-wait AI control and matches exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task488-sun-projectile-membership"
+}
