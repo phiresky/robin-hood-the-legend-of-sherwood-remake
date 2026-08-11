@@ -810,6 +810,10 @@ pub struct PhalanxMemberThemList {
     pub posture: crate::element::Posture,
     pub elevation: f32,
     pub is_rider: bool,
+    /// Live actor activity. Original still follows an inactive member's
+    /// phalanx link, but both detection variants reject that member before
+    /// doing geometry or LOS work.
+    pub active: bool,
     pub in_building: bool,
     /// Live view-cone values consumed by `ComputeViewRadius`.
     pub view_radius: u16,

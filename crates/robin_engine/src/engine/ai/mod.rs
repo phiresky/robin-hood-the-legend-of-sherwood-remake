@@ -3616,6 +3616,7 @@ impl EngineInner {
                 posture: s.element.posture,
                 elevation: s.element.sprite.position_iface.get_elevation(),
                 is_rider: s.soldier.rider,
+                active: s.element.active,
                 in_building: self.entity_data_in_building_sector(&s.element),
                 view_radius: s.npc.view_radius,
                 view_direction: s.npc.view_direction,

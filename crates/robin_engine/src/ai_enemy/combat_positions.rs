@@ -112,7 +112,7 @@ fn phalanx_member_detects_360(
     target: &PhalanxEnemySnapshot,
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> bool {
-    if member.in_building || !target.active || target.in_building {
+    if !member.active || member.in_building || !target.active || target.in_building {
         return false;
     }
 
@@ -152,7 +152,7 @@ fn phalanx_member_detects_180(
     target: &PhalanxEnemySnapshot,
     ctx: &AiContext,
 ) -> bool {
-    if member.in_building || !target.active {
+    if !member.active || member.in_building || !target.active {
         return false;
     }
 
@@ -3658,6 +3658,7 @@ mod tests {
             posture: Posture::Upright,
             elevation: 0.0,
             is_rider: false,
+            active: true,
             in_building: false,
             view_radius: radius as u16,
             view_direction: [1.0, 0.0],
@@ -3718,6 +3719,22 @@ mod tests {
         append_phalanx_member_enemies(&mut merged, &right, &right_kept, &ctx);
 
         assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn inactive_phalanx_member_is_traversed_without_detecting_enemies() {
+        let target = enemy(9, 40.0);
+        let mut inactive = member(2, 300.0, vec![target.clone()], vec![target]);
+        inactive.active = false;
+        let kept: Vec<&PhalanxEnemySnapshot> = inactive.current_them_list.iter().collect();
+        let mut merged = Vec::new();
+
+        append_phalanx_member_enemies(&mut merged, &inactive, &kept, &AiContext::default());
+
+        assert!(
+            merged.is_empty(),
+            "Original follows the inactive neighbour link but both detection variants reject its viewer before LOS"
+        );
     }
 
     #[test]
