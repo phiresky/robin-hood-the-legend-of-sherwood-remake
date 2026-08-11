@@ -14,6 +14,8 @@ use crate::sequence::{PendingCondolation, SequenceElement, SequenceId};
 
 #[cfg(test)]
 thread_local! {
+    static CONDOLATION_CARD_TRACE: std::cell::RefCell<Option<Vec<(EntityId, Command)>>> =
+        const { std::cell::RefCell::new(None) };
     static CONDOLATION_STIMULUS_TRACE: std::cell::RefCell<Option<Vec<(EntityId, StimulusType)>>> =
         const { std::cell::RefCell::new(None) };
     static CONDOLATION_NESTED_TERMINATION: std::cell::RefCell<Option<(EntityId, StimulusType, SequenceId, usize)>> =
@@ -22,6 +24,30 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
     static STRANGLE_CONDOLATION_TRACE: std::cell::RefCell<Option<Vec<&'static str>>> =
         const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn capture_condolation_cards<T>(f: impl FnOnce() -> T) -> (T, Vec<(EntityId, Command)>) {
+    CONDOLATION_CARD_TRACE.with(|trace| {
+        assert!(trace.borrow_mut().replace(Vec::new()).is_none());
+    });
+    let result = f();
+    let observed = CONDOLATION_CARD_TRACE.with(|trace| {
+        trace
+            .borrow_mut()
+            .take()
+            .expect("condolation card trace remains installed")
+    });
+    (result, observed)
+}
+
+#[cfg(test)]
+fn observe_condolation_card(owner: EntityId, command: Command) {
+    CONDOLATION_CARD_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.push((owner, command));
+        }
+    });
 }
 
 #[cfg(test)]
@@ -518,6 +544,9 @@ impl EngineInner {
             postponed_successor_pending,
             cancel_path_request_owner,
         } = card;
+
+        #[cfg(test)]
+        observe_condolation_card(owner, command);
 
         if let Some(path_owner) = cancel_path_request_owner {
             // RHSequenceElementMovement::MaybeCancelPathRequest runs before

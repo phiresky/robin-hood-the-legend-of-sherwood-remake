@@ -6118,23 +6118,34 @@ impl EngineInner {
                 .expect("orphan sword movement owner disappeared before Stop")
                 .element_data()
                 .position_map();
-            let resolver = Self::priority_resolver(&self.world.entities);
-            let pathfinder = &mut self.world.pathfinder;
-            self.orders.sequence_manager.stop_movement_from_root(
-                owner,
-                (selected.seq_id, selected.elem_idx),
-                owner_pos,
-                crate::sequence::SequencePriority::Injury,
-                &resolver,
-                &mut self.orders.next_order_id,
-                &mut |id| pathfinder.cancel_requests_for(id),
-            );
-            self.orders.sequence_manager.stop_owner_current_from_root(
-                owner,
-                Some((selected.seq_id, selected.elem_idx)),
-                crate::sequence::SequencePriority::Injury,
-                &resolver,
-            );
+            {
+                let resolver = Self::priority_resolver(&self.world.entities);
+                let pathfinder = &mut self.world.pathfinder;
+                self.orders.sequence_manager.stop_movement_from_root(
+                    owner,
+                    (selected.seq_id, selected.elem_idx),
+                    owner_pos,
+                    crate::sequence::SequencePriority::Injury,
+                    &resolver,
+                    &mut self.orders.next_order_id,
+                    &mut |id| pathfinder.cancel_requests_for(id),
+                );
+            }
+            // Movement::Stop delivers the selected movement's card from
+            // StopMovement before its base SequenceElement::Stop walks the
+            // linked successor/postponed graph.  That callback may re-enter
+            // AI and mutate the graph, so it is a real owner boundary rather
+            // than a batchable cleanup detail.
+            self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
+            {
+                let resolver = Self::priority_resolver(&self.world.entities);
+                self.orders.sequence_manager.stop_owner_current_from_root(
+                    owner,
+                    Some((selected.seq_id, selected.elem_idx)),
+                    crate::sequence::SequencePriority::Injury,
+                    &resolver,
+                );
+            }
         }
         self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
         // Human::Execute only registers this command here. Its ABORTED return
@@ -12796,7 +12807,20 @@ mod orphaned_sword_movement_tests {
             .sequence_manager
             .launch_element(SequenceElement::new(1, Command::LookLeft, Some(owner)));
 
-        engine.tick_entity_movement(&sim, &assets);
+        let ((), cards) = crate::engine::soldier_helpers::capture_condolation_cards(|| {
+            engine.tick_entity_movement(&sim, &assets);
+        });
+
+        assert_eq!(
+            cards
+                .iter()
+                .filter(|(card_owner, _)| *card_owner == owner)
+                .map(|(_, command)| *command)
+                .take(2)
+                .collect::<Vec<_>>(),
+            vec![Command::Move, Command::Turn],
+            "Movement::StopMovement must deliver the selected movement card before base Stop reaches the linked Turn"
+        );
 
         assert_eq!(
             engine
