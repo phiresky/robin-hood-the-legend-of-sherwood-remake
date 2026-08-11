@@ -73,3 +73,5 @@ parity-save-replays-schema12/traces/Savegame_linux2/Profile_002/Savegame_035-ses
 parity-save-replays-schema12/traces/Savegame_linux3/Profile_001/Savegame_038-session-0001.jsonl.zst
 # Task 488: projectile landing membership contradicts current Original source and geometry.
 Savegame_SuN1Sh1nE/Profile_004/Savegame_017/replay-013-session-0001.jsonl.zst
+# Task 497: schema-12 sword-strike record omits resolved click/gesture seek distance.
+Savegame_nicouzouf/Profile_001/Savegame_045/replay-014-session-0001.jsonl.zst
