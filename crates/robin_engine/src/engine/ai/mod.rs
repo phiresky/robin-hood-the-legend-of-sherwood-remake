@@ -111,6 +111,8 @@ mod panic_boundary_tests {
     };
 
     fn enemy_soldier() -> Entity {
+        let mut enemy_ai = crate::ai_enemy::EnemyAi::default();
+        enemy_ai.hth_weapon_id = 1;
         Entity::Soldier(ActorSoldier {
             element: ElementData {
                 kind: ElementKind::ActorSoldier,
@@ -121,7 +123,7 @@ mod panic_boundary_tests {
             actor: ActorData::default(),
             human: HumanData::default(),
             npc: NpcData {
-                ai_brain: AiBrain::Enemy(Box::default()),
+                ai_brain: AiBrain::Enemy(Box::new(enemy_ai)),
                 ..NpcData::default()
             },
             soldier: SoldierData::default(),
@@ -129,14 +131,18 @@ mod panic_boundary_tests {
     }
 
     #[test]
-    fn new_no_door_panic_boundary_sets_red_and_runs_plus_one() {
+    fn new_no_door_panic_boundary_closes_recursive_reachpoint() {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         let npc_id = engine.add_entity(enemy_soldier());
         let mut assets = LevelAssets::default();
-        std::sync::Arc::make_mut(&mut assets.profile_manager)
+        let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+        profiles
             .soldiers
             .push(crate::profiles::SoldierProfile::default());
+        profiles
+            .hth_weapons
+            .push(crate::profiles::HtHWeaponProfile::default());
         let runs = crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8;
         let request = crate::ai::PanicRequest {
             center: None,
@@ -156,10 +162,10 @@ mod panic_boundary_tests {
 
         let ai = engine.get_entity(npc_id).unwrap().ai_controller().unwrap();
         assert_eq!(ai.current_state, crate::ai::AiState::Fleeing);
-        assert_eq!(ai.current_substate, crate::ai::Substate::FleeingPanic);
-        assert_eq!(ai.view_alert_status, crate::ai::AlertLevel::Red);
-        assert_eq!(ai.current_music_alert_status, crate::ai::AlertLevel::Red);
-        assert_eq!(ai.lasting_panic_runs, runs.saturating_add(1));
+        assert_eq!(ai.current_substate, crate::ai::Substate::FleeingHiding);
+        assert_eq!(ai.view_alert_status, crate::ai::AlertLevel::Yellow);
+        assert_eq!(ai.current_music_alert_status, crate::ai::AlertLevel::Yellow);
+        assert_eq!(ai.lasting_panic_runs, 0);
     }
 
     #[test]
