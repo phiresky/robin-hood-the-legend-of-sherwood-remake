@@ -1371,6 +1371,7 @@ pub(super) fn build_ai_context_from_entity(
         difficulty,
         original_creation_order,
         position: self_position,
+        self_body_position_world: elem.position(),
         frame,
         direction: elem.direction() as u16,
         posture: elem.posture,

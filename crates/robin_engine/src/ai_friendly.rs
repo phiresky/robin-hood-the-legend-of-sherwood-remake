@@ -1829,10 +1829,20 @@ impl FriendlyAi {
 
             match view.ai_state {
                 AiState::Default => {
-                    // MaxNorm (Chebyshev) distance candidate.
-                    let dx = (view.position.x - my_pos.x).abs();
-                    let dy = (view.position.y - my_pos.y).abs();
-                    let mut distance = dx.max(dy) as u32;
+                    // RHArtificialIntelligence::MaxNormDistance subtracts
+                    // the actors' literal 3D positions, stretches world Y
+                    // for the isometric projection, and only then takes the
+                    // Chebyshev norm. Both `ctx.position` and `view.position`
+                    // are AI planning positions that may be snapped through
+                    // a door, so use the raw body positions retained beside
+                    // them.
+                    let my_world = ctx.self_body_position_world;
+                    let dx = (view.detection_position_world.x - my_world.x).abs();
+                    let dy = ((view.detection_position_world.y - my_world.y)
+                        * crate::position_interface::INVERSE_ASPECT_RATIO)
+                        .abs();
+                    let dz = (view.detection_position_world.z - my_world.z).abs();
+                    let mut distance = dx.max(dy).max(dz) as u32;
 
                     // +1000 layer-change penalty.
                     if view.position.level != my_layer {
@@ -3267,6 +3277,133 @@ mod tests {
             // Antagonist must be the same-layer one despite being farther.
             assert_eq!(ai.base.antagonist, 20);
         });
+    }
+
+    #[test]
+    fn alert_soldier_ranks_with_stretched_world_max_norm() {
+        use crate::ai_entity_view::AiEntityViewMap;
+        use crate::element::Camp;
+
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut ai = FriendlyAi::new(1);
+        let owner = Position {
+            x: 1680.0,
+            y: 2065.0,
+            sector: crate::position_interface::SectorHandle::new(0),
+            level: 0,
+        };
+        // Raw projected map distance makes handle 141 look nearer:
+        // max(105, 379) < max(414, 213). Original stretches world Y,
+        // yielding 660 for handle 141 but only 414 for handle 130.
+        let mut views = AiEntityViewMap::new();
+        views.insert(
+            141,
+            make_soldier_view(
+                Position {
+                    x: 1785.0,
+                    y: 1686.0,
+                    sector: crate::position_interface::SectorHandle::new(0),
+                    level: 0,
+                },
+                Camp::Lacklandists,
+                AiState::Default,
+            ),
+        );
+        views.insert(
+            130,
+            make_soldier_view(
+                Position {
+                    x: 1266.0,
+                    y: 2278.0,
+                    sector: crate::position_interface::SectorHandle::new(18),
+                    level: 0,
+                },
+                Camp::Lacklandists,
+                AiState::Default,
+            ),
+        );
+        let ctx = AiContext {
+            position: owner,
+            self_body_position_world: crate::coordinates::WorldPoint3D::new(owner.x, owner.y, 0.0),
+            camp: Camp::Lacklandists,
+            all_soldier_handles: std::sync::Arc::new(vec![130, 141]),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        assert!(ai.alert_soldier(sim, owner, 0, &ctx, None, None));
+        assert_eq!(ai.base.antagonist, 130);
+    }
+
+    #[test]
+    fn alert_soldier_ranks_from_raw_body_when_planning_position_is_gate_snapped() {
+        use crate::ai_entity_view::AiEntityViewMap;
+        use crate::coordinates::WorldPoint3D;
+        use crate::element::Camp;
+
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut ai = FriendlyAi::new(1);
+        let mut views = AiEntityViewMap::new();
+
+        let mut near_raw = make_soldier_view(
+            Position {
+                x: 300.0,
+                y: 0.0,
+                ..Position::default()
+            },
+            Camp::Lacklandists,
+            AiState::Default,
+        );
+        near_raw.detection_position_world = WorldPoint3D::new(300.0, 0.0, 500.0);
+        views.insert(10, near_raw);
+
+        let mut near_gate = make_soldier_view(
+            Position {
+                x: 900.0,
+                y: 0.0,
+                ..Position::default()
+            },
+            Camp::Lacklandists,
+            AiState::Default,
+        );
+        near_gate.detection_position_world = WorldPoint3D::new(900.0, 0.0, 100.0);
+        views.insert(20, near_gate);
+
+        let mut near_only_if_z_is_ignored = make_soldier_view(
+            Position {
+                x: 200.0,
+                y: 0.0,
+                ..Position::default()
+            },
+            Camp::Lacklandists,
+            AiState::Default,
+        );
+        near_only_if_z_is_ignored.detection_position_world = WorldPoint3D::new(200.0, 0.0, 1000.0);
+        views.insert(30, near_only_if_z_is_ignored);
+
+        let ctx = AiContext {
+            // AI Position() has already committed to the far gate endpoint,
+            // while GetPosition() still reports the interpolating body.
+            position: Position {
+                x: 1000.0,
+                y: 0.0,
+                ..Position::default()
+            },
+            self_body_position_world: WorldPoint3D::new(0.0, 0.0, 100.0),
+            camp: Camp::Lacklandists,
+            all_soldier_handles: std::sync::Arc::new(vec![10, 20, 30]),
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+
+        assert!(ai.alert_soldier(sim, ctx.position, 0, &ctx, None, None));
+        // Raw 3D MaxNorm distances are 400, 900, and 900. Reconstructing the
+        // owner from the gate-snapped planning position would choose 20;
+        // dropping the nonzero Z component while retaining raw X would choose
+        // 30. Original's literal raw 3D operation must instead choose 10.
+        assert_eq!(ai.base.antagonist, 10);
     }
 
     #[test]
