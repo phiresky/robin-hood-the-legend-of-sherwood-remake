@@ -1977,6 +1977,19 @@ fn collect_lateral_warning_victims(
     victims
 }
 
+/// Extra circle-strike warning range for an actor walking with a sword.
+///
+/// `RHElementActorHuman::GetPossibleVictimsOfCircleSwordStrike` divides by
+/// `RHSword::GetStrikeRotationAngle`, whose profile degrees are converted to
+/// radians before this formula is evaluated, then narrows the extension to
+/// `UWORD` before adding it to the strike's maximal distance.
+fn circle_warning_walking_tolerance(relative_sector: u16, rotation_angle_deg: u16) -> u16 {
+    let rotation_angle =
+        ((f64::from(rotation_angle_deg) / 360.0) * 2.0 * f64::from(std::f32::consts::PI)) as f32;
+    (10.0 + (f32::from(relative_sector) * 5.0 * std::f32::consts::PI) / (8.0 * rotation_angle))
+        as u16
+}
+
 /// Collect possible victims for a circle sword strike in the
 /// WarnForStrike phase, with the per-victim distance extension for
 /// walking-with-sword enemies.
@@ -2026,9 +2039,11 @@ fn collect_circle_warn_victims(
             .unwrap_or(false);
         if walking_with_sword {
             let enemy_sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy);
-            let relative = ((enemy_sector + 16 - attacker_direction) % 16) as f32;
-            let rotation = rotation_angle_deg.max(1) as f32;
-            max_dist += 10.0 + (relative * 5.0 * std::f32::consts::PI) / (8.0 * rotation);
+            let relative = ((enemy_sector + 16 - attacker_direction) % 16) as u16;
+            max_dist += f32::from(circle_warning_walking_tolerance(
+                relative,
+                rotation_angle_deg,
+            ));
         }
         if distance <= max_dist {
             victims.push(target_id.into());
@@ -2455,6 +2470,68 @@ mod tests {
 
         assert_eq!(after_three_ticks.to_bits(), final_angle.to_bits());
         assert_eq!(final_angle.to_bits(), 0x40bf_b210);
+    }
+
+    #[test]
+    fn circle_warning_tolerance_uses_radians_returned_by_sword_profile() {
+        // The profile stores 180 degrees, but RHSword::GetStrikeRotationAngle
+        // returns PI radians. At relative sector 8 Original therefore extends
+        // the warning range by 15 units: 10 + (8 * 5 * PI) / (8 * PI).
+        let tolerance = circle_warning_walking_tolerance(8, 180);
+        assert_eq!(tolerance, 15);
+
+        let base_max_distance = 60.0;
+        let walking_target_distance = 74.0;
+        assert!(walking_target_distance <= base_max_distance + f32::from(tolerance));
+
+        // Dividing by the raw profile degrees, as the old port did, would
+        // reject this moving defender and suppress its WarnForStrike callback.
+        let raw_degrees_tolerance = 10.0 + (8.0 * 5.0 * std::f32::consts::PI) / (8.0 * 180.0);
+        assert!(walking_target_distance > base_max_distance + raw_degrees_tolerance);
+        assert!(walking_target_distance > base_max_distance);
+
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let target = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: walking_target_distance,
+                ..WorldPoint3D::ZERO
+            },
+            None,
+        ));
+        engine
+            .get_entity_mut(target)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .action_state = ActionState::MovingSword;
+        let assets = assets_with_sword_profile(0, base_max_distance as u16);
+        let collect = |engine: &EngineInner| {
+            collect_circle_warn_victims(
+                &engine.world.entities,
+                attacker,
+                (0.0, 0.0),
+                0,
+                base_max_distance,
+                180,
+                &assets.profile_manager,
+                &engine.world.fast_grid,
+                crate::sight_obstacle::ObstacleList {
+                    static_obstacles: assets.static_sight_obstacles.as_slice(),
+                    dynamic_obstacles: &engine.world.dynamic_sight_obstacles,
+                    static_active: &engine.world.static_sight_obstacle_active,
+                },
+            )
+        };
+        assert_eq!(collect(&engine), vec![target]);
+
+        engine
+            .get_entity_mut(target)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .action_state = ActionState::WaitingSword;
+        assert!(collect(&engine).is_empty());
     }
 
     #[test]
