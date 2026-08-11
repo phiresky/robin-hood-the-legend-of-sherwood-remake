@@ -5935,6 +5935,15 @@ impl EnemyAi {
                 }
             }
 
+            // Original returns an archer parked on either kind of shooting
+            // path to ordinary duty when the hold timer expires.
+            Substate::AttackingArcherWaitOnArcheryPath
+            | Substate::AttackingArcherWaitOnArcheryPathBending => {
+                if stimulus_type == StimulusType::EventTimer {
+                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                }
+            }
+
             // Shared "timer → ReturnToDuty" for bow archers waiting on
             // archery/bend points.
             Substate::AttackingArcherWaitOnBendPoint => {
@@ -6376,6 +6385,46 @@ impl EnemyAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archer_waiting_on_shooting_path_returns_to_duty_only_on_timer() {
+        let sim = crate::sim_rng::test_context();
+        for substate in [
+            Substate::AttackingArcherWaitOnArcheryPath,
+            Substate::AttackingArcherWaitOnArcheryPathBending,
+        ] {
+            let mut ai = EnemyAi::new(84);
+            ai.base.current_state = AiState::Attacking;
+            ai.base.current_substate = substate;
+
+            ai.think_expected_attacking_event(
+                &sim,
+                &Stimulus::new(StimulusType::EventDone),
+                &mut AiGlobalState::default(),
+                &AiContext::default(),
+                &AiPerTickData::stub(),
+                None,
+            );
+
+            assert_eq!(ai.base.current_state, AiState::Attacking);
+            assert_eq!(ai.base.current_substate, substate);
+            assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+
+            ai.think_expected_attacking_event(
+                &sim,
+                &Stimulus::new(StimulusType::EventTimer),
+                &mut AiGlobalState::default(),
+                &AiContext::default(),
+                &AiPerTickData::stub(),
+                None,
+            );
+
+            assert!(matches!(
+                ai.base.outbox.reentrant.owner_work.as_slice(),
+                [AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }]
+            ));
+        }
+    }
 
     #[test]
     fn fleeing_hiding_timer_invokes_enemy_return_to_duty() {
