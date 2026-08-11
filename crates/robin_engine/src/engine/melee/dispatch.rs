@@ -40,10 +40,13 @@ impl EngineInner {
             return;
         }
 
-        // Validate target
+        // Translate B..I literally stores the interaction antagonist, even
+        // when that actor died while the strike was postponed. Thrust A is
+        // the sole exception: CanEnterSwordfightWith performs its live/dead
+        // admission check below, matching the Original's separate A case.
         let target_ok = self
             .get_entity(target)
-            .map(|e| e.is_human() && !e.is_dead())
+            .map(|e| e.is_human())
             .unwrap_or(false);
         if !target_ok {
             self.orders
@@ -80,7 +83,11 @@ impl EngineInner {
                     e.element_data().position_map().y,
                 )
             })
-            .unwrap_or((0.0, 0.0));
+            .unwrap_or_else(|| {
+                panic!(
+                    "validated sword strike target {target:?} disappeared before order construction"
+                )
+            });
 
         if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
