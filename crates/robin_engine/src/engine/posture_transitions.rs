@@ -261,16 +261,22 @@ impl EngineInner {
             return;
         };
         let position = owner.element_data().position_map();
-        let action_state = owner
-            .actor_data()
-            .expect("movement owner is not an actor")
-            .action_state;
-        let transition = match action_state {
-            ActionState::Moving => OrderType::TransitionWalkingUprightRunningUpright,
-            ActionState::Waiting | ActionState::Bored => {
-                OrderType::TransitionWaitingUprightRunningUpright
-            }
-            _ => return,
+        let actor = owner.actor_data().expect("movement owner is not an actor");
+        let transition = match owner.element_data().posture {
+            // RHelementactor.cpp:7640-7679 selects the crouched posture
+            // transition before considering the action-state transition.
+            // This matters when MakeFast rewrites the untranslated tail of a
+            // high wall pass while TransitionCrouchingUp is still current:
+            // Original inserts crouched-walking -> running, not
+            // waiting-upright -> running.
+            Posture::Crouched => OrderType::TransitionWalkingCrouchedRunningUpright,
+            _ => match actor.action_state {
+                ActionState::Moving => OrderType::TransitionWalkingUprightRunningUpright,
+                ActionState::Waiting | ActionState::Bored => {
+                    OrderType::TransitionWaitingUprightRunningUpright
+                }
+                _ => return,
+            },
         };
         let transition_distance = f32::from(owner.sprite().distance_for_animation(transition));
         // Original keeps the already-materialized PassDoor orders and its
@@ -1352,6 +1358,62 @@ mod tests {
             actor.active_door_pass.as_ref().unwrap().current_action,
             OrderType::TransitionRunningUprightWalkingCrouched
         );
+    }
+
+    #[test]
+    fn crouched_door_pass_make_fast_uses_crouched_running_transition_in_lazy_tail() {
+        let (mut engine, owner, sequence, _) = selected_running_pc();
+        {
+            let entity = engine.get_entity_mut(owner).expect("test PC");
+            entity.element_data_mut().posture = Posture::Crouched;
+            let actor = entity.actor_data_mut().expect("test actor");
+            actor.action_state = ActionState::Waiting;
+            actor.active_door_pass = Some(ActiveDoorPass {
+                door_index: crate::gate::DoorIndex(0),
+                direct: false,
+                position_direct: false,
+                steps: VecDeque::from([DoorPassStep::Walk {
+                    destination: MapPoint::new(30.0, 20.0),
+                    action: OrderType::WalkingUpright,
+                    reverse: false,
+                    compute_direction: true,
+                    tolerance: 0.0,
+                }]),
+                triggers_fired: 1,
+                current_action: OrderType::TransitionCrouchingUp,
+                current_reverse: false,
+                saved_action_state: Some(ActionState::Waiting),
+            });
+        }
+        // Model the materialized TransitionCrouchingUp prefix of the high
+        // wall pass; the following walk remains in ActiveDoorPass::steps.
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(sequence, 0)
+            .expect("selected movement")
+            .orders
+            .front_mut()
+            .expect("materialized transition")
+            .order_type = OrderType::TransitionCrouchingUp;
+
+        engine.make_active_door_pass_fast(owner);
+
+        let pass = engine
+            .get_entity(owner)
+            .expect("test PC")
+            .actor_data()
+            .expect("test actor")
+            .active_door_pass
+            .as_ref()
+            .expect("active door pass");
+        assert!(matches!(
+            pass.steps.front(),
+            Some(DoorPassStep::Walk {
+                action: OrderType::TransitionWalkingCrouchedRunningUpright,
+                ..
+            })
+        ));
     }
 
     #[test]
