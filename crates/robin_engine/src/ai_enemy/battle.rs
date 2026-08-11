@@ -62,7 +62,7 @@ fn has_nearby_alerting_soldier(
 /// Original `SquareDistance(primary_target)` compares the actors' literal
 /// 3D sprite positions, stretches world Y, includes Z, and then truncates the
 /// `FLOAT` result to `ULONG` before BattleDecisions compares friend distances.
-fn battle_owner_target_square_distance(
+pub(crate) fn battle_owner_target_square_distance(
     owner: crate::coordinates::WorldPoint3D,
     target: crate::coordinates::WorldPoint3D,
 ) -> u32 {
@@ -72,7 +72,7 @@ fn battle_owner_target_square_distance(
     (dx * dx + dy * dy + dz * dz) as u32
 }
 
-fn battle_friend_is_nearer(
+pub(crate) fn battle_friend_is_nearer(
     friend: Position,
     target: Position,
     owner_target_square_distance: u32,

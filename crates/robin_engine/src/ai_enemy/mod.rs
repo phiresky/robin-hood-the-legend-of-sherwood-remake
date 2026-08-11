@@ -7,6 +7,7 @@
 mod alert;
 mod archer_combat;
 mod battle;
+pub(crate) use battle::{battle_friend_is_nearer, battle_owner_target_square_distance};
 mod combat_positions;
 mod event_handlers;
 mod periodic;

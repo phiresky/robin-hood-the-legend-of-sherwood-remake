@@ -35,10 +35,12 @@ const BLIP_CONE_APERTURE_FACTOR: f32 = 1.0;
 struct EnemyOpticalTarget {
     id: EntityId,
     position: MapPoint,
-    /// Owner-boundary feet position used by `Position(pEnemy)` in Think.
-    /// This can be newer than `position` when Rust has deferred a later
-    /// element slot's batched movement past the current NPC owner.
-    planning_position: MapPoint,
+    /// Exact owner-boundary literal GetPosition value. This must not be
+    /// reconstructed through projected map coordinates.
+    position_world: crate::coordinates::WorldPoint3D,
+    /// Owner-boundary `RHArtificialIntelligence::Position(pEnemy)`, including
+    /// committed door-side and carried-PC substitution.
+    ai_position: crate::ai::Position,
     ground_position: GroundPoint,
     sector: Option<crate::position_interface::SectorHandle>,
     layer: u16,
@@ -51,7 +53,6 @@ struct EnemyOpticalTarget {
     eye_z: Option<f32>,
     /// `ComputeDetectionPoint` in world space. Absent alongside `eye_z`.
     detection_point: Option<crate::coordinates::WorldPoint3D>,
-    ground_z: f32,
     /// 16-sector facing.  Only used for `LeaningOut`: the detection
     /// point projects `direction × 40` forward.
     direction: i16,
@@ -163,6 +164,8 @@ struct SoldierSightContext {
     /// Literal owner position, before the AI `Position(actor)` door-side
     /// forecast used by shared entity views.
     position: crate::ai::Position,
+    /// Literal stored 3D position used by `SquareDistance(primary_target)`.
+    position_world: crate::coordinates::WorldPoint3D,
     eye: MapPoint,
     /// World-space `ComputeEyesPoint` result, used verbatim as the origin of
     /// opaque-reachability queries.
@@ -274,6 +277,7 @@ impl SoldierSightContext {
                 sector: entity.element_data().sector(),
                 level: entity.element_data().layer(),
             },
+            position_world: entity.element_data().position(),
             eye,
             eye_world,
             dir: entity.element_data().direction(),
@@ -320,6 +324,17 @@ fn attacking_reactiontime_enemy_near_enabled(
         }
         _ => false,
     }
+}
+
+fn battle_friend_nearer_to_detected_target(
+    owner_world: crate::coordinates::WorldPoint3D,
+    friend_position: crate::ai::Position,
+    target_world: crate::coordinates::WorldPoint3D,
+    target_position: crate::ai::Position,
+) -> bool {
+    let owner_target_sq =
+        crate::ai_enemy::battle_owner_target_square_distance(owner_world, target_world);
+    crate::ai_enemy::battle_friend_is_nearer(friend_position, target_position, owner_target_sq)
 }
 
 fn enemy_is_in_react_immediately_zone(
@@ -2299,10 +2314,10 @@ impl EngineInner {
                         (
                             target.id.index(),
                             crate::ai::Position {
-                                x: target.planning_position.x,
-                                y: target.planning_position.y,
-                                sector: target.sector,
-                                level: target.layer,
+                                x: target.ai_position.x,
+                                y: target.ai_position.y,
+                                sector: target.ai_position.sector,
+                                level: target.ai_position.level,
                             },
                         )
                     })
@@ -2509,16 +2524,43 @@ impl EngineInner {
                     if ss.ai_state == AiState::Attacking && ss.primary_target != 0 {
                         if crate::ai_enemy::is_any_swordfight_substate(ss.ai_substate as u32) {
                             tick_data.friends_nearer_to_enemy += 1;
-                        } else if let Some((_, _, best_score)) = best_target {
-                            let to_enemy_sq = if let Some(pc) = pc_snapshots.first() {
-                                let edx = ss.position.x - pc.position.x;
-                                let edy = (ss.position.y - pc.position.y)
-                                    * crate::position_interface::INVERSE_ASPECT_RATIO;
-                                (edx * edx + edy * edy) as u32
-                            } else {
-                                u32::MAX
-                            };
-                            if to_enemy_sq < best_score {
+                        } else if let Some((best_target_id, _, _)) = best_target {
+                            // Original compares this friend with the primary
+                            // target selected immediately before the camp
+                            // registry walk. The reference is the owner's
+                            // literal 3D SquareDistance (stretched world Y,
+                            // Z included, ULONG-truncated); the friend arm is
+                            // the raw map-space Position delta. Do not use the
+                            // first portrait-priority PC or the target-choice
+                            // score: neither has compatible identity or units.
+                            let target = enemy_targets
+                                .iter()
+                                .find(|target| target.id == best_target_id)
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "selected enemy target {} disappeared from NPC {} detection view",
+                                        best_target_id.index(),
+                                        npc_id.index()
+                                    )
+                                });
+                            let target_world = target.position_world;
+                            let friend_position = *world
+                                .ai_positions
+                                .get(&ss.id)
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "friend {} is absent from NPC {} owner-boundary AI position view",
+                                        ss.id.index(),
+                                        npc_id.index()
+                                    )
+                                });
+                            let target_position = target.ai_position;
+                            if battle_friend_nearer_to_detected_target(
+                                viewer.position_world,
+                                friend_position,
+                                target_world,
+                                target_position,
+                            ) {
                                 tick_data.friends_nearer_to_enemy += 1;
                             }
                         }
@@ -3150,11 +3192,10 @@ impl EngineInner {
                     Some(EnemyOpticalTarget {
                         id: entity_id,
                         position: snapshot.position,
-                        planning_position: MapPoint::from_world_xyz(
-                            snapshot.position_world.x,
-                            snapshot.position_world.y,
-                            snapshot.position_world.z,
-                        ),
+                        position_world: snapshot.position_world,
+                        ai_position: *world.ai_positions.get(&entity_id).unwrap_or_else(|| {
+                            panic!("PC {} is absent from the owner-boundary AI position view", entity_id.index())
+                        }),
                         ground_position: GroundPoint::from_map_and_z(
                             snapshot.position,
                             ground_z,
@@ -3180,7 +3221,6 @@ impl EngineInner {
                                 false,
                             )
                         }),
-                        ground_z,
                         direction: pc.element.direction(),
                         active: pc.element.active,
                         unconscious: pc.human.unconscious,
@@ -3225,11 +3265,10 @@ impl EngineInner {
                     Some(EnemyOpticalTarget {
                         id: entity_id,
                         position,
-                        planning_position: MapPoint::from_world_xyz(
-                            position_world.x,
-                            position_world.y,
-                            position_world.z,
-                        ),
+                        position_world,
+                        ai_position: *world.ai_positions.get(&entity_id).unwrap_or_else(|| {
+                            panic!("soldier {} is absent from the owner-boundary AI position view", entity_id.index())
+                        }),
                         ground_position: GroundPoint::from_map_and_z(
                             position,
                             soldier.element.position().z,
@@ -3251,7 +3290,6 @@ impl EngineInner {
                                 is_rider,
                             )
                         }),
-                        ground_z: soldier.element.position().z,
                         direction: soldier.element.direction(),
                         active: soldier.element.active,
                         unconscious: soldier.human.unconscious,
@@ -3272,6 +3310,26 @@ impl EngineInner {
                 _ => unreachable!("Entities::humans returned a non-human entity"),
             })
             .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn enemy_optical_geometry_at_owner_for_test(
+        &mut self,
+        assets: &LevelAssets,
+        owner: EntityId,
+        positions_before_movement: &crate::entities::EntitySlots<
+            Option<crate::entities::BoundaryPosition>,
+        >,
+        target: EntityId,
+    ) -> (crate::ai::Position, crate::coordinates::WorldPoint3D) {
+        let world =
+            self.tick_enemy_ai_build_world_view(assets, Some((owner, positions_before_movement)));
+        let optical = self
+            .tick_enemy_ai_build_live_enemy_optical_targets(&world)
+            .into_iter()
+            .find(|entry| entry.id == target)
+            .unwrap_or_else(|| panic!("test optical target {target:?} is missing"));
+        (optical.ai_position, optical.position_world)
     }
 
     /// Live `ComputeVisibility(human) > 0` for one NPC viewer and one human
@@ -4850,6 +4908,45 @@ mod tests {
         assert!(forest_180_degree_view_enabled(true, Camp::Royalists));
         assert!(!forest_180_degree_view_enabled(false, Camp::Royalists));
         assert!(!forest_180_degree_view_enabled(true, Camp::Lacklandists));
+    }
+
+    #[test]
+    fn friend_distance_gate_uses_selected_target_with_source_units() {
+        let owner_world = crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0);
+        let selected_target_world = crate::coordinates::WorldPoint3D::new(100.0, 0.0, 0.0);
+        let selected_target = Position {
+            x: 100.0,
+            y: 0.0,
+            ..Position::default()
+        };
+        let friend = Position {
+            x: 50.0,
+            y: 0.0,
+            ..Position::default()
+        };
+
+        assert!(battle_friend_nearer_to_detected_target(
+            owner_world,
+            friend,
+            selected_target_world,
+            selected_target,
+        ));
+
+        // The removed proxy measured the friend against the first PC in
+        // portrait order and compared that squared value with the selected
+        // target's linear score. This unrelated first PC would reverse the
+        // result despite not being the selected primary target.
+        let portrait_first = Position {
+            x: -1_000.0,
+            y: 0.0,
+            ..Position::default()
+        };
+        let proxy_dx = friend.x - portrait_first.x;
+        let proxy_dy =
+            (friend.y - portrait_first.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+        let obsolete_proxy_sq = (proxy_dx * proxy_dx + proxy_dy * proxy_dy) as u32;
+        let selected_linear_score = 100_u32;
+        assert!(obsolete_proxy_sq > selected_linear_score);
     }
 
     #[test]

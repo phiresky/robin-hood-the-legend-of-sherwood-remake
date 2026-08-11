@@ -380,6 +380,9 @@ fn object_detection_world_position(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct AiWorldView {
     pub(super) pcs: Vec<PcSnapshot>,
+    /// `RHArtificialIntelligence::Position(entity)` resolved at this owner
+    /// boundary, including the door-first / carried-PC rules.
+    pub(super) ai_positions: std::collections::HashMap<EntityId, crate::ai::Position>,
     /// Current live swordfight occupancy used only by RefreshDetection's
     /// optical best-visible-target aggregate. Tactical target selectors use
     /// the owner-ordered shared UWORD scratch instead.
@@ -390,6 +393,42 @@ pub(super) struct AiWorldView {
 }
 
 impl EngineInner {
+    fn ai_position_at_owner_boundary(
+        &self,
+        target_id: EntityId,
+        owner_boundary: Option<(
+            EntityId,
+            &EntitySlots<Option<crate::entities::BoundaryPosition>>,
+        )>,
+    ) -> crate::ai::Position {
+        super::resolve_ai_position_with(
+            &self.world.entities,
+            self.script_domains.interactables.doors.as_slice(),
+            target_id,
+            |position_id| {
+                let position_entity = self
+                    .world
+                    .entities
+                    .get(position_id)
+                    .unwrap_or_else(|| panic!("AI position owner {position_id:?} disappeared"));
+                let boundary = owner_boundary
+                    .map(|(owner, positions)| {
+                        self.boundary_position(position_id, owner, positions, true)
+                    })
+                    .unwrap_or_else(|| {
+                        crate::entities::BoundaryPosition::of(position_entity.element_data())
+                    });
+                crate::ai::Position {
+                    x: boundary.map.x,
+                    y: boundary.map.y,
+                    sector: position_entity.element_data().sector(),
+                    level: position_entity.element_data().layer(),
+                }
+            },
+        )
+        .effective
+    }
+
     #[cfg(test)]
     pub(crate) fn test_soldier_snapshot_abilities(
         &mut self,
@@ -425,6 +464,16 @@ impl EngineInner {
             &EntitySlots<Option<crate::entities::BoundaryPosition>>,
         )>,
     ) -> AiWorldView {
+        let human_ids: Vec<EntityId> = self
+            .world
+            .entities
+            .humans()
+            .map(|(id, _)| id.into())
+            .collect();
+        let ai_positions = human_ids
+            .into_iter()
+            .map(|id| (id, self.ai_position_at_owner_boundary(id, owner_boundary)))
+            .collect();
         let pcs = self.tick_enemy_ai_build_pc_snapshots(assets, owner_boundary);
         let detection_target_multiplicity = self.tick_enemy_ai_build_primary_target_multiplicity();
         let npc_jump_lines = self.tick_enemy_ai_build_jump_lines(assets);
@@ -432,6 +481,7 @@ impl EngineInner {
         let unconscious_soldiers = self.tick_enemy_ai_build_unconscious_soldiers();
         AiWorldView {
             pcs,
+            ai_positions,
             detection_target_multiplicity,
             npc_jump_lines,
             soldiers,
@@ -453,8 +503,15 @@ impl EngineInner {
     ) -> Vec<PcSnapshot> {
         use crate::element::Posture;
 
-        let mut pc_snapshots: Vec<PcSnapshot> = Vec::with_capacity(self.world.pc_ids.len());
-        for &pc_id in &self.world.pc_ids {
+        let mut pc_snapshots: Vec<PcSnapshot> =
+            Vec::with_capacity(self.world.original_pc_registry_ids.len());
+        // Original builds every AI-facing PC scan from marrayActorsPC /
+        // marrayFighters[CAMP_ROYALISTS], whose order is the AddElement
+        // registration order. `world.pc_ids` is deliberately re-sorted by
+        // portrait priority after loading and therefore is not an AI registry.
+        // Save adoption restores serialized creation-order fields without
+        // rebuilding this nonserialized live registry, matching Original.
+        for &pc_id in &self.world.original_pc_registry_ids {
             let Some(Entity::Pc(pc)) = self.world.entities.get(pc_id) else {
                 continue;
             };
@@ -616,6 +673,14 @@ impl EngineInner {
         }
 
         pc_snapshots
+    }
+
+    #[cfg(test)]
+    pub(crate) fn ai_pc_snapshot_ids_for_test(&mut self, assets: &LevelAssets) -> Vec<EntityId> {
+        self.tick_enemy_ai_build_pc_snapshots(assets, None)
+            .into_iter()
+            .map(|snapshot| snapshot.id)
+            .collect()
     }
 
     /// Bootstrap Original's nonserialized human multiplicity scratch after a

@@ -1522,6 +1522,14 @@ fn original_pc_registry_is_independent_from_portrait_priority_order() {
     engine.world.pc_ids = vec![first, second];
     assert_eq!(engine.world.original_pc_registry_ids, vec![second, first]);
 
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    assert_eq!(
+        engine.ai_pc_snapshot_ids_for_test(&assets),
+        vec![second, first],
+        "AI snapshots must scan Original's registry, not portrait priority"
+    );
+
     engine.remove_entity(second);
     assert_eq!(engine.world.pc_ids, vec![first]);
     assert_eq!(engine.world.original_pc_registry_ids, vec![first]);
@@ -2325,6 +2333,13 @@ fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
         current_reverse: false,
         saved_action_state: None,
     });
+    let exact_target_world = WorldPoint3D::new(20.123_457, 9.876_543, 7.654_321);
+    target.element.set_position_map(MapPoint::from_world_xyz(
+        exact_target_world.x,
+        exact_target_world.y,
+        exact_target_world.z,
+    ));
+    target.element.set_position(exact_target_world);
 
     engine.script_domains.interactables.doors = vec![Door {
         door_type: DoorType::Default,
@@ -2339,6 +2354,19 @@ fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    for (id, entity) in engine.world.entities.occupied() {
+        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
+    }
+    let (optical_ai_position, optical_world) =
+        engine.enemy_optical_geometry_at_owner_for_test(&assets, self_id, &positions, target_id);
+    assert_eq!(optical_ai_position.x, 120.0);
+    assert_eq!(optical_ai_position.y, 5.0);
+    assert_eq!(optical_ai_position.level, 3);
+    assert_eq!(optical_world.x.to_bits(), exact_target_world.x.to_bits());
+    assert_eq!(optical_world.y.to_bits(), exact_target_world.y.to_bits());
+    assert_eq!(optical_world.z.to_bits(), exact_target_world.z.to_bits());
+
     let fighters = engine.build_nearby_fighters_for(
         self_id,
         &assets,
@@ -2355,6 +2383,65 @@ fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
         crate::position_interface::SectorHandle::new(7)
     );
     assert_eq!(target.position.level, 3);
+}
+
+#[test]
+fn optical_ai_position_uses_carrier_boundary_but_keeps_target_world_bits() {
+    use crate::coordinates::{MapPoint, WorldPoint3D};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let carrier = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let target = engine.add_entity(make_test_pc(crate::element::Posture::OnShoulders));
+
+    let carrier_world = WorldPoint3D::new(321.25, 654.5, 11.0);
+    let Entity::Pc(carrier_pc) = engine.get_entity_mut(carrier).expect("carrier PC exists") else {
+        panic!("carrier changed kind")
+    };
+    carrier_pc.element.active = true;
+    carrier_pc.pc.life_points = 100;
+    carrier_pc.element.set_position(carrier_world);
+    carrier_pc
+        .element
+        .set_position_map(MapPoint::new(321.25, 640.0));
+
+    let exact_target_world = WorldPoint3D::new(12.345_679, 98.765_434, 7.654_321);
+    let Entity::Pc(target_pc) = engine.get_entity_mut(target).expect("carried PC exists") else {
+        panic!("carried target changed kind")
+    };
+    target_pc.element.active = true;
+    target_pc.pc.life_points = 100;
+    target_pc.human.carrier = Some(carrier);
+    target_pc.element.set_position_map(MapPoint::from_world_xyz(
+        exact_target_world.x,
+        exact_target_world.y,
+        exact_target_world.z,
+    ));
+    target_pc.element.set_position(exact_target_world);
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    for (id, entity) in engine.world.entities.occupied() {
+        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
+    }
+    let Entity::Pc(carrier_pc) = engine.get_entity_mut(carrier).expect("carrier PC remains") else {
+        panic!("carrier changed kind")
+    };
+    carrier_pc
+        .element
+        .set_position(WorldPoint3D::new(999.0, 999.0, 99.0));
+    carrier_pc
+        .element
+        .set_position_map(MapPoint::new(999.0, 999.0));
+
+    let (ai_position, optical_world) =
+        engine.enemy_optical_geometry_at_owner_for_test(&assets, owner, &positions, target);
+    assert_eq!(ai_position.x, 321.25);
+    assert_eq!(ai_position.y, 640.0);
+    assert_eq!(optical_world.x.to_bits(), exact_target_world.x.to_bits());
+    assert_eq!(optical_world.y.to_bits(), exact_target_world.y.to_bits());
+    assert_eq!(optical_world.z.to_bits(), exact_target_world.z.to_bits());
 }
 
 fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInner {

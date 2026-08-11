@@ -1571,6 +1571,76 @@ type PrimaryTargetMetadata = (
     Option<crate::ai::HumanHandle>,
 );
 
+pub(super) struct AiPositionResolution {
+    /// Target's own position after the door-first arm, before an optional
+    /// carried-PC substitution.
+    pub(super) target: crate::ai::Position,
+    /// Final `RHArtificialIntelligence::Position(entity)` result.
+    pub(super) effective: crate::ai::Position,
+    pub(super) carrier: Option<crate::ai::Position>,
+    pub(super) carrier_handle: Option<crate::ai::HumanHandle>,
+}
+
+pub(super) fn resolve_ai_position_with(
+    entities: &crate::entities::Entities,
+    doors: &[crate::gate::Door],
+    target_id: crate::element::EntityId,
+    mut position_of: impl FnMut(crate::element::EntityId) -> crate::ai::Position,
+) -> AiPositionResolution {
+    let target = entities
+        .get(target_id)
+        .unwrap_or_else(|| panic!("AI position target {target_id:?} disappeared"));
+    if let Some(pass) = target
+        .actor_data()
+        .and_then(|actor| actor.active_door_pass.as_ref())
+    {
+        let door = doors.get(pass.door_index.0 as usize).unwrap_or_else(|| {
+            panic!(
+                "AI position target {target_id:?} references missing door {}",
+                pass.door_index
+            )
+        });
+        let position = if pass.position_direct {
+            crate::ai::Position {
+                x: door.point_in.x,
+                y: door.point_in.y,
+                sector: crate::position_interface::SectorHandle::new(u16::from(door.sector_in)),
+                level: door.layer_in,
+            }
+        } else {
+            crate::ai::Position {
+                x: door.point_out.x,
+                y: door.point_out.y,
+                sector: crate::position_interface::SectorHandle::new(u16::from(door.sector_out)),
+                level: door.layer_out,
+            }
+        };
+        return AiPositionResolution {
+            target: position,
+            effective: position,
+            carrier: None,
+            carrier_handle: None,
+        };
+    }
+
+    let target_position = position_of(target_id);
+    let carrier_id = match target {
+        Entity::Pc(pc) if pc.element.posture == crate::element::Posture::OnShoulders => {
+            Some(pc.human.carrier.unwrap_or_else(|| {
+                panic!("on-shoulders PC {target_id:?} has no carrier for AI Position")
+            }))
+        }
+        _ => None,
+    };
+    let carrier = carrier_id.map(&mut position_of);
+    AiPositionResolution {
+        target: target_position,
+        effective: carrier.unwrap_or(target_position),
+        carrier,
+        carrier_handle: carrier_id.map(crate::element::EntityId::index),
+    }
+}
+
 pub(super) fn lookup_primary_target_metadata(
     entities: &crate::entities::Entities,
     sequence_manager: &crate::sequence::SequenceManager,
@@ -1582,79 +1652,30 @@ pub(super) fn lookup_primary_target_metadata(
     }
     let target = entities.get(target_id)?;
     let elem = target.element_data();
-    let mut position = crate::ai::Position {
-        x: elem.position_map().x,
-        y: elem.position_map().y,
-        sector: elem.sector(),
-        level: elem.layer(),
-    };
-    // `RHArtificialIntelligence::Position(actor)` returns the complete
-    // committed gate-side RHposition while an actor is passing a door, not
-    // merely that point's x/y. The sector and layer are significant to
-    // battle decisions (notably detecting a target committed to a ladder).
-    if let Some(pass) = target
-        .actor_data()
-        .and_then(|actor| actor.active_door_pass.as_ref())
-    {
-        let door = doors.get(pass.door_index.0 as usize).unwrap_or_else(|| {
-            panic!(
-                "AI metadata target {target_id:?} references missing door {}",
-                pass.door_index
-            )
-        });
-        if pass.position_direct {
-            position.x = door.point_in.x;
-            position.y = door.point_in.y;
-            position.sector =
-                crate::position_interface::SectorHandle::new(u16::from(door.sector_in));
-            position.level = door.layer_in;
-        } else {
-            position.x = door.point_out.x;
-            position.y = door.point_out.y;
-            position.sector =
-                crate::position_interface::SectorHandle::new(u16::from(door.sector_out));
-            position.level = door.layer_out;
+    let resolved = resolve_ai_position_with(entities, doors, target_id, |id| {
+        let element = entities
+            .get(id)
+            .unwrap_or_else(|| panic!("AI metadata position owner {id:?} disappeared"))
+            .element_data();
+        crate::ai::Position {
+            x: element.position_map().x,
+            y: element.position_map().y,
+            sector: element.sector(),
+            level: element.layer(),
         }
-    }
+    });
     let posture = elem.posture;
     // Orders live on the target's owning `SequenceElement.orders` —
     // look up the current in-progress element for the target actor.
     let animation = sequence_manager
         .current_order_for_actor(target_id)
         .map(|(_, _, o)| o.order_type);
-    // Target-on-shoulders: retarget to the carrier.  Expose both the
-    // carrier's handle (so the AI can re-point `primary_target` for the
-    // friend-swap / focus / begin-swordfight reads) and the carrier's
-    // position (used to recompute `live_target_pos`).  The carrier
-    // entity id is tracked on `actor.carrier` when posture ==
-    // OnShoulders.
-    let (carrier_position, carrier_handle) =
-        if matches!(posture, crate::element::Posture::OnShoulders) {
-            target
-                .human_data()
-                .and_then(|h| h.carrier)
-                .and_then(|c| {
-                    entities.get(c).map(|carrier| {
-                        let c_elem = carrier.element_data();
-                        let pos = crate::ai::Position {
-                            x: c_elem.position_map().x,
-                            y: c_elem.position_map().y,
-                            sector: c_elem.sector(),
-                            level: c_elem.layer(),
-                        };
-                        (Some(pos), Some(c.index()))
-                    })
-                })
-                .unwrap_or((None, None))
-        } else {
-            (None, None)
-        };
     Some((
-        position,
+        resolved.target,
         posture,
         animation,
-        carrier_position,
-        carrier_handle,
+        resolved.carrier,
+        resolved.carrier_handle,
     ))
 }
 
@@ -1667,6 +1688,7 @@ pub(super) fn lookup_primary_target_metadata(
 /// eligible.
 pub(super) fn build_friend_swap_candidates(
     entities: &Entities,
+    doors: &[crate::gate::Door],
     me_id: impl Into<crate::element::EntityId>,
     my_camp: crate::element::Camp,
 ) -> Vec<crate::ai::FriendSwapCandidate> {
@@ -1701,8 +1723,7 @@ pub(super) fn build_friend_swap_candidates(
         let Some(friend_target_id) = entities.id_at_legacy_slot(friend_target_handle) else {
             continue;
         };
-        let friend_target = entities.get(friend_target_id);
-        let Some(friend_target_entity) = friend_target else {
+        let Some(_friend_target_entity) = entities.get(friend_target_id) else {
             continue;
         };
         let friend_pos = crate::ai::Position {
@@ -1711,13 +1732,25 @@ pub(super) fn build_friend_swap_candidates(
             sector: s.element.sector(),
             level: s.element.layer(),
         };
-        let ft_elem = friend_target_entity.element_data();
-        let friend_target_pos = crate::ai::Position {
-            x: ft_elem.position_map().x,
-            y: ft_elem.position_map().y,
-            sector: ft_elem.sector(),
-            level: ft_elem.layer(),
-        };
+        // Original calls Position(friend->GetPrimaryTarget()) here. That
+        // resolves a door-passing actor to the committed gate endpoint and
+        // an on-shoulders PC to its carrier before comparing swap distances.
+        let friend_target_pos =
+            resolve_ai_position_with(entities, doors, friend_target_id, |position_id| {
+                let element = entities
+                    .get(position_id)
+                    .unwrap_or_else(|| {
+                        panic!("friend-swap target position owner {position_id:?} disappeared")
+                    })
+                    .element_data();
+                crate::ai::Position {
+                    x: element.position_map().x,
+                    y: element.position_map().y,
+                    sector: element.sector(),
+                    level: element.layer(),
+                }
+            })
+            .effective;
         out.push(crate::ai::FriendSwapCandidate {
             friend_id: friend_id.into(),
             friend_position: friend_pos,
@@ -1898,42 +1931,32 @@ fn build_entity_views_inner(engine: &EngineInner) -> AiEntityViewMap {
                 .unwrap_or(crate::order::OrderType::NonanimationEnd),
         );
 
-        // Door-rail snap: while a human actor is passing a door, AI
-        // probes read the rail-anchored destination (point_in /
-        // point_out) instead of the animated interpolated map
-        // position.  `direct = true` (outside → inside) maps to
-        // `point_in`; `direct = false` maps to `point_out`.
-        if let Some(actor) = entity.actor_data()
-            && let Some(dp) = actor.active_door_pass.as_ref()
-            && let Some(door) = doors_ref.get(dp.door_index.0 as usize)
-        {
-            if dp.position_direct {
-                view.position.x = door.point_in.x;
-                view.position.y = door.point_in.y;
-                view.position.sector =
-                    crate::position_interface::SectorHandle::new(u16::from(door.sector_in));
-                view.position.level = door.layer_in;
-            } else {
-                view.position.x = door.point_out.x;
-                view.position.y = door.point_out.y;
-                view.position.sector =
-                    crate::position_interface::SectorHandle::new(u16::from(door.sector_out));
-                view.position.level = door.layer_out;
-            }
-        }
-
-        // PC riding on someone's shoulders reports the carrier's
-        // position, not its own stale map slot.  `HumanData::carrier`
-        // stores the carrier entity id; look it up and copy its map
-        // position.
-        if let Entity::Pc(pc) = entity
-            && pc.element.posture == crate::element::Posture::OnShoulders
-            && let Some(carrier_id) = pc.human.carrier
-            && let Some(carrier) = engine.world.entities.get(carrier_id)
-        {
-            let cp = carrier.element_data().position_map();
-            view.position.x = cp.x;
-            view.position.y = cp.y;
+        if matches!(
+            entity,
+            Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_)
+        ) {
+            view.position = resolve_ai_position_with(
+                &engine.world.entities,
+                doors_ref,
+                entity_id,
+                |position_id| {
+                    let position_element = engine
+                        .world
+                        .entities
+                        .get(position_id)
+                        .unwrap_or_else(|| {
+                            panic!("AI entity-view position owner {position_id:?} disappeared")
+                        })
+                        .element_data();
+                    crate::ai::Position {
+                        x: position_element.position_map().x,
+                        y: position_element.position_map().y,
+                        sector: position_element.sector(),
+                        level: position_element.layer(),
+                    }
+                },
+            )
+            .effective;
         }
 
         // Attach pre-scanned covering nets for stuck victims, consumed
@@ -2548,7 +2571,7 @@ impl EngineInner {
             // scans the other soldiers; the helper handles the
             // empty-target case.
             tick.friend_swap_candidates =
-                build_friend_swap_candidates(&self.world.entities, npc_id, my_camp);
+                build_friend_swap_candidates(&self.world.entities, doors, npc_id, my_camp);
             return tick;
         };
 
@@ -2739,7 +2762,7 @@ impl EngineInner {
 
         // Friend-swap candidates for ReconsiderEnemyApproach.
         tick.friend_swap_candidates =
-            build_friend_swap_candidates(&self.world.entities, npc_id, my_camp);
+            build_friend_swap_candidates(&self.world.entities, doors, npc_id, my_camp);
 
         // Stashed-exit-door snapshot for the AlertSoldiers indoor
         // branch and the merry-man flee path.  Always populated
@@ -2993,40 +3016,21 @@ impl EngineInner {
         };
         let doors = self.script_domains.interactables.doors.as_slice();
         let fighter_position = |id: crate::element::EntityId| {
-            let entity = self
-                .world
-                .entities
-                .get(id)
-                .unwrap_or_else(|| panic!("fighter snapshot owner {id:?} disappeared"));
-            // Handle zero is a valid fighter-registry slot even though the
-            // primary-target lookup reserves it as the null target.
-            if id.index() == 0 {
-                let elem = entity.element_data();
-                return Position {
-                    x: elem.position_map().x,
-                    y: elem.position_map().y,
-                    sector: elem.sector(),
-                    level: elem.layer(),
-                };
-            }
-            let (position, _, _, carrier_position, _) = lookup_primary_target_metadata(
-                &self.world.entities,
-                &self.orders.sequence_manager,
-                doors,
-                id,
-            )
-            .unwrap_or_else(|| panic!("fighter snapshot owner {id:?} disappeared"));
-            let passing_door = entity
-                .actor_data()
-                .is_some_and(|actor| actor.active_door_pass.is_some());
-            // RHArtificialIntelligence::Position uses the carrier for a PC
-            // on shoulders, except that its earlier door-passing arm returns
-            // the committed gate side immediately.
-            if passing_door {
-                position
-            } else {
-                carrier_position.unwrap_or(position)
-            }
+            resolve_ai_position_with(&self.world.entities, doors, id, |position_id| {
+                let element = self
+                    .world
+                    .entities
+                    .get(position_id)
+                    .unwrap_or_else(|| panic!("fighter snapshot owner {position_id:?} disappeared"))
+                    .element_data();
+                Position {
+                    x: element.position_map().x,
+                    y: element.position_map().y,
+                    sector: element.sector(),
+                    level: element.layer(),
+                }
+            })
+            .effective
         };
         let me_position = fighter_position(npc_id);
         let me_pos_pt = crate::coordinates::MapPoint::new(me_position.x, me_position.y);
