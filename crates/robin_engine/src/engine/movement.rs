@@ -2860,16 +2860,10 @@ impl EngineInner {
                 .as_mut()
                 .expect("rider remained present before charge motion");
             let elem = entity.element_data_mut();
-            let dx = goal.x - elem.position_map().x;
-            let dy = goal.y - elem.position_map().y;
-            if order.compute_direction && dx * dx + dy * dy > 0.01 {
-                let direction = vector_to_sector_0_to_15(dx, dy);
-                elem.set_direction_goal(if order.reverse {
-                    direction ^ 8
-                } else {
-                    direction
-                });
-            }
+            // ExecuteRiderCharge calls Turn before PerformMotion. The first
+            // Execute therefore turns toward the previously installed goal;
+            // PerformMotion initializes this order and computes its new goal
+            // only afterward.
             elem.sprite.position_iface.turn();
             let (state, distance) = if frozen_all {
                 // FrozenAll short-circuits RHSprite::PerformMotion before it
@@ -2888,16 +2882,26 @@ impl EngineInner {
                     false,
                 )
             };
+            // PerformMotion initializes the new direction goal after the
+            // caller's Turn, then applies the standard turning slowdown to
+            // this frame's distance using that now-live direction/goal pair.
+            let distance = scaled_motion_distance(
+                distance,
+                speed_factor,
+                true,
+                elem.sprite.position_iface.get_direction()
+                    != elem.sprite.position_iface.get_direction_goal(),
+            );
             if distance != 0.0 {
                 elem.sprite
                     .position_iface
-                    .update_position_map_scaled(distance * speed_factor);
+                    .update_position_map_scaled(distance);
                 let wait = elem
                     .sprite
                     .wait_time(elem.sprite.current_row, elem.sprite.current_frame);
                 elem.sprite
                     .position_iface
-                    .update_forecasted_movement(distance * speed_factor, wait + 1);
+                    .update_forecasted_movement(distance, wait + 1);
                 elem.update_grid_cell();
             }
             (state, elem.sprite.current_frame)

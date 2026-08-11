@@ -1523,7 +1523,7 @@ fn rider_charge_frozen_then_unfrozen_initializes_sprite_motion_on_first_live_tic
 }
 
 #[test]
-fn rider_charge_real_hit_lands_once_only_and_uses_post_turn_flight_direction() {
+fn rider_charge_first_execute_turns_before_initializing_new_motion_goal() {
     use crate::engine::melee::{
         clear_test_sword_damage_observations, take_test_sword_damage_observations,
     };
@@ -1541,7 +1541,8 @@ fn rider_charge_real_hit_lands_once_only_and_uses_post_turn_flight_direction() {
         vec![20, 1],
     );
     // Frame zero's polygon is the one-sided width segment at the pre-Turn
-    // origin. The fixture's eastward goal turns the live rider from 0 to 1.
+    // origin. Source Turn uses the previously installed goal (zero) before
+    // PerformMotion initializes the new eastward goal.
     clear_test_sword_damage_observations();
 
     tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets);
@@ -1560,11 +1561,25 @@ fn rider_charge_real_hit_lands_once_only_and_uses_post_turn_flight_direction() {
         hit.life_points_after < hit.life_points_before,
         "the manager drain behind the entity loop applies the damage"
     );
+    let rider_entity = engine.get_entity(rider).unwrap();
+    assert_eq!(rider_entity.element_data().direction(), 0);
     assert_eq!(
-        hit.attacker_direction, 1,
-        "flight samples live post-Turn facing"
+        i16::from(rider_entity.position_iface().get_direction_goal()),
+        4,
+        "PerformMotion computes the new eastward goal after Turn"
     );
-    let [flight_x, flight_y] = crate::position_interface::sector_to_vector_iso(1);
+    assert_eq!(
+        rider_entity.sprite().current_row,
+        0,
+        "TransitionCharging selects the row from the pre-motion facing"
+    );
+    assert_eq!(
+        rider_entity.element_data().position_map(),
+        MapPoint::new(102.4, 100.0),
+        "the charge advances along the new increment with the source turn slowdown"
+    );
+    assert_eq!(hit.attacker_direction, 0, "flight samples live facing");
+    let [flight_x, flight_y] = crate::position_interface::sector_to_vector_iso(0);
     let expected_facing =
         (crate::position_interface::vector_to_sector_0_to_15(flight_x, flight_y) + 8) & 15;
     assert_eq!(
@@ -1596,7 +1611,7 @@ fn rider_charge_real_hit_lands_once_only_and_uses_post_turn_flight_direction() {
             .element_data()
             .direction(),
         expected_facing,
-        "the fall order's first Execute faces the victim opposite live rider direction 1"
+        "the fall order's first Execute faces the victim opposite live rider direction 0"
     );
     assert!(
         take_test_sword_damage_observations().is_empty(),
@@ -1721,7 +1736,7 @@ fn rider_charge_initial_eligibility_is_not_rechecked_and_returning_layer_can_hit
         &mut engine,
         &mut assets,
         crate::order::OrderType::RiderCharging,
-        vec![20, 20],
+        vec![1, 20, 20],
     );
     let victim = add_charge_victim(
         &mut engine,
@@ -1757,7 +1772,12 @@ fn rider_charge_initial_eligibility_is_not_rechecked_and_returning_layer_can_hit
         .get_entity_mut(victim)
         .unwrap()
         .element_data_mut()
-        .set_position_map(rider_charge_point(rider_origin, rider_direction, 0.0, 30.0));
+        .set_position_map(rider_charge_point(
+            rider_origin,
+            rider_direction,
+            -2.0,
+            30.0,
+        ));
     engine
         .get_entity_mut(victim)
         .unwrap()
