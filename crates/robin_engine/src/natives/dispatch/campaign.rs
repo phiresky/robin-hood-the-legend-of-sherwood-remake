@@ -3,6 +3,52 @@
 use super::*;
 
 impl NativeContext<'_, '_> {
+    /// Resolve the exact campaign-description slot owned by a PC actor.
+    ///
+    /// Original `AddPCToMissionTeam` / `RemovePCFromMissionTeam` pass the
+    /// live PC's `RHPCDescription*` to `RHCampaign`. Character profiles are
+    /// not an identity: multiple Sherwood peasants legitimately share one.
+    fn mission_team_character_index(&self, actor: i32, operation: &str) -> Option<usize> {
+        let campaign = self.campaign.as_ref()?;
+        match self.get_entity(actor) {
+            Some(entity) => {
+                let Some(pc) = entity.pc_data() else {
+                    tracing::warn!("{operation}: actor {actor} is not a PC");
+                    return None;
+                };
+                let Some(raw_index) = pc.campaign_description_index else {
+                    tracing::warn!(
+                        "{operation}: live PC actor {actor} has no campaign-description identity"
+                    );
+                    return None;
+                };
+                let index = raw_index as usize;
+                let Some(description) = campaign.characters.get(index) else {
+                    tracing::warn!(
+                        "{operation}: live PC actor {actor} references missing campaign character {index}"
+                    );
+                    return None;
+                };
+                if description.character_profile_idx != Some(pc.profile_index) {
+                    tracing::warn!(
+                        "{operation}: live PC actor {actor} campaign character {index} has profile {:?}, expected {:?}",
+                        description.character_profile_idx,
+                        pc.profile_index,
+                    );
+                    return None;
+                }
+                Some(index)
+            }
+            // Sherwood HUD calls can carry a raw character-profile index
+            // without a live actor. Preserve that compatibility fallback;
+            // a live PC with corrupt identity must never take this branch.
+            None => {
+                let profile_idx = self.resolve_profile(actor)?;
+                campaign.get_character_by_profile(profile_idx)
+            }
+        }
+    }
+
     pub(super) fn dispatch_campaign(&mut self, native: NativeFn, stack: &mut NativeStack) -> i32 {
         use NativeFn::*;
 
@@ -47,28 +93,14 @@ impl NativeContext<'_, '_> {
             }
             AddPCToMissionTeam => {
                 let actor = stack.pop_i32();
-                // If the handle refers to a live entity, it
-                // must actually be a PC; non-PCs warn and skip
-                // the campaign update + mark.  In a Sherwood HUD
-                // context there's no live entity, so the
-                // `resolve_profile` fallback via raw profile
-                // index is the only signal available.
-                let entity_is_pc = self.get_entity(actor).map(|e| e.is_pc());
                 let mut added = false;
-                if entity_is_pc == Some(false) {
-                    tracing::warn!("AddPCToMissionTeam: actor {actor} is not a PC");
-                } else {
-                    let profile_idx = self.resolve_profile(actor);
-                    if let Some(campaign) = self.campaign.as_mut() {
-                        if let Some(pi) = profile_idx {
-                            if let Some(char_idx) = campaign.get_character_by_profile(pi) {
-                                campaign.add_to_mission_team(char_idx);
-                                added = true;
-                            }
-                        } else {
-                            tracing::warn!("AddPCToMissionTeam: cannot resolve actor {actor}");
-                        }
-                    }
+                let character_index =
+                    self.mission_team_character_index(actor, "AddPCToMissionTeam");
+                if let (Some(campaign), Some(character_index)) =
+                    (self.campaign.as_mut(), character_index)
+                {
+                    campaign.add_to_mission_team(character_index);
+                    added = true;
                 }
                 // Mark only on the success branch.
                 if added {
@@ -80,22 +112,12 @@ impl NativeContext<'_, '_> {
             }
             RemovePCFromMissionTeam => {
                 let actor = stack.pop_i32();
-                // Reject non-PC actors with a warning and skip
-                // the update.
-                let entity_is_pc = self.get_entity(actor).map(|e| e.is_pc());
-                if entity_is_pc == Some(false) {
-                    tracing::warn!("RemovePCFromMissionTeam: actor {actor} is not a PC");
-                } else {
-                    let profile_idx = self.resolve_profile(actor);
-                    if let Some(campaign) = self.campaign.as_mut() {
-                        if let Some(pi) = profile_idx {
-                            if let Some(char_idx) = campaign.get_character_by_profile(pi) {
-                                campaign.remove_from_mission_team(char_idx);
-                            }
-                        } else {
-                            tracing::warn!("RemovePCFromMissionTeam: cannot resolve actor {actor}");
-                        }
-                    }
+                let character_index =
+                    self.mission_team_character_index(actor, "RemovePCFromMissionTeam");
+                if let (Some(campaign), Some(character_index)) =
+                    (self.campaign.as_mut(), character_index)
+                {
+                    campaign.remove_from_mission_team(character_index);
                 }
                 0
             }

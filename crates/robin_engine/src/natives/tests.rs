@@ -2858,6 +2858,100 @@ fn native_test_pc(disabled_actions: Vec<bool>, disabled_actions_temp: Vec<bool>)
     })
 }
 
+fn mission_team_identity_pc(
+    profile_index: crate::profiles::CharacterProfileIdx,
+    campaign_description_index: Option<u32>,
+) -> Entity {
+    let mut pc = native_test_pc(Vec::new(), Vec::new());
+    let data = pc.pc_data_mut().expect("mission-team fixture must be a PC");
+    data.profile_index = profile_index;
+    data.campaign_description_index = campaign_description_index;
+    pc
+}
+
+fn call_mission_team_native(host: &mut BoundScriptEffects, native: NativeFn, actor: i32) {
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    assert_eq!(
+        HostFunctions::call(host, native as u32, &mut stack)
+            .expect_return("mission-team native is synchronous"),
+        0
+    );
+}
+
+#[test]
+fn mission_team_natives_use_exact_description_identity_for_shared_profiles() {
+    let shared_profile = crate::profiles::CharacterProfileIdx(8);
+    let mut host = BoundScriptEffects::new();
+    host.campaign.characters = vec![crate::campaign::PcDescription::default(); 33];
+    for index in [3, 11, 32] {
+        host.campaign.characters[index].character_profile_idx = Some(shared_profile);
+    }
+    host.entities = crate::entities::Entities::from_legacy_slots(vec![
+        Some(mission_team_identity_pc(shared_profile, Some(11))),
+        Some(mission_team_identity_pc(shared_profile, Some(32))),
+    ]);
+    let pc_11 = ScriptHandleCodec::actor_handle_from_index(0);
+    let pc_32 = ScriptHandleCodec::actor_handle_from_index(1);
+
+    call_mission_team_native(&mut host, NativeFn::AddPCToMissionTeam, pc_32);
+    assert_eq!(host.campaign.mission_team_indices, [32]);
+    call_mission_team_native(&mut host, NativeFn::AddPCToMissionTeam, pc_11);
+    assert_eq!(host.campaign.mission_team_indices, [32, 11]);
+    call_mission_team_native(&mut host, NativeFn::RemovePCFromMissionTeam, pc_11);
+    assert_eq!(host.campaign.mission_team_indices, [32]);
+}
+
+#[test]
+fn mission_team_natives_reject_corrupt_live_pc_description_identity() {
+    let shared_profile = crate::profiles::CharacterProfileIdx(8);
+    let other_profile = crate::profiles::CharacterProfileIdx(7);
+
+    for (name, description_index) in [
+        ("missing", None),
+        ("out of bounds", Some(99)),
+        ("profile mismatch", Some(11)),
+    ] {
+        let mut host = BoundScriptEffects::new();
+        host.campaign.characters = vec![crate::campaign::PcDescription::default(); 33];
+        host.campaign.characters[3].character_profile_idx = Some(shared_profile);
+        host.campaign.characters[11].character_profile_idx = Some(other_profile);
+        host.campaign.characters[32].character_profile_idx = Some(shared_profile);
+        host.campaign.mission_team_indices = vec![32];
+        host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(
+            mission_team_identity_pc(shared_profile, description_index),
+        )]);
+        let actor = ScriptHandleCodec::actor_handle_from_index(0);
+
+        call_mission_team_native(&mut host, NativeFn::AddPCToMissionTeam, actor);
+        assert_eq!(host.campaign.mission_team_indices, [32], "{name}: add");
+        assert!(host.engine_commands().is_empty(), "{name}: mark");
+        call_mission_team_native(&mut host, NativeFn::RemovePCFromMissionTeam, actor);
+        assert_eq!(host.campaign.mission_team_indices, [32], "{name}: remove");
+    }
+}
+
+#[test]
+fn mission_team_natives_keep_raw_profile_fallback_without_live_actor() {
+    let profile_index = crate::profiles::CharacterProfileIdx(8);
+    let mut profiles = crate::profiles::ProfileManager::new();
+    profiles
+        .characters
+        .resize_with(9, crate::profiles::CharacterProfile::default);
+
+    let mut host = BoundScriptEffects::new();
+    host.bindings.profile_manager = std::sync::Arc::new(profiles);
+    host.campaign.characters = vec![crate::campaign::PcDescription::default(); 4];
+    host.campaign.characters[3].character_profile_idx = Some(profile_index);
+
+    call_mission_team_native(
+        &mut host,
+        NativeFn::AddPCToMissionTeam,
+        i32::try_from(u32::from(profile_index)).expect("profile index fits native integer"),
+    );
+    assert_eq!(host.campaign.mission_team_indices, [3]);
+}
+
 fn persistent_property_test_host(
     with_campaign: bool,
 ) -> (
