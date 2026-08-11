@@ -1502,7 +1502,11 @@ impl EngineInner {
                     target_id.index()
                 )
             });
-            let mut input = extract_forecast_input(target).unwrap_or_else(|| {
+            let mut input = extract_forecast_input(
+                target,
+                selected_actor_is_passing_door(&self.orders.sequence_manager, target_id),
+            )
+            .unwrap_or_else(|| {
                 panic!(
                     "NPC {} requires a destination forecast for non-actor {}",
                     npc_id.index(),

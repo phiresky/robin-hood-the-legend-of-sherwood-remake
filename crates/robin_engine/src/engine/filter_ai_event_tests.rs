@@ -5493,14 +5493,14 @@ fn destination_forecast_ignores_a_stale_door_pass_without_a_live_door() {
     });
 
     assert_eq!(
-        super::ai::extract_forecast_input(&actor)
+        super::ai::extract_forecast_input(&actor, true)
             .expect("actor has forecast state")
             .door_pass,
         None,
         "Original ForecastDestinationForIA falls back when GetDoor() is NULL"
     );
     assert!(
-        !super::ai::extract_forecast_input(&actor)
+        !super::ai::extract_forecast_input(&actor, true)
             .expect("actor has forecast state")
             .passing_door_directly,
         "a stale passage mirror must not manufacture the independent direct-passage latch"
@@ -5514,11 +5514,58 @@ fn destination_forecast_ignores_a_stale_door_pass_without_a_live_door() {
         .position_iface
         .set_door_for_test(crate::position_interface::DoorHandle(7));
     assert_eq!(
-        super::ai::extract_forecast_input(&actor)
+        super::ai::extract_forecast_input(&actor, true)
             .expect("actor has forecast state")
             .door_pass,
-        Some((DoorIndex(7), true))
+        Some((DoorIndex(7), false)),
+        "the live door must use the independent serialized passage-direction latch, not the runtime mirror"
     );
+}
+
+#[test]
+fn destination_forecast_uses_legacy_saved_live_door_without_runtime_pass() {
+    use crate::element::Command;
+    use crate::entity_id::PcId;
+    use crate::gate::DoorIndex;
+    use crate::sequence::{SequenceElement, SequenceManager};
+
+    let mut actor = make_pc(true);
+    let Entity::Pc(pc) = &mut actor else {
+        unreachable!("PC fixture changed kind")
+    };
+    assert!(
+        pc.actor.active_door_pass.is_none(),
+        "legacy adoption does not reconstruct runtime door choreography"
+    );
+    pc.actor.passing_door_directly = true;
+    pc.element
+        .sprite
+        .position_iface
+        .set_door_for_test(crate::position_interface::DoorHandle(133));
+
+    let owner = EntityId::Pc(PcId(0));
+    let mut sequences = SequenceManager::new();
+    assert!(
+        !super::ai::selected_actor_is_passing_door(&sequences, owner),
+        "a live saved door outside selected PassDoor must use the current-position forecast"
+    );
+    assert_eq!(
+        super::ai::extract_forecast_input(&actor, false)
+            .expect("actor has forecast state")
+            .door_pass,
+        None
+    );
+
+    let sequence_id =
+        sequences.launch_element(SequenceElement::new(1, Command::PassDoor, Some(owner)));
+    sequences.element_in_progress(sequence_id, 0);
+    let selected_pass_door = super::ai::selected_actor_is_passing_door(&sequences, owner);
+    assert!(selected_pass_door);
+
+    let input = super::ai::extract_forecast_input(&actor, selected_pass_door)
+        .expect("actor has forecast state");
+    assert_eq!(input.door_pass, Some((DoorIndex(133), true)));
+    assert!(input.passing_door_directly);
 }
 
 #[test]
@@ -5529,7 +5576,7 @@ fn destination_forecast_retains_direct_passage_after_the_live_door_clears() {
     };
     pc.actor.passing_door_directly = true;
 
-    let input = super::ai::extract_forecast_input(&actor).expect("actor has forecast state");
+    let input = super::ai::extract_forecast_input(&actor, true).expect("actor has forecast state");
     assert_eq!(input.door_pass, None);
     assert!(
         input.passing_door_directly,

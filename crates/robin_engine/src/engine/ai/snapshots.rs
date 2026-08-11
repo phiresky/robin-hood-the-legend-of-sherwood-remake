@@ -404,6 +404,7 @@ impl EngineInner {
         super::resolve_ai_position_with(
             &self.world.entities,
             self.script_domains.interactables.doors.as_slice(),
+            &self.orders.sequence_manager,
             target_id,
             |position_id| {
                 let position_entity = self

@@ -1156,17 +1156,67 @@ fn test_hiking_path_fine(
     ok
 }
 
+/// Whether the actor's selected sequence command is PassDoor, matching
+/// `RHActor::IsPassingDoor`.
+pub(super) fn selected_actor_is_passing_door(
+    sequence_manager: &crate::sequence::SequenceManager,
+    entity_id: EntityId,
+) -> bool {
+    sequence_manager
+        .current_element_for_actor(entity_id)
+        .and_then(|(sequence_id, element_index)| {
+            sequence_manager.get_element(sequence_id, element_index)
+        })
+        .is_some_and(|element| element.command == crate::element::Command::PassDoor)
+}
+
+/// Return the gate and direction carried by the selected PassDoor movement
+/// element. `RHArtificialIntelligence::Position` reads these fields from the
+/// sequence element itself; unlike `ForecastDestinationForIA`, it does not
+/// consult the sprite position interface's live door pointer.
+fn selected_pass_door_movement(
+    sequence_manager: &crate::sequence::SequenceManager,
+    entity_id: EntityId,
+) -> Option<(crate::gate::DoorIndex, i16)> {
+    let element = sequence_manager
+        .current_element_for_actor(entity_id)
+        .and_then(|(sequence_id, element_index)| {
+            sequence_manager.get_element(sequence_id, element_index)
+        })?;
+    if element.command != crate::element::Command::PassDoor {
+        return None;
+    }
+    let crate::sequence::SequenceElementData::Movement {
+        gate_id, direction, ..
+    } = &element.data
+    else {
+        panic!("selected PassDoor for {entity_id:?} is not a movement element")
+    };
+    Some((
+        gate_id.unwrap_or_else(|| panic!("selected PassDoor for {entity_id:?} has no gate")),
+        *direction,
+    ))
+}
+
 /// Extract a [`ForecastInput`] from an entity for destination prediction.
 ///
 /// Returns `None` for entities without actor data (e.g. objects, FX).
-pub(super) fn extract_forecast_input(entity: &Entity) -> Option<crate::ai::ForecastInput> {
+pub(super) fn extract_forecast_input(
+    entity: &Entity,
+    is_passing_door: bool,
+) -> Option<crate::ai::ForecastInput> {
     let elem = entity.element_data();
     let actor = entity.actor_data()?;
-    let door_pass = actor
-        .active_door_pass
-        .as_ref()
-        .filter(|_| !entity.position_iface().get_door().is_null())
-        .map(|dp| (dp.door_index, dp.position_direct));
+    // ForecastDestinationForIA gates the serialized GetDoor() pointer on
+    // IsPassingDoor(), then uses the independent mbPassingDoorDirectly latch
+    // for the destination side. A legacy save restores the selected PassDoor
+    // element and both serialized actor fields even though Rust's runtime-only
+    // ActiveDoorPass choreography is not reconstructed.
+    let live_door = entity.position_iface().get_door();
+    let door_pass = (is_passing_door && !live_door.is_null()).then_some((
+        crate::gate::DoorIndex(live_door.0),
+        actor.passing_door_directly,
+    ));
     let forecasted_z = entity.position_iface().get_forecasted_movement().z;
     Some(crate::ai::ForecastInput {
         position_map_x: elem.position_map().x,
@@ -1584,23 +1634,23 @@ pub(super) struct AiPositionResolution {
 pub(super) fn resolve_ai_position_with(
     entities: &crate::entities::Entities,
     doors: &[crate::gate::Door],
+    sequence_manager: &crate::sequence::SequenceManager,
     target_id: crate::element::EntityId,
     mut position_of: impl FnMut(crate::element::EntityId) -> crate::ai::Position,
 ) -> AiPositionResolution {
     let target = entities
         .get(target_id)
         .unwrap_or_else(|| panic!("AI position target {target_id:?} disappeared"));
-    if let Some(pass) = target
-        .actor_data()
-        .and_then(|actor| actor.active_door_pass.as_ref())
+    if target.actor_data().is_some()
+        && let Some((gate_id, direction)) = selected_pass_door_movement(sequence_manager, target_id)
     {
-        let door = doors.get(pass.door_index.0 as usize).unwrap_or_else(|| {
+        let door = doors.get(gate_id.0 as usize).unwrap_or_else(|| {
             panic!(
                 "AI position target {target_id:?} references missing door {}",
-                pass.door_index
+                gate_id.0
             )
         });
-        let position = if pass.position_direct {
+        let position = if direction != 0 {
             crate::ai::Position {
                 x: door.point_in.x,
                 y: door.point_in.y,
@@ -1652,7 +1702,7 @@ pub(super) fn lookup_primary_target_metadata(
     }
     let target = entities.get(target_id)?;
     let elem = target.element_data();
-    let resolved = resolve_ai_position_with(entities, doors, target_id, |id| {
+    let resolved = resolve_ai_position_with(entities, doors, sequence_manager, target_id, |id| {
         let element = entities
             .get(id)
             .unwrap_or_else(|| panic!("AI metadata position owner {id:?} disappeared"))
@@ -1689,6 +1739,7 @@ pub(super) fn lookup_primary_target_metadata(
 pub(super) fn build_friend_swap_candidates(
     entities: &Entities,
     doors: &[crate::gate::Door],
+    sequence_manager: &crate::sequence::SequenceManager,
     me_id: impl Into<crate::element::EntityId>,
     my_camp: crate::element::Camp,
 ) -> Vec<crate::ai::FriendSwapCandidate> {
@@ -1727,20 +1778,26 @@ pub(super) fn build_friend_swap_candidates(
             continue;
         };
         let resolve_position = |position_owner| {
-            resolve_ai_position_with(entities, doors, position_owner, |position_id| {
-                let element = entities
-                    .get(position_id)
-                    .unwrap_or_else(|| {
-                        panic!("friend-swap position owner {position_id:?} disappeared")
-                    })
-                    .element_data();
-                crate::ai::Position {
-                    x: element.position_map().x,
-                    y: element.position_map().y,
-                    sector: element.sector(),
-                    level: element.layer(),
-                }
-            })
+            resolve_ai_position_with(
+                entities,
+                doors,
+                sequence_manager,
+                position_owner,
+                |position_id| {
+                    let element = entities
+                        .get(position_id)
+                        .unwrap_or_else(|| {
+                            panic!("friend-swap position owner {position_id:?} disappeared")
+                        })
+                        .element_data();
+                    crate::ai::Position {
+                        x: element.position_map().x,
+                        y: element.position_map().y,
+                        sector: element.sector(),
+                        level: element.layer(),
+                    }
+                },
+            )
             .effective
         };
         // Original resolves both Position(pFriend) and
@@ -1936,6 +1993,7 @@ fn build_entity_views_inner(engine: &EngineInner) -> AiEntityViewMap {
             view.position = resolve_ai_position_with(
                 &engine.world.entities,
                 doors_ref,
+                &engine.orders.sequence_manager,
                 entity_id,
                 |position_id| {
                     let position_element = engine
@@ -1972,8 +2030,10 @@ fn build_entity_views_inner(engine: &EngineInner) -> AiEntityViewMap {
         if matches!(
             entity,
             Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_)
-        ) && let Some(input) = extract_forecast_input(entity)
-        {
+        ) && let Some(input) = extract_forecast_input(
+            entity,
+            selected_actor_is_passing_door(&engine.orders.sequence_manager, entity_id),
+        ) {
             view.forecasted_destination = crate::ai::prepare_forecast_destination_for_ia(
                 &input,
                 doors_ref,
@@ -2442,7 +2502,10 @@ impl EngineInner {
             && enemy_ai.missed_pc != 0
             && let Some(missed_id) = self.entity_id_for_index(enemy_ai.missed_pc)
             && let Some(missed_entity) = self.world.entities.get(missed_id)
-            && let Some(input) = extract_forecast_input(missed_entity)
+            && let Some(input) = extract_forecast_input(
+                missed_entity,
+                selected_actor_is_passing_door(&self.orders.sequence_manager, missed_id),
+            )
         {
             let doors = self.script_domains.interactables.doors.as_slice();
             tick.missed_pc_forecast = Some(crate::ai::prepare_forecast_destination_for_ia(
@@ -2568,8 +2631,13 @@ impl EngineInner {
             // enemy_sq_distances stays empty.  Friend-swap still
             // scans the other soldiers; the helper handles the
             // empty-target case.
-            tick.friend_swap_candidates =
-                build_friend_swap_candidates(&self.world.entities, doors, npc_id, my_camp);
+            tick.friend_swap_candidates = build_friend_swap_candidates(
+                &self.world.entities,
+                doors,
+                &self.orders.sequence_manager,
+                npc_id,
+                my_camp,
+            );
             return tick;
         };
 
@@ -2617,7 +2685,10 @@ impl EngineInner {
             matches!(self.world.entities.get(target_id), Some(Entity::Pc(_)));
         if build_forecasts
             && let Some(target_entity) = self.world.entities.get(target_id)
-            && let Some(input) = extract_forecast_input(target_entity)
+            && let Some(input) = extract_forecast_input(
+                target_entity,
+                selected_actor_is_passing_door(&self.orders.sequence_manager, target_id),
+            )
         {
             let doors = self.script_domains.interactables.doors.as_slice();
             tick.primary_target_forecast = Some(crate::ai::prepare_forecast_destination_for_ia(
@@ -2759,8 +2830,13 @@ impl EngineInner {
         }
 
         // Friend-swap candidates for ReconsiderEnemyApproach.
-        tick.friend_swap_candidates =
-            build_friend_swap_candidates(&self.world.entities, doors, npc_id, my_camp);
+        tick.friend_swap_candidates = build_friend_swap_candidates(
+            &self.world.entities,
+            doors,
+            &self.orders.sequence_manager,
+            npc_id,
+            my_camp,
+        );
 
         // Stashed-exit-door snapshot for the AlertSoldiers indoor
         // branch and the merry-man flee path.  Always populated
@@ -2866,12 +2942,15 @@ impl EngineInner {
                     .map(|_| self.script_domains.interactables.doors.as_slice())
                     .unwrap_or(&[]);
                 let pos_now = s.element.position_map();
-                let door_pass = s
-                    .actor
-                    .active_door_pass
-                    .as_ref()
-                    .filter(|_| !s.element.sprite.position_iface.get_door().is_null())
-                    .map(|dp| (dp.door_index, dp.position_direct));
+                let live_door = s.element.sprite.position_iface.get_door();
+                let door_pass = (selected_actor_is_passing_door(
+                    &self.orders.sequence_manager,
+                    EntityId::Soldier(other_id),
+                ) && !live_door.is_null())
+                .then_some((
+                    crate::gate::DoorIndex(live_door.0),
+                    s.actor.passing_door_directly,
+                ));
                 let input = crate::ai::ForecastInput {
                     position_map_x: pos_now.x,
                     position_map_y: pos_now.y,
@@ -3014,20 +3093,28 @@ impl EngineInner {
         };
         let doors = self.script_domains.interactables.doors.as_slice();
         let fighter_position = |id: crate::element::EntityId| {
-            resolve_ai_position_with(&self.world.entities, doors, id, |position_id| {
-                let element = self
-                    .world
-                    .entities
-                    .get(position_id)
-                    .unwrap_or_else(|| panic!("fighter snapshot owner {position_id:?} disappeared"))
-                    .element_data();
-                Position {
-                    x: element.position_map().x,
-                    y: element.position_map().y,
-                    sector: element.sector(),
-                    level: element.layer(),
-                }
-            })
+            resolve_ai_position_with(
+                &self.world.entities,
+                doors,
+                &self.orders.sequence_manager,
+                id,
+                |position_id| {
+                    let element = self
+                        .world
+                        .entities
+                        .get(position_id)
+                        .unwrap_or_else(|| {
+                            panic!("fighter snapshot owner {position_id:?} disappeared")
+                        })
+                        .element_data();
+                    Position {
+                        x: element.position_map().x,
+                        y: element.position_map().y,
+                        sector: element.sector(),
+                        level: element.layer(),
+                    }
+                },
+            )
             .effective
         };
         let me_position = fighter_position(npc_id);

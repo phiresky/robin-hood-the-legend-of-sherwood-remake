@@ -2290,33 +2290,32 @@ fn bow_interaction_accepts_a_target_that_died_while_aiming() {
 #[test]
 fn friend_swap_candidates_resolve_both_friend_and_target_through_ai_position() {
     use crate::coordinates::MapPoint;
-    use crate::element::ActiveDoorPass;
     use crate::gate::{Door, DoorIndex};
+    use crate::order::OrderType;
     use crate::sector::SectorNumber;
-    use std::collections::VecDeque;
+    use crate::sequence::{SequenceElement, SequenceElementData};
 
     let mut engine = EngineInner::new();
     let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let friend = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
 
-    let pass = |door_index, position_direct| ActiveDoorPass {
-        door_index: DoorIndex(door_index),
-        direct: position_direct,
-        position_direct,
-        steps: VecDeque::new(),
-        triggers_fired: 0,
-        current_action: crate::order::OrderType::WalkingUpright,
-        current_reverse: false,
-        saved_action_state: None,
-    };
     let Entity::Soldier(friend_soldier) = engine.get_entity_mut(friend).unwrap() else {
         panic!("friend changed kind")
     };
     friend_soldier
         .element
         .set_position_map(MapPoint::new(11.0, 12.0));
-    friend_soldier.actor.active_door_pass = Some(pass(0, true));
+    assert!(friend_soldier.actor.active_door_pass.is_none());
+    // A null live sprite door must not suppress the selected movement gate.
+    assert!(
+        friend_soldier
+            .element
+            .sprite
+            .position_iface
+            .get_door()
+            .is_null()
+    );
     let friend_ai = friend_soldier
         .npc
         .ai_brain
@@ -2331,7 +2330,38 @@ fn friend_swap_candidates_resolve_both_friend_and_target_through_ai_position() {
     target_pc
         .element
         .set_position_map(MapPoint::new(21.0, 22.0));
-    target_pc.actor.active_door_pass = Some(pass(1, false));
+    assert!(target_pc.actor.active_door_pass.is_none());
+    // A different live sprite door must not replace the selected movement
+    // element's gate or direction for AI Position.
+    target_pc
+        .element
+        .sprite
+        .position_iface
+        .set_door(crate::position_interface::DoorHandle(2), true);
+
+    for (passing, gate, direction) in [(friend, DoorIndex(0), 1), (target, DoorIndex(1), 0)] {
+        let mut element = SequenceElement::new_movement(
+            1,
+            crate::element::Command::PassDoor,
+            Some(passing),
+            OrderType::WalkingUpright,
+        );
+        let SequenceElementData::Movement {
+            gate_id,
+            direction: movement_direction,
+            ..
+        } = &mut element.data
+        else {
+            panic!("PassDoor test element changed kind")
+        };
+        *gate_id = Some(gate);
+        *movement_direction = direction;
+        let sequence_id = engine.orders.sequence_manager.launch_element(element);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
+    }
 
     engine.script_domains.interactables.doors = vec![
         Door {
@@ -2346,11 +2376,18 @@ fn friend_swap_candidates_resolve_both_friend_and_target_through_ai_position() {
             layer_out: 4,
             ..Door::default()
         },
+        Door {
+            point_in: MapPoint::new(301.0, 302.0),
+            sector_in: SectorNumber::new(33),
+            layer_in: 5,
+            ..Door::default()
+        },
     ];
 
     let candidates = crate::engine::ai::build_friend_swap_candidates(
         &engine.world.entities,
         &engine.script_domains.interactables.doors,
+        &engine.orders.sequence_manager,
         owner,
         crate::element::Camp::Lacklandists,
     );
@@ -2375,12 +2412,76 @@ fn friend_swap_candidates_resolve_both_friend_and_target_through_ai_position() {
 }
 
 #[test]
+fn ai_position_ignores_misassociated_pass_door_for_non_actor() {
+    use crate::coordinates::MapPoint;
+    use crate::element::{ElementBonus, ElementData, ElementKind, ObjectData, ObjectType};
+    use crate::gate::{Door, DoorIndex};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceElementData};
+
+    let mut engine = EngineInner::new();
+    let object_id = engine.add_entity(Entity::Bonus(ElementBonus {
+        element: ElementData {
+            kind: ElementKind::ObjectBonus,
+            active: true,
+            ..ElementData::default()
+        },
+        object: ObjectData {
+            object_type: ObjectType::Coin,
+            ..ObjectData::default()
+        },
+    }));
+
+    let mut pass_door = SequenceElement::new_movement(
+        1,
+        crate::element::Command::PassDoor,
+        Some(object_id),
+        OrderType::WalkingUpright,
+    );
+    let SequenceElementData::Movement {
+        gate_id, direction, ..
+    } = &mut pass_door.data
+    else {
+        panic!("PassDoor test element changed kind")
+    };
+    *gate_id = Some(DoorIndex(0));
+    *direction = 1;
+    let sequence_id = engine.orders.sequence_manager.launch_element(pass_door);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence_id, 0);
+
+    let doors = [Door {
+        point_in: MapPoint::new(101.0, 102.0),
+        ..Door::default()
+    }];
+    let raw = crate::ai::Position {
+        x: 11.0,
+        y: 12.0,
+        sector: crate::position_interface::SectorHandle::new(3),
+        level: 4,
+    };
+    let resolved = crate::engine::ai::resolve_ai_position_with(
+        &engine.world.entities,
+        &doors,
+        &engine.orders.sequence_manager,
+        object_id,
+        |_| raw,
+    );
+    assert_eq!(resolved.effective.x, raw.x);
+    assert_eq!(resolved.effective.y, raw.y);
+    assert_eq!(resolved.effective.sector, raw.sector);
+    assert_eq!(resolved.effective.level, raw.level);
+}
+
+#[test]
 fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
     use crate::coordinates::{MapPoint, WorldPoint3D};
-    use crate::element::ActiveDoorPass;
     use crate::gate::{Door, DoorIndex, DoorType};
+    use crate::order::OrderType;
     use crate::sector::SectorNumber;
-    use std::collections::VecDeque;
+    use crate::sequence::{SequenceElement, SequenceElementData};
 
     let mut engine = EngineInner::new();
     let self_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
@@ -2410,16 +2511,7 @@ fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
     else {
         panic!("door-passing target changed kind")
     };
-    target.actor.active_door_pass = Some(ActiveDoorPass {
-        door_index: DoorIndex(0),
-        direct: false,
-        position_direct: false,
-        steps: VecDeque::new(),
-        triggers_fired: 0,
-        current_action: crate::order::OrderType::WalkingWithSword,
-        current_reverse: false,
-        saved_action_state: None,
-    });
+    assert!(target.actor.active_door_pass.is_none());
     let exact_target_world = WorldPoint3D::new(20.123_457, 9.876_543, 7.654_321);
     target.element.set_position_map(MapPoint::from_world_xyz(
         exact_target_world.x,
@@ -2438,6 +2530,25 @@ fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
         point_in: MapPoint::new(100.0, 5.0),
         ..Door::default()
     }];
+    let mut pass_door = SequenceElement::new_movement(
+        1,
+        crate::element::Command::PassDoor,
+        Some(target_id),
+        OrderType::WalkingWithSword,
+    );
+    let SequenceElementData::Movement {
+        gate_id, direction, ..
+    } = &mut pass_door.data
+    else {
+        panic!("PassDoor test element changed kind")
+    };
+    *gate_id = Some(DoorIndex(0));
+    *direction = 0;
+    let sequence_id = engine.orders.sequence_manager.launch_element(pass_door);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence_id, 0);
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
