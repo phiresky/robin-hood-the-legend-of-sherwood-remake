@@ -8256,6 +8256,89 @@ mod tests {
         );
     }
 
+    /// ApplyDominoEffect measures the literal world X/Y ground plane. An
+    /// elevated victim can therefore be inside the 15-unit world radius even
+    /// when projecting elevation into map Y would put it outside the radius.
+    #[test]
+    fn elevated_domino_uses_world_ground_xy_not_projected_map_y() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let hitter = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 110.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let flyer = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 10.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 90.0,
+                z: 18.0,
+            },
+            None,
+        ));
+
+        // The generic actor fixture finishes by authoring a map point, which
+        // intentionally flattens actors without a level plane. Restore the
+        // literal 3D positions needed by this elevated-flight boundary.
+        engine
+            .get_entity_mut(flyer)
+            .unwrap()
+            .element_data_mut()
+            .set_position(WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 10.0,
+            });
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .element_data_mut()
+            .set_position(WorldPoint3D {
+                x: 0.0,
+                y: 90.0,
+                z: 18.0,
+            });
+
+        give_flight(&mut engine, flyer, hitter, 0.0, -1.0, 5);
+        let flight = engine
+            .get_entity_mut(flyer)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_flight
+            .as_mut()
+            .expect("test flight remains active");
+        flight.geometry = crate::element::FlightGeometry::World3d;
+        flight.increment_z = 1.0;
+
+        engine.tick_push_flights(sim, &LevelAssets::default());
+
+        let flyer_element = engine.get_entity(flyer).unwrap().element_data();
+        let victim_element = engine.get_entity(victim).unwrap().element_data();
+        let world_y_delta = victim_element.position().y - flyer_element.position().y;
+        let map_y_delta = victim_element.position_map().y - flyer_element.position_map().y;
+        assert_eq!(world_y_delta, -9.0);
+        assert_eq!(map_y_delta, -16.0);
+
+        assert_eq!(
+            count_domino_hits_for(&engine, victim, hitter),
+            1,
+            "world ground delta is 9 units after the flight step; projected map Y would incorrectly measure 16"
+        );
+    }
+
     /// Actors behind the flight vector (negative dot product) are
     /// outside the punch arc and must not take damage.
     #[test]

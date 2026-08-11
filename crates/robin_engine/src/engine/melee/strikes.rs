@@ -1703,17 +1703,17 @@ impl EngineInner {
             // Capture the domino-sweep request *before* clearing the
             // flight on the final frame.  An exact zero increment
             // skips frames where the sprite isn't actually moving.
-            let increment_map_y = match flight.geometry {
-                crate::element::FlightGeometry::GroundPlane => flight.increment_y,
-                crate::element::FlightGeometry::World3d => flight.increment_y - flight.increment_z,
-            };
-            let is_moving = flight.increment_x != 0.0 || increment_map_y != 0.0;
+            // ApplyDominoEffect reads GetIncrement().x/y: the literal world
+            // flight vector, not the projected map-space delta (whose Y also
+            // contains elevation). Flat flights make the two spaces coincide,
+            // while elevated flights do not.
+            let is_moving = flight.increment_x != 0.0 || flight.increment_y != 0.0;
             if is_moving && let Some(hitter) = flight.antagonist {
                 domino_sweeps.push((
                     entity_id.into(),
                     hitter,
                     flight.increment_x,
-                    increment_map_y,
+                    flight.increment_y,
                 ));
             }
 
@@ -1959,10 +1959,11 @@ impl EngineInner {
         inc_y: f32,
     ) {
         // Read flyer position + sector.
-        let (flyer_pos, flyer_sector) = match self.get_entity(flyer_id) {
+        let (flyer_pos_ground, flyer_sector) = match self.get_entity(flyer_id) {
             Some(e) => {
                 let elem = e.element_data();
-                (elem.position_map(), elem.sector())
+                let position = elem.position();
+                ((position.x, position.y), elem.sector())
             }
             None => return,
         };
@@ -2020,9 +2021,11 @@ impl EngineInner {
                 continue;
             }
 
-            // me-to-guy = guy.position_ground - flyer.position_ground.
-            let dx = elem.position_map().x - flyer_pos.x;
-            let dy = elem.position_map().y - flyer_pos.y;
+            // GetPositionGround is literal world Position X/Y. It is not the
+            // projected PositionMap (whose Y is world Y minus elevation).
+            let candidate_position = elem.position();
+            let dx = candidate_position.x - flyer_pos_ground.0;
+            let dy = candidate_position.y - flyer_pos_ground.1;
 
             // Chebyshev pre-filter (max(|dx|,|dy|) < DOMINO_DISTANCE).
             if dx.abs() >= DOMINO_DISTANCE || dy.abs() >= DOMINO_DISTANCE {
