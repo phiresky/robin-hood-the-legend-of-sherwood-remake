@@ -1689,9 +1689,10 @@ impl EnemyAi {
         );
         self.base.panic_center_x = center.x;
         self.base.panic_center_y = center.y;
-        self.base.lasting_panic_runs = runs;
         self.base.directed_panic = true;
-        self.set_state(AiState::Fleeing, Substate::FleeingPanic);
+        if !was_already_fleeing {
+            self.set_state(AiState::Fleeing, Substate::FleeingPanic);
+        }
         self.base.outbox.actor.begin_panic = Some(crate::ai::PanicRequest {
             center: Some(center),
             runs,
@@ -5298,6 +5299,42 @@ mod tests {
         assert_eq!(ai.base.current_state, AiState::Default);
         assert!(!ai.tower_guard);
         assert!(!ai.combat_trainer);
+    }
+
+    #[test]
+    fn repeated_directed_panic_preserves_existing_red_alert_until_engine_boundary() {
+        let mut ai = EnemyAi::new(53);
+        ai.base.current_state = AiState::Fleeing;
+        ai.base.current_substate = Substate::FleeingPanic;
+        ai.set_alert_status(crate::ai::AlertLevel::Red);
+
+        let center = test_position(667.0, 824.0);
+        let incoming_runs = crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8;
+        let existing_runs = incoming_runs.saturating_add(3);
+        ai.base.lasting_panic_runs = existing_runs;
+        ai.panic_from_position(center, incoming_runs);
+
+        assert_eq!(ai.base.current_state, AiState::Fleeing);
+        assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
+        assert_eq!(ai.base.lasting_panic_runs, existing_runs);
+        assert_eq!(ai.base.view_alert_status, crate::ai::AlertLevel::Red);
+        assert_eq!(
+            ai.base.current_music_alert_status,
+            crate::ai::AlertLevel::Red
+        );
+        assert!(
+            ai.base.outbox.reentrant.owner_work.is_empty(),
+            "Original skips SetState when Panic begins from FleeingPanic"
+        );
+        let request = ai
+            .base
+            .outbox
+            .actor
+            .begin_panic
+            .expect("repeated panic still reaches the engine door/search boundary");
+        assert_eq!(request.center, Some(center));
+        assert_eq!(request.runs, incoming_runs);
+        assert!(!request.is_new_panic);
     }
 
     #[test]

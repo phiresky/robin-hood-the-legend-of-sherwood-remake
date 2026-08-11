@@ -1,0 +1,9 @@
+{
+  "id": "341",
+  "subject": "Preserve repeated-panic state until Original's no-door boundary",
+  "description": "parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_065/replay-015-session-0001.jsonl.zst first diverged after frame 1370 because Soldier53 retained Red alert status in Original but Rust lowered it to Yellow. Original `RHArtificialIntelligence::Panic` first computes `bNewPanic` from the existing FleeingPanic/FleeingRunToDoor substate and the directed-center front test (`original-code/RHartificialintelligence.cpp:2960-2971,3051-3055`). In the no-door continuation, only the new-panic arm calls `SetState`, sets alert status, assigns `ubRuns + 1`, and fires `EVENT_REACHPOINT` (`original-code/RHartificialintelligence.cpp:3057-3074`); a repeated no-door panic instead performs only the upgrade-by-maximum run-count update (`original-code/RHartificialintelligence.cpp:3075-3078`). Rust's directed-panic producer had eagerly called `set_state` and overwritten `lasting_panic_runs` before the engine-owned door/search boundary could make that decision, resetting Soldier53's alert prematurely. It now records the center and queues the request without changing state or run count when the actor is already in either panic substate; the engine boundary retains its source-matching new-panic and repeated-panic arms. The focused `repeated_directed_panic_preserves_existing_red_alert_until_engine_boundary`, `new_no_door_panic_boundary_sets_red_and_runs_plus_one`, and `repeated_no_door_panic_boundary_preserves_red_and_larger_run_count` regressions pass, and the optimized parity-profile runner builds successfully. The representative clears frame 1370 and matches exact EOF through final frame 1528: all 1500 recorded frames match, with no downstream boundary.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task341-repeated-panic-boundary"
+}

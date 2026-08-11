@@ -102,6 +102,109 @@ mod directed_panic_front_tests {
     }
 }
 
+#[cfg(test)]
+mod panic_boundary_tests {
+    use super::*;
+    use crate::element::{
+        ActorData, ActorSoldier, AiBrain, ElementData, ElementKind, HumanData, NpcData, Posture,
+        SoldierData,
+    };
+
+    fn enemy_soldier() -> Entity {
+        Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData {
+                ai_brain: AiBrain::Enemy(Box::default()),
+                ..NpcData::default()
+            },
+            soldier: SoldierData::default(),
+        })
+    }
+
+    #[test]
+    fn new_no_door_panic_boundary_sets_red_and_runs_plus_one() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let npc_id = engine.add_entity(enemy_soldier());
+        let mut assets = LevelAssets::default();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .soldiers
+            .push(crate::profiles::SoldierProfile::default());
+        let runs = crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8;
+        let request = crate::ai::PanicRequest {
+            center: None,
+            runs,
+            alert: crate::ai::AlertLevel::Red,
+            is_new_panic: true,
+        };
+
+        engine.begin_panic_no_door_branch(
+            &sim,
+            &assets,
+            npc_id,
+            &request,
+            &AiContext::default(),
+            false,
+        );
+
+        let ai = engine.get_entity(npc_id).unwrap().ai_controller().unwrap();
+        assert_eq!(ai.current_state, crate::ai::AiState::Fleeing);
+        assert_eq!(ai.current_substate, crate::ai::Substate::FleeingPanic);
+        assert_eq!(ai.view_alert_status, crate::ai::AlertLevel::Red);
+        assert_eq!(ai.current_music_alert_status, crate::ai::AlertLevel::Red);
+        assert_eq!(ai.lasting_panic_runs, runs.saturating_add(1));
+    }
+
+    #[test]
+    fn repeated_no_door_panic_boundary_preserves_red_and_larger_run_count() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let npc_id = engine.add_entity(enemy_soldier());
+        {
+            let ai = engine
+                .get_entity_mut(npc_id)
+                .unwrap()
+                .ai_controller_mut()
+                .unwrap();
+            ai.current_state = crate::ai::AiState::Fleeing;
+            ai.current_substate = crate::ai::Substate::FleeingPanic;
+            ai.set_alert_status(crate::ai::AlertLevel::Red);
+            ai.lasting_panic_runs = 11;
+        }
+        let request = crate::ai::PanicRequest {
+            center: None,
+            runs: 8,
+            alert: crate::ai::AlertLevel::Red,
+            is_new_panic: false,
+        };
+
+        engine.begin_panic_no_door_branch(
+            &sim,
+            &LevelAssets::default(),
+            npc_id,
+            &request,
+            &AiContext::default(),
+            false,
+        );
+
+        let ai = engine.get_entity(npc_id).unwrap().ai_controller().unwrap();
+        assert_eq!(ai.current_state, crate::ai::AiState::Fleeing);
+        assert_eq!(ai.current_substate, crate::ai::Substate::FleeingPanic);
+        assert_eq!(ai.view_alert_status, crate::ai::AlertLevel::Red);
+        assert_eq!(ai.current_music_alert_status, crate::ai::AlertLevel::Red);
+        assert_eq!(ai.lasting_panic_runs, 11);
+        assert!(ai.outbox.reentrant.owner_work.is_empty());
+        assert!(ai.outbox.reentrant.self_stimuli.is_empty());
+    }
+}
+
 fn append_detectable(
     list: &mut Vec<Detectable>,
     entity_id: EntityId,
