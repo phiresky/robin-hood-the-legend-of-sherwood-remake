@@ -2974,6 +2974,90 @@ mod tests {
     }
 
     #[test]
+    fn postponed_non_entry_strike_translates_after_antagonist_dies() {
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_soldier(WorldPoint3D::default(), None));
+        let target = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 20.0,
+                ..WorldPoint3D::default()
+            },
+            None,
+        ));
+        match engine.get_entity_mut(target).unwrap() {
+            Entity::Pc(pc) => pc.pc.life_points = 0,
+            _ => unreachable!("test target must remain a PC"),
+        }
+
+        for (command, strike, expected_order) in [
+            (
+                Command::SwordstrikeThrustB,
+                SwordStrike::B,
+                OrderType::StrikingStraightStrongSword,
+            ),
+            (
+                Command::SwordstrikeThrustC,
+                SwordStrike::C,
+                OrderType::ExecutingSword,
+            ),
+        ] {
+            let element = crate::sequence::SequenceElement::new_interaction(
+                1,
+                command,
+                Some(attacker),
+                Some(target),
+            );
+            let sequence = engine.launch_element(element);
+            engine.dispatch_sword_strike(
+                &crate::sim_rng::test_context(),
+                &LevelAssets::default(),
+                attacker,
+                target,
+                strike,
+                sequence,
+                0,
+            );
+
+            let element = engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap();
+            assert_eq!(element.state, crate::sequence::SequenceState::InProgress);
+            let order = element.current_order().unwrap();
+            assert_eq!(order.order_type, expected_order);
+            assert_eq!(order.antagonist, Some(target));
+        }
+
+        let thrust_a = crate::sequence::SequenceElement::new_interaction(
+            1,
+            Command::SwordstrikeThrustA,
+            Some(attacker),
+            Some(target),
+        );
+        let sequence = engine.launch_element(thrust_a);
+        engine.dispatch_sword_strike(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::default(),
+            attacker,
+            target,
+            SwordStrike::A,
+            sequence,
+            0,
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .state,
+            crate::sequence::SequenceState::Impossible,
+            "Thrust A must retain CanEnterSwordfightWith's dead-target admission check"
+        );
+    }
+
+    #[test]
     fn thrust_a_accepts_an_existing_opponent_during_ordinary_door_transit() {
         let mut engine = make_engine();
         let attacker = engine.add_entity(make_pc(
