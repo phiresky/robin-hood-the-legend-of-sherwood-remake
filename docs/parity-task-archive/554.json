@@ -1,0 +1,9 @@
+{
+  "id": "554",
+  "subject": "Decode the exceptional serialized field order of legacy noise positions",
+  "description": "Original `RHStimulus::Serialize` gives INFO_NOISE a unique v22+ compatibility payload: after the obsolete raw `RHposition` and first repaired sector pointer, it writes the authoritative origin as X, Y, `uwLevel`, then the sector pointer (`original-code/RHartificialintelligence.cpp:231-243`). The other position-bearing stimulus variants retain X, Y, sector, level (`original-code/RHartificialintelligence.cpp:250-293`). Rust had decoded every variant through the latter generic order, turning the representative noise origin's authored sector 27/layer 0 into sector 0/layer 27. Authored H05_Lin_EC projection obstacle 67 in sector 27 contains map target `(2002.599976,793)` at elevation about 220; sector 0 has no containing projection, explaining the former four-soldier direction-goal split after frame 27777. Commit `2a7845609` adds a Noise-only decoder and a byte-level regression that decodes a Noise and adjacent Hint sequentially, pinning both exceptional and generic layouts; the focused regression passes 1/1. Authoritative optimized runner `/home/phire/robinhood/target/parity/examples/original_parity_replay`, built from HEAD `cbd976a44` plus frozen diff `51db180c82d4`, SHA-256 `dd55dcb5c492daa93566385694b3673a8b5d35bd10fd1c429df9b59ba9d28575`, size 65,914,978 bytes, mtime `2026-08-11 19:02:04 +0200`, clears linux3 Profile_001 Savegame_018 replay-001's former frame-27777 Soldiers130-133 direction-goal family and advances 879 frames to a distinct frame-28656 PC183 bow-lifecycle mismatch (Original LowerBow/animation 91, Rust Wait/animation 92). Same-save replays 007 and 014 match every recorded frame through exact EOF. The committed scope is exactly `crates/robin_engine/src/legacy_save/payload_ai.rs`.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task554-legacy-noise-position-order"
+}
