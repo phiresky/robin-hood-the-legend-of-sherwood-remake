@@ -6657,12 +6657,12 @@ mod tests {
             };
             attacker_ai.hth_weapon_id = 1;
         }
-        engine
-            .get_entity_mut(victim)
-            .unwrap()
-            .pc_data_mut()
-            .unwrap()
-            .life_points = 1;
+        {
+            let victim_entity = engine.get_entity_mut(victim).unwrap();
+            victim_entity.pc_data_mut().unwrap().life_points = 1;
+            victim_entity.actor_data_mut().unwrap().action_state =
+                crate::element::ActionState::WaitingSword;
+        }
 
         let queue_damage = |engine: &mut EngineInner, attacker| {
             let mut damage =
@@ -6701,25 +6701,15 @@ mod tests {
             ],
             "both simultaneous sword hits must execute their exact damage RNG sites"
         );
-        assert_ne!(
+        assert_eq!(
             engine
                 .orders
                 .sequence_manager
                 .get_element(second_damage, 0)
                 .unwrap()
                 .state,
-            crate::sequence::SequenceState::Interrupted,
-            "the lethal first hit must not purge the already-queued second hit"
-        );
-        assert_ne!(
-            engine
-                .orders
-                .sequence_manager
-                .get_element(second_damage, 0)
-                .unwrap()
-                .state,
-            crate::sequence::SequenceState::Todo,
-            "the preserved second hit must actually leave the FIFO and execute"
+            crate::sequence::SequenceState::InProgress,
+            "the already-dead second hit must translate into its own live dying order"
         );
         assert_eq!(
             engine
@@ -6748,6 +6738,18 @@ mod tests {
                 .unwrap()
                 .state,
             crate::sequence::SequenceState::Todo
+        );
+        assert_eq!(engine.actor_command(victim), Command::ReceiveSwordDamage);
+        assert_eq!(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .installed_order
+                .map(|order| order.order_type),
+            Some(crate::order::OrderType::DyingSword),
+            "the second damage card replaces the first while retaining Original's dying-sword lifecycle"
         );
     }
 

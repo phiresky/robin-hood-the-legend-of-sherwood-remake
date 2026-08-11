@@ -896,6 +896,35 @@ impl EngineInner {
             None
         };
 
+        // `SetLifePoints` refuses to run `Kill` twice, but
+        // `TranslateSwordDamage` still runs after that early return.  Until
+        // the first dying order actually starts, the corpse therefore keeps
+        // its standing posture/action and a queued same-frame cutting hit
+        // books a fresh dying order of its own.  That second element becomes
+        // Actor::mpSequenceElement/mpOrder after it interrupts the first one.
+        // Keep this separate from `handle_post_damage`: that helper correctly
+        // suppresses the repeated Kill cascade for an already-dead victim.
+        if life_points_before <= 0
+            && victim_died
+            && !pushed
+            && !result.is_empty()
+            && !result.contains(combat::SwordDamageResult::NO_DAMAGE_PARRIED)
+        {
+            let repeated_dying_anim = self.get_entity(victim_id).and_then(|victim| {
+                let posture = victim.element_data().posture;
+                let action = victim
+                    .actor_data()
+                    .map(|actor| actor.action_state)
+                    .unwrap_or_default();
+                select_combat_animations(posture, action)
+                    .map(|animations| dying_anim_override.unwrap_or(animations.dying_forward))
+            });
+            if let Some(anim) = repeated_dying_anim {
+                self.queue_damage_anim(victim_id, damage_element, anim);
+                self.try_queue_roll(assets, victim_id, damage_element);
+            }
+        }
+
         // Handle state transitions after damage — skip for push strikes,
         // since apply_push_effect already handled death/KO transitions.
         if !pushed {
