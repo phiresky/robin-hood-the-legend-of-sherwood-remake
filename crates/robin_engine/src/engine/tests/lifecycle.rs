@@ -6030,6 +6030,41 @@ fn lethal_swordfight_cleanup_only_unlinks_the_survivor() {
 }
 
 #[test]
+fn evaluate_opponents_maps_legacy_climb_like_original_release() {
+    use crate::element::Command;
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceElementData, SequenceState};
+
+    let sim = crate::sim_rng::test_context();
+    let assets = assets_with_test_pc_profile();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(crate::element::Posture::OnWall));
+    let mut legacy_movement =
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::ClimbingWallUp);
+    legacy_movement.state = SequenceState::InProgress;
+    let movement = engine
+        .orders
+        .sequence_manager
+        .launch_element(legacy_movement);
+
+    engine.evaluate_opponents(&sim, &assets, owner);
+
+    let movement = engine
+        .orders
+        .sequence_manager
+        .get_element(movement, 0)
+        .expect("legacy movement must remain registered for postponement");
+    let SequenceElementData::Movement { action, .. } = &movement.data else {
+        panic!("legacy movement changed data kind")
+    };
+    assert_eq!(
+        *action,
+        OrderType::RunningUpright,
+        "Original's release ternary maps every non-walking-sword action to running upright"
+    );
+}
+
+#[test]
 fn explicit_quit_dispatch_unlinks_but_defers_state_change_to_lowering_start() {
     use crate::element::Command;
     use crate::order::OrderType;

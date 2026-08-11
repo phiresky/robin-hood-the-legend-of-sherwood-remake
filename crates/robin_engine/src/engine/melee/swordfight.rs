@@ -406,9 +406,11 @@ impl EngineInner {
     }
 
     /// Change a movement which will survive a swordfight exit back to its
-    /// ordinary upright form. `EvaluateOpponents` requires its selected
-    /// movement to be a sword movement; an explicit quit can postpone any
-    /// movement, so its cross-sequence successor uses the non-strict form.
+    /// ordinary upright form. Original asserts in debug builds that
+    /// `EvaluateOpponents` sees a sword movement, but its shipped release
+    /// expression maps `WalkingWithSword` to `WalkingUpright` and every other
+    /// action to `RunningUpright`. An explicit quit can postpone any movement,
+    /// so its cross-sequence successor uses the non-strict form.
     pub(super) fn rewrite_sword_movement_for_fight_exit(
         &mut self,
         sequence_id: crate::sequence::SequenceId,
@@ -433,10 +435,11 @@ impl EngineInner {
             OrderType::WalkingWithSword => OrderType::WalkingUpright,
             OrderType::RunningWithSword => OrderType::RunningUpright,
             other if !strict => other,
-            other => panic!(
-                "evaluate_opponents: current movement for {owner:?} has \
-                 unexpected action {other:?}"
-            ),
+            // TODO: Legacy saves can resume a non-sword movement while the
+            // actor still owns an opponent. Preserve the shipped release
+            // behavior here even though Original's debug assertion rejects
+            // that state.
+            _ => OrderType::RunningUpright,
         };
     }
 
