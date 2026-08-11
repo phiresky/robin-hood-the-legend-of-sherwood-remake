@@ -1,0 +1,9 @@
+{
+  "id": "456",
+  "subject": "Restore Pay first-Execute and completion boundaries",
+  "description": "Commits `bfd9a81141690548c4936ced8c69a865d91ec52d` and `d0f4c93ab95f2303e32074318e28cedc9917b17f` restore Original's complete `PAYING` lifecycle as one parity family. Translation now only installs the Paying order. On the first Execute, Rust revalidates the selected Pay element, samples the antagonist's live direction, sets the PC's direction goal to the opposite facing, and emits `HERO_GIVE_MONEY` exactly once; a failed first validation aborts before either facing or speech. After `PerformAction` genuinely reports DONE, Rust revalidates again so ransom, range, or target changes during the animation abort before any completion effect. A valid completion launches `ACTIVATE_MONEY` or `RECEIVE_PURSE` first and only then deducts `BEGGAR_SALARY`, preserving Original statement order (`original-code/RHelementactorpc.cpp:5830-5900`). The three-frame lifecycle regression separates first Execute from DONE and covers invalid initialization, one-time live facing/speech, invalid settled completion with an Impossible element and no response or deduction, and valid response launch with exactly one deduction. All three focused `pay_` tests pass, as do formatting and diff checks. A fresh optimized runner containing both commits matches the schema-14 representative `parity-random-save-replays-60s-15x-schema14/traces/Savegame_linux3/Profile_003/Restart/replay-004-session-0001.jsonl.zst` through exact EOF: all 1,500 recorded frames and 5,072 RNG draws match.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task456-pay-execute-boundaries"
+}
