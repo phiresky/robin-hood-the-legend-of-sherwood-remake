@@ -1069,18 +1069,22 @@ impl EngineInner {
                 ) {
                     return;
                 }
-                let at_action_point = entity.element_data().sprite.last_processed_order_id
-                    == active_order_id.get()
-                    && entity.element_data().sprite.current_frame
-                        == entity.element_data().sprite.action_done_frame
-                    && entity.element_data().sprite.frame_count
-                        == entity.element_data().sprite.action_done_counter;
-                let retained_circle_off_action_point = self
+                let sprite = &entity.element_data().sprite;
+                // ExecuteTrueCircleSwordStrikeAction branches on
+                // RHSprite::IsActionDone, not equality with the one-shot
+                // RHMOTION_DONE frame/counter.  Once this exact order has
+                // reached that point, later counters on the same frame still
+                // present the retained terminal angle before PerformAction.
+                let active_action_done = sprite.last_processed_order_id == active_order_id.get()
+                    && (sprite.current_frame > sprite.action_done_frame
+                        || (sprite.current_frame == sprite.action_done_frame
+                            && sprite.frame_count >= sprite.action_done_counter));
+                let retained_circle_before_action_point = self
                     .get_entity(attacker_id)
                     .and_then(|entity| entity.actor_data())
                     .and_then(|actor| actor.sweep_state.as_ref())
-                    .is_some_and(|_| is_circle_sweep(active_kind) && !at_action_point);
-                if retained_circle_off_action_point {
+                    .is_some_and(|_| is_circle_sweep(active_kind) && !active_action_done);
+                if retained_circle_before_action_point {
                     // ExecuteCircleSwordStrike always runs the effect with
                     // the current Execute call's strike, even before that
                     // animation reaches its action point.  The action-point

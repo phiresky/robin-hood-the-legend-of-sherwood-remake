@@ -4982,6 +4982,73 @@ mod tests {
     }
 
     #[test]
+    fn terminal_true_circle_direction_is_presented_after_done_counter() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let assets = assets_with_nonstraight_profile(
+            SwordStrike::G,
+            crate::profiles::WeaponThrustKind::TrueHalfCircle,
+        );
+        install_test_melee_order(&mut engine, attacker, victim, SwordStrike::G, true);
+
+        let terminal_angle = sector_to_angle(13);
+        {
+            let entity = engine.get_entity_mut(attacker).unwrap();
+            entity.element_data_mut().set_direction_instantly(15);
+            let sprite = &mut entity.element_data_mut().sprite;
+            assert_eq!(sprite.current_frame, sprite.action_done_frame);
+            assert_eq!(sprite.frame_count, sprite.action_done_counter);
+            sprite.frame_count += 1;
+            entity.actor_data_mut().unwrap().sweep_state = Some(crate::movement::SweepState {
+                pending_victims: Vec::new(),
+                initial_angle: terminal_angle + std::f32::consts::PI,
+                current_angle: terminal_angle,
+                final_angle: terminal_angle,
+                rotation_per_frame: -std::f32::consts::FRAC_PI_2,
+                direction: crate::profiles::WeaponThrustDirection::RightToLeft,
+                strike: SwordStrike::G,
+                attacker_profile_idx: Some(1),
+                strike_kind: crate::profiles::WeaponThrustKind::TrueHalfCircle,
+            });
+        }
+
+        engine.tick_selected_sweep_phase(
+            sim,
+            &assets,
+            attacker,
+            strikes::SweepTickPhase::InProgress,
+        );
+
+        let attacker_entity = engine.get_entity(attacker).unwrap();
+        assert_eq!(
+            attacker_entity.element_data().direction(),
+            13,
+            "Original presents the terminal true-circle angle on every Execute call after IsActionDone"
+        );
+        assert!(
+            attacker_entity.actor_data().unwrap().sweep_state.is_none(),
+            "the terminal presentation call clears an exhausted sweep mirror"
+        );
+    }
+
+    #[test]
     fn saved_human_sweep_is_rehydrated_for_the_live_strike_order() {
         let mut engine = make_engine();
         let attacker = engine.add_entity(make_pc(
