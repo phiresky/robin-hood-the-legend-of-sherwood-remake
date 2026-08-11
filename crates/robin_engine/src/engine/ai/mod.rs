@@ -1530,6 +1530,7 @@ pub(super) fn build_ai_context_from_entity(
         difficulty,
         original_creation_order,
         position: self_position,
+        self_body_position_world: elem.position(),
         frame,
         direction: elem.direction() as u16,
         posture: elem.posture,
@@ -11217,9 +11218,10 @@ impl EngineInner {
         // Dispatching a completion also re-enters Think, whose entry gate
         // clears all three latches before the nested handler runs, so a single
         // boundary surfaces at most one event even when several were set.
-        let reconsider_tail_pending = ai.outbox.reentrant.reconsider_approach_completion_pending;
+        let typed_tail_pending = ai.outbox.reentrant.reconsider_approach_completion_pending
+            || ai.outbox.reentrant.look_for_help_completion_pending;
         let retain_couldnt_reachpoint =
-            ai.completion_latch_inside_think && ai.couldnt_reachpoint && reconsider_tail_pending;
+            ai.completion_latch_inside_think && ai.couldnt_reachpoint && typed_tail_pending;
         let event = if !ai.completion_latch_inside_think {
             None
         } else if retain_couldnt_reachpoint {

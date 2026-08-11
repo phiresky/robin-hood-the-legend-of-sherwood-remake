@@ -6,42 +6,6 @@ use crate::campaign::{Campaign, CampaignValue};
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::{MissionLocation, MissionProfile};
 
-#[inline]
-fn battle_look_for_help_success_remark(
-    sim: &crate::sim_rng::SimulationContext,
-) -> crate::ai::Remark {
-    if crate::sim_rng::bool(sim, crate::sim_rng::RngSite::BattlePanicRemark) {
-        crate::ai::Remark::Cassos
-    } else {
-        crate::ai::Remark::Panic
-    }
-}
-
-#[cfg(test)]
-mod battle_look_for_help_rng_order_tests {
-    use super::battle_look_for_help_success_remark;
-    use crate::sim_rng::{RngSite, with_draw_trace};
-
-    #[test]
-    fn courage_precedes_building_exit_wait_and_success_remark() {
-        let sim = crate::sim_rng::test_context();
-        let (_, sites) = with_draw_trace(|| {
-            let _ = crate::sim_rng::u16(&sim, RngSite::BattleCourage, 0..100);
-            let _ = crate::engine::movement::building_exit_wait_frames(&sim);
-            let _ = battle_look_for_help_success_remark(&sim);
-        });
-        assert_eq!(
-            sites,
-            vec![
-                RngSite::BattleCourage,
-                RngSite::RuntimeBuildingExitWait,
-                RngSite::RuntimeBuildingExitWait,
-                RngSite::BattlePanicRemark,
-            ]
-        );
-    }
-}
-
 #[cfg(test)]
 std::thread_local! {
     static ACTIVE_DRIVER_SNAPSHOT_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -3379,24 +3343,54 @@ impl EngineInner {
                     ai.outbox.reentrant.cross_npc_actions = prefix_cross_npc_actions;
                     continue;
                 }
-                crate::ai::AiOwnerWork::BattleLookForHelpSuccessRemark => {
+                crate::ai::AiOwnerWork::ResumeBattleLookForHelpAfterAlertOfficer => {
                     // Original resumes DECISION_LOOK_4_HELP only after
-                    // AlertOfficer's synchronous GoNear has returned. The
-                    // ActorEffects item immediately before this continuation
-                    // constructs that route (and consumes any random
-                    // building-exit wait) before this final remark draw.
-                    let remark = battle_look_for_help_success_remark(sim);
-                    self.world
+                    // AlertOfficer's synchronous GoNear has returned. Build
+                    // the typed owner context before borrowing the AI again;
+                    // the continuation consumes route failure itself or emits
+                    // the successful remark in the original statement order.
+                    let frame = self.control.frame_counter;
+                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                    let tick =
+                        self.build_npc_tick_data_without_forecasts(sim, owner, &scratch, assets);
+                    let in_uninterruptible_command = self.is_very_very_busy(owner);
+                    let mut ctx = {
+                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                            panic!("look-for-help owner {} disappeared", owner.index())
+                        });
+                        let building_sector =
+                            self.entity_building_sector(entity.element_data().sector());
+                        let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                            entity,
+                            frame,
+                            building_sector,
+                            self.world.weather.is_forest_level,
+                            self.world.weather.ambiance,
+                            self.ai.standard_view_polygon_radius,
+                            &scratch.ai_entity_views,
+                            &scratch.ai_sight_obstacles,
+                            &self.world.fast_grid,
+                            &assets.hiking_paths,
+                            &self.ai.global.all_soldier_handles,
+                            self.control.sim_config.difficulty,
+                        );
+                        ctx.in_uninterruptible_command = in_uninterruptible_command;
+                        ctx
+                    };
+                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
+                    let ai_global = &mut self.ai.global;
+                    let enemy = self
+                        .world
                         .entities
                         .get_mut(owner)
-                        .and_then(Entity::ai_controller_mut)
+                        .and_then(Entity::enemy_ai_mut)
                         .unwrap_or_else(|| {
-                            panic!(
-                                "look-for-help owner {} vanished before success remark",
-                                owner.index()
-                            )
-                        })
-                        .say(remark);
+                            panic!("look-for-help owner {} lost Enemy AI", owner.index())
+                        });
+                    enemy.base.outbox.reentrant.look_for_help_completion_pending = false;
+                    enemy.resume_battle_look_for_help_after_alert_officer(
+                        sim, ai_global, &ctx, &tick,
+                    );
                     continue;
                 }
                 crate::ai::AiOwnerWork::NearbyCiviliansPanic => {

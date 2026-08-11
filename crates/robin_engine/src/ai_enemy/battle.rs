@@ -1304,9 +1304,10 @@ impl EnemyAi {
     /// `cover_shield_bearer` is the handle of the shield bearer chosen during the
     /// decision phase for `CoverBehindShieldBearer`; 0 for all other decisions.
     ///
-    /// Returns `false` only when the Observe arm's avenger-on-roof
-    /// fallback fires, which skips the caller's decision log line;
-    /// every other path returns `true`.
+    /// Returns `false` when the caller must not register the current decision:
+    /// the Observe arm's avenger-on-roof fallback skips it, while deferred
+    /// LookForHelp registers exactly one final decision after AlertOfficer's
+    /// route result is known. Every other path returns `true`.
     fn execute_battle_decision(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1631,11 +1632,15 @@ impl EnemyAi {
                                 &mut self.base.outbox.actor,
                             )),
                         );
+                        self.base.outbox.reentrant.look_for_help_completion_pending = true;
                         self.base
                             .outbox
                             .reentrant
                             .owner_work
-                            .push(crate::ai::AiOwnerWork::BattleLookForHelpSuccessRemark);
+                            .push(crate::ai::AiOwnerWork::ResumeBattleLookForHelpAfterAlertOfficer);
+                        // The continuation owns the single final battle log:
+                        // LookForHelp after success, Cassos after route failure.
+                        return false;
                     }
                 }
 
@@ -2151,6 +2156,57 @@ impl EnemyAi {
             break; // Decision executed successfully
         }
         true
+    }
+
+    /// Resume the statement immediately following `AlertOfficer`'s
+    /// synchronous `GoNear` in `DECISION_LOOK_4_HELP`.
+    ///
+    /// Rust constructs cross-sector routes after releasing the AI borrow, so
+    /// this tail must run at the owner boundary. In Original, a failed route
+    /// is consumed by `AlertOfficer` itself and changes the decision to
+    /// `CASSOS`; it is not delivered as `EVENT_COULDNT_REACHPOINT`.
+    pub(crate) fn resume_battle_look_for_help_after_alert_officer(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        if !self.base.couldnt_reachpoint {
+            if crate::sim_rng::bool(sim, crate::sim_rng::RngSite::BattlePanicRemark) {
+                self.base.say(Remark::Cassos);
+            } else {
+                self.base.say(Remark::Panic);
+            }
+            self.base
+                .register_log_line(LogLineType::BattleDecision, Decision::LookForHelp as u16);
+            return;
+        }
+
+        // AlertOfficer clears the latch before returning false. The enclosing
+        // decision loop then executes the ordinary CASSOS arm.
+        self.base.couldnt_reachpoint = false;
+        if !self.is_merry_man_forest(ctx) || !self.merry_man_forest_cassos(ctx, global) {
+            if crate::sim_rng::bool(sim, crate::sim_rng::RngSite::BattlePanicRemark) {
+                self.base.say(Remark::Cassos);
+            } else {
+                self.base.say(Remark::Panic);
+            }
+            let target = self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
+            self.base.primary_target = target;
+            let threat = self
+                .find_fighter(target, tick)
+                .map(|fighter| fighter.position)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "failed LookForHelp owner {} selected required Cassos target {} absent from the live fighter view",
+                        self.base.me, target
+                    )
+                });
+            self.panic_from_position(threat, parameters_ai::AI_STANDARD_PANIC_RUNS as u8);
+        }
+        self.base
+            .register_log_line(LogLineType::BattleDecision, Decision::Cassos as u16);
     }
 
     // -----------------------------------------------------------------------
@@ -3245,6 +3301,75 @@ mod tests {
             None,
             crate::order::OrderType::NonanimationEnd,
         )
+    }
+
+    #[test]
+    fn failed_look_for_help_route_is_consumed_before_event_fallback() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(105);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingRunningToOfficer;
+        ai.base.couldnt_reachpoint = true;
+        ai.base.primary_target = 252;
+        ai.list_them = vec![252];
+
+        let threat = Position {
+            x: 1050.0,
+            y: 1780.0,
+            ..Position::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry = vec![FighterSnapshot {
+            handle: 252,
+            position: threat,
+            is_pc: true,
+            is_able_to_fight: true,
+            ..FighterSnapshot::default()
+        }];
+        let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+        let mut target_view = pc_view();
+        target_view.position = threat;
+        views.insert(252, target_view);
+        let ctx = AiContext {
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            ..AiContext::default()
+        };
+        let mut global = AiGlobalState::default();
+
+        let (_, draws) = crate::sim_rng::with_draw_trace(|| {
+            ai.resume_battle_look_for_help_after_alert_officer(&sim, &mut global, &ctx, &tick);
+        });
+
+        assert_eq!(draws, vec![crate::sim_rng::RngSite::BattlePanicRemark]);
+        assert!(!ai.base.couldnt_reachpoint);
+        assert_eq!(ai.base.current_state, AiState::Fleeing);
+        assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
+        assert!(ai.my_seek_points.is_empty());
+        let log = ai.base.ai_log.last().expect("Cassos decision log");
+        assert_eq!(log.line_type, LogLineType::BattleDecision);
+        assert_eq!(log.info, Decision::Cassos as u16);
+    }
+
+    #[test]
+    fn successful_look_for_help_continuation_draws_remark_and_logs_once() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(105);
+        let mut global = AiGlobalState::default();
+
+        let (_, draws) = crate::sim_rng::with_draw_trace(|| {
+            ai.resume_battle_look_for_help_after_alert_officer(
+                &sim,
+                &mut global,
+                &AiContext::default(),
+                &AiPerTickData::stub(),
+            );
+        });
+
+        assert_eq!(draws, vec![crate::sim_rng::RngSite::BattlePanicRemark]);
+        assert_eq!(ai.base.ai_log.len(), 1);
+        let log = ai.base.ai_log.last().expect("LookForHelp decision log");
+        assert_eq!(log.line_type, LogLineType::BattleDecision);
+        assert_eq!(log.info, Decision::LookForHelp as u16);
     }
 
     #[test]

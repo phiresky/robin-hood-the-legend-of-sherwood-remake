@@ -656,7 +656,7 @@ mod tests {
         ("ArrowFallingFrame", 1),
         ("ArrowPiercingProtection", 1),
         ("BattleCourage", 1),
-        ("BattlePanicRemark", 3),
+        ("BattlePanicRemark", 4),
         ("BattleProvoke", 1),
         ("BoredAnimationChoice", 1),
         ("BowAccuracy", 4),

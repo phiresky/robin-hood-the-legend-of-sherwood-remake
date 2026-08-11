@@ -1,0 +1,9 @@
+{
+  "id": "559",
+  "subject": "Match the shipped swordfight-exit fallback",
+  "description": "External parity Lane 25 screened 45 linux Profile_005/Profile_011 schema-14 traces: 36 exact EOF, three state failures, and six panics. Profile_005 Continue replay-013 failed entering frame 731 because loaded PC126 retained an opponent while its current movement was ClimbingWallUp. Original's debug build asserts sword motion, but the shipped release expression maps WalkingWithSword to WalkingUpright and every other action to RunningUpright before quitting swordfight. Commit bdde376ab matches that release fallback. The evaluate_opponents_maps_legacy_climb_like_original_release regression passes, and the representative plus both Profile_011 controls now match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task343-legacy-sword-exit"
+}

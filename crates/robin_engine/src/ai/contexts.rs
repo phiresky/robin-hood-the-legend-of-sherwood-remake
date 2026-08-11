@@ -69,6 +69,10 @@ pub struct AiContext {
     /// `ForbidRemark(..., THIS_GUY)` identity checks.
     pub original_creation_order: Option<u32>,
     pub position: Position,
+    /// Live `RHElement::GetPosition()` body point for the evaluating actor.
+    /// Unlike [`Self::position`], this never snaps a door-passing actor to a
+    /// gate endpoint. Direct element-distance tests must use this point.
+    pub self_body_position_world: crate::coordinates::WorldPoint3D,
     pub frame: u32,
     pub direction: u16,
     pub posture: crate::element::Posture,

@@ -493,14 +493,52 @@ impl GridLine {
 
     /// Test if this line's segment intersects a bounding box.
     pub fn intersects_bbox(&self, bbox: &MapBBox) -> bool {
-        if let (Some(line_rect), Some(box_rect)) = (self.bbox.0, bbox.0) {
-            use geo::Intersects;
-            if !line_rect.intersects(&box_rect) {
-                return false;
-            }
-            box_rect.intersects(&self.segment())
+        let Some(rect) = bbox.0 else {
+            return false;
+        };
+
+        // SBGeoBoundingBox2D::IsIntersecting(SBGeoSegment2D) first performs
+        // this strict endpoint rejection, then tests the corresponding
+        // infinite line against all four corners. `geo::Rect::intersects`
+        // uses a different robust predicate and can reject a segment that
+        // passes within a few millionths of a box corner. That difference
+        // is gameplay-visible: RHCOMMAND_MOVE extracts an actor whenever its
+        // move box intersects a motion line.
+        let a = self.a;
+        let b = self.b;
+        if (a.x < rect.min().x && b.x < rect.min().x)
+            || (a.x > rect.max().x && b.x > rect.max().x)
+            || (a.y < rect.min().y && b.y < rect.min().y)
+            || (a.y > rect.max().y && b.y > rect.max().y)
+        {
+            return false;
+        }
+        let inside = |point: MapPoint| {
+            point.x >= rect.min().x
+                && point.x <= rect.max().x
+                && point.y >= rect.min().y
+                && point.y <= rect.max().y
+        };
+        if inside(a) || inside(b) {
+            return true;
+        }
+
+        let vx = b.x - a.x;
+        let vy = b.y - a.y;
+        let det = |x: f32, y: f32| vx * (y - a.y) - vy * (x - a.x);
+        let first = det(rect.min().x, rect.min().y);
+        if first == 0.0 {
+            return true;
+        }
+        let other = [
+            det(rect.max().x, rect.min().y),
+            det(rect.max().x, rect.max().y),
+            det(rect.min().x, rect.max().y),
+        ];
+        if first > 0.0 {
+            other.into_iter().any(|value| value <= 0.0)
         } else {
-            false
+            other.into_iter().any(|value| value >= 0.0)
         }
     }
 }
@@ -3871,6 +3909,28 @@ mod tests {
         let bbox_miss = MapBBox::from_coords(0.0, 0.0, 256.0, 50.0);
         let lines_miss = grid.get_active_motion_line_indices(0, &bbox_miss);
         assert!(lines_miss.is_empty(), "should not find lines above");
+    }
+
+    #[test]
+    fn motion_line_intersects_move_box_at_near_corner_like_original() {
+        // Schema-14 Linux parity, Savegame_022 replay-005 frame 804. The
+        // segment misses the bottom-right corner by only a few millionths.
+        // SBGeoBoundingBox2D's f32 corner determinants report an intersection;
+        // geo::Rect::intersects previously did not, suppressing the
+        // RHCOMMAND_MOVE extraction performed immediately afterward.
+        let line = GridLine::new(
+            MapPoint::new(1138.0, 785.0),
+            MapPoint::new(1300.0, 823.0),
+            true,
+        );
+        let bbox = MapBBox::from_coords(
+            f32::from_bits(1_151_378_057),
+            f32::from_bits(1_145_934_887),
+            f32::from_bits(1_151_476_361),
+            f32::from_bits(1_146_065_959),
+        );
+
+        assert!(line.intersects_bbox(&bbox));
     }
 
     #[test]

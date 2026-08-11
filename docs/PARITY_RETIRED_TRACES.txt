@@ -75,3 +75,14 @@ parity-save-replays-schema12/traces/Savegame_linux3/Profile_001/Savegame_038-ses
 Savegame_SuN1Sh1nE/Profile_004/Savegame_017/replay-013-session-0001.jsonl.zst
 # Task 497: schema-12 sword-strike record omits resolved click/gesture seek distance.
 Savegame_nicouzouf/Profile_001/Savegame_045/replay-014-session-0001.jsonl.zst
+# Task 348: schema-12 captures ended without a clean rng_suffix terminator.
+parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_019-session-0001.jsonl.zst
+parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_021-session-0001.jsonl.zst
+parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_023-session-0001.jsonl.zst
+parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_025-session-0001.jsonl.zst
+parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_027-session-0001.jsonl.zst
+parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_029-session-0001.jsonl.zst
+parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_034-session-0001.jsonl.zst
+parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_038-session-0001.jsonl.zst
+parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_040-session-0001.jsonl.zst
+parity-save-replays-schema12/traces/Savegame_nicouzouf/Profile_001/Savegame_042-session-0001.jsonl.zst

@@ -1,0 +1,9 @@
+{
+  "id": "560",
+  "subject": "Use Original distance when civilians alert soldiers",
+  "description": "External parity Lane 26 screened all 360 linux2 Profile_002 schema-14 traces: 284 exact EOF, 60 state divergences, and 16 timeout or capture-panic outcomes. Savegame_002 replay-009 first differs after frame 711 when Civilian65 selects path goal (1785,1686), tolerance 70 instead of Original (1371,2249), tolerance 0. Original AlertSoldier ranks candidates from both actors' raw 3-D GetPosition values, stretches world Y, takes MaxNorm, then truncates; Rust used projected and potentially gate-snapped planning geometry. Commit d070997ca adds canonical AiContext::self_body_position_world and exact stretched 3-D ranking. Gate-snap/nonzero-Z regressions pass, and replay-009 plus replay-008 match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task344-alert-soldier-distance"
+}
