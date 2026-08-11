@@ -1,0 +1,9 @@
+{
+  "id": "355",
+  "subject": "Preserve orphan sword movement Stop callback ordering",
+  "description": "Original `RHElementActorHuman::Execute` handles a non-forced sword movement with no opponents by calling the selected movement element's virtual `Stop(RHPRIORITY_INJURY)` before registering `QuitSwordfight`, notifying a soldier with `EVENT_QUIT_SWORDFIGHT`, and returning `RHMOTION_ABORTED`; Actor Hourglass marks the captured movement Impossible only after that return. Within the virtual stop, `RHSequenceElementMovement::Stop` calls `StopMovement` first, whose terminal `SetState` synchronously sends the selected movement's condolence card, and only afterward calls base `RHSequenceElement::Stop` to traverse linked successor and postponed elements. Rust now preserves both callback boundaries: the movement card is delivered before the linked Face/Turn is stopped, the Turn condolence closes before Quit is registered, unrelated pending owner work is preserved, and Quit cannot inherit the stopped Turn's cross link. The NPC regression asserts movement-card-before-Turn ordering, Turn Interrupted, cleared cross links, preserved unrelated work, final direction 10, and Turn completion before `EVENT_QUIT_SWORDFIGHT`; all 15 focused orphaned-sword-movement tests pass. Commit `2a6a0449dde878bf499bcf7c4971ec54ce7c1c5d` contains the completed fix. `parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_039/replay-001-session-0001.jsonl.zst` clears Soldier81's historical post-frame-117 direction-goal mismatch and advances to an independent frame-199 RNG overdraw.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task355-orphan-sword-stop-order"
+}

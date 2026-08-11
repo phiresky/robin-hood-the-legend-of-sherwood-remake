@@ -1,0 +1,9 @@
+{
+  "id": "343",
+  "subject": "Preserve Original AI Position boundaries and UWORD phalanx target ties",
+  "description": "Schema-14 linux3 Profile_003 Restart replay-004 first diverged after frame 973 when shield-phalanx Soldiers81 and82 rebuilt their shared Them list. The broader audit corrected three independently source-owned AI inputs: AI-facing PC scans now use Original's AddElement registry rather than portrait-priority order; RHArtificialIntelligence::Position is resolved through one door-first, carried-PC-aware helper at the evaluating owner's boundary; and BattleDecisions' nearer-friend arm compares the selected primary target's exact literal WorldPoint3D SquareDistance with friend and target AI Position values, rather than using the first PC and mixing a squared distance with a linear target score. The remaining frame-973 split was in PhalanxReinitializeThemList: Original narrows each aspect-scaled MaxNorm candidate distance to UWORD before its strict comparison. Both recorded candidates truncate to 191, so Original preserves PC171 first; Rust's raw-f32 comparison had selected PC174 and swapped it to the head. Rust now performs the source-authored narrowing and stable tie break. The representative clears frame 973 and advances independently to frame 1150, where only PC173 direction_goal differs (Original 1, Rust 14). linux3 Profile_003 Savegame_046 replay-003 and the task-36 schema-14 controls Cyrdach Profile_156 Savegame_001 replay-009 and Nescafe Profile_001 Savegame_001 replay-009 match exact EOF. Five focused registry, selected-target units, door-boundary, carried-PC exact-world, and phalanx-tie regressions pass using the current test binary; the current optimized parity runner supplied the replay evidence.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "downstream_314_f1343"
+}

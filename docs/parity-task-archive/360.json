@@ -1,0 +1,9 @@
+{
+  "id": "360",
+  "subject": "Honor sword-fight aspect ratio in step-back geometry",
+  "description": "RHArtificialMalignity::ConsiderToBeginParade passes SWORDFIGHT_ASPECT_RATIO (1.0) to ProposeGoodStepBackGoal, whose Original implementation uses that argument for Norm, GetSector0to15, and SetSector0to15. Rust accepted the same parameter but its retreat norm, vector-to-sector, and sector-to-vector helpers always used the ordinary isometric ASPECT_RATIO. In `parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-004-session-0001.jsonl.zst` this classified Soldier54 as already far enough away and authored its current position as the goal; Original authored (722.9815, 2160.7336), moved toward it, and remained in AttackingSwordfightStepBack. The helpers now honor their supplied aspect ratio while retaining the existing exact sector classifier. The trace clears Soldier54's frame-584 and frame-585 movement/animation/command/AI frontier, and the Tasks345+360 validation runner first diverged independently after frame 585 on Soldier110: direction Original 8/Rust 14, direction_goal Original 8/Rust 14, and sprite_row Original 712/Rust 830. All four step-back-focused tests pass, the optimized parity build is stable, and the current diff check is clean.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task360-step-back-aspect"
+}

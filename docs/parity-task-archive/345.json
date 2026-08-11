@@ -1,0 +1,9 @@
+{
+  "id": "345",
+  "subject": "Close reactive step-back Halt and replacement movement synchronously",
+  "description": "Original RHArtificialMalignity::ConsiderToBeginParade executes StopAll, SetState, and GoTo on one synchronous call stack; RHElementActorNPC::Halt brackets Stop(RHPRIORITY_PREFERENCE). Rust deferred parts of the Halt/condolence boundary, so the replacement step-back movement was not live when the callback returned. The direct owner drain now temporarily detaches condolence cards that predated the call for other owners, closes the selected owner's work plus newly causal cross-owner cards, and restores the foreign backlog in FIFO order. A dedicated owner Halt boundary drains queued owner work, applies Halt, and closes its causal condolations before the replacement GoTo. The reactive step-back path retains a complete live pre-Halt AI context, preserves sword and rider semantics, and synchronously launches the replacement movement before returning. The foreign-A/owner-root/foreign-B Halt regression and the rider/non-rider reactive movement regression pass, as does the optimized parity build. `parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-004-session-0001.jsonl.zst` clears Soldier54's frame-584 Freezing/Wait/Swordfight frontier; after the separately archived Task360 retreat-geometry correction, the Tasks345+360 validation runner first diverged independently after frame 585 on Soldier110: direction Original 8/Rust 14, direction_goal Original 8/Rust 14, and sprite_row Original 712/Rust 830.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task345-reactive-step-back-boundary"
+}
