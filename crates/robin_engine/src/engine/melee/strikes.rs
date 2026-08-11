@@ -1002,7 +1002,7 @@ impl EngineInner {
         }
     }
 
-    fn tick_selected_sweep_phase(
+    pub(super) fn tick_selected_sweep_phase(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -1069,22 +1069,26 @@ impl EngineInner {
                 ) {
                     return;
                 }
-                let action_done = entity.element_data().sprite.last_processed_order_id
+                let at_action_point = entity.element_data().sprite.last_processed_order_id
                     == active_order_id.get()
                     && entity.element_data().sprite.current_frame
                         == entity.element_data().sprite.action_done_frame
                     && entity.element_data().sprite.frame_count
                         == entity.element_data().sprite.action_done_counter;
-                let inherited_circle_before_action_point = self
+                let retained_circle_off_action_point = self
                     .get_entity(attacker_id)
                     .and_then(|entity| entity.actor_data())
                     .and_then(|actor| actor.sweep_state.as_ref())
-                    .is_some_and(|sweep| {
-                        active_strike != sweep.strike
-                            && is_circle_sweep(active_kind)
-                            && !action_done
-                    });
-                if inherited_circle_before_action_point {
+                    .is_some_and(|_| is_circle_sweep(active_kind) && !at_action_point);
+                if retained_circle_off_action_point {
+                    // ExecuteCircleSwordStrike always runs the effect with
+                    // the current Execute call's strike, even before that
+                    // animation reaches its action point.  The action-point
+                    // gate only protects the tail angle advance.  Preserve
+                    // the retained victim/angle geometry, but rebind the
+                    // payload and direction to the replacement strike.
+                    self.rebind_retained_sweep_to_active_strike(assets, attacker_id);
+                    self.tick_sweep_for_mode(sim, assets, attacker_id, false, true);
                     return;
                 }
                 self.rebind_retained_sweep_to_active_strike(assets, attacker_id);
@@ -1307,6 +1311,17 @@ impl EngineInner {
         attacker_id: EntityId,
         initialized_this_hourglass: bool,
     ) {
+        self.tick_sweep_for_mode(sim, assets, attacker_id, initialized_this_hourglass, false);
+    }
+
+    fn tick_sweep_for_mode(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        attacker_id: EntityId,
+        initialized_this_hourglass: bool,
+        effect_only_before_action_point: bool,
+    ) {
         if self
             .get_entity(attacker_id)
             .and_then(Entity::actor_data)
@@ -1361,18 +1376,22 @@ impl EngineInner {
                 }
                 continue;
             }
-            if matches!(active.sweep.strike_kind, WeaponThrustKind::Lateral) {
+            if !effect_only_before_action_point
+                && matches!(active.sweep.strike_kind, WeaponThrustKind::Lateral)
+            {
                 advance_lateral_angle(&mut active.sweep);
             }
 
             // Rotate the attacker's sprite direction to follow the
             // circle using the angle that existed on entry. Only the TRUE
             // variants rotate; FALSE variants do not.
-            if matches!(
-                active.sweep.strike_kind,
-                crate::profiles::WeaponThrustKind::TrueCircle
-                    | crate::profiles::WeaponThrustKind::TrueHalfCircle
-            ) {
+            if !effect_only_before_action_point
+                && matches!(
+                    active.sweep.strike_kind,
+                    crate::profiles::WeaponThrustKind::TrueCircle
+                        | crate::profiles::WeaponThrustKind::TrueHalfCircle
+                )
+            {
                 let new_dir = angle_to_sector(active.sweep.current_angle);
                 if let Some(entity) = self.world.entities.get_mut(active.attacker_id) {
                     let elem = entity.element_data_mut();
@@ -1464,7 +1483,7 @@ impl EngineInner {
                 active.sweep.pending_victims.remove(i);
             }
 
-            if circle {
+            if circle && !effect_only_before_action_point {
                 advance_circle_angle(&mut active.sweep);
             }
         }
