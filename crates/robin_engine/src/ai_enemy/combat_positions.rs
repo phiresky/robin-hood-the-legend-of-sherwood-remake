@@ -820,12 +820,13 @@ impl EnemyAi {
     // Phalanx / shield-bearer formation helpers
     // -----------------------------------------------------------------------
 
-    /// GetNearestFreeShieldBearer. Scans friendly soldiers in the
-    /// snapshot for the nearest shield bearer already in (or heading
-    /// into) a shield-bearer substate. If the caller is a shield bearer
-    /// any protecting shield bearer will do; if the caller is an archer
-    /// we only accept shield bearers that don't yet have an archer
-    /// behind them.
+    /// GetNearestFreeShieldBearer. Scans the complete friendly-soldier
+    /// registry for the nearest shield bearer already in (or heading into)
+    /// a shield-bearer substate. Original does not apply IsAbleToFight here:
+    /// an inactive or script-locked bearer remains a valid formation anchor.
+    /// If the caller is a shield bearer any protecting shield bearer will do;
+    /// if the caller is an archer we only accept shield bearers that don't yet
+    /// have an archer behind them.
     pub(super) fn get_nearest_free_shield_bearer(
         &self,
         ctx: &AiContext,
@@ -843,7 +844,7 @@ impl EnemyAi {
         let mut best: HumanHandle = 0;
         let mut best_distance = min_distance;
 
-        for f in &tick.nearby_fighters {
+        for f in &tick.fighter_registry {
             if f.handle == self.base.me || !f.is_friendly || !f.is_shield_bearer {
                 continue;
             }
@@ -3553,6 +3554,50 @@ mod tests {
         assert!(
             max_norm(pos_diff(&archer_position, &cover)) < archer::COVER_POINT_TOLERANCE as f32
         );
+    }
+
+    #[test]
+    fn nearest_shield_bearer_includes_inactive_running_to_phalanx_soldier() {
+        // nicouzouf Profile_001 Savegame_045 replay-014 frame 1054. Soldier
+        // 62 is inactive/script-locked while running to its phalanx slot, but
+        // Original's global soldier scan still chooses it over Soldier 60.
+        let ai = EnemyAi::new(66);
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 66,
+            is_friendly: true,
+            is_archer_unit: true,
+            ..FighterSnapshot::default()
+        });
+        let active_bearer = FighterSnapshot {
+            handle: 60,
+            position: position(669.8923, 746.43475),
+            is_friendly: true,
+            is_able_to_fight: true,
+            is_shield_bearer: true,
+            current_substate: Substate::AttackingPhalanx as u32,
+            ..FighterSnapshot::default()
+        };
+        let inactive_bearer = FighterSnapshot {
+            handle: 62,
+            position: position(484.0, 701.0),
+            is_friendly: true,
+            is_able_to_fight: false,
+            is_shield_bearer: true,
+            current_substate: Substate::AttackingRunningToPhalanx as u32,
+            ..FighterSnapshot::default()
+        };
+        tick.fighter_registry.push(active_bearer.clone());
+        tick.fighter_registry.push(inactive_bearer);
+        // The radius-limited/able-only list omits Soldier 62, which is why it
+        // cannot be the backing collection for this Original global scan.
+        tick.nearby_fighters.push(active_bearer);
+        let ctx = AiContext {
+            position: position(549.00867, 517.99506),
+            ..AiContext::default()
+        };
+
+        assert_eq!(ai.get_nearest_free_shield_bearer(&ctx, &tick), Some(62));
     }
 
     #[test]
