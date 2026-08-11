@@ -8,6 +8,35 @@ use crate::element::{ActionState, Command, Entity, EntityId};
 use crate::profiles::WeaponThrustKind;
 use crate::weapons::SwordStrike;
 
+fn opponent_sword_strike_time_limit(
+    animation: Option<crate::order::OrderType>,
+    frames_from_now: impl FnOnce() -> i16,
+) -> i16 {
+    use crate::order::OrderType as OT;
+
+    if !matches!(
+        animation,
+        Some(
+            OT::StrikingStraightSword
+                | OT::StrikingStraightStrongSword
+                | OT::ExecutingSword
+                | OT::StrikingRightSword
+                | OT::StrikingLeftSword
+                | OT::StrikingRoundRightSword
+                | OT::StrikingRoundLeftSword
+                | OT::StrikingSemiroundRightSword
+                | OT::StrikingSemiroundLeftSword
+        )
+    ) {
+        return 1000;
+    }
+
+    match frames_from_now() {
+        -1 => 1000,
+        frames => frames,
+    }
+}
+
 fn required_hth_weapon_profile<'a>(
     entity: &Entity,
     entity_id: EntityId,
@@ -1028,27 +1057,10 @@ impl EngineInner {
                 )
             });
             let sprite = &target.element_data().sprite;
-            use crate::order::OrderType as OT;
-            let in_active_strike = matches!(
+            Some(opponent_sword_strike_time_limit(
                 self.live_actor_animation(target_id),
-                Some(
-                    OT::StrikingStraightSword
-                        | OT::StrikingStraightStrongSword
-                        | OT::StrikingRightSword
-                        | OT::StrikingLeftSword
-                        | OT::StrikingRoundRightSword
-                        | OT::StrikingRoundLeftSword
-                        | OT::StrikingSemiroundRightSword
-                        | OT::StrikingSemiroundLeftSword
-                        | OT::StrikingDownSword
-                )
-            );
-            if !in_active_strike {
-                Some(1000i16)
-            } else {
-                let ftad = sprite.frames_from_now_till_action_done();
-                Some(if ftad == -1 { 1000 } else { ftad })
-            }
+                || sprite.frames_from_now_till_action_done(),
+            ))
         };
 
         // Build the nearby-victim list (same shape as the soldier path).
@@ -1572,27 +1584,10 @@ impl EngineInner {
                     )
                 });
                 let sprite = &opponent.element_data().sprite;
-                use crate::order::OrderType as OT;
-                let in_active_strike = matches!(
+                Some(opponent_sword_strike_time_limit(
                     self.live_actor_animation(target_id_for_nearby),
-                    Some(
-                        OT::StrikingStraightSword
-                            | OT::StrikingStraightStrongSword
-                            | OT::StrikingRightSword
-                            | OT::StrikingLeftSword
-                            | OT::StrikingRoundRightSword
-                            | OT::StrikingRoundLeftSword
-                            | OT::StrikingSemiroundRightSword
-                            | OT::StrikingSemiroundLeftSword
-                            | OT::StrikingDownSword
-                    )
-                );
-                if !in_active_strike {
-                    Some(1000i16)
-                } else {
-                    let frames = sprite.frames_from_now_till_action_done();
-                    Some(if frames == -1 { 1000 } else { frames })
-                }
+                    || sprite.frames_from_now_till_action_done(),
+                ))
             };
 
             // Build nearby victims so circle/push/round strike scoring can
@@ -1954,26 +1949,10 @@ impl EngineInner {
             let e = self.get_entity(principal_opponent)?;
             e.actor_data()?;
             let sprite = &e.element_data().sprite;
-            use crate::order::OrderType as OT;
-            let in_active_strike = matches!(
+            Some(opponent_sword_strike_time_limit(
                 self.live_actor_animation(principal_opponent),
-                Some(
-                    OT::StrikingStraightSword
-                        | OT::StrikingStraightStrongSword
-                        | OT::StrikingRightSword
-                        | OT::StrikingLeftSword
-                        | OT::StrikingRoundRightSword
-                        | OT::StrikingRoundLeftSword
-                        | OT::StrikingSemiroundRightSword
-                        | OT::StrikingSemiroundLeftSword
-                        | OT::StrikingDownSword
-                )
-            );
-            if !in_active_strike {
-                return Some(1000i16);
-            }
-            let ftad = sprite.frames_from_now_till_action_done();
-            Some(if ftad == -1 { 1000 } else { ftad })
+                || sprite.frames_from_now_till_action_done(),
+            ))
         });
 
         // Compute per-strike startup frames from the victim's sprite.
@@ -2431,5 +2410,78 @@ impl EngineInner {
                 ai.known_enemy_strike_3 = None;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::opponent_sword_strike_time_limit;
+    use crate::combat::{self, NearbyVictim, ProposedCombatAction, StrikeSelectionContext};
+    use crate::element::Camp;
+    use crate::profiles::{HtHWeaponProfile, ThrustProfile, WeaponThrustKind};
+    use crate::weapons::SwordStrike;
+
+    fn reactive_pc_proposal(opponent_animation: crate::order::OrderType) -> ProposedCombatAction {
+        let mut profile = HtHWeaponProfile::default();
+        profile.thrusts[SwordStrike::A as usize] = ThrustProfile {
+            kind: WeaponThrustKind::Straight,
+            cutting: 10,
+            maximal_distance: 100,
+            ..Default::default()
+        };
+        let deadline = opponent_sword_strike_time_limit(Some(opponent_animation), || 5);
+        let ctx = StrikeSelectionContext {
+            attacker_profile: &profile,
+            fighting_ability: 100,
+            blood_alcohol: 0,
+            is_rank_soldier: false,
+            attacker_direction: 0,
+            attacker_elevation: 0.0,
+            attacker_camp: Camp::Royalists,
+            is_swordfighting: true,
+            opponent_time_limit: Some(deadline),
+            strike_startup_frames: Some([10; crate::weapons::NUM_NORMAL_SWORD_STRIKES]),
+            parry_startup_frames: Some(1),
+            is_npc: false,
+        };
+        let victim = NearbyVictim {
+            eligible_for_regular_strikes: true,
+            dx: 0.0,
+            dy_stretched: -20.0,
+            distance: 20.0,
+            direction_sector: 0,
+            camp: Camp::Lacklandists,
+            facing_direction: 8,
+            elevation: 0.0,
+            life_points: 100,
+            defender_profile: None,
+            is_primary_target: true,
+            is_walking_with_sword: false,
+        };
+
+        combat::propose_good_sword_strike(
+            &crate::sim_rng::test_context(),
+            &ctx,
+            &[victim],
+            &mut vec![0; crate::weapons::NUM_NORMAL_SWORD_STRIKES],
+            true,
+        )
+        .expect("high-skill reactive PC should choose a strike or parry")
+    }
+
+    #[test]
+    fn executing_sword_deadline_forces_reactive_pc_to_parry() {
+        assert_eq!(
+            reactive_pc_proposal(crate::order::OrderType::ExecutingSword),
+            ProposedCombatAction::Parry
+        );
+    }
+
+    #[test]
+    fn striking_down_sword_keeps_reactive_pc_counterstrike_unlimited() {
+        assert_eq!(
+            reactive_pc_proposal(crate::order::OrderType::StrikingDownSword),
+            ProposedCombatAction::Strike(SwordStrike::A)
+        );
     }
 }
