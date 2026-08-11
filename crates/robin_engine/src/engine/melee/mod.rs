@@ -5059,6 +5059,170 @@ mod tests {
     }
 
     #[test]
+    fn replacement_half_circle_start_rebases_retained_angles_before_effect() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let retained_victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: -10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let replacement_target = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let mut assets = assets_with_nonstraight_profile(
+            SwordStrike::G,
+            crate::profiles::WeaponThrustKind::TrueHalfCircle,
+        );
+        std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].thrusts
+            [SwordStrike::G as usize]
+            .direction = crate::profiles::WeaponThrustDirection::RightToLeft;
+        let selected = install_test_melee_order(
+            &mut engine,
+            attacker,
+            replacement_target,
+            SwordStrike::G,
+            false,
+        );
+        // Actor::Instruct publishes the selected G order to mpOrder before
+        // Execute reaches its START warning boundary. The low-level fixture
+        // installs the sequence order directly, so mirror that publication.
+        engine.publish_selected_order_as_installed(attacker);
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .element_data_mut()
+            .set_direction_instantly(0);
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .sweep_state = Some(crate::movement::SweepState {
+            pending_victims: vec![retained_victim],
+            // Stale left-to-right H geometry already spans the victim's
+            // sector. Without the START warning-query rebase, G's first
+            // IN_PROGRESS effect would queue a second sword hit.
+            initial_angle: 0.0,
+            current_angle: std::f32::consts::PI,
+            final_angle: std::f32::consts::TAU,
+            rotation_per_frame: std::f32::consts::FRAC_PI_2,
+            direction: crate::profiles::WeaponThrustDirection::LeftToRight,
+            strike: SwordStrike::H,
+            attacker_profile_idx: Some(1),
+            strike_kind: crate::profiles::WeaponThrustKind::TrueCircle,
+        });
+        {
+            // The shared order fixture advances to the action point for most
+            // sweep tests. Rewind only its sprite identity so the established
+            // selected-owner dispatcher observes G's real START boundary.
+            let sprite = &mut engine
+                .get_entity_mut(attacker)
+                .unwrap()
+                .element_data_mut()
+                .sprite;
+            sprite.last_processed_order_id = u32::MAX;
+            sprite.last_action = crate::order::OrderType::WaitingSword;
+            sprite.current_frame = 0;
+            sprite.frame_count = 0;
+        }
+
+        // Human::Execute calls WarnForStrike on MotionState::Start. Its
+        // half-circle victim query mutates the shared angles even though the
+        // retained victim FIFO belongs to the interrupted H strike.
+        engine.tick_selected_melee_owner(&sim, &assets, attacker, selected);
+        assert_eq!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .element_data()
+                .sprite
+                .last_motion_state,
+            Some(crate::sprite::MotionState::Start),
+            "the first selected-owner tick must exercise G's START warning boundary"
+        );
+        assert_eq!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .element_data()
+                .direction(),
+            0,
+            "replacement G must turn right while the stale H victim remains on the left"
+        );
+
+        let sweep = engine
+            .get_entity(attacker)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .sweep_state
+            .as_ref()
+            .expect("replacement G keeps the interrupted victim FIFO");
+        assert_eq!(sweep.pending_victims, vec![retained_victim]);
+        assert_eq!(sweep.strike, SwordStrike::G);
+        assert_eq!(
+            sweep.direction,
+            crate::profiles::WeaponThrustDirection::RightToLeft
+        );
+        let replacement_direction_angle = sector_to_angle(0);
+        assert!((sweep.initial_angle - replacement_direction_angle).abs() < f32::EPSILON);
+        assert!((sweep.current_angle - replacement_direction_angle).abs() < f32::EPSILON);
+        assert!(
+            (sweep.final_angle - (replacement_direction_angle - std::f32::consts::PI)).abs()
+                < f32::EPSILON
+        );
+
+        engine.tick_selected_melee_owner(&sim, &assets, attacker, selected);
+        assert_eq!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .element_data()
+                .sprite
+                .last_motion_state,
+            Some(crate::sprite::MotionState::InProgress),
+            "the second selected-owner tick must exercise retained G geometry before DONE"
+        );
+        assert!(
+            !engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| sequence.elements.iter())
+                .any(|element| {
+                    element.command == Command::ReceiveSwordDamage
+                        && element.owner == Some(retained_victim)
+                }),
+            "G's first effect must use the START-rebased half-circle angles"
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(selected.seq_id, selected.elem_idx)
+                .is_some(),
+            "the focused effect check keeps the replacement strike selected"
+        );
+    }
+
+    #[test]
     fn terminal_true_circle_direction_is_presented_before_done_progresses() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;

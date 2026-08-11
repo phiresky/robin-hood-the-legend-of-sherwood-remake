@@ -143,11 +143,14 @@ impl EngineInner {
         });
 
         // Original's START-only warning forecast is not side-effect free:
-        // GetPossibleVictimsOfLateralSwordStrike writes the human-owned
-        // initial/current/final sweep angles even though it fills a temporary
-        // warning-victim list.  A replacement lateral strike can therefore
-        // keep an interrupted strike's victim FIFO while rebasing its geometry
-        // to the replacement strike before the first IN_PROGRESS Execute.
+        // GetPossibleVictimsOfLateralSwordStrike and
+        // GetPossibleVictimsOfHalfCircleSwordStrike write the human-owned
+        // initial/current/final sweep angles even though they fill a temporary
+        // warning-victim list. A replacement lateral/half-circle strike can
+        // therefore keep an interrupted strike's victim FIFO while rebasing
+        // its geometry to the replacement strike before the first IN_PROGRESS
+        // Execute. GetPossibleVictimsOfCircleSwordStrike does not write those
+        // angles, so full circles deliberately retain the old geometry here.
         // Do not create a sweep for an ordinary fresh strike here; its real
         // victim list is still initialized only at MotionState::Done.
         let retained_victims = self
@@ -159,15 +162,21 @@ impl EngineInner {
         let strike_kind = profile_idx
             .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
             .map(|profile| profile.thrusts[strike as usize].kind);
-        if strike_kind == Some(WeaponThrustKind::Lateral)
-            && let Some(retained_victims) = retained_victims
+        if strike_kind.is_some_and(|kind| {
+            matches!(
+                kind,
+                WeaponThrustKind::Lateral
+                    | WeaponThrustKind::TrueHalfCircle
+                    | WeaponThrustKind::FalseHalfCircle
+            )
+        }) && let Some(retained_victims) = retained_victims
         {
             self.initialize_sweep(
                 assets,
                 attacker_id,
                 strike,
                 profile_idx,
-                WeaponThrustKind::Lateral,
+                strike_kind.expect("rebased warning strike kind disappeared"),
                 retained_victims,
             );
         }
