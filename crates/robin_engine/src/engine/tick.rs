@@ -4259,6 +4259,12 @@ impl EngineInner {
                             actor.execute_order_initialising = false;
                         }
 
+                        // Human::SetPosture updates intersecting-corpse state
+                        // synchronously in Original. Close the owner-local
+                        // boundary before the next creation slot samples this
+                        // actor for anti-collision.
+                        self.process_corpse_intersection_update_for(entity_id);
+
                         let leaked_slot_work = self
                             .orders
                             .sequence_manager

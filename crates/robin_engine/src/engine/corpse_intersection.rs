@@ -12,23 +12,18 @@
 //! [`Entity::human_and_posture_mut`] (e.g. [`crate::combat::tie_up`])
 //! and the
 //! [`ElementData::set_posture`](crate::element::ElementData::set_posture)
-//! setter doesn't see `EngineInner`, so we cannot react synchronously
-//! to every posture change.  Instead,
+//! setter doesn't see `EngineInner`, so it cannot react by itself.
+//! Instead,
 //! [`HumanData::last_is_lying_for_corpse_intersection`] records the
-//! previously-observed lying state, and every tick
-//! [`EngineInner::process_corpse_intersection_updates`] scans all
-//! humans, compares `posture.is_lying()` against that record, and
-//! fires [`EngineInner::update_intersecting_corpses`] for each
-//! transition it finds.  The scan runs once per hourglass, right
-//! after the animation phase has had a chance to change postures.
+//! previously-observed lying state. The live actor walk calls
+//! [`EngineInner::process_corpse_intersection_update_for`] at every owner
+//! boundary, before the next creation slot can sample repulsive state.
+//! [`EngineInner::process_corpse_intersection_updates`] retains a full scan
+//! after the actor walk as a fallback for posture writes outside those owner
+//! envelopes.
 //!
-//! The deferred model is slightly looser than a synchronous hook:
-//! a posture that toggles lying→upright→lying inside a single tick
-//! won't trigger any update (the end-of-tick observation matches the
-//! start).  In practice those transient flips don't happen — posture
-//! changes are driven by animations that take multiple frames — and
-//! the visible symptom (corpse hitboxes) is only sampled during
-//! movement, which runs once per tick.
+//! This closes the source-visible cross-owner boundary while retaining the
+//! centralized tracker needed by direct posture mutations.
 
 use crate::coordinates::MapPoint;
 use crate::element::EntityId;
@@ -47,6 +42,38 @@ const INTERSECT_SQ_DIST: f32 =
     4.0 * (RADIUS_CORPSE + ACTIONRADIUS_CORPSE) * (RADIUS_CORPSE + ACTIONRADIUS_CORPSE);
 
 impl EngineInner {
+    /// Close one human owner's `SetPosture` corpse-intersection boundary.
+    ///
+    /// Original performs this work synchronously from
+    /// `RHElementActorHuman::SetPosture`, so a later creation slot must see
+    /// the updated anti-collision flag and repulsive radius. The full drain
+    /// remains as a fallback for posture writes outside the live actor walk.
+    pub(crate) fn process_corpse_intersection_update_for(&mut self, id: EntityId) {
+        let transition = {
+            let Some(entity) = self.world.entities.get_mut(id) else {
+                return;
+            };
+            let is_lying = entity.element_data().posture.is_lying();
+            let Some(human) = entity.human_data_mut() else {
+                return;
+            };
+            match human.last_is_lying_for_corpse_intersection {
+                None => {
+                    human.last_is_lying_for_corpse_intersection = Some(is_lying);
+                    None
+                }
+                Some(previous) if previous != is_lying => {
+                    human.last_is_lying_for_corpse_intersection = Some(is_lying);
+                    Some(is_lying)
+                }
+                Some(_) => None,
+            }
+        };
+        if let Some(b_added) = transition {
+            self.update_intersecting_corpses_with_snapshot(id, b_added, None);
+        }
+    }
+
     /// Per-tick drain: detect lying↔non-lying posture transitions on
     /// every human and fire [`EngineInner::update_intersecting_corpses`]
     /// for each.
@@ -727,6 +754,34 @@ mod tests {
                 .unwrap()
                 .small_repulsive_radius,
             "replaying both final postures at once must not clear the later corpse"
+        );
+    }
+
+    #[test]
+    fn owner_boundary_clears_door_ignore_before_later_actor_moves() {
+        let mut engine = EngineInner::new();
+        let mut standing = civilian_at(100.0, 100.0, Posture::Lying, 1);
+        standing.human.last_is_lying_for_corpse_intersection = Some(true);
+        standing.actor.is_ignored_for_anti_collision = true;
+        let standing = engine.add_entity(Entity::Civilian(standing));
+
+        engine
+            .get_entity_mut(standing)
+            .unwrap()
+            .set_posture(Posture::Upright);
+        engine.process_corpse_intersection_update_for(standing);
+
+        let entity = engine.get_entity(standing).unwrap();
+        assert_eq!(
+            entity
+                .human_data()
+                .unwrap()
+                .last_is_lying_for_corpse_intersection,
+            Some(false)
+        );
+        assert!(
+            !entity.actor_data().unwrap().is_ignored_for_anti_collision,
+            "a later actor's anti-collision gather must see the stood-up body"
         );
     }
 }
