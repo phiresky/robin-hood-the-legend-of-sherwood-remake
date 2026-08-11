@@ -2016,7 +2016,7 @@ pub fn vector_to_sector_0_to_15(x: f32, y: f32) -> i16 {
     vector_to_sector_0_to_15_with_aspect(x, y, 1.0)
 }
 
-fn vector_to_sector_0_to_15_with_aspect(x: f32, y: f32, aspect_ratio: f32) -> i16 {
+pub(crate) fn vector_to_sector_0_to_15_with_aspect(x: f32, y: f32, aspect_ratio: f32) -> i16 {
     if x == 0.0 && y == 0.0 {
         return 0;
     }

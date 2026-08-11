@@ -695,12 +695,12 @@ pub(super) fn vec_to_sector(dx: f32, dy: f32) -> u16 {
     crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy) as u16
 }
 
-/// Isometric Euclidean norm.  Thin alias over
-/// [`crate::position_interface::vector_norm_iso`].  Every caller passes
-/// `aspect_ratio = ASPECT_RATIO`; the argument is retained for signature
-/// stability.
-pub(super) fn iso_norm(v: (f32, f32), _aspect_ratio: f32) -> f32 {
-    crate::position_interface::vector_norm_iso(v.0, v.1)
+/// Aspect-corrected Euclidean norm. Most callers pass
+/// `aspect_ratio = ASPECT_RATIO` for ordinary map-space AI geometry. A few
+/// sword-fight call sites deliberately pass `SWORDFIGHT_ASPECT_RATIO` instead.
+pub(super) fn iso_norm(v: (f32, f32), aspect_ratio: f32) -> f32 {
+    let yi = v.1 / aspect_ratio;
+    (v.0 * v.0 + yi * yi).sqrt()
 }
 
 /// Isometric normalize.  Thin alias over
@@ -710,17 +710,15 @@ pub(super) fn iso_normalize(v: (f32, f32), _aspect_ratio: f32) -> (f32, f32) {
     (x, y)
 }
 
-/// Sector to unit vector with isometric Y scaling.  Thin alias over
-/// [`crate::position_interface::sector_to_vector_iso`].
-pub(super) fn sector_to_vector_iso(sector: u16, _aspect_ratio: f32) -> (f32, f32) {
-    let [x, y] = crate::position_interface::sector_to_vector_iso(sector as i16);
-    (x, y)
+/// Sector to unit vector with the caller's Y aspect scaling.
+pub(super) fn sector_to_vector_iso(sector: u16, aspect_ratio: f32) -> (f32, f32) {
+    let [x, y] = crate::shadow_polygon::sector_to_direction(sector as i16);
+    (x, y * aspect_ratio)
 }
 
-/// Vector to sector.  Thin alias over
-/// [`crate::position_interface::vector_to_sector_0_to_15_iso`].
-pub(super) fn vec_to_sector_ar(dx: f32, dy: f32, _aspect_ratio: f32) -> u16 {
-    crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy) as u16
+/// Vector to sector using the caller's aspect ratio.
+pub(super) fn vec_to_sector_ar(dx: f32, dy: f32, aspect_ratio: f32) -> u16 {
+    crate::position_interface::vector_to_sector_0_to_15_with_aspect(dx, dy, aspect_ratio) as u16
 }
 
 /// Perpendicular vector in isometric space.  Thin alias over
@@ -747,7 +745,7 @@ fn step_back_direction_sector(direction: u16, relative_direction: i16) -> u16 {
 
 #[cfg(test)]
 mod step_back_direction_tests {
-    use super::step_back_direction_sector;
+    use super::{iso_norm, sector_to_vector_iso, step_back_direction_sector, vec_to_sector_ar};
 
     #[test]
     fn negative_step_back_offsets_keep_signed_cpp_remainder() {
@@ -758,6 +756,18 @@ mod step_back_direction_tests {
     #[test]
     fn positive_step_back_offsets_keep_source_modulo_fifteen() {
         assert_eq!(step_back_direction_sector(15, 1), 1);
+    }
+
+    #[test]
+    fn step_back_geometry_honours_swordfight_aspect_ratio() {
+        let vertical = (0.0, 40.0);
+        assert_eq!(iso_norm(vertical, 1.0), 40.0);
+        assert!(iso_norm(vertical, crate::position_interface::ASPECT_RATIO) > 69.0);
+
+        let sector = vec_to_sector_ar(vertical.0, vertical.1, 1.0);
+        let direction = sector_to_vector_iso(sector, 1.0);
+        assert_eq!(sector, 8);
+        assert_eq!(direction, (0.0, 1.0));
     }
 }
 
