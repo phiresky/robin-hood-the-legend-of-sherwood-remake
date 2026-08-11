@@ -46,10 +46,10 @@ Do not substitute any of these for a lane:
   and linux3 Profile 002 Restart replay 004 now match exact EOF;
 - old nicouzouf Savegame 022 replay 005 stops at a transient anti-collision
   boundary whose Original owner is not serialized;
-- old nicouzouf Savegame 045 replay 014 has unrepresentable old input
-  provenance and is a retirement candidate;
-- old SuN Savegame 017 replay 013 contradicts current Original projectile
-  membership and is a retirement candidate;
+- old nicouzouf Savegame 045 replay 014 was retired by Task 497 because its
+  old record omits resolved click-versus-gesture seek-distance provenance;
+- old SuN Savegame 017 replay 013 was retired by Task 488 because its recorded
+  projectile membership contradicts current Original source and geometry;
 - old SuN Savegame 013 replay 002 is a separate unowned RNG boundary and is
   not a control for lane 34;
 - schema-14 linux3 Profile 003 and all families explicitly owned by active
