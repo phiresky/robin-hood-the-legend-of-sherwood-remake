@@ -4174,7 +4174,10 @@ fn tick_arrows_matching(
                 };
                 if hit {
                     hit_victim = Some((snap.id, snap.position_map));
-                    break;
+                    // Original's `break` exits only the posture switch, not
+                    // the surrounding marrayActors scan.  A later eligible
+                    // human therefore replaces the current candidate.
+                    continue;
                 }
 
                 // Leaning-out re-check for arrows only.  If the belt's
@@ -4201,7 +4204,10 @@ fn tick_arrows_matching(
                             && point_to_line_distance(eyes, arrow_old, arrow_new) <= HIT_DISTANCE
                         {
                             hit_victim = Some((snap.id, snap.position_map));
-                            break;
+                            // As with the belt hit above, Original continues
+                            // the actor scan and ultimately returns the last
+                            // eligible human.
+                            continue;
                         }
                     }
                 }
@@ -6097,6 +6103,130 @@ mod tests {
                 .any(|r| r.hit_target == Some(EntityId::Soldier(crate::entity_id::SoldierId(2)))),
             "arrow should continue to the valid victim behind the filtered candidate"
         );
+    }
+
+    #[test]
+    fn tick_arrows_selects_last_eligible_human_in_actor_order() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let arrow = spawn_arrow(SpawnArrowParams {
+            shooter: EntityId::Pc(crate::entity_id::PcId(0)),
+            bow_point: WorldPoint3D {
+                x: 0.0,
+                y: 0.0,
+                z: 25.0,
+            },
+            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
+            target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
+            target_pos: MapPoint { x: 100.0, y: 0.0 },
+            trajectory: vec![TrajectoryPoint {
+                position: WorldPoint3D {
+                    x: 100.0,
+                    y: 0.0,
+                    z: 25.0,
+                },
+                time: 1,
+            }],
+            damage: 30,
+            layer: 0,
+            lands_in_hole: false,
+            initial_velocity: WorldVec3D {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        });
+        let mut entities = entity_table(vec![
+            Some(make_pc(0.0, 0.0)),
+            // The earlier actor is farther downrange than the later actor so
+            // this proves registry order, not nearest/farthest geometry.
+            Some(make_soldier(80.0, 0.0)),
+            Some(make_soldier(60.0, 0.0)),
+            Some(arrow),
+        ]);
+
+        let results = tick_arrows(
+            sim,
+            &mut entities,
+            crate::sight_obstacle::ObstacleList::empty(),
+        );
+
+        assert!(
+            results.iter().any(|result| {
+                result.hit_target == Some(EntityId::Soldier(crate::entity_id::SoldierId(2)))
+            }),
+            "Original retains the last eligible human visited by marrayActors"
+        );
+        assert!(
+            results.iter().all(|result| {
+                result.hit_target != Some(EntityId::Soldier(crate::entity_id::SoldierId(1)))
+            }),
+            "an earlier eligible human must be replaced by a later one"
+        );
+    }
+
+    #[test]
+    fn tick_arrows_leaning_eye_hit_can_be_replaced_by_later_eligible_human() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let [lean_x, lean_y] = crate::position_interface::sector_to_vector_iso(0);
+        let arrow_y = lean_y * 40.0;
+        let arrow_old = WorldPoint3D {
+            x: lean_x * 40.0,
+            y: arrow_y,
+            z: 45.0,
+        };
+        let arrow_new = WorldPoint3D {
+            x: 120.0 + lean_x * 40.0,
+            y: arrow_y,
+            z: 45.0,
+        };
+        let arrow = spawn_arrow(SpawnArrowParams {
+            shooter: EntityId::Pc(crate::entity_id::PcId(0)),
+            bow_point: arrow_old,
+            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
+            target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
+            target_pos: MapPoint { x: 120.0, y: 0.0 },
+            trajectory: vec![TrajectoryPoint {
+                position: arrow_new,
+                time: 1,
+            }],
+            damage: 30,
+            layer: 0,
+            lands_in_hole: false,
+            initial_velocity: WorldVec3D {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        });
+        let mut earlier = make_soldier(80.0, 0.0);
+        earlier.element_data_mut().posture = Posture::LeaningOut;
+        earlier.element_data_mut().set_direction_instantly(0);
+        // The flight line is at the leaning eye height (z=45); the belt is
+        // at z=25, outside HIT_DISTANCE, so only the eye retry can hit.
+        let mut later = make_soldier(60.0, 0.0);
+        later.element_data_mut().posture = Posture::LeaningOut;
+        later.element_data_mut().set_direction_instantly(0);
+        let mut entities = entity_table(vec![
+            Some(make_pc(0.0, -200.0)),
+            Some(earlier),
+            Some(later),
+            Some(arrow),
+        ]);
+
+        let results = tick_arrows(
+            sim,
+            &mut entities,
+            crate::sight_obstacle::ObstacleList::empty(),
+        );
+
+        assert!(results.iter().any(|result| {
+            result.hit_target == Some(EntityId::Soldier(crate::entity_id::SoldierId(2)))
+        }));
+        assert!(results.iter().all(|result| {
+            result.hit_target != Some(EntityId::Soldier(crate::entity_id::SoldierId(1)))
+        }));
     }
 
     #[test]
