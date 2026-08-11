@@ -3284,13 +3284,19 @@ impl EnemyAi {
                                     Substate::SeekingSeekpoint
                                         | Substate::SeekingSeekpointWatching
                                         | Substate::SeekingSeekpointWatchingSidewards
+                                        | Substate::SeekingSeekpointPassedAmbushPointLeft
+                                        | Substate::SeekingSeekpointPassedAmbushPointRight
+                                        | Substate::SeekingSeekpointCheckingAmbushPoint
+                                        | Substate::SeekingSeekpointApproachingBeggar
+                                        | Substate::SeekingSeekpointIdentifyingBeggar1
+                                        | Substate::SeekingSeekpointIdentifyingBeggar2
                                         | Substate::SeekingSoldierReturnToOfficer
                                         | Substate::SeekingSoldierGiveReportToOfficer
                                         | Substate::SeekingRunningToOfficer
                                         | Substate::SeekingRunningToOfficerSeen
                                         | Substate::SeekingBodyReactiontime
                                         | Substate::SeekingBody
-                                        | Substate::SeekingTakingNet
+                                        | Substate::SeekingNet
                                         | Substate::SeekingBodyLookingDeadBody
                                         | Substate::SeekingBodyAwakeningSleeperr
                                         | Substate::SeekingDetectedCharly
@@ -3299,6 +3305,24 @@ impl EnemyAi {
                         });
 
                         if self.alerted_us.is_empty() {
+                            let report = &self.base.my_reconnaissance_report;
+                            if report.report_type == ReportType::MissedCharly && report.charly != 0
+                            {
+                                let charly = ctx.entity_view(report.charly).unwrap_or_else(|| {
+                                    panic!(
+                                        "officer waiting for instructed group requires Charly {} view",
+                                        report.charly
+                                    )
+                                });
+                                if matches!(
+                                    charly.ai_substate,
+                                    Substate::SeekingCharlySentToOfficer
+                                        | Substate::SeekingCharlyGoToOfficer
+                                ) {
+                                    self.base.launch_timer(30, ctx.frame);
+                                    return false;
+                                }
+                            }
                             self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                         } else {
                             self.base.launch_timer(30, ctx.frame);
@@ -6385,6 +6409,202 @@ impl EnemyAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn camp_soldier_with_substate(
+        handle: NpcHandle,
+        ai_substate: Substate,
+    ) -> crate::ai_enemy::CampSoldierInfo {
+        crate::ai_enemy::CampSoldierInfo {
+            handle,
+            active: true,
+            position: Position::default(),
+            position_world: crate::coordinates::WorldPoint3D::ZERO,
+            direction: 0,
+            rank: ProfileRank::Soldier,
+            ai_state: AiState::Seeking,
+            ai_substate,
+            is_able_to_fight: true,
+            is_dead: false,
+            primary_target: 0,
+            pride: 0,
+            is_able_to_help: true,
+            script_locked: false,
+            ai_lock_frozen: false,
+            layer: 0,
+            report_type: ReportType::Nothing,
+            report_seek_position: Position::default(),
+            report_seen_bodies: Vec::new(),
+            report_charly: 0,
+            alert_soldiers_point: Position::default(),
+            patrol_chief: None,
+            antagonist: 0,
+            detected_body: 0,
+            duty_flag: false,
+            is_tower_guard: false,
+            company_number: 0,
+            in_building: false,
+            forecast_destination: None,
+            detectable_bodies: Vec::new(),
+            seek_position: Position::default(),
+            current_task_priority: 0,
+            minimal_task_priority: 0,
+            view_direction: [1.0, 0.0],
+            view_radius: 300,
+            real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
+            eye_blind: false,
+        }
+    }
+
+    fn soldier_view_with_substate(
+        handle: u32,
+        substate: Substate,
+    ) -> crate::ai_entity_view::AiEntityView {
+        let entity = crate::element::Entity::Soldier(crate::element::ActorSoldier {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::ActorSoldier,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        });
+        let mut view = crate::ai_entity_view::entity_view_from_entity(
+            &entity,
+            handle,
+            false,
+            None,
+            None,
+            crate::order::OrderType::NonanimationEnd,
+        );
+        view.ai_state = AiState::Seeking;
+        view.ai_substate = substate;
+        view
+    }
+
+    #[test]
+    fn officer_wait_for_instructed_group_keeps_full_original_seek_area_set() {
+        let sim = crate::sim_rng::test_context();
+        for member_substate in [
+            Substate::SeekingSeekpoint,
+            Substate::SeekingSeekpointWatching,
+            Substate::SeekingSeekpointWatchingSidewards,
+            Substate::SeekingSeekpointPassedAmbushPointLeft,
+            Substate::SeekingSeekpointPassedAmbushPointRight,
+            Substate::SeekingSeekpointCheckingAmbushPoint,
+            Substate::SeekingSeekpointApproachingBeggar,
+            Substate::SeekingSeekpointIdentifyingBeggar1,
+            Substate::SeekingSeekpointIdentifyingBeggar2,
+            Substate::SeekingNet,
+        ] {
+            let mut ai = EnemyAi::new(147);
+            ai.base.current_state = AiState::Seeking;
+            ai.base.current_substate = Substate::SeekingOfficerWaitForInstructedGroup;
+            ai.alerted_us = vec![148];
+
+            let mut tick = AiPerTickData::stub();
+            tick.camp_soldiers
+                .push(camp_soldier_with_substate(148, member_substate));
+            let ctx = AiContext {
+                frame: 7_915,
+                ..AiContext::default()
+            };
+
+            ai.think_expected_event(
+                &sim,
+                &Stimulus::new(StimulusType::EventTimer),
+                &mut AiGlobalState::default(),
+                &ctx,
+                &tick,
+                None,
+            );
+
+            assert_eq!(ai.alerted_us, vec![148], "{member_substate:?}");
+            assert_eq!(
+                ai.base.current_substate,
+                Substate::SeekingOfficerWaitForInstructedGroup,
+                "{member_substate:?}"
+            );
+            assert!(ai.base.timer_is_running, "{member_substate:?}");
+            assert_eq!(ai.base.when_does_timer_ring, 7_945, "{member_substate:?}");
+            assert!(
+                ai.base.outbox.reentrant.owner_work.is_empty(),
+                "{member_substate:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn officer_wait_for_instructed_group_prunes_taking_net() {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(147);
+        ai.base.current_state = AiState::Seeking;
+        ai.base.current_substate = Substate::SeekingOfficerWaitForInstructedGroup;
+        ai.alerted_us = vec![148];
+
+        let mut tick = AiPerTickData::stub();
+        tick.camp_soldiers
+            .push(camp_soldier_with_substate(148, Substate::SeekingTakingNet));
+
+        ai.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &tick,
+            None,
+        );
+
+        assert!(ai.alerted_us.is_empty());
+        assert!(matches!(
+            ai.base.outbox.reentrant.owner_work.as_slice(),
+            [AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }]
+        ));
+    }
+
+    #[test]
+    fn officer_wait_for_instructed_group_waits_for_approaching_charly() {
+        let sim = crate::sim_rng::test_context();
+        for (charly_substate, should_wait) in [
+            (Substate::SeekingCharlySentToOfficer, true),
+            (Substate::SeekingCharlyGoToOfficer, true),
+            (Substate::DefaultOnPost, false),
+        ] {
+            let mut ai = EnemyAi::new(147);
+            ai.base.current_state = AiState::Seeking;
+            ai.base.current_substate = Substate::SeekingOfficerWaitForInstructedGroup;
+            ai.base.my_reconnaissance_report.report_type = ReportType::MissedCharly;
+            ai.base.my_reconnaissance_report.charly = 148;
+
+            let mut views = crate::ai_entity_view::AiEntityViewMap::new();
+            views.insert(148, soldier_view_with_substate(148, charly_substate));
+            let ctx = AiContext {
+                frame: 7_915,
+                entity_views: crate::ai_entity_view::shared_entity_views(views),
+                ..AiContext::default()
+            };
+
+            ai.think_expected_event(
+                &sim,
+                &Stimulus::new(StimulusType::EventTimer),
+                &mut AiGlobalState::default(),
+                &ctx,
+                &AiPerTickData::stub(),
+                None,
+            );
+
+            if should_wait {
+                assert!(ai.base.timer_is_running);
+                assert_eq!(ai.base.when_does_timer_ring, 7_945);
+                assert!(ai.base.outbox.reentrant.owner_work.is_empty());
+            } else {
+                assert!(matches!(
+                    ai.base.outbox.reentrant.owner_work.as_slice(),
+                    [AiOwnerWork::ResumeReturnToDutyAfterPatrolInit { .. }]
+                ));
+            }
+        }
+    }
 
     #[test]
     fn archer_waiting_on_shooting_path_returns_to_duty_only_on_timer() {
