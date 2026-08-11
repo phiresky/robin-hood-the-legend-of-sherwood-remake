@@ -153,6 +153,10 @@ pub enum QaReplayCommand {
         target: EntityId,
         command: Command,
         with_seek: bool,
+        /// Exact seek tolerance captured with the resolved player command.
+        /// Missing legacy macro state retains the strike-specific fallback.
+        #[serde(default)]
+        seek_distance: Option<f32>,
     },
     /// Quickitos posture toggle — `CrouchDown` / `StandUp` recorded so
     /// the macro can replay a mid-sequence posture change.  `to_crouch`
@@ -544,6 +548,62 @@ mod tests {
                 running: false,
             },
         }
+    }
+
+    #[test]
+    fn sword_macro_preserves_resolved_seek_distance_and_defaults_legacy_field() {
+        let target = EntityId::new(9, crate::element::EntityIdKind::Soldier);
+        let replay = QaReplayCommand::SwordStrike {
+            target,
+            command: Command::SwordstrikeThrustA,
+            with_seek: true,
+            seek_distance: Some(63.0),
+        };
+        let encoded = serde_json::to_value(replay).expect("serialize sword macro");
+        let decoded: QaReplayCommand =
+            serde_json::from_value(encoded.clone()).expect("roundtrip sword macro");
+        assert!(matches!(
+            decoded,
+            QaReplayCommand::SwordStrike {
+                seek_distance: Some(63.0),
+                ..
+            }
+        ));
+
+        let mut legacy = encoded;
+        legacy
+            .get_mut("SwordStrike")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("externally tagged sword macro")
+            .remove("seek_distance");
+        let decoded: QaReplayCommand =
+            serde_json::from_value(legacy).expect("deserialize legacy sword macro");
+        assert!(matches!(
+            decoded,
+            QaReplayCommand::SwordStrike {
+                seek_distance: None,
+                ..
+            }
+        ));
+
+        let direct = QaReplayCommand::SwordStrike {
+            target,
+            command: Command::SwordstrikeThrustF,
+            with_seek: false,
+            seek_distance: None,
+        };
+        let decoded: QaReplayCommand = serde_json::from_value(
+            serde_json::to_value(direct).expect("serialize direct sword macro"),
+        )
+        .expect("roundtrip direct sword macro");
+        assert!(matches!(
+            decoded,
+            QaReplayCommand::SwordStrike {
+                with_seek: false,
+                seek_distance: None,
+                ..
+            }
+        ));
     }
 
     #[test]

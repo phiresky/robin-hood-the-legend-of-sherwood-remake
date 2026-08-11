@@ -559,6 +559,7 @@ impl EngineInner {
                 target,
                 command,
                 with_seek,
+                seek_distance,
             } => {
                 tracing::trace!(
                     ?actor,
@@ -568,7 +569,13 @@ impl EngineInner {
                     "PlayerCommand::SwordStrikeCmd"
                 );
                 if *with_seek {
-                    self.apply_sword_strike_with_seek(assets, *actor, *target, *command);
+                    self.apply_sword_strike_with_seek(
+                        assets,
+                        *actor,
+                        *target,
+                        *command,
+                        *seek_distance,
+                    );
                 } else {
                     let elem =
                         SequenceElement::new_interaction(1, *command, Some(*actor), Some(*target));
@@ -1368,6 +1375,7 @@ impl EngineInner {
                 target,
                 command,
                 with_seek,
+                seek_distance,
             } => {
                 if *actor != recording_pc {
                     return;
@@ -1383,6 +1391,7 @@ impl EngineInner {
                         target: *target,
                         command: *command,
                         with_seek: *with_seek,
+                        seek_distance: *seek_distance,
                     },
                 )
             }
@@ -1731,6 +1740,7 @@ impl EngineInner {
                     target,
                     command,
                     with_seek,
+                    seek_distance,
                 } => {
                     // See Interaction arm — whole-sequence abort on
                     // target-gone.
@@ -1742,6 +1752,7 @@ impl EngineInner {
                         target,
                         command,
                         with_seek,
+                        seek_distance,
                     }
                 }
                 crate::macro_store::QaReplayCommand::PostureToggle { to_crouch } => {
@@ -3464,16 +3475,16 @@ impl EngineInner {
         pc_id: EntityId,
         target_id: EntityId,
         strike_cmd: Command,
+        resolved_seek_distance: Option<f32>,
     ) {
         use crate::order::OrderType;
 
-        let pc_sector = self
-            .get_entity(pc_id)
-            .and_then(|e| e.element_data().sector());
-        let target_sector = self
-            .get_entity(target_id)
-            .and_then(|e| e.element_data().sector());
-        let same_sector = matches!((pc_sector, target_sector), (Some(a), Some(b)) if a == b);
+        let same_sector = match (self.get_entity(pc_id), self.get_entity(target_id)) {
+            (Some(pc), Some(target)) => {
+                pc.element_data().sector() == target.element_data().sector()
+            }
+            _ => false,
+        };
 
         let strike_elem = SequenceElement::new_interaction(
             if same_sector { 2 } else { 1 },
@@ -3509,22 +3520,33 @@ impl EngineInner {
             return;
         };
 
-        let Some(target_distance) = self
-            .get_entity(pc_id)
-            .and_then(|e| crate::engine::melee::get_hth_weapon_id_full(e, &assets.profile_manager))
-            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
-            .map(|p| 0.9 * p.thrusts[strike as usize].maximal_distance as f32)
-        else {
-            tracing::warn!(
-                ?pc_id,
-                ?target_id,
-                ?strike_cmd,
-                "apply_sword_strike_with_seek: actor has no hth weapon profile; launching direct strike"
+        let target_distance = if let Some(distance) = resolved_seek_distance {
+            assert!(
+                distance.is_finite() && distance >= 0.0,
+                "resolved sword seek distance must be finite and non-negative"
             );
-            let mut sequence = Sequence::new();
-            sequence.append_element(strike_elem);
-            self.launch_sequence(sequence);
-            return;
+            distance
+        } else {
+            let Some(distance) = self
+                .get_entity(pc_id)
+                .and_then(|e| {
+                    crate::engine::melee::get_hth_weapon_id_full(e, &assets.profile_manager)
+                })
+                .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+                .map(|p| 0.9 * p.thrusts[strike as usize].maximal_distance as f32)
+            else {
+                tracing::warn!(
+                    ?pc_id,
+                    ?target_id,
+                    ?strike_cmd,
+                    "apply_sword_strike_with_seek: actor has no hth weapon profile; launching direct strike"
+                );
+                let mut sequence = Sequence::new();
+                sequence.append_element(strike_elem);
+                self.launch_sequence(sequence);
+                return;
+            };
+            distance
         };
 
         let mut seek_elem =
@@ -4971,7 +4993,7 @@ mod tests {
     }
 
     #[test]
-    fn sword_strike_seek_uses_ordinary_upright_movement_without_force_sword() {
+    fn sword_strike_seek_uses_resolved_tolerance_and_ordinary_upright_movement() {
         let (mut engine, mut assets, pc_id) = setup_pc_engine(&[]);
         {
             let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
@@ -5002,7 +5024,27 @@ mod tests {
         target.element.set_sector(sector);
         let target_id = engine.add_entity(Entity::Civilian(target));
 
-        engine.apply_sword_strike_with_seek(&assets, pc_id, target_id, Command::SwordstrikeThrustD);
+        let mut legacy = engine.clone();
+        legacy.apply_sword_strike_with_seek(
+            &assets,
+            pc_id,
+            target_id,
+            Command::SwordstrikeThrustD,
+            None,
+        );
+        assert_eq!(
+            first_seek_tolerance(&legacy),
+            54.0,
+            "missing resolved distance must preserve legacy strike-specific lookup"
+        );
+
+        engine.apply_sword_strike_with_seek(
+            &assets,
+            pc_id,
+            target_id,
+            Command::SwordstrikeThrustD,
+            Some(63.0),
+        );
 
         let sequence = engine
             .orders
@@ -5026,7 +5068,7 @@ mod tests {
         };
         assert_eq!(*action, crate::order::OrderType::RunningUpright);
         assert_eq!(*element, Some(target_id));
-        assert_eq!(*tolerance, 54.0);
+        assert_eq!(*tolerance, 63.0);
         assert!(flags.contains(MoveFlags::SEEK));
         assert!(!flags.contains(MoveFlags::FORCE_SWORD_MOVEMENT));
 
@@ -5043,6 +5085,43 @@ mod tests {
                 antagonist: Some(id)
             } if *id == target_id
         ));
+    }
+
+    #[test]
+    fn sword_strike_seek_treats_two_unassigned_sectors_as_same_like_original() {
+        let (mut engine, mut assets, pc_id) = setup_pc_engine(&[]);
+        {
+            let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+            profiles.characters[0].hth_weapon_id = 1;
+            profiles
+                .hth_weapons
+                .push(crate::profiles::HtHWeaponProfile::default());
+        }
+        assert_eq!(
+            engine.get_entity(pc_id).unwrap().element_data().sector(),
+            None
+        );
+        let target_id = engine.add_entity(Entity::Civilian(ActorCivilian {
+            element: ElementData {
+                kind: ElementKind::ActorCivilian,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            civilian: Default::default(),
+        }));
+
+        engine.apply_sword_strike_with_seek(
+            &assets,
+            pc_id,
+            target_id,
+            Command::SwordstrikeThrustA,
+            Some(63.0),
+        );
+        assert_eq!(first_seek_tolerance(&engine), 63.0);
     }
 
     #[test]
@@ -5212,7 +5291,13 @@ mod tests {
         let old_strike_seq = engine.orders.sequence_manager.launch_element(old_strike);
         engine.engine_postpone(injury_seq, 0, old_strike_seq, 0);
 
-        engine.apply_sword_strike_with_seek(&assets, pc_id, target_id, Command::SwordstrikeThrustE);
+        engine.apply_sword_strike_with_seek(
+            &assets,
+            pc_id,
+            target_id,
+            Command::SwordstrikeThrustE,
+            None,
+        );
 
         // LaunchSequenceElement admission: the newer seek is registered at
         // the manager tail without synchronous arbitration, so the older

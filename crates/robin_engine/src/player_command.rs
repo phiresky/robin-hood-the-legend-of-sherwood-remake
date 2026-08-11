@@ -121,6 +121,10 @@ pub enum PlayerCommand {
         target: EntityId,
         command: Command,
         with_seek: bool,
+        /// Exact tolerance resolved by the input source. Older commands did
+        /// not carry it and retain the historical strike-specific fallback.
+        #[serde(default)]
+        seek_distance: Option<f32>,
     },
     /// Promote `opponent_id` to `actor`'s principal opponent (front of
     /// `human_data.opponents`).  Issued by the gamepad's swordfight
@@ -580,6 +584,49 @@ pub enum PlayerCommand {
 
 fn default_true() -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::element::EntityIdKind;
+
+    #[test]
+    fn sword_seek_distance_roundtrips_and_missing_field_defaults_to_legacy_none() {
+        let command = PlayerCommand::SwordStrikeCmd {
+            actor: EntityId::new(3, EntityIdKind::Pc),
+            target: EntityId::new(7, EntityIdKind::Soldier),
+            command: Command::SwordstrikeThrustA,
+            with_seek: true,
+            seek_distance: Some(63.0),
+        };
+        let encoded = serde_json::to_value(&command).expect("serialize sword command");
+        let decoded: PlayerCommand =
+            serde_json::from_value(encoded.clone()).expect("roundtrip sword command");
+        assert!(matches!(
+            decoded,
+            PlayerCommand::SwordStrikeCmd {
+                seek_distance: Some(63.0),
+                ..
+            }
+        ));
+
+        let mut legacy = encoded;
+        legacy
+            .get_mut("SwordStrikeCmd")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("externally tagged sword command")
+            .remove("seek_distance");
+        let decoded: PlayerCommand =
+            serde_json::from_value(legacy).expect("deserialize legacy sword command");
+        assert!(matches!(
+            decoded,
+            PlayerCommand::SwordStrikeCmd {
+                seek_distance: None,
+                ..
+            }
+        ));
+    }
 }
 
 /// Which blocking modal was dismissed, plus whatever identifier the

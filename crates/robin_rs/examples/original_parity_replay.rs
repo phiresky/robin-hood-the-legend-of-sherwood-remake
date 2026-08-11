@@ -737,6 +737,8 @@ enum TraceCommand {
         target: TraceEntityId,
         original_command_name: String,
         with_seek: bool,
+        #[serde(default)]
+        seek_distance: Option<f32>,
     },
     SelectPc {
         pc: TraceEntityId,
@@ -1066,11 +1068,13 @@ impl TraceCommand {
                 target,
                 original_command_name,
                 with_seek,
+                seek_distance,
             } => PlayerCommand::SwordStrikeCmd {
                 actor: entity_map.translate(actor),
                 target: entity_map.translate(target),
                 command: command_from_stable_name(&original_command_name),
                 with_seek,
+                seek_distance: normalized_trace_sword_seek_distance(with_seek, seek_distance),
             },
             Self::SelectPc { pc, append } => PlayerCommand::SelectPc {
                 pc_id: entity_map.translate(pc),
@@ -1222,6 +1226,13 @@ impl TraceCommand {
             }
         })
     }
+}
+
+fn normalized_trace_sword_seek_distance(
+    with_seek: bool,
+    seek_distance: Option<f32>,
+) -> Option<f32> {
+    if with_seek { seek_distance } else { None }
 }
 
 fn command_from_stable_name(name: &str) -> Command {
@@ -1602,8 +1613,8 @@ fn validate_trace_frame_envelope(schema: u32, frame: &TraceFrame) {
     }
 }
 
-const TRACE_CACHE_VERSION: u32 = 54;
-const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v54.native-bincode.zst";
+const TRACE_CACHE_VERSION: u32 = 55;
+const TRACE_CACHE_SUFFIX: &str = ".parity-cache-v55.native-bincode.zst";
 // Full-session JSONL recordings are compressed as a single zstd frame. Some
 // encoders select a frame window from the total uncompressed size, so long
 // recordings legitimately exceed zstd's conservative 128 MiB decoder default.
@@ -6692,6 +6703,28 @@ mod tests {
         assert!(
             TRACE_CACHE_SUFFIX.contains(&format!("-v{TRACE_CACHE_VERSION}.")),
             "native parity-cache suffix {TRACE_CACHE_SUFFIX:?} does not identify header version {TRACE_CACHE_VERSION}"
+        );
+    }
+
+    #[test]
+    fn trace_sword_seek_distance_defaults_old_records_and_discards_direct_zero() {
+        let old: TraceCommand = serde_json::from_value(serde_json::json!({
+            "type": "sword_strike",
+            "actor": { "kind": "pc", "index": 3 },
+            "target": { "kind": "soldier", "index": 7 },
+            "original_command_name": "swordstrike_thrust_a",
+            "with_seek": true
+        }))
+        .expect("old sword trace without seek distance");
+        let TraceCommand::SwordStrike { seek_distance, .. } = old else {
+            panic!("decoded wrong trace command")
+        };
+        assert_eq!(seek_distance, None);
+
+        assert_eq!(normalized_trace_sword_seek_distance(false, Some(0.0)), None);
+        assert_eq!(
+            normalized_trace_sword_seek_distance(true, Some(63.0)),
+            Some(63.0)
         );
     }
 

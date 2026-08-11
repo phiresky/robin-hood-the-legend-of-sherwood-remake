@@ -542,6 +542,7 @@ impl GamePadState {
                     target: target_id,
                     command: strike.to_command(),
                     with_seek: false,
+                    seek_distance: None,
                 });
             }
             self.sword_swing.clear();

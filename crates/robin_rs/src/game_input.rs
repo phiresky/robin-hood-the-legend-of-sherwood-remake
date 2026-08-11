@@ -1452,11 +1452,21 @@ pub fn resolve_swordfight(
 
                 host.input.element_old_click = Some(target_id);
                 if already_opponent {
+                    let with_seek = sword_strike_target_is_in_same_sector(engine, pc_id, target_id);
                     cmds.push(PlayerCommand::SwordStrikeCmd {
                         actor: pc_id,
                         target: target_id,
                         command: Command::SwordstrikeThrustA,
-                        with_seek: true,
+                        with_seek,
+                        seek_distance: with_seek.then(|| {
+                            resolved_sword_seek_distance(
+                                engine,
+                                assets,
+                                pc_id,
+                                Command::SwordstrikeThrustA,
+                                true,
+                            )
+                        }),
                     });
                 } else {
                     // Same walking-seek behaviour as the
@@ -1478,20 +1488,24 @@ pub fn resolve_swordfight(
                     .and_then(|h| h.opponents.first().copied());
                 let Some(target_id) = principal else { continue };
 
-                let with_seek = matches!(
-                    recognised,
-                    MouseWayPattern::ThrustA
-                        | MouseWayPattern::ThrustB
-                        | MouseWayPattern::ThrustC
-                        | MouseWayPattern::ThrustD
-                        | MouseWayPattern::ThrustE
-                );
+                let with_seek =
+                    matches!(
+                        recognised,
+                        MouseWayPattern::ThrustA
+                            | MouseWayPattern::ThrustB
+                            | MouseWayPattern::ThrustC
+                            | MouseWayPattern::ThrustD
+                            | MouseWayPattern::ThrustE
+                    ) && sword_strike_target_is_in_same_sector(engine, pc_id, target_id);
 
                 cmds.push(PlayerCommand::SwordStrikeCmd {
                     actor: pc_id,
                     target: target_id,
                     command: strike_cmd,
                     with_seek,
+                    seek_distance: with_seek.then(|| {
+                        resolved_sword_seek_distance(engine, assets, pc_id, strike_cmd, false)
+                    }),
                 });
             }
         }
@@ -1504,6 +1518,70 @@ pub fn resolve_swordfight(
         cmds.push(PlayerCommand::Noop);
     }
     cmds
+}
+
+fn sword_strike_target_is_in_same_sector(
+    engine: &Engine,
+    actor: EntityId,
+    target: EntityId,
+) -> bool {
+    let actor_sector = engine
+        .get_entity(actor)
+        .unwrap_or_else(|| {
+            panic!("sword-strike actor {actor:?} disappeared during input resolution")
+        })
+        .element_data()
+        .sector();
+    let target_sector = engine
+        .get_entity(target)
+        .unwrap_or_else(|| {
+            panic!("sword-strike target {target:?} disappeared during input resolution")
+        })
+        .element_data()
+        .sector();
+    actor_sector == target_sector
+}
+
+/// Resolve the exact tolerance authored by `RHEngine::PerformSwordfight`.
+/// The no-gesture click path deliberately uses the weapon's generic maximum
+/// (`END_OF_REAL_STRIKE` in Original), while recognised A-E gestures use the
+/// selected thrust's maximum. Keeping the resulting scalar in the resolved
+/// command makes macro and rollback replay independent of later profile state.
+fn resolved_sword_seek_distance(
+    engine: &Engine,
+    assets: &LevelAssets,
+    pc_id: EntityId,
+    command: Command,
+    generic_maximum: bool,
+) -> f32 {
+    let pc = engine
+        .get_entity(pc_id)
+        .and_then(Entity::pc_data)
+        .unwrap_or_else(|| panic!("sword seek owner {pc_id:?} is not a PC"));
+    let profile = assets
+        .profile_manager
+        .get_character(pc.profile_index)
+        .unwrap_or_else(|| panic!("sword seek owner {pc_id:?} has no character profile"));
+    let weapon = assets
+        .profile_manager
+        .get_hth_weapon(profile.hth_weapon_id)
+        .unwrap_or_else(|| panic!("sword seek owner {pc_id:?} has no HtH weapon profile"));
+    sword_seek_distance_for_weapon(weapon, command, generic_maximum)
+}
+
+fn sword_seek_distance_for_weapon(
+    weapon: &robin_engine::profiles::HtHWeaponProfile,
+    command: Command,
+    generic_maximum: bool,
+) -> f32 {
+    let maximum = if generic_maximum {
+        weapon.distance[robin_engine::weapons::WeaponDistance::Maximal as usize]
+    } else {
+        let strike = robin_engine::weapons::SwordStrike::from_command(command)
+            .unwrap_or_else(|| panic!("seek command {command:?} is not a normal sword strike"));
+        weapon.thrusts[strike as usize].maximal_distance
+    };
+    0.9 * maximum as f32
 }
 
 // ─── Helpers (read-only) ────────────────────────────────────────────
@@ -1666,4 +1744,25 @@ fn pattern_to_command(pattern: MouseWayPattern) -> Option<Command> {
         MouseWayPattern::ThrustI => Command::SwordstrikeThrustI,
         MouseWayPattern::None | MouseWayPattern::Attempt => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sword_seek_distance_distinguishes_simple_click_from_thrust_a_gesture() {
+        let mut weapon = robin_engine::profiles::HtHWeaponProfile::default();
+        weapon.distance[robin_engine::weapons::WeaponDistance::Maximal as usize] = 70;
+        weapon.thrusts[robin_engine::weapons::SwordStrike::A as usize].maximal_distance = 60;
+
+        assert_eq!(
+            sword_seek_distance_for_weapon(&weapon, Command::SwordstrikeThrustA, true),
+            63.0
+        );
+        assert_eq!(
+            sword_seek_distance_for_weapon(&weapon, Command::SwordstrikeThrustA, false),
+            54.0
+        );
+    }
 }
