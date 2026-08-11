@@ -1,0 +1,9 @@
+{
+  "id": "378",
+  "subject": "Keep retained sweep geometry dormant during PushAside replacements",
+  "description": "Original RHElementActorHuman::Execute dispatches by the active weapon thrust kind: only Lateral and the four half/full-circle kinds enter ExecuteLateralSwordStrike or ExecuteCircleSwordStrike, while PushAside enters ExecutePushSwordStrike. A PushAside IN_PROGRESS frame therefore performs its own animation without advancing an interrupted strike's retained human-owned victim and angle state. Rust's selected non-straight driver instead advanced a retained strike-F TrueHalfCircle sweep while replacement strike A was PushAside, presenting the stale sweep's terminal direction. The IN_PROGRESS sweep driver now returns unless the active thrust is one of Original's five sweep kinds; PushAside still reaches its own action-point rectangle and damage path, and genuine non-straight termination retains the existing shared-sweep cleanup. The focused `push_replacement_executes_without_advancing_retained_circle_sweep` regression preserves direction 8 and retained strike F while confirming that the replacement PushAside queues ReceiveSwordDamage. Commit `bbb8daf5224edbf3f0a8de121649ff0dd5d18838` touches only `engine/melee/strikes.rs` and its focused test in `engine/melee/mod.rs`. In `parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_024/replay-004-session-0001.jsonl.zst`, the optimized runner clears the prior divergence after frame 585 and advances 326 frames to a distinct RNG-consumption mismatch during Original frame 911: Rust consumes draws 6940..6945 at MacroRand, SwordStrikeSelection, and three MeleeNonMutualGate sites while Original ends the frame at draw 6949. This is not exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task378-retained-push-sweep"
+}
