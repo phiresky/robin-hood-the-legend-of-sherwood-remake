@@ -80,6 +80,16 @@ fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
         ),
     ]);
     engine.control.frame_counter = 101;
+    let due_frame = engine.control.frame_counter;
+    {
+        let earlier_ai = engine
+            .get_entity_mut(earlier_timer_owner)
+            .and_then(Entity::ai_controller_mut)
+            .expect("earlier timer owner has AI");
+        earlier_ai.timer_is_running = true;
+        earlier_ai.when_does_timer_ring = due_frame;
+        earlier_ai.substate_at_last_timer_launch = earlier_ai.current_substate;
+    }
 
     engine.hourglass_phase_paths(&sim, &assets);
 
@@ -129,10 +139,26 @@ fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
         .and_then(Entity::ai_controller)
         .expect("earlier actor retains AI");
     assert!(
+        earlier_ai.timer_is_running,
+        "the due timer must remain armed until its owner Hourglass slot"
+    );
+    assert!(
         !earlier_ai.ai_log.iter().any(|line| {
             line.line_type == LogLineType::Event && line.info == StimulusType::EventTimer as u16
         }),
         "the paths barrier must finish before the earlier actor's timer slot begins"
+    );
+
+    engine.tick_ai_normal_timer_for_npc(&sim, earlier_timer_owner, &assets);
+    let earlier_ai = engine
+        .get_entity(earlier_timer_owner)
+        .and_then(Entity::ai_controller)
+        .expect("earlier actor retains AI after its timer slot");
+    assert!(
+        earlier_ai.ai_log.iter().any(|line| {
+            line.line_type == LogLineType::Event && line.info == StimulusType::EventTimer as u16
+        }),
+        "the same due timer must dispatch when the earlier actor's timer slot runs"
     );
 }
 
