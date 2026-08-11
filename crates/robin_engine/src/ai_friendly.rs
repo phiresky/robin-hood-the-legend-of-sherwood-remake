@@ -3559,10 +3559,22 @@ mod tests {
 
         crate::sim_rng::with_seed(1, |sim| {
             ai.alert_soldier(sim, ctx.position, 0, &ctx, None, None);
-            let friends: Vec<_> = ai
+            let notification = ai
                 .base
                 .outbox
-                .actor
+                .reentrant
+                .owner_work
+                .iter()
+                .find_map(|work| match work {
+                    AiOwnerWork::StateChange(notification) => Some(notification),
+                    _ => None,
+                })
+                .expect("alerting a soldier must enter Seeking through Friendly SetState");
+            let effects = notification
+                .actor_effects_before_callback
+                .as_ref()
+                .expect("friend detectables must precede the Friendly state callback");
+            let friends: Vec<_> = effects
                 .add_detectables
                 .iter()
                 .filter(|(_, t)| *t == DetectableType::Friend)
