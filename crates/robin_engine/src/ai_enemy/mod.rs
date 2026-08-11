@@ -4078,6 +4078,30 @@ impl EnemyAi {
         let outgoing_state = self.base.current_state;
         let outgoing_substate = self.base.current_substate;
         self.base.return_to_duty_common_stuff(sim, flags, ctx);
+        let incoming_state = self.base.current_state;
+        let incoming_substate = self.base.current_substate;
+
+        // ReturnToDutyCommonStuff calls the virtual Enemy SetState in Original.
+        // When an archer leaves the bow substates, that override clears
+        // mpShieldBearerBeforeMe and the shield bearer's reciprocal
+        // mpArcherBehindMe before the next AI owner runs
+        // (`RHartificialmalignity.cpp:9296-9314`). The shared Rust base assigns
+        // the destination state directly, so restore that omitted virtual tail
+        // here at the same owner boundary.
+        if self.shield_bearer_before_me != 0
+            && !matches!(
+                incoming_substate,
+                Substate::AttackingBowShooting
+                    | Substate::AttackingBowLoading
+                    | Substate::AttackingBowAiming
+                    | Substate::AttackingBowObservingLoading
+                    | Substate::AttackingBowObserving
+                    | Substate::AttackingBowRunningBehindShieldBearer
+                    | Substate::AttackingBowCorrectingPosition
+            )
+        {
+            self.update_shield_bearer_before_me(0);
+        }
 
         // `ReturnToDutyCommonStuff` reaches its destination state through the
         // virtual `SetState` call in Original.  The shared Rust base assigns
@@ -4107,8 +4131,6 @@ impl EnemyAi {
         // the init-time Default/Enroute transition) is restored after the
         // common code has already advanced the live state to
         // Default/GotoRoute.
-        let incoming_state = self.base.current_state;
-        let incoming_substate = self.base.current_substate;
         if outgoing_substate != incoming_substate {
             self.base
                 .outbox
@@ -5595,6 +5617,78 @@ mod tests {
                 new: None,
             }),
             "the owner-boundary drain must clear the PC's reciprocal guard before later NPCs scan"
+        );
+    }
+
+    #[test]
+    fn return_to_duty_clears_shield_pair_before_bearer_protection_timer() {
+        let sim = crate::sim_rng::test_context();
+        let mut archer = EnemyAi::new(64);
+        archer.is_archer_unit = true;
+        archer.base.current_state = AiState::Attacking;
+        archer.base.current_substate = Substate::AttackingBowShooting;
+        archer.shield_bearer_before_me = 58;
+
+        archer.resume_return_to_duty_after_patrol_init(
+            &sim,
+            DutyFlags::empty(),
+            &AiContext::default(),
+        );
+
+        assert_eq!(archer.base.current_state, AiState::Default);
+        assert_eq!(archer.shield_bearer_before_me, 0);
+        let reciprocal = std::mem::take(&mut archer.base.outbox.reentrant.cross_npc_actions);
+        assert!(matches!(
+            reciprocal.as_slice(),
+            [CrossNpcAction::SetArcherBehindMe {
+                target: 58,
+                archer: 0
+            }]
+        ));
+
+        // Drain the reciprocal write before the later shield-bearer owner. Its
+        // next protection timer must now take Original's danger-over path into
+        // GetBattleOverview, rather than the stale archer-behind-me arm.
+        let mut bearer = EnemyAi::new(58);
+        bearer.base.current_state = AiState::Attacking;
+        bearer.base.current_substate = Substate::AttackingProtectingWithShield;
+        bearer.base.primary_target = 101;
+        bearer.archer_behind_me = 64;
+        for action in reciprocal {
+            if let CrossNpcAction::SetArcherBehindMe { target, archer } = action {
+                assert_eq!(target, bearer.base.me);
+                bearer.archer_behind_me = archer;
+            }
+        }
+        assert_eq!(bearer.archer_behind_me, 0);
+
+        let mut tick = AiPerTickData::stub();
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 58,
+            action_state: crate::element::ActionState::HoldingShield,
+            ..FighterSnapshot::default()
+        });
+        tick.fighter_registry.push(FighterSnapshot {
+            handle: 101,
+            action_state: crate::element::ActionState::Waiting,
+            ..FighterSnapshot::default()
+        });
+        bearer.think_expected_event(
+            &sim,
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &tick,
+            None,
+        );
+
+        assert_eq!(
+            bearer.base.current_substate,
+            Substate::AttackingOverviewLookLeft
+        );
+        assert_eq!(
+            bearer.base.outbox.actor.look_sidewards,
+            Some(crate::ai::LookDirection::Left)
         );
     }
 
