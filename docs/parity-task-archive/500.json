@@ -1,0 +1,9 @@
+{
+  "id": "500",
+  "subject": "Use isometric MaxNorm distance when alerting soldiers",
+  "description": "`parity-random-save-replays-60s-15x-schema14/traces/Savegame_linux2/Profile_002/Savegame_002/replay-009-session-0001.jsonl.zst` previously diverged after frame 711 when Civilian65's `AlertSoldier` search chose Soldier141 and Rust queued its raw position `(1785,1686)` with tolerance 70, while Original chose Soldier187 and queued the cross-sector route's door-99 point-in `(1371,2249)` with tolerance 0. Original `RHArtificialIntelligence::MaxNormDistance` computes `(other_position - owner_position).StretchY(INVERSE_ASPECT_RATIO).MaxNorm()` (`original-code/RHartificialintelligence.cpp:6950-6953`), and `RHArtificialBonhomie::AlertSoldier` narrows that result to `ULONG` while selecting the nearest default-state soldier (`original-code/RHartificialbonhomie.cpp:1483-1595`). Rust instead compared raw map-space Chebyshev distance. At the recorded boundary, Soldier141's deltas `(105,379)` become approximately 660.7 after the Y stretch, while Soldier187's `(453,366)` become approximately 638.1, proving Soldier187 is the source-selected candidate and explaining Original's route endpoint exactly. Commit `f31e42a7751e424afd42e750e1992ffc331451d7` stretches Y by `INVERSE_ASPECT_RATIO` before the existing MaxNorm and integer narrowing. The focused `alert_soldier_uses_isometric_max_norm_for_nearest_candidate` regression passes, as do formatting, diff checks, and the optimized parity-profile build. The representative now matches exact EOF through all 710 recorded frames at final frame 1186. The schema-14 control `parity-random-save-replays-60s-15x-schema14/traces/Savegame_Cyrdach/Profile_156/Savegame_001/replay-009-session-0001.jsonl.zst` also matches exact EOF on the same optimized runner.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task500-isometric-alert-distance"
+}
