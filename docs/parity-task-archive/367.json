@@ -1,0 +1,9 @@
+{
+  "id": "367",
+  "subject": "Close corpse-intersection changes at each actor owner boundary",
+  "description": "`parity-random-save-replays-60s-15x-schema14/traces/Savegame_nicouzouf/Profile_001/Savegame_075/replay-008-session-0001.jsonl.zst` first diverged after frame 480 in Soldier140 movement, direction-goal, and downstream visibility state because Rust reconciled a prior human's lying-to-upright transition only after the complete actor walk. Original `RHElementActorHuman::SetPosture` snapshots whether the actor was lying, applies the new posture, and synchronously calls `RHEngine::UpdateIntersectingCorpses(this, false)` when the actor stands (`original-code/RHelementactorhuman.cpp:13044-13068`). The removal arm re-evaluates intersecting corpses and then clears the standing actor's small-radius and anti-collision-ignore flags before returning (`original-code/RHengine.cpp:16743-16766`), so the next creation slot observes the updated repulsive state. Commit `02d6255b4` adds a per-human corpse-intersection transition drain at the end of each live actor owner boundary, before the next legacy slot, while retaining the full post-walk scan for posture writes outside those envelopes. The focused `owner_boundary_clears_door_ignore_before_later_actor_moves` regression and the full `robin_engine` test gate pass. The current optimized representative clears the original frame-480 frontier and advances to a later independent divergence after frame 1027; it does not match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task367-corpse-owner-boundary"
+}
