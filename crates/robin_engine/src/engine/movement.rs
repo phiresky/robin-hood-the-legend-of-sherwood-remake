@@ -428,11 +428,28 @@ struct LiveMobileGeometry {
 #[cfg(test)]
 thread_local! {
     static LAST_MOBILE_CROSSING_INCREMENT: std::cell::Cell<Option<MapVec>> = const { std::cell::Cell::new(None) };
+    static POST_EXECUTE_CROSSING_OBSERVER: std::cell::RefCell<Option<Box<dyn FnMut(&EngineInner, EntityId)>>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
 pub(super) fn take_last_mobile_crossing_increment() -> Option<MapVec> {
     LAST_MOBILE_CROSSING_INCREMENT.with(|increment| increment.take())
+}
+
+#[cfg(test)]
+pub(super) fn set_post_execute_crossing_observer(
+    observer: Option<Box<dyn FnMut(&EngineInner, EntityId)>>,
+) {
+    POST_EXECUTE_CROSSING_OBSERVER.with(|slot| *slot.borrow_mut() = observer);
+}
+
+#[cfg(test)]
+fn observe_post_execute_crossing(engine: &EngineInner, entity_id: EntityId) {
+    POST_EXECUTE_CROSSING_OBSERVER.with(|slot| {
+        if let Some(observer) = slot.borrow_mut().as_mut() {
+            observer(engine, entity_id);
+        }
+    });
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2865,7 +2882,7 @@ impl EngineInner {
             // PerformMotion initializes this order and computes its new goal
             // only afterward.
             elem.sprite.position_iface.turn();
-            let (state, distance) = if frozen_all {
+            let (mut state, distance) = if frozen_all {
                 // FrozenAll short-circuits RHSprite::PerformMotion before it
                 // changes row/frame/order state. ExecuteRiderCharge continues
                 // around that call and uses the sprite's existing live frame.
@@ -2896,6 +2913,18 @@ impl EngineInner {
                 elem.sprite
                     .position_iface
                     .update_position_map_scaled(distance);
+                if elem
+                    .sprite
+                    .position_iface
+                    .is_goal_reached(&self.world.fast_grid, None)
+                {
+                    if !elem.sprite.position_iface.is_deviated()
+                        && elem.sprite.position_iface.get_tolerance() == 0.0
+                    {
+                        elem.set_position_map(goal);
+                    }
+                    state = MotionState::Terminated;
+                }
                 let wait = elem
                     .sprite
                     .wait_time(elem.sprite.current_row, elem.sprite.current_frame);
@@ -2904,6 +2933,7 @@ impl EngineInner {
                     .update_forecasted_movement(distance, wait + 1);
                 elem.update_grid_cell();
             }
+            elem.sprite.last_motion_state = Some(state);
             (state, elem.sprite.current_frame)
         };
         let last_frame = actual_frame == transition_frames - 1;
@@ -6911,7 +6941,50 @@ impl EngineInner {
             .collect();
         'actors: for actor_id in movement_actor_ids {
             let entity_id = actor_id.into();
+            let rider_entry_compute_direction = self
+                .orders
+                .sequence_manager
+                .get_element(selected.seq_id, selected.elem_idx)
+                .and_then(|element| element.current_order())
+                .filter(|order| order.order_id == selected.order_id)
+                .map(|order| order.compute_direction);
             if self.tick_rider_charge_owner(sim, assets, entity_id, false) {
+                let charge_motion = self
+                    .world
+                    .entities
+                    .get(entity_id)
+                    .and_then(|entity| entity.element_data().sprite.last_motion_state);
+                self.dispatch_actor_post_execute_line_crossing(
+                    sim,
+                    assets,
+                    entity_id,
+                    rider_entry_compute_direction,
+                );
+                if charge_motion == Some(MotionState::Terminated) {
+                    // Actor::Hourglass advances only after line-crossing
+                    // callbacks. Never consume a replacement installed by
+                    // one of those callbacks in place of the entry order.
+                    let entry_still_current = self
+                        .orders
+                        .sequence_manager
+                        .get_element(selected.seq_id, selected.elem_idx)
+                        .and_then(|element| element.current_order())
+                        .is_some_and(|order| order.order_id == selected.order_id);
+                    if entry_still_current {
+                        self.do_next_order(selected.seq_id, selected.elem_idx);
+                    }
+                    if let Some(actor) = self
+                        .world
+                        .entities
+                        .get_mut(entity_id)
+                        .and_then(Entity::actor_data_mut)
+                    {
+                        actor.active_rider_charge = None;
+                    }
+                    if let Some(entity) = self.world.entities.get_mut(entity_id) {
+                        entity.element_data_mut().sprite.last_motion_state = charge_motion;
+                    }
+                }
                 continue;
             }
             let ft = final_tolerances[actor_id];
@@ -11149,6 +11222,8 @@ impl EngineInner {
         entity_id: EntityId,
         entry_compute_direction: Option<bool>,
     ) {
+        #[cfg(test)]
+        observe_post_execute_crossing(self, entity_id);
         let (old_pos, new_pos, layer, posture, is_carried, is_human) = {
             let entity =
                 self.world.entities.get(entity_id).unwrap_or_else(|| {

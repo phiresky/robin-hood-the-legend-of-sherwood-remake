@@ -1620,6 +1620,77 @@ fn rider_charge_first_execute_turns_before_initializing_new_motion_goal() {
 }
 
 #[test]
+fn rider_charge_arrival_snaps_and_advances_from_actor_hourglass() {
+    use crate::engine::movement::set_post_execute_crossing_observer;
+    use crate::order::{Order, OrderType};
+
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (rider, sequence, _) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        OrderType::RiderCharging,
+        vec![20, 20],
+    );
+    let next_id = engine.orders.allocate_order_id();
+    let movement = engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, 0)
+        .expect("rider movement remains installed");
+    let charge = movement
+        .orders
+        .front_mut()
+        .expect("fixture installs a charge order");
+    charge.target_x = 102.0;
+    charge.target_y = 100.0;
+    charge.tolerance = 0.0;
+    movement
+        .orders
+        .push_back(Order::new(OrderType::RunningUpright, 300.0, 100.0, next_id));
+
+    let crossing_saw_charge = std::rc::Rc::new(std::cell::Cell::new(false));
+    let crossing_observed = crossing_saw_charge.clone();
+    set_post_execute_crossing_observer(Some(Box::new(move |engine, owner| {
+        if owner == rider {
+            assert_eq!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(owner)
+                    .map(|(_, _, order)| order.order_type),
+                Some(OrderType::RiderCharging),
+                "line-crossing callbacks observe the terminating entry order"
+            );
+            crossing_observed.set(true);
+        }
+    })));
+
+    tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
+    set_post_execute_crossing_observer(None);
+
+    assert!(crossing_saw_charge.get());
+    assert_eq!(
+        engine
+            .get_entity(rider)
+            .unwrap()
+            .element_data()
+            .position_map(),
+        MapPoint::new(102.0, 100.0),
+        "PerformMotion snaps an undeviated zero-tolerance arrival to its goal"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(rider)
+            .map(|(_, _, order)| order.order_type),
+        Some(OrderType::RunningUpright),
+        "Actor::Hourglass consumes the Terminated charge order"
+    );
+}
+
+#[test]
 fn rider_charge_multiple_hits_follow_creation_order_rng_state_and_holes() {
     use crate::engine::melee::{
         clear_test_sword_damage_observations, take_test_sword_damage_observations,
