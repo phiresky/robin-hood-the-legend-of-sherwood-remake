@@ -543,6 +543,102 @@ fn remove_all_subordinates_force_returns_script_locked_civilian_to_duty() {
     );
 }
 
+#[test]
+fn remove_all_subordinates_vm_yield_clears_before_following_add_as_subordinate() {
+    let sim = crate::sim_rng::test_context();
+    let mut assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    let old_chief = engine.add_entity(make_scripted_soldier(""));
+    let new_chief = engine.add_entity(make_scripted_soldier(""));
+    let old_member = engine.add_entity(make_scripted_soldier(""));
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    engine
+        .get_entity_mut(old_chief)
+        .and_then(Entity::ai_controller_mut)
+        .expect("old chief has AI")
+        .theoretical_patrol = vec![old_member];
+    {
+        let member_ai = engine
+            .get_entity_mut(old_member)
+            .and_then(Entity::ai_controller_mut)
+            .expect("old member has AI");
+        member_ai.patrol_chief = Some(old_chief);
+        // Keep this regression focused on the script VM boundary. The
+        // default-member ForceReturnToDuty path has dedicated coverage above.
+        member_ai.current_state = crate::ai::AiState::Seeking;
+    }
+
+    let old_chief_handle = crate::natives::ScriptHandleCodec::actor_handle(old_chief);
+    let new_chief_handle = crate::natives::ScriptHandleCodec::actor_handle(new_chief);
+    let startup = ClassEntry {
+        source_file: "remove_then_add_test.scs".into(),
+        class_name: "StartUp".into(),
+        size_of_member_variables: 0,
+        member_variables: Vec::new(),
+        functions: vec![Function {
+            name: "Reassign".into(),
+            address: 0,
+            num_parameters: 0,
+            size_of_return_value: 0,
+            size_of_parameters: 0,
+            size_of_volatile: 0,
+            size_of_temporary: 8,
+        }],
+        quads: vec![
+            q_begin_function(0, 2),
+            q_aff0_iconstant(TMP0, old_chief_handle),
+            q_native_param(TMP0),
+            q_native_call(crate::natives::NativeFn::RemoveAllSubordinates as u32),
+            q_aff0_iconstant(TMP0, new_chief_handle),
+            q_aff0_iconstant(TMP1, old_chief_handle),
+            q_native_param(TMP0),
+            q_native_param(TMP1),
+            q_native_call(crate::natives::NativeFn::AddAsSubordinate as u32),
+            q_return(),
+            q_end_function(),
+        ],
+    };
+    engine.scripts.mission = Some(
+        MissionScript::from_scb(ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![startup],
+        })
+        .expect("remove-then-add test SCB builds"),
+    );
+    engine.attach_script_bindings(&assets);
+
+    engine
+        .call_script_vm(
+            &sim,
+            &assets,
+            super::ScriptVmKey::Global,
+            "Reassign",
+            &[],
+            crate::natives::ScriptCallFrame::default(),
+        )
+        .expect("remove-then-add callback completes");
+
+    assert!(
+        engine
+            .get_entity(old_chief)
+            .and_then(Entity::ai_controller)
+            .expect("old chief remains an NPC")
+            .theoretical_patrol
+            .is_empty(),
+        "the old patrol is cleared before the VM continues"
+    );
+    assert_eq!(
+        engine
+            .get_entity(new_chief)
+            .and_then(Entity::ai_controller)
+            .expect("new chief remains an NPC")
+            .theoretical_patrol,
+        vec![old_chief],
+        "the following AddAsSubordinate must observe old_chief.HasPatrol() == false"
+    );
+}
+
 /// Actors with no bound script instance at all pass through
 /// unfiltered.  (Most shipped actors aren't scripted.)
 #[test]

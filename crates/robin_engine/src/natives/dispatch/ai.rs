@@ -747,7 +747,34 @@ impl NativeContext<'_, '_> {
             }
             RemoveAllSubordinates => {
                 let actor = stack.pop_i32();
-                self.emit_barrier(DeferredCommand::RemoveAllSubordinates { actor });
+
+                let Some(entity) = self.get_entity(actor) else {
+                    tracing::error!(
+                        "Script Error: RemoveAllSubordinates with invalid chief ({actor})"
+                    );
+                    return 0;
+                };
+                if !entity.is_npc() {
+                    tracing::error!(
+                        "Script Error: RemoveAllSubordinates with non-NPC chief ({actor})"
+                    );
+                    return 0;
+                }
+
+                // ClearPatrol synchronously returns every default-state
+                // subordinate to duty before the script continues. That work
+                // needs EngineInner + LevelAssets, so suspend this VM at the
+                // native boundary and let the engine complete it before the
+                // next instruction runs.
+                self.pending_yield = Some(crate::interp::NativeYield {
+                    operation: crate::interp::NativeOperation::EngineAction(
+                        crate::interp::SynchronousScriptRequest::RemoveAllSubordinates {
+                            actor,
+                            native_return: 0,
+                        },
+                    ),
+                    resume: crate::interp::ResumePolicy::Fixed(0),
+                });
                 0
             }
             AddRepulsivePoint => {

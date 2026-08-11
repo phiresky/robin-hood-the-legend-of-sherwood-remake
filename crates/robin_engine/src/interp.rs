@@ -135,6 +135,14 @@ pub enum SynchronousScriptRequest {
         actor: i32,
         native_return: i32,
     },
+    /// Execute `RHArtificialIntelligence::ClearPatrol` before the VM invokes
+    /// its next native. Clearing a patrol synchronously calls
+    /// `ForceReturnToDuty` for each default-state member, which requires the
+    /// engine-owned AI and sequence machinery.
+    RemoveAllSubordinates {
+        actor: i32,
+        native_return: i32,
+    },
     /// Execute `RHScript::StopActor` before the VM invokes its next native.
     /// Sequence natives mutate the sequence manager synchronously, so a
     /// queued effect would allow later sequence work to overtake the stop.
@@ -203,6 +211,7 @@ impl SynchronousScriptRequest {
             | Self::AssignPost { native_return, .. }
             | Self::SwitchToAlertPath { native_return, .. }
             | Self::SetPathWalkingStyle { native_return, .. }
+            | Self::RemoveAllSubordinates { native_return, .. }
             | Self::StopActor { native_return, .. } => native_return,
         }
     }

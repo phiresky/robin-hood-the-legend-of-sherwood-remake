@@ -3600,3 +3600,57 @@ fn add_as_subordinate_requests_patrol_reinit() {
     assert!(chief_ai.missed_patrol_members.is_empty());
     assert!(chief_ai.needs_patrol_reinit);
 }
+
+#[test]
+fn remove_all_subordinates_yields_engine_clear_before_vm_continues() {
+    let mut host = BoundScriptEffects::new();
+    host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(native_test_soldier())]);
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    assert!(matches!(
+        HostFunctions::call(
+            &mut host,
+            NativeFn::RemoveAllSubordinates as u32,
+            &mut stack,
+        ),
+        NativeCallOutcome::Yield(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::EngineAction(
+                crate::interp::SynchronousScriptRequest::RemoveAllSubordinates {
+                    actor: yielded_actor,
+                    native_return: 0,
+                },
+            ),
+            resume: crate::interp::ResumePolicy::Fixed(0),
+        }) if yielded_actor == actor
+    ));
+    assert!(
+        host.simulation_barriers().is_empty(),
+        "the native must not also enqueue the serialized compatibility command"
+    );
+}
+
+#[test]
+fn remove_all_subordinates_rejects_invalid_or_non_npc_chief_without_yielding() {
+    let invalid_actor = ScriptHandleCodec::actor_handle_from_index(1);
+    let mut host = BoundScriptEffects::new();
+    host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(native_test_pc(
+        Vec::new(),
+        Vec::new(),
+    ))]);
+
+    for actor in [invalid_actor, ScriptHandleCodec::actor_handle_from_index(0)] {
+        let mut stack = NativeStack::default();
+        stack.push_i32(actor);
+        assert_eq!(
+            HostFunctions::call(
+                &mut host,
+                NativeFn::RemoveAllSubordinates as u32,
+                &mut stack,
+            ),
+            NativeCallOutcome::Return(0)
+        );
+    }
+    assert!(host.simulation_barriers().is_empty());
+}

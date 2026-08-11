@@ -834,6 +834,23 @@ impl EngineInner {
                 self.relaunch_path_at_new_speed(sim, assets, owner);
                 Ok(0)
             }
+            crate::interp::SynchronousScriptRequest::RemoveAllSubordinates { actor, .. } => {
+                let chief = self.entity_id_for_actor_handle(actor).ok_or_else(|| {
+                    format!(
+                        "RemoveAllSubordinates chief handle {actor} became stale at its synchronous barrier"
+                    )
+                })?;
+                self.get_entity(chief)
+                    .and_then(crate::element::Entity::ai_controller)
+                    .ok_or_else(|| {
+                        format!(
+                            "RemoveAllSubordinates chief {} lost its required NPC AI at its synchronous barrier",
+                            chief.index()
+                        )
+                    })?;
+                self.script_remove_all_subordinates(sim, assets, chief);
+                Ok(0)
+            }
             crate::interp::SynchronousScriptRequest::StopActor { actor, .. } => {
                 let owner = self.entity_id_for_actor_handle(actor).ok_or_else(|| {
                     format!(
@@ -5101,6 +5118,79 @@ mod script_context_tests {
             .as_ref()
             .expect("script remains installed");
         assert_eq!(script.active_call_frame_count(), 0);
+    }
+
+    #[test]
+    fn external_remove_all_subordinates_finishes_clear_before_returning() {
+        fn soldier() -> crate::element::Entity {
+            crate::element::Entity::Soldier(crate::element::ActorSoldier {
+                element: crate::element::ElementData {
+                    kind: crate::element::ElementKind::ActorSoldier,
+                    ..Default::default()
+                },
+                actor: crate::element::ActorData::default(),
+                human: crate::element::HumanData::default(),
+                npc: crate::element::NpcData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::new(
+                        crate::ai_enemy::EnemyAi::new(0),
+                    )),
+                    ..Default::default()
+                },
+                soldier: crate::element::SoldierData::default(),
+            })
+        }
+
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        let mut engine = EngineInner::new();
+        engine.world.entities.push(Some(soldier()));
+        engine.world.entities.push(Some(soldier()));
+        let chief = crate::element::EntityId::Soldier(crate::element::SoldierId(0));
+        let member = crate::element::EntityId::Soldier(crate::element::SoldierId(1));
+
+        {
+            let chief_ai = engine
+                .get_entity_mut(chief)
+                .and_then(crate::element::Entity::ai_controller_mut)
+                .expect("chief has AI");
+            chief_ai.theoretical_patrol.push(member);
+            chief_ai.patrol.push(member);
+            chief_ai.missed_patrol_members.push(member);
+        }
+        {
+            let member_ai = engine
+                .get_entity_mut(member)
+                .and_then(crate::element::Entity::ai_controller_mut)
+                .expect("member has AI");
+            member_ai.patrol_chief = Some(chief);
+            // Non-default members are unlinked synchronously without entering
+            // ForceReturnToDuty, keeping this test focused on the VM barrier.
+            member_ai.current_state = crate::ai::AiState::Seeking;
+        }
+
+        engine.scripts.mission = Some(empty_mission_script());
+        engine.attach_script_bindings(&assets);
+        let chief_handle = crate::natives::ScriptHandleCodec::actor_handle_from_index(0);
+        assert_eq!(
+            engine.call_external_native(&sim, &assets, "RemoveAllSubordinates", &[chief_handle],),
+            Ok(0)
+        );
+
+        let chief_ai = engine
+            .get_entity(chief)
+            .and_then(crate::element::Entity::ai_controller)
+            .expect("chief remains an NPC");
+        assert!(chief_ai.theoretical_patrol.is_empty());
+        assert!(chief_ai.patrol.is_empty());
+        assert!(chief_ai.missed_patrol_members.is_empty());
+        assert_eq!(
+            engine
+                .get_entity(member)
+                .and_then(crate::element::Entity::ai_controller)
+                .expect("member remains an NPC")
+                .patrol_chief,
+            None
+        );
     }
 
     #[test]
