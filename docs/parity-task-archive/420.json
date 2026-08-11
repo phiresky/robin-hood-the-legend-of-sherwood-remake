@@ -1,0 +1,9 @@
+{
+  "id": "420",
+  "subject": "Use AI Position for archer retreat geometry",
+  "description": "`parity-random-save-replays-60s-15x-schema14/traces/Savegame_nicouzouf/Profile_001/Savegame_075/replay-008-session-0001.jsonl.zst` previously reached an independent divergence after frame 1027: Original Soldier191 entered `MoveOk`/animation 235/substate 181, while Rust retained `Wait`/animation 236/substate 178. The selected enemy PC346 was executing PassDoor through door 33. Its raw interpolated map position was `(1352,500)`, but Original AI `Position` had already committed it to the selected door's point-out `(1352,512)`. Original's offensive archer decision calls `ArcherIsToNearToEnemy(Position(mpMe), mpPrimaryTarget)` (`original-code/RHartificialmalignity.cpp:7399-7418`), and `ArcherIsToNearToEnemy` constructs its enemy vector from `Position(pEnemy)`, not the actor's raw feet (`original-code/RHartificialmalignity.cpp:16239-16266`). The ArcherStepBack arm reselects the primary target and again stores `Position(mpPrimaryTarget)` before `ProposeGoodStepBackGoal` (`original-code/RHartificialmalignity.cpp:7777-7788`). Commit `70277f26e49922221395b28a6b0c833ebe1e8513` routes both archer proximity and step-back geometry through the shared AI entity view while retaining the fighter snapshot's direction and action state. The focused `archer_distance_uses_door_committed_ai_position` regression passes, as do all 167 `ai_enemy` tests, and the optimized parity-profile runner builds successfully. The schema-14 representative now matches exact EOF through all 1,500 recorded frames at final frame 1514.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task420-archer-ai-position"
+}

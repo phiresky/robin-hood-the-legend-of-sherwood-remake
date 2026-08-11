@@ -1,0 +1,9 @@
+{
+  "id": "407",
+  "subject": "Scan the complete soldier registry for free shield bearers",
+  "description": "`parity-random-save-replays-60s-15x/traces/Savegame_nicouzouf/Profile_001/Savegame_045/replay-014-session-0001.jsonl.zst` formerly first diverged after frame 1054 when archer Soldier66 queued a cover path to `(691.105469,734.267334)` instead of Original's `(673.427795,724.127869)`. Original `RHArtificialMalignity::GetNearestFreeShieldBearer` scans every same-camp soldier in registration order and applies shield identity, formation-substate, free-bearer, and strict truncated-distance gates without calling `IsAbleToFight` (`original-code/RHartificialmalignity.cpp:17282-17324`). Soldier62 was inactive and script-locked while in `SUBSTATE_ATTACKING_RUNNING_TO_PHALANX`, but remained the nearer eligible bearer; Rust scanned the radius-limited `nearby_fighters` collection, which excludes unable fighters, omitted Soldier62, and selected active Soldier60. Commit `f7322ef74f6f3fdf7ccd7f428a374322a3fb7a3e` changes only `get_nearest_free_shield_bearer` and its focused regression to scan the complete `fighter_registry`, preserving the existing Original eligibility and strict distance gates. The focused `nearest_shield_bearer_includes_inactive_running_to_phalanx_soldier` test passes and the optimized parity-profile runner builds successfully. The representative clears the frame-1054 path-goal frontier and advances to an independent one-field divergence after frame 1162: Soldier62's Original `list_them` is `[PC102, PC99]`, while Rust additionally retains PC103. Same-save replay-003 remains unchanged at its independent frame-1191 Projectile121 active/elevation/movement frontier, so neither replay is exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task407-shield-bearer-registry"
+}
