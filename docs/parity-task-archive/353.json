@@ -1,0 +1,9 @@
+{
+  "id": "353",
+  "subject": "Retain the last eligible human in projectile actor order",
+  "description": "parity-random-save-replays-60s-15x/traces/Savegame_SuN1Sh1nE/Profile_004/Savegame_034/replay-001-session-0001.jsonl.zst first diverged after frame 940 because Rust applied Projectile249's arrow damage to Soldier114 while Original applied it to the later Soldier116, leaving reciprocal command, animation, direction, and life-point differences on the two soldiers. Original RHElementProjectile::FindHumanVictim walks the complete marrayActors order (`original-code/RHelementprojectile.cpp:1596-1646`). Its primary belt-hit assignment and `break` are inside the posture switch (`original-code/RHelementprojectile.cpp:1680-1705`), as are the leaning-eye retry assignment and `break` (`original-code/RHelementprojectile.cpp:1708-1729`); neither exits the surrounding actor loop, so each later eligible human replaces the retained candidate returned at line 1735. Rust instead broke its actor scan after the first eligible primary or leaning-eye hit. Both paths now retain the candidate and continue through the remaining humans. The focused `tick_arrows_selects_last_eligible_human_in_actor_order` and `tick_arrows_leaning_eye_hit_can_be_replaced_by_later_eligible_human` regressions pass, and the optimized parity-profile runner builds successfully. The representative now matches exact EOF through final frame 1599: all 1500 recorded frames match, with no downstream boundary.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task353-projectile-last-human"
+}
