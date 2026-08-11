@@ -2316,7 +2316,7 @@ impl EngineInner {
         )
     }
 
-    fn build_npc_tick_data_without_forecasts(
+    pub(super) fn build_npc_tick_data_without_forecasts(
         &self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
@@ -9011,16 +9011,47 @@ impl EngineInner {
                     crate::ai::Remark::Panic
                 });
             self.drain_ai_owner_work_for(sim, assets, npc_id);
-            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                panic!("panic owner {} disappeared after speech", npc_id.index())
-            });
-            let ai = entity
-                .ai_controller_mut()
-                .unwrap_or_else(|| panic!("panic owner {} lost AI after speech", npc_id.index()));
-            ai.set_alert_status(request.alert);
-            ai.lasting_panic_runs = request.runs.saturating_add(1);
-            ai.first_try = true;
-            ai.fire_self_stimulus(crate::ai::StimulusType::EventReachPoint);
+            let deferred_self_stimuli = {
+                let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+                    panic!("panic owner {} disappeared after speech", npc_id.index())
+                });
+                let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+                    panic!("panic owner {} lost AI after speech", npc_id.index())
+                });
+                ai.set_alert_status(request.alert);
+                ai.lasting_panic_runs = request.runs.saturating_add(1);
+                ai.first_try = true;
+
+                // A pre-existing Rust self-stimulus is deferred work from an
+                // enclosing boundary.  It is not part of Original Panic's
+                // direct recursive Think call and must not be pulled into it.
+                let deferred = std::mem::take(&mut ai.outbox.reentrant.self_stimuli);
+                ai.fire_self_stimulus(crate::ai::StimulusType::EventReachPoint);
+                deferred
+            };
+
+            // `RHArtificialIntelligence::Panic` calls
+            // `Think(EVENT_REACHPOINT)` directly here.  This is a recursive
+            // owner-local boundary, not a deferred event: in particular, a
+            // retained sibling stimulus must not run first and replace the
+            // freshly installed `FLEEING_PANIC` substate.  Close the generated
+            // Think (and its two direction/distance RNG draws) before Panic
+            // returns to its caller.
+            self.drain_self_stimuli_for_npc_without_forecast(sim, npc_id, assets);
+            self.world
+                .entities
+                .get_mut(npc_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "panic owner {} lost AI after recursive Think",
+                        npc_id.index()
+                    )
+                })
+                .outbox
+                .reentrant
+                .self_stimuli
+                .extend(deferred_self_stimuli);
         } else {
             // Not new: upgrade-only bump of `lasting_panic_runs`
             // (`if lasting_panic_runs < runs`).  No state change, no

@@ -314,6 +314,9 @@ impl FriendlyAi {
 
         // Pre-think checks
         if !self.start_think(stimulus, ctx, global.freeze) {
+            if stimulus_type == StimulusType::EventAfterScriptGoOn {
+                self.base.outbox.reentrant.engine_drains_after_script_go_on = false;
+            }
             self.end_think(sim, global, ctx);
             return true;
         }
@@ -399,7 +402,11 @@ impl FriendlyAi {
             }
         };
 
-        self.end_think(sim, global, ctx);
+        if !(stimulus_type == StimulusType::EventAfterScriptGoOn
+            && self.base.outbox.reentrant.engine_drains_after_script_go_on)
+        {
+            self.end_think(sim, global, ctx);
+        }
         return_value
     }
 
@@ -1161,7 +1168,7 @@ impl FriendlyAi {
     // ThinkUnexpectedEvent — civilian dispatcher
     // -----------------------------------------------------------------------
 
-    fn think_unexpected_event(
+    pub(crate) fn think_unexpected_event(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
@@ -1205,6 +1212,9 @@ impl FriendlyAi {
             }
 
             StimulusType::EventAfterScriptGoOn => {
+                if self.base.outbox.reentrant.engine_drains_after_script_go_on {
+                    return false;
+                }
                 // Drain retained stimuli exactly as the Original's recursive
                 // Think(stimulus) loop does. Preserve the complete stimulus:
                 // reducing an EventView to its type discards the viewed actor

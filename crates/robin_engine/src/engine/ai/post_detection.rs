@@ -776,6 +776,26 @@ impl EngineInner {
         npc_id: EntityId,
         assets: &LevelAssets,
     ) {
+        self.tick_ai_queued_stimuli_for_npc_limit(sim, npc_id, assets, None);
+    }
+
+    pub(crate) fn tick_one_ai_queued_stimulus_for_npc(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+    ) {
+        self.tick_ai_queued_stimuli_for_npc_limit(sim, npc_id, assets, Some(1));
+    }
+
+    fn tick_ai_queued_stimuli_for_npc_limit(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+        limit: Option<usize>,
+    ) {
+        let mut processed = 0usize;
         loop {
             let stimulus = {
                 let entity =
@@ -884,6 +904,10 @@ impl EngineInner {
             self.dispatch_think_with_drain_without_forecast_deferred_turn(
                 sim, npc_id, &stimulus, &ctx, &tick_data, assets,
             );
+            processed += 1;
+            if limit.is_some_and(|limit| processed >= limit) {
+                return;
+            }
         }
     }
 

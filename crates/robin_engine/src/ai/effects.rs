@@ -88,6 +88,9 @@ pub struct AiDetectionOutbox {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct AiReentrantOutbox {
+    #[serde(skip)]
+    #[state_hash(skip)]
+    pub engine_drains_after_script_go_on: bool,
     pub cross_npc_actions: Vec<CrossNpcAction>,
     pub self_stimuli: Vec<StimulusType>,
     /// Finish an outside-Think multi-point patrol macro after its synthetic

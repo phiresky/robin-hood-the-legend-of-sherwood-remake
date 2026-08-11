@@ -1507,7 +1507,9 @@ fn retained_fifo_stops_when_first_think_acquires_busy_lock() {
     let ai = soldier.npc.ai_brain.base_mut().expect("FIFO owner has AI");
     ai.locks_flag_field = AiLockFlags::empty();
     ai.stimulus_queue = vec![
+        Stimulus::new(StimulusType::EventAfterScriptGoOn),
         Stimulus::new(StimulusType::EventCouldntReachPoint),
+        Stimulus::new(StimulusType::EventAfterScriptGoOn),
         Stimulus::new(StimulusType::EventTimer),
     ];
 
@@ -1517,11 +1519,113 @@ fn retained_fifo_stops_when_first_think_acquires_busy_lock() {
         .and_then(Entity::ai_controller)
         .expect("FIFO owner retains AI");
     assert!(ai.locks_flag_field.contains(AiLockFlags::BUSY));
-    assert!(
+    assert_eq!(
         ai.stimulus_queue
             .iter()
-            .any(|stimulus| stimulus.stimulus_type == StimulusType::EventTimer),
-        "the pre-existing FIFO suffix must survive the newly acquired lock"
+            .map(|stimulus| stimulus.stimulus_type)
+            .collect::<Vec<_>>(),
+        vec![
+            StimulusType::EventAfterScriptGoOn,
+            StimulusType::EventTimer,
+            StimulusType::EventCouldntReachPoint,
+        ],
+        "the lock check must preserve both a later duplicate marker and its suffix before the causal retry"
+    );
+}
+
+#[test]
+fn panic_generated_reachpoint_precedes_retained_panic_sibling_and_draws_twice() {
+    use crate::ai::{AiState, Position, Stimulus, StimulusType, Substate};
+    use crate::sim_rng::{RngSite, with_draw_trace};
+
+    let sim = &crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let npc_id = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .civilians
+        .push(crate::profiles::CivilianProfile::default());
+
+    // Keep the first panic segment inside an open grid.  There are no door
+    // seek records, so the first retained EVENT_PANIC must enter the
+    // Original no-door branch and recursively Think(EVENT_REACHPOINT).
+    engine.world.fast_grid.size_map(64, 64);
+    engine.world.fast_grid.allocate_layers(1);
+    let sector = crate::position_interface::SectorHandle::new(1).unwrap();
+    let Entity::Civilian(civilian) = engine.get_entity_mut(npc_id).unwrap() else {
+        panic!("retained panic owner changed kind")
+    };
+    civilian.element.active = true;
+    civilian
+        .element
+        .set_position(crate::coordinates::WorldPoint3D::new(1000.0, 1000.0, 0.0));
+    civilian.element.set_layer(0);
+    civilian.element.set_sector(Some(sector));
+    civilian
+        .element
+        .sprite
+        .position_iface
+        .set_move_box(crate::coordinates::MoveBox::from_corners(
+            crate::coordinates::MapVec::new(-2.0, -2.0),
+            crate::coordinates::MapVec::new(2.0, 2.0),
+        ));
+    civilian.npc.life_points = 100;
+    let ai = civilian.npc.ai_brain.base_mut().unwrap();
+    ai.current_state = AiState::Default;
+    ai.current_substate = Substate::DefaultEnroute;
+    ai.script_locked = false;
+    ai.outbox
+        .reentrant
+        .self_stimuli
+        .push(StimulusType::EventTimer);
+    ai.stimulus_queue = vec![
+        Stimulus::new(StimulusType::EventAfterScriptGoOn),
+        Stimulus::with_position(
+            StimulusType::EventPanic,
+            Position {
+                x: 900.0,
+                y: 1000.0,
+                sector: Some(sector),
+                level: 0,
+            },
+        ),
+        Stimulus::new(StimulusType::EventAfterScriptGoOn),
+        Stimulus::with_position(
+            StimulusType::EventPanic,
+            Position {
+                x: 1100.0,
+                y: 1000.0,
+                sector: Some(sector),
+                level: 0,
+            },
+        ),
+    ];
+
+    let (_, draws) =
+        with_draw_trace(|| engine.tick_ai_queued_stimuli_for_npc(sim, npc_id, &assets));
+
+    assert_eq!(draws, vec![RngSite::AiPanic, RngSite::AiPanic]);
+    let ai = engine
+        .get_entity(npc_id)
+        .and_then(Entity::ai_controller)
+        .expect("retained panic owner keeps AI");
+    let events = ai
+        .ai_log
+        .iter()
+        .filter(|line| line.line_type == crate::ai::LogLineType::Event)
+        .map(|line| line.info)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        events,
+        vec![
+            StimulusType::EventAfterScriptGoOn as u16,
+            StimulusType::EventPanic as u16,
+            StimulusType::EventReachPoint as u16,
+            StimulusType::EventTimer as u16,
+            StimulusType::EventPanic as u16,
+        ],
+        "Panic's direct recursive Think must precede both an existing self backlog and the retained sibling"
     );
 }
 

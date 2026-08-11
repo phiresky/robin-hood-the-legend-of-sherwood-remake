@@ -3425,6 +3425,9 @@ impl EnemyAi {
 
         // Pre-think: check locks, queue if busy, etc.
         if !self.start_think(stimulus, ctx, global.freeze) {
+            if stimulus_type == StimulusType::EventAfterScriptGoOn {
+                self.base.outbox.reentrant.engine_drains_after_script_go_on = false;
+            }
             self.end_think(sim, global, ctx, tick, grid);
             return true;
         }
@@ -3535,7 +3538,11 @@ impl EnemyAi {
             }
         };
 
-        self.end_think(sim, global, ctx, tick, grid);
+        if !(stimulus_type == StimulusType::EventAfterScriptGoOn
+            && self.base.outbox.reentrant.engine_drains_after_script_go_on)
+        {
+            self.end_think(sim, global, ctx, tick, grid);
+        }
         return_value
     }
 

@@ -3017,6 +3017,15 @@ impl EngineInner {
                 matches!(entity, Entity::Civilian(c) if c.npc.ai_brain.friendly().is_some())
             })
             .then(|| self.build_friendly_tick_data_without_forecasts(entity_id));
+        if stimulus.stimulus_type == crate::ai::StimulusType::EventAfterScriptGoOn {
+            let ai = self
+                .world
+                .entities
+                .get_mut(entity_id)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| panic!("AfterScript owner {} lost its AI", entity_id.index()));
+            ai.outbox.reentrant.engine_drains_after_script_go_on = true;
+        }
         let handled = {
             let ai_global = &mut self.ai.global;
             let Some(entity) = self.world.entities.get_mut(entity_id) else {
@@ -3055,13 +3064,165 @@ impl EngineInner {
                 return false;
             }
         };
+        let after_script_suspended = stimulus.stimulus_type
+            == crate::ai::StimulusType::EventAfterScriptGoOn
+            && self
+                .world
+                .entities
+                .get(entity_id)
+                .and_then(Entity::ai_controller)
+                .is_some_and(|ai| ai.outbox.reentrant.engine_drains_after_script_go_on);
+        if after_script_suspended {
+            // Original is still inside the outer Think here.  Its handler
+            // recursively calls Think for each retained sibling, skipping a
+            // duplicate AFTER_SCRIPT marker and stopping if a sibling locks
+            // the AI.  Close each sibling's engine-facing outbox before
+            // advancing to the next one, then run the outer tail/EndThink.
+            loop {
+                let next = {
+                    let ai = self
+                        .world
+                        .entities
+                        .get_mut(entity_id)
+                        .and_then(Entity::ai_controller_mut)
+                        .unwrap_or_else(|| {
+                            panic!("AfterScript owner {} lost its AI queue", entity_id.index())
+                        });
+                    if ai.stimulus_queue.is_empty()
+                        || !ai.locks_flag_field.is_empty()
+                        || ai.script_locked
+                    {
+                        None
+                    } else if ai.stimulus_queue[0].stimulus_type
+                        == crate::ai::StimulusType::EventAfterScriptGoOn
+                    {
+                        ai.stimulus_queue.remove(0);
+                        Some(false)
+                    } else {
+                        Some(true)
+                    }
+                };
+                match next {
+                    Some(true) => self.tick_one_ai_queued_stimulus_for_npc(sim, entity_id, assets),
+                    Some(false) => continue,
+                    None => break,
+                }
+            }
+            let completed = self
+                .world
+                .entities
+                .get(entity_id)
+                .and_then(Entity::ai_controller)
+                .is_some_and(|ai| ai.stimulus_queue.is_empty());
+
+            let fresh_scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let fresh_entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
+                panic!(
+                    "AfterScript owner {} disappeared before outer tail",
+                    entity_id.index()
+                )
+            });
+            let mut fresh_ctx = super::ai::build_ai_context_from_entity(
+                fresh_entity,
+                self.control.frame_counter,
+                self.entity_building_sector(fresh_entity.element_data().sector()),
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &fresh_scratch.ai_entity_views,
+                &fresh_scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.hiking_paths,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            fresh_ctx.enter_swordfight_pending = self
+                .orders
+                .sequence_manager
+                .element_is_about_to_be_launched_or_postponed_by_current(
+                    entity_id,
+                    crate::element::Command::EnterSwordfight,
+                );
+            self.refresh_selected_default_wait_identity(entity_id, &mut fresh_ctx);
+            fresh_ctx.in_uninterruptible_command = self.is_very_very_busy(entity_id);
+            fresh_ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
+            let fresh_enemy_tick = matches!(fresh_entity, Entity::Soldier(_)).then(|| {
+                self.build_npc_tick_data_without_forecasts(sim, entity_id, &fresh_scratch, assets)
+            });
+            let fresh_friendly_tick = matches!(fresh_entity, Entity::Civilian(_))
+                .then(|| self.build_friendly_tick_data_without_forecasts(entity_id));
+            let ai_global = &mut self.ai.global;
+            let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
+                panic!(
+                    "AfterScript owner {} disappeared at outer tail",
+                    entity_id.index()
+                )
+            });
+            match entity {
+                Entity::Soldier(s) => {
+                    let enemy = s.npc.ai_brain.enemy_mut().unwrap();
+                    enemy.base.outbox.reentrant.engine_drains_after_script_go_on = false;
+                    if completed {
+                        enemy.think_unexpected_event(
+                            sim,
+                            stimulus,
+                            ai_global,
+                            &fresh_ctx,
+                            fresh_enemy_tick
+                                .as_ref()
+                                .expect("AfterScript Enemy tick data"),
+                            Some(&self.world.fast_grid),
+                        );
+                    }
+                    enemy.end_think(
+                        sim,
+                        ai_global,
+                        &fresh_ctx,
+                        fresh_enemy_tick
+                            .as_ref()
+                            .expect("AfterScript Enemy tick data"),
+                        Some(&self.world.fast_grid),
+                    );
+                }
+                Entity::Civilian(c) => {
+                    let friendly = c.npc.ai_brain.friendly_mut().unwrap();
+                    friendly
+                        .base
+                        .outbox
+                        .reentrant
+                        .engine_drains_after_script_go_on = false;
+                    if completed {
+                        friendly.think_unexpected_event(
+                            sim,
+                            stimulus,
+                            ai_global,
+                            &fresh_ctx,
+                            fresh_friendly_tick
+                                .as_ref()
+                                .expect("AfterScript Friendly tick data"),
+                            Some(&self.world.fast_grid),
+                            Some(self.script_domains.interactables.doors.as_slice()),
+                        );
+                    }
+                    friendly.end_think(sim, ai_global, &fresh_ctx);
+                }
+                other => panic!(
+                    "AfterScript owner has invalid kind {:?}",
+                    other.element_data().kind
+                ),
+            }
+            ctx.absorb_view_radius_cache(&fresh_ctx);
+            ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
+        }
         // The Think ran against a refreshed copy of the caller's context; any
         // surface radius it computed belongs to the surface, so hand those
         // entries back before the copy goes away and publish them now — the
         // owner drain below can re-enter Think, and those nested calls read
         // the surfaces through the persistent table.
-        ctx.absorb_view_radius_cache(&live_ctx);
-        ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
+        if !after_script_suspended {
+            ctx.absorb_view_radius_cache(&live_ctx);
+            ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
+        }
 
         // ReconsiderSwordfight calls ProposeGoodSwordStrike before returning
         // to its caller. Keep that event-owned RNG and sequence work ahead of

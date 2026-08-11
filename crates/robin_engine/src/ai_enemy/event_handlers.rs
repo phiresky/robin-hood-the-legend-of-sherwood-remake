@@ -222,7 +222,7 @@ impl EnemyAi {
     // ThinkUnexpectedEvent
     // -----------------------------------------------------------------------
 
-    pub(super) fn think_unexpected_event(
+    pub(crate) fn think_unexpected_event(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
@@ -1003,6 +1003,9 @@ impl EnemyAi {
             // continue from where the script left them rather than
             // restarting the patrol.
             StimulusType::EventAfterScriptGoOn => {
+                if self.base.outbox.reentrant.engine_drains_after_script_go_on {
+                    return false;
+                }
                 while !self.base.stimulus_queue.is_empty() {
                     if !self.base.locks_flag_field.is_empty() || self.base.script_locked {
                         return false;
