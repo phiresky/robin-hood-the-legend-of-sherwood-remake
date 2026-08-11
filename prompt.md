@@ -13,7 +13,7 @@ result is valid and should not create a commit.
 - Read `AGENTS.md`; never use `git stash`.
 - Always consult `./original-code` before changing behavior.
 - Every representative below is an authoritative member of the current
-  4,716-trace snapshot and was reproduced with frozen current runner
+  4,715-trace snapshot and was reproduced with frozen current runner
   `7890a5983`. Reproduce it again on the lane branch.
 - Build and run separately. Do not pipe/redirect Cargo and do not run clippy.
 - Record the exact first boundary, all state differences or RNG sites, and the
