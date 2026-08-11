@@ -3977,17 +3977,21 @@ impl SequenceManager {
         dispatch.card.was_selected = false;
     }
 
-    /// Hard-interrupt every `InProgress` or `Postponed` sequence
-    /// element owned by `actor`, except those in `exempt_seq`.
+    /// Hard-interrupt every live sequence element owned by `actor`, except
+    /// those in `exempt_seq` and dead-admissible cards already waiting in the
+    /// FIFO.
     ///
     /// Used on death: the graceful `stop_owner` path rewrites an
     /// in-progress movement order to a `TransitionWalking*Waiting*` stop
     /// animation and lets the element keep playing — which is correct
     /// for a live halt but produces a "corpse walks a few more frames"
     /// visual for a dead actor.  Death needs to throw every surviving
-    /// sequence away cleanly; only the damage sequence (which just had
-    /// the dying/corpse-idle orders pushed onto it) survives so its
-    /// `DyingSword` order becomes the actor's current order.
+    /// sequence away cleanly. Original `Human::Kill` does not purge its
+    /// sequence queue, and dead `Human::Instruct` still admits the five
+    /// ordinary Receive*Damage commands, Wait, and GetKilledAtBottom. Preserve
+    /// those `Todo` cards so simultaneous hits execute in FIFO order after the
+    /// lethal hit; the active damage sequence survives via `exempt_seq` so its
+    /// dying order becomes the actor's current order.
     ///
     /// Our arbitration doesn't run on state changes, so we do the
     /// cleanup explicitly here.
@@ -3999,6 +4003,20 @@ impl SequenceManager {
             }
             for (elem_idx, elem) in seq.elements.iter().enumerate() {
                 if elem.owner != Some(actor) {
+                    continue;
+                }
+                let pending_command_admitted_while_dead = elem.state == SequenceState::Todo
+                    && matches!(
+                        elem.command,
+                        Command::ReceiveHitDamage
+                            | Command::ReceiveSwordDamage
+                            | Command::ReceiveArrowDamage
+                            | Command::ReceiveDamage
+                            | Command::ReceiveMobileDamage
+                            | Command::Wait
+                            | Command::GetKilledAtBottom
+                    );
+                if pending_command_admitted_while_dead {
                     continue;
                 }
                 if matches!(
@@ -7902,5 +7920,45 @@ mod tests {
             SequenceState::InProgress,
             "an executing non-interruptable owner remains protected"
         );
+    }
+
+    #[test]
+    fn death_cleanup_preserves_exact_dead_human_todo_whitelist() {
+        let owner = EntityId::Pc(crate::entity_id::PcId(38));
+        let mut mgr = SequenceManager::new();
+        let admitted = [
+            Command::ReceiveHitDamage,
+            Command::ReceiveSwordDamage,
+            Command::ReceiveArrowDamage,
+            Command::ReceiveDamage,
+            Command::ReceiveMobileDamage,
+            Command::Wait,
+            Command::GetKilledAtBottom,
+        ]
+        .map(|command| {
+            let sequence = mgr.launch_element(SequenceElement::new(1, command, Some(owner)));
+            (command, sequence)
+        });
+        let rejected = [Command::ReceiveStoneDamage, Command::WaitTimer].map(|command| {
+            let sequence = mgr.launch_element(SequenceElement::new(1, command, Some(owner)));
+            (command, sequence)
+        });
+
+        mgr.kill_owner_sequences(owner, SequenceId(u32::MAX));
+
+        for (command, sequence) in admitted {
+            assert_eq!(
+                mgr.get_element(sequence, 0).unwrap().state,
+                SequenceState::Todo,
+                "dead Human::Instruct admits queued {command:?}"
+            );
+        }
+        for (command, sequence) in rejected {
+            assert_eq!(
+                mgr.get_element(sequence, 0).unwrap().state,
+                SequenceState::Interrupted,
+                "dead Human::Instruct rejects queued {command:?}"
+            );
+        }
     }
 }

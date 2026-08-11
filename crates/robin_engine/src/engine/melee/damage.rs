@@ -2372,16 +2372,16 @@ impl EngineInner {
             .map(|e| e.is_pc())
             .unwrap_or(false);
 
-        // Throw away every sequence element the victim owns except the
-        // damage sequence (which just had its dying order queued).
+        // Throw away unrelated sequence work the victim owns. The active
+        // damage sequence (which just had its dying order queued) and Todo
+        // commands Original admits while dead remain in the manager FIFO.
         // The general-purpose `stop_owner` path is
         // wrong for death — it calls `stop_movement_for_owner` which
         // rewrites a walking order to a `TransitionWalking*Waiting*`
         // stop-animation and lets the movement element keep playing,
         // producing a "corpse walks a few more frames" visual.  We want
-        // a hard interrupt instead, so the only InProgress element
-        // `current_element_for_actor` finds is the damage element, and
-        // its `DyingSword` order becomes the actor's current order.
+        // a hard interrupt instead, so the damage element's `DyingSword`
+        // order becomes current without deleting a simultaneous pending hit.
         self.orders
             .sequence_manager
             .kill_owner_sequences(victim_id, damage_element.0);

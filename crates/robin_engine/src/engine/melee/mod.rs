@@ -6397,6 +6397,138 @@ mod tests {
     }
 
     #[test]
+    fn lethal_sword_hit_preserves_queued_second_damage_fifo() {
+        let sim = crate::sim_rng::SimulationContext::with_seed(0x38);
+        let mut engine = make_engine();
+        let attacker_a = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let attacker_b = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 20.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 10.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        for attacker in [attacker_a, attacker_b] {
+            let Entity::Soldier(attacker_entity) = engine.get_entity_mut(attacker).unwrap() else {
+                unreachable!()
+            };
+            let crate::element::AiBrain::Enemy(attacker_ai) = &mut attacker_entity.npc.ai_brain
+            else {
+                unreachable!()
+            };
+            attacker_ai.hth_weapon_id = 1;
+        }
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .pc_data_mut()
+            .unwrap()
+            .life_points = 1;
+
+        let queue_damage = |engine: &mut EngineInner, attacker| {
+            let mut damage =
+                crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+            damage.data =
+                crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+            engine.resolve_element_priority(&mut damage);
+            engine.orders.sequence_manager.launch_element(damage)
+        };
+        let first_damage = queue_damage(&mut engine, attacker_a);
+        let second_damage = queue_damage(&mut engine, attacker_b);
+
+        let mut unrelated =
+            crate::sequence::SequenceElement::new(1, Command::WaitTimer, Some(victim));
+        engine.resolve_element_priority(&mut unrelated);
+        let unrelated = engine.orders.sequence_manager.launch_element(unrelated);
+
+        let assets = assets_with_sword_profile(200, 30);
+        let (_, draws) = crate::sim_rng::with_draw_trace(|| {
+            engine.hourglass_phase_sequences(
+                &sim,
+                &mut crate::engine::HostDisplayState::default(),
+                &assets,
+            );
+        });
+
+        assert_eq!(
+            draws,
+            vec![
+                crate::sim_rng::RngSite::SwordDamageProtection,
+                crate::sim_rng::RngSite::SwordDamageProtection,
+                crate::sim_rng::RngSite::MeleeProvoke,
+                crate::sim_rng::RngSite::SwordDamageProtection,
+                crate::sim_rng::RngSite::SwordDamageProtection,
+                crate::sim_rng::RngSite::MeleeProvoke,
+            ],
+            "both simultaneous sword hits must execute their exact damage RNG sites"
+        );
+        assert_ne!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(second_damage, 0)
+                .unwrap()
+                .state,
+            crate::sequence::SequenceState::Interrupted,
+            "the lethal first hit must not purge the already-queued second hit"
+        );
+        assert_ne!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(second_damage, 0)
+                .unwrap()
+                .state,
+            crate::sequence::SequenceState::Todo,
+            "the preserved second hit must actually leave the FIFO and execute"
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(unrelated, 0)
+                .unwrap()
+                .state,
+            crate::sequence::SequenceState::Interrupted,
+            "death cleanup must still discard unrelated queued owner work"
+        );
+        assert_eq!(
+            engine
+                .get_entity(victim)
+                .unwrap()
+                .pc_data()
+                .unwrap()
+                .life_points,
+            0
+        );
+        assert_ne!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(first_damage, 0)
+                .unwrap()
+                .state,
+            crate::sequence::SequenceState::Todo
+        );
+    }
+
+    #[test]
     fn sword_damage_on_dying_pc_preserves_the_fresh_sprite_start() {
         let sim = crate::sim_rng::test_context();
         let mut engine = make_engine();
