@@ -146,6 +146,16 @@ impl FriendlyAi {
             AiState::Fleeing => AiStateChangeSource::from_optional_human(self.base.primary_target),
             _ => AiStateChangeSource::SelfActor,
         };
+        // Calls made before virtual SetState belong inside its synchronous
+        // callback boundary. In particular, common CoordinatePatrol falls
+        // through from StopAll, so its Halt must be applied before the
+        // civilian FilterAIEvent while the following GoTo remains outside.
+        let actor_effects_before_callback = self
+            .base
+            .outbox
+            .actor
+            .has_boundary_work()
+            .then(|| std::mem::take(&mut self.base.outbox.actor));
         self.base
             .outbox
             .reentrant
@@ -156,7 +166,7 @@ impl FriendlyAi {
                 incoming_state: state,
                 incoming_substate: substate,
                 source,
-                actor_effects_before_callback: Default::default(),
+                actor_effects_before_callback,
             }));
 
         self.base.set_ai_state(state);
@@ -204,6 +214,54 @@ impl FriendlyAi {
     ) {
         self.set_state(state, substate);
         self.base.go_near(destination, distance, flags, ctx);
+    }
+
+    /// Apply common patrol geometry through Bonhomie's virtual `SetState`.
+    /// The base routine owns StopAll and formation planning; the friendly
+    /// override owns alert/script state effects before the movement order.
+    fn coordinate_patrol(
+        &mut self,
+        info: &StimulusInfo,
+        ctx: &AiContext,
+        patrol_chief_position: Position,
+    ) {
+        let Some(action) = self
+            .base
+            .prepare_patrol_coordinate(info, ctx, patrol_chief_position)
+        else {
+            return;
+        };
+
+        match action {
+            PatrolCoordinateAction::FaceChief { target } => {
+                self.base.face_position_with_ctx(target, ctx);
+            }
+            PatrolCoordinateAction::Walk {
+                target,
+                speed_factor,
+            } => {
+                let flags = GotoFlags::NO_HALT
+                    | GotoFlags::DONT_STOP
+                    | self.base.default_path_walking_flags;
+                self.go_to_speed(
+                    AiState::Default,
+                    Substate::DefaultPatrolEnroute,
+                    target,
+                    flags,
+                    speed_factor,
+                    ctx,
+                );
+            }
+            PatrolCoordinateAction::Run { target } => {
+                self.go_to(
+                    AiState::Default,
+                    Substate::DefaultPatrolEnrouteRunning,
+                    target,
+                    GotoFlags::RUN | GotoFlags::NO_HALT | GotoFlags::DONT_STOP,
+                    ctx,
+                );
+            }
+        }
     }
 
     // -- Panic helpers (civilians go through set_state for alert status) --
@@ -1204,7 +1262,7 @@ impl FriendlyAi {
             }
 
             StimulusType::CallPatrolCoordinate => {
-                self.base.coordinate_patrol(
+                self.coordinate_patrol(
                     &stimulus.info,
                     ctx,
                     tick.required_patrol_chief(self.base.me).position,
@@ -2410,6 +2468,118 @@ mod tests {
 
         ai.set_state(AiState::Fleeing, Substate::FleeingPanic);
         assert_eq!(ai.base.current_music_alert_status, AlertLevel::Yellow);
+    }
+
+    #[test]
+    fn patrol_coordinate_uses_friendly_virtual_state_before_walk_and_run() {
+        for (distance, expected_substate, expected_order) in [
+            (
+                45.0,
+                Substate::DefaultPatrolEnroute,
+                crate::order::OrderType::WalkingUpright,
+            ),
+            (
+                60.0,
+                Substate::DefaultPatrolEnrouteRunning,
+                crate::order::OrderType::RunningUpright,
+            ),
+        ] {
+            let mut ai = FriendlyAi::new(1);
+            ai.base.patrol_chief = Some(crate::element::EntityId::Soldier(
+                crate::entity_id::SoldierId(2),
+            ));
+            ai.base.current_state = AiState::Default;
+            ai.base.current_substate = Substate::DefaultOnPost;
+            ai.base.current_music_alert_status = AlertLevel::Yellow;
+            ai.base.view_alert_status = AlertLevel::Yellow;
+
+            let ctx = AiContext {
+                position: Position {
+                    x: 100.0,
+                    y: 100.0,
+                    sector: SectorHandle::new(1),
+                    level: 0,
+                },
+                ..AiContext::default()
+            };
+            let target = Position {
+                x: ctx.position.x + distance,
+                ..ctx.position
+            };
+            ai.coordinate_patrol(
+                &StimulusInfo::Position(target),
+                &ctx,
+                Position {
+                    x: ctx.position.x + 100.0,
+                    ..ctx.position
+                },
+            );
+
+            assert_eq!(ai.base.current_state, AiState::Default);
+            assert_eq!(ai.base.current_substate, expected_substate);
+            assert_eq!(ai.base.current_music_alert_status, AlertLevel::Green);
+            assert_eq!(ai.base.view_alert_status, AlertLevel::Green);
+            let [AiOwnerWork::StateChange(notification)] =
+                ai.base.outbox.reentrant.owner_work.as_slice()
+            else {
+                panic!("patrol coordinate must call Bonhomie's virtual SetState");
+            };
+            let prefix = notification
+                .actor_effects_before_callback
+                .as_ref()
+                .expect("StopAll must precede the friendly state callback");
+            assert!(prefix.halt);
+            let [order] = ai.base.outbox.actor.orders.as_slice() else {
+                panic!("patrol coordinate must queue one replacement movement");
+            };
+            assert_eq!(order.order_type, expected_order);
+        }
+    }
+
+    #[test]
+    fn patrol_coordinate_same_substate_still_calls_friendly_state_without_stop_prefix() {
+        let mut ai = FriendlyAi::new(1);
+        ai.base.patrol_chief = Some(crate::element::EntityId::Soldier(
+            crate::entity_id::SoldierId(2),
+        ));
+        ai.base.current_state = AiState::Default;
+        ai.base.current_substate = Substate::DefaultPatrolEnroute;
+        ai.base.current_music_alert_status = AlertLevel::Yellow;
+        ai.base.view_alert_status = AlertLevel::Yellow;
+        let ctx = AiContext {
+            position: Position {
+                x: 100.0,
+                y: 100.0,
+                sector: SectorHandle::new(1),
+                level: 0,
+            },
+            ..AiContext::default()
+        };
+
+        ai.coordinate_patrol(
+            &StimulusInfo::Position(Position {
+                x: 145.0,
+                ..ctx.position
+            }),
+            &ctx,
+            Position {
+                x: 200.0,
+                ..ctx.position
+            },
+        );
+
+        assert_eq!(ai.base.current_music_alert_status, AlertLevel::Green);
+        assert_eq!(ai.base.view_alert_status, AlertLevel::Green);
+        let [AiOwnerWork::StateChange(notification)] =
+            ai.base.outbox.reentrant.owner_work.as_slice()
+        else {
+            panic!("Bonhomie SetState must notify even when the substate is unchanged");
+        };
+        assert!(notification.actor_effects_before_callback.is_none());
+        let [order] = ai.base.outbox.actor.orders.as_slice() else {
+            panic!("same-substate patrol update must queue its movement");
+        };
+        assert_eq!(order.order_type, crate::order::OrderType::WalkingUpright);
     }
 
     #[test]
