@@ -109,6 +109,12 @@ pub struct AiReentrantOutbox {
     /// latch for the typed owner continuation instead of translating it into
     /// an independent `EVENT_COULDNT_REACHPOINT`.
     pub reconsider_approach_completion_pending: bool,
+    /// `AlertOfficer` has issued its synchronous `GoNear`, but the enclosing
+    /// `DECISION_LOOK_4_HELP` statement has not inspected the resulting
+    /// `mbCouldntReachpoint` latch yet. Original performs that test before
+    /// `BattleDecisions` returns to `EndThink`, so an engine-owned route
+    /// failure must not become an independent `EVENT_COULDNT_REACHPOINT`.
+    pub look_for_help_completion_pending: bool,
     pub waypoint_script_reach_point: Option<(PathId, u8)>,
 }
 
@@ -124,11 +130,12 @@ pub enum AiOwnerWork {
     /// both in one actor outbox would apply the halt-first drain policy and
     /// incorrectly launch the older move afterward.
     ActorEffects(AiActorOutbox),
-    /// Continue the successful `DECISION_LOOK_4_HELP` arm after
-    /// `AlertOfficer`'s synchronous `GoNear` has constructed its route.
-    /// Original consumes any building-exit wait draws inside GoNear before
-    /// drawing the Cassos/Panic remark that follows the call.
-    BattleLookForHelpSuccessRemark,
+    /// Continue `DECISION_LOOK_4_HELP` after `AlertOfficer`'s synchronous
+    /// `GoNear` has either constructed its route or set
+    /// `mbCouldntReachpoint`. Original consumes that latch inside
+    /// `AlertOfficer`; only a successful route reaches the arm's success
+    /// remark, while failure falls through to `DECISION_CASSOS`.
+    ResumeBattleLookForHelpAfterAlertOfficer,
     /// Synchronous `NearbyCiviliansPanic()` engine callback.  It shares the
     /// owner FIFO because callers can speak or change state immediately
     /// before/after it and those operations are observably ordered.
