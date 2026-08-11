@@ -1,0 +1,9 @@
+{
+  "id": "347",
+  "subject": "Use raw geometry for look-there prechecks",
+  "description": "External parity Lane 29 screened 1,960 authoritative retained old/short traces: 1,517 exact EOF, 346 state failures, 79 panics, and 18 timeouts. randomguy Profile_004 Restart replay-007 first differs after frame 398 when Soldier184 is Original EnterAttentiveMode animation 141 in WonderingWatching but Rust remains Wait animation 3 in DefaultInMacro. Original HeyFolksLookThere compares raw 3-D RHElement::GetPosition values; Rust's cheap precheck used a gate-snapped owner planning position and incorrectly skipped delivery. Commit 9eac3474c uses the shared canonical self_body_position_world before the authoritative live broadcast. The door-transit regression passes, and replay-007 plus replay-008 match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task347-look-there-raw-geometry"
+}

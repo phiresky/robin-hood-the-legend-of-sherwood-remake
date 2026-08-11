@@ -1,0 +1,9 @@
+{
+  "id": "339",
+  "subject": "Verify the schema-14 Cyrdach slice remains exact",
+  "description": "COMPLETED WITHOUT A RUST CHANGE. External parity Lane 21 screened all 15 authoritative Cyrdach Profile_156 schema-14 traces: 15 exact EOF and zero failures. Savegame_001 replay-001 matched through exact EOF after frame 1701, and the strict task-36 replay-009 control also remained exact. Current source and runner behavior already agree across the slice, so no compatibility change or retirement was justified.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task339-external21-exact"
+}

@@ -1,0 +1,9 @@
+{
+  "id": "341",
+  "subject": "Classify the deferred WAITING_ALERTED repair boundary",
+  "description": "COMPLETED WITHOUT A RUST CHANGE. External parity Lane 23 screened 30 Nescafe Profile_002-003 schema-14 traces: 26 exact EOF and four state failures. Profile_003 Savegame_001 replay-002 first differs after frame 941 when Soldier181 is Original LeaveAttentiveMode animation 141 versus Rust Turn animation 50. Original ownership traces to Soldier::Execute(WAITING_ALERTED), but the transient Execute-entry identity spanning StopAll, Face, and SetState is not represented by the loaded owner graph. Three narrow source-motivated projections did not advance the end-to-end replay and were reverted. Task 132 is symptom-adjacent but has a different trigger; no heuristic fix or retirement was added.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task341-waiting-alerted-owner"
+}

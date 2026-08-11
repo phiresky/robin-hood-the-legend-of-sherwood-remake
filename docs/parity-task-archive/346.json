@@ -1,0 +1,9 @@
+{
+  "id": "346",
+  "subject": "Translate postponed sword strikes against dead targets",
+  "description": "External parity Lane 28 screened 90 eligible nicouzouf schema-14 traces: 72 exact EOF, 17 state failures, and one timeout. Savegame_075 replay-015 first differs after frame 465 when Soldier140 remains Original ThrustC animation 75 but Rust falls back to Wait animation 283 after PC345 dies while the strike is postponed. Original applies CanEnterSwordfightWith death admission only to fresh ThrustA; authored B-I strikes translate unconditionally with their human antagonist. Commit c24358d32 preserves A's rejection, permits postponed B/C translation, and replaces a fake missing-target position with an identity-rich panic. The focused regression passes, and replay-015, replay-013, and replay-012 match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task346-dead-postponed-strikes"
+}

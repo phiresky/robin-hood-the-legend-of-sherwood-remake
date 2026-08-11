@@ -1,0 +1,9 @@
+{
+  "id": "348",
+  "subject": "Reset loaded AI completion ownership and retire incomplete schema-12 captures",
+  "description": "External parity Lane 30 screened 344 eligible schema-12 traces: 332 exact EOF, two state failures, and ten malformed clean-close failures. Nescafe Profile_002 Restart after frame 7 and Continue after frame 16 launched a Rust-only ReturnToDuty Turn because legacy adoption retained an initialized mission's runtime completion_latch_inside_think. Original serializes the three completion flag values but not static Think recursion ownership, so loaded flags have no live EndThink owner and the next StartThink clears them. Commit d8137b159 resets only the Rust ownership marker while preserving all saved flags; the focused regression and both end-to-end traces pass. Ten nicouzouf captures match every recorded frame but lack a clean rng_suffix terminator and are retired as incomplete captures.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task348-loaded-ai-completion"
+}

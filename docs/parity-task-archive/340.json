@@ -1,0 +1,9 @@
+{
+  "id": "340",
+  "subject": "Preserve AlertOfficer route-failure ordering",
+  "description": "External parity Lane 22 screened 14 eligible Nescafe Profile_001 schema-14 traces: 13 exact EOF and one RNG failure, replay-015 after frame 816. Original LookForHelp consumes AlertOfficer's failed synchronous GoNear latch inside the enclosing decision, falls back to Cassos, and logs exactly once; Rust instead surfaced a generic EVENT_COULDNT_REACHPOINT and entered SeekArea. Commit d3acb7e71 adds an explicit owner continuation, strict Cassos target lookup, and Original callback/log/RNG ordering. The focused success and route-failure tests pass, and replay-015 plus replay-014 now match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task340-alert-officer-route"
+}

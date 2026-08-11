@@ -1,0 +1,9 @@
+{
+  "id": "342",
+  "subject": "Classify the unrecorded macro-recording latch",
+  "description": "COMPLETED WITHOUT A RUST CHANGE. External parity Lane 24 screened 60 eligible SuN1Sh1nE Profile_004 schema-14 traces excluding Savegame_024: 47 exact EOF, eight state failures, one RNG panic, and four timeouts. Savegame_001 replay-005 first differs after frame 553 when repeated select_pc leaves PC252 at Original Wait animation 3 versus Rust EquipBow animation 85; replay-004 is exact EOF. Original can retain process-global RHMessenger::mbRecordingMacro across an in-process save/load, while schema 14 records neither that singleton nor an authoritative transition. Rust cannot reconstruct the branch from the trace, so no speculative compatibility state or retirement was introduced.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task342-macro-recording-latch"
+}

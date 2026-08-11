@@ -1,0 +1,9 @@
+{
+  "id": "345",
+  "subject": "Match Original segment-box intersection",
+  "description": "External parity Lane 27 screened all 285 linux3 Profile_001-002 schema-14 traces: 202 exact EOF, 58 state divergences, seven panics, and 18 timeouts. Profile_001 Savegame_022 replay-005 first differs after frame 804 because Soldier66's move box passes within a few millionths of a level line corner. Original SBGeoBoundingBox2D uses strict endpoint rejection followed by f32 infinite-line corner determinants, while geo::Rect::intersects rejected this contact and skipped movement extraction. Commit a3d14cccc ports the exact Original predicate. The near-corner regression and all 37 fast_find_grid tests pass; the archived representative, fresh Original recapture, and replay-001 control match exact EOF.",
+  "status": "completed",
+  "blocks": [],
+  "blockedBy": [],
+  "owner": "task345-segment-box-intersection"
+}
