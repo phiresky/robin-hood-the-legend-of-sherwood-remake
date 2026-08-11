@@ -2132,7 +2132,7 @@ impl EngineInner {
         )
     }
 
-    fn build_npc_tick_data_without_forecasts(
+    pub(super) fn build_npc_tick_data_without_forecasts(
         &self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
@@ -10990,9 +10990,10 @@ impl EngineInner {
         // Dispatching a completion also re-enters Think, whose entry gate
         // clears all three latches before the nested handler runs, so a single
         // boundary surfaces at most one event even when several were set.
-        let reconsider_tail_pending = ai.outbox.reentrant.reconsider_approach_completion_pending;
+        let typed_tail_pending = ai.outbox.reentrant.reconsider_approach_completion_pending
+            || ai.outbox.reentrant.look_for_help_completion_pending;
         let retain_couldnt_reachpoint =
-            ai.completion_latch_inside_think && ai.couldnt_reachpoint && reconsider_tail_pending;
+            ai.completion_latch_inside_think && ai.couldnt_reachpoint && typed_tail_pending;
         let event = if !ai.completion_latch_inside_think {
             None
         } else if retain_couldnt_reachpoint {
