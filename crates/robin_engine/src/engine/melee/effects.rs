@@ -214,7 +214,8 @@ impl EngineInner {
                 )
             }
             WeaponThrustKind::PushAside => {
-                let (dir_x, dir_y) = sector_to_direction(attacker_dir);
+                let (dir_x, dir_y) = crate::element_kinds::direction_vector_16(attacker_dir);
+                let dir_y = dir_y * crate::position_interface::ASPECT_RATIO;
                 collect_push_victims(
                     &self.world.entities,
                     &PushStrikeParams {
@@ -1462,7 +1463,14 @@ impl EngineInner {
                 )
             }
             WeaponThrustKind::PushAside => {
-                let (dir_x, dir_y) = sector_to_direction(attacker_dir);
+                // RHElement::GetDirectionVector builds the literal 16-sector
+                // vector with ASPECT_RATIO before ExecutePushSwordStrike
+                // applies the shipping INVERSE_SWORDFIGHT_ASPECT_RATIO.
+                // Using the ordinary unit-circle helper here rotates the
+                // narrow push rectangle in map space and can reject actors
+                // that Original includes near a side boundary.
+                let (dir_x, dir_y) = crate::element_kinds::direction_vector_16(attacker_dir);
+                let dir_y = dir_y * crate::position_interface::ASPECT_RATIO;
                 let half_width = thrust.repulsion as f32 / 2.0;
                 let attacker_elevation = self
                     .get_entity(attacker_id)

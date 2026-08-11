@@ -2195,17 +2195,6 @@ fn angle_to_sector(angle: f32) -> u8 {
     ((normalized / two_pi * 16.0).floor() as u32 % 16) as u8
 }
 
-/// Get the unit direction vector for a 0-15 sector.
-///
-/// Computes the unbiased sin/cos directly — must NOT go through
-/// `sector_to_angle`, which adds the `+0.1` round-trip nudge that
-/// would rotate the resulting vector by ~5.7° relative to the
-/// pre-baked per-sector unit vectors used elsewhere.
-fn sector_to_direction(sector: i16) -> (f32, f32) {
-    let angle = (sector as f32) * std::f32::consts::PI * 2.0 / 16.0;
-    (angle.sin(), -angle.cos())
-}
-
 // ─── Animation selection ────────────────────────────────────────────
 
 /// Animation category for combat state transitions.

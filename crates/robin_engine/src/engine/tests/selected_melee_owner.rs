@@ -472,6 +472,98 @@ fn smalltalk_done_uses_isometric_facing_for_back_hit_gate() {
 }
 
 #[test]
+fn push_start_uses_original_aspect_scaled_rectangle() {
+    let mut engine = EngineInner::new();
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_entity(make_test_pc(Posture::Upright));
+    set_map_position(&mut engine, attacker, 0.0, 0.0);
+    // This is the same side-boundary geometry as the completed-hit
+    // regression below: an unscaled unit-circle vector rejects the victim,
+    // while Original's ASPECT_RATIO-scaled direction admits it.
+    set_map_position(&mut engine, victim, 37.676_39, -3.109_62);
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .active = true;
+    bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(3);
+    install_selected_melee(&mut engine, attacker, victim);
+
+    let mut assets = straight_warning_assets(0, 45);
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    let thrust = &mut profiles.hth_weapons[0].thrusts[SwordStrike::A as usize];
+    thrust.kind = crate::profiles::WeaponThrustKind::PushAside;
+    thrust.repulsion = 20;
+
+    let (_, warnings) =
+        super::super::melee::capture_strike_warnings(|| run_owner_walk(&mut engine, &assets));
+
+    assert_eq!(warnings, vec![(attacker, victim)]);
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| {
+                element.command == Command::ReceiveSwordDamage && element.owner == Some(victim)
+            }),
+        "strike START must warn the admitted push victim without applying DONE damage"
+    );
+}
+
+#[test]
+fn push_done_uses_original_aspect_scaled_rectangle() {
+    let mut engine = EngineInner::new();
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_entity(make_test_pc(Posture::Upright));
+    set_map_position(&mut engine, attacker, 0.0, 0.0);
+    // At sector 3 the unscaled unit-circle vector puts this actor about
+    // 11.55 units from the strike axis and rejects it. Original's
+    // GetDirectionVector applies ASPECT_RATIO first, yielding about 5.67 and
+    // admitting it inside this profile's 10-unit half-width.
+    set_map_position(&mut engine, victim, 37.676_39, -3.109_62);
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .element_data_mut()
+        .active = true;
+    bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(3);
+    install_selected_melee(&mut engine, attacker, victim);
+
+    let mut assets = straight_warning_assets(0, 45);
+    let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
+    let thrust = &mut profiles.hth_weapons[0].thrusts[SwordStrike::A as usize];
+    thrust.kind = crate::profiles::WeaponThrustKind::PushAside;
+    thrust.repulsion = 20;
+    for _ in 0..4 {
+        run_owner_walk(&mut engine, &assets);
+    }
+
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .any(|element| {
+                element.command == Command::ReceiveSwordDamage && element.owner == Some(victim)
+            }),
+        "push rectangle must use Original's ASPECT_RATIO-scaled facing vector"
+    );
+}
+
+#[test]
 fn smalltalk_done_uses_ground_positions_for_back_hit_gate() {
     let mut engine = EngineInner::new();
     let attacker = engine.add_entity(make_test_pc(Posture::Upright));
