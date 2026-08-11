@@ -1019,6 +1019,110 @@ fn disappearing_arrow_human_hit_still_exposes_terminal_active_frame() {
 }
 
 #[test]
+fn falling_arrow_refresh_follows_fx_merged_display_order() {
+    use crate::coordinates::{MapPoint, WorldPoint3D};
+    use crate::element::{
+        Animation, ElementData, ElementFx, ElementKind, ElementProjectile, FxData, ObjectData,
+        ObjectType, ProjectileData, TrajectoryPoint,
+    };
+    use crate::sim_rng::{RngSite, SimulationContext};
+
+    fn falling_arrow(position: WorldPoint3D) -> Entity {
+        let mut element = ElementData {
+            kind: ElementKind::ObjectProjectile,
+            active: true,
+            ..Default::default()
+        };
+        element.set_position(position);
+        Entity::Projectile(ElementProjectile {
+            element,
+            object: ObjectData {
+                object_type: ObjectType::Arrow,
+                animation: Animation::ObjectFlying,
+                ..Default::default()
+            },
+            projectile: ProjectileData {
+                flying: true,
+                falling: true,
+                trajectory: vec![TrajectoryPoint { position, time: 1 }],
+                trajectory_frame_count: 1,
+                ..Default::default()
+            },
+        })
+    }
+
+    let mut engine = EngineInner::new();
+    let shallower = engine.add_entity(falling_arrow(WorldPoint3D::new(0.0, 10.0, 0.0)));
+    let deeper = engine.add_entity(falling_arrow(WorldPoint3D::new(100.0, 20.0, 0.0)));
+
+    // This rising masking edge classifies only the deeper arrow as behind the
+    // FX. Original's phase-three SortForDisplay merge therefore extracts it
+    // before the shallower arrow despite their initial world-Y order.
+    let mut fx_element = ElementData {
+        kind: ElementKind::Fx,
+        active: true,
+        ..Default::default()
+    };
+    fx_element.set_position(WorldPoint3D::new(50.0, 50.0, 1.0));
+    let fx = engine.add_entity(Entity::Fx(ElementFx {
+        element: fx_element,
+        fx: FxData {
+            display_polyline: vec![MapPoint::new(-10.0, 0.0), MapPoint::new(110.0, 30.0)],
+            ..Default::default()
+        },
+    }));
+    assert!(
+        engine
+            .get_entity(shallower)
+            .unwrap()
+            .element_data()
+            .position()
+            .y
+            < engine
+                .get_entity(deeper)
+                .unwrap()
+                .element_data()
+                .position()
+                .y
+    );
+    let draw_order = engine.compute_display_order();
+    let relevant: Vec<_> = draw_order
+        .ids
+        .into_iter()
+        .filter(|id| [shallower, deeper, fx].contains(id))
+        .collect();
+    assert_eq!(relevant, vec![deeper, fx, shallower]);
+
+    let seed = (0..1024)
+        .find(|&seed| {
+            let probe = SimulationContext::with_seed(seed);
+            let first = crate::sim_rng::u32(&probe, RngSite::ArrowFallingFrame, 0..3);
+            let second = crate::sim_rng::u32(&probe, RngSite::ArrowFallingFrame, 0..3);
+            first != second
+        })
+        .expect("a seed with distinct first two modulo-three draws");
+    let expected = SimulationContext::with_seed(seed);
+    let deeper_frame = crate::sim_rng::u32(&expected, RngSite::ArrowFallingFrame, 0..3) as u16 + 3;
+    let shallower_frame =
+        crate::sim_rng::u32(&expected, RngSite::ArrowFallingFrame, 0..3) as u16 + 3;
+    assert_ne!(deeper_frame, shallower_frame);
+
+    engine.control.arrow_refresh_pending = true;
+    engine.apply_pending_arrow_refresh(&SimulationContext::with_seed(seed));
+    let Entity::Projectile(deeper_arrow) = engine.get_entity(deeper).unwrap() else {
+        unreachable!()
+    };
+    let Entity::Projectile(shallower_arrow) = engine.get_entity(shallower).unwrap() else {
+        unreachable!()
+    };
+    assert_eq!(deeper_arrow.element.sprite.current_frame, deeper_frame);
+    assert_eq!(
+        shallower_arrow.element.sprite.current_frame,
+        shallower_frame
+    );
+}
+
+#[test]
 fn successful_projectile_human_hit_rewind_settles_and_deletes_trajectory() {
     use crate::element::{
         ElementData, ElementKind, ElementProjectile, ObjectData, ObjectType, ProjectileData,

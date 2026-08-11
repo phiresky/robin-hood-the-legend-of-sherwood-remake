@@ -1982,33 +1982,25 @@ impl EngineInner {
             return;
         }
 
-        // SortForDisplay orders non-animation elements by display depth and
-        // Original creation order. That order is authoritative for multiple
-        // falling arrows because each Refresh consumes one global RNG draw.
-        let mut arrows: Vec<_> = self
-            .world
-            .entities
-            .occupied()
-            .filter_map(|(id, entity)| match entity {
-                Entity::Projectile(projectile)
-                    if projectile.object.object_type == crate::element::ObjectType::Arrow =>
-                {
-                    Some((
-                        id,
-                        projectile.element.position().y,
-                        self.world.original_creation_order(id),
-                    ))
-                }
-                _ => None,
+        // Refresh walks the full SortForDisplay result. Its FX-polyline merge
+        // can interleave (and even reverse) two non-animation arrows that an
+        // arrow-only depth sort would leave together. That exact order is
+        // authoritative because every falling-arrow Refresh consumes one
+        // global RNG draw.
+        let arrows: Vec<_> = self
+            .compute_display_order()
+            .ids
+            .into_iter()
+            .filter(|&id| {
+                matches!(
+                    self.world.entities.get(id),
+                    Some(Entity::Projectile(projectile))
+                        if projectile.object.object_type == crate::element::ObjectType::Arrow
+                )
             })
             .collect();
-        arrows.sort_by(|a, b| {
-            a.1.partial_cmp(&b.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.2.cmp(&b.2))
-        });
 
-        for (id, _, _) in arrows {
+        for id in arrows {
             let Some(Entity::Projectile(projectile)) = self.world.entities.get_mut(id) else {
                 panic!("arrow {id:?} vanished during deferred Refresh");
             };
