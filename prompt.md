@@ -55,12 +55,11 @@ Do not substitute any of these for a lane:
 - schema-14 linux3 Profile 003 and all families explicitly owned by active
   coordinator sessions remain excluded.
 
-Lane 35 is temporarily reserved by coordinator Task502 and must remain
-unstarted on baseline `dc09f516d`. Its integration owner must first supply a
-new baseline containing Task502's disposition, or explicitly instruct the
-lane to cherry-pick that disposition. Only then may lane 35 validate the
-integrated fix or take the still-live downstream frontier. This reservation
-prevents an independent implementation of the same source boundary.
+Lane 35 must branch from integrated commit `56fdad63d` or a descendant, not
+the shared `dc09f516d` baseline. Task502's first-execute rider fix is complete
+and immutable for this wave; lane 35 owns only the still-live same-family
+completion/termination frontier described below and must not reimplement the
+cleared first-execute boundary.
 
 Lane 36 is likewise reserved by coordinator Task507's pushed-flight takeoff
 work and must remain unstarted on `dc09f516d`. Its integration owner must first
@@ -141,20 +140,26 @@ change `ReinitializeThemList`, friend-target injection, visibility, or list
 retention from the final serialized mismatch. Replay 002 is a separate RNG
 family and must not be used as a control.
 
-## Lane 35 — linux2 Save018 rider-charge ordering (Task502 reserved)
+## Lane 35 — linux2 Save018 rider-charge completion timing
 
 Representative:
 `parity-random-save-replays-60s-15x/traces/Savegame_linux2/Profile_002/Savegame_018/replay-009-session-0001.jsonl.zst`
 
-The current live frontier is after frame 8728 in rider-charge ordering. This
-family is reserved by coordinator Task502 (`task502-rider-charge-order`): do
-not create its worktree or start from `dc09f516d`. Wait until the integration
-owner supplies a new baseline containing Task502's disposition or explicitly
-requires that disposition to be cherry-picked. Re-run the representative only
-on that resulting baseline. If still live, compare the Original rider-charge
-state/event handler, order construction, animation callback, and replacement
-sequencing with the Rust owner. Preserve RNG and actor-order statement order;
-do not force the charge state or destination.
+Integrated commit `56fdad63d` restores Original's rider-charge first-execute
+motion ordering and clears the former frame-8728 frontier. On that commit the
+representative advances 21 frames to a same-family divergence after frame
+8749, owned by Soldier83's `RiderCharging` completion/termination timing. The
+RNG stream remains aligned through the new boundary, and Task502's nearby
+control reaches exact EOF; the representative itself is not complete and the
+new frontier is not independent.
+
+Start from `56fdad63d` or a later integrated baseline and treat its
+first-execute behavior as an immutable control. Compare Original's rider
+charge completion result, actor `Hourglass` interpretation, animation/event
+callback, order termination, and replacement sequencing with Rust at frames
+8748–8750. Preserve statement order and the aligned RNG stream. Do not undo or
+duplicate Task502's first-execute fix, force the charging state, or treat the
+21-frame advance as an exact-EOF result.
 
 ## Lane 36 — SuN Save034 elevation/visibility (Task507 reserved)
 
