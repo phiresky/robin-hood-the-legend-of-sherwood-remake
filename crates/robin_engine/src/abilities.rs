@@ -1674,15 +1674,11 @@ pub fn begin_throw_purse(
 
 /// Start the `Paying` animation for a VIP PC handing money to a beggar.
 ///
-/// Faces away from the beggar, plays the Paying animation, and — on
-/// completion — deducts the beggar salary and launches a `ReceivePurse`
-/// sequence element on the beggar.  The post-completion side effects
-/// live in [`AbilityTickResult::PayDone`] because they need the
-/// EngineInner-level borrow.
-///
-/// The PC's "give money" speech cue is handled by the engine at
-/// dispatch time — it's cheaper to fire once at command launch than
-/// to thread a side-effect out of owner-local `tick_ability`.
+/// Installs the Paying order without changing the PC's facing. Original
+/// translation only constructs the order; the live validity check, facing
+/// change, and "give money" speech belong to the order's first Execute.
+/// On completion, [`AbilityTickResult::PayDone`] deducts the beggar salary
+/// and launches a `ReceivePurse` sequence element on the beggar.
 pub fn begin_pay(
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
@@ -1709,12 +1705,6 @@ pub fn begin_pay(
     if !beggar_valid {
         return BeginResult::Impossible;
     }
-
-    let beggar_direction = entities[beggar_id]
-        .as_ref()
-        .unwrap()
-        .element_data()
-        .direction();
 
     let order_id = alloc_order_id(order_id_counter);
     let pc_entity = match entities.get_mut(pc_id) {
@@ -1750,11 +1740,6 @@ pub fn begin_pay(
     order.compute_direction = false;
 
     sequence_manager.push_order_on(seq_id, elem_idx, order);
-
-    // Face opposite to beggar.
-    pc_entity
-        .element_data_mut()
-        .set_direction_goal((beggar_direction + 8).rem_euclid(16));
 
     BeginResult::Started
 }
@@ -3061,6 +3046,86 @@ mod tests {
         let seq_id = manager.launch_element(SequenceElement::new(1, command, Some(owner)));
         manager.element_in_progress(seq_id, 0);
         seq_id
+    }
+
+    #[test]
+    fn pay_translation_preserves_direction_goal_until_execute_initialization() {
+        let mut entities = Entities::new();
+        entities.push(Some(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        })));
+        entities.push(Some(Entity::Civilian(ActorCivilian {
+            element: ElementData {
+                kind: ElementKind::ActorCivilian,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            civilian: CivilianData {
+                beggar_scroll_sets: Some(vec![vec![]]),
+                ..Default::default()
+            },
+        })));
+        let pc = entities.id_at_legacy_slot(0).unwrap();
+        let beggar = entities.id_at_legacy_slot(1).unwrap();
+        entities
+            .get_mut(pc)
+            .unwrap()
+            .element_data_mut()
+            .set_direction_instantly(1);
+        entities
+            .get_mut(beggar)
+            .unwrap()
+            .element_data_mut()
+            .set_direction_instantly(6);
+
+        let mut manager = SequenceManager::new();
+        let seq_id = manager.launch_element(SequenceElement::new_interaction(
+            1,
+            Command::Pay,
+            Some(pc),
+            Some(beggar),
+        ));
+        let mut next_id = 1;
+        assert_eq!(
+            begin_pay(
+                &mut entities,
+                &mut manager,
+                pc,
+                beggar,
+                seq_id,
+                0,
+                &mut next_id,
+            ),
+            BeginResult::Started
+        );
+
+        assert_eq!(
+            entities
+                .get(pc)
+                .unwrap()
+                .position_iface()
+                .get_direction_goal()
+                .as_u8(),
+            1,
+            "RHCOMMAND_PAY translation only installs its Paying order"
+        );
+        assert_eq!(
+            manager
+                .get_element(seq_id, 0)
+                .unwrap()
+                .current_order()
+                .unwrap()
+                .order_type,
+            OrderType::Paying
+        );
     }
 
     #[test]

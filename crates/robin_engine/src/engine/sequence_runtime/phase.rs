@@ -2010,13 +2010,6 @@ impl EngineInner {
                                             &mut self.orders.next_order_id,
                                         ) {
                                             AbilityBeginResult::Started => {
-                                                // HERO_GIVE_MONEY speech
-                                                // cue.
-                                                self.hero_speaking(
-                                                    assets,
-                                                    owner,
-                                                    crate::engine::melee::HERO_GIVE_MONEY,
-                                                );
                                                 self.orders
                                                     .sequence_manager
                                                     .element_in_progress(seq_id, elem_idx);

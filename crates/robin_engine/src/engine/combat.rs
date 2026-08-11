@@ -3161,6 +3161,79 @@ impl EngineInner {
         assets: &LevelAssets,
         actor_id: EntityId,
     ) {
+        let pending_pay_init = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::Pay)
+                    && actor.execute_order_initialising)
+                    .then(|| {
+                        (
+                            ability
+                                .sequence_id
+                                .expect("pending Pay initialization lost sequence identity"),
+                            ability.element_index,
+                            ability
+                                .target
+                                .expect("pending Pay initialization lost antagonist identity"),
+                            ability
+                                .order_id
+                                .expect("pending Pay initialization lost order identity"),
+                        )
+                    })
+            });
+        if let Some((seq_id, elem_idx, beggar_id, order_id)) = pending_pay_init {
+            let valid = {
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .unwrap_or_else(|| {
+                        panic!("pending Pay owner {actor_id:?} lost element {seq_id:?}/{elem_idx}")
+                    });
+                assert_eq!(element.owner, Some(actor_id));
+                assert_eq!(element.command, crate::element::Command::Pay);
+                let order = element.current_order().unwrap_or_else(|| {
+                    panic!("pending Pay element {seq_id:?}/{elem_idx} lost its selected order")
+                });
+                assert_eq!(order.order_id, order_id);
+                assert_eq!(order.target_actor, Some(beggar_id.index()));
+                self.check_sequence_element_validity(assets, actor_id, element, true)
+            };
+            if !valid {
+                self.cleanup_aborted_ability(
+                    actor_id,
+                    crate::movement::AbilityKind::Pay,
+                    seq_id,
+                    elem_idx,
+                    Some(order_id),
+                );
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                return;
+            }
+
+            let beggar_direction = self
+                .get_entity(beggar_id)
+                .unwrap_or_else(|| {
+                    panic!("validated Pay beggar {beggar_id:?} vanished during initialization")
+                })
+                .element_data()
+                .direction();
+            // RHElementActorPC::Execute(PAYING) samples the antagonist's live
+            // direction and changes only the progressive goal on the first
+            // Execute. Translation may happen after this PC's owner slot and
+            // therefore must not expose this facing one frame early.
+            self.get_entity_mut(actor_id)
+                .expect("validated Pay owner vanished before direction initialization")
+                .element_data_mut()
+                .set_direction_goal((beggar_direction + 8).rem_euclid(16));
+            self.hero_speaking(assets, actor_id, crate::engine::melee::HERO_GIVE_MONEY);
+        }
+
         let pending_hit_init = self
             .get_entity(actor_id)
             .and_then(Entity::actor_data)

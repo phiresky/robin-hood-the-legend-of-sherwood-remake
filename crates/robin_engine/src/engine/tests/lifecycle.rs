@@ -3268,6 +3268,208 @@ fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
 }
 
 #[test]
+fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
+    use crate::campaign::CampaignValue;
+    use crate::element::{Command, Entity, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::SequenceElement;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let pc = engine.add_entity(make_test_pc(Posture::Upright));
+    let beggar = engine.add_entity(make_test_civilian(Posture::Upright));
+    let Entity::Civilian(civilian) = engine.get_entity_mut(beggar).unwrap() else {
+        unreachable!()
+    };
+    civilian.civilian.beggar_scroll_sets = Some(vec![vec![]]);
+    engine
+        .mission_domain
+        .campaign
+        .set_value(CampaignValue::Ransom, crate::engine::BEGGAR_SALARY);
+    engine
+        .get_entity_mut(pc)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(1);
+    engine
+        .get_entity_mut(beggar)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(6);
+
+    let scripts = (0..16)
+        .map(|_| SpriteScript {
+            action_id: OrderType::Paying as u16,
+            action_done: 1,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2],
+            delays: vec![10, 10],
+            distances: vec![0, 0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
+            sound_ids: vec![0; 2],
+        })
+        .collect();
+    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    conversion[OrderType::Paying as usize] = 0;
+    engine.get_entity_mut(pc).unwrap().element_data_mut().sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(scripts),
+        std::sync::Arc::new(conversion),
+    );
+    engine
+        .get_entity_mut(pc)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(1);
+
+    let seq = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new_interaction(
+            1,
+            Command::Pay,
+            Some(pc),
+            Some(beggar),
+        ));
+    assert_eq!(
+        crate::abilities::begin_pay(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            pc,
+            beggar,
+            seq,
+            0,
+            &mut engine.orders.next_order_id,
+        ),
+        crate::abilities::BeginResult::Started
+    );
+    engine.orders.sequence_manager.element_in_progress(seq, 0);
+    assert_eq!(
+        engine
+            .get_entity(pc)
+            .unwrap()
+            .position_iface()
+            .get_direction_goal()
+            .as_u8(),
+        1,
+        "translation must not expose PAYING's facing"
+    );
+    assert!(
+        engine.feedback.sound_sim.pending_exclamations.is_empty(),
+        "translation must not emit HERO_GIVE_MONEY"
+    );
+
+    let assets = assets_with_test_pc_profile();
+    let mut invalid = engine.clone();
+    invalid
+        .mission_domain
+        .campaign
+        .set_value(CampaignValue::Ransom, 0);
+    invalid
+        .get_entity_mut(beggar)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(8);
+    invalid
+        .get_entity_mut(pc)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .execute_order_initialising = true;
+    invalid.tick_ability_for(&sim, &mut HostDisplayState::default(), &assets, pc);
+    assert_eq!(
+        invalid
+            .get_entity(pc)
+            .unwrap()
+            .position_iface()
+            .get_direction_goal()
+            .as_u8(),
+        1,
+        "failed first-Execute validity must abort before facing"
+    );
+    assert!(
+        invalid.feedback.sound_sim.pending_exclamations.is_empty(),
+        "failed first-Execute validity must abort before speech"
+    );
+
+    // The target can turn after translation. Original samples its live
+    // direction only when PAYING first enters Execute.
+    engine
+        .get_entity_mut(beggar)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(7);
+    engine
+        .get_entity_mut(pc)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .execute_order_initialising = true;
+    engine.tick_ability_for(&sim, &mut HostDisplayState::default(), &assets, pc);
+    assert_eq!(
+        engine
+            .get_entity(pc)
+            .unwrap()
+            .position_iface()
+            .get_direction_goal()
+            .as_u8(),
+        15
+    );
+    assert_eq!(
+        engine
+            .feedback
+            .sound_sim
+            .pending_exclamations
+            .iter()
+            .filter(|speech| speech.exclamation_id == crate::engine::melee::HERO_GIVE_MONEY)
+            .count(),
+        1,
+        "first valid Execute must emit HERO_GIVE_MONEY exactly once"
+    );
+
+    engine.control.chorus_timer = 0;
+    let Entity::Pc(pc_entity) = engine.get_entity_mut(pc).unwrap() else {
+        unreachable!()
+    };
+    pc_entity.pc.forbidden_expressions.clear();
+    engine
+        .get_entity_mut(pc)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .execute_order_initialising = false;
+    engine
+        .get_entity_mut(beggar)
+        .unwrap()
+        .element_data_mut()
+        .set_direction_instantly(8);
+    engine.tick_ability_for(&sim, &mut HostDisplayState::default(), &assets, pc);
+    assert_eq!(
+        engine
+            .get_entity(pc)
+            .unwrap()
+            .position_iface()
+            .get_direction_goal()
+            .as_u8(),
+        15,
+        "later Execute frames must not resample the antagonist"
+    );
+    assert_eq!(
+        engine
+            .feedback
+            .sound_sim
+            .pending_exclamations
+            .iter()
+            .filter(|speech| speech.exclamation_id == crate::engine::melee::HERO_GIVE_MONEY)
+            .count(),
+        1,
+        "later Execute frames must not re-emit HERO_GIVE_MONEY"
+    );
+}
+
+#[test]
 fn production_selected_beggar_frozen_turns_and_bids_while_execution_frozen_and_fried_skip() {
     use crate::element::{ActionState, Command, Posture};
     use crate::order::{Order, OrderType};
