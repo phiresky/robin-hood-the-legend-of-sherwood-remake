@@ -2206,9 +2206,10 @@ impl EngineInner {
     /// but death clears that entire outbox to prevent pre-death work from
     /// reaching the corpse.  Extract both the current relationship and any
     /// already-queued old relationship before that reset so teardown cannot
-    /// leave a PC or archery reservation pointing at the dead soldier.
+    /// leave a PC, combat neighbour, or archery reservation pointing at the
+    /// dead soldier.
     fn detach_npc_death_relationships(&mut self, victim_id: EntityId) {
-        let (guarded_pcs, shooting_points, archery_sector) = {
+        let (guarded_pcs, shooting_points, archery_sector, left_neighbours, right_neighbours) = {
             let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(victim_id) else {
                 return;
             };
@@ -2246,13 +2247,101 @@ impl EngineInner {
             }
 
             let archery_sector = enemy.my_archery_sector.take();
+            // RHArtificialMalignity::SetState(SLEEPING_FOREVER) leaves every
+            // combat-line mode and therefore calls both reciprocal neighbour
+            // updates synchronously.  The lethal-damage path writes the
+            // terminal AI state directly, so it must perform the same teardown
+            // here before `clear_all_pending` discards the victim's outbox.
+            let mut left_neighbours = Vec::new();
+            let mut right_neighbours = Vec::new();
+            let left_neighbour = std::mem::take(&mut enemy.left_combat_neighbour);
+            if left_neighbour != 0 {
+                left_neighbours.push(left_neighbour);
+            }
+            let right_neighbour = std::mem::take(&mut enemy.right_combat_neighbour);
+            if right_neighbour != 0 {
+                right_neighbours.push(right_neighbour);
+            }
+            // `EnemyAi::set_state` zeroes the victim's local fields eagerly,
+            // but queues the reciprocal zero writes. Death clears that queue
+            // below, so preserve every old neighbour target first.
+            for action in &enemy.base.outbox.reentrant.cross_npc_actions {
+                match *action {
+                    crate::ai::CrossNpcAction::SetRightCombatNeighbour {
+                        target,
+                        neighbour: 0,
+                    } => {
+                        if target != 0 && !left_neighbours.contains(&target) {
+                            left_neighbours.push(target);
+                        }
+                    }
+                    crate::ai::CrossNpcAction::SetLeftCombatNeighbour {
+                        target,
+                        neighbour: 0,
+                    } => {
+                        if target != 0 && !right_neighbours.contains(&target) {
+                            right_neighbours.push(target);
+                        }
+                    }
+                    _ => {}
+                }
+            }
             debug_assert!(
                 !release.release_sector || archery_sector.is_some(),
                 "queued archery-sector release has no owned sector on death"
             );
 
-            (guarded_pcs, shooting_points, archery_sector)
+            (
+                guarded_pcs,
+                shooting_points,
+                archery_sector,
+                left_neighbours,
+                right_neighbours,
+            )
         };
+
+        for left_neighbour in left_neighbours {
+            let Some(Entity::Soldier(soldier)) =
+                self.world
+                    .entities
+                    .get_mut(EntityId::Soldier(crate::entity_id::SoldierId(
+                        left_neighbour,
+                    )))
+            else {
+                panic!(
+                    "dead soldier {victim_id:?} has missing/non-soldier left combat neighbour \
+                     {left_neighbour}"
+                );
+            };
+            let enemy = soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
+                panic!(
+                    "dead soldier {victim_id:?}'s left combat neighbour {left_neighbour} has no \
+                     EnemyAi"
+                )
+            });
+            enemy.right_combat_neighbour = 0;
+        }
+        for right_neighbour in right_neighbours {
+            let Some(Entity::Soldier(soldier)) =
+                self.world
+                    .entities
+                    .get_mut(EntityId::Soldier(crate::entity_id::SoldierId(
+                        right_neighbour,
+                    )))
+            else {
+                panic!(
+                    "dead soldier {victim_id:?} has missing/non-soldier right combat neighbour \
+                     {right_neighbour}"
+                );
+            };
+            let enemy = soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
+                panic!(
+                    "dead soldier {victim_id:?}'s right combat neighbour {right_neighbour} has no \
+                     EnemyAi"
+                )
+            });
+            enemy.left_combat_neighbour = 0;
+        }
 
         for guarded_pc in guarded_pcs {
             let guarded_pc_id = EntityId::Pc(guarded_pc);

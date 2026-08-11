@@ -2145,6 +2145,157 @@ fn soldier_death_detaches_guard_and_archery_before_forcing_quiet_music() {
 }
 
 #[test]
+fn soldier_death_detaches_both_combat_neighbours_without_touching_another_line() {
+    use crate::entity_id::SoldierId;
+
+    let mut engine = EngineInner::new();
+    // Reserve handle zero, which EnemyAi uses as its null neighbour sentinel.
+    // This models Lane 36's Soldier 90 — dying Soldier 91 — Soldier 54 line.
+    let _sentinel = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let left = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let victim = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let right = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let unrelated_left =
+        engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let unrelated_right =
+        engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+
+    let left_handle = left.index();
+    let victim_handle = victim.index();
+    let right_handle = right.index();
+    let unrelated_left_handle = unrelated_left.index();
+    let unrelated_right_handle = unrelated_right.index();
+    for (entity, left_neighbour, right_neighbour) in [
+        (left, 0, victim_handle),
+        (victim, left_handle, right_handle),
+        (right, victim_handle, 0),
+        (unrelated_left, 0, unrelated_right_handle),
+        (unrelated_right, unrelated_left_handle, 0),
+    ] {
+        let Some(Entity::Soldier(soldier)) = engine.get_entity_mut(entity) else {
+            panic!("combat-neighbour fixture contains a non-soldier")
+        };
+        let enemy = soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("test soldier has enemy AI");
+        enemy.left_combat_neighbour = left_neighbour;
+        enemy.right_combat_neighbour = right_neighbour;
+    }
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.handle_death(&crate::sim_rng::test_context(), &assets, victim);
+
+    let links = |engine: &EngineInner, handle: u32| {
+        let Some(Entity::Soldier(soldier)) = engine
+            .world
+            .entities
+            .get(EntityId::Soldier(SoldierId(handle)))
+        else {
+            panic!("combat-neighbour fixture soldier disappeared")
+        };
+        let enemy = soldier
+            .npc
+            .ai_brain
+            .enemy()
+            .expect("test soldier retains enemy AI");
+        (enemy.left_combat_neighbour, enemy.right_combat_neighbour)
+    };
+
+    assert_eq!(links(&engine, left_handle), (0, 0));
+    assert_eq!(links(&engine, victim_handle), (0, 0));
+    assert_eq!(links(&engine, right_handle), (0, 0));
+    assert_eq!(
+        links(&engine, unrelated_left_handle),
+        (0, unrelated_right_handle)
+    );
+    assert_eq!(
+        links(&engine, unrelated_right_handle),
+        (unrelated_left_handle, 0)
+    );
+}
+
+#[test]
+fn soldier_death_applies_queued_reciprocal_combat_neighbour_clears() {
+    use crate::ai::CrossNpcAction;
+    use crate::entity_id::SoldierId;
+
+    let mut engine = EngineInner::new();
+    let _sentinel = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let old_left = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let victim = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let old_right = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let victim_handle = victim.index();
+    let old_left_handle = old_left.index();
+    let old_right_handle = old_right.index();
+
+    for (entity, left_neighbour, right_neighbour) in
+        [(old_left, 0, victim_handle), (old_right, victim_handle, 0)]
+    {
+        let Some(Entity::Soldier(soldier)) = engine.get_entity_mut(entity) else {
+            panic!("queued combat-neighbour fixture contains a non-soldier")
+        };
+        let enemy = soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("test soldier has enemy AI");
+        enemy.left_combat_neighbour = left_neighbour;
+        enemy.right_combat_neighbour = right_neighbour;
+    }
+    let Some(Entity::Soldier(victim_soldier)) = engine.get_entity_mut(victim) else {
+        panic!("queued combat-neighbour victim is not a soldier")
+    };
+    let victim_enemy = victim_soldier
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("test victim has enemy AI");
+    assert_eq!(victim_enemy.left_combat_neighbour, 0);
+    assert_eq!(victim_enemy.right_combat_neighbour, 0);
+    victim_enemy
+        .base
+        .outbox
+        .reentrant
+        .cross_npc_actions
+        .extend([
+            CrossNpcAction::SetRightCombatNeighbour {
+                target: old_left_handle,
+                neighbour: 0,
+            },
+            CrossNpcAction::SetLeftCombatNeighbour {
+                target: old_right_handle,
+                neighbour: 0,
+            },
+        ]);
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.handle_death(&crate::sim_rng::test_context(), &assets, victim);
+
+    let links = |engine: &EngineInner, handle: u32| {
+        let Some(Entity::Soldier(soldier)) = engine
+            .world
+            .entities
+            .get(EntityId::Soldier(SoldierId(handle)))
+        else {
+            panic!("queued combat-neighbour fixture soldier disappeared")
+        };
+        let enemy = soldier
+            .npc
+            .ai_brain
+            .enemy()
+            .expect("test soldier retains enemy AI");
+        (enemy.left_combat_neighbour, enemy.right_combat_neighbour)
+    };
+    assert_eq!(links(&engine, old_left_handle), (0, 0));
+    assert_eq!(links(&engine, victim_handle), (0, 0));
+    assert_eq!(links(&engine, old_right_handle), (0, 0));
+}
+
+#[test]
 fn nearby_fighters_keeps_inactive_self_and_filters_ineligible_others() {
     use crate::element::Posture;
 
