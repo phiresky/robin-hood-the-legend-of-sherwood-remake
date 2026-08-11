@@ -188,8 +188,28 @@ impl EngineInner {
         anim: OrderType,
     ) {
         let _ = victim_id;
+        self.push_translated_damage_order(damage_element, anim);
+    }
+
+    /// Append an order authored by one of Original's human damage
+    /// translators. TranslateDamage, TranslateArrowDamage,
+    /// TranslateSwordDamage, TranslateHitDamage, and TranslatePushDamage
+    /// explicitly set `RHOrder::bComputeDirection = false` on their direct
+    /// reaction orders; those animations preserve the actor's facing rather
+    /// than deriving it from the dummy `(0, 0)` point. Orders appended by the
+    /// separate TranslateRoll helper deliberately retain the default `true`.
+    pub(super) fn push_translated_damage_order(
+        &mut self,
+        damage_element: (crate::sequence::SequenceId, usize),
+        anim: OrderType,
+    ) {
         let (dseq, didx) = damage_element;
-        self.push_new_order(dseq, didx, anim, 0.0, 0.0);
+        let id = self.orders.allocate_order_id();
+        let mut order = crate::order::Order::new(anim, 0.0, 0.0, id);
+        order.compute_direction = false;
+        self.orders
+            .sequence_manager
+            .push_order_on(dseq, didx, order);
     }
 
     // ─── Damage application ─────────────────────────────────────────
@@ -537,13 +557,9 @@ impl EngineInner {
                 if defender_action != ActionState::ParryingSword
                     && defender_action != ActionState::ParryingSwordLow
                 {
-                    let (dseq, didx) = damage_element;
-                    self.push_new_order(
-                        dseq,
-                        didx,
+                    self.push_translated_damage_order(
+                        damage_element,
                         crate::order::OrderType::TransitionParryingSwordWaitingSword,
-                        0.0,
-                        0.0,
                     );
                 }
 
@@ -766,32 +782,28 @@ impl EngineInner {
                     select_combat_animations(posture, action)
                 });
                 if let Some(a) = anims {
-                    let (dseq, didx) = damage_element;
                     if result.contains(combat::SwordDamageResult::STUNNING_DAMAGE) {
                         // Stunning hit chain: fall-back, roll,
                         // stand-up, optional in-place stun if the
                         // defender is mid-swordfight with concussion
                         // above the threshold.
-                        self.push_new_order(dseq, didx, a.falling_back, 0.0, 0.0);
+                        self.push_translated_damage_order(damage_element, a.falling_back);
                         self.try_queue_roll(assets, victim_id, damage_element);
-                        self.push_new_order(dseq, didx, a.standing_up, 0.0, 0.0);
+                        self.push_translated_damage_order(damage_element, a.standing_up);
                         let (is_swordfighting, concussion) = self
                             .get_entity(victim_id)
                             .and_then(|e| e.human_data())
                             .map(|h| (!h.opponents.is_empty(), h.concussion_of_the_brain))
                             .unwrap_or((false, 0));
                         if is_swordfighting && concussion > STUNNING_THRESHOLD {
-                            self.push_new_order(
-                                dseq,
-                                didx,
+                            self.push_translated_damage_order(
+                                damage_element,
                                 crate::order::OrderType::BeingStunnedSword,
-                                0.0,
-                                0.0,
                             );
                         }
                     } else if result.contains(combat::SwordDamageResult::CUTTING_DAMAGE) {
                         // Cutting hit, no follow-up roll / stand-up.
-                        self.push_new_order(dseq, didx, a.simple_hit, 0.0, 0.0);
+                        self.push_translated_damage_order(damage_element, a.simple_hit);
                     }
                 }
             }
@@ -1153,8 +1165,7 @@ impl EngineInner {
                 })
                 .map(|a| a.simple_hit);
             if let Some(anim) = hit_anim {
-                let (dseq, didx) = damage_element;
-                self.push_new_order(dseq, didx, anim, 0.0, 0.0);
+                self.push_translated_damage_order(damage_element, anim);
             }
             // Unconditional roll attempt (except for net damage, which
             // routes through a different path that never reaches
@@ -1345,8 +1356,7 @@ impl EngineInner {
                     }
                 });
             if let Some(anim) = hit_anim {
-                let (dseq, didx) = damage_element;
-                self.push_new_order(dseq, didx, anim, 0.0, 0.0);
+                self.push_translated_damage_order(damage_element, anim);
             }
             // Unconditional roll attempt.
             self.try_queue_roll(assets, victim_id, damage_element);
@@ -1590,14 +1600,13 @@ impl EngineInner {
             None => return,
         };
 
-        let (dseq, didx) = damage_element;
-        let id = self.orders.allocate_order_id();
-        let mut order = crate::order::Order::new(anim, 0.0, 0.0, id);
-        order.compute_direction = false;
-        order.antagonist = attacker_id;
+        self.push_translated_damage_order(damage_element, anim);
         self.orders
             .sequence_manager
-            .push_order_on(dseq, didx, order);
+            .get_element_mut(damage_element.0, damage_element.1)
+            .and_then(|element| element.orders.back_mut())
+            .expect("translated hit-fall order vanished")
+            .antagonist = attacker_id;
 
         tracing::debug!(
             victim = ?victim_id,

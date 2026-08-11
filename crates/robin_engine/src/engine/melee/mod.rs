@@ -2578,6 +2578,65 @@ mod tests {
         })
     }
 
+    #[test]
+    fn damage_dispatcher_disables_direction_on_live_reaction_orders() {
+        for (command, expected) in [
+            (Command::ReceiveDamage, OrderType::FallingBackUpright),
+            (Command::ReceiveMobileDamage, OrderType::FallingBackUpright),
+            (
+                Command::ReceiveArrowDamage,
+                OrderType::ExtractingArrowUpright,
+            ),
+            (Command::ReceiveStoneDamage, OrderType::FallingBackUpright),
+        ] {
+            let sim = crate::sim_rng::test_context();
+            let mut engine = make_engine();
+            let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+            let victim = engine.add_entity(make_pc(
+                WorldPoint3D {
+                    x: 10.0,
+                    ..WorldPoint3D::ZERO
+                },
+                None,
+            ));
+            let assets = action_test_assets([crate::profiles::Action::NoAction; 3]);
+            let mut damage = crate::sequence::SequenceElement::new_damage(
+                1,
+                command,
+                Some(victim),
+                Some(attacker),
+                1,
+                0,
+            );
+            engine.resolve_element_priority(&mut damage);
+            let sequence = engine.orders.sequence_manager.launch_element(damage);
+            let mut display = crate::engine::HostDisplayState::default();
+            engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+            let element = engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .expect("translated damage command remains registered");
+            assert_eq!(element.command, command);
+            assert!(
+                element
+                    .orders
+                    .iter()
+                    .any(|order| order.order_type == expected),
+                "{command:?} must author {expected:?}"
+            );
+            assert!(
+                !element
+                    .orders
+                    .iter()
+                    .find(|order| order.order_type == expected)
+                    .unwrap()
+                    .compute_direction
+            );
+        }
+    }
+
     fn action_test_assets(actions: [crate::profiles::Action; 3]) -> LevelAssets {
         let mut profiles = crate::profiles::ProfileManager::new();
         profiles.characters.push(crate::profiles::CharacterProfile {
@@ -5290,6 +5349,106 @@ mod tests {
     }
 
     #[test]
+    fn shoulder_damage_dispatches_partner_fall_without_direction_recompute() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let carrier = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        let carried = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        engine
+            .get_entity_mut(carrier)
+            .unwrap()
+            .set_posture(Posture::HelpingToClimb);
+        engine
+            .get_entity_mut(carrier)
+            .unwrap()
+            .pc_data_mut()
+            .unwrap()
+            .carried = Some(carried);
+        engine
+            .get_entity_mut(carried)
+            .unwrap()
+            .set_posture(Posture::OnShoulders);
+        engine
+            .get_entity_mut(carried)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .carrier = Some(carrier);
+
+        let assets = action_test_assets([crate::profiles::Action::NoAction; 3]);
+        let mut damage = crate::sequence::SequenceElement::new_damage(
+            1,
+            Command::ReceiveDamage,
+            Some(carrier),
+            Some(attacker),
+            1,
+            0,
+        );
+        engine.resolve_element_priority(&mut damage);
+        engine.orders.sequence_manager.launch_element(damage);
+        let mut display = crate::engine::HostDisplayState::default();
+        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+        engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+
+        let partner_fall = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .find(|element| element.command == Command::Fall && element.owner == Some(carried))
+            .expect("shoulder damage must dispatch Fall to the carried partner");
+        let order = partner_fall
+            .orders
+            .iter()
+            .find(|order| order.order_type == OrderType::FallingShoulders)
+            .expect("partner Fall command must translate to FallingShoulders");
+        assert!(!order.compute_direction);
+    }
+
+    #[test]
+    fn slope_translate_roll_order_keeps_its_source_authored_direction_recompute() {
+        let mut engine = make_engine();
+        let victim = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+        let mut obstacle = crate::sight_obstacle::SightObstacle::new_default(0);
+        obstacle.top_plane_points = [[0.0, 0.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]];
+        let mut assets = LevelAssets::new();
+        assets.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
+        {
+            let victim = engine.get_entity_mut(victim).unwrap();
+            victim.element_data_mut().set_obstacle_index(
+                crate::position_interface::ObstacleHandle::new(0),
+                Some(crate::position_interface::PlaneZCoeffs {
+                    az: 1.0,
+                    bz: 0.0,
+                    dz: 0.0,
+                }),
+            );
+            victim
+                .position_iface_mut()
+                .set_move_box(crate::coordinates::MoveBox::from_corners(
+                    crate::coordinates::MapVec::new(-5.0, -5.0),
+                    crate::coordinates::MapVec::new(5.0, 5.0),
+                ));
+        }
+        let damage = crate::sequence::SequenceElement::new(1, Command::ReceiveDamage, Some(victim));
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+
+        engine.try_queue_roll(&assets, victim, (sequence, 0));
+
+        let rolling = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .orders
+            .iter()
+            .find(|order| order.order_type == OrderType::Rolling)
+            .expect("TranslateRoll must append its Rolling order");
+        assert!(rolling.compute_direction);
+    }
+
+    #[test]
     fn parried_damage_still_learns_attackers_live_strike() {
         let sim = crate::sim_rng::test_context();
         let mut engine = make_engine();
@@ -5413,6 +5572,87 @@ mod tests {
         assert!(
             engine.feedback.sound_sim.pending_exclamations.is_empty(),
             "PC inherits RHElementActorHuman::SayOuch's no-op on TranslatePushDamage"
+        );
+    }
+
+    #[test]
+    fn push_damage_command_disables_direction_on_fall_and_successors() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 10.0,
+                ..WorldPoint3D::ZERO
+            },
+            None,
+        ));
+        {
+            let victim = engine
+                .get_entity_mut(victim)
+                .expect("push victim remains live");
+            victim.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
+            victim.human_data_mut().unwrap().concussion_of_the_brain = STUNNING_THRESHOLD + 1;
+            victim.enemy_ai_mut().unwrap().hth_weapon_id = 1;
+        }
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap()
+            .hth_weapon_id = 1;
+        let assets = assets_with_nonstraight_profile(
+            SwordStrike::H,
+            crate::profiles::WeaponThrustKind::TrueCircle,
+        );
+        let damage = crate::sequence::SequenceElement::new_damage(
+            1,
+            Command::ReceiveSwordDamage,
+            Some(victim),
+            Some(attacker),
+            1,
+            0,
+        );
+        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+
+        assert!(engine.apply_push_effect(
+            &sim,
+            &assets,
+            victim,
+            attacker,
+            &PushStrikeInfo { repulsion: 100 },
+            combat::SwordDamageResult::STUNNING_DAMAGE,
+            (sequence, 0),
+        ));
+
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .expect("translated push damage remains registered");
+        assert_eq!(
+            element
+                .orders
+                .iter()
+                .map(|order| order.order_type)
+                .collect::<Vec<_>>(),
+            vec![
+                OrderType::FallingPushedWithSword,
+                OrderType::StandingUpSword,
+                OrderType::BeingStunnedSword,
+            ]
+        );
+        assert!(
+            element
+                .orders
+                .iter()
+                .filter(|order| order.order_type != OrderType::Rolling)
+                .all(|order| !order.compute_direction),
+            "TranslatePushDamage sets bComputeDirection=false on the fall, stand-up, and stunned orders"
         );
     }
 
@@ -5573,6 +5813,19 @@ mod tests {
             entry.line_type == LogLineType::Event
                 && entry.info == StimulusType::EventGoodStrike as u16
         }));
+        let damage = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .expect("cutting damage command remains registered");
+        assert!(
+            damage
+                .orders
+                .iter()
+                .filter(|order| order.order_type != OrderType::Rolling)
+                .all(|order| !order.compute_direction),
+            "TranslateSwordDamage sets bComputeDirection=false on its cutting-hit order"
+        );
     }
 
     #[test]
@@ -5653,6 +5906,14 @@ mod tests {
                 .expect("Original TranslatePushDamage queues a fall even when the hit is parried")
                 .order_type,
             OrderType::FallingPushedWithSword
+        );
+        assert!(
+            damage
+                .orders
+                .iter()
+                .filter(|order| order.order_type != OrderType::Rolling)
+                .all(|order| !order.compute_direction),
+            "TranslatePushDamage sets bComputeDirection=false on the falling-pushed order"
         );
         let victim_after_translation = engine.get_entity(victim).unwrap();
         assert_eq!(

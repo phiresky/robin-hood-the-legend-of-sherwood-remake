@@ -582,7 +582,11 @@ impl EngineInner {
                     crate::sequence::SequencePriority::NonInterruptable,
                 );
             }
-            self.push_new_order(seq_id, elem_idx, anim, 0.0, 0.0);
+            // This Fall command is the partner half launched by
+            // TranslateShoulderDamage. Original PC::Translate authors both
+            // FallingShoulders and FallingBackUpright with
+            // bComputeDirection=false.
+            self.push_translated_damage_order((seq_id, elem_idx), anim);
             self.orders
                 .sequence_manager
                 .element_in_progress(seq_id, elem_idx);
@@ -910,14 +914,13 @@ impl EngineInner {
                 && !is_unconscious
                 && damage_result.contains(combat::SwordDamageResult::STUNNING_DAMAGE)
             {
-                let (dseq, didx) = damage_element;
                 if let Some(standup) = anims.standing_up {
-                    self.push_new_order(dseq, didx, standup, 0.0, 0.0);
+                    self.push_translated_damage_order(damage_element, standup);
                 }
                 if let Some(stunned) = anims.stunned
                     && concussion > STUNNING_THRESHOLD
                 {
-                    self.push_new_order(dseq, didx, stunned, 0.0, 0.0);
+                    self.push_translated_damage_order(damage_element, stunned);
                 }
             }
 
@@ -1349,6 +1352,17 @@ impl EngineInner {
 
         // Append a Rolling order with the authoritative map destination.
         // Its Execute arm drives ordinary PerformMotion directly.
+        self.push_translated_roll_order(damage_element, dest);
+    }
+
+    /// Append the positional order authored by Original TranslateRoll. Unlike
+    /// the direct damage-reaction animations, this order retains RHOrder's
+    /// default `bComputeDirection=true`.
+    pub(super) fn push_translated_roll_order(
+        &mut self,
+        damage_element: (crate::sequence::SequenceId, usize),
+        dest: crate::coordinates::MapPoint,
+    ) {
         let (dseq, didx) = damage_element;
         let roll_order = crate::order::Order::new(
             OrderType::Rolling,
