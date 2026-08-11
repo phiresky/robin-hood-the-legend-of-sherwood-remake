@@ -1199,8 +1199,14 @@ impl PositionInterface {
     pub fn prime_deviated_turn_for_current_goal(&mut self) {
         let diff = (i32::from(self.direction_goal.as_u8()) - i32::from(self.direction.as_u8()))
             .rem_euclid(16);
+        // Original TurnAntiVibration returns immediately when the current
+        // direction already equals its goal, leaving msbDirectionCount
+        // untouched.  An in-place transition at that heading must preserve
+        // the stable count for a later goal change rather than clear it.
+        if diff == 0 {
+            return;
+        }
         self.direction_count = match diff {
-            0 => 0,
             1..=7 => 2,
             _ => -2,
         };
@@ -2388,6 +2394,22 @@ mod tests {
 
         assert!(pi.turn());
         assert_eq!(pi.direction, d(11));
+    }
+
+    #[test]
+    fn aligned_in_place_transition_preserves_stable_count_for_later_goal() {
+        let mut pi = PositionInterface::new();
+        pi.direction = d(6);
+        pi.direction_goal = d(6);
+        pi.deviated = true;
+        pi.direction_count = 2;
+
+        pi.prime_deviated_turn_for_current_goal();
+        assert_eq!(pi.direction_count, 2);
+
+        pi.direction_goal = d(9);
+        assert!(pi.turn());
+        assert_eq!(pi.direction, d(7));
     }
 
     #[test]
