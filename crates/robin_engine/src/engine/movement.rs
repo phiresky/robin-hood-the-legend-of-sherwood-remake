@@ -4626,7 +4626,12 @@ impl EngineInner {
                 // and only attaches the gate via SetGate.
                 flags: MoveFlags::empty(),
                 tolerance: 0.0,
-                direction: 0,
+                // The Original gate carries path-local `RHGate::mbDirect`
+                // while constructing PassDoor. AI::Position then reads the
+                // selected movement element's direction to commit the actor
+                // to the side it is entering. Materialize that traversal
+                // direction instead of leaving Rust's element at its default.
+                direction: i16::from(shot.direct),
                 action: door_action,
                 speed_factor,
                 post_seek_sequence: None,

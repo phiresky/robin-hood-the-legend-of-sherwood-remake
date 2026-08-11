@@ -32,6 +32,135 @@ fn tick_movement_and_sequences(
 }
 
 #[test]
+fn gate_builder_retains_direct_pass_direction_for_ai_position() {
+    use crate::coordinates::MapPoint;
+    use crate::engine::MissionScript;
+    use crate::engine::movement::GoalShape;
+    use crate::gate::{Door, DoorIndex, GatePathStep};
+    use crate::order::OrderType;
+    use crate::scb::{ClassEntry, Function, SCB_VERSION, ScbFile};
+    use crate::sector::SectorNumber;
+    use crate::sequence::{MoveFlags, SequenceElementData};
+    use crate::vm::{Opcode, Quad};
+
+    let minimal_mission = || {
+        let startup = ClassEntry {
+            source_file: "test.scs".into(),
+            class_name: "StartUp".into(),
+            size_of_member_variables: 0,
+            member_variables: Vec::new(),
+            functions: vec![Function {
+                name: "Initialize".into(),
+                address: 0,
+                num_parameters: 0,
+                size_of_return_value: 0,
+                size_of_parameters: 0,
+                size_of_volatile: 0,
+                size_of_temporary: 0,
+            }],
+            quads: vec![
+                Quad {
+                    operation: Opcode::BeginFunction as u8,
+                    operands: [0; 8],
+                },
+                Quad {
+                    operation: Opcode::Return as u8,
+                    operands: [0; 8],
+                },
+            ],
+        };
+        MissionScript::from_scb(ScbFile {
+            version: SCB_VERSION,
+            classes: vec![startup],
+        })
+        .expect("minimal mission script")
+    };
+
+    let capture = |direct| {
+        let mut engine = EngineInner::new();
+        engine.scripts.mission = Some(minimal_mission());
+        let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+        engine.script_domains.interactables.doors = vec![Door {
+            point_out: MapPoint::new(1393.0, 502.0),
+            point_in: MapPoint::new(1382.0, 480.0),
+            sector_out: SectorNumber::new(0),
+            sector_in: SectorNumber::new(14),
+            ..Door::default()
+        }];
+
+        let sequence_id = engine
+            .build_gate_movement_sequence(
+                &crate::sim_rng::test_context(),
+                owner,
+                vec![GatePathStep {
+                    door_index: DoorIndex(0),
+                    direct,
+                }],
+                GoalShape::Point {
+                    point: MapPoint::new(1381.5, 480.3),
+                    tolerance: 0.0,
+                },
+                0,
+                OrderType::WalkingUpright,
+                true,
+                1.0,
+                MoveFlags::empty(),
+                Vec::new(),
+                Vec::new(),
+                false,
+                false,
+            )
+            .expect("door route");
+        let pass_index = engine
+            .orders
+            .sequence_manager
+            .get_sequence(sequence_id)
+            .expect("gate sequence")
+            .elements
+            .iter()
+            .position(|element| element.command == Command::PassDoor)
+            .expect("PassDoor element");
+        let pass = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, pass_index)
+            .expect("PassDoor element");
+        let SequenceElementData::Movement { direction, .. } = pass.data else {
+            panic!("PassDoor changed element kind")
+        };
+
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, pass_index);
+        let resolved = crate::engine::ai::resolve_ai_position_with(
+            &engine.world.entities,
+            &engine.script_domains.interactables.doors,
+            &engine.orders.sequence_manager,
+            owner,
+            |_| panic!("selected PassDoor must not use the actor's raw position"),
+        );
+        (direction, resolved.effective)
+    };
+
+    let (direct_direction, direct_position) = capture(true);
+    assert_eq!(direct_direction, 1);
+    assert_eq!((direct_position.x, direct_position.y), (1382.0, 480.0));
+    assert_eq!(
+        direct_position.sector,
+        crate::position_interface::SectorHandle::new(14)
+    );
+
+    let (indirect_direction, indirect_position) = capture(false);
+    assert_eq!(indirect_direction, 0);
+    assert_eq!((indirect_position.x, indirect_position.y), (1393.0, 502.0));
+    assert_eq!(
+        indirect_position.sector,
+        crate::position_interface::SectorHandle::new(0)
+    );
+}
+
+#[test]
 fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
     use crate::ai::{LogLineType, StimulusType};
     use crate::element::{Camp, Entity};
