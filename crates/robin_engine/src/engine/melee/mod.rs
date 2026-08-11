@@ -5047,6 +5047,101 @@ mod tests {
     }
 
     #[test]
+    fn push_replacement_executes_without_advancing_retained_circle_sweep() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let attacker = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: 0.0,
+                y: 100.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        let victim = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: 0.0,
+                y: 140.0,
+                z: 0.0,
+            },
+            None,
+        ));
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .element_data_mut()
+            .sprite
+            .position_iface
+            .set_move_box(crate::coordinates::MoveBox::from_corners(
+                crate::coordinates::MapVec::new(-5.0, -5.0),
+                crate::coordinates::MapVec::new(5.0, 5.0),
+            ));
+        let assets = assets_with_nonstraight_profile(
+            SwordStrike::A,
+            crate::profiles::WeaponThrustKind::PushAside,
+        );
+        let selected =
+            install_test_melee_order(&mut engine, attacker, victim, SwordStrike::A, false);
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .element_data_mut()
+            .set_direction_instantly(8);
+        engine
+            .get_entity_mut(attacker)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .sweep_state = Some(crate::movement::SweepState {
+            pending_victims: vec![victim],
+            initial_angle: 2.0,
+            current_angle: 5.5,
+            final_angle: 5.5,
+            rotation_per_frame: std::f32::consts::FRAC_PI_4,
+            direction: crate::profiles::WeaponThrustDirection::LeftToRight,
+            strike: SwordStrike::F,
+            attacker_profile_idx: Some(1),
+            strike_kind: crate::profiles::WeaponThrustKind::TrueHalfCircle,
+        });
+
+        engine.tick_selected_melee_owner(sim, &assets, attacker, selected);
+
+        assert_eq!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .element_data()
+                .direction(),
+            8,
+            "PushAside must not present the retained F sweep's terminal direction"
+        );
+        assert_eq!(
+            engine
+                .get_entity(attacker)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .sweep_state
+                .as_ref()
+                .expect("PushAside leaves interrupted sweep storage dormant")
+                .strike,
+            SwordStrike::F,
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| sequence.elements.iter())
+                .any(|element| {
+                    element.command == Command::ReceiveSwordDamage && element.owner == Some(victim)
+                }),
+            "the replacement PushAside must still execute and queue its damage"
+        );
+    }
+
+    #[test]
     fn push_strike_does_not_recover_antagonist_outside_rectangle() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;

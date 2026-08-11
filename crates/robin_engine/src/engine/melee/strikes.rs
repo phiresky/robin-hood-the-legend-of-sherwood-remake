@@ -1054,6 +1054,21 @@ impl EngineInner {
                         )
                     });
                 let active_kind = profile.thrusts[active_strike as usize].kind;
+                // Execute's weapon-kind dispatch gives PushAside (and the
+                // other non-sweep kinds) their own executor.  They do not
+                // enter ExecuteLateralSwordStrike/ExecuteCircleSwordStrike,
+                // so an interrupted strike's human-owned victim/angle state
+                // must remain dormant while that replacement owns Execute.
+                if !matches!(
+                    active_kind,
+                    WeaponThrustKind::Lateral
+                        | WeaponThrustKind::TrueHalfCircle
+                        | WeaponThrustKind::FalseHalfCircle
+                        | WeaponThrustKind::TrueCircle
+                        | WeaponThrustKind::FalseCircle
+                ) {
+                    return;
+                }
                 let action_done = entity.element_data().sprite.last_processed_order_id
                     == active_order_id.get()
                     && entity.element_data().sprite.current_frame
